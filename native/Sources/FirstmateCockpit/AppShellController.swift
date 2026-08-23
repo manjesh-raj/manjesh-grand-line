@@ -1445,8 +1445,17 @@ final class AppShellController: NSViewController {
     /// while visible rather than only on each `viewWillAppear`. A no-op if
     /// the page hasn't been visited yet - `DictationController.setEngineStatus`
     /// itself guards on `isViewLoaded`.
+    /// Daylight Phase 3 also forwards it to the hub's Dictation module.
+    /// `HomeCanvasController.applyDictationStatus` existed from Phase 2 but
+    /// nothing ever called it, so that module's chip showed the initial
+    /// `.ready` regardless of what the engine was actually doing - a card
+    /// claiming "Ready" mid-recording, and claiming it on a machine that had
+    /// never been granted microphone access. The engine already fans this
+    /// status out to two subscribers (the Dictation page and the floating
+    /// HUD); this is a third, not a new signal.
     func setDictationEngineStatus(_ status: DictationStatus) {
         dictation.setEngineStatus(status)
+        homeCanvas.applyDictationStatus(status)
     }
 
     /// Fix 1: mirrors what `AppDelegate.applicationWillTerminate` already

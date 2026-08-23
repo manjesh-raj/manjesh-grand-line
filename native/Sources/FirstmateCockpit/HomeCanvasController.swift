@@ -82,7 +82,15 @@ final class HomeCanvasController: NSViewController {
     private var fleetSnapshot: FleetSnapshot?
     private var mergedPRs: [MergedPR]?
     private var prFetchFailure: String?
-    private var dictationStatus: DictationStatus = .ready
+    /// `nil` until the engine has pushed one. The Dictation module then falls
+    /// back to `DictationPermissions.currentStatus()` rather than assuming
+    /// `.ready`: the engine only pushes on a *change*, so a hub rendered at
+    /// launch on a machine that has never granted microphone access would
+    /// otherwise show a confident "Ready" chip until the captain tried to
+    /// dictate. That read is three synchronous authorization-status calls -
+    /// no subprocess, no network - and is what `DictationController` seeds
+    /// its own state from.
+    private var pushedDictationStatus: DictationStatus?
 
     private let sources: Sources
     private var space: DaylightSpace = .overview
@@ -99,6 +107,7 @@ final class HomeCanvasController: NSViewController {
 
     private var cards: [HelmModuleCard] = []
     private var themeToken: ThemeObservation?
+    private var signalCountsToken: BackgroundSignalsPoller.CountsObservation?
     private var windowResizeObserver: NSObjectProtocol?
     private var lastGridWidth: CGFloat = 0
     /// Coalesces the render requests that arrive in bursts.
@@ -122,6 +131,7 @@ final class HomeCanvasController: NSViewController {
 
     deinit {
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
+        if let signalCountsToken { BackgroundSignalsPoller.shared.unobserveCounts(signalCountsToken) }
         if let windowResizeObserver { NotificationCenter.default.removeObserver(windowResizeObserver) }
     }
 
@@ -228,6 +238,30 @@ final class HomeCanvasController: NSViewController {
             self.setNeedsRender()
         }
 
+        // Phase 3: the Setup and Vault modules render
+        // `BackgroundSignalsPoller.lastCounts`, whose first pass lands ~10s
+        // after launch - while the captain is looking at *this* page, since it
+        // is the launch landing. Without this, both cards said "hasn't been
+        // checked yet this session" for the whole session: no `viewWillAppear`
+        // fires for a page already on screen, and nothing else this page
+        // observes changes when a poll pass completes.
+        //
+        // This is a subscription to already-computed numbers, not a new poll.
+        // The poller's cadence, its passes and its subprocesses are untouched -
+        // see `observeCounts`'s own doc comment for why the notification-center
+        // fan-out could not be reused here (a clean machine publishes nothing).
+        //
+        // Deliberately NOT gated on visibility, unlike the health observer
+        // above: a first pass that lands while the captain is on a drill page
+        // must still reach this page's cards, or returning to the hub would
+        // show a stale "not checked yet" until something else forced a render.
+        // The cost is one coalesced rebuild per poll pass - at most one per
+        // 15 minutes.
+        signalCountsToken = BackgroundSignalsPoller.shared.observeCounts { [weak self] _ in
+            guard let self, self.isViewLoaded else { return }
+            self.setNeedsRender()
+        }
+
         render()
         // `ThemeManager.observe` fired synchronously above, before a single
         // card existed - the `refreshTheme()` convention (AGENTS.md's
@@ -279,7 +313,7 @@ final class HomeCanvasController: NSViewController {
     /// The dictation engine already fans its status out to the Dictation page
     /// and the floating HUD; this is a third subscriber, not a new signal.
     func applyDictationStatus(_ status: DictationStatus) {
-        dictationStatus = status
+        pushedDictationStatus = status
         guard isViewLoaded, !view.isHidden else { return }
         setNeedsRender()
     }
@@ -625,7 +659,16 @@ final class HomeCanvasController: NSViewController {
         let counts = BackgroundSignalsPoller.shared.lastCounts
         content.subtitle = "toolchain"
         guard let drift = counts.setupDrift else {
-            content.body = .note("Setup status hasn't been checked yet this session.")
+            // Honest, and specific about which of the two "no number yet"
+            // states this is: the poller's first pass is genuinely in flight
+            // (it starts ~10s after launch), or a pass has completed without
+            // producing a count, which would be a real fault rather than
+            // ordinary startup. Neither renders a fake "Current" or a
+            // confident zero - GL-14's rule, one more signal.
+            content.chip = Self.pollerIsStillWarmingUp ? .mute("Checking\u{2026}") : nil
+            content.body = .note(Self.pollerIsStillWarmingUp
+                ? "Checking the toolchain\u{2026} this card fills itself in when the first pass lands."
+                : "Setup status hasn't been checked yet this session.")
             return
         }
         let total = SetupStepKind.allCases.count
@@ -685,7 +728,11 @@ final class HomeCanvasController: NSViewController {
         let counts = BackgroundSignalsPoller.shared.lastCounts
         content.subtitle = "names only"
         guard let secrets = counts.vaultSecrets else {
-            content.body = .note("Vault hasn't been checked yet this session.")
+            // The same two states as Setup above, for the same reason.
+            content.chip = Self.pollerIsStillWarmingUp ? .mute("Checking\u{2026}") : nil
+            content.body = .note(Self.pollerIsStillWarmingUp
+                ? "Checking Automic Vault\u{2026} this card fills itself in when the first pass lands."
+                : "Vault hasn't been checked yet this session.")
             return
         }
         if let attention = counts.vaultAttention, attention > 0 {
@@ -713,6 +760,7 @@ final class HomeCanvasController: NSViewController {
 
     private func fillDictation(_ content: inout HelmModuleCard.Content) {
         content.subtitle = "hold Right \u{2325}"
+        let dictationStatus = pushedDictationStatus ?? DictationPermissions.currentStatus()
         switch dictationStatus {
         case .ready: content.chip = .ok("Ready")
         case .recording, .transcribing, .cleaningUp: content.chip = .mute(dictationStatus.title)
@@ -732,6 +780,15 @@ final class HomeCanvasController: NSViewController {
         content.body = .note("Connection \u{00B7} Appearance \u{00B7} Terminal \u{00B7} Security \u{00B7} Backup")
     }
 
+    /// Whether the background-signals poller has yet completed a pass.
+    ///
+    /// Read from the poller rather than tracked here: `lastCompletedPassAt` is
+    /// its own already-published state, so this cannot drift out of step with
+    /// it and adds nothing new to observe.
+    private static var pollerIsStillWarmingUp: Bool {
+        BackgroundSignalsPoller.shared.lastCompletedPassAt == nil
+    }
+
     // MARK: Probe / self-test surface
 
     var moduleCardsForTests: [HelmModuleCard] { cards }
@@ -740,4 +797,8 @@ final class HomeCanvasController: NSViewController {
         (greetingLabel.stringValue, subtitleLabel.stringValue)
     }
     var gridRowCountForTests: Int { gridStack.arrangedSubviews.count }
+    /// Force one synchronous render, bypassing the coalescing hop - so a
+    /// self-test can establish a known starting state before driving the
+    /// signal it is actually testing.
+    func debugRenderNow() { render() }
 }
