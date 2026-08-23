@@ -86,6 +86,17 @@ final class AppShellController: NSViewController {
     /// the initial layout pass.
     private let bodyContainer = NSView()
 
+    /// GL-37: the destination table plus the lazy-mount mechanics - see
+    /// `DestinationRegistry.swift`. `unowned self` rather than `weak`: this
+    /// closure only ever runs from `show(_:)`/`mountEagerSlots()`, both of
+    /// which are reached through `self`, so `self` is alive by construction,
+    /// and the mounter is owned by `self` so there is no retain cycle to
+    /// break beyond that.
+    private lazy var mounter = DestinationMounter { [unowned self] controller in
+        self.addChild(controller)
+        self.embed(controller.view)
+    }
+
     /// `fm/grandline-live-gap-rootcause-scout`: named (rather than anonymous,
     /// like every other constraint activated in `loadView`) so
     /// `reassertBodyContainerWidthTie()` can check/repair them on every
@@ -213,19 +224,10 @@ final class AppShellController: NSViewController {
         // icon (`ConsoleController.showFind`) and the Edit menu's `⌘F`.
         topBar.onSearchTapped = { [weak self] in self?.onSearchTapped?() }
 
-        addChild(hostsPanel)
-        addChild(console)
-        addChild(overview)
-        addChild(shift)
-        addChild(review)
-        addChild(logAnalyzer)
-        addChild(tools)
-        addChild(vault)
-        addChild(dictation)
-        addChild(docs)
         // The four Setup pages become children of `setup`, not of this
         // controller - `SetupContainerController.loadView` calls `addChild`
-        // for each of them.
+        // for each of them, which means none of the four runs its own
+        // `loadView` until the Setup slot itself is first mounted.
         setup = SetupContainerController(updates: updates, bootstrap: bootstrap,
                                          automation: automation, githubSync: githubSync)
         setup.onTabSelected = { [weak self] dest in
@@ -236,12 +238,37 @@ final class AppShellController: NSViewController {
             // does for its own three tabs.
             self?.rail.setActive(dest)
         }
-        addChild(setup)
-        addChild(settings)
 
-        for destinationView in [hostsPanel.view, console.view, overview.view, shift.view, review.view, logAnalyzer.view, tools.view, vault.view, dictation.view, docs.view, setup.view, settings.view] {
-            embed(destinationView)
-        }
+        // GL-37: the destination table. One line per body view replaces the
+        // six hand-maintained per-destination edit sites this used to need
+        // (see `DestinationRegistry.swift`'s header). Registration order is
+        // the rail's own order, purely for readability - `show(_:)` looks
+        // slots up by id.
+        //
+        // Constructing a controller does not run its `loadView`; only
+        // `mount` does, which for a lazy slot is the first `show(_:)` that
+        // names it. So every reference to these properties elsewhere in this
+        // file is safe before a first visit as long as it only *assigns a
+        // closure* (which the wiring below does) - anything that touches a
+        // destination's views goes through `show(_:)` first.
+        mounter.register(DestinationSlot(id: .overview, title: RailDestination.overview.bodyTitle, mountsEagerly: true, controller: overview))
+        mounter.register(DestinationSlot(id: .console, title: RailDestination.console.bodyTitle, mountsEagerly: true, controller: console))
+        mounter.register(DestinationSlot(id: .hosts, title: RailDestination.hosts.bodyTitle, mountsEagerly: false, controller: hostsPanel))
+        mounter.register(DestinationSlot(id: .shift, title: RailDestination.shift.bodyTitle, mountsEagerly: false, controller: shift))
+        mounter.register(DestinationSlot(id: .review, title: RailDestination.review.bodyTitle, mountsEagerly: true, controller: review))
+        mounter.register(DestinationSlot(id: .logAnalyzer, title: RailDestination.logAnalyzer.bodyTitle, mountsEagerly: false, controller: logAnalyzer))
+        mounter.register(DestinationSlot(id: .tools, title: RailDestination.tools.bodyTitle, mountsEagerly: false, controller: tools))
+        mounter.register(DestinationSlot(id: .vault, title: RailDestination.vault.bodyTitle, mountsEagerly: false, controller: vault))
+        mounter.register(DestinationSlot(id: .dictation, title: RailDestination.dictation.bodyTitle, mountsEagerly: false, controller: dictation))
+        mounter.register(DestinationSlot(id: .docs, title: RailDestination.docs.bodyTitle, mountsEagerly: false, controller: docs))
+        mounter.register(DestinationSlot(id: .setup, title: RailDestination.updates.bodyTitle, mountsEagerly: false, controller: setup))
+        mounter.register(DestinationSlot(id: .settings, title: RailDestination.settings.bodyTitle, mountsEagerly: false, controller: settings))
+
+        // Built here, before the window is ever shown, for the three
+        // invariants `DestinationRegistry.swift` documents (a live PTY, and
+        // two launch-seeded rail badges that render through their own
+        // views). Every other slot waits for its first `show(_:)`.
+        mounter.mountEagerSlots()
 
         bodyLeadingConstraint = bodyContainer.leadingAnchor.constraint(equalTo: rail.view.trailingAnchor)
         bodyTrailingConstraint = bodyContainer.trailingAnchor.constraint(equalTo: root.trailingAnchor)
@@ -682,6 +709,23 @@ final class AppShellController: NSViewController {
         bodyTrailingConstraint.isActive = false
     }
 
+    /// GL-37: which destination slots have actually been built.
+    /// `DestinationMountingSelfTest` asserts this is exactly the eager set
+    /// at launch, grows by one on a first visit, and does not grow again on
+    /// a revisit.
+    var mountedDestinationSlotsForTests: [DestinationSlotID] {
+        mounter.mountedSlots.map(\.id)
+    }
+
+    /// The view a mounted slot owns, for identity comparison across a
+    /// navigate-away-and-back cycle - `nil` while the slot is unmounted,
+    /// deliberately, so a test cannot accidentally build the thing it is
+    /// asserting stays unbuilt.
+    func destinationViewIfMountedForTests(_ id: DestinationSlotID) -> NSView? {
+        guard let slot = mounter.slot(for: id), slot.isMounted else { return nil }
+        return slot.controller.view
+    }
+
     // MARK: Destination switching
 
     /// Internal (not `private`): the app delegate also calls this directly
@@ -690,50 +734,20 @@ final class AppShellController: NSViewController {
     func show(_ dest: RailDestination) {
         hideAllDestinations()
 
-        switch dest {
-        case .overview:
-            overview.view.isHidden = false
-            topBar.setTitle("Overview")
-        case .shift:
-            shift.view.isHidden = false
-            topBar.setTitle("Tasks")
-        case .hosts:
-            hostsPanel.view.isHidden = false
-            topBar.setTitle("Hosts")
-        case .console:
-            console.view.isHidden = false
-            topBar.setTitle("Console")
-        case .review:
-            review.view.isHidden = false
-            topBar.setTitle("Review")
-        case .logAnalyzer:
-            logAnalyzer.view.isHidden = false
-            topBar.setTitle("Log Analyzer")
-        case .tools:
-            tools.view.isHidden = false
-            topBar.setTitle("Tools")
-        case .vault:
-            vault.view.isHidden = false
-            topBar.setTitle("Vault")
-        case .dictation:
-            dictation.view.isHidden = false
-            topBar.setTitle("Dictation")
-        case .docs:
-            docs.view.isHidden = false
-            topBar.setTitle("Docs")
-        case .updates, .bootstrap, .automation, .githubSync:
-            // One destination view with four tabs - the rail flyout still
-            // names a specific one, which just selects that tab.
-            setup.view.isHidden = false
-            if let tab = SetupTab(destination: dest) { setup.select(tab: tab) }
-            // "Setup", not the sub-page's own name: the tab row below names
-            // the sub-page, and the rail row the captain came from says
-            // "Setup" too.
-            topBar.setTitle("Setup")
-        case .settings:
-            settings.view.isHidden = false
-            topBar.setTitle("Settings")
+        // GL-37: one table lookup replaces the fifteen-case switch this used
+        // to be (and the matching line-per-destination in
+        // `hideAllDestinations`). The slot is mounted here if this is its
+        // first visit - see `DestinationRegistry.swift`.
+        guard let slot = mounter.show(dest.slot) else { return }
+        topBar.setTitle(slot.title)
+
+        // The one destination-specific step left: four rail destinations
+        // share the Setup slot, and which of them the captain asked for
+        // decides the segmented tab, not the body view.
+        if slot.id == .setup, let tab = SetupTab(destination: dest) {
+            setup.select(tab: tab)
         }
+
         rail.setActive(dest)
     }
 
@@ -822,19 +836,14 @@ final class AppShellController: NSViewController {
     }
 
     private func hideAllDestinations() {
-        hostsPanel.view.isHidden = true
-        console.view.isHidden = true
-        overview.view.isHidden = true
-        shift.view.isHidden = true
-        review.view.isHidden = true
-        logAnalyzer.view.isHidden = true
-        tools.view.isHidden = true
-        vault.view.isHidden = true
-        dictation.view.isHidden = true
-        docs.view.isHidden = true
-        setup.view.isHidden = true
-        settings.view.isHidden = true
-        for controller in hostConsoles.values { controller.view.isHidden = true }
+        // Only mounted slots have a view to hide - asking an unmounted one
+        // for `controller.view` here would build it and defeat GL-37's whole
+        // point. Host pages are tracked separately (they are not fixed
+        // `RailDestination` cases) and were always lazily built.
+        mounter.hideAll()
+        for controller in hostConsoles.values where controller.isViewLoaded {
+            controller.view.isHidden = true
+        }
         activeHostID = nil
     }
 
@@ -884,6 +893,19 @@ final class AppShellController: NSViewController {
     @objc func selectHosts() {
         show(.hosts)
         hostsPanel.select(tab: .hosts)
+    }
+
+    /// The Hosts menu's "New Host…".
+    ///
+    /// GL-37: this used to target `HostsController` directly, which was the
+    /// one menu item in the app that could reach a destination's own
+    /// view-touching method without going through `show(_:)` first. With the
+    /// Hosts slot mounted lazily that would mean invoking a page that has
+    /// not been built yet, so it now follows the same shape every other
+    /// menu item here already uses - select the destination, then act on it.
+    @objc func newHostFromMenu() {
+        show(.hosts)
+        hostsPanel.newHost()
     }
 
     /// The Keys menu's "Manage Keys…" (⌘⇧K). Phase 5 of the full-app UI audit
