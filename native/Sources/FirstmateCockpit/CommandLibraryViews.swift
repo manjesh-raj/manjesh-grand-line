@@ -354,11 +354,27 @@ final class CommandLibraryPageView: NSObject {
         buttonsSpacer.translatesAutoresizingMaskIntoConstraints = false
         buttonsSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         buttonsSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        for b in [detailSendButton, detailSendToHostsButton, detailCopyButton, detailWorkflowButton,
+        for b in [detailSendButton, detailCopyButton, detailWorkflowButton,
                   detailEditButton, detailDuplicateButton, detailFavoriteButton, detailExplainButton] {
             b.setContentHuggingPriority(.required, for: .horizontal)
             b.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
+        // F9's own addition, and the row's one non-`.required` compression
+        // resistance: at `.required` (bisected live - removing this button
+        // from the row entirely, and only this one, made
+        // `bodyContainerTracksWindowAcrossAllDestinations` pass again) its
+        // ~25-33pt minimum width was a real content floor above
+        // `NSLayoutPriorityWindowSizeStayPut` (500) sitting behind a fully
+        // required leading/trailing chain all the way up into the shared
+        // `bodyContainer` (AGENTS.md gotchas (13)/(14)) - capping the whole
+        // app window's minimum width the moment `.shift`'s DevOps Commands
+        // tab (a permanently-mounted, hidden-not-torn-down sibling per
+        // GL-37) was ever built, not just while it was showing. `.defaultLow`
+        // makes this button - the newest, least essential action in the row -
+        // the one that yields space first if a window is ever this narrow,
+        // rather than blocking the resize outright.
+        detailSendToHostsButton.setContentHuggingPriority(.required, for: .horizontal)
+        detailSendToHostsButton.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         // Primary first, then the two supporting secondaries, then the spacer,
         // then the quiet group at the trailing edge.
         let buttonsRow = NSStackView(views: [
