@@ -109,14 +109,28 @@ final class HelmGradientTile: NSView {
         themeToken = ThemeManager.shared.observe { [weak self] theme in
             self?.applyTheme(theme)
         }
+        #if FM_SELFTESTS
+        Self.debugLiveInstanceCount += 1
+        #endif
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) not supported")
     }
 
+    #if FM_SELFTESTS
+    /// `fm/grandline-daylight-shell-regressions`: same live-instance counter
+    /// convention as `HelmModuleCard.debugLiveInstanceCount`, to isolate
+    /// whether a tile specifically (rather than its owning card) is what a
+    /// suspected retention holds onto.
+    static var debugLiveInstanceCount = 0
+    #endif
+
     deinit {
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
+        #if FM_SELFTESTS
+        Self.debugLiveInstanceCount -= 1
+        #endif
     }
 
     /// Point the tile at a hue and an SF Symbol.
