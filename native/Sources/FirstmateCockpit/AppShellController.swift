@@ -384,6 +384,14 @@ final class AppShellController: NSViewController {
         // than new behaviour.
         overview.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
         overview.onOpenShiftTask = { [weak self] id in self?.openShiftTask(id: id) }
+        // F7: the general "message first mate" channel. Overview owns the
+        // composer, this shell owns the console that owns the Mirror tab -
+        // the same forward-don't-own split every other cross-page action here
+        // uses. Deliberately *not* `fm-send.sh`: an unaddressed message has no
+        // task id for that script to target (see `FleetActions.swift`).
+        overview.onMessageFirstMate = { [weak self] text, completion in
+            completion(self?.sendToFirstmate(text) ?? .notSent("the app shell is gone"))
+        }
         // cockpit-settings-sudo-touchid: Settings' "Touch ID for sudo" row
         // runs `sudo av harden sudo`, which needs a real interactive `sudo`
         // prompt exactly like Bootstrap's provisioning actions - same
@@ -918,6 +926,46 @@ final class AppShellController: NSViewController {
     /// rather than opening a separate window.
     @objc func selectSettings() {
         show(.settings)
+    }
+
+    // MARK: F7 - answering the crew
+
+    /// F7's general-message channel, performed. Injects `text` into the live
+    /// firstmate session's own tab (the tmux mirror or the real herdr attach
+    /// client), through the same `TerminalView.send(txt:)` path Snippets' Run
+    /// and the SRE Lead bridge already use.
+    ///
+    /// GL-09: gated like every other write into the captain's agent session.
+    /// This one is reachable from the ⌘K palette as well as Overview, and the
+    /// palette is its own `.floating` panel - it already refuses to open while
+    /// locked, but the write itself is what the gate is actually about.
+    func sendToFirstmate(_ text: String) -> FleetGeneralMessageOutcome {
+        guard AppLockGate.shared.allows(.crewReply) else {
+            return .notSent("the app is locked")
+        }
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .notSent("nothing to send")
+        }
+        switch console.sendToFirstmateMirror(text) {
+        case .sent:
+            return .sent
+        case .noMirrorTab:
+            return .notSent("this console has no firstmate session tab")
+        case .notStarted:
+            // Honest, and actionable: bring the console up so the session
+            // starts, and say plainly that nothing was typed. Deliberately no
+            // timed retry - a delay-based "probably up by now" resend is
+            // exactly how a message gets reported as sent when it was not.
+            show(.console)
+            return .notSent("the firstmate session tab isn't running yet - it's starting now, try again in a moment")
+        }
+    }
+
+    /// ⌘K's "Message First Mate" action, and the same thing the Overview
+    /// header button does - one composer, reached two ways.
+    @objc func messageFirstMateFromMenu() {
+        show(.overview)
+        overview.openMessageFirstMateComposer()
     }
 
     /// The Hosts menu's "Show Hosts": select the Hosts rail destination.
