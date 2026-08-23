@@ -88,6 +88,12 @@ enum HelmContrastSelfTest {
         checkRowDoesNotResizeWindow(&ok)
         checkSetupFlyoutTintsAreDistinct(&ok)
         checkConsoleCardChromeGeometry(&ok)
+        checkDaylightPalette(&ok)
+        checkDaylightDomainHues(&ok)
+        checkDaylightRadiiScale(&ok)
+        checkDaylightElevation(&ok)
+        checkDaylightTypeRoles(&ok)
+        checkGradientTileRecipe(&ok)
         print(ok ? "== contrast: PASS ==" : "== contrast: FAIL ==")
         return ok
     }
@@ -1144,13 +1150,30 @@ enum HelmContrastSelfTest {
             }
 
             // The fill has to be visibly separate from whichever surface the
-            // field lands on. 1.05:1 is a deliberately low bar - a field's
+            // field lands on. 1.02:1 is a deliberately low bar - a field's
             // boundary is also carried by its border - but it catches "the fill
             // is literally the background", which is the real failure mode.
+            //
+            // One palette legitimately cannot clear it on both surfaces, and
+            // is handled by proving the substitute rather than by an exemption.
+            // Daylight's well token (§2.1's `inset`) sits deliberately close to
+            // its `paper` ground - the design separates a well on the bare page
+            // with its 1px `hair` border, not with a fill step - so where the
+            // fill cannot carry the boundary the **border** must, measurably,
+            // against that same fill. A theme that fails both is still a
+            // failure. (No pre-existing palette takes this branch: the three
+            // whose card and page are the same token derive a fill 1.15:1 off
+            // both.)
+            let borderVsFill = HelmContrast.ratio(HelmField.border(theme).withAlphaComponent(1), expected)
             for (surfaceName, hex) in [("chrome", theme.chromeBackgroundHex), ("page", theme.backgroundHex)] {
                 let r = HelmContrast.ratio(expected, HelmTheme.nsColor(hex))
                 if r < worstEdge.ratio { worstEdge = (r, "\(theme.id) vs \(surfaceName)") }
-                if r < 1.02 { problems.append("fill indistinguishable from \(surfaceName) (\(fmt(r)))") }
+                guard r < 1.02 else { continue }
+                if borderVsFill >= 1.10 {
+                    print("  NOTE \(theme.id): fill sits on \(surfaceName) (\(fmt(r))) - boundary carried by the border (\(fmt(borderVsFill)))")
+                } else {
+                    problems.append("fill indistinguishable from \(surfaceName) (\(fmt(r))) and its border cannot carry the boundary either (\(fmt(borderVsFill)))")
+                }
             }
 
             let inkRatio = HelmContrast.ratio(HelmField.ink(theme), expected)
@@ -1504,6 +1527,404 @@ enum HelmContrastSelfTest {
         }
     }
 
+    // MARK: Daylight - the migration's palette sweep (Phase 1)
+
+    /// Every contrast pair the Daylight migration's §2.4 table names, measured
+    /// against this codebase's own WCAG formula rather than trusted.
+    ///
+    /// The table lists both the prototype's raw value and the corrected one, so
+    /// this asserts **both directions**: the corrected value clears the floor,
+    /// *and* the raw value it replaced genuinely fails it. A check that only
+    /// asserted the first half would still pass if someone reverted a
+    /// correction to a value that happened to be fine for a different reason,
+    /// and would tell a future reader nothing about why the correction exists.
+    private static func checkDaylightPalette(_ ok: inout Bool) {
+        print("\n-- daylight palette (migration section 2.4, every pair measured) --")
+        guard let daylight = HelmTheme.theme(id: "daylight") else {
+            print("  FAIL the daylight theme is not in HelmTheme.allThemes")
+            ok = false
+            return
+        }
+        let card = HelmTheme.nsColor(DaylightPalette.card)
+        let paper = HelmTheme.nsColor(DaylightPalette.paper)
+        let inset = HelmTheme.nsColor(DaylightPalette.inset)
+        let floor = HelmContrast.textTarget
+
+        func expect(_ label: String, _ value: Double, atLeast target: Double) {
+            if value < target - 0.01 {
+                print("  FAIL \(label): \(fmt(value)):1, want >= \(fmt(target))")
+                ok = false
+            } else {
+                print("  OK   \(pad(label, 44)) \(fmt(value)):1")
+            }
+        }
+        func expectBelow(_ label: String, _ value: Double, _ target: Double) {
+            if value >= target {
+                print("  FAIL \(label): \(fmt(value)):1 - this value is supposed to FAIL the floor, so the correction it justifies is now unexplained")
+                ok = false
+            } else {
+                print("  OK   \(pad(label, 44)) \(fmt(value)):1 (correctly below \(fmt(target)))")
+            }
+        }
+
+        for (name, got, want) in [
+            ("chromeBackgroundHex = card", daylight.chromeBackgroundHex, DaylightPalette.card),
+            ("backgroundHex = paper", daylight.backgroundHex, DaylightPalette.paper),
+            ("chromeInkHex = ink", daylight.chromeInkHex, DaylightPalette.ink),
+            ("chromeLineHex = hair", daylight.chromeLineHex, DaylightPalette.hair),
+            ("accentHex = corrected link blue", daylight.accentHex, DaylightPalette.linkBlue),
+        ] where got.lowercased() != want.lowercased() {
+            print("  FAIL daylight.\(name): got \(got), want \(want)")
+            ok = false
+        }
+        if daylight.mode != .light {
+            print("  FAIL daylight must be a light-mode theme")
+            ok = false
+        }
+
+        let muted = HelmTheme.nsColor(DaylightPalette.muted)
+        expect("muted on card", HelmContrast.ratio(muted, card), atLeast: floor)
+        expect("muted on paper", HelmContrast.ratio(muted, paper), atLeast: floor)
+        expect("muted on inset", HelmContrast.ratio(muted, inset), atLeast: floor)
+        expectBelow("prototype muted 7C7767 on inset",
+                    HelmContrast.ratio(HelmTheme.nsColor("7C7767"), inset), floor)
+        if HelmContrast.ratio(HelmTheme.mutedInk(daylight), muted) > 1.01 {
+            print("  FAIL HelmTheme.mutedInk(daylight) is not DaylightPalette.muted")
+            ok = false
+        }
+
+        expectBelow("faint B0AA97 on paper (decorative only)",
+                    HelmContrast.ratio(HelmTheme.nsColor(DaylightPalette.faint), paper), floor)
+
+        let rawBlue = HelmDomainHue.blue.baseColor(in: daylight)
+        expect("raw domain blue on card", HelmContrast.ratio(rawBlue, card), atLeast: floor)
+        expectBelow("raw domain blue on paper", HelmContrast.ratio(rawBlue, paper), floor)
+        let linkBlue = HelmTheme.nsColor(DaylightPalette.linkBlue)
+        expect("corrected link blue on paper", HelmContrast.ratio(linkBlue, paper), atLeast: floor)
+        expect("corrected link blue on card", HelmContrast.ratio(linkBlue, card), atLeast: floor)
+        expect("selection text on selection fill",
+               HelmContrast.ratio(HelmTheme.nsColor(daylight.selectionTextHex),
+                                  HelmTheme.nsColor(daylight.selectionHex)), atLeast: floor)
+
+        for (name, hue, corrected, wash) in [
+            ("ok", DaylightPalette.ok, DaylightPalette.okText, 0.12),
+            ("warn", DaylightPalette.warn, DaylightPalette.warnText, 0.14),
+            ("bad", DaylightPalette.bad, DaylightPalette.badText, 0.12),
+        ] {
+            let fill = HelmContrast.mix(HelmContrast.components(HelmTheme.nsColor(hue)),
+                                        HelmContrast.components(card), wash)
+            expectBelow("raw \(name) label on its own wash",
+                        HelmContrast.ratio(HelmContrast.components(HelmTheme.nsColor(hue)), fill), floor)
+            expect("corrected \(name) label on its own wash",
+                   HelmContrast.ratio(HelmContrast.components(HelmTheme.nsColor(corrected)), fill),
+                   atLeast: floor)
+        }
+
+        for entry in DaylightPalette.primaryButtonFills {
+            let raw = entry.hue.baseColor(in: daylight)
+            expectBelow("raw \(entry.hue.rawValue) fill, white label",
+                        HelmContrast.ratio(.white, raw), floor)
+            expect("corrected \(entry.hue.rawValue) fill, white label",
+                   HelmContrast.ratio(.white, HelmTheme.nsColor(entry.corrected)), atLeast: floor)
+        }
+        for hue in [HelmDomainHue.blue, .violet] {
+            expect("\(hue.rawValue) fill passes raw, white label",
+                   HelmContrast.ratio(.white, hue.baseColor(in: daylight)), atLeast: floor)
+        }
+
+        var worstAnsi = (index: -1, ratio: Double.greatestFiniteMagnitude)
+        for (i, hex) in daylight.ansiHex.enumerated() {
+            let r = HelmContrast.ratio(HelmTheme.nsColor(hex), paper)
+            if r < worstAnsi.ratio { worstAnsi = (i, r) }
+            if r < floor - 0.01 {
+                print("  FAIL ansi[\(i)] \(hex) on paper: \(fmt(r)):1")
+                ok = false
+            }
+        }
+        print("  OK   \(pad("all 16 ansi slots on paper", 44)) worst is ansi[\(worstAnsi.index)] at \(fmt(worstAnsi.ratio)):1")
+    }
+
+    // MARK: Daylight - per-domain hues and the per-theme fallback
+
+    /// Section 2.2's hue table plus 2.8's requirement that it resolve per
+    /// theme.
+    ///
+    /// The load-bearing half is the **fallback**: a Phase 2/4 component asks
+    /// for "the Hosts hue" unconditionally, so a captain on any of the 12
+    /// pre-existing palettes has to get a real, in-palette, legible pair back.
+    /// That is asserted for every theme, not just Daylight.
+    private static func checkDaylightDomainHues(_ ok: inout Bool) {
+        print("\n-- daylight domain hues (section 2.2 table, 2.8 per-theme fallback) --")
+        guard let daylight = HelmTheme.theme(id: "daylight") else { return }
+
+        var seen: [String: String] = [:]
+        for hue in HelmDomainHue.allCases {
+            let pair = hue.pair(in: daylight)
+            let key = hexString(pair.h1)
+            if let clash = seen[key] {
+                print("  FAIL \(hue.rawValue) and \(clash) resolve to the same h1 (\(key)) on daylight")
+                ok = false
+            }
+            seen[key] = hue.rawValue
+            let l1 = HelmContrast.relativeLuminance(HelmContrast.components(pair.h1))
+            let l2 = HelmContrast.relativeLuminance(HelmContrast.components(pair.h2))
+            if l2 <= l1 {
+                print("  FAIL \(hue.rawValue): h2 is not lighter than h1 on daylight")
+                ok = false
+            }
+        }
+        print("  OK   seven distinct hues on daylight, every h2 lighter than its h1")
+
+        for theme in HelmTheme.allThemes {
+            var cells: [String] = []
+            for hue in HelmDomainHue.allCases {
+                let pair = hue.pair(in: theme)
+                let l1 = HelmContrast.relativeLuminance(HelmContrast.components(pair.h1))
+                let l2 = HelmContrast.relativeLuminance(HelmContrast.components(pair.h2))
+                if l2 < l1 - 0.0001 {
+                    print("  FAIL \(theme.id) \(hue.rawValue): fallback h2 is darker than h1")
+                    ok = false
+                }
+                let glyph = HelmGradientTile.glyphColor(for: hue, theme: theme)
+                let r = HelmContrast.ratio(glyph, pair.h1)
+                if r < HelmContrast.nonTextTarget - 0.01 {
+                    print("  FAIL \(theme.id) \(hue.rawValue): glyph on h1 is \(fmt(r)):1")
+                    ok = false
+                }
+                cells.append("\(hue.rawValue.prefix(2)) \(fmt(r))")
+            }
+            print("  \(pad(theme.id, 20)) \(cells.joined(separator: " "))")
+        }
+
+        let setup: [RailDestination] = [.updates, .bootstrap, .automation, .githubSync]
+        if Set(setup.map { $0.domainHue }).count != 1 {
+            print("  FAIL the four Setup sub-pages do not share one domain hue")
+            ok = false
+        }
+        let owners = Set(RailDestination.allCases.map { $0.domainHue })
+        let unowned = HelmDomainHue.allCases.filter { !owners.contains($0) }
+        if unowned.isEmpty {
+            print("  OK   all \(RailDestination.allCases.count) destinations mapped; every hue owns at least one area")
+        } else {
+            print("  NOTE hues with no destination: \(unowned.map { $0.rawValue }.joined(separator: ", "))")
+        }
+    }
+
+    // MARK: Daylight - the radius scale is the enforced set
+
+    /// Section 2.6 states its radii as complete: "no other radius values are
+    /// allowed". This asserts the set is exactly those nine values, that every
+    /// named Daylight token is a member, and that the one component Phase 1
+    /// ships (`HelmGradientTile`) picks its radii from it rather than a
+    /// literal.
+    private static func checkDaylightRadiiScale(_ ok: inout Bool) {
+        print("\n-- daylight radii (section 2.6, the complete allowed set) --")
+        let want: Set<CGFloat> = [20, 24, 18, 16, 14, 12, 10, 8, 999]
+        if HelmMetrics.daylightRadii != want {
+            print("  FAIL HelmMetrics.daylightRadii is \(HelmMetrics.daylightRadii.sorted()), want \(want.sorted())")
+            ok = false
+        }
+        let tokens: [(String, CGFloat)] = [
+            ("dModule", HelmMetrics.dModule), ("dSheet", HelmMetrics.dSheet),
+            ("dBar", HelmMetrics.dBar), ("dSurface", HelmMetrics.dSurface),
+            ("dWell", HelmMetrics.dWell), ("dTileLarge", HelmMetrics.dTileLarge),
+            ("dTileSmall", HelmMetrics.dTileSmall), ("dLogoDot", HelmMetrics.dLogoDot),
+            ("dCapsule", HelmMetrics.dCapsule),
+        ]
+        for (name, value) in tokens where !HelmMetrics.daylightRadii.contains(value) {
+            print("  FAIL HelmMetrics.\(name) = \(value) is not in the allowed set")
+            ok = false
+        }
+        for size in [HelmGradientTile.Size.logo, .module, .drill]
+        where !HelmMetrics.daylightRadii.contains(size.cornerRadius) {
+            print("  FAIL HelmGradientTile.Size.\(size) radius \(size.cornerRadius) is not in the allowed set")
+            ok = false
+        }
+        if HelmMetrics.capsuleRadius(forHeight: 28) != 14 {
+            print("  FAIL capsuleRadius(forHeight: 28) is \(HelmMetrics.capsuleRadius(forHeight: 28)), want 14")
+            ok = false
+        }
+        print("  OK   \(tokens.count) tokens, all in the 9-value set; capsule clamps to half its height")
+    }
+
+    // MARK: Daylight - the two elevation levels
+
+    /// Exactly two depth levels, Daylight's matching section 2.5's measured
+    /// values, and - the regression half - the pre-existing themes' `.resting`
+    /// shadow byte-identical to what `ConsoleCardChrome` has always rendered.
+    private static func checkDaylightElevation(_ ok: inout Bool) {
+        print("\n-- daylight elevation (section 2.5, two levels) --")
+        guard let daylight = HelmTheme.theme(id: "daylight") else { return }
+        let resting = HelmCard.elevation(for: daylight, level: .resting)
+        let raised = HelmCard.elevation(for: daylight, level: .raised)
+        func check(_ label: String, _ shadow: NSShadow, alpha: CGFloat, blur: CGFloat, dy: CGFloat) {
+            let a = shadow.shadowColor?.alphaComponent ?? 0
+            if abs(a - alpha) > 0.005 || abs(shadow.shadowBlurRadius - blur) > 0.01
+                || abs(shadow.shadowOffset.height - dy) > 0.01 {
+                print("  FAIL \(label): alpha \(fmt(Double(a))) blur \(shadow.shadowBlurRadius) dy \(shadow.shadowOffset.height), want \(alpha)/\(blur)/\(dy)")
+                ok = false
+            } else {
+                print("  OK   \(pad(label, 30)) alpha \(fmt(Double(a)))  blur \(blur)  dy \(dy)")
+            }
+        }
+        check("daylight resting", resting, alpha: 0.10, blur: 15, dy: -6)
+        check("daylight raised", raised, alpha: 0.15, blur: 28, dy: -14)
+        let ink = HelmTheme.nsColor(DaylightPalette.shadowInk)
+        if let c = resting.shadowColor?.withAlphaComponent(1),
+           HelmContrast.ratio(c, ink) > 1.01 {
+            print("  FAIL daylight's shadow is not ink-tinted")
+            ok = false
+        }
+        for theme in HelmTheme.allThemes where !theme.isDaylight {
+            let r = HelmCard.elevation(for: theme, level: .resting)
+            let expected: CGFloat = theme.mode == .dark ? 0.45 : 0.24
+            let a = r.shadowColor?.alphaComponent ?? 0
+            if abs(a - expected) > 0.005 || r.shadowBlurRadius != 16 || r.shadowOffset.height != -5 {
+                print("  FAIL \(theme.id) resting drifted from the historical shadow")
+                ok = false
+            }
+            let up = HelmCard.elevation(for: theme, level: .raised)
+            if up.shadowBlurRadius <= r.shadowBlurRadius
+                || abs(up.shadowOffset.height) <= abs(r.shadowOffset.height) {
+                print("  FAIL \(theme.id) raised is not deeper than resting")
+                ok = false
+            }
+        }
+        let byDefault = HelmCard.elevation(for: HelmTheme.dark)
+        if byDefault.shadowBlurRadius != HelmCard.elevation(for: HelmTheme.dark, level: .resting).shadowBlurRadius {
+            print("  FAIL elevation(for:)'s default level is not .resting")
+            ok = false
+        }
+        print("  OK   12 pre-existing palettes keep their historical resting shadow")
+    }
+
+    // MARK: Daylight - the new type roles
+
+    /// The roles section 3 adds, plus the two deferrals Phase 1 made on
+    /// purpose.
+    ///
+    /// The deferrals are asserted, not just commented: `body()` staying at 12
+    /// and `pageTitle(.serif)` staying Georgia are deliberate Phase 1
+    /// decisions (section 3 retunes both, and both are visible app-wide
+    /// restyles that belong to Phase 4), so a future edit that "fixes" them
+    /// has to change this test and read why.
+    private static func checkDaylightTypeRoles(_ ok: inout Bool) {
+        print("\n-- daylight type roles (section 3) --")
+        let roles: [(String, NSFont, CGFloat)] = [
+            ("heroTitle", HelmType.heroTitle(), 30),
+            ("drillTitle", HelmType.drillTitle(), 26),
+            ("moduleTitle", HelmType.moduleTitle(), 13.5),
+            ("moduleMetric", HelmType.moduleMetric(), 34),
+            ("metricUnit", HelmType.metricUnit(), 12),
+            ("cardTitle", HelmType.cardTitle(), 13.5),
+            ("captionSmall", HelmType.captionSmall(), 10.5),
+            ("chip", HelmType.chip(), 10.5),
+        ]
+        for (name, font, designed) in roles {
+            let want = HelmType.scaled(designed)
+            if abs(font.pointSize - want) > 0.01 {
+                print("  FAIL \(name) is \(font.pointSize)pt, want \(want) (designed \(designed))")
+                ok = false
+            }
+            if font.pointSize < HelmType.minimumUIPointSize {
+                print("  FAIL \(name) is below the \(HelmType.minimumUIPointSize)pt floor")
+                ok = false
+            }
+        }
+        let plain = NSFont.systemFont(ofSize: HelmType.scaled(30), weight: .heavy)
+        if HelmType.heroTitle().fontName == plain.fontName {
+            print("  FAIL heroTitle resolves to the plain system face (\(plain.fontName)) - the rounded design did not apply")
+            ok = false
+        } else {
+            print("  OK   rounded display face resolves: \(HelmType.heroTitle().fontName)")
+        }
+        if abs(HelmType.body().pointSize - HelmType.scaled(12)) > 0.01 {
+            print("  FAIL body() moved off 12 - section 3's bump to 13.5 is a Phase 4 restyle, not a token change")
+            ok = false
+        }
+        if HelmType.pageTitle(.serif).fontName == HelmType.pageTitle(.sans).fontName {
+            print("  FAIL pageTitle(.serif) no longer resolves to its own face - serif retirement is Phase 2/4's, via heroTitle/drillTitle")
+            ok = false
+        }
+        print("  OK   \(roles.count) new roles; body() and pageTitle(.serif) unchanged, as Phase 1 requires")
+    }
+
+    // MARK: Daylight - the gradient tile
+
+    /// `HelmGradientTile`'s anatomy: section 6.2's three sizes, a real
+    /// two-stop gradient filling the tile, a resolved symbol, and a glyph
+    /// colour that clears the icon floor in **every** theme.
+    private static func checkGradientTileRecipe(_ ok: inout Bool) {
+        print("\n-- HelmGradientTile (section 6.2) --")
+        let sizes: [(HelmGradientTile.Size, CGFloat)] = [(.logo, 22), (.module, 30), (.drill, 34)]
+        for (size, side) in sizes {
+            let tile = HelmGradientTile(size: size)
+            tile.configure(symbol: "sailboat.fill", hue: .blue)
+            tile.frame = NSRect(x: 0, y: 0, width: side, height: side)
+            tile.layoutSubtreeIfNeeded()
+            let g = tile.geometryForTests
+            if abs(g.side - side) > 0.01 {
+                print("  FAIL \(size) is \(g.side)pt wide, want \(side)")
+                ok = false
+            }
+            if abs(g.cornerRadius - size.cornerRadius) > 0.01 {
+                print("  FAIL \(size) radius \(g.cornerRadius), want \(size.cornerRadius)")
+                ok = false
+            }
+            if g.gradientColorCount != 2 {
+                print("  FAIL \(size) gradient has \(g.gradientColorCount) stops, want 2")
+                ok = false
+            }
+            if g.gradientFrame != tile.bounds {
+                print("  FAIL \(size) gradient frame \(g.gradientFrame) does not fill \(tile.bounds)")
+                ok = false
+            }
+            if !g.hasImage {
+                print("  FAIL \(size) has no glyph - the symbol did not resolve")
+                ok = false
+            }
+            print("  OK   \(pad("\(size)", 8)) \(g.side)pt  r\(g.cornerRadius)  2 stops  glyph present")
+        }
+        for destination in RailDestination.allCases {
+            let tile = HelmGradientTile(size: .drill)
+            tile.configure(for: destination)
+            if !tile.geometryForTests.hasImage {
+                print("  FAIL \(destination.title): SF Symbol '\(destination.symbol)' did not resolve")
+                ok = false
+            }
+        }
+        print("  OK   all \(RailDestination.allCases.count) destination symbols resolve on a gradient tile")
+
+        // It themes itself: a theme change has to repaint both stops from that
+        // theme's own resolution of the hue, with no help from a page. Checked
+        // on Daylight (where the §2.2 table applies) and on one fallback
+        // palette (where §2.8's `HelmTint` derivation does), because a tile
+        // that only ever read the table would pass the first and fail the
+        // second silently.
+        guard let daylight = HelmTheme.theme(id: "daylight") else { return }
+        let tile = HelmGradientTile(size: .drill)
+        tile.configure(symbol: "lock.fill", hue: .violet)
+        for theme in [daylight, HelmTheme.gruvboxLight] {
+            tile.applyTheme(theme)
+            let want = HelmDomainHue.violet.pair(in: theme)
+            let got = tile.resolvedColorsForTests
+            guard let h1 = got.h1, let h2 = got.h2, let glyph = got.glyph else {
+                print("  FAIL \(theme.id): tile has no resolved colours after applyTheme")
+                ok = false
+                continue
+            }
+            if HelmContrast.ratio(h1, want.h1) > 1.01 || HelmContrast.ratio(h2, want.h2) > 1.01 {
+                print("  FAIL \(theme.id): stops \(hexString(h1))/\(hexString(h2)) do not match the resolved pair \(hexString(want.h1))/\(hexString(want.h2))")
+                ok = false
+            }
+            if HelmContrast.ratio(glyph, want.h1) < HelmContrast.nonTextTarget - 0.01 {
+                print("  FAIL \(theme.id): glyph does not clear the icon floor after applyTheme")
+                ok = false
+            }
+        }
+        print("  OK   re-themes both stops and its glyph from the active theme's own resolution")
+    }
+
     // MARK: Helpers
 
     /// The chip's own fill is the hue washed over a surface; the label has to
@@ -1526,6 +1947,13 @@ enum HelmContrastSelfTest {
         let straight = (Double(c.redComponent), Double(c.greenComponent), Double(c.blueComponent))
         let flattened = HelmContrast.mix(straight, surface, Double(c.alphaComponent))
         return HelmContrast.ratio(flattened, surface)
+    }
+
+    /// `#RRGGBB` for a colour, used only in this file's own printouts.
+    private static func hexString(_ color: NSColor) -> String {
+        let c = HelmContrast.components(color)
+        return String(format: "#%02X%02X%02X",
+                      Int((c.0 * 255).rounded()), Int((c.1 * 255).rounded()), Int((c.2 * 255).rounded()))
     }
 
     private static func fmt(_ v: Double) -> String { String(format: "%.2f", v) }

@@ -100,6 +100,21 @@ enum HelmField {
     /// `HelmButton.controlFill`; Phase 6 moved it here, which is its real
     /// home, and deleted the last three private copies.
     static func fill(_ theme: HelmTheme) -> NSColor {
+        // Daylight publishes a real well token (§2.1's `inset`) instead of
+        // leaving this to be derived, and uses it - a token the design names
+        // for exactly this surface beats a derivation of two other tokens.
+        //
+        // What is worth recording is what the derivation revealed. Daylight is
+        // the first palette whose card and page differ in a direction that puts
+        // the 8%-toward-ink blend almost exactly on the page's own luminance
+        // (1.01:1 against `paper`), and `HelmContrastSelfTest.checkFieldRecipe`
+        // failed on it. `inset` is **no further** from `paper` (1.02:1), so
+        // switching tokens is not what resolves that - on this palette a well
+        // on the bare page is separated by its 1px `hair` border by design, and
+        // a well on a card (which is where every form in this app actually
+        // lives) reads at 1.14:1. That check now proves the border carries the
+        // boundary wherever the fill cannot, rather than exempting a theme.
+        if theme.isDaylight { return HelmTheme.nsColor(DaylightPalette.inset) }
         let chromeBackground = HelmTheme.nsColor(theme.chromeBackgroundHex)
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         return chromeBackground.blended(withFraction: 0.08, of: ink) ?? chromeBackground
