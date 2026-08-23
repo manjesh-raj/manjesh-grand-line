@@ -99,18 +99,28 @@
 // pass - not reproduced), and `test_moduleCardCountDoesNotAccumulateOverALongSession`
 // (a per-switch accumulation across a real, 300-switch, per-event-pooled,
 // real-display-pass session - not reproduced: flat at every checkpoint).
-// That last one **did** turn up one real, if narrow, finding along the way -
-// isolated into its own case, `test_initialCanvasRenderIsOrphanedOnce`:
-// `HomeCanvasController`'s very first render, at app-launch mount time, is
-// never replaced by the next `.overview` visit the way every later
-// generation correctly is, orphaning one fixed batch of cards once, at
-// startup. Real, and worth fixing on its own merits, but its magnitude
-// (one small, bounded batch, exactly once) cannot be the mechanism behind a
-// cost the captain's own report says *grows over a session* - that shape
-// needs something that keeps recurring, and nothing found here does. (That
-// case originally asserted a literal fifteen; it asserts boundedness and
-// constancy now - see its own doc comment for why the literal was the wrong
-// thing to pin.)
+// That last one **appeared** to turn up one real, if narrow, finding along
+// the way - isolated into its own case, `test_initialCanvasRenderIsOrphanedOnce`:
+// `HomeCanvasController`'s very first render, at app-launch mount time,
+// looked like it was never replaced by the next `.overview` visit the way
+// every later generation correctly is, orphaning one fixed batch of cards
+// once, at startup. That case originally asserted a literal fifteen, then
+// (`fm/grandline-daylight-canvas-card-sizing`, once the canvas moved to
+// `HelmResponsiveGrid.spanningRows` for §6.1's wide briefing and the observed
+// magnitude moved to a full eighteen - one whole `.overview` generation)
+// asserted boundedness and constancy instead of a literal, attributing the
+// retention to "AppKit's own bookkeeping around `NSStackView.
+// removeArrangedSubview`", observed but not explained.
+//
+// `fm/grandline-daylight-canvas-orphaned-render-fix` re-derived this from the
+// actual code and found that attribution was itself wrong: there is no
+// retention at all, in either grid path. `rebuildGrid()` has no first-render
+// special case to unify - the "orphaned batch" was the exact self-test-harness
+// autoreleasepool pitfall this file already names two paragraphs down, just
+// not yet applied to *this* case's own baseline capture. See that case's own
+// doc comment for the full account - once its mount and first resize are
+// pool-wrapped like every other call in this file, the true count is a
+// deterministic 0, not a bounded batch, under either grid path.
 //
 // Also confirmed, along the way, as a real self-test-harness pitfall worth
 // recording rather than repeating: an early version of the long-session test
@@ -701,19 +711,15 @@ enum AppShellBodyWidthSelfTest {
     /// (three independent, direct construct/destruct counters) and
     /// `ThemeManager.observerCountForTests`, at five checkpoints along the
     /// way, so a genuinely *growing* leak can be told apart from a bounded
-    /// one. **One real, if minor, finding**: the very first render
-    /// `HomeCanvasController.loadView()` performs at mount time (before this
-    /// test - or any real navigation - ever revisits `.overview`) is not
-    /// replaced by the *next* visit to `.overview` the way every later
-    /// generation is - a one-time, bounded (one batch, never grows) orphaned
-    /// set of fifteen cards from app launch, not a per-switch leak. This test
-    /// starts by switching away from and back to `.overview` once specifically
-    /// so its baseline is a genuine steady-state generation, not that
-    /// original one, and isolates that finding to a separate, narrower probe
-    /// (`test_initialCanvasRenderIsOrphanedOnce`) rather than let it read as
-    /// "the steady state itself leaks". **Result here: flat at every
-    /// checkpoint** - no growth, no excess, across a session 15x longer than
-    /// the existing suite's own check.
+    /// one. This test starts by switching away from and back to `.overview`
+    /// once before taking its baseline specifically so that baseline is a
+    /// genuine steady-state generation rather than `loadView()`'s own very
+    /// first render - see `test_initialCanvasRenderIsOrphanedOnce`, which
+    /// isolates that first render on its own and (after
+    /// `fm/grandline-daylight-canvas-orphaned-render-fix` re-derived it) found
+    /// it is not actually special-cased or orphaned at all. **Result here:
+    /// flat at every checkpoint** - no growth, no excess, across a session
+    /// 15x longer than the existing suite's own check.
     private static func test_moduleCardCountDoesNotAccumulateOverALongSession() -> String? {
         withScratchEnv {
             let (window, shell) = makeMountedShell()
@@ -769,24 +775,63 @@ enum AppShellBodyWidthSelfTest {
         }
     }
 
-    /// `fm/grandline-daylight-shell-regressions`: isolates the one real,
-    /// bounded finding the test above deliberately excludes from its own
-    /// baseline - `HomeCanvasController.loadView()`'s very first render (at
-    /// `mountEagerSlots()` time, before the captain ever revisits `.overview`)
-    /// is not replaced when `.overview` is next selected, the way every later
-    /// generation correctly is. Fifteen cards (one full Overview batch) from
-    /// that one-time initial render stay alive permanently - confirmed not to
-    /// clear even after several further idle re-selections of `.overview` -
-    /// but the excess never exceeds that one batch, however many further
-    /// switches happen (see the test above). This is a real, worth-fixing
-    /// piece of dead weight from every app launch, but its magnitude (one
-    /// small, fixed batch, once, at startup) cannot explain a CPU cost that
-    /// the captain's own report says *grows over a session* - that shape
-    /// needs something that keeps recurring, not something that happens once.
+    /// `fm/grandline-daylight-shell-regressions` isolated what looked like a
+    /// real, bounded finding here: `HomeCanvasController.loadView()`'s very
+    /// first render (at `mountEagerSlots()` time, before the captain ever
+    /// revisits `.overview`) appeared to survive the next `.overview`
+    /// selection rather than being replaced the way every later generation
+    /// correctly is, permanently orphaning one full Overview batch of cards
+    /// from every app launch.
+    ///
+    /// `fm/grandline-daylight-canvas-orphaned-render-fix` re-derived this
+    /// from the actual code rather than trusting the earlier reading, and
+    /// found there is no such divergence to unify:
+    /// `HomeCanvasController.rebuildGrid()` removes every arranged row from
+    /// `gridStack` and clears `cards` unconditionally at the top of every
+    /// call, with no branch for "is this the first render" - `render()` and
+    /// `select(space:)` both call it identically whether this is generation
+    /// one or generation fifty. There was never a first-render special case
+    /// for a fix to land in.
+    ///
+    /// What was actually happening: this case's own baseline
+    /// (`initialInstances`, below) used to be captured right after
+    /// `makeMountedShell()`'s mount and the very first `window.setFrame(...)`
+    /// resize - both **outside any `autoreleasepool`**, unlike every one of
+    /// this test's own `selectSpace` round trips (which were already
+    /// wrapped, per this file's own established convention - see the header
+    /// comment above and `test_moduleCardCountDoesNotAccumulateOverALongSession`'s).
+    /// A card `rebuildGrid()` genuinely tears down still autoreleases some
+    /// AppKit-owned state before it deinits, so with no pool draining
+    /// between the launch render/resize and that baseline read, cards that
+    /// were already correctly discarded still counted as "live" a moment
+    /// longer than they actually were. Confirmed live and deterministically:
+    /// wrapping the mount and the first resize in their own `autoreleasepool`
+    /// - the exact fix below - drops the measured excess from a constant
+    /// (not growing) 18 extra cards (the *current* `DaylightModule.allCases`
+    /// count visible on `.overview`, not the stale "15" this case used to
+    /// assert - a second, independent sign the assertion had drifted from
+    /// reality rather than reality drifting from a real leak) to a constant
+    /// 0, across repeated runs. No code outside this self-test changed.
     private static func test_initialCanvasRenderIsOrphanedOnce() -> String? {
         withScratchEnv {
-            let (window, shell) = makeMountedShell()
-            window.setFrame(NSRect(x: 0, y: 0, width: 1400, height: 900), display: true)
+            // Both the mount (which runs `HomeCanvasController.loadView()`'s
+            // own first `render()`) and the launch-time resize (which fires
+            // `containerWidthMayHaveChanged()` -> a second `rebuildGrid()`)
+            // are now wrapped in their own `autoreleasepool`, matching every
+            // `selectSpace` round trip below and what a real `NSApp.run()`
+            // already guarantees per discrete event - see this method's own
+            // doc comment for why an undrained baseline here used to read as
+            // a false "orphaned batch" that was never actually retained.
+            var window: NSWindow!
+            var shell: AppShellController!
+            autoreleasepool {
+                let mounted = makeMountedShell()
+                window = mounted.window
+                shell = mounted.shell
+            }
+            autoreleasepool {
+                window.setFrame(NSRect(x: 0, y: 0, width: 1400, height: 900), display: true)
+            }
 
             // No prior `.command` detour here, deliberately - this baseline
             // is taken right after the controller's own initial render, the
@@ -803,40 +848,24 @@ enum AppShellBodyWidthSelfTest {
             }
             let afterFiveMoreRoundTrips = HelmModuleCard.debugLiveInstanceCount - initialInstances
 
-            // The bound is derived rather than a literal: one full Overview
-            // generation is the most a single orphaned batch can be, since
-            // Overview is the space that shows every module.
-            //
-            // `fm/grandline-daylight-shell-regressions` asserted a literal 15
-            // here. That number moved to a full 18 when the canvas went back
-            // to `HelmResponsiveGrid.spanningRows` for §6.1's wide briefing
-            // (`fm/grandline-daylight-canvas-card-sizing`) - observed, not
-            // explained: the exact magnitude is AppKit's own retention
-            // bookkeeping around `NSStackView.removeArrangedSubview`, and the
-            // two grid paths account for it one generation apart. Which is
-            // precisely why the literal was the wrong thing to assert. What
-            // this case is actually for is unchanged and is asserted directly:
-            // the batch is **bounded** and **constant**, so a real leak (a
-            // batch that grows with the number of round trips) still fails
-            // here and still needs escalating.
-            let bound = DaylightModule.canvasOrder.filter { $0.isVisible(in: .overview) }.count
-            guard afterOneRoundTrip == afterFiveMoreRoundTrips else {
-                return "the initial render's orphaned batch grew from \(afterOneRoundTrip) cards after "
-                    + "1 round trip to \(afterFiveMoreRoundTrips) after 6 - that IS the growing leak "
-                    + "this whole investigation was looking for and needs to be re-escalated immediately."
-            }
-            guard afterOneRoundTrip <= bound else {
-                return "the initial render orphaned \(afterOneRoundTrip) cards, more than one full "
-                    + "Overview generation (\(bound)) - more than one batch is being retained."
+            guard afterOneRoundTrip == 0, afterFiveMoreRoundTrips == 0 else {
+                return "expected the very first render to be fully replaced (0 extra live cards left "
+                    + "behind) after 1 round trip and after 6 - got \(afterOneRoundTrip) then "
+                    + "\(afterFiveMoreRoundTrips). This IS the real regression this case guards against: "
+                    + "the initial render must go through the exact same rebuildGrid() teardown every "
+                    + "later generation does, leaving nothing behind after a round trip away and back."
             }
             return nil
         }
     }
 
-    /// `fm/grandline-daylight-shell-regressions`: isolates the mechanism
-    /// behind `test_moduleCardCountDoesNotAccumulateOverALongSession`'s
-    /// finding (a real, permanent-but-bounded one-batch-behind retention,
-    /// not a growing leak) by removing `HomeCanvasController`/`HelmModuleCard`
+    /// `fm/grandline-daylight-shell-regressions`: was built to isolate the
+    /// mechanism behind what looked, at the time, like a real,
+    /// permanent-but-bounded one-batch-behind retention in
+    /// `HomeCanvasController`'s own grid rebuild -
+    /// `fm/grandline-daylight-canvas-orphaned-render-fix` later found that
+    /// retention was never real (see `test_initialCanvasRenderIsOrphanedOnce`'s
+    /// own doc comment) - by removing `HomeCanvasController`/`HelmModuleCard`
     /// from the picture entirely, while matching `rebuildGrid()`'s exact
     /// two-level structure: an outer `gridStack`-equivalent holding
     /// per-rebuild *row* stack views (not the cards directly), each row
