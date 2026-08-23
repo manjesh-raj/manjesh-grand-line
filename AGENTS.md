@@ -907,6 +907,131 @@ GL-numbered item.
   launching the app**, per the README's worktree rule, which this phase did not
   relax.
 
+## Production-readiness phase 4 (`fm/grandline-review-phase4-strategic`)
+
+The strategic/architectural slice of the captain-approved production-readiness
+review (`data/grandline-production-review/MANJESH_GRAND_LINE_PRODUCTION_REVIEW.md`,
+GL-01..GL-38), and the last of its four phases. Read section 31 before picking
+up anything still open.
+
+- **Destinations mount lazily now, and there is one table instead of six edit
+  sites (GL-37) - `DestinationRegistry.swift`.** Adding a body destination used
+  to mean editing six places in lockstep (the `RailDestination` case, a stored
+  property, an `addChild` line, the `embed(...)` array, a `case` in `show(_:)`,
+  and a line in `hideAllDestinations()`), each of which fails differently when
+  missed. It is now the enum case plus one `register(...)` line.
+  `DestinationSlotID` exists because the mapping is not one-to-one: the four
+  Setup pages share one `SetupContainerController`.
+  - **`mountsEagerly` is not a performance dial - each of its three uses is a
+    named invariant, and moving one out should have to argue with the
+    self-test.** `.console` owns live PTYs. `.overview` and `.review` seed the
+    rail's badges at launch through `refreshIfNeeded()`, and both render that
+    count *through their own views* - their view properties are IUOs built in
+    `loadView`, so their render path cannot run against an unloaded
+    controller. Decoupling their fetch from their render is a real refactor of
+    both pages and was deliberately left out of this change.
+  - **Retention is deliberate.** A mounted slot stays mounted for the process's
+    life; navigating away only hides it. Tearing one down would throw away
+    in-progress page state and reintroduce the failure the permanent-mount
+    model exists to avoid. Host pages already worked this way, so this makes
+    the fixed destinations match a model this app already relies on.
+  - **The one thing to know before adding a caller:** anything that reaches
+    into a destination controller must go through `show(_:)` first, or only
+    assign a closure. Assigning a closure to an unloaded controller is safe and
+    is what all the launch-time wiring does; touching its views is not. The
+    Hosts menu's "New Host…" was the single menu item still targeting a
+    destination directly and now routes through `AppShellController` like every
+    other one.
+  - `FM_RUN_DESTINATION_MOUNTING_TESTS` covers the table and the mounting, and
+    was confirmed to catch both regressions (eager mount at launch; re-mount on
+    revisit). Note *which* case catches the second: only
+    `mounterIsLazyAndBuildsEachSlotOnce`, because `NSViewController` caches its
+    own `view`, so a duplicate mount hands back the same view and a
+    view-identity check cannot see it. Count the mount calls.
+- **`ConsoleController` is six files now (GL-36), split verbatim along its own
+  `// MARK:` seams** - `+Tabs` / `+Sessions` / `+Toolbar` / `+SRELead` /
+  `+LogCapture` / `+TestSupport`, with the core keeping state, `init` and
+  `loadView`. The split was verified line-for-line against the pre-split file
+  (every non-comment line accounted for; the only additions are the six file
+  scaffolds), so behaviour is identical by construction rather than by
+  inspection.
+  - **The cost, so nobody re-derives it:** Swift's `private` is file-scoped, so
+    members reached across those boundaries are internal now. Treat every
+    member of the `ConsoleController*.swift` family as private to that family.
+  - **Coordinator objects were considered and rejected**, not skipped: SRE
+    Lead, the toolbar and the tabs all need the current tab, the terminal card
+    and each other, so a coordinator would need all three handed to it and
+    would buy nothing beyond the file boundary an extension already gives.
+  - **A stored property cannot live in an extension** - `blockViewShowing` is
+    the one member that had to stay in the core file for that reason, and it
+    says so at its declaration.
+  - **The `debug*` hooks were never behind `FM_SELFTESTS`.** Phase 3's GL-27
+    work moved every self-test *file* behind that flag, but these sat in a
+    production file and kept shipping. They are guarded now - measured, 0
+    symbols in the release binary against 10 in debug.
+- **F3, the self-update channel, is half shipped and honest about which half.**
+  `AppUpdateData.swift` (version + release feed), `AppUpdateInstaller.swift`
+  (download/verify/swap/relaunch), `UpdatesController+AppRow.swift` (the App
+  card at the top of Updates), `.github/workflows/release.yml` (build and
+  publish on a `v*` tag).
+  - **Sparkle is not viable here, and the reason is structural rather than a
+    preference:** it ships as an Xcode-built `.framework` with its own build
+    phases and an embedded XPC bundle, and this project builds with plain
+    `swift build` on CLT with no Xcode. Vendoring it as source would mean
+    reimplementing its packaging. Hence the minimal in-house flow.
+  - **The verification gate is the feature, not a detail.** An updater that
+    installs whatever it downloaded is a remote code execution channel on a
+    machine holding the captain's SSH keys. `AppUpdateInstaller.install`
+    refuses anything it cannot prove is signed by
+    `expectedTeamIdentifier`'s Developer ID, there is no override, and the
+    policy gate is checked *before* any environmental check so a future
+    environment change cannot silently move which refusal a caller sees.
+    `expectedTeamIdentifier` is `nil` until the captain has a real
+    certificate; the UI therefore offers "Release Notes" and says why, rather
+    than a disabled Update button.
+  - **Two places have to agree when signing arrives:** the workflow's
+    `SIGNING_ENABLED` flag (its header lists every secret) and
+    `AppUpdateInstaller.expectedTeamIdentifier`. Disagreement fails safe
+    (a correctly signed artifact is still refused) but is confusing.
+  - **`ditto -c -k --keepParent`, never `zip`**, for packaging, and
+    `ditto -x -k` for unpacking: it preserves the extended attributes and
+    symlinks a signed bundle needs, and a bundle that round-trips through
+    `zip` can arrive with a broken signature - which then fails verification
+    for a reason that has nothing to do with its provenance.
+  - `FM_RUN_APP_UPDATE_TESTS` covers version comparison (including the
+    git-describe suffix case, so a dev build past its tag is never told it is
+    behind that tag), release parsing, and the refusal. Confirmed to catch the
+    tempting "codesign --verify passed, that's good enough" shortcut - the
+    case that fails is the one describing this app's own current local
+    self-signed identity.
+- **`Subprocess.launchDetached` is the one fire-and-forget spawn**, added
+  rather than widening Phase 2's "no hand-rolled `Process`" allowlist. Its only
+  caller is the relaunch helper, whose child waits for *this* process to exit
+  and therefore cannot be waited on. Keep it narrow - no stdin, no capture, no
+  timeout - and keep new process spawning on `Subprocess.run`.
+- **Three P3 items landed alongside:** `RailDestination` moved into its own
+  file (its case order is still what orders the rail);
+  `GIT_TERMINAL_PROMPT=0` is set for background children in `Subprocess`
+  specifically, **not** in `childEnvironmentDict()`, which also builds the
+  environment for the captain's own interactive terminal tabs where git
+  prompting is correct; and six per-presentation sheets
+  (`PortForwardingController`, `ShiftConflictController`,
+  `ShiftSnoozeCustomController`, Vault's three) now store their
+  `ThemeManager` token and unobserve in `deinit`.
+- **Verified with `swift build` (zero warnings in this app's sources),
+  `swift build -c release`, and all 54 runnable suites - without ever
+  launching the app**, per the README's worktree rule, which this phase did
+  not relax.
+- **Still open after phase 4**, for whoever picks up next: Developer ID
+  signing and notarization themselves (captain-only), the rest of the P3 batch
+  (token-based store `observe()`, `@objc protocol` for the cross-controller tab
+  selectors, cached static formatters, `AppSettings.init(defaults:)`, store
+  activation split from construction, state restoration, localization, the
+  whisper model SHA-256 pin, `Host.password`), and GL-32's remaining half -
+  text whose font is set once in a page's `loadView` does not follow a
+  `ChromeTextScale` change until relaunch, and fixed table `rowHeight`s do not
+  grow with it.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
