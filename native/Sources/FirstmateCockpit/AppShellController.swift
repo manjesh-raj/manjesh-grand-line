@@ -417,6 +417,10 @@ final class AppShellController: NSViewController {
             self?.rail.setBadgeCount(count, for: .review)
             NotificationSources.setPRReady(count: count) { self?.show(.review) }
         }
+        // F4: the OS-banner half of the same signal. The in-app entry above is
+        // a count; this is the per-PR post that carries Merge / Open PR, and it
+        // needs the rows themselves (URL, task id, checks) rather than a count.
+        review.onPRsChanged = { prs in FleetNotifier.shared.reconcilePRs(prs) }
         // Trigger both pages' own refresh once at launch so the badges have
         // a real count before the captain ever visits Overview or Review -
         // every later update comes from those pages' existing refresh

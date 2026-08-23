@@ -54,6 +54,10 @@ enum AppLockedSurface {
     case quickCapture
     /// Recording, transcribing, pasting and logging a dictation.
     case dictation
+    /// F4: a tapped `UNNotification` action button (Merge / Open task /
+    /// Snooze 1h / Show in app). Runs while the main window is not frontmost,
+    /// and both navigates and writes - the rule in this file's header exactly.
+    case notificationAction
 }
 
 final class AppLockGate {

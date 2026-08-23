@@ -139,6 +139,15 @@ final class ReviewController: NSViewController {
     /// straight to `IconRailController.setBadgeCount(_:for: .review)`.
     var onOpenPRCountChanged: ((Int) -> Void)?
 
+    /// F4: the same `mergedPRs` list this page just rendered, forwarded so a
+    /// "PR is green and ready to merge" OS banner (with a real Merge button)
+    /// can be posted for it - see `FleetNotifier.reconcilePRs`. Deliberately
+    /// the whole list rather than a pre-filtered one: the filter is
+    /// `FleetDataSource.canMerge`, and that gate belongs in exactly one place.
+    /// Wired in `AppShellController`, alongside `onOpenPRCountChanged` above,
+    /// so this rides Review's existing refresh triggers and adds no poll.
+    var onPRsChanged: (([MergedPR]) -> Void)?
+
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 940, height: 720))
         root.wantsLayer = true
@@ -435,6 +444,7 @@ final class ReviewController: NSViewController {
         }
 
         onOpenPRCountChanged?(prs.count)
+        onPRsChanged?(prs)
 
         let sorted = prs.sorted { ($0.repo, $0.number ?? 0) < ($1.repo, $1.number ?? 0) }
         let github = sorted.filter { $0.forge == "github" }
