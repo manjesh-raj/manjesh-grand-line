@@ -115,6 +115,7 @@ jobs:
           FM_COMMAND_LIBRARY_DIR: ${{ runner.temp }}/ci-stores/commands
           FM_LOG_ANALYZER_DIR: ${{ runner.temp }}/ci-stores/investigations
           FM_FLEET_LOG_DIR: ${{ runner.temp }}/ci-stores/fleet-log
+          FM_INCIDENTS_DIR: ${{ runner.temp }}/ci-stores/incidents
           FM_WHISPER_MODEL_DIR: ${{ runner.temp }}/ci-stores/whisper
           FM_INSTANCE_LOCK_FILE: ${{ runner.temp }}/ci-stores/instance.lock
         run: ./Scripts/run-all-tests.sh --ci --no-build

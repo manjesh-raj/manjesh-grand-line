@@ -52,6 +52,11 @@ final class AppShellController: NSViewController {
     /// any of them - the same forward-don't-own convention every other
     /// destination here follows.
     private let logAnalyzer: LogAnalyzerController
+    /// F8: the host page whose capture seeded whatever the Log Analyzer is
+    /// currently showing, so a save can be attached to that host's incident.
+    /// Weak - a deleted host's page is torn down and must not be kept alive
+    /// by this.
+    private weak var logAnalyzerCaptureSource: ConsoleController?
     private let tools = ToolsController()
     private let vault = VaultController()
     private let dictation: DictationController
@@ -434,6 +439,17 @@ final class AppShellController: NSViewController {
             self?.console.sendCommandLibraryTextToActiveTab(text)
         }
         logAnalyzer.onOpenRunbook = { [weak self] id in self?.openDocsRunbook(id: id) }
+        // F8 (incident mode): a saved investigation attaches as openable
+        // evidence to the incident on whichever host page handed over the
+        // capture this investigation was built from - which is the only
+        // honest correlation available, since the Log Analyzer itself has no
+        // notion of a host. A clipboard analysis or an investigation reopened
+        // from history clears that association first (see
+        // `logAnalyzerCaptureSource`), so a save then attaches to nothing
+        // rather than to whichever host happened to be last.
+        logAnalyzer.onInvestigationSaved = { [weak self] id, title in
+            self?.logAnalyzerCaptureSource?.noteInvestigationSaved(id: id, title: title)
+        }
         logAnalyzer.onOpenConsole = { [weak self] in self?.show(.console) }
 
         // fm/grandline-sidebar-badges: forward each page's own already-
@@ -851,9 +867,28 @@ final class AppShellController: NSViewController {
         // renamed host should show its current label on the imported
         // evidence, and the closure only reads it when a capture actually
         // happens.
-        controller.onAnalyzeLogs = { [weak self] capture, tabName in
+        controller.onAnalyzeLogs = { [weak self, weak controller] capture, tabName in
             guard let self else { return }
+            self.logAnalyzerCaptureSource = controller
             self.openLogAnalyzer(with: capture, hostLabel: "\(hostLabel) · \(tabName)")
+        }
+
+        // F8 (incident mode): this page's host identity. Set on every call
+        // for the same reason the two closures above are reassigned - a
+        // renamed host should show its current label on a new incident - and
+        // it is what makes the incident toolbar action appear at all (the
+        // shared Firstmate console never gets one).
+        controller.hostIdentity = ConsoleHostIdentity(id: host.id.uuidString, label: host.label)
+
+        // The incident card's Evidence tab reopening a saved Log Analyzer
+        // investigation. Routed through this controller because a console
+        // page knows nothing about rail destinations, exactly like
+        // `onAnalyzeLogs` above.
+        controller.onOpenInvestigation = { [weak self] investigationID in
+            guard let self else { return }
+            self.show(.logAnalyzer)
+            self.logAnalyzerCaptureSource = nil
+            self.logAnalyzer.openSavedInvestigation(id: investigationID)
         }
 
         // F9 (v1): a multi-host send connects several hosts in one pass and
@@ -1185,6 +1220,7 @@ final class AppShellController: NSViewController {
     /// The clipboard quick action (spec §2).
     @objc func analyzeClipboardInLogAnalyzer() {
         show(.logAnalyzer)
+        logAnalyzerCaptureSource = nil
         logAnalyzer.analyzeClipboard()
     }
 

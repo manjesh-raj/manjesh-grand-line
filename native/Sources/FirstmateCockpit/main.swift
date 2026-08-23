@@ -1585,6 +1585,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_FLEET_LOG_TESTS"] == "1" {
     exit(FleetLogSelfTest.run() ? 0 : 1)
 }
 
+// F8 (incident mode): the incident record's create/append/end round trip on
+// real disk, the one-active-incident-per-host rule, the redaction boundary
+// (grepped in the real bytes), the aggregate the postmortem generator is fed,
+// and the F6 log wiring. See IncidentStoreSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_INCIDENT_TESTS"] == "1" {
+    exit(IncidentStoreSelfTest.run() ? 0 : 1)
+}
+
 // F5's command-palette providers: every domain's matching, the grouping the
 // mockup shows, the "never send a half-substituted command" rule, and the
 // source guards that keep the destructive-command gate a single definition the

@@ -87,6 +87,30 @@ final class SRELeadBridge {
     private var lastIdleScan: Date?
     private var inFlightTicks = 0
 
+    /// F8 (incident mode): fired when `sre_kubectl_mcp.py`'s `run_runbook`
+    /// finishes and drops an `event-<id>.json` summary in this same bridge
+    /// directory.
+    ///
+    /// **This observes an execution, it never performs one.** The runbook
+    /// still runs exactly where it always did - inside `run_runbook`, step by
+    /// step, through `_execute_via_bridge`, which is the same command-injection
+    /// path every `kubectl_readonly` call already uses. All this adds is a
+    /// summary file the tool writes once at the end, so the app can record
+    /// that it happened without inferring it from a sequence of anonymous
+    /// `request-*.json` commands (which carry no runbook identity at all).
+    var onRunbookRun: ((RunbookRunEvent) -> Void)?
+
+    /// The fields `run_runbook`'s own result already computes. No log output
+    /// and no command text crosses this boundary - the incident record only
+    /// ever says *which* runbook ran and how many of its steps did.
+    struct RunbookRunEvent: Equatable {
+        let name: String
+        let ran: Int
+        let total: Int
+        let ok: Bool
+        let refused: Bool
+    }
+
     /// A request is refused as "busy" if the captain touched the tab within
     /// this many seconds before injection. An instance property (not a
     /// `static let`), defaulted below, so `FirstmateCockpitTests` can pass a
@@ -197,8 +221,37 @@ final class SRELeadBridge {
         let now = Date()
         if let lastIdleScan, now.timeIntervalSince(lastIdleScan) < idlePollInterval { return }
         lastIdleScan = now
+        drainEvents()
         guard let request = nextPendingRequest() else { return }
         beginProcessing(request)
+    }
+
+    /// Claims (reads, then deletes) every `event-*.json` the MCP tool has
+    /// dropped since the last idle scan. Drained on the idle cadence, not on
+    /// every 5Hz tick, for the same reason `nextPendingRequest` is: a
+    /// directory enumeration five times a second per SRE-Lead-active tab is
+    /// exactly the cost GL-34 removed. A runbook's event is written after its
+    /// last step's response, so the bridge is never busy when one lands.
+    private func drainEvents() {
+        guard onRunbookRun != nil else { return }
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: bridgeDir, includingPropertiesForKeys: nil) else { return }
+        for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
+        where file.lastPathComponent.hasPrefix("event-") && file.pathExtension == "json" {
+            let data = try? Data(contentsOf: file)
+            // Deleted on claim, exactly like a request file, so a slow tick
+            // can never report the same runbook run twice.
+            try? fm.removeItem(at: file)
+            guard let data,
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  (obj["kind"] as? String) == "runbook_run",
+                  let name = obj["runbook"] as? String, !name.isEmpty else { continue }
+            onRunbookRun?(RunbookRunEvent(name: name,
+                                          ran: obj["ran"] as? Int ?? 0,
+                                          total: obj["total"] as? Int ?? 0,
+                                          ok: obj["ok"] as? Bool ?? false,
+                                          refused: obj["refused"] as? Bool ?? false))
+        }
     }
 
     private struct PendingRequest { let id: String; let command: String }

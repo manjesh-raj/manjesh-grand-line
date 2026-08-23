@@ -116,7 +116,7 @@ Behaviour overrides. Everything here is optional; the app has working defaults f
 | `FM_KEYS_FILE` | `keys.json` (SSH key *metadata*; key material is Keychain-only) |
 | `FM_SNIPPETS_FILE` | `snippets.json` |
 | `FM_SCHEDULES_FILE` | `schedules.json` (the Automation page's scheduled automations) |
-| `FM_SHIFT_DIR` | Shift's data root. Setting it bypasses git sync entirely, and is also the fallback root for the command library |
+| `FM_SHIFT_DIR` | Shift's data root. Setting it bypasses git sync entirely, and is also the fallback root for the command library and incident records |
 | `FM_COMMAND_LIBRARY_DIR` | The DevOps command library only |
 | `FM_SHIFT_GIT_CLONE_PATH` | Where the `manjesh-config` clone lives |
 | `FM_SHIFT_REMOTE_URL` | The remote Shift clones/pulls/pushes (point at a disposable local bare repo for tests) |
@@ -125,6 +125,7 @@ Behaviour overrides. Everything here is optional; the app has working defaults f
 | `FM_DOCS_RUNBOOKS_DIR` | Runbooks/postmortems (bypasses git) |
 | `FM_LOG_ANALYZER_DIR` | Saved Log Analyzer investigations |
 | `FM_FLEET_LOG_DIR` | The captain's log (Overview > Log): its append-only `events.jsonl` |
+| `FM_INCIDENTS_DIR` | Incident records (F8 incident mode). Falls back to `FM_SHIFT_DIR`, then the synced clone |
 | `FM_WHISPER_MODEL_DIR` | Where the local Whisper model is downloaded |
 | `FM_INSTANCE_LOCK_FILE` | The single-instance lock file |
 
