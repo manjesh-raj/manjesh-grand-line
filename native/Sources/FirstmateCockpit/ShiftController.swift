@@ -122,6 +122,11 @@ final class ShiftController: NSViewController {
     /// `ShiftController` knows nothing about the console, `AppShellController`
     /// wires this to `ConsoleController.sendCommandLibraryTextToActiveTab`.
     var onSendCommandToTerminal: ((String) -> Void)?
+    /// F9 (v1): forwarded straight up to `AppShellController`, which forwards
+    /// it again to the app delegate - the picker needs the host store and the
+    /// per-host page path, neither of which this page has any business
+    /// knowing about.
+    var onSendCommandToHosts: ((DevOpsCommand, [String: String], String) -> Void)?
 
     private let reviewGreeting = NSTextField(labelWithString: "")
     private let reviewSubtitle = NSTextField(labelWithString: "What got done, what got pushed back, what's coming.")
@@ -219,6 +224,9 @@ final class ShiftController: NSViewController {
         commandLibraryView.view.translatesAutoresizingMaskIntoConstraints = false
         commandLibraryView.view.isHidden = true
         commandLibraryView.onSendToTerminal = { [weak self] text in self?.onSendCommandToTerminal?(text) }
+        commandLibraryView.onSendToHosts = { [weak self] command, values, generated in
+            self?.onSendCommandToHosts?(command, values, generated)
+        }
         commandLibraryView.onPresentEditor = { [weak self] editor in
             guard let self else { return }
             self.presentAsSheet(editor)

@@ -129,6 +129,12 @@ final class AppShellController: NSViewController {
     /// arranges views and knows nothing about persistence.
     var onPresentHostEditor: ((Host?) -> Void)?
 
+    /// F9 (v1) - the Command Library's "Send to…" action, forwarded on for
+    /// the same reason `onPresentHostEditor` above is: the picker reads the
+    /// saved hosts and the send opens their dedicated pages, and the host
+    /// store lives with the app delegate.
+    var onSendCommandToHosts: ((DevOpsCommand, [String: String], String) -> Void)?
+
     // MARK: App-level password lock (fm/grandline-app-lock)
 
     private let lockScreen = LockScreenController()
@@ -415,6 +421,10 @@ final class AppShellController: NSViewController {
         // above), the exact same "type this into the active tab" behavior
         // Snippets' own "Run" already uses.
         shift.onSendCommandToTerminal = { [weak self] text in self?.console.sendCommandLibraryTextToActiveTab(text) }
+        // F9 (v1): straight up to the app delegate - see `onSendCommandToHosts`.
+        shift.onSendCommandToHosts = { [weak self] command, values, generated in
+            self?.onSendCommandToHosts?(command, values, generated)
+        }
 
         // `fm/grandline-log-analyzer-build`: the Log Analyzer forwards the
         // same two things Shift's Command Library already does - "run this
@@ -799,7 +809,7 @@ final class AppShellController: NSViewController {
     /// `args` is the host's resolved `ssh` argv (`Host.sshArguments(allHosts:)`)
     /// - built by the caller, since this controller knows nothing about the
     /// host store, matching `onPresentHostEditor` above.
-    func connectHost(_ host: Host, args: [String]) {
+    func connectHost(_ host: Host, args: [String], navigate: Bool = true) {
         let controller: ConsoleController
         if let existing = hostConsoles[host.id] {
             controller = existing
@@ -846,6 +856,14 @@ final class AppShellController: NSViewController {
             self.openLogAnalyzer(with: capture, hostLabel: "\(hostLabel) · \(tabName)")
         }
 
+        // F9 (v1): a multi-host send connects several hosts in one pass and
+        // navigates once, at the end, to the first of them - so every
+        // intermediate host is connected with `navigate: false` rather than
+        // yanking the window through N pages the captain never asked to look
+        // at. Every other caller (the rail icon, the Hosts list's Connect, the
+        // ⌘K palette) keeps the default and behaves exactly as before.
+        guard navigate else { return }
+
         hideAllDestinations()
         controller.view.isHidden = false
         topBar.setTitle(host.label)
@@ -858,6 +876,49 @@ final class AppShellController: NSViewController {
         // currently-selected tab now" - clears its own SRE Lead unread
         // entry, if any, the same as an in-page tab switch already does.
         controller.markCurrentTabAsRead()
+    }
+
+    /// F9 (v1): does this host already have a live dedicated page? Read by
+    /// the "Send to…" picker for each row's connected/not-connected line -
+    /// the same piece of state the rail's own per-host highlighting uses, not
+    /// a second notion of "connected" invented for the picker.
+    func isHostConnected(_ host: Host) -> Bool {
+        hostConsoles[host.id] != nil
+    }
+
+    /// F9 (v1): type `text` into `host`'s own dedicated page, connecting it
+    /// first if it has none yet.
+    ///
+    /// This is the *existing* connect-then-`send(txt:)` path per host, not a
+    /// second mechanism: `connectHost` (whose `connectSSHIfNeeded` is what
+    /// makes a re-send to an already-open host reuse its tab instead of
+    /// stacking a second one) followed by the same
+    /// `sendCommandLibraryTextToActiveTab` a single-host send already calls -
+    /// just on that host's console rather than the shared one.
+    ///
+    /// A host that was already open receives the text immediately. A host that
+    /// had to be connected first gets it after a short delay, for the same
+    /// reason - and with the same honest "best-effort, there is no protocol
+    /// signal for *the remote shell is ready now*" caveat - as
+    /// `ConsoleController.runStartupSnippet`, whose delay this matches.
+    func sendCommandToHost(_ host: Host, args: [String], text: String) {
+        let wasConnected = isHostConnected(host)
+        connectHost(host, args: args, navigate: false)
+        guard let controller = hostConsoles[host.id] else { return }
+        if wasConnected {
+            controller.sendCommandLibraryTextToActiveTab(text)
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + ConsoleController.remoteShellReadyDelay) { [weak controller] in
+                controller?.sendCommandLibraryTextToActiveTab(text)
+            }
+        }
+    }
+
+    /// F9 (v1): bring one host's page forward after a multi-host send, so the
+    /// captain lands somewhere deliberate rather than on whichever page
+    /// happened to be connected last.
+    func revealHost(_ host: Host, args: [String]) {
+        connectHost(host, args: args)
     }
 
     /// A host was deleted from the store - tear down its dedicated page

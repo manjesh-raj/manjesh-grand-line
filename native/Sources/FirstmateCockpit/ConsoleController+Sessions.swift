@@ -261,11 +261,22 @@ extension ConsoleController {
     /// shell to print its prompt on a typical connection.
     func runStartupSnippet(_ id: UUID, in tab: TabModel) {
         guard let snippet = snippetStore.snippet(id: id) else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak tab] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + ConsoleController.remoteShellReadyDelay) { [weak tab] in
             guard let tab, !tab.isClosing else { return }
             tab.terminal.send(txt: snippet.command + "\n")
         }
     }
+
+    /// How long to wait after starting an ssh tab before typing into it.
+    ///
+    /// Named and shared rather than repeated as a literal, because the caveat
+    /// travels with it: there is no protocol-level "the remote shell is now
+    /// ready" signal to hook, so this is best-effort timing - long enough for
+    /// `ssh` to authenticate and the remote shell to print its prompt on a
+    /// typical connection. Two callers: a host's startup snippet
+    /// (`runStartupSnippet`) and F9's multi-host send
+    /// (`AppShellController.sendCommandToHost`), which are the same problem.
+    static let remoteShellReadyDelay: TimeInterval = 1.5
 
     /// The Snippets panel's "Run" action (B2): send a snippet to whichever
     /// tab is currently in front. A no-op with no tabs, which cannot happen

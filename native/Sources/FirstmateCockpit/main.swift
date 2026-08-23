@@ -160,6 +160,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appShell.onPresentHostEditor = { [weak self] host in
             self?.presentHostEditor(for: host)
         }
+        // F9 (v1) - multi-host command execution. Here rather than in
+        // `AppShellController` because this is the one object holding the host
+        // store, and `connectToHost`'s own argv resolution
+        // (`Host.sshArguments(allHosts:)`) needs the full host list to resolve
+        // a jump chain.
+        appShell.onSendCommandToHosts = { [weak self] command, values, generated in
+            self?.presentMultiHostSend(command: command, values: values, generatedText: generated)
+        }
         // Fix 3 (fixes4): a pinned rail icon per saved host, kept live via
         // `HostStore.observe` - the same add/rename/delete signal the Hosts
         // list itself reloads from. Clicking one connects exactly like the
@@ -531,6 +539,63 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// for jump-chain resolution (`Host.sshArguments(allHosts:)`).
     private func connectToHost(_ host: Host) {
         appShell.connectHost(host, args: host.sshArguments(allHosts: hostStore.hosts))
+    }
+
+    // MARK: Multi-host command execution (F9, v1)
+
+    /// Opens the "Send to…" picker, then - for the hosts the captain ticked -
+    /// runs the app's one risk gate once per host and delivers the command to
+    /// that host's own dedicated page.
+    ///
+    /// **v1 only, deliberately.** One real tab per host, no aggregation: the
+    /// review's own F9 entry puts the combined result view behind Block View
+    /// Stage 1 ("blocks give clean per-command output capture"), which is
+    /// itself blocked on Stage 0 surviving real use. See
+    /// `MultiHostSend.swift`'s header.
+    private func presentMultiHostSend(command: DevOpsCommand, values: [String: String], generatedText: String) {
+        let picker = MultiHostSendPickerController(
+            command: command,
+            generatedText: generatedText,
+            hosts: hostStore.hosts,
+            isConnected: { [weak self] host in self?.appShell.isHostConnected(host) ?? false }
+        )
+        picker.onSend = { [weak self] hosts in
+            guard let self else { return }
+            let executor = MultiHostSendExecutor(
+                // The app's one gate (`CommandRiskConfirmation`, the same
+                // definition the page's own Copy/Send buttons and the ⌘K
+                // palette call), invoked once per host with that host named -
+                // never one blanket confirmation covering the selection.
+                confirm: { command, text, _, context, proceed in
+                    CommandRiskConfirmation.confirm(
+                        command: command, generatedText: text, actionVerb: "send to the terminal",
+                        context: context, proceed: proceed)
+                },
+                deliver: { [weak self] host, text in
+                    guard let self else { return }
+                    self.appShell.sendCommandToHost(
+                        host, args: host.sshArguments(allHosts: self.hostStore.hosts), text: text)
+                }
+            )
+            // `nil` means the command is not sendable at all (an unfilled
+            // `{{token}}`) - the button refuses before the picker even opens,
+            // so this is the second check of the same rule, not the first.
+            guard let outcome = executor.send(command: command, values: values, to: hosts) else {
+                self.appShell.showToast("Fill in this command's parameters before sending it.")
+                return
+            }
+            if !outcome.sent.isEmpty {
+                self.commandLibraryStore.recordUsage(command.id)
+                // Land on the first host that actually received it, so the
+                // captain sees a real result rather than whichever page was
+                // connected last.
+                if let first = hosts.first(where: { outcome.sent.contains($0.id) }) {
+                    self.appShell.revealHost(first, args: first.sshArguments(allHosts: self.hostStore.hosts))
+                }
+            }
+            self.appShell.showToast(MultiHostSend.resultMessage(outcome))
+        }
+        appShell.presentAsSheet(picker)
     }
 
     // MARK: Host editor window (nav-redesign task, item 3)
@@ -1485,6 +1550,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_SCHEDULE_RUNNER_TESTS"] == "1" {
 // disposable fake `claude`. See MorningBriefingSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_MORNING_BRIEFING_TESTS"] == "1" {
     exit(MorningBriefingSelfTest.run() ? 0 : 1)
+}
+
+// F9 (v1, multi-host command execution): the host-selection logic - tag
+// matching, the never-preselected invariant, the risk gate firing once per
+// host, and the unfilled-parameter refusal applied across a whole selection.
+// See MultiHostSendSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_MULTI_HOST_SEND_TESTS"] == "1" {
+    exit(MultiHostSendSelfTest.run() ? 0 : 1)
 }
 
 // F6 (fleet history / captain's log): the event store's append/retention/
