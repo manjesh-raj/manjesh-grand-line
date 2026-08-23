@@ -83,6 +83,11 @@ final class CommandLibraryPageView: NSObject {
     // primary action.
     private let detailCopyButton = HelmButton(title: "Copy", variant: .secondary, symbol: "doc.on.doc", target: nil, action: nil)
     private let detailSendButton = HelmButton(title: "Send to Terminal", variant: .primary, symbol: "play.fill", target: nil, action: nil)
+    /// F9 (v1) - fan the same command out to several saved hosts. Secondary,
+    /// beside the primary single-tab send: multi-host is the deliberate,
+    /// less-frequent action, and the mockup leads with the picker rather than
+    /// with this button.
+    private let detailSendToHostsButton = HelmButton(title: "Send to\u{2026}", variant: .secondary, symbol: "square.stack.3d.up", target: nil, action: nil)
     private let detailEditButton = HelmButton(title: "Edit", variant: .quiet, target: nil, action: nil)
     private let detailDuplicateButton = HelmButton(title: "Duplicate", variant: .quiet, target: nil, action: nil)
     private let detailWorkflowButton = HelmButton(title: "Add to Runbook", variant: .secondary, symbol: "plus", target: nil, action: nil)
@@ -99,6 +104,12 @@ final class CommandLibraryPageView: NSObject {
     /// (see `ShiftController`/`AppShellController`'s wiring) - this class
     /// knows nothing about the console.
     var onSendToTerminal: ((String) -> Void)?
+    /// F9 (v1): hands the command and its already-substituted text up so the
+    /// app delegate (the one place that holds the host store *and* can open a
+    /// host's dedicated page) can present the picker and run the send. This
+    /// class knows nothing about hosts, exactly as it knows nothing about the
+    /// console - same forward-don't-own convention as `onSendToTerminal`.
+    var onSendToHosts: ((DevOpsCommand, [String: String], String) -> Void)?
     /// This class isn't an `NSViewController`, so it can't call
     /// `presentAsSheet` itself - the owning `ShiftController` does, via this
     /// closure (same forward-don't-own convention as every other page in
@@ -307,6 +318,12 @@ final class CommandLibraryPageView: NSObject {
         detailSendButton.action = #selector(sendToTerminalClicked)
         detailSendButton.translatesAutoresizingMaskIntoConstraints = false
 
+        detailSendToHostsButton.controlSize = .small
+        detailSendToHostsButton.target = self
+        detailSendToHostsButton.action = #selector(sendToHostsClicked)
+        detailSendToHostsButton.toolTip = "Send this command to several saved hosts at once"
+        detailSendToHostsButton.translatesAutoresizingMaskIntoConstraints = false
+
         detailEditButton.controlSize = .small
         detailEditButton.target = self
         detailEditButton.action = #selector(editClicked)
@@ -337,7 +354,7 @@ final class CommandLibraryPageView: NSObject {
         buttonsSpacer.translatesAutoresizingMaskIntoConstraints = false
         buttonsSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         buttonsSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        for b in [detailSendButton, detailCopyButton, detailWorkflowButton,
+        for b in [detailSendButton, detailSendToHostsButton, detailCopyButton, detailWorkflowButton,
                   detailEditButton, detailDuplicateButton, detailFavoriteButton, detailExplainButton] {
             b.setContentHuggingPriority(.required, for: .horizontal)
             b.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -345,7 +362,7 @@ final class CommandLibraryPageView: NSObject {
         // Primary first, then the two supporting secondaries, then the spacer,
         // then the quiet group at the trailing edge.
         let buttonsRow = NSStackView(views: [
-            detailSendButton, detailCopyButton, detailWorkflowButton, buttonsSpacer,
+            detailSendButton, detailSendToHostsButton, detailCopyButton, detailWorkflowButton, buttonsSpacer,
             detailEditButton, detailDuplicateButton, detailFavoriteButton, detailExplainButton,
         ])
         buttonsRow.orientation = .horizontal
@@ -907,6 +924,34 @@ final class CommandLibraryPageView: NSObject {
         }
     }
 
+    /// F9 (v1). Two things happen here and neither of them is a send.
+    ///
+    /// The readiness check is F5's rule applied to N hosts: a command with an
+    /// unfilled `{{token}}` is refused *before* the picker opens, so the
+    /// captain fills the form they are already looking at rather than picking
+    /// three hosts and then being told no. `MultiHostSendExecutor` re-asks the
+    /// same question at send time - the picker is a sheet, so the values
+    /// cannot change under it, but a refusal that only exists in the UI layer
+    /// is one refactor away from not existing at all.
+    ///
+    /// The risk gate is deliberately *not* run here. It belongs per host, and
+    /// only the executor knows which hosts were ticked - running it once here
+    /// would be the single blanket confirmation the review's own security line
+    /// rules out.
+    @objc private func sendToHostsClicked() {
+        guard let id = selectedCommandID, let command = store.command(id: id) else { return }
+        switch MultiHostSend.readiness(for: command, values: paramValues) {
+        case .needsParameters(let names):
+            Toast.show(in: view, message: MultiHostSend.unfilledParameterMessage(names))
+        case .ready(let generated):
+            // Both the values *and* the text they produced: the executor
+            // re-runs the readiness check against the values (a real second
+            // check, not a restatement), while the picker shows the exact
+            // string every ticked host will receive.
+            onSendToHosts?(command, paramValues, generated)
+        }
+    }
+
     @objc private func favoriteClicked() {
         guard let id = selectedCommandID else { return }
         store.toggleFavorite(id)
@@ -1017,9 +1062,17 @@ final class CommandLibraryPageView: NSObject {
 /// not a lookalike - the review's own F5 security line is "destructive
 /// commands keep their confirmation gates", and a palette is a faster way to
 /// reach an action, never a way around its safety check. So there is exactly
-/// one definition and two callers: `CommandLibraryPageView`'s Copy/Send
-/// buttons and `UnifiedSearchCommandProvider`'s row action (dispatched from
-/// `main.swift`).
+/// one definition and three callers: `CommandLibraryPageView`'s Copy/Send
+/// buttons, `UnifiedSearchCommandProvider`'s row action (dispatched from
+/// `main.swift`), and F9's multi-host send (`MultiHostSendExecutor`, which
+/// invokes it once per selected host).
+///
+/// `context` is F9's one addition, and it is a *parameter on the one
+/// definition* rather than a second gate: a multi-host send shows this alert
+/// once per host, and three consecutive identical alerts would read as one
+/// alert misfiring. Naming the host on each ("Sending to Prod Bastion (2 of
+/// 3)") is what makes a per-host confirmation legible as one. Every existing
+/// caller leaves it nil and is unaffected.
 ///
 /// `readOnly` never interrupts, `potentiallyDisruptive` gets a lighter,
 /// still-dismissible confirmation, `destructive` gets the full "this can
@@ -1028,7 +1081,8 @@ final class CommandLibraryPageView: NSObject {
 /// a terminal.
 enum CommandRiskConfirmation {
     static func confirm(command: DevOpsCommand, generatedText: String, actionVerb: String,
-                        proceed: () -> Void) {
+                        context: String? = nil, proceed: () -> Void) {
+        let suffix = context.map { "\n\n\($0)" } ?? ""
         switch command.risk {
         case .readOnly:
             proceed()
@@ -1036,7 +1090,7 @@ enum CommandRiskConfirmation {
             let alert = NSAlert()
             alert.alertStyle = .warning
             alert.messageText = "Potentially disruptive command"
-            alert.informativeText = "This command can change live state:\n\n\(generatedText)"
+            alert.informativeText = "This command can change live state:\n\n\(generatedText)\(suffix)"
             alert.addButton(withTitle: "Cancel")
             alert.addButton(withTitle: "Proceed")
             guard alert.runModal() == .alertSecondButtonReturn else { return }
@@ -1045,7 +1099,7 @@ enum CommandRiskConfirmation {
             let alert = NSAlert()
             alert.alertStyle = .critical
             alert.messageText = "\u{26A0}\u{FE0F} Destructive command"
-            alert.informativeText = "This command can modify or delete infrastructure:\n\n\(generatedText)"
+            alert.informativeText = "This command can modify or delete infrastructure:\n\n\(generatedText)\(suffix)"
             alert.addButton(withTitle: "Cancel")
             alert.addButton(withTitle: "\(actionVerb == "copy" ? "Copy" : "Send") Anyway")
             guard alert.runModal() == .alertSecondButtonReturn else { return }
