@@ -132,6 +132,8 @@ final class ReviewController: NSViewController {
 
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var isLoading = false
+    /// The PR set behind what is currently on screen - see `render`.
+    private var lastRenderedPRs: [MergedPR] = []
 
     /// fm/grandline-sidebar-badges: fires every time `render` recomputes the
     /// full open-PR list - the same `mergedPRs` this page already shows, not
@@ -445,6 +447,12 @@ final class ReviewController: NSViewController {
 
         onOpenPRCountChanged?(prs.count)
         onPRsChanged?(prs)
+        // F6: kept so `mergePR` can name the PR it merged (number, title,
+        // repo) in the captain's log. The merge button's own identifier
+        // carries only the task id and the URL - deliberately, since that is
+        // the argv contract (GL-38) - so the display fields have to come from
+        // the list this page already rendered.
+        lastRenderedPRs = prs
 
         let sorted = prs.sorted { ($0.repo, $0.number ?? 0) < ($1.repo, $1.number ?? 0) }
         let github = sorted.filter { $0.forge == "github" }
@@ -589,6 +597,10 @@ final class ReviewController: NSViewController {
             let result = FleetDataSource.mergePR(taskID: taskID, url: prURL)
             DispatchQueue.main.async {
                 if result.ok {
+                    // F6: append to the captain's log from the one code path
+                    // that already knows a merge really happened - never from
+                    // a poller noticing the PR disappeared later.
+                    self?.recordMergeInFleetLog(url: prURL)
                     self?.refresh()
                 } else {
                     sender.isEnabled = true
@@ -601,6 +613,16 @@ final class ReviewController: NSViewController {
                 }
             }
         }
+    }
+
+    /// F6: one `.merge` event, phrased by `FleetLogSources` from the PR row
+    /// this page already rendered. A PR that is somehow no longer in that
+    /// list still gets an event - the merge genuinely happened, and losing
+    /// the title is a better outcome than losing the record.
+    private func recordMergeInFleetLog(url: String) {
+        let pr = lastRenderedPRs.first { $0.url == url }
+        FleetLogStore.shared.append(FleetLogSources.merged(
+            prNumber: pr?.number, prTitle: pr?.title ?? "", repo: pr?.repo ?? "", url: url))
     }
 
     // MARK: Theme

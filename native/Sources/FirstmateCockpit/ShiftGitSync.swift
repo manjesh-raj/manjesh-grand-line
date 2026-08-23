@@ -643,8 +643,30 @@ final class ShiftGitSync {
     func resolveConflicts(choices: [String: ShiftConflictChoice]) -> Bool {
         guard let set = pendingConflictSet else { return false }
         guard applyConflictResolution(set, choices: choices) else { return false }
+        recordResolutionInFleetLog(set, choices: choices)
         pendingConflictSet = nil
         return true
+    }
+
+    /// F6 (fleet history / captain's log): one `.sync` event per conflicting
+    /// record the captain actually decided, appended here - the one place a
+    /// resolution is known to have been written and pushed.
+    ///
+    /// Only genuine, captain-resolved conflicts are logged.
+    /// `detectAndResolveConflicts`'s automatic path (two machines that touched
+    /// different records, the common shape) resolves with no decision to
+    /// record and no divergence the captain ever saw, so logging it would
+    /// bury the events that do matter under routine sync noise.
+    private func recordResolutionInFleetLog(_ set: ShiftConflictSet, choices: [String: ShiftConflictChoice]) {
+        func log(_ kindLabel: String, _ id: String, _ title: String) {
+            guard let choice = choices[id] else { return }
+            FleetLogStore.shared.append(FleetLogSources.syncConflictResolved(
+                recordKind: kindLabel, recordTitle: title, recordID: id,
+                keptLocal: choice == .keepLocal))
+        }
+        for c in set.taskConflicts { log("task", c.id, c.title) }
+        for c in set.followUpConflicts { log("follow-up", c.id, c.title) }
+        for c in set.projectConflicts { log("project", c.id, c.title) }
     }
 
     /// UI-facing wrapper - runs on the sync queue (never blocking the

@@ -169,8 +169,11 @@ final class AppShellController: NSViewController {
         self.hostsPanel = hostsPanel
         self.console = console
         self.settings = settings
-        // F12: the shared `ShiftStore`, so the briefing's due-task count is
-        // the same one the Tasks page shows - never a second store instance.
+        // The shared `ShiftStore`, never a second instance - two consumers
+        // on this page now. F12: the briefing's due-task count is the same
+        // one the Tasks page shows. F6: Overview's "Log" tab reads the task
+        // half of its feed straight from Shift's own activity YAML rather
+        // than a second copy of it (see `FleetLogFeed`'s header).
         self.overview = FleetController(shiftStore: shiftStore)
         self.dictation = DictationController(store: dictationStore)
         // Phase 5 (cockpit-shift-power-features): `shiftStore` is now built

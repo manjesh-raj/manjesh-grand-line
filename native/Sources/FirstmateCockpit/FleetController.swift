@@ -34,7 +34,9 @@ final class FleetController: NSViewController {
     // `AppShellController` - deliberately not a second `ShiftStore()`. That
     // one caches and writes, so a second instance would diverge in-session
     // and race the first's files (see AGENTS.md's `CommandLibraryStore` note
-    // on exactly this lesson).
+    // on exactly this lesson). Two consumers on this page now: F12's briefing
+    // reads its due-task count from it, and F6's Log tab reads the task half
+    // of its feed from the same store's activity YAML.
     private let shiftStore: ShiftStore
     private let briefingCard = MorningBriefingCard()
     /// The `.quota` clause opens the same Claude-usage popover Console's
@@ -93,6 +95,34 @@ final class FleetController: NSViewController {
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var isLoading = false
 
+    // MARK: F6 - the "Log" tab (captain's log)
+
+    /// F6: Overview is two tabs now - the live dashboard, and a durable,
+    /// reverse-chronological record of what has already happened. Same
+    /// `HelmSegmentedTabs` shape Shift/Docs/Hosts already use; "Overview"
+    /// stays the default.
+    private enum OverviewTab: String, CaseIterable {
+        case overview, log
+        var title: String { self == .overview ? "Overview" : "Log" }
+    }
+
+    private var activeTab: OverviewTab = .overview
+    private let tabs = HelmSegmentedTabs(items: OverviewTab.allCases.map { .init(id: $0.rawValue, title: $0.title) },
+                                         selected: OverviewTab.overview.rawValue)
+
+    /// The dashboard's own sections, wrapped so the whole set can be hidden
+    /// as one. Arranged subviews of an `NSStackView`, so hiding genuinely
+    /// removes them from layout (AGENTS.md gotcha (11) is about an *ordinary*
+    /// hidden `NSView`, which this is not).
+    private let overviewContainer = NSStackView()
+
+    private let logContainer = NSStackView()
+    private let logFilters = HelmSegmentedTabs(items: FleetLogListView.filterItems,
+                                               selected: FleetLogListView.allFilterID,
+                                               size: .compact)
+    private let logList = FleetLogListView()
+    private var logFilterKind: FleetLogEventKind?
+
     /// fm/grandline-sidebar-badges: fires every time `render` recomputes the
     /// banner's "needs your call" set (`needs_decision`/`blocked` tasks) -
     /// the exact same signal the banner text above already surfaces, not a
@@ -150,22 +180,34 @@ final class FleetController: NSViewController {
         let inFlightSection = buildSection(title: "In flight")
         inFlightSectionView = inFlightSection
 
+        overviewContainer.orientation = .vertical
+        overviewContainer.alignment = .leading
+        overviewContainer.spacing = 20
+        overviewContainer.translatesAutoresizingMaskIntoConstraints = false
+        // F12 + F6: the briefing is the first thing read on the *Overview*
+        // tab, directly under the tab strip rather than under the page header
+        // - it is Overview content, so switching to Log takes it with the
+        // rest of the dashboard. Hidden until there is a briefing to show,
+        // and a hidden *arranged subview* of an `NSStackView` leaves layout
+        // entirely (AGENTS.md gotcha (11)), so an off-by-default feature
+        // costs this page nothing.
+        buildBriefingCard()
+        overviewContainer.addArrangedSubview(briefingCard)
+        overviewContainer.addArrangedSubview(loadingSection)
+        overviewContainer.addArrangedSubview(bannerRow)
+        overviewContainer.addArrangedSubview(statsRow)
+        overviewContainer.addArrangedSubview(inFlightSection)
+
+        let logSection = buildLogSection()
+
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
         contentStack.spacing = 20
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(header)
-        // F12: directly under the page header, so it is the first thing read
-        // on the page without duplicating the header's own greeting. Hidden
-        // until there is a briefing to show - and a hidden *arranged subview*
-        // of an `NSStackView` leaves layout entirely (AGENTS.md gotcha (11)),
-        // so an off-by-default feature costs this page nothing.
-        buildBriefingCard()
-        contentStack.addArrangedSubview(briefingCard)
-        contentStack.addArrangedSubview(loadingSection)
-        contentStack.addArrangedSubview(bannerRow)
-        contentStack.addArrangedSubview(statsRow)
-        contentStack.addArrangedSubview(inFlightSection)
+        contentStack.addArrangedSubview(tabs)
+        contentStack.addArrangedSubview(overviewContainer)
+        contentStack.addArrangedSubview(logSection)
 
         // The data sections stay hidden behind the loading skeleton until the
         // first successful `render(...)` - see `buildLoadingState`.
@@ -173,6 +215,7 @@ final class FleetController: NSViewController {
         statsRow.isHidden = true
         inFlightSection.isHidden = true
         briefingCard.isHidden = true
+        logSection.isHidden = true
 
         content.addSubview(contentStack)
         NSLayoutConstraint.activate([
@@ -181,12 +224,24 @@ final class FleetController: NSViewController {
             contentStack.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
             contentStack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -28),
             headerRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            briefingCard.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            loadingSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            bannerRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            statsRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            inFlightSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            overviewContainer.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            logSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            briefingCard.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
+            loadingSection.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
+            bannerRow.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
+            statsRow.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
+            inFlightSection.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
         ])
+
+        tabs.onSelect = { [weak self] id in
+            guard let self, let tab = OverviewTab(rawValue: id) else { return }
+            self.switchTab(tab)
+        }
+        logFilters.onSelect = { [weak self] id in
+            guard let self else { return }
+            self.logFilterKind = FleetLogListView.kind(forFilterID: id)
+            self.renderLog()
+        }
 
         scroll.documentView = content
         scroll.hasVerticalScroller = true
@@ -417,6 +472,57 @@ final class FleetController: NSViewController {
         return section
     }
 
+    // MARK: F6 - the Log tab
+
+    /// The mockup's "Log" tab: the filter-pill row over the event feed.
+    /// Deliberately not wrapped in a `HelmCard` - the rows below are
+    /// `HelmAccentRow` cards already, the same reason "In flight" above is a
+    /// plain heading rather than a card.
+    private func buildLogSection() -> NSView {
+        logList.translatesAutoresizingMaskIntoConstraints = false
+
+        logContainer.orientation = .vertical
+        logContainer.alignment = .leading
+        logContainer.spacing = HelmMetrics.s3
+        logContainer.translatesAutoresizingMaskIntoConstraints = false
+        logContainer.addArrangedSubview(logFilters)
+        logContainer.addArrangedSubview(logList)
+        NSLayoutConstraint.activate([
+            logList.widthAnchor.constraint(equalTo: logContainer.widthAnchor),
+        ])
+        return logContainer
+    }
+
+    private func switchTab(_ tab: OverviewTab) {
+        activeTab = tab
+        // Keeps the pill right when the tab was changed from somewhere other
+        // than a click; a no-op on a real click, which already moved it.
+        tabs.select(tab.rawValue)
+        overviewContainer.isHidden = tab != .overview
+        logContainer.isHidden = tab != .log
+        if tab == .log { renderLog() }
+        applyTheme()
+    }
+
+    /// Re-reads the feed and re-renders it. Called when the Log tab is shown,
+    /// on `viewWillAppear` while it is showing, and by Refresh - never on a
+    /// timer (F6 adds no polling).
+    private func renderLog() {
+        let all = FleetLogFeed.events(store: FleetLogStore.shared, shift: shiftStore)
+        let shown = FleetLogFeed.filtered(all, kind: logFilterKind)
+        let emptyTitle: String
+        let emptyBody: String
+        if all.isEmpty {
+            emptyTitle = "Nothing logged yet"
+            emptyBody = "Merges, completed tasks, resolved sync conflicts and saved investigations land here as they happen."
+        } else {
+            emptyTitle = "Nothing here"
+            emptyBody = "No \(logFilterKind?.pluralTitle.lowercased() ?? "events") in the recent history."
+        }
+        logList.setRows(FleetLogFeed.rows(for: shown), theme: theme,
+                        emptyTitle: emptyTitle, emptyBody: emptyBody)
+    }
+
     // MARK: Refresh
 
     @objc private func refreshTapped() { refresh() }
@@ -434,6 +540,10 @@ final class FleetController: NSViewController {
     /// `forceBriefing` is the briefing card's own clock affordance: regenerate
     /// from a fresh scan rather than waiting for tomorrow's first activation.
     private func refresh(forceBriefing: Bool) {
+        // F6: the log is a cheap local read (a JSONL file plus a bounded
+        // window of Shift's activity YAML), so Refresh re-reads it too rather
+        // than the Log tab having a refresh action of its own.
+        if activeTab == .log { renderLog() }
         guard !isLoading else { return }
         isLoading = true
         refreshButton.isEnabled = false
@@ -890,6 +1000,13 @@ final class FleetController: NSViewController {
         inFlightGlyph.applyTheme(theme)
         inFlightCountChip.layer?.backgroundColor = ink.withAlphaComponent(0.08).cgColor
         inFlightCountLabel.textColor = muted
+
+        // Both tab strips theme themselves at init and on `select`, but not
+        // on a live theme change - every page owning a `HelmSegmentedTabs`
+        // re-hands it the theme from its own `applyTheme`.
+        tabs.applyTheme(theme)
+        logFilters.applyTheme(theme)
+        logList.applyTheme(theme)
 
         for tile in statTiles { tile.applyTheme(theme) }
         for empty in emptyStates { empty.applyTheme(theme) }
