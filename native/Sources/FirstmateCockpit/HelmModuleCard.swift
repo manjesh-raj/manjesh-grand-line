@@ -130,6 +130,20 @@ final class HelmModuleCard: NSView {
     /// accessibility label reports.
     static let maxPeekRows = 3
 
+    /// The briefing paragraph's own cap, for the same reason `maxPeekRows`
+    /// exists and enforced the same way (the caller truncates; the overflow is
+    /// *reported*, never silently dropped - see `HomeCanvasController.
+    /// fillBriefing`).
+    ///
+    /// §6.1 gave the briefing a double-width card precisely so a full
+    /// paragraph could sit on it. The captain overrode that after seeing it
+    /// live, so the same copy now has one column: unbounded, it would make its
+    /// whole grid row as tall as the longest briefing of the day. Clauses stay
+    /// clauses rather than becoming peek rows because each one carries a real
+    /// `BriefingTarget` - turning them into rows would throw the deep links
+    /// away, which is the one thing on this card that does something.
+    static let maxBriefingClauses = 3
+
     struct Content {
         var title: String
         var subtitle: String
@@ -137,8 +151,6 @@ final class HelmModuleCard: NSView {
         var hue: HelmDomainHue
         var chip: HelmModuleChip?
         var body: Body
-        /// Spans two grid columns (the briefing).
-        var isWide: Bool = false
     }
 
     // Geometry (§2.7, §2.6).
@@ -269,6 +281,15 @@ final class HelmModuleCard: NSView {
         headerRow.spacing = HelmMetrics.s3
         headerRow.distribution = .fill
         headerRow.translatesAutoresizingMaskIntoConstraints = false
+        // gotcha (12)+(13), and the reason this is not merely tidiness: an
+        // `NSStackView` resists clipping below its arranged subviews' own
+        // minimums at `.defaultHigh` (750) by default, which is above
+        // `NSLayoutPriorityWindowSizeStayPut` (500) - so a stack inside a
+        // module card is a *window* floor unless it is told to yield. The
+        // labels inside already yield; the stack holding them did not.
+        // See `compressibleStack` for the rest of them.
+        headerRow.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        headerRow.setHuggingPriority(.defaultLow, for: .horizontal)
 
         bodyContainer.translatesAutoresizingMaskIntoConstraints = false
 
@@ -405,7 +426,7 @@ final class HelmModuleCard: NSView {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         row.append(spacer)
 
-        let metricRow = NSStackView(views: row)
+        let metricRow = compressibleStack(NSStackView(views: row))
         metricRow.orientation = .horizontal
         metricRow.alignment = .lastBaseline
         metricRow.spacing = HelmMetrics.s1 + 2
@@ -457,7 +478,7 @@ final class HelmModuleCard: NSView {
             value.setContentHuggingPriority(.required, for: .horizontal)
             peekValueLabels.append(value)
 
-            let peek = NSStackView(views: [dot, text, value])
+            let peek = compressibleStack(NSStackView(views: [dot, text, value]))
             peek.orientation = .horizontal
             peek.alignment = .centerY
             peek.spacing = HelmMetrics.s2
@@ -485,7 +506,7 @@ final class HelmModuleCard: NSView {
         let text = verticalStack([titleField, noteLabel(note)], spacing: 2)
         text.alignment = .leading
 
-        let row = NSStackView(views: [ring, text])
+        let row = compressibleStack(NSStackView(views: [ring, text]))
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = HelmMetrics.s3
@@ -516,6 +537,26 @@ final class HelmModuleCard: NSView {
         paragraph.render(clauses, separator: " ", theme: ThemeManager.shared.theme)
         paragraphView = paragraph
         return verticalStack([paragraph], spacing: 0)
+    }
+
+    /// Every horizontal stack inside a card must yield rather than act as a
+    /// width floor.
+    ///
+    /// A card is laid out into whatever column the grid hands it, and the grid
+    /// row is `.fillEqually` - so one card refusing to compress does not cap
+    /// the window by its own width, it caps it by *column count times* its own
+    /// width. That is how a single card with a long note produced a 1135.5pt
+    /// floor on every destination at once (`.homeCanvas` is eagerly mounted,
+    /// so its constraints are live whichever page is showing - gotcha (11)),
+    /// caught by `AppShellBodyWidthSelfTest`.
+    ///
+    /// Note this is the *stack*-level API: `setContentCompressionResistance-
+    /// Priority` is a no-op on a view with no intrinsic content size, which an
+    /// `NSStackView` does not have (gotcha (12)).
+    private func compressibleStack(_ stack: NSStackView) -> NSStackView {
+        stack.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        stack.setHuggingPriority(.defaultLow, for: .horizontal)
+        return stack
     }
 
     private func verticalStack(_ views: [NSView], spacing: CGFloat) -> NSStackView {

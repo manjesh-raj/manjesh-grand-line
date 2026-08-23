@@ -66,10 +66,28 @@ enum DaylightSpace: String, CaseIterable {
 /// Every module the canvas can render.
 ///
 /// A module is *not* a destination: `.briefing` and `.fleet` have no page of
-/// their own on the canvas's own terms (they open Overview), and several
-/// destinations - the four Setup sub-pages, the per-host console pages -
-/// deliberately have no module at all. The mapping to a `RailDestination` is
-/// `opens` below, which is what a card's click calls `show(_:)` with.
+/// their own on the canvas's own terms (they open Overview), and the per-host
+/// console pages deliberately have no module at all. The mapping to a
+/// `RailDestination` is `opens` below, which is what a card's click calls
+/// `show(_:)` with.
+///
+/// **Every module renders at the same single-column size.** The migration
+/// spec's §6.1 gave the Morning briefing a "wide variant" spanning two grid
+/// columns, and that is what Phase 2 shipped; the captain overrode it after
+/// seeing it live, because one double-width card among a dozen uniform ones
+/// reads as inconsistent rather than as emphasis. There is deliberately no
+/// `span` property here any more - reintroducing one is how per-card sizing
+/// creeps back, and `DaylightModuleSelfTest.checkUniformCardSizing` fails the
+/// build if any row ever renders cards of differing widths.
+///
+/// **The four Setup sub-pages each get their own card** (`.updates`,
+/// `.bootstrap`, `.automation`, `.githubSync`) rather than one aggregate
+/// "Setup" card, also on the captain's direct instruction. Each reads the
+/// signal its own page owns out of `BackgroundSignalsPoller.lastCounts` -
+/// already computed for the Notification Center, never a fresh check from the
+/// canvas. They keep the Setup flyout's own glyphs so a captain used to that
+/// flyout recognises them here, and they all resolve to §2.2's amber through
+/// `opens.domainHue` because the hue belongs to the *area*, not the page.
 enum DaylightModule: String, CaseIterable {
     case briefing
     case fleet
@@ -78,7 +96,10 @@ enum DaylightModule: String, CaseIterable {
     case console
     case health
     case hosts
-    case setup
+    case updates
+    case bootstrap
+    case automation
+    case githubSync
     case schedules
     case logAnalyzer
     case vault
@@ -99,7 +120,7 @@ enum DaylightModule: String, CaseIterable {
         case .console, .tasks, .mergeQueue: return .command
         case .hosts, .logAnalyzer, .health, .schedules: return .operations
         case .vault, .docs, .tools, .dictation: return .stores
-        case .setup, .settings: return .engineering
+        case .updates, .bootstrap, .automation, .githubSync, .settings: return .engineering
         }
     }
 
@@ -117,7 +138,10 @@ enum DaylightModule: String, CaseIterable {
         case .console: return .console
         case .health: return .health
         case .hosts: return .hosts
-        case .setup: return .updates
+        case .updates: return .updates
+        case .bootstrap: return .bootstrap
+        case .automation: return .automation
+        case .githubSync: return .githubSync
         case .schedules: return .schedules
         case .logAnalyzer: return .logAnalyzer
         case .vault: return .vault
@@ -141,7 +165,10 @@ enum DaylightModule: String, CaseIterable {
         case .console: return "terminal.fill"
         case .health: return "heart.text.square.fill"
         case .hosts: return "desktopcomputer"
-        case .setup: return "gearshape.fill"
+        case .updates: return "steeringwheel"
+        case .bootstrap: return "hammer.fill"
+        case .automation: return "bolt.fill"
+        case .githubSync: return "arrow.2.squarepath"
         case .schedules: return "clock.fill"
         case .logAnalyzer: return "text.magnifyingglass"
         case .vault: return "lock.fill"
@@ -177,7 +204,10 @@ enum DaylightModule: String, CaseIterable {
         case .console: return "Console"
         case .health: return "Health"
         case .hosts: return "Hosts"
-        case .setup: return "Setup"
+        case .updates: return "Updates"
+        case .bootstrap: return "Bootstrap"
+        case .automation: return "Automation"
+        case .githubSync: return "GitHub Sync"
         case .schedules: return "Schedules"
         case .logAnalyzer: return "Log Analyzer"
         case .vault: return "Vault"
@@ -187,10 +217,6 @@ enum DaylightModule: String, CaseIterable {
         case .settings: return "Settings"
         }
     }
-
-    /// The briefing spans two grid columns (§6.1's "wide variant"); every
-    /// other module is one.
-    var span: Int { self == .briefing ? 2 : 1 }
 
     /// Canvas order, top-left to bottom-right. Declaration order is the
     /// order - `allCases` is the only list.
