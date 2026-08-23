@@ -55,6 +55,10 @@ final class AppShellController: NSViewController {
     private let tools = ToolsController()
     private let vault = VaultController()
     private let dictation: DictationController
+    /// `fm/grandline-schedules-sidebar-move`: F11's Schedules card, promoted
+    /// off the Automation page onto its own rail destination - see
+    /// `SchedulesController.swift`'s header.
+    private let schedules: SchedulesController
     private let docs = DocsController()
     private let updates = UpdatesController()
     private let bootstrap: BootstrapController
@@ -186,7 +190,10 @@ final class AppShellController: NSViewController {
         self.logAnalyzer = LogAnalyzerController(commandLibrary: commandLibraryStore)
         self.bootstrap = BootstrapController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore)
         self.automation = AutomationController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore,
-                                               dictationStore: dictationStore, scheduleStore: scheduleStore)
+                                               dictationStore: dictationStore)
+        // `fm/grandline-schedules-sidebar-move`: the schedules card's own
+        // destination, not a section of `.automation` anymore.
+        self.schedules = SchedulesController(scheduleStore: scheduleStore)
         self.makeHostConsole = makeHostConsole
         super.init(nibName: nil, bundle: nil)
     }
@@ -267,6 +274,7 @@ final class AppShellController: NSViewController {
         mounter.register(DestinationSlot(id: .tools, title: RailDestination.tools.bodyTitle, mountsEagerly: false, controller: tools))
         mounter.register(DestinationSlot(id: .vault, title: RailDestination.vault.bodyTitle, mountsEagerly: false, controller: vault))
         mounter.register(DestinationSlot(id: .dictation, title: RailDestination.dictation.bodyTitle, mountsEagerly: false, controller: dictation))
+        mounter.register(DestinationSlot(id: .schedules, title: RailDestination.schedules.bodyTitle, mountsEagerly: false, controller: schedules))
         mounter.register(DestinationSlot(id: .docs, title: RailDestination.docs.bodyTitle, mountsEagerly: false, controller: docs))
         mounter.register(DestinationSlot(id: .setup, title: RailDestination.updates.bodyTitle, mountsEagerly: false, controller: setup))
         mounter.register(DestinationSlot(id: .settings, title: RailDestination.settings.bodyTitle, mountsEagerly: false, controller: settings))

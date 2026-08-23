@@ -56,6 +56,19 @@ import AppKit
 /// follows the identical convention too: a fourth real `RailDestination` with
 /// no rail row of its own, reachable only as the Setup flyout's fourth entry,
 /// below Automation.
+/// `.schedules` (fm/grandline-schedules-sidebar-move) is the opposite of all
+/// of the above: F11's Schedules card used to live nested inside `.automation`
+/// (still behind the Setup flyout), and the captain's own correction was that
+/// it should NOT be a flyout/sub-page destination - it gets its own rail
+/// icon, directly visible, alongside Tools/Vault/Dictation/Docs. It stays a
+/// utility (`isDailyUse == false`, see that property's own doc comment for
+/// the criterion: it runs itself and reports to Health rather than being
+/// something a captain checks in on daily), pinned directly *above* `.docs`
+/// and below `.dictation` - so the bottom-anchored group now reads Tools,
+/// Vault, Dictation, Schedules, Docs, Setup
+/// (-> Updates, Bootstrap, Automation, GitHub Sync flyout), avatar.
+/// `.automation`'s own "Run Automation" pipeline stepper is unaffected and
+/// stays exactly where it was.
 /// `fm/grandline-avatar-menu-and-setup-guide` removed `.settings`'s own
 /// standalone rail row entirely - it is still a real `RailDestination` for
 /// switching purposes (`AppShellController.show(.settings)` is unchanged),
@@ -83,7 +96,7 @@ import AppKit
 /// live captain feedback that icon-only utility rows looked inconsistent
 /// once the rest of the rail had labels - see `labeledRailButton(for:)`.
 enum RailDestination: CaseIterable {
-    case overview, console, hosts, shift, review, logAnalyzer, tools, vault, dictation, docs, updates, bootstrap, automation, githubSync, settings
+    case overview, console, hosts, shift, review, logAnalyzer, tools, vault, dictation, schedules, docs, updates, bootstrap, automation, githubSync, settings
 
     var symbol: String {
         switch self {
@@ -109,6 +122,10 @@ enum RailDestination: CaseIterable {
         case .tools: return "wrench.and.screwdriver"
         case .vault: return "lock.shield"
         case .dictation: return "waveform"
+        // `fm/grandline-schedules-sidebar-move`: a calendar - matches
+        // `SchedulesCardView`'s own header icon, so the rail row and the
+        // card it opens onto agree.
+        case .schedules: return "calendar"
         case .docs: return "book.closed"
         case .updates: return "steeringwheel"
         case .bootstrap: return "hammer"
@@ -129,6 +146,7 @@ enum RailDestination: CaseIterable {
         case .tools: return "Tools"
         case .vault: return "Vault"
         case .dictation: return "Dictation"
+        case .schedules: return "Schedules"
         case .docs: return "Docs"
         case .updates: return "Updates"
         case .bootstrap: return "Bootstrap"
@@ -179,14 +197,14 @@ enum RailDestination: CaseIterable {
         case .automation: return .accent
         case .githubSync: return .violet
         case .overview, .console, .hosts, .shift, .review, .logAnalyzer,
-             .tools, .vault, .dictation, .docs, .settings: return .accent
+             .tools, .vault, .dictation, .schedules, .docs, .settings: return .accent
         }
     }
 
     var isDailyUse: Bool {
         switch self {
         case .overview, .console, .hosts, .shift, .review, .logAnalyzer: return true
-        case .tools, .vault, .dictation, .docs, .updates, .bootstrap, .automation, .githubSync, .settings: return false
+        case .tools, .vault, .dictation, .schedules, .docs, .updates, .bootstrap, .automation, .githubSync, .settings: return false
         }
     }
 }

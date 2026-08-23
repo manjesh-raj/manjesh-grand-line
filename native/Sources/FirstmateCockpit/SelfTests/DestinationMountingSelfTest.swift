@@ -59,6 +59,7 @@ enum DestinationMountingSelfTest {
             ("firstVisitMountsExactlyOneSlot", test_firstVisitMountsOneSlot),
             ("revisitReusesTheSameView", test_revisitReusesSameView),
             ("everySlotIsReachableAndMountsCleanly", test_everySlotMounts),
+            ("schedulesHasItsOwnSlotAndAutomationNoLongerRendersIt", test_schedulesIsSeparateFromAutomation),
             ("mounterIsLazyAndBuildsEachSlotOnce", test_mounterUnitBehaviour),
         ]
         var failures = 0
@@ -128,7 +129,7 @@ enum DestinationMountingSelfTest {
                 return "expected at most the launch destination beyond the eager set, also mounted: \(extra.map(\.rawValue).sorted())"
             }
             // The expensive ones must not be among them under any launch path.
-            let mustBeLazy: Set<DestinationSlotID> = [.docs, .tools, .logAnalyzer, .vault, .dictation, .hosts, .shift, .settings]
+            let mustBeLazy: Set<DestinationSlotID> = [.docs, .tools, .logAnalyzer, .vault, .dictation, .schedules, .hosts, .shift, .settings]
             let eagerlyBuilt = mounted.intersection(mustBeLazy)
             guard eagerlyBuilt.isEmpty else {
                 return "these should not be built at launch: \(eagerlyBuilt.map(\.rawValue).sorted())"
@@ -211,6 +212,70 @@ enum DestinationMountingSelfTest {
             }
             return nil
         }
+    }
+
+    /// `fm/grandline-schedules-sidebar-move`: F11's Schedules card used to be
+    /// nested inside `.automation` (itself only reachable via the Setup
+    /// flyout - a hover/click, then a scroll past the pipeline stepper). The
+    /// captain's own correction was that Schedules needed its own rail icon,
+    /// directly visible, and that the card must actually leave the Automation
+    /// page rather than just gaining a second entry point. Both halves are
+    /// checked here: `.schedules` mounts to a slot of its own (not `.setup`,
+    /// the one Updates/Bootstrap/Automation/GitHub Sync all share), and the
+    /// real `SetupContainerController` root that `.automation` shows -
+    /// which parents all four Setup pages' views up front, regardless of
+    /// which tab is active (see `SetupContainerController.loadView`) - no
+    /// longer contains a "Schedules" card header anywhere in its view tree.
+    ///
+    /// Confirmed to catch a real regression, not just to pass: temporarily
+    /// re-adding `SchedulesCardView`'s card to `AutomationController`'s own
+    /// stack (the pre-move shape) makes this fail on the second assertion,
+    /// naming the leftover "Schedules" label, while every other case in this
+    /// file keeps passing.
+    private static func test_schedulesIsSeparateFromAutomation() -> String? {
+        withScratchEnv {
+            let (_, shell) = makeMountedShell()
+
+            guard RailDestination.schedules.slot != RailDestination.automation.slot else {
+                return "schedules must not share a slot with automation"
+            }
+
+            shell.show(.schedules)
+            guard let schedulesView = shell.destinationViewIfMountedForTests(.schedules) else {
+                return "show(.schedules) did not mount the schedules slot"
+            }
+            guard schedulesView.isHidden == false else {
+                return "the schedules view should be visible right after show(.schedules)"
+            }
+
+            // Visiting Schedules must not have built the shared Setup slot as
+            // a side effect - it is a fully independent destination now.
+            guard shell.destinationViewIfMountedForTests(.setup) == nil else {
+                return "show(.schedules) unexpectedly mounted the setup slot too"
+            }
+
+            shell.show(.automation)
+            guard let setupView = shell.destinationViewIfMountedForTests(.setup) else {
+                return "show(.automation) did not mount the setup slot"
+            }
+            let labels = collectTextFieldValues(in: setupView)
+            guard !labels.contains("Schedules") else {
+                return "the Automation page (behind the Setup flyout) still renders a \"Schedules\" card header - it should have moved to its own destination"
+            }
+            guard !labels.contains(where: { $0.localizedCaseInsensitiveContains("new schedule") }) else {
+                return "the Automation page still renders a schedule-creation control"
+            }
+            return nil
+        }
+    }
+
+    /// A plain recursive walk - this file's only need for one, so it stays
+    /// local rather than becoming a shared utility.
+    private static func collectTextFieldValues(in view: NSView) -> [String] {
+        var result: [String] = []
+        if let field = view as? NSTextField { result.append(field.stringValue) }
+        for sub in view.subviews { result.append(contentsOf: collectTextFieldValues(in: sub)) }
+        return result
     }
 
     // MARK: The mounter itself, with stub controllers

@@ -491,7 +491,8 @@ final class IconRailController: NSViewController, NSPopoverDelegate {
             navStack.addArrangedSubview(button)
         }
 
-        // Tools/Vault/Dictation/Docs/"Setup" (fm/grandline-rail-unify-and-mark-polish)
+        // Tools/Vault/Dictation/Schedules/Docs/"Setup" (fm/grandline-rail-unify-and-mark-polish,
+        // extended by fm/grandline-schedules-sidebar-move for Schedules)
         // continue `navStack`'s own loop directly - one continuous,
         // evenly-spaced list with the daily-use rows above, separated by the
         // same `navStackDivider()` rhythm, rather than a separately-anchored
@@ -499,7 +500,7 @@ final class IconRailController: NSViewController, NSPopoverDelegate {
         // switching purposes (Bootstrap/Updates/Automation/Settings
         // included); only their vertical position (or, for Settings, entry
         // point) is what moves.
-        for dest: RailDestination in [.tools, .vault, .dictation, .docs] {
+        for dest: RailDestination in [.tools, .vault, .dictation, .schedules, .docs] {
             navStackDivider()
             let button = railButton(for: dest)
             buttons[dest] = button

@@ -278,7 +278,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // on a cadence nobody chose, while this runs the specific actions the
         // captain asked for at the times they asked for. Both are timers; only
         // this one has a captain-authored schedule behind it.
-        ScheduleRunner.shared.onNavigateToAutomation = { [weak self] in self?.appShell.show(.automation) }
+        // fm/grandline-schedules-sidebar-move: the Schedules card lives on
+        // its own rail destination now, not `.automation`.
+        ScheduleRunner.shared.onNavigateToSchedules = { [weak self] in self?.appShell.show(.schedules) }
         ScheduleRunner.shared.start(store: scheduleStore,
                                     hostStore: hostStore,
                                     keyStore: keyStore,
