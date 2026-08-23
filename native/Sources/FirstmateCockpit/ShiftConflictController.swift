@@ -19,6 +19,15 @@
 import AppKit
 
 final class ShiftConflictController: NSViewController {
+    /// P3 (production review, section 21): this controller is built fresh on
+    /// every presentation, so a `ThemeManager` observation registered in
+    /// `loadView` and never removed leaves a dead closure in
+    /// `ThemeManager.observers` for the rest of the session - one per
+    /// presentation, growing without bound. `ThemeManager.swift`'s own
+    /// checklist calls for storing the token and unobserving; the six
+    /// `HelmFormSheet` editors already do. This is the same fix.
+    private var themeObservation: ThemeObservation?
+
 
     private let conflictSet: ShiftConflictSet
 
@@ -50,7 +59,7 @@ final class ShiftConflictController: NSViewController {
         let theme = ThemeManager.shared.theme
         root.wantsLayer = true
         root.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
-        ThemeManager.shared.observe { [weak root] theme in
+        themeObservation = ThemeManager.shared.observe { [weak root] theme in
             root?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
             root?.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
         }
@@ -311,4 +320,9 @@ final class ShiftConflictController: NSViewController {
             }
         }
     }
+
+    deinit {
+        if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }
+    }
+
 }

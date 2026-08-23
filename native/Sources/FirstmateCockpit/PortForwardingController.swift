@@ -10,6 +10,15 @@
 import AppKit
 
 final class PortForwardingController: NSViewController {
+    /// P3 (production review, section 21): this controller is built fresh on
+    /// every presentation, so a `ThemeManager` observation registered in
+    /// `loadView` and never removed leaves a dead closure in
+    /// `ThemeManager.observers` for the rest of the session - one per
+    /// presentation, growing without bound. `ThemeManager.swift`'s own
+    /// checklist calls for storing the token and unobserving; the six
+    /// `HelmFormSheet` editors already do. This is the same fix.
+    private var themeObservation: ThemeObservation?
+
 
     private var rules: [PortForwardRule]
     private var rows: [PortForwardRuleRowView] = []
@@ -42,7 +51,7 @@ final class PortForwardingController: NSViewController {
         // set to. Its own muted text no longer relies on that - it goes
         // through `mutedLabels` (audit §5.3), which is theme-aware rather
         // than merely light/dark-correct.
-        ThemeManager.shared.observe { [weak root, weak self] theme in
+        themeObservation = ThemeManager.shared.observe { [weak root, weak self] theme in
             root?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
             self?.mutedLabels.apply(theme)
             self?.rowsStack.arrangedSubviews
@@ -184,6 +193,11 @@ final class PortForwardingController: NSViewController {
     @objc private func cancel() {
         dismiss(self)
     }
+
+    deinit {
+        if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }
+    }
+
 }
 
 // MARK: - One rule row

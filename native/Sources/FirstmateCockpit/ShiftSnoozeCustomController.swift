@@ -8,6 +8,15 @@
 import AppKit
 
 final class ShiftSnoozeCustomController: NSViewController {
+    /// P3 (production review, section 21): this controller is built fresh on
+    /// every presentation, so a `ThemeManager` observation registered in
+    /// `loadView` and never removed leaves a dead closure in
+    /// `ThemeManager.observers` for the rest of the session - one per
+    /// presentation, growing without bound. `ThemeManager.swift`'s own
+    /// checklist calls for storing the token and unobserving; the six
+    /// `HelmFormSheet` editors already do. This is the same fix.
+    private var themeObservation: ThemeObservation?
+
 
     private let initial: Date
     var onPick: ((Date) -> Void)?
@@ -24,7 +33,7 @@ final class ShiftSnoozeCustomController: NSViewController {
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 140))
         view = root
-        ThemeManager.shared.observe { [weak root] theme in
+        themeObservation = ThemeManager.shared.observe { [weak root] theme in
             root?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
         }
 
@@ -70,4 +79,9 @@ final class ShiftSnoozeCustomController: NSViewController {
     @objc private func cancel() {
         dismiss(self)
     }
+
+    deinit {
+        if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }
+    }
+
 }

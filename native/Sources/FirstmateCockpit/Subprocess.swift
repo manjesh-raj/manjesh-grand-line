@@ -301,6 +301,15 @@ enum Subprocess {
         if let cwd { proc.currentDirectoryURL = cwd }
 
         var environment = env ?? childEnvironmentDict()
+        // P3: a background child has no terminal and nobody to answer a
+        // credential prompt, so a `git` that decides to ask for one blocks
+        // until this runner's timeout kills it - a slow, confusing failure
+        // for what is really "no credentials". Set before `extraEnv` so a
+        // caller that genuinely wants prompting can override it; deliberately
+        // *not* in `childEnvironmentDict()`, which also builds the
+        // environment for the captain's own interactive terminal tabs, where
+        // git prompting is correct behaviour.
+        environment["GIT_TERMINAL_PROMPT"] = "0"
         for (key, value) in extraEnv { environment[key] = value }
         proc.environment = environment
 
