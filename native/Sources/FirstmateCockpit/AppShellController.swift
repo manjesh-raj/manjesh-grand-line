@@ -1027,6 +1027,28 @@ final class AppShellController: NSViewController {
         docs.openPostmortem(id: id)
     }
 
+    // MARK: Command palette navigation (F5)
+
+    /// F5 (`fm/grandline-feature-f5-command-palette-expansion`): the command
+    /// palette's action for a saved command that still needs a parameter
+    /// filled in - switches to the Tasks destination's DevOps Commands tab
+    /// and selects it, so the captain completes it on the real form (with its
+    /// real Copy/Send buttons and their real risk gate) rather than the
+    /// palette sending a half-substituted template.
+    func openCommandLibraryCommand(id: String) {
+        show(.shift)
+        shift.openCommandLibraryCommand(id: id)
+    }
+
+    /// The command palette's send action for a command that needs no input -
+    /// the identical call `shift.onSendCommandToTerminal` is wired to above,
+    /// so both surfaces type into whichever console tab is in front. The risk
+    /// gate runs *before* this (see `CommandRiskConfirmation`); this method is
+    /// only the delivery half.
+    func sendCommandToConsole(_ text: String) {
+        console.sendCommandLibraryTextToActiveTab(text)
+    }
+
     // MARK: Log Analyzer (`fm/grandline-log-analyzer-build`)
 
     /// ⌘⇧L / the Log Analyzer menu's "Open Log Analyzer" - switches to the

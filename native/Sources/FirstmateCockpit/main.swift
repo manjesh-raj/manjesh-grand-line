@@ -37,15 +37,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var hostsPanel = HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore)
     lazy var settingsController = SettingsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore)
     lazy var shiftMenuBar = ShiftMenuBarController(store: shiftStore)
-    lazy var shiftSearch = ShiftSearchController(store: shiftStore)
-    // Phase 4 ("Knowledge and speed"): the unified `⌘K` search palette. Its
-    // own `DocsRunbookStore` instance (not `appShell`'s private one inside
-    // `DocsController`) - both read the same git-synced folder fresh on every
-    // call, so a second instance costs nothing and needs no plumbing through
-    // `AppShellController`'s constructor, mirroring how `UpdatesController`/
-    // `BootstrapController` already keep independent copies of the same
-    // underlying checks (see AGENTS.md).
-    lazy var unifiedSearch = UnifiedSearchController(store: DocsRunbookStore())
+    // F5 (`fm/grandline-feature-f5-command-palette-expansion`): the `⌘K`
+    // command palette, now the app's one search/verb surface - it absorbed
+    // Shift's own separate ⌘⇧P palette (`ShiftSearchController`, deleted), so
+    // there is no second search UI to keep in sync.
+    //
+    // Its providers are registered in `buildUnifiedSearchIndex()` below, each
+    // holding the *shared* store its domain lives in (never a second cached
+    // copy - GL-23's own lesson, which is why F5 depends on that fix) and the
+    // real action its rows dispatch to.
+    //
+    // The one exception is `DocsRunbookStore`, which this palette keeps its
+    // own instance of (not `appShell`'s private one inside `DocsController`):
+    // it re-reads the same git-synced folder fresh on every call, so a second
+    // instance costs nothing and caches nothing that could drift - the same
+    // reasoning `UpdatesController`/`BootstrapController` already use for
+    // their own independent copies of one underlying check (see AGENTS.md).
+    let docsRunbookStore = DocsRunbookStore()
+    lazy var unifiedSearch = UnifiedSearchController(index: buildUnifiedSearchIndex())
     lazy var shiftQuickCapture = ShiftQuickCaptureController(store: shiftStore)
     lazy var shiftNotifications = ShiftNotificationScheduler(store: shiftStore)
     lazy var shiftHotkey = ShiftGlobalHotkey { [weak self] in self?.shiftQuickCapture.present() }
@@ -276,18 +285,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                     snippetStore: snippetStore,
                                     dictationStore: dictationStore)
 
-        // Phase 5 (cockpit-shift-power-features): search palette + menu bar
-        // popover + global quick capture + due-item notifications. All four
-        // read/write the one shared `shiftStore` above - never a second
-        // instance.
-        shiftSearch.onSelectTask = { [weak self] id in self?.appShell.openShiftTask(id: id) }
-        shiftSearch.onSelectFollowUp = { [weak self] id in self?.appShell.openShiftFollowUp(id: id) }
-        shiftSearch.onSelectProject = { [weak self] id in self?.appShell.openShiftProject(id: id) }
-        // Phase 4 ("Knowledge and speed"): `⌘K` now opens this unified
-        // palette app-wide - both its own click (the topbar Search pill,
-        // wired below) and the main menu's `⌘K` item resolve here.
-        unifiedSearch.onSelectRunbook = { [weak self] id in self?.appShell.openDocsRunbook(id: id) }
-        unifiedSearch.onSelectPostmortem = { [weak self] id in self?.appShell.openDocsPostmortem(id: id) }
+        // Phase 5 (cockpit-shift-power-features): menu bar popover + global
+        // quick capture + due-item notifications, all reading/writing the one
+        // shared `shiftStore` above - never a second instance. (Its fourth
+        // member, the ⌘⇧P search palette, was absorbed into ⌘K by F5.)
+        //
+        // F5: `⌘K` opens the one palette app-wide - the topbar Search pill
+        // (wired below), the Edit menu's `⌘K` item, and nothing else. Every
+        // row's action was wired into its provider in
+        // `buildUnifiedSearchIndex()`; there is no per-result callback here
+        // any more, and no second palette (⌘⇧P is gone with
+        // `ShiftSearchController`).
+        //
         // The topbar Search pill's click, forwarded through `AppShellController.
         // onSearchTapped` (see that property's own doc comment) - not
         // `appShell.topBar.onSearchTapped` directly, since `loadView()` (run
@@ -625,18 +634,81 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Shift power features (phase 5)
 
-    @objc func showShiftSearch() {
-        shiftSearch.present()
-    }
-
     @objc func showShiftQuickCapture() {
         shiftQuickCapture.present()
     }
 
-    // MARK: Unified search (phase 4, "Knowledge and speed")
+    // MARK: Command palette (phase 4 "Knowledge and speed"; expanded by F5)
 
     @objc func showUnifiedSearch() {
         unifiedSearch.present()
+    }
+
+    /// F5 (`fm/grandline-feature-f5-command-palette-expansion`): registers
+    /// every domain the palette searches.
+    ///
+    /// This is the one place the palette's rows get their actions, and every
+    /// one of them is a call into the method that already backs that action's
+    /// own UI - the review's own instruction ("action items dispatch through
+    /// existing `AppShellController` methods"). Nothing here re-implements a
+    /// connect, a send, an open or a navigation.
+    ///
+    /// Provider order is irrelevant to display (the palette groups and orders
+    /// by `UnifiedSearchKind.groupOrder`); it is listed here in that same
+    /// order purely so this reads like the palette looks.
+    private func buildUnifiedSearchIndex() -> UnifiedSearchIndex {
+        let index = UnifiedSearchIndex()
+
+        // Hosts -> the one place a saved host is connected to, shared with
+        // the Hosts list's own Connect and the rail's per-host icons.
+        index.register(UnifiedSearchHostProvider(store: hostStore) { [weak self] host in
+            self?.connectToHost(host)
+        })
+
+        // Saved commands -> the Command Library's own Send-to-terminal path,
+        // behind the Command Library's own risk gate. `CommandRiskConfirmation`
+        // is the single shared definition of that alert (extracted from
+        // `CommandLibraryPageView` by F5 for exactly this), so a destructive
+        // command reached from the palette shows the identical confirmation it
+        // shows on the page - the review's "destructive commands keep their
+        // confirmation gates".
+        //
+        // A command that still needs a parameter is never sent; it opens on
+        // the real form instead. See `UnifiedSearchCommandProvider`'s header.
+        index.register(UnifiedSearchCommandProvider(
+            store: commandLibraryStore,
+            onSend: { [weak self] command, generated in
+                guard let self else { return }
+                CommandRiskConfirmation.confirm(command: command, generatedText: generated,
+                                                actionVerb: "send to the terminal") {
+                    self.commandLibraryStore.recordUsage(command.id)
+                    self.appShell.sendCommandToConsole(generated)
+                    self.appShell.showToast("Sent to terminal")
+                }
+            },
+            onOpen: { [weak self] id in self?.appShell.openCommandLibraryCommand(id: id) }
+        ))
+
+        // Tasks / follow-ups / projects - what ⌘⇧P used to search, on the same
+        // shared `shiftStore`, opening the same editor sheets a row click does.
+        index.register(UnifiedSearchShiftProvider(
+            store: shiftStore,
+            onOpenTask: { [weak self] id in self?.appShell.openShiftTask(id: id) },
+            onOpenFollowUp: { [weak self] id in self?.appShell.openShiftFollowUp(id: id) },
+            onOpenProject: { [weak self] id in self?.appShell.openShiftProject(id: id) }
+        ))
+
+        // Runbooks + postmortems - the pre-F5 palette, unchanged behaviour.
+        index.register(UnifiedSearchDocsProvider(
+            store: docsRunbookStore,
+            onOpenRunbook: { [weak self] id in self?.appShell.openDocsRunbook(id: id) },
+            onOpenPostmortem: { [weak self] id in self?.appShell.openDocsPostmortem(id: id) }
+        ))
+
+        // App actions + destinations - every entry an existing menu action.
+        index.register(UnifiedSearchActionProvider.standard(shell: appShell))
+
+        return index
     }
 
     // MARK: Menu
@@ -703,10 +775,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let findInTerminalItem = NSMenuItem(title: "Find in Terminal", action: #selector(AppShellController.activateConsoleFind), keyEquivalent: "")
         findInTerminalItem.target = appShell
         editMenu.addItem(findInTerminalItem)
-        // Phase 4: ⌘K now opens the unified search palette (Runbooks +
-        // Postmortems - see `UnifiedSearch.swift`'s header for why terminal
-        // history isn't included yet), matching the topbar Search pill's own
-        // ⌘K badge.
+        // ⌘K opens the app's one command palette, matching the topbar Search
+        // pill's own ⌘K badge. F5 expanded what it searches from Runbooks +
+        // Postmortems to hosts, saved commands, tasks/follow-ups/projects,
+        // runbooks, postmortems and app actions/destinations - and absorbed
+        // Shift's own ⌘⇧P palette. See `UnifiedSearch.swift`'s header (and
+        // `UnifiedSearchProviders.swift`'s) for the design, including why
+        // terminal history is still not included.
         let unifiedSearchItem = NSMenuItem(title: "Search…", action: #selector(AppDelegate.showUnifiedSearch), keyEquivalent: "k")
         unifiedSearchItem.target = self
         editMenu.addItem(unifiedSearchItem)
@@ -752,21 +827,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         newFollowUpItem.keyEquivalentModifierMask = [.command, .shift]
         newFollowUpItem.target = appShell
         shiftMenu.addItem(newFollowUpItem)
-        // cockpit-fix-shift-new-project: no keyEquivalent - ⌘⇧P is already
-        // "Search Shift…" below, and this menu follows that item's own
-        // no-shortcut precedent ("Weekly Review") rather than force a
-        // collision.
+        // cockpit-fix-shift-new-project: no keyEquivalent - this menu follows
+        // "Weekly Review"'s own no-shortcut precedent rather than force a
+        // collision. (It could take ⌘⇧P now that F5 freed it, but a shortcut
+        // the captain never had is not this task's to invent.)
         let newProjectItem = NSMenuItem(title: "New Project…", action: #selector(AppShellController.newShiftProjectFromMenu), keyEquivalent: "")
         newProjectItem.target = appShell
         shiftMenu.addItem(newProjectItem)
         shiftMenu.addItem(NSMenuItem.separator())
-        // Phase 5 (cockpit-shift-power-features): ⌘⇧P rather than the
-        // reviewed mockup's own ⌘K, which this app already bound to "Find in
-        // Terminal" above, well before this phase existed.
-        let searchShiftItem = NSMenuItem(title: "Search Tasks…", action: #selector(AppDelegate.showShiftSearch), keyEquivalent: "p")
-        searchShiftItem.keyEquivalentModifierMask = [.command, .shift]
-        searchShiftItem.target = self
-        shiftMenu.addItem(searchShiftItem)
+        // F5 (`fm/grandline-feature-f5-command-palette-expansion`) removed
+        // this menu's own "Search Tasks… ⌘⇧P" item: ⌘K now searches tasks,
+        // follow-ups and projects alongside hosts, commands, runbooks and app
+        // actions, so a second search item pointing at a second palette was
+        // exactly the duplication the review asked to collapse. Tasks are
+        // still fully searchable - from the Edit menu's "Search… ⌘K" or the
+        // topbar Search pill. ⌘⇧P is now unbound.
         let weeklyReviewItem = NSMenuItem(title: "Weekly Review", action: #selector(AppShellController.showShiftWeeklyReview), keyEquivalent: "")
         weeklyReviewItem.target = appShell
         shiftMenu.addItem(weeklyReviewItem)
@@ -1417,6 +1492,23 @@ if ProcessInfo.processInfo.environment["FM_RUN_MORNING_BRIEFING_TESTS"] == "1" {
 // one property no amount of using the app would ever surface.
 if ProcessInfo.processInfo.environment["FM_RUN_FLEET_LOG_TESTS"] == "1" {
     exit(FleetLogSelfTest.run() ? 0 : 1)
+}
+
+// F5's command-palette providers: every domain's matching, the grouping the
+// mockup shows, the "never send a half-substituted command" rule, and the
+// source guards that keep the destructive-command gate a single definition the
+// palette cannot bypass. See UnifiedSearchSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_UNIFIED_SEARCH_TESTS"] == "1" {
+    exit(UnifiedSearchSelfTest.run() ? 0 : 1)
+}
+
+// The palette's own layout - the chip staying a chip under `.fill`, the panel
+// being as tall as a grouped list, and the title truncating rather than
+// running under the chip. Window-backed, so the runner skips it in a headless
+// CI container; its provider/matching sibling above stays CI-enforced. See
+// UnifiedSearchLayoutSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_UNIFIED_SEARCH_LAYOUT_TESTS"] == "1" {
+    exit(UnifiedSearchLayoutSelfTest.run() ? 0 : 1)
 }
 
 #endif

@@ -382,6 +382,29 @@ final class CommandLibraryPageView: NSObject {
         render()
     }
 
+    /// F5 (`fm/grandline-feature-f5-command-palette-expansion`): reveal one
+    /// command from outside this page - the command palette's action for a
+    /// command that still needs a parameter filled in, which is why the
+    /// palette never sends such a command blind.
+    ///
+    /// Deliberately the same two steps a real row click already performs
+    /// (open the command's own category in the left column so the row is
+    /// visible, then select it) rather than a second selection path - it
+    /// calls straight into `selectCommand(id:)`.
+    func openCommand(id: String) {
+        store.reloadAll()
+        guard let command = store.command(id: id) else { return }
+        if !command.category.isEmpty { leftPanelState = .category(command.category) }
+        // `selectCommand` early-returns when the id is already selected, in
+        // which case only the left panel's newly-opened category needs a
+        // render.
+        if selectedCommandID == id {
+            render()
+        } else {
+            selectCommand(id: id)
+        }
+    }
+
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
         view.layer?.backgroundColor = .clear
@@ -974,12 +997,38 @@ final class CommandLibraryPageView: NSObject {
 
     // MARK: Destructive-confirmation gate
 
-    /// Both Copy and Send to Terminal route through this - `readOnly` never
-    /// interrupts, `potentiallyDisruptive` gets a lighter, still-dismissible
-    /// confirmation, `destructive` gets the full "this can modify or delete
-    /// infrastructure" warning (matching the design doc's mockup). There is
-    /// no silent path from a risky command to the clipboard or a terminal.
+    /// Both Copy and Send to Terminal route through this. Delegates to the
+    /// one shared gate (`CommandRiskConfirmation`, below) -
+    /// F5 extracted it there so the Command palette's own command action runs
+    /// the identical alert rather than a second copy that could drift.
     private func confirmIfNeeded(for command: DevOpsCommand, generatedText: String, actionVerb: String, proceed: @escaping () -> Void) {
+        CommandRiskConfirmation.confirm(command: command, generatedText: generatedText,
+                                        actionVerb: actionVerb, proceed: proceed)
+    }
+}
+
+// MARK: - Destructive-confirmation gate (shared)
+
+/// The app's one destructive-command confirmation.
+///
+/// It lived as a private method on `CommandLibraryPageView` until F5
+/// (`fm/grandline-feature-f5-command-palette-expansion`) gave the command
+/// palette a command action of its own. The palette must run the *same* gate,
+/// not a lookalike - the review's own F5 security line is "destructive
+/// commands keep their confirmation gates", and a palette is a faster way to
+/// reach an action, never a way around its safety check. So there is exactly
+/// one definition and two callers: `CommandLibraryPageView`'s Copy/Send
+/// buttons and `UnifiedSearchCommandProvider`'s row action (dispatched from
+/// `main.swift`).
+///
+/// `readOnly` never interrupts, `potentiallyDisruptive` gets a lighter,
+/// still-dismissible confirmation, `destructive` gets the full "this can
+/// modify or delete infrastructure" warning (matching the design doc's
+/// mockup). There is no silent path from a risky command to the clipboard or
+/// a terminal.
+enum CommandRiskConfirmation {
+    static func confirm(command: DevOpsCommand, generatedText: String, actionVerb: String,
+                        proceed: () -> Void) {
         switch command.risk {
         case .readOnly:
             proceed()

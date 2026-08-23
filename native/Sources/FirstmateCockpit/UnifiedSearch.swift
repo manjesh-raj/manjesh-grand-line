@@ -1,77 +1,112 @@
 // Manjesh Grand Line - native macOS app.
 //
-// Phase 4 (final phase) of "Knowledge and speed" (fm/grandline-unified-search):
-// expands the app's global `⌘K` shortcut from its prior single job
-// (`AppShellController.activateConsoleFind` - in-terminal find) into a real
-// "search everything" palette, mirroring `ShiftSearchController`'s own small
-// `NSPanel`-based shape (borderless input over a results list, arrow keys/
-// Return/Escape) - a second, similar palette for a different content domain,
-// not a third distinct UI pattern. See AGENTS.md's "Knowledge" section for
-// the full phase history.
+// The app's `⌘K` command palette.
 //
-// The actual search backend is phase 1's real `DocsKnowledgeSearch.search` -
-// this file does not reimplement matching/snippeting, only wraps its result
-// type for the palette's row shape and owns the palette UI itself.
+// Phase 4 of "Knowledge and speed" (fm/grandline-unified-search) built this
+// as a runbook/postmortem search, expanding `⌘K` from its prior single job
+// (`AppShellController.activateConsoleFind` - in-terminal find).
 //
-// Terminal command history was investigated as a fourth search domain (per
-// the phase-4 brief) and deliberately left out: the only structured record of
-// "commands the captain has actually run" is Block View's `TerminalBlockTracker`,
-// which is off by default and only active on hosts with `Host.blockViewOptIn`
-// set (see AGENTS.md's "Block view" section - still an early "Stage 0"
-// rollout). That's not a safe, already-real, app-wide data source to search
-// against - most captains have it off entirely, and expanding its scope to
-// back a search feature is explicitly out of scope for this task. Session
-// logging is opt-in, unstructured raw terminal bytes, not a list of commands.
-// So this palette searches Runbooks + Postmortems only; terminal-history
-// search stays deferred until Block View matures past its current rollout
-// stage.
+// **F5 (`fm/grandline-feature-f5-command-palette-expansion`) made it the
+// app's verb surface**, per the production review's F5 entry (section 25 of
+// `data/grandline-production-review/MANJESH_GRAND_LINE_PRODUCTION_REVIEW.md`)
+// and the captain-approved mockup in that review's `lavish-plan.html`: hosts
+// (Connect), the command library (Send/open), tasks/follow-ups/projects,
+// runbooks, postmortems and app actions/destinations, grouped by kind, in one
+// list. It also **absorbed ⌘⇧P** - `ShiftSearch.swift`'s second, near-
+// identical palette over the same Shift data is gone, its matcher living on
+// as `UnifiedSearchShiftProvider`.
+//
+// This file owns the palette *UI and nothing else*. Every domain's matching
+// and every row's action live behind `UnifiedSearchProvider`
+// (`UnifiedSearchProviders.swift`) - read that file's header for the design,
+// including why a command row sometimes sends and sometimes opens, and how
+// the destructive-command confirmation gate is preserved when a command is
+// reached from here. Grouping/capping is the only thing added on top, below.
+//
+// Terminal command history was investigated as a search domain (in phase 4,
+// and unchanged by F5) and deliberately left out: the only structured record
+// of "commands the captain has actually run" is Block View's
+// `TerminalBlockTracker`, which is off by default and only active on hosts
+// with `Host.blockViewOptIn` set (see AGENTS.md's "Block view" section -
+// still an early "Stage 0" rollout). That's not a safe, already-real,
+// app-wide data source to search against, and expanding its rollout scope to
+// back a search feature is its own decision. Terminal-history search stays
+// deferred until Block View matures past that stage.
 
 import AppKit
 
-struct UnifiedSearchResult {
-    enum Kind: String { case runbook = "Runbook", postmortem = "Postmortem" }
-    let kind: Kind
-    let id: String
-    let title: String
-    let snippet: String
-}
+/// Runs every registered provider and groups what they return.
+///
+/// Providers are registered once (`main.swift`), each already holding its own
+/// store and its own real actions - so this type never learns what a host or
+/// a command is, which is exactly the "provider protocol on the existing
+/// palette" the review asked for.
+final class UnifiedSearchIndex {
+    /// Rows shown per group before the rest collapse into an explicit
+    /// "N more…" line. A query like "e" genuinely matches most of the 70+
+    /// seeded commands, and the palette renders rows as permanent
+    /// `NSStackView` arranged subviews - the shape AGENTS.md has watched blow
+    /// up into multi-second layout passes four times now. Capping keeps the
+    /// stack small *and* keeps the palette readable; the overflow count is
+    /// surfaced rather than silently dropped.
+    static let maxPerGroup = 6
 
-enum UnifiedSearchIndex {
-    /// Thin wrapper over `DocsKnowledgeSearch.search` (`DocsRunbookData.swift`)
-    /// - the same real search logic the Docs page's own in-page Search tab
-    /// already uses, never a second index/matching implementation.
-    static func search(store: DocsRunbookStore, query: String) -> [UnifiedSearchResult] {
-        DocsKnowledgeSearch.search(query: query, store: store).map { result in
-            let kind: UnifiedSearchResult.Kind = result.scope == .runbook ? .runbook : .postmortem
-            return UnifiedSearchResult(kind: kind, id: result.runbook.id, title: result.runbook.title, snippet: result.snippet)
+    private var providers: [UnifiedSearchProvider] = []
+
+    func register(_ provider: UnifiedSearchProvider) { providers.append(provider) }
+
+    /// Every provider's matches, bucketed by `UnifiedSearchKind.groupTitle`
+    /// and ordered by `UnifiedSearchKind.groupOrder`. A group with no matches
+    /// is omitted entirely (no empty headers).
+    func groups(query: String) -> [UnifiedSearchGroup] {
+        var buckets: [String: [UnifiedSearchItem]] = [:]
+        for provider in providers {
+            for item in provider.items(query: query) {
+                buckets[item.kind.groupTitle, default: []].append(item)
+            }
         }
+        return UnifiedSearchKind.groupOrder.compactMap { title in
+            guard let items = buckets[title], !items.isEmpty else { return nil }
+            let shown = Array(items.prefix(Self.maxPerGroup))
+            return UnifiedSearchGroup(title: title, items: shown, overflow: items.count - shown.count)
+        }
+    }
+
+    /// The flat, in-display-order row list the palette's arrow keys move
+    /// through - group headers and overflow lines are not selectable.
+    func flatItems(query: String) -> [UnifiedSearchItem] {
+        groups(query: query).flatMap(\.items)
     }
 }
 
 /// The palette itself - a small, non-activating, key-accepting panel so
 /// typing works immediately without stealing focus from (or hiding) the main
-/// window behind it. Structurally identical to `ShiftSearchController`
-/// (`ShiftSearch.swift`); kept as its own type since the two search over
-/// completely different stores/result shapes and `⌘⇧P` (Shift's own palette)
-/// is deliberately left untouched and separate by this task's scope.
+/// window behind it.
+///
+/// F5 replaced its flat single-domain list with `UnifiedSearchIndex`'s
+/// grouped output, and its result type with `UnifiedSearchItem` - so picking
+/// a row is now `item.activate()` and this class dispatches nothing itself.
+/// The old `onSelectRunbook`/`onSelectPostmortem` callbacks are gone with it;
+/// `main.swift` wires those two actions into `UnifiedSearchDocsProvider`
+/// instead, alongside every other domain's.
 final class UnifiedSearchController: NSWindowController, NSTextFieldDelegate {
-    private let store: DocsRunbookStore
-    var onSelectRunbook: ((String) -> Void)?
-    var onSelectPostmortem: ((String) -> Void)?
+    private let index: UnifiedSearchIndex
 
     private let searchField = NSTextField()
     private let resultsStack = NSStackView()
     private let scroll = NSScrollView()
-    private var results: [UnifiedSearchResult] = []
+    private var groups: [UnifiedSearchGroup] = []
+    /// The selectable rows, flattened in display order - group headers and
+    /// "N more…" lines are skipped, so arrow keys never land on one.
+    private var items: [UnifiedSearchItem] = []
     private var selectedIndex = 0
     private var rowViews: [UnifiedSearchRowView] = []
+    private var groupHeaderLabels: [NSTextField] = []
     // Fix (dismiss bug): a click anywhere outside the palette - on the main
     // window, or in another app entirely (the panel floats at `.floating`
     // level above everything) - should close it, same as Spotlight/any
-    // command palette. Neither this class nor `ShiftSearchController` had
-    // this before; a bare `NSPanel` (unlike `NSPopover`) has no built-in
-    // outside-click dismissal, and nothing here previously installed a
-    // monitor to fill that gap. A local monitor covers a click landing in a
+    // command palette. A bare `NSPanel` (unlike `NSPopover`) has no built-in
+    // outside-click dismissal. A local monitor covers a click landing in a
     // different window of this same app; a global monitor covers a click in
     // a different app - mirrors `ShiftGlobalHotkey`'s established
     // local+global monitor pair (`ShiftQuickCapture.swift`), just for mouse
@@ -79,10 +114,10 @@ final class UnifiedSearchController: NSWindowController, NSTextFieldDelegate {
     private var outsideClickMonitor: Any?
     private var globalOutsideClickMonitor: Any?
 
-    init(store: DocsRunbookStore) {
-        self.store = store
+    init(index: UnifiedSearchIndex) {
+        self.index = index
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 60),
+            contentRect: NSRect(x: 0, y: 0, width: 580, height: 60),
             styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel, .resizable],
             backing: .buffered, defer: false
         )
@@ -120,7 +155,7 @@ final class UnifiedSearchController: NSWindowController, NSTextFieldDelegate {
         // `ThemeManager`/`HelmTheme` checklist, gotcha #8.
         content.wantsLayer = true
 
-        searchField.placeholderString = "Search runbooks and postmortems\u{2026}"
+        searchField.placeholderString = "Search hosts, commands, tasks, runbooks, actions\u{2026}"
         searchField.font = .systemFont(ofSize: 16)
         searchField.isBordered = false
         searchField.focusRingType = .none
@@ -173,8 +208,10 @@ final class UnifiedSearchController: NSWindowController, NSTextFieldDelegate {
     func present() {
         // GL-09: this palette is a `.floating` `NSPanel`, so it renders above
         // the lock overlay (which only covers the main window's own view tree)
-        // and its results disclose real task/runbook titles. A locked app does
-        // not open it.
+        // and its results disclose real host/task/runbook titles - and F5
+        // gave every row a real action, so a locked app opening this would
+        // hand out the app's whole verb surface. A locked app does not open
+        // it.
         guard AppLockGate.shared.allows(.quickCapture) else {
             AppLog.lifecycle.info("search palette refused - app is locked (GL-09)")
             return
@@ -244,7 +281,8 @@ final class UnifiedSearchController: NSWindowController, NSTextFieldDelegate {
     }
 
     private func reload(query: String) {
-        results = UnifiedSearchIndex.search(store: store, query: query)
+        groups = index.groups(query: query)
+        items = groups.flatMap(\.items)
         selectedIndex = 0
         rebuildRows()
         resizeToFit()
@@ -256,63 +294,124 @@ final class UnifiedSearchController: NSWindowController, NSTextFieldDelegate {
             v.removeFromSuperview()
         }
         rowViews.removeAll()
-        guard !results.isEmpty else {
-            let empty = NSTextField(labelWithString: "No matches.")
-            empty.font = .systemFont(ofSize: 13)
-            empty.textColor = HelmTheme.mutedInk(ThemeManager.shared.theme)
-            empty.translatesAutoresizingMaskIntoConstraints = false
-            let padded = NSView()
-            padded.translatesAutoresizingMaskIntoConstraints = false
-            padded.addSubview(empty)
-            NSLayoutConstraint.activate([
-                empty.leadingAnchor.constraint(equalTo: padded.leadingAnchor, constant: 18),
-                empty.topAnchor.constraint(equalTo: padded.topAnchor, constant: 14),
-                empty.bottomAnchor.constraint(equalTo: padded.bottomAnchor, constant: -14),
-            ])
-            resultsStack.addArrangedSubview(padded)
-            padded.widthAnchor.constraint(equalTo: resultsStack.widthAnchor).isActive = true
+        groupHeaderLabels.removeAll()
+        guard !items.isEmpty else {
+            addPaddedLabel("No matches.", font: .systemFont(ofSize: 13))
             return
         }
-        for (index, result) in results.enumerated() {
-            let row = UnifiedSearchRowView()
-            row.configure(result: result, theme: ThemeManager.shared.theme, selected: index == selectedIndex)
-            row.onClick = { [weak self] in
-                self?.selectedIndex = index
-                self?.selectCurrent()
+        var flatIndex = 0
+        for group in groups {
+            addGroupHeader(group.title)
+            for item in group.items {
+                let row = UnifiedSearchRowView()
+                row.configure(item: item, theme: ThemeManager.shared.theme, selected: flatIndex == selectedIndex)
+                let capturedIndex = flatIndex
+                row.onClick = { [weak self] in
+                    self?.selectedIndex = capturedIndex
+                    self?.selectCurrent()
+                }
+                row.translatesAutoresizingMaskIntoConstraints = false
+                resultsStack.addArrangedSubview(row)
+                row.widthAnchor.constraint(equalTo: resultsStack.widthAnchor).isActive = true
+                rowViews.append(row)
+                flatIndex += 1
             }
-            row.translatesAutoresizingMaskIntoConstraints = false
-            resultsStack.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: resultsStack.widthAnchor).isActive = true
-            rowViews.append(row)
+            // "No silent caps" - say what was left out rather than letting a
+            // capped group look complete.
+            if group.overflow > 0 {
+                addPaddedLabel("\(group.overflow) more \(group.title.lowercased()) match\(group.overflow == 1 ? "" : "es") - keep typing to narrow it down",
+                               font: .systemFont(ofSize: 11), leading: 24, vertical: 5, muted: true)
+            }
         }
+    }
+
+    /// A section header - the mockup's small uppercase group name.
+    private func addGroupHeader(_ title: String) {
+        let label = NSTextField(labelWithString: title.uppercased())
+        label.font = HelmType.kicker()
+        label.textColor = HelmTheme.mutedInk(ThemeManager.shared.theme)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        let padded = NSView()
+        padded.translatesAutoresizingMaskIntoConstraints = false
+        padded.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: padded.leadingAnchor, constant: 18),
+            label.topAnchor.constraint(equalTo: padded.topAnchor, constant: 8),
+            label.bottomAnchor.constraint(equalTo: padded.bottomAnchor, constant: -4),
+        ])
+        resultsStack.addArrangedSubview(padded)
+        padded.widthAnchor.constraint(equalTo: resultsStack.widthAnchor).isActive = true
+        groupHeaderLabels.append(label)
+    }
+
+    private func addPaddedLabel(_ text: String, font: NSFont, leading: CGFloat = 18,
+                               vertical: CGFloat = 14, muted: Bool = true) {
+        let label = NSTextField(labelWithString: text)
+        label.font = font
+        label.textColor = muted ? HelmTheme.mutedInk(ThemeManager.shared.theme)
+                                : HelmTheme.nsColor(ThemeManager.shared.theme.chromeInkHex)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        let padded = NSView()
+        padded.translatesAutoresizingMaskIntoConstraints = false
+        padded.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: padded.leadingAnchor, constant: leading),
+            label.topAnchor.constraint(equalTo: padded.topAnchor, constant: vertical),
+            label.bottomAnchor.constraint(equalTo: padded.bottomAnchor, constant: -vertical),
+        ])
+        resultsStack.addArrangedSubview(padded)
+        padded.widthAnchor.constraint(equalTo: resultsStack.widthAnchor).isActive = true
+        groupHeaderLabels.append(label)
     }
 
     private func resizeToFit() {
         guard let window else { return }
-        let rowHeight: CGFloat = results.isEmpty ? 46 : 48
-        let count = max(results.count, 1)
-        let resultsHeight = min(CGFloat(count) * rowHeight, 360)
+        // Summed from each arranged subview's own fitting height rather than
+        // one per-row constant, since a grouped list mixes three different row
+        // shapes (result rows, section headers, overflow lines). Measured per
+        // child rather than off the stack, so it cannot be thrown off by the
+        // stack's own width tie to the clip view - every child here is a
+        // padded, single-line, non-wrapping label, so its fitting height is
+        // exact and width-independent.
+        resultsStack.layoutSubtreeIfNeeded()
+        let measured = resultsStack.arrangedSubviews.reduce(CGFloat(0)) { $0 + $1.fittingSize.height }
+        let contentHeight = items.isEmpty ? 46 : max(measured, 46)
+        let resultsHeight = min(contentHeight, 420)
         let total = 61 + resultsHeight // search field + divider + padding
         let frame = window.frame
         window.setFrame(NSRect(x: frame.minX, y: frame.maxY - total, width: frame.width, height: total), display: true)
     }
 
     private func moveSelection(by delta: Int) {
-        guard !results.isEmpty else { return }
-        selectedIndex = max(0, min(results.count - 1, selectedIndex + delta))
+        guard !items.isEmpty else { return }
+        selectedIndex = max(0, min(items.count - 1, selectedIndex + delta))
         for (index, row) in rowViews.enumerated() {
             row.setSelected(index == selectedIndex)
         }
+        scrollSelectionIntoView()
     }
 
+    /// Keeps the arrow-key selection on screen once a grouped list is taller
+    /// than the palette's 420pt cap. `scrollToVisible` is called *on the row*
+    /// with its own `bounds` - the rect argument is in the receiver's own
+    /// coordinate space, so handing a clip view a rect in document
+    /// coordinates would scroll to the wrong place.
+    private func scrollSelectionIntoView() {
+        guard selectedIndex >= 0, selectedIndex < rowViews.count else { return }
+        resultsStack.layoutSubtreeIfNeeded()
+        rowViews[selectedIndex].scrollToVisible(rowViews[selectedIndex].bounds)
+    }
+
+    /// F5: the palette no longer knows what any row *is* - the provider that
+    /// produced it already closed over the real action (see
+    /// `UnifiedSearchProviders.swift`). Dismiss first so an action that opens
+    /// a sheet or an `NSAlert` (a destructive command's confirmation, say) is
+    /// not fighting this panel for key window.
     private func selectCurrent() {
-        guard selectedIndex >= 0, selectedIndex < results.count else { return }
-        let result = results[selectedIndex]
+        guard selectedIndex >= 0, selectedIndex < items.count else { return }
+        let item = items[selectedIndex]
         dismiss()
-        switch result.kind {
-        case .runbook: onSelectRunbook?(result.id)
-        case .postmortem: onSelectPostmortem?(result.id)
-        }
+        item.activate()
     }
 
     func dismiss() {
@@ -325,17 +424,48 @@ final class UnifiedSearchController: NSWindowController, NSTextFieldDelegate {
         searchField.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         dividerRef?.wantsLayer = true
         dividerRef?.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6).cgColor
+        for label in groupHeaderLabels { label.textColor = HelmTheme.mutedInk(theme) }
         for row in rowViews { row.applyTheme(theme) }
     }
+
+    // MARK: - Probe / self-test surface
+    //
+    // `UnifiedSearchSelfTest` drives the real grouping + selection + dispatch
+    // path rather than re-deriving it. Guarded like every other such hook.
+    #if FM_SELFTESTS
+    func debugReload(query: String) { reload(query: query) }
+    var debugGroupTitles: [String] { groups.map(\.title) }
+    var debugItemTitles: [String] { items.map(\.title) }
+    var debugSelectedIndex: Int { selectedIndex }
+    var debugRowCount: Int { rowViews.count }
+    func debugMoveSelection(by delta: Int) { moveSelection(by: delta) }
+    func debugActivateSelection() { selectCurrent() }
+    /// The panel height `resizeToFit()` settled on - the measurement that
+    /// proves a grouped list of mixed row shapes is not collapsed to one
+    /// row's worth of height.
+    var debugPanelHeight: CGFloat { window?.frame.height ?? 0 }
+    var debugContentWidth: CGFloat { window?.contentView?.bounds.width ?? 0 }
+    func debugLayoutNow() { window?.contentView?.layoutSubtreeIfNeeded() }
+    /// Per-row geometry for the layout checks: the chip must stay at its own
+    /// natural width instead of absorbing the row's slack, and must sit to the
+    /// right of the title rather than on top of it.
+    func debugRowGeometry(at index: Int) -> (rowWidth: CGFloat, chipWidth: CGFloat, chipHidden: Bool,
+                                             titleMaxX: CGFloat, chipMinX: CGFloat)? {
+        guard index >= 0, index < rowViews.count else { return nil }
+        return rowViews[index].debugGeometry
+    }
+    #endif
 }
 
-/// A single search-result row: a small mono "kind" label, the title, and a
-/// muted excerpt snippet - matching `ShiftSearchRowView`'s kind+title shape,
-/// with a second line for the snippet `DocsKnowledgeSearch` already computes.
+/// One palette row, matching the mockup's shape: a small tinted icon tile,
+/// the title over a muted meta line, and an optional trailing chip carrying
+/// what Return will do ("Connect ↵").
 private final class UnifiedSearchRowView: NSView {
-    private let kindLabel = NSTextField(labelWithString: "")
+    private let tile = IconTileView(size: 24, cornerRadius: 6)
     private let titleLabel = NSTextField(labelWithString: "")
-    private let snippetLabel = NSTextField(labelWithString: "")
+    private let metaLabel = NSTextField(labelWithString: "")
+    private let hintLabel = NSTextField(labelWithString: "")
+    private let hintBackground = NSView()
     private let background = HoverHighlightView()
     var onClick: (() -> Void)?
     private var isSelected = false
@@ -349,42 +479,72 @@ private final class UnifiedSearchRowView: NSView {
         background.translatesAutoresizingMaskIntoConstraints = false
         addSubview(background)
         NSLayoutConstraint.activate([
-            background.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 6),
-            background.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            background.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            background.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             background.topAnchor.constraint(equalTo: topAnchor, constant: 1),
             background.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
         ])
 
-        kindLabel.font = .monospacedSystemFont(ofSize: 9.5, weight: .semibold)
-        kindLabel.translatesAutoresizingMaskIntoConstraints = false
-        kindLabel.setContentHuggingPriority(.required, for: .horizontal)
-        kindLabel.widthAnchor.constraint(equalToConstant: 78).isActive = true
-
-        titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        titleLabel.font = HelmType.rowTitle()
         titleLabel.lineBreakMode = .byTruncatingTail
         titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        metaLabel.font = HelmType.caption()
+        metaLabel.lineBreakMode = .byTruncatingTail
+        metaLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let titleRow = NSStackView(views: [kindLabel, titleLabel])
-        titleRow.orientation = .horizontal
-        titleRow.spacing = 10
-        titleRow.alignment = .firstBaseline
-        titleRow.translatesAutoresizingMaskIntoConstraints = false
+        let textColumn = NSStackView(views: [titleLabel, metaLabel])
+        textColumn.orientation = .vertical
+        textColumn.alignment = .leading
+        textColumn.spacing = 1
+        textColumn.translatesAutoresizingMaskIntoConstraints = false
+        // AGENTS.md gotcha (12): the *stack*-level priority is the one that
+        // bites for a view with no intrinsic content size - the text column
+        // is the one thing allowed to flex, so the tile and the chip keep
+        // their natural widths and the title truncates instead.
+        textColumn.setHuggingPriority(.defaultLow, for: .horizontal)
+        textColumn.setClippingResistancePriority(.defaultLow, for: .horizontal)
 
-        snippetLabel.font = .systemFont(ofSize: 11)
-        snippetLabel.lineBreakMode = .byTruncatingTail
-        snippetLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        let column = NSStackView(views: [titleRow, snippetLabel])
-        column.orientation = .vertical
-        column.alignment = .leading
-        column.spacing = 3
-        column.translatesAutoresizingMaskIntoConstraints = false
-        background.addSubview(column)
+        hintLabel.font = HelmType.caption()
+        hintLabel.translatesAutoresizingMaskIntoConstraints = false
+        // AGENTS.md gotcha (12) again, and the reason this chip is sized by a
+        // *width constraint* rather than by hugging priority: `hintBackground`
+        // is a bare `NSView`, so it has no intrinsic content size, so
+        // `setContentHuggingPriority` on it is a no-op - which under the row's
+        // `.fill` distribution leaves it a candidate to absorb the row's whole
+        // slack width (this codebase has shipped a 90pt button rendered ~900pt
+        // wide exactly that way). Tying its width to the label's own intrinsic
+        // width plus the chip insets makes stretching structurally impossible
+        // instead of merely deprioritised. The stack-level
+        // `setHuggingPriority` fix does not apply here - that API only exists
+        // on `NSStackView`.
+        hintLabel.setContentHuggingPriority(.required, for: .horizontal)
+        hintLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+        hintBackground.wantsLayer = true
+        hintBackground.layer?.cornerRadius = 4
+        hintBackground.translatesAutoresizingMaskIntoConstraints = false
+        hintBackground.addSubview(hintLabel)
         NSLayoutConstraint.activate([
-            column.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 12),
-            column.trailingAnchor.constraint(lessThanOrEqualTo: background.trailingAnchor, constant: -12),
-            column.topAnchor.constraint(equalTo: background.topAnchor, constant: 7),
-            column.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -7),
+            hintLabel.centerXAnchor.constraint(equalTo: hintBackground.centerXAnchor),
+            hintLabel.centerYAnchor.constraint(equalTo: hintBackground.centerYAnchor),
+            hintBackground.widthAnchor.constraint(equalTo: hintLabel.widthAnchor, constant: 12),
+            hintBackground.heightAnchor.constraint(equalTo: hintLabel.heightAnchor, constant: 4),
+        ])
+
+        let row = NSStackView(views: [tile, textColumn, hintBackground])
+        row.orientation = .horizontal
+        row.spacing = 10
+        row.alignment = .centerY
+        // AGENTS.md gotcha (10): the AppKit default `.gravityAreas` honours
+        // no hugging priority at all, so slack width is resolved by Auto
+        // Layout's own tie-breaking and the chip drifts row to row.
+        row.distribution = .fill
+        row.translatesAutoresizingMaskIntoConstraints = false
+        background.addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: background.leadingAnchor, constant: 10),
+            row.trailingAnchor.constraint(equalTo: background.trailingAnchor, constant: -10),
+            row.topAnchor.constraint(equalTo: background.topAnchor, constant: 6),
+            row.bottomAnchor.constraint(equalTo: background.bottomAnchor, constant: -6),
         ])
 
         let click = NSClickGestureRecognizer(target: self, action: #selector(clicked))
@@ -395,12 +555,14 @@ private final class UnifiedSearchRowView: NSView {
 
     @objc private func clicked() { onClick?() }
 
-    func configure(result: UnifiedSearchResult, theme: HelmTheme, selected: Bool) {
+    func configure(item: UnifiedSearchItem, theme: HelmTheme, selected: Bool) {
         self.theme = theme
-        kindLabel.stringValue = result.kind.rawValue.uppercased()
-        titleLabel.stringValue = result.title
-        snippetLabel.stringValue = result.snippet
-        snippetLabel.isHidden = result.snippet.isEmpty || result.snippet == result.title
+        tile.configure(symbol: item.kind.symbol, tint: item.kind.tint, pointSize: 11)
+        titleLabel.stringValue = item.title
+        metaLabel.stringValue = item.meta
+        metaLabel.isHidden = item.meta.isEmpty
+        hintLabel.stringValue = item.actionHint ?? ""
+        hintBackground.isHidden = (item.actionHint ?? "").isEmpty
         setSelected(selected)
         applyTheme(theme)
     }
@@ -415,10 +577,25 @@ private final class UnifiedSearchRowView: NSView {
         let muted = HelmTheme.mutedInk(theme)
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let line = HelmTheme.nsColor(theme.chromeLineHex)
-        kindLabel.textColor = muted
         titleLabel.textColor = ink
-        snippetLabel.textColor = muted
+        metaLabel.textColor = muted
+        hintLabel.textColor = muted
+        hintBackground.layer?.backgroundColor = line.withAlphaComponent(0.35).cgColor
+        tile.applyTheme(theme)
         background.normalColor = isSelected ? line.withAlphaComponent(0.3) : .clear
         background.hoverColor = line.withAlphaComponent(0.3)
     }
+
+    #if FM_SELFTESTS
+    var debugGeometry: (rowWidth: CGFloat, chipWidth: CGFloat, chipHidden: Bool,
+                        titleMaxX: CGFloat, chipMinX: CGFloat) {
+        let titleInRow = titleLabel.convert(titleLabel.bounds, to: self)
+        let chipInRow = hintBackground.convert(hintBackground.bounds, to: self)
+        return (rowWidth: bounds.width,
+                chipWidth: hintBackground.frame.width,
+                chipHidden: hintBackground.isHidden,
+                titleMaxX: titleInRow.maxX,
+                chipMinX: chipInRow.minX)
+    }
+    #endif
 }

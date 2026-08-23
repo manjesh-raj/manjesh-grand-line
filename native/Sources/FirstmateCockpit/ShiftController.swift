@@ -628,6 +628,16 @@ final class ShiftController: NSViewController {
     /// task/follow-up/project found via search or the menu bar popover.
     func showDashboard() { switchTopLevelView(.dashboard) }
 
+    /// F5 (`fm/grandline-feature-f5-command-palette-expansion`): reveal one
+    /// saved command from the command palette. Switches to the DevOps
+    /// Commands tab (which `switchTopLevelView` already reloads) and then asks
+    /// the library page to select that command - the same selection a real row
+    /// click performs, never a second one.
+    func openCommandLibraryCommand(id: String) {
+        switchTopLevelView(.commandLibrary)
+        commandLibraryView.openCommand(id: id)
+    }
+
     private func buildWeeklyReviewSection() -> NSView {
         reviewGreeting.font = HelmType.pageTitle(.serif)
         reviewSubtitle.font = .systemFont(ofSize: 12)
