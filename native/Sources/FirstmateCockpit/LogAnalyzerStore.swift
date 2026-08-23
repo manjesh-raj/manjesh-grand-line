@@ -149,9 +149,14 @@ final class LogAnalyzerStore {
         // storage choice downward genuinely deletes content rather than
         // leaving `analysis.md`/`evidence/` orphaned next to a now-metadata-
         // only `investigation.yaml`.
-        if let existing = directory(forID: investigation.id) {
-            try? fm.removeItem(at: existing)
+        let existingDirectory = directory(forID: investigation.id)
+        if let existingDirectory {
+            try? fm.removeItem(at: existingDirectory)
         }
+        // F6: whether this save is the investigation's first. `save` also runs
+        // on every later edit and re-save of the same investigation, and the
+        // captain's log wants "saved investigation X" once, not once per edit.
+        let isFirstSave = existingDirectory == nil
 
         guard investigation.storage != .doNotSave else {
             gitSync?.markDirty()
@@ -181,6 +186,20 @@ final class LogAnalyzerStore {
         }
 
         gitSync?.markDirty()
+        // F6 (fleet history / captain's log): appended here, after the write
+        // genuinely succeeded, from the one code path that saves an
+        // investigation. Only the id and the title cross this boundary -
+        // never an evidence line or any part of the analysis, per F6's own
+        // security constraint and Log Analyzer's redaction posture.
+        //
+        // Both real storage modes count. The brief named `.complete`, but a
+        // `.metadataOnly` save is still a real investigation the captain chose
+        // to keep and still something that happened; only `.doNotSave` (which
+        // returns above, having written nothing) gets no event.
+        if isFirstSave {
+            FleetLogStore.shared.append(FleetLogSources.investigationSaved(
+                title: investigation.title, id: investigation.id))
+        }
         return dir
     }
 

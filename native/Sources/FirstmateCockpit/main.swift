@@ -975,6 +975,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 // never contends for the instance lock and never touches the real stores.
 #if FM_SELFTESTS
 
+// F6: redirect the captain's log to a scratch directory for the whole of a
+// self-test process, unless the caller already pointed it somewhere.
+//
+// Not a precaution - a real defect this caught. `FleetLogStore.shared` is
+// appended to by `ShiftGitSync.resolveConflicts` and `LogAnalyzerStore.save`,
+// which `ShiftConflictSelfTest` and `LogAnalyzerSelfTest` both drive against
+// their own scratch stores. Those suites correctly override every store they
+// know about (`FM_SHIFT_DIR`, `FM_LOG_ANALYZER_DIR`, ...), but the fleet log
+// is reached indirectly, through a singleton neither of them constructs - so
+// a plain `./Scripts/run-all-tests.sh` wrote three fabricated events into the
+// captain's real `events.jsonl`. Doing it here rather than in those two
+// suites covers every present and future suite that reaches an append path,
+// including a single suite run by hand, which is the case a per-suite fix
+// would keep missing. Same reasoning as `CommandLibraryStore` honouring
+// `FM_SHIFT_DIR` (see AGENTS.md's DevOps Commands section).
+if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_RUN_") }),
+   (ProcessInfo.processInfo.environment["FM_FLEET_LOG_DIR"] ?? "").isEmpty {
+    let scratch = FileManager.default.temporaryDirectory
+        .appendingPathComponent("fleet-log-selftest-process-\(ProcessInfo.processInfo.processIdentifier)",
+                                isDirectory: true)
+    setenv("FM_FLEET_LOG_DIR", scratch.path, 1)
+}
+
 // `fm/cockpit-sre-lead-shared-terminal`: `swift build && FM_RUN_SRE_LEAD_BRIDGE_TESTS=1
 // .build/debug/FirstmateCockpit` runs `SRELeadBridge`'s self-tests and exits,
 // never opening a window - this project builds with Command Line Tools only
@@ -1385,6 +1408,15 @@ if ProcessInfo.processInfo.environment["FM_RUN_SCHEDULE_RUNNER_TESTS"] == "1" {
 // disposable fake `claude`. See MorningBriefingSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_MORNING_BRIEFING_TESTS"] == "1" {
     exit(MorningBriefingSelfTest.run() ? 0 : 1)
+}
+
+// F6 (fleet history / captain's log): the event store's append/retention/
+// kind-filter contract, the day grouping, the one-line title sanitiser, and
+// the merge with Shift's own activity YAML. See FleetLogSelfTest.swift's
+// header for why the retention cap in particular is worth pinning - it is the
+// one property no amount of using the app would ever surface.
+if ProcessInfo.processInfo.environment["FM_RUN_FLEET_LOG_TESTS"] == "1" {
+    exit(FleetLogSelfTest.run() ? 0 : 1)
 }
 
 #endif

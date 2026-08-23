@@ -623,6 +623,15 @@ final class ShiftStore {
     /// 2 months) rather than scanning every month file that has ever
     /// existed, since "pushed back repeatedly" only needs a recent window to
     /// be useful.
+    /// F6 (fleet history / captain's log): the same bounded activity read
+    /// Weekly Review already does, exposed so Overview's Log tab can render
+    /// the task half of its feed from Shift's own activity YAML rather than a
+    /// second copy of it written into a separate event file. Read-only, on
+    /// demand - see `FleetLogFeed`'s header for why the copy was rejected.
+    func recentActivity(monthsBack: Int = 2, reference: Date = Date()) -> [ShiftActivityEntry] {
+        recentActivityEntries(monthsBack: monthsBack, reference: reference)
+    }
+
     private func recentActivityEntries(monthsBack: Int, reference: Date) -> [ShiftActivityEntry] {
         let cal = Calendar(identifier: .gregorian)
         var entries: [ShiftActivityEntry] = []

@@ -124,6 +124,7 @@ Behaviour overrides. Everything here is optional; the app has working defaults f
 | `FM_DOCS_DIR` | The synced DevOps Playbook copy |
 | `FM_DOCS_RUNBOOKS_DIR` | Runbooks/postmortems (bypasses git) |
 | `FM_LOG_ANALYZER_DIR` | Saved Log Analyzer investigations |
+| `FM_FLEET_LOG_DIR` | The captain's log (Overview > Log): its append-only `events.jsonl` |
 | `FM_WHISPER_MODEL_DIR` | Where the local Whisper model is downloaded |
 | `FM_INSTANCE_LOCK_FILE` | The single-instance lock file |
 
