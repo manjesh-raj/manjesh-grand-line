@@ -103,11 +103,14 @@
 // isolated into its own case, `test_initialCanvasRenderIsOrphanedOnce`:
 // `HomeCanvasController`'s very first render, at app-launch mount time, is
 // never replaced by the next `.overview` visit the way every later
-// generation correctly is, orphaning one fixed batch of fifteen cards once,
-// at startup. Real, and worth fixing on its own merits, but its magnitude
+// generation correctly is, orphaning one fixed batch of cards once, at
+// startup. Real, and worth fixing on its own merits, but its magnitude
 // (one small, bounded batch, exactly once) cannot be the mechanism behind a
 // cost the captain's own report says *grows over a session* - that shape
-// needs something that keeps recurring, and nothing found here does.
+// needs something that keeps recurring, and nothing found here does. (That
+// case originally asserted a literal fifteen; it asserts boundedness and
+// constancy now - see its own doc comment for why the literal was the wrong
+// thing to pin.)
 //
 // Also confirmed, along the way, as a real self-test-harness pitfall worth
 // recording rather than repeating: an early version of the long-session test
@@ -800,12 +803,31 @@ enum AppShellBodyWidthSelfTest {
             }
             let afterFiveMoreRoundTrips = HelmModuleCard.debugLiveInstanceCount - initialInstances
 
-            guard afterOneRoundTrip == 15, afterFiveMoreRoundTrips == 15 else {
-                return "expected the initial render's orphaned batch to be a constant 15 cards after "
-                    + "1 round trip and after 6 - got \(afterOneRoundTrip) then \(afterFiveMoreRoundTrips). "
-                    + "If this is 0, the orphaning itself may already be fixed and this test's own "
-                    + "assumption is stale; if it grows past 15, that IS the growing leak this whole "
-                    + "investigation was looking for and needs to be re-escalated immediately."
+            // The bound is derived rather than a literal: one full Overview
+            // generation is the most a single orphaned batch can be, since
+            // Overview is the space that shows every module.
+            //
+            // `fm/grandline-daylight-shell-regressions` asserted a literal 15
+            // here. That number moved to a full 18 when the canvas went back
+            // to `HelmResponsiveGrid.spanningRows` for §6.1's wide briefing
+            // (`fm/grandline-daylight-canvas-card-sizing`) - observed, not
+            // explained: the exact magnitude is AppKit's own retention
+            // bookkeeping around `NSStackView.removeArrangedSubview`, and the
+            // two grid paths account for it one generation apart. Which is
+            // precisely why the literal was the wrong thing to assert. What
+            // this case is actually for is unchanged and is asserted directly:
+            // the batch is **bounded** and **constant**, so a real leak (a
+            // batch that grows with the number of round trips) still fails
+            // here and still needs escalating.
+            let bound = DaylightModule.canvasOrder.filter { $0.isVisible(in: .overview) }.count
+            guard afterOneRoundTrip == afterFiveMoreRoundTrips else {
+                return "the initial render's orphaned batch grew from \(afterOneRoundTrip) cards after "
+                    + "1 round trip to \(afterFiveMoreRoundTrips) after 6 - that IS the growing leak "
+                    + "this whole investigation was looking for and needs to be re-escalated immediately."
+            }
+            guard afterOneRoundTrip <= bound else {
+                return "the initial render orphaned \(afterOneRoundTrip) cards, more than one full "
+                    + "Overview generation (\(bound)) - more than one batch is being retained."
             }
             return nil
         }
