@@ -245,13 +245,18 @@ final class NotificationCenterController: NSObject, NSPopoverDelegate {
 private final class NotificationPanelViewController: NSViewController {
     private var theme = ThemeManager.shared.theme
 
-    // Widened from the original flat-list width (320) to give the new card
+    // Widened from the original flat-list width (320) to give the card
     // treatment (left accent bar + icon badge + trailing chip) room to
     // breathe without feeling cramped - still a modest popover width, not a
-    // dramatic widening.
-    static let width: CGFloat = 340
+    // dramatic widening. Daylight §6.12 puts it at 360, one more step for the
+    // same reason.
+    static let width: CGFloat = 360
 
-    private let titleLabel = NSTextField(labelWithString: "Notifications")
+    /// Daylight §6.12's exact header copy. "Notifications" named the
+    /// mechanism; this names what is in the list, which is the only reason a
+    /// captain opens it - and it matches the store's own contract, where an
+    /// `.actionNeeded` entry clears itself the moment its condition resolves.
+    private let titleLabel = NSTextField(labelWithString: "Waiting for you")
     private let markAllReadLabel = NSTextField(labelWithString: "Mark all read")
     /// GL-16: the click recognizer used to sit on the label itself, which
     /// VoiceOver reads as static text with no way to activate it. A

@@ -243,6 +243,8 @@ extension RailDestination {
     /// "Setup" as one area rather than to each page inside it.
     var domainHue: HelmDomainHue {
         switch self {
+        // The hub itself carries the app's own identity hue.
+        case .homeCanvas: return .blue
         case .overview: return .blue          // Fleet
         case .console: return .teal
         case .hosts: return .teal

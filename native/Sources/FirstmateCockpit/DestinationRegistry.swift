@@ -10,9 +10,10 @@
 // array, a `case` in `show(_:)`, and a line in `hideAllDestinations()`.
 // Missing any one of them fails in a different, non-obvious way (a
 // destination that never appears, one that never hides, one whose title is
-// wrong). Now it is the `RailDestination` case - which the rail still owns,
-// since its declaration order *is* the rail's top-to-bottom order - plus one
-// `register(...)` line here.
+// wrong). Now it is the `RailDestination` case plus one `register(...)` line
+// here. (That enum's declaration order used to be the icon rail's own
+// top-to-bottom order; Daylight Phase 2 removed the rail, so the order is
+// free - see `RailDestination.swift`'s own Phase 2 note.)
 //
 // **Why lazy.** Every fixed destination used to run `loadView` during app
 // launch and then stay mounted forever with only `isHidden` toggled. Two
@@ -41,13 +42,18 @@
 //   - `.console` owns live PTYs. The shared Firstmate console opens its
 //     Shell/Mirror pair at launch (`opensFirstmateOnLaunch`), and a running
 //     child process must never be waiting on a view that does not exist yet.
-//   - `.overview` and `.review` seed the rail's "needs you" badges at launch
+//   - `.overview` and `.review` seed the "needs you" counts at launch
 //     (`refreshIfNeeded()`), and both controllers render that count *through
 //     their own views* - their view properties are implicitly-unwrapped
 //     optionals built in `loadView`, so their render path cannot run against
 //     an unloaded controller. Decoupling their data fetch from their render
 //     is a real refactor of both pages and is deliberately not folded into
-//     this change; until then, seeding the badge requires the view.
+//     this change; until then, seeding the count requires the view. (Those
+//     counts fed the rail's badges when this was written; since Daylight
+//     Phase 2 they feed the Notification Center and the canvas's Fleet /
+//     Merge-queue chips instead - same counts, same trigger.)
+//   - `.homeCanvas` is the launch landing and the target of every drill
+//     page's back button, so it can never wait for a first visit.
 //
 // Everything else - Hosts, Tasks, Log Analyzer, Tools, Vault, Dictation,
 // Docs, Setup (all four pages) and Settings - is lazy.
@@ -62,6 +68,9 @@ import AppKit
 /// whole reason this is a separate type rather than keying the table on
 /// `RailDestination` directly.
 enum DestinationSlotID: String, CaseIterable {
+    /// Daylight Phase 2's home canvas - eagerly mounted, because it is the
+    /// launch landing and the target of every drill page's back button.
+    case homeCanvas
     case overview, console, hosts, shift, review, logAnalyzer
     case tools, vault, dictation, schedules, health, docs, setup, settings
 }
@@ -70,6 +79,7 @@ extension RailDestination {
     /// Which body view this destination shows.
     var slot: DestinationSlotID {
         switch self {
+        case .homeCanvas: return .homeCanvas
         case .overview: return .overview
         case .console: return .console
         case .hosts: return .hosts
@@ -95,6 +105,29 @@ extension RailDestination {
     /// same split Hosts already uses for its own three tabs.
     var bodyTitle: String {
         slot == .setup ? "Setup" : title
+    }
+
+    /// The line under a drill page's title (Daylight §6.4). Deliberately
+    /// short, static, and about the *area* rather than about live data - live
+    /// numbers belong on that page's own header, which Phase 4 builds.
+    var drillSubtitle: String {
+        switch self {
+        case .homeCanvas: return ""
+        case .overview: return "Crew, decisions and the morning briefing"
+        case .console: return "Terminals, hosts and the shared Firstmate session"
+        case .hosts: return "Saved hosts, SSH keys and snippets"
+        case .shift: return "Tasks, follow-ups, projects and DevOps commands"
+        case .review: return "Open pull requests, ready to merge"
+        case .logAnalyzer: return "Collect, analyse and explain captured output"
+        case .tools: return "Nine offline utilities"
+        case .vault: return "Secrets and verified launchers - names only"
+        case .dictation: return "Speech to text, on this machine"
+        case .schedules: return "Unattended runs of actions this app already has"
+        case .health: return "How this app's own background services are doing"
+        case .docs: return "Playbook, runbooks and postmortems"
+        case .updates, .bootstrap, .automation, .githubSync: return "Toolchain, machine config and fork sync"
+        case .settings: return "Connection, appearance, terminal, security and backup"
+        }
     }
 }
 

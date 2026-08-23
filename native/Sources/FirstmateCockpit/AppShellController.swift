@@ -1,8 +1,16 @@
 // Manjesh Grand Line - native macOS app.
 //
-// The window's root content view controller: a fixed `IconRailController` on
-// the left, and to its right a `TopBarController` (always visible) above a
-// body area that swaps between five destinations:
+// The window's root content view controller.
+//
+// **Read the Daylight Phase 2 note below first** - it describes the shell as
+// it is now (a floating bar plus a body container). The paragraphs
+// immediately following this one describe the *rail-and-top-bar* shell that
+// preceded it, and are kept because the per-destination decisions they record
+// are all still true; only the chrome around them changed.
+//
+// Historically: a fixed `IconRailController` on the left, and to its right a
+// `TopBarController` (always visible) above a body area that swaps between
+// five destinations:
 //
 //   - .overview shows `FleetController` (Fix 1): the real fleet/PR dashboard.
 //   - .hosts shows `HostsController` (Fix 2) as its own full destination -
@@ -31,6 +39,26 @@
 // as a child up front (or lazily for host pages) and just has its `isHidden`
 // flipped, never rebuilt, so nothing here can drop a running terminal session
 // or its tabs.
+//
+// **Daylight Phase 2 rewrote the shell's chrome, and only its chrome.**
+// `IconRailController` and `TopBarController` are gone. In their place:
+//
+//   root
+//   ├── DaylightBarController.view   (floating bar, pinned 14/22, height 50)
+//   ├── HelmDrillHeader              (back button + tile + title; 0-height on
+//   │                                 the canvas, which is the hub, not a spoke)
+//   └── bodyContainer                (every destination, exactly as before)
+//
+// Everything below the chrome is untouched by that change, and deliberately:
+// `DestinationRegistry`'s permanent-mount model, `show(_:)`, `connectHost`,
+// every deep-link closure and every menu action behave exactly as they did.
+// A "drill page" IS a mounted destination shown full-body - the only
+// difference is that it now sits `HelmDrillHeader.height` further down and
+// has a back affordance above it.
+//
+// The one genuinely new destination is `.homeCanvas` (`HomeCanvasController`),
+// eagerly mounted because it is the launch landing and the target of every
+// back button.
 
 import AppKit
 
@@ -38,8 +66,24 @@ final class AppShellController: NSViewController {
 
     private var chromeTextScaleObservation: ChromeTextScaleObservation?
 
-    let rail = IconRailController()
-    let topBar = TopBarController()
+    /// Daylight Phase 2: the floating bar that replaced the rail and the old
+    /// top bar. Internal (like `rail` was) so the app delegate can reach its
+    /// notification centre and its space pills.
+    let bar = DaylightBarController()
+
+    /// The back affordance every drill page gets, owned here rather than by
+    /// each destination - see `HelmDrillHeader`'s own header for why that is
+    /// the right level, and why per-page header restyling is Phase 4.
+    private let drillHeader = HelmDrillHeader()
+    /// Toggled between 0 and `HelmDrillHeader.height`. Collapsing needs both
+    /// this *and* `isHidden`: an ordinary hidden `NSView`'s constraints still
+    /// participate fully in Auto Layout (AGENTS.md gotcha (11)).
+    private var drillHeaderHeightConstraint: NSLayoutConstraint!
+
+    /// The hub. Owns the space filter and the module grid; knows nothing about
+    /// navigation beyond the closures wired below.
+    private let homeCanvas: HomeCanvasController
+
     private let hostsPanel: HostsController
     private let console: ConsoleController
     private let settings: SettingsController
@@ -125,8 +169,10 @@ final class AppShellController: NSViewController {
     private var windowResizeObserver: NSObjectProtocol?
 
     /// Set while a host's dedicated page is showing; `nil` whenever a fixed
-    /// `RailDestination` is current. Mirrors `IconRailController.activeHostID`
-    /// so `removeHostConsole` knows whether to navigate away.
+    /// `RailDestination` is current, so `removeHostConsole` knows whether to
+    /// navigate away. It used to be mirrored by the rail's own
+    /// `activeHostID` for per-host icon highlighting; with the rail gone
+    /// (Daylight §5.1) this is the only copy.
     private var activeHostID: UUID?
 
     /// Add/Edit Host, requested from the Hosts panel - forwarded to whoever
@@ -157,7 +203,7 @@ final class AppShellController: NSViewController {
     /// while the overlay is covering it.
     var onLockStateChanged: ((Bool) -> Void)?
 
-    /// The avatar's Logout action (double-confirmed inside `IconRailController`
+    /// The avatar's Logout action (confirmed inside `DaylightBarController`
     /// itself) - forwarded to the app delegate's `AppLockController`, which
     /// is what actually flips the lock state, matching how host-editor
     /// presentation is forwarded rather than owned here.
@@ -210,6 +256,20 @@ final class AppShellController: NSViewController {
         // destination, not a section of `.automation` anymore.
         self.schedules = SchedulesController(scheduleStore: scheduleStore)
         self.makeHostConsole = makeHostConsole
+        // Daylight Phase 2: the canvas reads already-owned stores, never its
+        // own - see `HomeCanvasController`'s header, and the source guard in
+        // `DaylightModuleSelfTest` that enforces it. `DocsRunbookStore` and
+        // `LogAnalyzerStore` are the two the shell did not already hold, so
+        // they are constructed here alongside the rest of this controller's
+        // own dependencies rather than inside the canvas - each store re-reads
+        // its git-synced folder per call, which is the same "an independent
+        // instance is fine and cheap" pattern `UnifiedSearch` already uses.
+        self.homeCanvas = HomeCanvasController(sources: .init(
+            shiftStore: shiftStore,
+            hostStore: hostStore,
+            scheduleStore: scheduleStore,
+            logAnalyzerStore: LogAnalyzerStore(),
+            docsRunbookStore: DocsRunbookStore()))
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -217,7 +277,24 @@ final class AppShellController: NSViewController {
 
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 1220, height: 720))
+        root.wantsLayer = true
         view = root
+
+        // Daylight Phase 2: this view is the window's *ground* now, and it has
+        // to paint. Before, the rail and the top bar between them covered
+        // every pixel of it; the floating bar deliberately does not - there is
+        // a real 20pt band of ground between the bar's bottom edge and the
+        // body container, which is what makes the bar read as floating rather
+        // than as a header strip. A layer-backed view with no explicit
+        // background paints nothing at all (AGENTS.md gotcha (8)), so that
+        // band would show the window's own backing through it.
+        //
+        // This controller had no `ThemeManager` observation before, for the
+        // same reason: it painted nothing. It is an app-lifetime singleton, so
+        // the token is discarded like every other such observer here.
+        _ = ThemeManager.shared.observe { [weak self] theme in
+            self?.view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
+        }
 
         // GL-32: one place turns a chrome-text-scale change into the app-wide
         // repaint every page already knows how to do. See
@@ -231,18 +308,21 @@ final class AppShellController: NSViewController {
             self.view.layoutSubtreeIfNeeded()
         }
 
-        addChild(rail)
-        root.addSubview(rail.view)
-        rail.view.translatesAutoresizingMaskIntoConstraints = false
-        rail.onSelect = { [weak self] dest in self?.show(dest) }
-        rail.onLogoutRequested = { [weak self] in self?.onLogoutRequested?() }
+        addChild(bar)
+        root.addSubview(bar.view)
+        bar.view.translatesAutoresizingMaskIntoConstraints = false
+        // A space pill navigates to the canvas (if it is not already showing)
+        // and filters it. That two-step is here rather than in the bar for
+        // §5.3's reason: the bar must not know what a canvas is.
+        bar.onSelectSpace = { [weak self] space in self?.selectSpace(space) }
+        bar.onSelectSettings = { [weak self] in self?.show(.settings) }
+        bar.onLogoutRequested = { [weak self] in self?.onLogoutRequested?() }
 
         bodyContainer.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(bodyContainer)
 
-        addChild(topBar)
-        bodyContainer.addSubview(topBar.view)
-        topBar.view.translatesAutoresizingMaskIntoConstraints = false
+        drillHeader.onBack = { [weak self] in self?.show(.homeCanvas) }
+        bodyContainer.addSubview(drillHeader)
         // Phase 4 ("Knowledge and speed") superseded Fix 4's original mapping
         // here (an in-terminal find stand-in, since there was no real global
         // search yet) - the topbar Search pill (and its `⌘K` badge) now opens
@@ -251,7 +331,7 @@ final class AppShellController: NSViewController {
         // owned by this controller. Plain find-in-terminal is unaffected -
         // it's still reachable via the console toolbar's own magnifying-glass
         // icon (`ConsoleController.showFind`) and the Edit menu's `⌘F`.
-        topBar.onSearchTapped = { [weak self] in self?.onSearchTapped?() }
+        bar.onSearchTapped = { [weak self] in self?.onSearchTapped?() }
 
         // The four Setup pages become children of `setup`, not of this
         // controller - `SetupContainerController.loadView` calls `addChild`
@@ -259,13 +339,12 @@ final class AppShellController: NSViewController {
         // `loadView` until the Setup slot itself is first mounted.
         setup = SetupContainerController(updates: updates, bootstrap: bootstrap,
                                          automation: automation, githubSync: githubSync)
-        setup.onTabSelected = { [weak self] dest in
-            // The tab row moved itself; only the rail highlight still needs to
-            // follow. The top bar keeps saying "Setup" - the tab row directly
-            // below it is what names the active sub-page, exactly as in the
-            // prototype (`03-proposed-setup-tabs.png`), and as Hosts already
-            // does for its own three tabs.
-            self?.rail.setActive(dest)
+        setup.onTabSelected = { _ in
+            // Nothing to follow any more. Before Daylight this moved the rail
+            // highlight; the drill header keeps saying "Setup" (all four pages
+            // share one slot and one title) and the tab row directly below it
+            // is what names the active sub-page, exactly as Hosts already does
+            // for its own three tabs.
         }
 
         // GL-37: the destination table. One line per body view replaces the
@@ -280,6 +359,7 @@ final class AppShellController: NSViewController {
         // file is safe before a first visit as long as it only *assigns a
         // closure* (which the wiring below does) - anything that touches a
         // destination's views goes through `show(_:)` first.
+        mounter.register(DestinationSlot(id: .homeCanvas, title: RailDestination.homeCanvas.bodyTitle, mountsEagerly: true, controller: homeCanvas))
         mounter.register(DestinationSlot(id: .overview, title: RailDestination.overview.bodyTitle, mountsEagerly: true, controller: overview))
         mounter.register(DestinationSlot(id: .console, title: RailDestination.console.bodyTitle, mountsEagerly: true, controller: console))
         mounter.register(DestinationSlot(id: .hosts, title: RailDestination.hosts.bodyTitle, mountsEagerly: false, controller: hostsPanel))
@@ -301,23 +381,32 @@ final class AppShellController: NSViewController {
         // views). Every other slot waits for its first `show(_:)`.
         mounter.mountEagerSlots()
 
-        bodyLeadingConstraint = bodyContainer.leadingAnchor.constraint(equalTo: rail.view.trailingAnchor)
+        // Daylight Phase 2: `bodyContainer` now spans the window's full width -
+        // there is no rail to sit beside - and starts below the floating bar's
+        // reserved region. Both edges are still named, still required, and
+        // still re-asserted on every resize; see
+        // `reassertBodyContainerWidthTie()` for why a declared `==` is not by
+        // itself enough.
+        bodyLeadingConstraint = bodyContainer.leadingAnchor.constraint(equalTo: root.leadingAnchor)
         bodyTrailingConstraint = bodyContainer.trailingAnchor.constraint(equalTo: root.trailingAnchor)
 
+        drillHeaderHeightConstraint = drillHeader.heightAnchor.constraint(equalToConstant: HelmDrillHeader.height)
+
         NSLayoutConstraint.activate([
-            rail.view.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            rail.view.topAnchor.constraint(equalTo: root.topAnchor),
-            rail.view.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            bar.view.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            bar.view.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            bar.view.topAnchor.constraint(equalTo: root.topAnchor),
 
             bodyLeadingConstraint,
             bodyTrailingConstraint,
-            bodyContainer.topAnchor.constraint(equalTo: root.topAnchor),
+            bodyContainer.topAnchor.constraint(equalTo: root.topAnchor,
+                                               constant: DaylightBarController.reservedTopHeight),
             bodyContainer.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 
-            topBar.view.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
-            topBar.view.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
-            topBar.view.topAnchor.constraint(equalTo: bodyContainer.topAnchor),
-            topBar.view.heightAnchor.constraint(equalToConstant: TopBarController.height),
+            drillHeader.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
+            drillHeader.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
+            drillHeader.topAnchor.constraint(equalTo: bodyContainer.topAnchor),
+            drillHeaderHeightConstraint,
         ])
 
         // `fm/grandline-live-gap-rootcause-scout`: a real, live-captured
@@ -461,9 +550,19 @@ final class AppShellController: NSViewController {
         // refresh, and the `refreshIfNeeded()` calls just below) - piggy-
         // backing on the existing count callbacks means no new detection
         // logic and no new poll for either signal.
+        // Daylight Phase 2: the rail badge these fed is gone. The same
+        // already-computed counts now reach the captain through the bell (the
+        // Notification Center, unchanged) and through the Fleet / Merge queue
+        // modules' own chips, which read the snapshot pushed below. No new
+        // signal was invented for either.
         overview.onNeedsDecisionCountChanged = { [weak self] count in
-            self?.rail.setBadgeCount(count, for: .overview)
             NotificationSources.setFleetDecisions(count: count) { self?.show(.overview) }
+        }
+        // The canvas's Fleet and Merge queue modules, fed from Overview's own
+        // refresh rather than a fetch of their own - see
+        // `FleetController.onSnapshotChanged`.
+        overview.onSnapshotChanged = { [weak self] snapshot, prs, failure in
+            self?.homeCanvas.applyFleet(snapshot: snapshot, mergedPRs: prs, prFetchFailure: failure)
         }
         // GL-11/GL-30: the two failure signals (a background service failing
         // repeatedly, a save that did not reach disk) are raised from
@@ -475,7 +574,6 @@ final class AppShellController: NSViewController {
         NotificationSources.navigateToHealth = { [weak self] in self?.show(.health) }
 
         review.onOpenPRCountChanged = { [weak self] count in
-            self?.rail.setBadgeCount(count, for: .review)
             NotificationSources.setPRReady(count: count) { self?.show(.review) }
         }
         // F4: the OS-banner half of the same signal. The in-app entry above is
@@ -490,6 +588,32 @@ final class AppShellController: NSViewController {
         overview.refreshIfNeeded()
         review.refreshIfNeeded()
 
+        // Daylight Phase 2: the canvas's own forwarded actions. Every one is a
+        // pass-through to something that already existed - `show(_:)`,
+        // `openShiftTask(id:)`, and the two pages' own refresh entry points -
+        // so the hub adds no behaviour of its own, only a faster way to reach
+        // it.
+        homeCanvas.onOpenDestination = { [weak self] dest in self?.show(dest) }
+        homeCanvas.onOpenShiftTask = { [weak self] id in self?.openShiftTask(id: id) }
+        homeCanvas.onRefresh = { [weak self] in
+            self?.overview.refreshIfNeeded()
+            self?.review.refreshIfNeeded()
+        }
+        // The Console module's peek rows. A closure, so the canvas never holds
+        // a console or learns what a tab is.
+        homeCanvas.consoleTabsProvider = { [weak self] in
+            guard let self else { return [] }
+            return self.console.tabs.map { tab in
+                HelmModulePeekRow(state: tab.terminal.process.running ? .ok : .idle,
+                                  text: tab.name,
+                                  value: tab.terminal.process.running ? "live" : "exited")
+            }
+        }
+        homeCanvas.connectedHostIDs = { [weak self] in
+            guard let self else { return [] }
+            return Set(self.hostConsoles.keys)
+        }
+
         // GL-31: a machine with no firstmate home resolved lands on Setup, not
         // on a Console tab in front of an Overview that can only report
         // zeroes. `FirstmateHome.root` is resolved once at launch, so this is
@@ -499,10 +623,16 @@ final class AppShellController: NSViewController {
         // with no saved hosts, no Shift data and no Vault password beyond the
         // lock screen's own, so none of those should redirect a captain who
         // knows where they were going.
+        // Daylight §5.2: the canvas is the launch landing - it is the
+        // navigation, so landing anywhere else would hide it behind a back
+        // button on the first run of every session. GL-31's own exception
+        // stands unchanged: a machine with no firstmate home resolved lands on
+        // Setup instead, because a canvas of modules that can only report
+        // zeroes is worse than the page that fixes the cause.
         if FirstmateHome.homeOk() {
-            show(.console)
+            show(.homeCanvas)
         } else {
-            AppLog.lifecycle.info("firstmate home not configured - opening Setup instead of the console")
+            AppLog.lifecycle.info("firstmate home not configured - opening Setup instead of the home canvas")
             show(.bootstrap)
         }
 
@@ -567,10 +697,11 @@ final class AppShellController: NSViewController {
         // overlay is up but a global hotkey still fires.
         AppLockGate.shared.setLocked(true)
         onLockStateChanged?(true)
-        // fm/grandline-lock-and-rail-fixes: the rail's own sailboat mark goes
-        // back to inert/static the instant the app locks, regardless of
-        // whether it was mid-bob.
-        rail.setUnlocked(false)
+        // `fm/grandline-lock-and-rail-fixes` used this moment to make the
+        // rail's sailboat mark inert. The rail is gone (Daylight §5.1) and the
+        // bar's logo tile is a static gradient with no animation to stop, so
+        // there is nothing left to do here - the lock overlay covers the whole
+        // window including the bar, which was always the real guarantee.
         // Optimistic default so the overlay never shows a blank subtitle for
         // the fraction of a second the background `av list` check takes -
         // corrected below once that check actually resolves.
@@ -653,10 +784,6 @@ final class AppShellController: NSViewController {
         lockScreen.view.isHidden = true
         AppLockGate.shared.setLocked(false)
         onLockStateChanged?(false)
-        // fm/grandline-lock-and-rail-fixes: bold + bob the rail's own
-        // sailboat mark now that the captain is actually in the app - a
-        // small "welcome back, the ship is sailing" touch.
-        rail.setUnlocked(true)
     }
 
     /// Open `command` as a new tab in the shared Firstmate console and bring
@@ -677,7 +804,7 @@ final class AppShellController: NSViewController {
         NSLayoutConstraint.activate([
             destinationView.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
             destinationView.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
-            destinationView.topAnchor.constraint(equalTo: topBar.view.bottomAnchor),
+            destinationView.topAnchor.constraint(equalTo: drillHeader.bottomAnchor),
             destinationView.bottomAnchor.constraint(equalTo: bodyContainer.bottomAnchor),
         ])
     }
@@ -740,7 +867,8 @@ final class AppShellController: NSViewController {
     /// A half-point tolerance covers the non-integral widths AppKit produces on
     /// a Retina display.
     private func bodyContainerWidthIsStale() -> Bool {
-        let expected = view.bounds.width - IconRailController.width
+        // Daylight Phase 2: no rail, so the body spans the full content width.
+        let expected = view.bounds.width
         guard expected > 0 else { return false }
         return abs(bodyContainer.frame.width - expected) > 0.5
     }
@@ -782,6 +910,16 @@ final class AppShellController: NSViewController {
         mounter.mountedSlots.map(\.id)
     }
 
+    /// Daylight Phase 2: the hub and the drill header, so
+    /// `DaylightModuleSelfTest` can drive the real space filter, the real
+    /// module cards and the real back button rather than stand-ins.
+    #if FM_SELFTESTS
+    var homeCanvasForTests: HomeCanvasController { homeCanvas }
+    var drillHeaderForTests: HelmDrillHeader { drillHeader }
+    var drillHeaderHeightForTests: CGFloat { drillHeaderHeightConstraint.constant }
+    var drillHeaderIsHiddenForTests: Bool { drillHeader.isHidden }
+    #endif
+
     /// The view a mounted slot owns, for identity comparison across a
     /// navigate-away-and-back cycle - `nil` while the slot is unmounted,
     /// deliberately, so a test cannot accidentally build the thing it is
@@ -804,7 +942,6 @@ final class AppShellController: NSViewController {
         // `hideAllDestinations`). The slot is mounted here if this is its
         // first visit - see `DestinationRegistry.swift`.
         guard let slot = mounter.show(dest.slot) else { return }
-        topBar.setTitle(slot.title)
 
         // The one destination-specific step left: four rail destinations
         // share the Setup slot, and which of them the captain asked for
@@ -813,8 +950,53 @@ final class AppShellController: NSViewController {
             setup.select(tab: tab)
         }
 
-        rail.setActive(dest)
+        applyDrillHeader(title: slot.title,
+                         subtitle: dest.drillSubtitle,
+                         symbol: dest.symbol,
+                         hue: dest.domainHue,
+                         isCanvas: slot.id == .homeCanvas)
     }
+
+    /// Daylight §6.4: point the shell's drill header at whatever is showing,
+    /// or collapse it entirely on the canvas (the hub has no "back").
+    ///
+    /// Collapsing sets both `isHidden` *and* the height to 0 - AGENTS.md
+    /// gotcha (11): an ordinary hidden `NSView`'s constraints still
+    /// participate fully in Auto Layout, so hiding alone would leave a
+    /// `HelmDrillHeader.height` gap above the canvas.
+    private func applyDrillHeader(title: String, subtitle: String, symbol: String,
+                                  hue: HelmDomainHue, isCanvas: Bool) {
+        drillHeader.isHidden = isCanvas
+        drillHeaderHeightConstraint.constant = isCanvas ? 0 : HelmDrillHeader.height
+        guard !isCanvas else { return }
+        drillHeader.configure(title: title, subtitle: subtitle, symbol: symbol, hue: hue)
+    }
+
+    // MARK: Spaces (Daylight §5.3)
+
+    /// A space pill (or `⌘1`…`⌘5`) was picked: land on the canvas if we are
+    /// not already there, then filter it.
+    ///
+    /// Both halves live here rather than in either component, which is what
+    /// keeps §5.3's rule true from both directions - the bar does not know
+    /// what a canvas is, and the canvas does not know how to navigate.
+    func selectSpace(_ space: DaylightSpace) {
+        bar.setSelectedSpace(space)
+        homeCanvas.select(space: space)
+        show(.homeCanvas)
+    }
+
+    /// The menu's `⌘1`…`⌘5` items. See `AppDelegate.buildMenu` for why these
+    /// are ordered *after* the Tab menu's own `⌘1`…`⌘9`.
+    @objc func selectSpaceByShortcut(_ sender: NSMenuItem) {
+        let index = sender.tag - 1
+        guard DaylightSpace.allCases.indices.contains(index) else { return }
+        selectSpace(DaylightSpace.allCases[index])
+    }
+
+    /// The canvas itself, for a caller that wants the hub without changing
+    /// the space (the app delegate's launch landing).
+    @objc func showHomeCanvas() { show(.homeCanvas) }
 
     /// Fix 1: connect to `host` (its own dedicated page). The first call for
     /// a given host builds its `ConsoleController` (via `makeHostConsole`),
@@ -855,9 +1037,10 @@ final class AppShellController: NSViewController {
                 guard let self, let controller else { return }
                 self.hideAllDestinations()
                 controller.view.isHidden = false
-                self.topBar.setTitle(hostLabel)
+                self.applyDrillHeader(title: hostLabel, subtitle: "Dedicated host page",
+                                      symbol: RailDestination.hosts.symbol,
+                                      hue: RailDestination.hosts.domainHue, isCanvas: false)
                 self.activeHostID = hostID
-                self.rail.setActiveHost(hostID)
                 controller.selectAndFocusTab(id: tab.id)
             }
         }
@@ -901,9 +1084,10 @@ final class AppShellController: NSViewController {
 
         hideAllDestinations()
         controller.view.isHidden = false
-        topBar.setTitle(host.label)
+        applyDrillHeader(title: host.label, subtitle: "Dedicated host page",
+                         symbol: RailDestination.hosts.symbol,
+                         hue: RailDestination.hosts.domainHue, isCanvas: false)
         activeHostID = host.id
-        rail.setActiveHost(host.id)
         controller.focusCurrentTab()
         // fm/grandline-notification-center: this page coming back on screen
         // (via the rail icon or the Hosts list, not necessarily through a

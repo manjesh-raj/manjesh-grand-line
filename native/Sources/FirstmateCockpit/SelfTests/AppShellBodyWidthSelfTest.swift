@@ -186,11 +186,17 @@ enum AppShellBodyWidthSelfTest {
         return (window, shell)
     }
 
-    /// The width `bodyContainer` should have for a given window: the
-    /// window's own current content width minus the fixed 84pt rail - the
-    /// exact relationship the scout report found violated live.
+    /// The width `bodyContainer` should have for a given window.
+    ///
+    /// Was "the window's content width minus the fixed 84pt rail" - the exact
+    /// relationship the scout report found violated live. Daylight Phase 2
+    /// removed the rail (migration §5.1), so the body now spans the window's
+    /// *full* content width and the relationship being asserted is simply
+    /// equality. Everything else about these cases is unchanged: the bug they
+    /// guard against is `bodyContainer`'s frame going stale relative to the
+    /// window, whatever the correct width happens to be.
     private static func expectedBodyWidth(for window: NSWindow) -> CGFloat {
-        (window.contentView?.bounds.width ?? 0) - IconRailController.width
+        window.contentView?.bounds.width ?? 0
     }
 
     // MARK: Cases
@@ -235,8 +241,8 @@ enum AppShellBodyWidthSelfTest {
             // value.
             window.setFrame(NSRect(x: 0, y: 0, width: 1512, height: 900), display: true)
             let staleWidth = shell.bodyContainerFrameForTests.width
-            guard abs(staleWidth - (1512 - IconRailController.width)) < 0.5 else {
-                return "setup failed: expected bodyContainer to be \(1512 - IconRailController.width) wide before breaking the tie, got \(staleWidth)"
+            guard abs(staleWidth - 1512) < 0.5 else {
+                return "setup failed: expected bodyContainer to be 1512 wide before breaking the tie, got \(staleWidth)"
             }
 
             // Reproduce the exact live failure: the width tie goes inactive
@@ -280,7 +286,7 @@ enum AppShellBodyWidthSelfTest {
             for width in [CGFloat(1100), 1220, 1350, 1420, 1512, 1600, 1800, 2000] {
                 window.setFrame(NSRect(x: 0, y: 0, width: width, height: 900), display: true)
                 let actual = shell.bodyContainerFrameForTests.width
-                let expected = width - IconRailController.width
+                let expected = width
                 guard abs(actual - expected) < 0.5 else {
                     return "at window width \(width): expected bodyContainer \(expected), got \(actual) "
                         + "(window's own frame stayed at \(window.frame.width) - a destination's content is "
@@ -364,7 +370,7 @@ enum AppShellBodyWidthSelfTest {
                 for width in [CGFloat(1100), 1512, 2000] {
                     window.setFrame(NSRect(x: 0, y: 0, width: width, height: 900), display: true)
                     let actual = shell.bodyContainerFrameForTests.width
-                    let expected = width - IconRailController.width
+                    let expected = width
                     if abs(actual - expected) >= 0.5 {
                         failures.append("\(dest) at width \(width): expected bodyContainer \(expected), got \(actual)")
                     }
@@ -380,7 +386,7 @@ enum AppShellBodyWidthSelfTest {
                 shell.show(dest)
                 window.setFrame(NSRect(x: 0, y: 0, width: 1100, height: 900), display: true)
                 let actual = shell.bodyContainerFrameForTests.width
-                let expected = CGFloat(1100) - IconRailController.width
+                let expected = CGFloat(1100)
                 if abs(actual - expected) >= 0.5 {
                     failures.append("(revisit) \(dest) at width 1100: expected bodyContainer \(expected), got \(actual)")
                 }

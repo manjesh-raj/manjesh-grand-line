@@ -113,6 +113,16 @@ final class BackgroundSignalsPoller {
         var forkDrift: Int?
         var vaultAttention: Int?
         var setupDrift: Int?
+        /// How many hardened secrets Automic Vault reported on this poller's
+        /// **last** pass.
+        ///
+        /// Daylight Phase 2's Vault module renders this rather than calling
+        /// `VaultSource.loadSnapshot()` itself - the migration spec is explicit
+        /// that the canvas "renders the LAST snapshot, it does not shell out on
+        /// canvas load". `checkVault` below already loads that snapshot for the
+        /// attention count, so recording one more number off it costs nothing
+        /// and adds no `av` invocation anywhere.
+        var vaultSecrets: Int?
     }
 
     /// Written on the main thread by each check's own completion block (the
@@ -267,8 +277,10 @@ final class BackgroundSignalsPoller {
             if case .needsAttention = $0.status { return true }
             return false
         }.count
+        let secretCount = snapshot.secrets.count
         DispatchQueue.main.async { [weak self] in
             self?.lastCounts.vaultAttention = count
+            self?.lastCounts.vaultSecrets = secretCount
             NotificationSources.setVaultAttention(count: count) { self?.onNavigateToVault?() }
         }
     }

@@ -168,12 +168,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appShell.onSendCommandToHosts = { [weak self] command, values, generated in
             self?.presentMultiHostSend(command: command, values: values, generatedText: generated)
         }
-        // Fix 3 (fixes4): a pinned rail icon per saved host, kept live via
-        // `HostStore.observe` - the same add/rename/delete signal the Hosts
-        // list itself reloads from. Clicking one connects exactly like the
-        // Hosts list's own Connect action (Fix 1: both now reach the same
-        // dedicated per-host page via `connectToHost`).
-        appShell.rail.setHosts(hostStore.hosts)
+        // Fix 3 (fixes4) pinned a rail icon per saved host here. Daylight
+        // Phase 2 removed the rail (§5.1), and the canvas's Hosts module plus
+        // the Hosts page's own Connect are the two ways in now - both of which
+        // already reach the same `connectToHost` path this did.
         knownHostIDs = Set(hostStore.hosts.map { $0.id })
         // Finding 4 (cockpit-audit-core): a corrupted hosts.json comes up as
         // an empty list with no other signal - surface that once here rather
@@ -224,10 +222,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.appShell.removeHostConsole(id: removedID)
             }
             self.knownHostIDs = currentIDs
-            self.appShell.rail.setHosts(self.hostStore.hosts)
-        }
-        appShell.rail.onConnectHost = { [weak self] host in
-            self?.connectToHost(host)
         }
         // The Snippets tab's "Run" (Phase 3, B2) sends straight to the
         // console's active tab.
@@ -307,9 +301,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // any more, and no second palette (⌘⇧P is gone with
         // `ShiftSearchController`).
         //
-        // The topbar Search pill's click, forwarded through `AppShellController.
+        // The bar's Search pill's click, forwarded through `AppShellController.
         // onSearchTapped` (see that property's own doc comment) - not
-        // `appShell.topBar.onSearchTapped` directly, since `loadView()` (run
+        // `appShell.bar.onSearchTapped` directly, since `loadView()` (run
         // later, once `window.contentViewController = appShell` is assigned
         // below) wires that control to call back through this property, and
         // would silently clobber a direct assignment made before that point.
@@ -1023,11 +1017,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             tabMenu.addItem(item)
         }
 
-        // View menu - zoom + theme (all resolve to ConsoleController).
+        // View menu - the Daylight spaces, then zoom + theme.
         let viewMenuItem = NSMenuItem()
         mainMenu.addItem(viewMenuItem)
         let viewMenu = NSMenu(title: "View")
         viewMenuItem.submenu = viewMenu
+
+        // Daylight Phase 2 (§5.2): `⌘1`…`⌘5` select the five spaces.
+        //
+        // **Why these live in View, after the Tab menu, and why that ordering
+        // is the whole design.** The spec asks for `⌘1`…`⌘5` on the spaces AND
+        // for "⌘T/⌘W/⌘1-9 Console and Tools tab behavior unchanged" - which
+        // collide on `⌘1`…`⌘5`. AppKit resolves a key equivalent by scanning
+        // the main menu in order and taking the first *enabled* match, and the
+        // Tab menu's items have a nil target (they route through the responder
+        // chain to whichever `ConsoleController`/`ToolsController` owns the
+        // first responder). So:
+        //
+        //   - With a terminal or a Tools tab focused, that controller IS in the
+        //     responder chain, the Tab item is enabled, and `⌘1` selects tab 1
+        //     exactly as it always has.
+        //   - Anywhere else - including the canvas, which is where a captain
+        //     reaching for a space actually is - nothing answers
+        //     `selectTabByShortcut`, AppKit disables that item, a disabled item
+        //     does not consume its key equivalent, and `⌘1` falls through to
+        //     the space item here.
+        //
+        // Both shortcuts therefore keep working, each in the context where it
+        // is the obvious meaning. The alternative was breaking one of them
+        // outright. A dedicated top-level "Go" menu would have read better but
+        // adds a 12th top-level menu, and this app's menu bar already overruns
+        // the notched-display budget (see AGENTS.md's menu-bar section) - View
+        // is where a space *filter* belongs anyway.
+        //
+        // These target `AppShellController` explicitly rather than the
+        // responder chain, so they are enabled regardless of what has focus.
+        for (index, space) in DaylightSpace.allCases.enumerated() {
+            let item = NSMenuItem(title: space.title,
+                                  action: #selector(AppShellController.selectSpaceByShortcut(_:)),
+                                  keyEquivalent: "\(index + 1)")
+            item.tag = index + 1
+            item.target = appShell
+            viewMenu.addItem(item)
+        }
+        viewMenu.addItem(NSMenuItem.separator())
+
         viewMenu.addItem(withTitle: "Zoom In", action: #selector(ConsoleController.zoomIn), keyEquivalent: "+")
         viewMenu.addItem(withTitle: "Zoom Out", action: #selector(ConsoleController.zoomOut), keyEquivalent: "-")
         viewMenu.addItem(withTitle: "Actual Size", action: #selector(ConsoleController.zoomReset), keyEquivalent: "0")
@@ -1335,6 +1369,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_VAULT_DATA_TESTS"] == "1" {
 // header.
 if ProcessInfo.processInfo.environment["FM_RUN_APP_SHELL_BODY_WIDTH_TESTS"] == "1" {
     exit(AppShellBodyWidthSelfTest.run() ? 0 : 1)
+}
+
+// Daylight Phase 2: the shell that replaced the icon rail and the top bar -
+// module anatomy, span-2 grid math, the locked space table, the canvas's
+// no-store rule, and the bar's window-safety. See
+// DaylightModuleSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_MODULE_TESTS"] == "1" {
+    exit(DaylightModuleSelfTest.run() ? 0 : 1)
 }
 
 // GL-37: the destination table and lazy-mount-with-permanent-retention -

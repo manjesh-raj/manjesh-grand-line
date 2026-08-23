@@ -2793,4 +2793,116 @@ enum HelmResponsiveGrid {
             return row
         }
     }
+
+    // MARK: Span-aware layout (Daylight migration §6.1)
+
+    /// One item's placement decision: which items share a row, and how many
+    /// columns each consumes.
+    ///
+    /// Split out of `spanningRows` as pure arithmetic so
+    /// `DaylightModuleSelfTest` can assert the packing without building a
+    /// single view - the failure this guards against (a wide card that
+    /// silently renders one column wide, or a row that overflows its
+    /// container) is a *math* bug, and measuring it through AppKit would only
+    /// make it harder to see.
+    struct SpanPlacement: Equatable {
+        /// Index into the caller's own `items` array.
+        let index: Int
+        /// Columns consumed, already clamped to the row's column count.
+        let span: Int
+    }
+
+    /// Greedy row packing for items of span 1 or 2 (§6.1's "wide" briefing).
+    ///
+    /// Greedy rather than best-fit on purpose: the canvas has a fixed,
+    /// captain-visible module order, and a packer that reorders modules to fill
+    /// rows more tightly would move cards around as the window resizes, which
+    /// is exactly the kind of instability a hub screen must not have.
+    ///
+    /// A span-2 item in a single-column grid degrades to span 1 rather than
+    /// being dropped or overflowing.
+    static func packRows(spans: [Int], columns: Int) -> [[SpanPlacement]] {
+        let columnCount = max(1, columns)
+        var rows: [[SpanPlacement]] = []
+        var current: [SpanPlacement] = []
+        var used = 0
+        for (index, rawSpan) in spans.enumerated() {
+            let span = min(max(1, rawSpan), columnCount)
+            if used + span > columnCount, !current.isEmpty {
+                rows.append(current)
+                current = []
+                used = 0
+            }
+            current.append(SpanPlacement(index: index, span: span))
+            used += span
+        }
+        if !current.isEmpty { rows.append(current) }
+        return rows
+    }
+
+    /// Lays `items` out into span-aware rows.
+    ///
+    /// Unlike `rows(_:)` above this cannot use `.fillEqually` - a span-2 card
+    /// has to be twice a column wide plus the gap between the two columns it
+    /// covers - so each card carries an explicit width constraint and the row
+    /// pads with a low-hugging spacer, which is the same partial-last-row fix
+    /// expressed for unequal cells.
+    ///
+    /// **Every width constraint here is `HelmDaylightPriority.contentTie`
+    /// (499), never required.** These constraints chain up through the canvas's
+    /// document view to `bodyContainer` and therefore to the window, and a
+    /// required width on a card is a window-width floor (AGENTS.md gotcha
+    /// (13)). At 499 the cards still resolve to exactly the computed width in
+    /// every normal case and simply compress instead of pushing the window
+    /// wider in the pathological one.
+    static func spanningRows<Item>(_ items: [Item],
+                                   spans: (Item) -> Int,
+                                   containerWidth: CGFloat,
+                                   minItemWidth: CGFloat,
+                                   spacing: CGFloat = spacing,
+                                   makeItem: (Item, CGFloat) -> NSView) -> [NSStackView] {
+        let columnCount = columns(containerWidth: containerWidth,
+                                  minItemWidth: minItemWidth,
+                                  spacing: spacing)
+        let unit = itemWidth(containerWidth: containerWidth,
+                             columns: columnCount,
+                             spacing: spacing)
+        let placements = packRows(spans: items.map(spans), columns: columnCount)
+
+        return placements.map { row in
+            var views: [NSView] = []
+            var used = 0
+            for placement in row {
+                let width = unit * CGFloat(placement.span) + spacing * CGFloat(placement.span - 1)
+                let view = makeItem(items[placement.index], width)
+                view.translatesAutoresizingMaskIntoConstraints = false
+                let widthConstraint = view.widthAnchor.constraint(equalToConstant: width)
+                widthConstraint.priority = HelmDaylightPriority.contentTie
+                widthConstraint.isActive = true
+                view.setContentHuggingPriority(.required, for: .horizontal)
+                views.append(view)
+                used += placement.span
+            }
+            // Pad the leftover columns so a short row's cards keep the same
+            // width as a full row's rather than stretching (the same reason
+            // `rows(_:)` pads with spacers, just measured in columns).
+            while used < columnCount {
+                let spacer = NSView()
+                spacer.translatesAutoresizingMaskIntoConstraints = false
+                let widthConstraint = spacer.widthAnchor.constraint(equalToConstant: unit)
+                widthConstraint.priority = HelmDaylightPriority.contentTie
+                widthConstraint.isActive = true
+                spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+                views.append(spacer)
+                used += 1
+            }
+            let stack = NSStackView(views: views)
+            stack.orientation = .horizontal
+            stack.spacing = spacing
+            stack.distribution = .fill
+            stack.alignment = .top
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            return stack
+        }
+    }
 }

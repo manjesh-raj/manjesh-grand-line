@@ -138,7 +138,10 @@ final class ReviewController: NSViewController {
     /// fm/grandline-sidebar-badges: fires every time `render` recomputes the
     /// full open-PR list - the same `mergedPRs` this page already shows, not
     /// a narrower or invented filter. `AppShellController` forwards this
-    /// straight to `IconRailController.setBadgeCount(_:for: .review)`.
+    /// on to `NotificationSources.setPRReady`. It used to also drive the
+    /// rail's own badge, which Daylight Phase 2 removed along with the rail -
+    /// the count itself is unchanged and still comes from this page's own
+    /// refresh.
     var onOpenPRCountChanged: ((Int) -> Void)?
 
     /// F4: the same `mergedPRs` list this page just rendered, forwarded so a

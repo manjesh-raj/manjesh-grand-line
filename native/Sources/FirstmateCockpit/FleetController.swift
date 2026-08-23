@@ -127,8 +127,23 @@ final class FleetController: NSViewController {
     /// banner's "needs your call" set (`needs_decision`/`blocked` tasks) -
     /// the exact same signal the banner text above already surfaces, not a
     /// new count invented for the rail. `AppShellController` forwards this
-    /// straight to `IconRailController.setBadgeCount(_:for: .overview)`.
+    /// on to `NotificationSources.setFleetDecisions`. It used to also drive
+    /// the rail's own badge, which Daylight Phase 2 removed along with the
+    /// rail - the count itself is unchanged and still comes from this page's
+    /// own refresh.
     var onNeedsDecisionCountChanged: ((Int) -> Void)?
+
+    /// Daylight Phase 2: this page's own refresh result, pushed to whoever
+    /// wants it (the home canvas's Fleet and Merge-queue modules).
+    ///
+    /// Fired from `render`, so it rides the refresh triggers this page
+    /// already has - the launch `refreshIfNeeded()`, a page visit, the manual
+    /// Refresh button, a merge action. **This is the whole reason the canvas
+    /// needs no fetch of its own**: `snapshot()` plus `OpenPRsSource
+    /// .fetchDetailed()` is seconds of real work, and doing it twice - once
+    /// here, once on the hub the captain returns to constantly - would be a
+    /// straight doubling of the app's own cost for numbers it already had.
+    var onSnapshotChanged: ((FleetSnapshot, [MergedPR]?, String?) -> Void)?
 
     /// fm/grandline-overview-drop-duplicate-pr-list: fired when the captain
     /// clicks the "ready to merge" stat tile - `AppShellController` wires
@@ -679,9 +694,9 @@ final class FleetController: NSViewController {
         let needs = snapshot.tasks.filter { $0.status == "needs_decision" || $0.status == "blocked" }
         onNeedsDecisionCountChanged?(needs.count)
 
-        let hour = Calendar.current.component(.hour, from: Date())
-        let part = hour < 5 ? "Still up" : hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening"
-        greetingLabel.stringValue = "\(part), \(snapshot.captain)"
+        // Daylight §5.4: one definition of the greeting, shared with the home
+        // canvas - see `FleetGreeting`'s own header for why that matters.
+        greetingLabel.stringValue = FleetGreeting.greeting(captain: snapshot.captain)
         let df = DateFormatter()
         df.setLocalizedDateFormatFromTemplate("EEEE")
         subtitleLabel.stringValue = snapshot.homeOk
@@ -699,6 +714,7 @@ final class FleetController: NSViewController {
         inFlightCountLabel.stringValue = "\(working.count)"
 
         applyTheme()
+        onSnapshotChanged?(snapshot, mergedPRs, prFetchFailure)
 
         // cockpit-native-fixes5: the loading skeleton's content is much
         // shorter than the real data (header + spinner only), so the first
@@ -712,57 +728,30 @@ final class FleetController: NSViewController {
         scrollToTop()
     }
 
-    /// The answer banner, as the shared `HelmAccentRow`. Same two states and
-    /// same copy as before; only the presentation changed - the accent bar,
-    /// the round badge and the uppercase kicker come from the component now
-    /// rather than being absent.
+    /// The answer banner, as the shared `HelmAccentRow`.
+    ///
+    /// Daylight §5.4 moved the *decision* half of this - which of the three
+    /// states applies, and the exact copy for each - into `FleetGreeting.answer`
+    /// so the home canvas's one-line summary is the same computation rather
+    /// than a second one that could drift. This method is now purely the
+    /// rendering half: values in, one `HelmAccentRow.Content` out.
     private func renderBanner(needs: [FleetTask], working: [FleetTask], readyCount: Int,
                               prFetchFailure: String? = nil, homeOk: Bool = true) {
-        let content: HelmAccentRow.Content
-        // GL-31: with no firstmate home resolved there is no fleet to report
-        // on, and every number below it is zero for a reason that has nothing
-        // to do with the fleet. Say the real thing, and make it actionable.
-        if !homeOk {
-            content = HelmAccentRow.Content(
-                tint: .info,
-                kicker: "Finish setup",
-                title: "Point Manjesh Grand Line at your firstmate home",
-                meta: "Nothing was found at \(FirstmateHome.root.path). Open Setup to choose the directory firstmate keeps its projects, backlog and crew state in.",
-                badgeSymbol: "wrench.and.screwdriver.fill",
-                chipText: "Open Setup")
-            bannerRow.configure(content, theme: theme)
-            bannerRow.onClick = { [weak self] in self?.onNavigateToSetup?() }
-            return
-        }
-        bannerRow.onClick = nil
-        if needs.isEmpty {
-            // GL-14: an "all clear" banner must not assert something this
-            // refresh could not actually verify. With a failed PR scan the
-            // banner still reports what it does know (crew, decisions) and
-            // says the PR half is unknown, rather than printing "0 PRs ready".
-            let prPhrase = prFetchFailure == nil
-                ? "\(readyCount) PR\(readyCount == 1 ? "" : "s") ready to merge"
-                : "PR status unavailable"
-            content = HelmAccentRow.Content(
-                tint: prFetchFailure == nil ? .good : .warn,
-                kicker: prFetchFailure == nil ? "All clear" : "Partly unknown",
-                title: prFetchFailure == nil ? "Nothing needs you right now" : "Nothing known needs you right now",
-                meta: "\(working.count) crew working \u{00B7} \(prPhrase) \u{00B7} nobody is parked on a decision.",
-                badgeSymbol: prFetchFailure == nil ? "checkmark" : "wifi.exclamationmark")
-        } else {
-            let decisions = needs.filter { $0.status == "needs_decision" }.count
-            let blocked = needs.filter { $0.status == "blocked" }.count
-            var bits: [String] = []
-            if decisions > 0 { bits.append("\(decisions) decision\(decisions > 1 ? "s" : "") waiting") }
-            if blocked > 0 { bits.append("\(blocked) blocked") }
-            content = HelmAccentRow.Content(
-                tint: .warn,
-                kicker: "Needs you",
-                title: "\(needs.count) task\(needs.count > 1 ? "s" : "") need your call",
-                meta: bits.joined(separator: " \u{00B7} ") + " - the crew is holding for you.",
-                badgeSymbol: "exclamationmark.triangle.fill")
-        }
+        let answer = FleetGreeting.answer(tasks: needs + working,
+                                          readyCount: readyCount,
+                                          prFetchFailure: prFetchFailure,
+                                          homeOk: homeOk)
+        let content = HelmAccentRow.Content(
+            tint: answer.tint,
+            kicker: answer.kicker,
+            title: answer.title,
+            meta: answer.meta,
+            badgeSymbol: answer.badgeSymbol,
+            chipText: answer.isSetupPrompt ? "Open Setup" : nil)
         bannerRow.configure(content, theme: theme)
+        // GL-31: only the not-configured banner is clickable, and it leads
+        // straight into the Bootstrap stepper where firstmate home is set.
+        bannerRow.onClick = answer.isSetupPrompt ? { [weak self] in self?.onNavigateToSetup?() } : nil
     }
 
     private func rebuildStats(working: Int, ready: Int, snapshot: FleetSnapshot,
