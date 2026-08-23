@@ -135,9 +135,12 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
 
     /// Mirrors `ThemeManager.shared.theme` - kept as a local var so the many
     /// call sites below don't all become `ThemeManager.shared.theme`, but the
-    /// manager (not this property) is the source of truth: `toggleTheme`
-    /// writes through it, and every window that needs to match (Hosts/Keys/
-    /// Snippets) observes the same manager instead of tracking its own copy.
+    /// manager (not this property) is the source of truth: the light/dark
+    /// toggle (moved onto `DaylightBarController` -
+    /// `fm/grandline-daylight-theme-toggle-relocate` - since it's an app-wide
+    /// preference, not Console-specific) writes through it directly, and
+    /// every window that needs to match (Hosts/Keys/Snippets) observes the
+    /// same manager instead of tracking its own copy.
     var theme: HelmTheme = ThemeManager.shared.theme
     /// Mirrors `FontSizeManager.shared.size` (`fm/cockpit-tools-page-ui-polish`) -
     /// same "local var kept live via `observe`" convention as `theme` above,
@@ -219,7 +222,6 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// `contentTintColor`, so assigning that directly would be silently
     /// overwritten on the next theme change - `tint` is the seam.
     var plusButton: HelmButton!
-    var themeButton: HelmButton!
     var findButton: HelmButton!
     var zoomInButton: HelmButton!
     var zoomOutButton: HelmButton!

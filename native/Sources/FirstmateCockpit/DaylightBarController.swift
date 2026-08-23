@@ -73,6 +73,12 @@ final class DaylightBarController: NSViewController {
     private let logoTile = HelmGradientTile(size: .logo)
     private let wordmark = NSTextField(labelWithString: "Grand Line")
     private let searchPill = DaylightSearchPill()
+    /// The light/dark quick-toggle, moved here from Console's own toolbar
+    /// (`fm/grandline-daylight-theme-toggle-relocate`) - it flips the whole
+    /// app's theme, not just one page's, so it belongs on the app-wide bar
+    /// rather than a per-destination toolbar. Sits between the search pill
+    /// and the bell, matching the captain's own reviewed layout.
+    private let themeToggleButton = DaylightThemeToggleButton()
     private let avatar = HoverTrackingButton()
     private let avatarGradient = CAGradientLayer()
     private let avatarPopover = NSPopover()
@@ -129,11 +135,15 @@ final class DaylightBarController: NSViewController {
         searchPill.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         searchPill.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
+        themeToggleButton.target = self
+        themeToggleButton.action = #selector(themeToggleClicked)
+
         buildAvatar()
 
         bar.addSubview(logoRow)
         bar.addSubview(pillRow)
         bar.addSubview(searchPill)
+        bar.addSubview(themeToggleButton)
         bar.addSubview(notificationCenter.bell)
         bar.addSubview(avatar)
 
@@ -162,8 +172,13 @@ final class DaylightBarController: NSViewController {
             pillRow.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
 
             pillsToSearch,
-            searchPill.trailingAnchor.constraint(equalTo: notificationCenter.bell.leadingAnchor, constant: -HelmMetrics.s2),
+            searchPill.trailingAnchor.constraint(equalTo: themeToggleButton.leadingAnchor, constant: -HelmMetrics.s2),
             searchPill.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+
+            themeToggleButton.trailingAnchor.constraint(equalTo: notificationCenter.bell.leadingAnchor, constant: -HelmMetrics.s2),
+            themeToggleButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            themeToggleButton.widthAnchor.constraint(equalToConstant: DaylightThemeToggleButton.side),
+            themeToggleButton.heightAnchor.constraint(equalToConstant: DaylightThemeToggleButton.side),
 
             notificationCenter.bell.trailingAnchor.constraint(equalTo: avatar.leadingAnchor, constant: -HelmMetrics.s2),
             notificationCenter.bell.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
@@ -324,6 +339,15 @@ final class DaylightBarController: NSViewController {
         onLogoutRequested?()
     }
 
+    /// The exact call Console's own toolbar button used to make - the quick
+    /// flip within a theme's own light/dark family pair (`pairId`), never
+    /// the full 13-theme picker (`ThemeMenu.swift`/Settings' Appearance
+    /// grid). `applyTheme()` runs via the `observe` callback registered in
+    /// `loadView`, so nothing else is needed here.
+    @objc private func themeToggleClicked() {
+        ThemeManager.shared.toggle()
+    }
+
     // MARK: Theme
 
     override func viewDidLayout() {
@@ -377,6 +401,8 @@ final class DaylightBarController: NSViewController {
         }
 
         searchPill.applyTheme(theme)
+        themeToggleButton.applyTheme(ink: muted, line: line, surface: theme.isDaylight
+            ? HelmTheme.nsColor(DaylightPalette.inset) : surface)
         notificationCenter.bell.applyTheme(ink: muted, line: line, surface: theme.isDaylight
             ? HelmTheme.nsColor(DaylightPalette.inset) : surface)
 
@@ -555,6 +581,71 @@ final class DaylightSearchPill: HoverHighlightView {
         badge.textColor = muted
         badge.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         badge.layer?.borderColor = line.withAlphaComponent(theme.isDaylight ? 1.0 : 0.6).cgColor
+    }
+}
+
+// MARK: - The theme toggle (moved from Console's own toolbar)
+
+/// A bordered 34x34 icon square - the exact same visible chrome as
+/// `NotificationBellButton`'s own icon square (`iconBackground`: radius 9,
+/// `chromeBackgroundHex` fill, `chromeLineHex` @ 0.5 border), so the two
+/// square icon buttons on this bar read as one visual language rather than
+/// two different button recipes sitting side by side.
+///
+/// Moved here from Console's per-tab toolbar
+/// (`fm/grandline-daylight-theme-toggle-relocate`): the light/dark flip is
+/// an app-wide preference (it calls `ThemeManager.shared.toggle()`, the
+/// same quick within-family flip Console's button always called - never the
+/// full 13-theme picker, which stays on `ThemeMenu.swift`/Settings'
+/// Appearance grid), so it belongs on the app-wide floating bar rather than
+/// a per-destination toolbar that only exists on Console.
+final class DaylightThemeToggleButton: NSButton {
+    /// Matches `NotificationBellButton.iconSize` exactly.
+    static let side: CGFloat = NotificationBellButton.iconSize
+
+    private let iconBackground = NSView()
+    private let iconImageView = NSImageView()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        title = ""
+        isBordered = false
+        image = nil
+        toolTip = "Toggle Light/Dark (⌘⌥T)"
+        setAccessibilityLabel("Toggle Light/Dark")
+        translatesAutoresizingMaskIntoConstraints = false
+
+        iconBackground.wantsLayer = true
+        iconBackground.layer?.cornerRadius = 9
+        iconBackground.translatesAutoresizingMaskIntoConstraints = false
+        // Decorative only - clicks are handled by the button itself, exactly
+        // as `NotificationBellButton.iconBackground` is.
+        addSubview(iconBackground)
+
+        iconImageView.image = NSImage(systemSymbolName: "circle.lefthalf.filled", accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 14, weight: .regular))
+        iconImageView.imageScaling = .scaleProportionallyDown
+        iconImageView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(iconImageView)
+
+        NSLayoutConstraint.activate([
+            iconBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
+            iconBackground.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconBackground.widthAnchor.constraint(equalToConstant: Self.side),
+            iconBackground.heightAnchor.constraint(equalToConstant: Self.side),
+
+            iconImageView.centerXAnchor.constraint(equalTo: iconBackground.centerXAnchor),
+            iconImageView.centerYAnchor.constraint(equalTo: iconBackground.centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    func applyTheme(ink: NSColor, line: NSColor, surface: NSColor) {
+        iconImageView.contentTintColor = ink.withAlphaComponent(0.75)
+        iconBackground.layer?.backgroundColor = surface.cgColor
+        iconBackground.layer?.borderWidth = 1
+        iconBackground.layer?.borderColor = line.withAlphaComponent(0.5).cgColor
     }
 }
 
