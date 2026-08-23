@@ -10,6 +10,13 @@
 // Restore Grand Line config too, with its own real file-picker pause), skips
 // whatever's already satisfied, and stops cleanly on the first failure.
 //
+// `fm/grandline-schedules-sidebar-move` moved F11's "Schedules" card off this
+// page entirely, onto its own rail destination (`SchedulesController.swift`)
+// - the captain's own correction that a captain checking on/adding a
+// schedule shouldn't have to know this page (behind a flyout) existed at
+// all. This page no longer knows about `ScheduleStore`/`ScheduleRunner`/
+// `SchedulesCardView` in any way; the pipeline stepper below is unaffected.
+//
 // This page does not reimplement any check or install action. Every "is this
 // step done" decision goes through `SetupStepChecks` (`SetupStepChecks.swift`)
 // - the exact same functions `BootstrapController.stepIsDone(_:)` now
@@ -123,18 +130,13 @@ final class AutomationController: NSViewController {
     private let keyStore: SSHKeyStore
     private let snippetStore: SnippetStore
     private let dictationStore: DictationStore
-    /// F11. Injected rather than constructed here, for the same reason every
-    /// other store on this page is: a second instance would be a second writer
-    /// to the same JSON file.
-    private let scheduleStore: ScheduleStore
 
     init(hostStore: HostStore, keyStore: SSHKeyStore, snippetStore: SnippetStore,
-         dictationStore: DictationStore, scheduleStore: ScheduleStore) {
+         dictationStore: DictationStore) {
         self.hostStore = hostStore
         self.keyStore = keyStore
         self.snippetStore = snippetStore
         self.dictationStore = dictationStore
-        self.scheduleStore = scheduleStore
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -189,12 +191,6 @@ final class AutomationController: NSViewController {
     /// otherwise go stale after that switch.
     private var stepAccentBars: [(bar: NSView, hex: (HelmTheme) -> String)] = []
 
-    /// F11's Schedules card. A self-contained view (see `SchedulesCardView`'s
-    /// header for why it is not an extension on this controller) - this
-    /// controller only owns presenting its sheet and confirming its delete,
-    /// both of which need a real `NSViewController`.
-    private let schedulesCard = SchedulesCardView()
-
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 620, height: 720))
         root.wantsLayer = true
@@ -205,7 +201,6 @@ final class AutomationController: NSViewController {
             self?.theme = theme
             self?.applyTheme()
             self?.rebuildStepper()
-            self?.refreshSchedules()
         }
 
         let subtitle = NSTextField(wrappingLabelWithString: "Runs every setup step below in order, skipping anything already configured on this machine.")
@@ -221,9 +216,7 @@ final class AutomationController: NSViewController {
         // is assembled - not here, to avoid building every row twice.
         let stepperCard = card(icon: "list.number", title: "Pipeline", content: stepperStack)
 
-        let schedulesCardView = buildSchedulesCard()
-
-        let stack = NSStackView(views: [subtitle, runCard, stepperCard, schedulesCardView])
+        let stack = NSStackView(views: [subtitle, runCard, stepperCard])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
@@ -241,7 +234,6 @@ final class AutomationController: NSViewController {
             subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
             runCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             stepperCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            schedulesCardView.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
 
         let scroll = NSScrollView()
@@ -274,7 +266,6 @@ final class AutomationController: NSViewController {
         super.viewWillAppear()
         if isLoadingDotfiles { refreshDotfiles() }
         if isLoadingSoftware { checkAllSoftware() }
-        refreshSchedules()
         scrollToTop()
     }
 
@@ -467,85 +458,6 @@ final class AutomationController: NSViewController {
     @objc private func restoreConfigSkipClicked() {
         guard steps.first(where: { $0.kind == .restoreConfig })?.status == .waitingForCaptain else { return }
         continueRestoreConfigStep(skipped: true)
-    }
-
-    // MARK: Schedules (F11)
-
-    /// Wires `SchedulesCardView`'s closures. Every one of them is a decision
-    /// that needs either a store write or a sheet presentation, which is
-    /// exactly the split between that view and this controller.
-    private func buildSchedulesCard() -> NSView {
-        schedulesCard.onNewSchedule = { [weak self] in self?.presentScheduleEditor(editing: nil) }
-        schedulesCard.onEditSchedule = { [weak self] schedule in self?.presentScheduleEditor(editing: schedule) }
-        schedulesCard.onDeleteSchedule = { [weak self] schedule in self?.confirmDeleteSchedule(schedule) }
-        schedulesCard.onRunNow = { [weak self] schedule in
-            ScheduleRunner.shared.runNow(schedule)
-            self?.refreshSchedules()
-        }
-        schedulesCard.onToggleEnabled = { [weak self] schedule, enabled in
-            guard let self else { return }
-            self.scheduleStore.setEnabled(enabled, id: schedule.id)
-            // Pausing a schedule should also retire whatever its last run left
-            // in the notification center - a paused schedule reporting drift
-            // it will not re-check is a stale claim.
-            if !enabled {
-                NotificationSources.clearScheduleResult(scheduleID: schedule.id)
-            }
-            self.refreshSchedules()
-        }
-        // The runner is what knows a run just finished; the card re-reads the
-        // store rather than being handed a result, so there is one source of
-        // truth for what a row shows.
-        ScheduleRunner.shared.onRunStateChanged = { [weak self] _ in self?.refreshSchedules() }
-        scheduleStore.onChange = { [weak self] in self?.refreshSchedules() }
-        refreshSchedules()
-        return schedulesCard.card
-    }
-
-    private func refreshSchedules() {
-        guard isViewLoaded else { return }
-        schedulesCard.setSchedules(scheduleStore.schedules,
-                                   runningID: ScheduleRunner.shared.runningScheduleID,
-                                   theme: theme)
-    }
-
-    private func presentScheduleEditor(editing: AutomationSchedule?) {
-        let editor = ScheduleEditorController(schedule: editing)
-        editor.onSave = { [weak self] schedule in
-            guard let self else { return }
-            if editing == nil {
-                self.scheduleStore.add(schedule)
-                Toast.show(in: self.view, message: "Schedule created")
-            } else {
-                self.scheduleStore.update(schedule)
-                Toast.show(in: self.view, message: "Schedule saved")
-            }
-            self.refreshSchedules()
-        }
-        editor.onDelete = { [weak self] id in
-            guard let self else { return }
-            self.scheduleStore.delete(id: id)
-            NotificationSources.clearScheduleResult(scheduleID: id)
-            self.refreshSchedules()
-        }
-        presentAsSheet(editor)
-    }
-
-    /// A schedule is cheap to recreate, but deleting one silently on a menu
-    /// click would still be a surprise - and this app confirms every other
-    /// record delete (see `HostsController`'s own confirm alert).
-    private func confirmDeleteSchedule(_ schedule: AutomationSchedule) {
-        let alert = NSAlert()
-        alert.messageText = "Delete this schedule?"
-        alert.informativeText = "\(schedule.action.title) will stop running on its own. "
-            + "The action itself stays available to run by hand on its own page."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Delete")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        scheduleStore.delete(id: schedule.id)
-        NotificationSources.clearScheduleResult(scheduleID: schedule.id)
-        refreshSchedules()
     }
 
     // MARK: Same underlying checks Bootstrap reads - see `SetupStepChecks.swift`

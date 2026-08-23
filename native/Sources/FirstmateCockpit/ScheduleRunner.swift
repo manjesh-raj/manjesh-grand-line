@@ -78,10 +78,12 @@ final class ScheduleRunner {
     private let queue = DispatchQueue(label: "com.firstmate.cockpit.schedule-runner", qos: .utility)
 
     /// Set by whoever owns the shell at launch, so the notification entry a run
-    /// raises can deep-link to the Automation page - the same
+    /// raises can deep-link to the Schedules page - the same
     /// forward-don't-own convention `BackgroundSignalsPoller.onNavigateToUpdates`
-    /// uses.
-    var onNavigateToAutomation: (() -> Void)?
+    /// uses. Renamed from `onNavigateToAutomation` when
+    /// `fm/grandline-schedules-sidebar-move` gave the Schedules card its own
+    /// rail destination, separate from `.automation`'s own pipeline page.
+    var onNavigateToSchedules: (() -> Void)?
 
     /// Fired on the main queue when a run starts and again when it finishes,
     /// so the Schedules card can show "Running…" and then the real result
@@ -224,7 +226,7 @@ final class ScheduleRunner {
                     verdict: result.verdict,
                     summary: result.summary,
                     notifyOn: schedule.notifyOn
-                ) { [weak self] in self?.onNavigateToAutomation?() }
+                ) { [weak self] in self?.onNavigateToSchedules?() }
 
                 self.onRunStateChanged?(schedule.id)
             }
