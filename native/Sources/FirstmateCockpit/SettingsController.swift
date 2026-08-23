@@ -91,6 +91,8 @@ final class SettingsController: NSViewController {
     private var uiScaleButtons: [Int: HelmButton] = [:]
     private let autoReconnectSwitch = NSSwitch()
     private let notifySwitch = NSSwitch()
+    /// F12's opt-in. Off by default - see `AppSettings.morningBriefingEnabled`.
+    private let morningBriefingSwitch = NSSwitch()
 
     /// Every `HelmCard` on this page, re-themed together. The card owns its own
     /// header icon tile and subtitle label, so neither needs a registry here.
@@ -125,6 +127,13 @@ final class SettingsController: NSViewController {
         let connection = card(icon: "network", tint: .info, title: "Connection", subtitle: "Mirror target and working directory", content: buildConnectionSection())
         let appearance = card(icon: "paintpalette", tint: .violet, title: "Appearance", subtitle: "\(HelmTheme.allThemes.count) Helm themes, light and dark", content: buildAppearanceSection())
         let terminal = card(icon: "terminal", tint: .warn, title: "Terminal", subtitle: "Font size and behavior", content: buildTerminalSection())
+        // F12. Its own card rather than a fourth row inside Terminal: this is
+        // not a terminal preference, it is the one place in the app that opts
+        // into a daily `claude -p` call, and the card's subtitle is where that
+        // gets said.
+        let briefing = card(icon: "sparkles", tint: .accent, title: "Morning briefing",
+                            subtitle: "One generated summary of your fleet, PRs, tasks, drift and quota",
+                            content: buildMorningBriefingSection())
         let security = card(icon: "lock.shield", tint: .violet, title: "Security", subtitle: "System-level convenience toggles", content: buildSecuritySection())
         let backup = card(icon: "tray.and.arrow.up.fill", tint: .info, title: "Backup & Restore", subtitle: "Move saved hosts, snippets, and preferences between machines", content: buildBackupSection())
         // F1 / GL-11: the Health card. Placed last because it is a diagnostic,
@@ -135,7 +144,7 @@ final class SettingsController: NSViewController {
                           subtitle: "Last run and last error for each background service",
                           content: buildHealthSection())
 
-        let stack = NSStackView(views: [header, connection, appearance, terminal, security, backup, health])
+        let stack = NSStackView(views: [header, connection, appearance, terminal, briefing, security, backup, health])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
@@ -154,6 +163,7 @@ final class SettingsController: NSViewController {
             connection.widthAnchor.constraint(equalTo: stack.widthAnchor),
             appearance.widthAnchor.constraint(equalTo: stack.widthAnchor),
             terminal.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            briefing.widthAnchor.constraint(equalTo: stack.widthAnchor),
             security.widthAnchor.constraint(equalTo: stack.widthAnchor),
             backup.widthAnchor.constraint(equalTo: stack.widthAnchor),
             health.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -755,6 +765,38 @@ final class SettingsController: NSViewController {
         return section
     }
 
+    // MARK: Morning briefing (F12)
+
+    private func buildMorningBriefingSection() -> NSView {
+        morningBriefingSwitch.target = self
+        morningBriefingSwitch.action = #selector(morningBriefingToggled)
+        let toggleRow = descRow(
+            title: "Show a morning briefing on Overview",
+            desc: "On the first visit to Overview each day, generate one short paragraph from the fleet snapshot, PR queue, due tasks, drift and quota - each clause linking to the page it came from.",
+            trailing: morningBriefingSwitch)
+
+        // Stated plainly rather than left to be discovered: this is the one
+        // feature here that reaches the network, and what it sends is worth
+        // being specific about.
+        let note = NSTextField(wrappingLabelWithString:
+            "Uses your own `claude` login for one call per day. Only counts and titles already shown elsewhere in the app are sent - never terminal output or logs. With `claude` unavailable the card still appears as a plain, locally-computed stat line with no AI call at all.")
+        note.font = .systemFont(ofSize: 11)
+        mutedLabel(note)
+        note.preferredMaxLayoutWidth = 520
+
+        let section = NSStackView(views: [toggleRow, separator(), note])
+        section.orientation = .vertical
+        section.alignment = .leading
+        section.spacing = 12
+        toggleRow.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
+        note.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
+        return section
+    }
+
+    @objc private func morningBriefingToggled() {
+        AppSettings.shared.morningBriefingEnabled = morningBriefingSwitch.state == .on
+    }
+
     // MARK: Health (F1 / GL-11)
 
     private let healthStack = NSStackView()
@@ -1131,6 +1173,7 @@ final class SettingsController: NSViewController {
         }
         autoReconnectSwitch.state = AppSettings.shared.autoReconnect ? .on : .off
         notifySwitch.state = AppSettings.shared.notifyOnNeedsDecision ? .on : .off
+        morningBriefingSwitch.state = AppSettings.shared.morningBriefingEnabled ? .on : .off
 
         rebuildAppearanceGrid()
         refreshSessions()

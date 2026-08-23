@@ -25,6 +25,8 @@ final class AppSettings {
         static let dictationShortcut = "fm.dictationShortcut"
         static let dictationCleanupEnabled = "fm.dictationCleanupEnabled"
         static let dictationLocalWhisperEnabled = "fm.dictationLocalWhisperEnabled"
+        static let morningBriefingEnabled = "fm.morningBriefingEnabled"
+        static let morningBriefingRecord = "fm.morningBriefingRecord"
     }
 
     private init() {}
@@ -147,5 +149,45 @@ final class AppSettings {
     var dictationLocalWhisperEnabled: Bool {
         get { defaults.bool(forKey: Keys.dictationLocalWhisperEnabled) }
         set { defaults.set(newValue, forKey: Keys.dictationLocalWhisperEnabled) }
+    }
+
+    /// F12's "Morning briefing" toggle (Settings > Morning briefing). Off by
+    /// default, and section 25's F12 entry is explicit about that being part
+    /// of the design rather than caution: the briefing makes one `claude -p`
+    /// call per day, which needs network access and the captain's own `claude`
+    /// authentication, and it costs quota. Nothing about the card exists until
+    /// this is switched on - see `FleetController.refreshMorningBriefing`,
+    /// which returns before reading any input when this is false.
+    var morningBriefingEnabled: Bool {
+        get { defaults.bool(forKey: Keys.morningBriefingEnabled) }
+        set { defaults.set(newValue, forKey: Keys.morningBriefingEnabled) }
+    }
+
+    /// The most recently generated briefing, JSON-encoded - the same
+    /// "one cohesive value, always read and written as a unit" reasoning as
+    /// `dictationShortcut` above, rather than five flat keys.
+    ///
+    /// Persisting it (rather than keeping it in memory for the session) is what
+    /// makes "once per day" behave the way a captain expects across a
+    /// relaunch: a briefing generated at 07:00 is still the one on screen after
+    /// a restart at 11:00, and the AI call is not made a second time. It holds
+    /// only the app's own already-displayed derived state - the same counts
+    /// Overview, Review, Tasks, GitHub Sync and the quota popover already show.
+    var morningBriefingRecord: MorningBriefingRecord? {
+        get {
+            guard let data = defaults.data(forKey: Keys.morningBriefingRecord),
+                  let decoded = try? JSONDecoder().decode(MorningBriefingRecord.self, from: data) else {
+                return nil
+            }
+            return decoded
+        }
+        set {
+            guard let newValue else {
+                defaults.removeObject(forKey: Keys.morningBriefingRecord)
+                return
+            }
+            guard let data = try? JSONEncoder().encode(newValue) else { return }
+            defaults.set(data, forKey: Keys.morningBriefingRecord)
+        }
     }
 }

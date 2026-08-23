@@ -17,9 +17,39 @@
 // merge" stat tile is the one signal left here, and it's clickable straight
 // through to `.review` via `onNavigateToReview`.
 
+// F12 (`fm/grandline-feature-f12-morning-briefing`): this page also hosts the
+// morning briefing card - see `MorningBriefingData.swift` for what it says and
+// `MorningBriefingCard.swift` for how it looks. Everything the briefing knows
+// comes from data this controller already fetched for its own banner and stat
+// tiles, plus the shared `ShiftStore`, `BackgroundSignalsPoller.lastCounts`
+// (counts that poller already computed) and one `QuotaSource.fetch()`.
+
 import AppKit
 
 final class FleetController: NSViewController {
+
+    // MARK: F12 - the morning briefing
+    //
+    // `shiftStore` is the *shared* store the app delegate builds and hands to
+    // `AppShellController` - deliberately not a second `ShiftStore()`. That
+    // one caches and writes, so a second instance would diverge in-session
+    // and race the first's files (see AGENTS.md's `CommandLibraryStore` note
+    // on exactly this lesson).
+    private let shiftStore: ShiftStore
+    private let briefingCard = MorningBriefingCard()
+    /// The `.quota` clause opens the same Claude-usage popover Console's
+    /// toolbar shows, anchored on the briefing paragraph - Console's own
+    /// button only exists on a Herdr-backed mirror tab, so it is not something
+    /// this page can reach.
+    private let quotaUsage = QuotaUsageController()
+    private var isGeneratingBriefing = false
+
+    init(shiftStore: ShiftStore) {
+        self.shiftStore = shiftStore
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     private let scroll = NSScrollView()
     private let contentStack = NSStackView()
@@ -82,6 +112,20 @@ final class FleetController: NSViewController {
     /// leaving the captain to find the Setup flyout on their own.
     var onNavigateToSetup: (() -> Void)?
 
+    /// F12: where a briefing clause's deep link goes for the destinations this
+    /// page has no dedicated callback for already. One closure over
+    /// `RailDestination` rather than four more - `AppShellController.show(_:)`
+    /// is the only thing on the other end, and this page has no business
+    /// knowing more about navigation than "take me to that rail destination".
+    var onNavigateToDestination: ((RailDestination) -> Void)?
+
+    /// F12: a `.tasks` clause when the app itself resolved exactly one due
+    /// Shift task - wired to `AppShellController.openShiftTask(id:)`, the same
+    /// "open this task" behaviour every other entry point uses. The id is
+    /// always the app's own (`BriefingInputs.singleDueTaskID`), never
+    /// something a model wrote.
+    var onOpenShiftTask: ((String) -> Void)?
+
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 940, height: 720))
         root.wantsLayer = true
@@ -111,6 +155,13 @@ final class FleetController: NSViewController {
         contentStack.spacing = 20
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(header)
+        // F12: directly under the page header, so it is the first thing read
+        // on the page without duplicating the header's own greeting. Hidden
+        // until there is a briefing to show - and a hidden *arranged subview*
+        // of an `NSStackView` leaves layout entirely (AGENTS.md gotcha (11)),
+        // so an off-by-default feature costs this page nothing.
+        buildBriefingCard()
+        contentStack.addArrangedSubview(briefingCard)
         contentStack.addArrangedSubview(loadingSection)
         contentStack.addArrangedSubview(bannerRow)
         contentStack.addArrangedSubview(statsRow)
@@ -121,6 +172,7 @@ final class FleetController: NSViewController {
         bannerRow.isHidden = true
         statsRow.isHidden = true
         inFlightSection.isHidden = true
+        briefingCard.isHidden = true
 
         content.addSubview(contentStack)
         NSLayoutConstraint.activate([
@@ -129,6 +181,7 @@ final class FleetController: NSViewController {
             contentStack.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
             contentStack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -28),
             headerRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            briefingCard.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             loadingSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             bannerRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             statsRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
@@ -173,6 +226,10 @@ final class FleetController: NSViewController {
         // every later appearance this is a cheap no-op (already resolved).
         view.layoutSubtreeIfNeeded()
         scrollToTop()
+        // F12: a briefing already generated today renders immediately from the
+        // persisted record - the AI call is not repeated on every visit, and
+        // the card does not flicker in behind the fleet fetch.
+        showCachedBriefingIfAvailable()
         refresh()
     }
 
@@ -372,10 +429,15 @@ final class FleetController: NSViewController {
     /// and the manual refresh button, unchanged).
     func refreshIfNeeded() { refresh() }
 
-    private func refresh() {
+    private func refresh() { refresh(forceBriefing: false) }
+
+    /// `forceBriefing` is the briefing card's own clock affordance: regenerate
+    /// from a fresh scan rather than waiting for tomorrow's first activation.
+    private func refresh(forceBriefing: Bool) {
         guard !isLoading else { return }
         isLoading = true
         refreshButton.isEnabled = false
+        if forceBriefing { briefingCard.setBusy(true) }
         // snapshot() (~0.5s: task/backlog counts, watcher health) and
         // OpenPRsSource.fetch() (the slow, network-bound per-clone PR scan)
         // are independent - render the fast fields the moment snapshot()
@@ -395,6 +457,12 @@ final class FleetController: NSViewController {
                 self.isLoading = false
                 self.refreshButton.isEnabled = true
                 self.render(snapshot: snapshot, mergedPRs: merged, prFetchFailure: fetched.failureSummary)
+                // F12: only from here, never from the first (PR-less) render -
+                // a briefing built while the PR scan is still in flight would
+                // report "0 PRs ready" as a fact.
+                self.considerMorningBriefing(snapshot: snapshot,
+                                             prReadyCount: fetched.failureSummary == nil ? merged.count : nil,
+                                             force: forceBriefing)
             }
         }
     }
@@ -637,6 +705,161 @@ final class FleetController: NSViewController {
 
     // MARK: Actions
 
+    // MARK: F12 - the morning briefing
+
+    private func buildBriefingCard() {
+        briefingCard.onRefresh = { [weak self] in self?.refresh(forceBriefing: true) }
+        briefingCard.onDismiss = { [weak self] in self?.dismissBriefing() }
+        briefingCard.onActivate = { [weak self] target in self?.activateBriefingClause(target) }
+    }
+
+    /// Renders a briefing already generated today, straight from the persisted
+    /// record - no fetch, no AI call. Called on every appearance, so navigating
+    /// away and back does not re-run anything.
+    private func showCachedBriefingIfAvailable() {
+        guard AppSettings.shared.morningBriefingEnabled,
+              let record = AppSettings.shared.morningBriefingRecord,
+              record.day == MorningBriefing.dayKey(),
+              !record.dismissed else {
+            briefingCard.isHidden = true
+            return
+        }
+        show(record)
+    }
+
+    /// The once-per-day gate. `force` is the clock affordance, which ignores
+    /// both the day check and a dismissal.
+    private func considerMorningBriefing(snapshot: FleetSnapshot, prReadyCount: Int?, force: Bool) {
+        guard AppSettings.shared.morningBriefingEnabled else {
+            // Off by default, and off means nothing happens: no inputs are
+            // read, no quota fetch, no `claude` call.
+            briefingCard.isHidden = true
+            briefingCard.setBusy(false)
+            return
+        }
+        if !force, let record = AppSettings.shared.morningBriefingRecord,
+           record.day == MorningBriefing.dayKey() {
+            // Already briefed today - render it (or stay hidden if the captain
+            // dismissed it) rather than spending a second `claude` call.
+            if record.dismissed { briefingCard.isHidden = true } else { show(record) }
+            return
+        }
+        guard !isGeneratingBriefing else { return }
+        generateBriefing(snapshot: snapshot, prReadyCount: prReadyCount)
+    }
+
+    private func generateBriefing(snapshot: FleetSnapshot, prReadyCount: Int?) {
+        isGeneratingBriefing = true
+        briefingCard.isHidden = false
+        briefingCard.setBusy(true)
+
+        var inputs = BriefingInputs()
+        inputs.homeOk = snapshot.homeOk
+        inputs.workingCount = snapshot.tasks.filter { $0.status == "working" }.count
+        inputs.needsDecisionCount = snapshot.tasks.filter { $0.status == "needs_decision" }.count
+        inputs.blockedCount = snapshot.tasks.filter { $0.status == "blocked" }.count
+        inputs.doneTodayCount = snapshot.doneCount
+        inputs.queuedCount = snapshot.queuedCount
+        inputs.watcherStatus = snapshot.watcher.status
+        inputs.prReadyCount = prReadyCount
+
+        // Main thread on purpose: `ShiftStore` is not thread-safe, and this is
+        // a cheap scan of arrays it already has in memory.
+        let due = MorningBriefing.shiftDue(store: shiftStore)
+        inputs.dueTaskCount = due.tasks
+        inputs.dueFollowUpCount = due.followUps
+        inputs.singleDueTaskID = due.singleTaskID
+
+        // Read, not recomputed - see `BackgroundSignalsPoller.lastCounts`.
+        let counts = BackgroundSignalsPoller.shared.lastCounts
+        inputs.forkDriftCount = counts.forkDrift
+        inputs.toolUpdateCount = counts.toolUpdates
+        inputs.setupDriftCount = counts.setupDrift
+
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let quota = MorningBriefing.fetchQuota()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                inputs.quotaWeeklyPercentUsed = quota.weekly
+                inputs.quotaWeeklyPace = quota.pace
+                inputs.quotaSessionPercentUsed = quota.session
+                self.finishBriefing(inputs: inputs)
+            }
+        }
+    }
+
+    /// The local/AI split, at the one point it matters: the local clause list
+    /// is built first and is what ships whenever the AI half cannot answer.
+    private func finishBriefing(inputs: BriefingInputs) {
+        let localClauses = MorningBriefingLocal.clauses(from: inputs)
+        func commit(_ clauses: [BriefingClause], degradedReason: String?) {
+            let record = MorningBriefing.record(inputs: inputs, clauses: clauses,
+                                                isDegraded: degradedReason != nil,
+                                                degradedReason: degradedReason)
+            AppSettings.shared.morningBriefingRecord = record
+            self.isGeneratingBriefing = false
+            self.briefingCard.setBusy(false)
+            self.show(record)
+        }
+
+        guard MorningBriefingAI.isAvailable else {
+            commit(localClauses, degradedReason: "claude isn\u{2019}t installed or on PATH")
+            return
+        }
+        MorningBriefingAI.generate(inputs: inputs) { result in
+            switch result {
+            case .success(let clauses):
+                commit(clauses, degradedReason: nil)
+            case .failure(let error):
+                // Never fatal: the deterministic clauses are already built.
+                AppLog.ai.info("morning briefing fell back to the local summary: \(error.message, privacy: .public)")
+                commit(localClauses, degradedReason: error.message)
+            }
+        }
+    }
+
+    private func show(_ record: MorningBriefingRecord) {
+        briefingCard.render(record, theme: theme)
+        briefingCard.isHidden = false
+    }
+
+    private func dismissBriefing() {
+        briefingCard.isHidden = true
+        briefingCard.setBusy(false)
+        guard var record = AppSettings.shared.morningBriefingRecord else { return }
+        record.dismissed = true
+        AppSettings.shared.morningBriefingRecord = record
+    }
+
+    /// The deep links. Every branch is a real destination - `.none` clauses are
+    /// never rendered as links in the first place, so there is no case here
+    /// that silently does nothing.
+    private func activateBriefingClause(_ target: BriefingTarget) {
+        switch target {
+        case .none:
+            break
+        case .review:
+            onNavigateToReview?()
+        case .tasks:
+            if let id = AppSettings.shared.morningBriefingRecord?.shiftTaskID {
+                onOpenShiftTask?(id)
+            } else {
+                onNavigateToDestination?(.shift)
+            }
+        case .githubSync:
+            onNavigateToDestination?(.githubSync)
+        case .updates:
+            onNavigateToDestination?(.updates)
+        case .setup:
+            onNavigateToSetup?()
+        case .quota:
+            quotaUsage.toggle(relativeTo: briefingCard.quotaAnchor)
+        case .fleet:
+            // The tasks this clause is about are rows on this very page.
+            if let section = inFlightSectionView { section.scrollToVisible(section.bounds) }
+        }
+    }
+
     // MARK: Theme
 
     private func applyTheme() {
@@ -662,6 +885,7 @@ final class FleetController: NSViewController {
         loadingLabel.textColor = muted
 
         bannerRow.applyTheme(theme)
+        briefingCard.applyTheme(theme)
         inFlightHeader.textColor = ink
         inFlightGlyph.applyTheme(theme)
         inFlightCountChip.layer?.backgroundColor = ink.withAlphaComponent(0.08).cgColor

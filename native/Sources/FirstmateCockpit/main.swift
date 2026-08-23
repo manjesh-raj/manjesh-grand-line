@@ -1379,6 +1379,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_SCHEDULE_RUNNER_TESTS"] == "1" {
     exit(ScheduleRunnerSelfTest.run() ? 0 : 1)
 }
 
+// F12 (`fm/grandline-feature-f12-morning-briefing`): the morning briefing's
+// local composer (what data goes in, and the unknown-is-not-zero rule) plus
+// its degradation path, driven through the real `ClaudeOneShot` against a
+// disposable fake `claude`. See MorningBriefingSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_MORNING_BRIEFING_TESTS"] == "1" {
+    exit(MorningBriefingSelfTest.run() ? 0 : 1)
+}
+
 #endif
 
 // GL-05: refuse to be a second instance. This sits *after* every

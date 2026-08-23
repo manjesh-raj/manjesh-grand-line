@@ -169,7 +169,9 @@ final class AppShellController: NSViewController {
         self.hostsPanel = hostsPanel
         self.console = console
         self.settings = settings
-        self.overview = FleetController()
+        // F12: the shared `ShiftStore`, so the briefing's due-task count is
+        // the same one the Tasks page shows - never a second store instance.
+        self.overview = FleetController(shiftStore: shiftStore)
         self.dictation = DictationController(store: dictationStore)
         // Phase 5 (cockpit-shift-power-features): `shiftStore` is now built
         // once by the app delegate and shared with the menu bar item, the
@@ -360,6 +362,12 @@ final class AppShellController: NSViewController {
         // GL-31: Overview's unconfigured banner leads straight into the
         // Bootstrap stepper, which is where firstmate home is actually set.
         overview.onNavigateToSetup = { [weak self] in self?.show(.bootstrap) }
+        // F12: the morning briefing's clause deep links. `show(_:)` and
+        // `openShiftTask(id:)` are both already the one way this app navigates
+        // to a destination / opens a task, so these are pass-throughs rather
+        // than new behaviour.
+        overview.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
+        overview.onOpenShiftTask = { [weak self] id in self?.openShiftTask(id: id) }
         // cockpit-settings-sudo-touchid: Settings' "Touch ID for sudo" row
         // runs `sudo av harden sudo`, which needs a real interactive `sudo`
         // prompt exactly like Bootstrap's provisioning actions - same
