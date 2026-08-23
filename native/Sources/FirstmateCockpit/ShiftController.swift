@@ -184,7 +184,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         let content = FlippedView()
         content.translatesAutoresizingMaskIntoConstraints = false
 
-        let header = buildHeader()
+        configureSyncPill()
         let tabRow = buildTabRow()
         buildStatsRow()
         let taskSection = buildTaskSection()
@@ -253,7 +253,6 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         contentStack.alignment = .leading
         contentStack.spacing = 20
         contentStack.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.addArrangedSubview(header)
         contentStack.addArrangedSubview(tabRow)
         contentStack.addArrangedSubview(dashboardContainer)
         contentStack.addArrangedSubview(weeklyReviewSection)
@@ -357,47 +356,19 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// the old top-bar title both disappear - the drill header IS the
     /// destination name". So the greeting and the date line are gone from the
     /// page, and the live counts they used to sit beside are what the drill
-    /// header's own subtitle now carries (`drillHeaderSubtitle`).
+    /// header's own subtitle carries (`drillHeaderSubtitle`).
     ///
-    /// What is left in the page's own header is the sync pill - and only when
-    /// there is real git backing to report on, which is decided once (see
-    /// below). It is handed to the drill header's action cluster rather than
-    /// rendered here, so this method's row exists purely to keep the pill in a
-    /// view the page owns; the drill header positions it.
-    private func buildHeader() -> NSView {
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
+    /// What survives of this page's own header is the sync pill, which is now
+    /// handed to the drill header's action cluster (`drillHeaderActions`) -
+    /// so there is no in-page header row left at all, and this method only
+    /// prepares the pill the shell will position.
+    private func configureSyncPill() {
+        guard store.gitSync != nil else { return }
         syncPill.translatesAutoresizingMaskIntoConstraints = false
         let syncPillClick = NSClickGestureRecognizer(target: self, action: #selector(syncPillClicked))
         syncPill.addGestureRecognizer(syncPillClick)
         syncPill.accessibilityLabelOverride = "Sync status - open conflict resolution"
         applySyncPill()
-
-        // `store.gitSync` is fixed for this controller's whole lifetime (a
-        // `let` on `ShiftStore`, decided once at store construction by
-        // whether `FM_SHIFT_DIR` was set), so whether the pill belongs in
-        // the header at all is also decided once, here - rather than only
-        // ever toggling its `isHidden` flag. This is deliberately stronger
-        // than `isHidden`: a view never added as an arranged subview can't
-        // be shown by any later code path that forgets this rule, and can't
-        // report a stale on-screen frame to anything inspecting the view
-        // tree (isHidden was already correct at every layer verified live -
-        // see fm/cockpit-fix-shift-sync-pill - but leaving a real, non-empty
-        // pill sitting hidden in the tree is an unnecessary trap for the
-        // next person who touches this header).
-        let row = NSStackView(views: [spacer])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 8
-        row.translatesAutoresizingMaskIntoConstraints = false
-        // A zero-height row: the header's whole content moved into the drill
-        // header, and the page keeps the (now empty) row rather than removing
-        // it from `contentStack` so `loadView`'s structure - and every width
-        // tie in it - is untouched by this restyle.
-        row.heightAnchor.constraint(equalToConstant: 0).isActive = true
-        row.isHidden = true
-        return row
     }
 
     // MARK: Drill header (Daylight §6.4)
@@ -438,7 +409,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// Reflects `ShiftGitSync`'s real status - never a timer or a fake cycle.
     /// `nil` `store.gitSync` (an explicit `FM_SHIFT_DIR` override with no git
     /// backing) means the pill was never added to the header at all (see
-    /// `buildHeader()`) - nothing to style.
+    /// `configureSyncPill()`) - nothing to style.
     private func applySyncPill() {
         guard store.gitSync != nil else { return }
         syncPill.isHidden = false
