@@ -107,6 +107,7 @@ jobs:
           FM_HOSTS_FILE: ${{ runner.temp }}/ci-stores/hosts.json
           FM_KEYS_FILE: ${{ runner.temp }}/ci-stores/keys.json
           FM_SNIPPETS_FILE: ${{ runner.temp }}/ci-stores/snippets.json
+          FM_SCHEDULES_FILE: ${{ runner.temp }}/ci-stores/schedules.json
           FM_SHIFT_DIR: ${{ runner.temp }}/ci-stores/tasks
           FM_DICTATION_DIR: ${{ runner.temp }}/ci-stores/dictation
           FM_DOCS_DIR: ${{ runner.temp }}/ci-stores/docs

@@ -163,6 +163,7 @@ final class AppShellController: NSViewController {
         hostsPanel: HostsController, console: ConsoleController, settings: SettingsController,
         hostStore: HostStore, keyStore: SSHKeyStore, snippetStore: SnippetStore, shiftStore: ShiftStore,
         dictationStore: DictationStore, commandLibraryStore: CommandLibraryStore,
+        scheduleStore: ScheduleStore,
         makeHostConsole: @escaping () -> ConsoleController
     ) {
         self.hostsPanel = hostsPanel
@@ -179,7 +180,8 @@ final class AppShellController: NSViewController {
         // GL-23: the same instance the Tasks page uses.
         self.logAnalyzer = LogAnalyzerController(commandLibrary: commandLibraryStore)
         self.bootstrap = BootstrapController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore)
-        self.automation = AutomationController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore)
+        self.automation = AutomationController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore,
+                                               dictationStore: dictationStore, scheduleStore: scheduleStore)
         self.makeHostConsole = makeHostConsole
         super.init(nibName: nil, bundle: nil)
     }

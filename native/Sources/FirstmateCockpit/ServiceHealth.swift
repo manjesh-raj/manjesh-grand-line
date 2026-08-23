@@ -40,6 +40,10 @@ enum HealthService: String, CaseIterable {
     case docsSync
     case shiftDueItems
     case persistence
+    /// F11: the schedule runner. Reports one success/failure per completed
+    /// scheduled run, so a scheduler that has silently stopped firing shows up
+    /// here rather than only as "that nightly check has been quiet a while".
+    case scheduledAutomations
 
     /// Row title on the Health card.
     var title: String {
@@ -50,6 +54,7 @@ enum HealthService: String, CaseIterable {
         case .docsSync: return "Docs & runbooks sync"
         case .shiftDueItems: return "Due-item reminders"
         case .persistence: return "Saving to disk"
+        case .scheduledAutomations: return "Scheduled automations"
         }
     }
 
@@ -69,6 +74,8 @@ enum HealthService: String, CaseIterable {
             return "Notifies when a task or follow-up comes due."
         case .persistence:
             return "Writes hosts, keys, snippets, tasks and commands to disk."
+        case .scheduledAutomations:
+            return "Runs the schedules set up on the Automation page."
         }
     }
 
@@ -80,6 +87,7 @@ enum HealthService: String, CaseIterable {
         case .docsSync: return "book.closed"
         case .shiftDueItems: return "bell"
         case .persistence: return "internaldrive"
+        case .scheduledAutomations: return "calendar"
         }
     }
 }

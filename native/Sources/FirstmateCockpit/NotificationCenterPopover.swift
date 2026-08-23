@@ -470,6 +470,11 @@ private struct NotificationRowPresentation {
             if entry.id.hasPrefix("sre-lead.") {
                 icon = "bubble.left.fill"
                 kicker = "SRE Lead Reply"
+            } else if entry.id.hasPrefix("schedule-result.") {
+                // F11. One entry per schedule, so this is a prefix match like
+                // SRE Lead's per-tab entries rather than a fixed id.
+                icon = "calendar.badge.clock"
+                kicker = "Scheduled Run"
             } else {
                 icon = "bell.fill"
                 kicker = entry.kind == .actionNeeded ? "Action Needed" : "Update"
