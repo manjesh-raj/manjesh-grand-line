@@ -52,9 +52,12 @@ final class CommandLibraryPageView: NSObject {
 
     // MARK: Chrome
 
-    private let searchField = NSTextField()
-    private let searchIcon = NSImageView()
-    private let searchRow = NSView()
+    /// One shared component where this page hand-rolled its own search well
+    /// (a bordered row + a magnifier + a chromeless field) - Phase 0's
+    /// raw-input purge, and the reason `HelmSearchField` exists.
+    private let searchField = HelmSearchField(
+        placeholder: "Search commands\u{2026} (try \u{201C}memory\u{201D} or \u{201C}certificate\u{201D})",
+        size: .prominent)
 
     private let leftPanel = NSView()
     private let leftPanelStack = NSStackView()
@@ -153,7 +156,7 @@ final class CommandLibraryPageView: NSObject {
         detailPanel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         detailPanel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let root = NSStackView(views: [searchRow, columns])
+        let root = NSStackView(views: [searchField, columns])
         root.orientation = .vertical
         root.alignment = .leading
         root.spacing = 14
@@ -164,46 +167,20 @@ final class CommandLibraryPageView: NSObject {
             root.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             root.topAnchor.constraint(equalTo: view.topAnchor),
             root.bottomAnchor.constraint(lessThanOrEqualTo: view.bottomAnchor),
-            searchRow.widthAnchor.constraint(equalTo: root.widthAnchor),
+            searchField.widthAnchor.constraint(equalTo: root.widthAnchor),
             columns.widthAnchor.constraint(equalTo: root.widthAnchor),
         ])
     }
 
+    /// `HelmSearchField` owns the well, the magnifier and the placeholder now
+    /// (`.prominent`, because this is the page's single primary entry point -
+    /// the same visual weight the hand-rolled row had); only the query hookup
+    /// stays here.
     private func buildSearchRow() {
-        searchIcon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .medium))
-        searchIcon.translatesAutoresizingMaskIntoConstraints = false
-
-        searchField.placeholderString = "Search commands\u{2026} (try \u{201C}memory\u{201D} or \u{201C}certificate\u{201D})"
-        searchField.isBordered = false
-        searchField.drawsBackground = false
-        searchField.focusRingType = .none
-        searchField.font = .systemFont(ofSize: 13)
-        searchField.target = self
-        searchField.action = #selector(searchChanged)
-        searchField.delegate = self
-        searchField.translatesAutoresizingMaskIntoConstraints = false
-
-        let inner = NSStackView(views: [searchIcon, searchField])
-        inner.orientation = .horizontal
-        inner.alignment = .centerY
-        inner.spacing = 10
-        inner.translatesAutoresizingMaskIntoConstraints = false
-
-        // A touch more generous than the app's usual compact rows - this is
-        // the page's single primary entry point (mockup: `py-2` on a
-        // full-width bar), so it should read with more visual weight than an
-        // ordinary list row.
-        searchRow.wantsLayer = true
-        searchRow.layer?.cornerRadius = 9
-        searchRow.translatesAutoresizingMaskIntoConstraints = false
-        searchRow.addSubview(inner)
-        NSLayoutConstraint.activate([
-            inner.leadingAnchor.constraint(equalTo: searchRow.leadingAnchor, constant: 14),
-            inner.trailingAnchor.constraint(equalTo: searchRow.trailingAnchor, constant: -14),
-            inner.topAnchor.constraint(equalTo: searchRow.topAnchor, constant: 11),
-            inner.bottomAnchor.constraint(equalTo: searchRow.bottomAnchor, constant: -11),
-        ])
+        searchField.onTextChanged = { [weak self] query in
+            self?.searchQuery = query
+            self?.renderLeftPanel()
+        }
     }
 
     private func buildLeftPanel() {
@@ -445,12 +422,6 @@ final class CommandLibraryPageView: NSObject {
         let muted = HelmTheme.mutedInk(theme)
         let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
         let line = HelmTheme.nsColor(theme.chromeLineHex)
-
-        searchRow.layer?.backgroundColor = surface.cgColor
-        searchRow.layer?.borderWidth = 1
-        searchRow.layer?.borderColor = line.withAlphaComponent(0.6).cgColor
-        searchIcon.contentTintColor = muted
-        searchField.textColor = ink
 
         leftPanel.layer?.backgroundColor = surface.cgColor
         leftPanel.layer?.borderWidth = 1
@@ -744,11 +715,6 @@ final class CommandLibraryPageView: NSObject {
         render()
     }
 
-    @objc private func searchChanged() {
-        searchQuery = searchField.stringValue
-        renderLeftPanel()
-    }
-
     // MARK: Detail pane
 
     private func renderDetail(for command: DevOpsCommand) {
@@ -823,10 +789,8 @@ final class CommandLibraryPageView: NSObject {
             popup.action = #selector(paramValueChanged(_:))
             control = popup
         default:
-            let field = NSTextField()
+            let field = HelmTextField(placeholder: param.placeholder ?? "")
             field.stringValue = paramValues[param.name] ?? param.defaultValue ?? ""
-            field.placeholderString = param.placeholder
-            field.font = .systemFont(ofSize: 12)
             field.target = self
             field.action = #selector(paramValueChanged(_:))
             field.delegate = self
@@ -1126,11 +1090,9 @@ enum CommandRiskConfirmation {
 
 extension CommandLibraryPageView: NSTextFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {
+        // The search well reports through its own `onTextChanged` closure -
+        // everything reaching here is a parameter field.
         guard let field = obj.object as? NSTextField else { return }
-        if field === searchField {
-            searchChanged()
-            return
-        }
         paramValueChanged(field)
     }
 }

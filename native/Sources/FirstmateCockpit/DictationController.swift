@@ -86,7 +86,7 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
     private let explainerLabel = NSTextField(wrappingLabelWithString: "")
     private var vocabularyColumn = NSStackView()
     private let vocabularyChipFlow = ChipFlowView()
-    private let vocabularyInputField = NSTextField()
+    private let vocabularyInputField = HelmTextField(placeholder: "Add a word or phrase\u{2026}")
     private let vocabularyAddButton = HelmButton(title: "", variant: .secondary)
 
     private let historyPanel = HelmCard()
@@ -604,9 +604,7 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
 
         vocabularyChipFlow.translatesAutoresizingMaskIntoConstraints = false
 
-        vocabularyInputField.placeholderString = "Add a word or phrase…"
         vocabularyInputField.delegate = self
-        vocabularyInputField.translatesAutoresizingMaskIntoConstraints = false
 
         vocabularyAddButton.title = "Add"
         vocabularyAddButton.controlSize = .small

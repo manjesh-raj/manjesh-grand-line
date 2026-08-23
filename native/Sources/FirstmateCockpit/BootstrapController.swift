@@ -211,7 +211,7 @@ final class BootstrapController: NSViewController {
     private let subtitleLabel = NSTextField(labelWithString: "Machine setup and environment bootstrap - stored locally on this machine.")
 
     private let currentPathLabel = NSTextField(labelWithString: "")
-    private let pathField = NSTextField()
+    private let pathField = HelmTextField(placeholder: "~/manjesh/firstmate")
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
     private let saveButton = HelmButton(title: "", variant: .primary)
     private let restartButton = HelmButton(title: "", variant: .secondary)
@@ -241,7 +241,7 @@ final class BootstrapController: NSViewController {
     private let dotfilesStack = NSStackView()
     private let agentStack = NSStackView()
     private let clonePathField = NSTextField(string: DotfilesSource.defaultClonePath)
-    private let usernameField = NSTextField()
+    private let usernameField = HelmTextField()
     private let dotfilesStatusLabel = NSTextField(wrappingLabelWithString: "")
 
     // MARK: Software checklist state (Part C)
@@ -547,8 +547,6 @@ final class BootstrapController: NSViewController {
         desc.textColor = HelmTheme.mutedInk(theme)
         desc.preferredMaxLayoutWidth = 520
 
-        pathField.placeholderString = "~/manjesh/firstmate"
-        pathField.translatesAutoresizingMaskIntoConstraints = false
 
         let browseButton = HelmButton(title: "Browse\u{2026}", variant: .secondary, target: self, action: #selector(browseClicked))
 
@@ -1624,7 +1622,6 @@ final class BootstrapController: NSViewController {
         let label = NSTextField(labelWithString: "macOS username")
         label.font = .systemFont(ofSize: 12, weight: .medium)
 
-        usernameField.translatesAutoresizingMaskIntoConstraints = false
         let save = HelmButton(title: "Save", variant: .primary, target: self, action: #selector(saveUsernameClicked))
 
         let row = NSStackView(views: [usernameField, save])

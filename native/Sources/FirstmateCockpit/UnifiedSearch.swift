@@ -89,10 +89,16 @@ final class UnifiedSearchIndex {
 /// The old `onSelectRunbook`/`onSelectPostmortem` callbacks are gone with it;
 /// `main.swift` wires those two actions into `UnifiedSearchDocsProvider`
 /// instead, alongside every other domain's.
-final class UnifiedSearchController: NSWindowController, NSTextFieldDelegate {
+final class UnifiedSearchController: NSWindowController {
     private let index: UnifiedSearchIndex
 
-    private let searchField = NSTextField()
+    /// The palette's query line, in the app's own search well (Phase 0's
+    /// raw-input purge - this was the smallest, most-used surface in the app
+    /// still wearing system chrome, audit Tier 3). Arrow/Return/Escape still
+    /// arrive here, now through `HelmSearchField.onCommand`.
+    private let searchField = HelmSearchField(
+        placeholder: "Search hosts, commands, tasks, runbooks, actions\u{2026}",
+        size: .prominent)
     private let resultsStack = NSStackView()
     private let scroll = NSScrollView()
     private var groups: [UnifiedSearchGroup] = []
@@ -155,13 +161,8 @@ final class UnifiedSearchController: NSWindowController, NSTextFieldDelegate {
         // `ThemeManager`/`HelmTheme` checklist, gotcha #8.
         content.wantsLayer = true
 
-        searchField.placeholderString = "Search hosts, commands, tasks, runbooks, actions\u{2026}"
-        searchField.font = .systemFont(ofSize: 16)
-        searchField.isBordered = false
-        searchField.focusRingType = .none
-        searchField.drawsBackground = false
-        searchField.delegate = self
-        searchField.translatesAutoresizingMaskIntoConstraints = false
+        searchField.onTextChanged = { [weak self] query in self?.reload(query: query) }
+        searchField.onCommand = { [weak self] selector in self?.handle(command: selector) ?? false }
 
         let divider = NSView()
         divider.wantsLayer = true
@@ -185,7 +186,6 @@ final class UnifiedSearchController: NSWindowController, NSTextFieldDelegate {
             searchField.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18),
             searchField.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
             searchField.topAnchor.constraint(equalTo: content.topAnchor, constant: 14),
-            searchField.heightAnchor.constraint(equalToConstant: 26),
 
             divider.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             divider.trailingAnchor.constraint(equalTo: content.trailingAnchor),
@@ -228,7 +228,7 @@ final class UnifiedSearchController: NSWindowController, NSTextFieldDelegate {
             window.center()
         }
         window.makeKeyAndOrderFront(nil)
-        window.makeFirstResponder(searchField)
+        searchField.focusEditor()
         installOutsideClickMonitors()
     }
 
@@ -250,18 +250,14 @@ final class UnifiedSearchController: NSWindowController, NSTextFieldDelegate {
         globalOutsideClickMonitor = nil
     }
 
-    // MARK: NSTextFieldDelegate
-
-    func controlTextDidChange(_ obj: Notification) {
-        reload(query: searchField.stringValue)
-    }
+    // MARK: Key handling
 
     /// Arrow keys move the selection, Return picks the current row, Escape
     /// dismisses - the field editor forwards its command keys here rather
     /// than through a plain `keyDown` override, since AppKit routes an
     /// editing text field's key events to the shared field editor, not the
-    /// `NSTextField` itself.
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+    /// `NSTextField` itself. `HelmSearchField` passes them straight along.
+    private func handle(command commandSelector: Selector) -> Bool {
         switch commandSelector {
         case #selector(NSResponder.moveDown(_:)):
             moveSelection(by: 1)
@@ -421,7 +417,6 @@ final class UnifiedSearchController: NSWindowController, NSTextFieldDelegate {
 
     private func applyTheme(_ theme: HelmTheme) {
         window?.contentView?.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
-        searchField.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         dividerRef?.wantsLayer = true
         dividerRef?.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6).cgColor
         for label in groupHeaderLabels { label.textColor = HelmTheme.mutedInk(theme) }

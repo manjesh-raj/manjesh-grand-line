@@ -783,7 +783,7 @@ final class VaultSaveSecretSheetController: NSViewController {
 
     var onSave: ((String) -> Void)?
 
-    private let nameField = NSTextField()
+    private let nameField = HelmTextField(placeholder: "SECRET_NAME")
     private let errorLabel = NSTextField(labelWithString: "")
 
     override func loadView() {
@@ -801,8 +801,6 @@ final class VaultSaveSecretSheetController: NSViewController {
         help.textColor = HelmTheme.mutedInk(ThemeManager.shared.theme)
         help.preferredMaxLayoutWidth = 320
 
-        nameField.placeholderString = "SECRET_NAME"
-        nameField.translatesAutoresizingMaskIntoConstraints = false
 
         errorLabel.font = .systemFont(ofSize: 10.5)
         errorLabel.textColor = .systemRed
@@ -1070,7 +1068,7 @@ final class VaultInjectSheetController: NSViewController {
     private let secretNames: [String]
     private let preselected: String?
     private let secretPopup = HelmPopUpButton()
-    private let commandField = NSTextField()
+    private let commandField = HelmTextField(placeholder: "e.g. gh auth status")
     private let errorLabel = NSTextField(labelWithString: "")
 
     init(secretNames: [String], preselected: String?) {
@@ -1104,8 +1102,6 @@ final class VaultInjectSheetController: NSViewController {
         secretPopup.isEnabled = !secretNames.isEmpty
         secretPopup.translatesAutoresizingMaskIntoConstraints = false
 
-        commandField.placeholderString = "e.g. gh auth status"
-        commandField.translatesAutoresizingMaskIntoConstraints = false
 
         errorLabel.font = .systemFont(ofSize: 10.5)
         errorLabel.textColor = .systemRed

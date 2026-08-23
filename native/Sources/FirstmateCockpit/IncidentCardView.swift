@@ -76,7 +76,7 @@ final class IncidentCardView: NSView {
     private let rowsStack = NSStackView()
 
     private let footerDivider = NSView()
-    private let noteField = NSTextField()
+    private let noteField = HelmTextField(placeholder: "Add a note to the timeline\u{2026}")
     private let addNoteButton = HelmButton(title: "Add note", variant: .secondary, size: .small)
     private let endButton = HelmButton(title: "End Incident \u{2192} generate postmortem",
                                        variant: .primary, size: .small, symbol: "checkmark.circle")
@@ -163,10 +163,6 @@ final class IncidentCardView: NSView {
         footerDivider.translatesAutoresizingMaskIntoConstraints = false
         addSubview(footerDivider)
 
-        HelmField.makeSunkenTextField(noteField)
-        noteField.placeholderString = "Add a note to the timeline\u{2026}"
-        noteField.translatesAutoresizingMaskIntoConstraints = false
-        noteField.heightAnchor.constraint(equalToConstant: HelmField.controlHeight).isActive = true
         noteField.target = self
         noteField.action = #selector(addNoteClicked)
         addNoteButton.target = self
@@ -386,8 +382,9 @@ final class IncidentCardView: NSView {
         titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         subtitleLabel.textColor = HelmTheme.mutedInk(theme)
         tabs.applyTheme(theme)
-        HelmField.applySunken(to: noteField, theme: theme)
-        noteField.textColor = HelmField.ink(theme)
-        noteField.backgroundColor = HelmField.fill(theme)
+        // `HelmTextField` owns its own chrome and theme observation (and its
+        // focus lamp) - a page must not re-paint it, or the next theme change
+        // overwrites whatever it set.
+        noteField.applyTheme(theme)
     }
 }

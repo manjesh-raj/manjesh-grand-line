@@ -625,9 +625,7 @@ final class ToolInstance: NSObject {
     // MARK: Timestamp
 
     private func buildTimestampPanel() -> NSView {
-        tsEpochField = NSTextField()
-        tsEpochField.placeholderString = "e.g. 1734000000"
-        tsEpochField.translatesAutoresizingMaskIntoConstraints = false
+        tsEpochField = HelmTextField(placeholder: "e.g. 1734000000")
 
         let nowButton = HelmButton(title: "Now", variant: .secondary, target: self, action: #selector(nowClicked))
         let toHumanButton = HelmButton(title: "\u{2192} Human", variant: .secondary, target: self, action: #selector(epochToHumanClicked))
@@ -641,9 +639,7 @@ final class ToolInstance: NSObject {
         tsHumanOutput = humanOutputView
         tsHumanCopyButton = copyButton(action: #selector(tsCopyHumanClicked))
 
-        tsHumanField = NSTextField()
-        tsHumanField.placeholderString = "e.g. 2026-08-12T10:00:00Z"
-        tsHumanField.translatesAutoresizingMaskIntoConstraints = false
+        tsHumanField = HelmTextField(placeholder: "e.g. 2026-08-12T10:00:00Z")
         let toEpochButton = HelmButton(title: "\u{2192} Epoch", variant: .secondary, target: self, action: #selector(humanToEpochClicked))
         let humanRow = NSStackView(views: [tsHumanField, toEpochButton])
         humanRow.orientation = .horizontal
@@ -903,10 +899,8 @@ final class ToolInstance: NSObject {
     // MARK: Cron
 
     private func buildCronPanel() -> NSView {
-        cronInput = NSTextField()
+        cronInput = HelmTextField(placeholder: "e.g. */15 2 * * 1-5, or a shortcut like @daily")
         cronInput.stringValue = "*/15 2 * * 1-5"
-        cronInput.placeholderString = "e.g. */15 2 * * 1-5, or a shortcut like @daily"
-        cronInput.translatesAutoresizingMaskIntoConstraints = false
         cronInput.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
         let explainButton = HelmButton(title: "Explain", variant: .primary, target: self, action: #selector(cronExplainClicked))
@@ -999,9 +993,7 @@ final class ToolInstance: NSObject {
     // MARK: Resource units
 
     private func buildResourcePanel() -> NSView {
-        cpuMillicoresField = NSTextField()
-        cpuMillicoresField.placeholderString = "e.g. 500m"
-        cpuMillicoresField.translatesAutoresizingMaskIntoConstraints = false
+        cpuMillicoresField = HelmTextField(placeholder: "e.g. 500m")
         cpuMillicoresField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let toCoresButton = HelmButton(title: "\u{2192} Cores", variant: .secondary, target: self, action: #selector(cpuToCoresClicked))
         let millicoresRow = NSStackView(views: [cpuMillicoresField, toCoresButton])
@@ -1017,9 +1009,7 @@ final class ToolInstance: NSObject {
         let coresResultRow = NSStackView(views: [cpuCoresOutput])
         coresResultRow.orientation = .horizontal
 
-        cpuCoresField = NSTextField()
-        cpuCoresField.placeholderString = "e.g. 0.5"
-        cpuCoresField.translatesAutoresizingMaskIntoConstraints = false
+        cpuCoresField = HelmTextField(placeholder: "e.g. 0.5")
         cpuCoresField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let toMillicoresButton = HelmButton(title: "\u{2192} Millicores", variant: .secondary, target: self, action: #selector(cpuToMillicoresClicked))
         let coresRow = NSStackView(views: [cpuCoresField, toMillicoresButton])
@@ -1039,9 +1029,7 @@ final class ToolInstance: NSObject {
         sLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
         statusLabel = sLabel
 
-        memoryQuantityField = NSTextField()
-        memoryQuantityField.placeholderString = "e.g. 256Mi, 1.5Gi, 500M, or a plain byte count"
-        memoryQuantityField.translatesAutoresizingMaskIntoConstraints = false
+        memoryQuantityField = HelmTextField(placeholder: "e.g. 256Mi, 1.5Gi, 500M, or a plain byte count")
         memoryQuantityField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let convertButton = HelmButton(title: "Convert", variant: .primary, target: self, action: #selector(memoryConvertClicked))
         let memoryRow = NSStackView(views: [memoryQuantityField, convertButton])

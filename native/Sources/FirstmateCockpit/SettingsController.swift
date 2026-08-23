@@ -77,10 +77,10 @@ final class SettingsController: NSViewController {
     private let subtitleLabel = NSTextField(labelWithString: "Connection, appearance, and terminal - stored locally on this machine.")
 
     // Connection
-    private let mirrorTargetField = NSTextField()
+    private let mirrorTargetField = HelmTextField(placeholder: "firstmate")
     private let sessionsStatusLabel = NSTextField(wrappingLabelWithString: "")
     private let sessionsStack = NSStackView()
-    private let shellCwdField = NSTextField()
+    private let shellCwdField = HelmTextField(placeholder: "~ (Home)")
 
     // Appearance
     private let appearanceContainer = NSStackView()
@@ -378,7 +378,7 @@ final class SettingsController: NSViewController {
         mutedLabel(desc)
         desc.preferredMaxLayoutWidth = 520
 
-        configure(mirrorTargetField, placeholder: "firstmate")
+        configure(mirrorTargetField)
         let detectButton = HelmButton(title: "Detect", variant: .secondary, symbol: "arrow.triangle.2.circlepath", target: self, action: #selector(detectClicked))
 
         let fieldRow = NSStackView(views: [mirrorTargetField, detectButton])
@@ -402,7 +402,7 @@ final class SettingsController: NSViewController {
         sessionsStack.widthAnchor.constraint(equalTo: mirrorGroup.widthAnchor).isActive = true
 
         let chooseCwd = HelmButton(title: "Choose\u{2026}", variant: .secondary, target: self, action: #selector(chooseShellCwd))
-        configure(shellCwdField, placeholder: "~ (Home)")
+        configure(shellCwdField)
         shellCwdField.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let cwdRow = NSStackView(views: [shellCwdField, chooseCwd])
         cwdRow.orientation = .horizontal
@@ -972,9 +972,9 @@ final class SettingsController: NSViewController {
 
     // MARK: Shared field plumbing
 
-    private func configure(_ field: NSTextField, placeholder: String) {
-        field.placeholderString = placeholder
-        field.translatesAutoresizingMaskIntoConstraints = false
+    /// Placeholder and chrome are `HelmTextField`'s own now (Phase 0's raw-input
+    /// purge) - this only wires the value back to `AppSettings`.
+    private func configure(_ field: NSTextField) {
         field.target = self
         field.action = #selector(textFieldChanged(_:))
         field.delegate = self

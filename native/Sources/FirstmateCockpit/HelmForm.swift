@@ -65,10 +65,21 @@ enum HelmField {
     /// The one field/control corner radius.
     static let cornerRadius: CGFloat = HelmMetrics.rControl
 
+    /// The resting border weight of a well. `HelmInputSurface` thickens it to
+    /// `HelmInputSurface.focusBorderWidth` while focused and back to this when
+    /// focus leaves.
+    static let hairlineBorderWidth: CGFloat = 1
+
     /// The field border opacity - the same step fainter than the card outline
     /// that `HelmCard.dividerAlpha` uses, so a field inside a card reads as
     /// nested rather than as a second card.
     static let borderAlpha: CGFloat = 0.5
+
+    /// A larger single-line well, for the one place an input *is* the surface:
+    /// the ⌘K palette's query line and ⌥Space quick capture, both of which are
+    /// a small panel with one field in it. Same physical object as
+    /// `controlHeight`, one step up - not a fourth input language.
+    static let prominentHeight: CGFloat = 40
 
     /// The height of a single-line field, so a column of fields, popups and
     /// date pickers sits on one rhythm.
@@ -129,7 +140,7 @@ enum HelmField {
         view.wantsLayer = true
         view.layer?.masksToBounds = true
         view.layer?.cornerRadius = radius
-        view.layer?.borderWidth = 1
+        view.layer?.borderWidth = hairlineBorderWidth
     }
 
     /// Recolour, on every theme change.
@@ -185,6 +196,11 @@ enum HelmField {
 private final class SunkenFieldTheming {
     private weak var field: NSTextField?
     private var observation: ThemeObservation?
+    /// Phase 0's D1 fix: the focused chrome is driven by the window's first
+    /// responder, so a click lights the field before a single keystroke.
+    private var focus: HelmFocusRegistration?
+    private var isFocused = false
+    private var lastTheme: HelmTheme = ThemeManager.shared.theme
     /// Kept as a plain string so the placeholder can be re-rendered in the new
     /// theme's muted ink on every change. `NSTextField.placeholderString` is
     /// drawn in a fixed system grey, which is exactly the §5.3 token this
@@ -196,15 +212,22 @@ private final class SunkenFieldTheming {
     init(_ field: NSTextField) {
         self.field = field
         observation = ThemeManager.shared.observe { [weak self] theme in self?.apply(theme) }
+        focus = HelmFocusSensing.shared.register(field) { [weak self] focused in
+            guard let self else { return }
+            self.isFocused = focused
+            self.apply(self.lastTheme)
+        }
     }
 
     deinit {
         if let observation { ThemeManager.shared.unobserve(observation) }
+        if let focus { HelmFocusSensing.shared.unregister(focus) }
     }
 
     func apply(_ theme: HelmTheme) {
         guard let field else { return }
-        HelmField.applySunken(to: field, theme: theme)
+        lastTheme = theme
+        HelmInputSurface.apply(chrome: field, theme: theme, focused: isFocused)
         // Both, deliberately. With `drawsBackground = true` the *cell* paints
         // `backgroundColor` over the layer's own fill, and its default is the
         // system `.textBackgroundColor` - so setting only the layer (which is
@@ -238,6 +261,12 @@ final class HelmTextField: NSTextField {
     enum Style {
         case standard
         case lead
+        /// The same well, one step larger, for a small panel whose entire
+        /// content is one field (⌥Space quick capture, the ⌘K palette's query
+        /// line). Phase 0 added this so those two surfaces could leave their
+        /// raw `NSTextField()` behind without shrinking to a form field's
+        /// footprint inside a 600pt panel.
+        case prominent
     }
 
     private var theming: SunkenFieldTheming!
@@ -250,11 +279,14 @@ final class HelmTextField: NSTextField {
         translatesAutoresizingMaskIntoConstraints = false
         lineBreakMode = .byTruncatingTail
         switch style {
-        case .standard:
+        case .standard, .prominent:
             HelmField.makeSunkenTextField(self)
+            if style == .prominent { font = .systemFont(ofSize: HelmType.scaled(15)) }
             theming = SunkenFieldTheming(self)
             theming.placeholder = placeholder
-            heightAnchor.constraint(equalToConstant: HelmField.controlHeight).isActive = true
+            heightAnchor.constraint(
+                equalToConstant: style == .prominent ? HelmField.prominentHeight : HelmField.controlHeight
+            ).isActive = true
         case .lead:
             isBordered = false
             isBezeled = false
@@ -280,9 +312,17 @@ final class HelmTextField: NSTextField {
     /// Force a specific theme. The field observes `ThemeManager` itself, so a
     /// page never needs this; the self-test and a render probe do, to sweep a
     /// theme other than the active one.
+    /// A control built before it was added to a hierarchy has no window to
+    /// observe yet, so the focus sensing has to pick one up the moment it
+    /// lands in one - see `HelmFocusSensing.noteWindowChanged(for:)`.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        HelmFocusSensing.shared.noteWindowChanged(for: self)
+    }
+
     func applyTheme(_ theme: HelmTheme) {
         switch style {
-        case .standard: theming.apply(theme)
+        case .standard, .prominent: theming.apply(theme)
         case .lead: applyLead(theme)
         }
     }
@@ -315,6 +355,12 @@ final class HelmSecureTextField: NSSecureTextField {
 
     var chromeView: NSView { self }
 
+    /// See `HelmTextField.viewDidMoveToWindow()`.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        HelmFocusSensing.shared.noteWindowChanged(for: self)
+    }
+
     /// See `HelmTextField.applyTheme(_:)`.
     func applyTheme(_ theme: HelmTheme) { theming.apply(theme) }
 }
@@ -331,6 +377,9 @@ final class HelmTextView: NSView {
     let textView = NSTextView()
     private let scroll = NSScrollView()
     private var observation: ThemeObservation?
+    private var focus: HelmFocusRegistration?
+    private var isFocused = false
+    private var lastTheme: HelmTheme = ThemeManager.shared.theme
 
     var string: String {
         get { textView.string }
@@ -344,6 +393,9 @@ final class HelmTextView: NSView {
     init(height: CGFloat, monospaced: Bool = false) {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
+        // The glow host has to be layer-backed before `layout()` can set its
+        // `shadowPath`.
+        wantsLayer = true
 
         textView.isRichText = false
         textView.isEditable = true
@@ -375,20 +427,48 @@ final class HelmTextView: NSView {
         ])
 
         observation = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
+        // The focus target is the text view (a real first responder, unlike a
+        // text field's), and `self` is the un-clipped wrapper that can carry
+        // the glow - see `HelmInputSurface`'s "two shapes" note.
+        focus = HelmFocusSensing.shared.register(textView) { [weak self] focused in
+            guard let self else { return }
+            self.isFocused = focused
+            self.applyTheme(self.lastTheme)
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     deinit {
         if let observation { ThemeManager.shared.unobserve(observation) }
+        if let focus { HelmFocusSensing.shared.unregister(focus) }
+    }
+
+    /// See `HelmTextField.viewDidMoveToWindow()`.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        HelmFocusSensing.shared.noteWindowChanged(for: textView)
+    }
+
+    override func layout() {
+        super.layout()
+        // An un-clipped layer's shadow otherwise falls back to this view's
+        // full rectangular bounds rather than the rounded rect `scroll`
+        // actually draws - the same resync `HelmComposerCard.layout()` does,
+        // and for the same reason.
+        layer?.shadowPath = CGPath(roundedRect: bounds,
+                                   cornerWidth: HelmField.cornerRadius,
+                                   cornerHeight: HelmField.cornerRadius, transform: nil)
     }
 
     func applyTheme(_ theme: HelmTheme) {
-        HelmField.applySunken(to: scroll, theme: theme)
+        lastTheme = theme
+        HelmInputSurface.apply(chrome: scroll, shadowHost: self, theme: theme, focused: isFocused)
         let ink = HelmField.ink(theme)
         textView.backgroundColor = HelmField.fill(theme)
         textView.textColor = ink
         textView.insertionPointColor = ink
+        HelmSelection.apply(to: textView, theme: theme)
     }
 }
 
@@ -432,6 +512,235 @@ final class HelmDatePicker: NSDatePicker {
         // light/dark side is all a view can do for them.
         appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
     }
+}
+
+// MARK: - HelmSearchField
+
+/// The app's one search input (Daylight spec §6.9's search variant, shipped in
+/// Phase 0 as recommendation R2): the same sunken well as `HelmTextField`, with
+/// a leading magnifier glyph and an optional trailing keyboard-shortcut chip.
+///
+/// **Why this exists rather than a themed `NSSearchField`.** A stock
+/// `NSSearchField` paints its own rounded system chrome and its own system
+/// fill; the two sites this replaces (`UpdatesController`'s "Filter tools…"
+/// and `HostsController`'s quick-connect) had only their `appearance` forced,
+/// which picks the light-or-dark *side* of a system colour and cannot make it
+/// theme-derived - which is exactly the wallpaper-tinted brown field the audit
+/// measured (D2). `NSSearchField`'s own chrome is not overridable the way
+/// `NSTextField`'s bezel is, so the well is rebuilt out of the shared parts
+/// instead of fought with.
+///
+/// Callers get closures rather than having to conform to
+/// `NSSearchFieldDelegate`: `onTextChanged` for live filtering, `onCommand`
+/// for a panel that needs the arrow/Return/Escape keys (the ⌘K palette).
+final class HelmSearchField: NSView, NSTextFieldDelegate {
+
+    enum Size {
+        case standard
+        /// For a panel whose whole content is this field - see
+        /// `HelmTextField.Style.prominent`.
+        case prominent
+    }
+
+    /// Live filtering: fires on every keystroke.
+    var onTextChanged: ((String) -> Void)?
+    /// A field-editor command (Return, arrows, Escape). Return `true` to
+    /// consume it, exactly like `NSTextFieldDelegate`'s own contract.
+    var onCommand: ((Selector) -> Bool)?
+
+    var stringValue: String {
+        get { editor.stringValue }
+        set {
+            editor.stringValue = newValue
+            updatePlaceholderVisibility()
+        }
+    }
+
+    /// The view carrying this field's sunken chrome - the well, not this
+    /// container (which is the un-clipped glow host).
+    var chromeView: NSView { well }
+
+    private let well = NSView()
+    private let icon = NSImageView()
+    /// The bare field is deliberately chromeless: the *well* carries the fill,
+    /// border and radius, so the editor is only ever text on top of it. This
+    /// is the one raw `NSTextField()` in this component and it lives in the
+    /// file `checkNoRawTextInputs` exempts, for exactly that reason.
+    private let editor = NSTextField()
+    private let placeholderLabel = NSTextField(labelWithString: "")
+    private var hintChip: NSView?
+    private var hintLabel: NSTextField?
+
+    private var observation: ThemeObservation?
+    private var focus: HelmFocusRegistration?
+    private var isFocused = false
+    private var lastTheme: HelmTheme = ThemeManager.shared.theme
+    private let size: Size
+
+    init(placeholder: String = "", size: Size = .standard, shortcutHint: String? = nil) {
+        self.size = size
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+
+        HelmField.makeSunken(well)
+        well.translatesAutoresizingMaskIntoConstraints = false
+
+        icon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
+        icon.imageScaling = .scaleProportionallyUpOrDown
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        icon.setContentHuggingPriority(.required, for: .horizontal)
+
+        editor.isBordered = false
+        editor.isBezeled = false
+        editor.drawsBackground = false
+        editor.focusRingType = .none
+        editor.usesSingleLineMode = true
+        editor.cell?.wraps = false
+        editor.cell?.isScrollable = true
+        editor.lineBreakMode = .byTruncatingTail
+        editor.font = size == .prominent ? .systemFont(ofSize: HelmType.scaled(15)) : HelmType.body()
+        editor.delegate = self
+        editor.translatesAutoresizingMaskIntoConstraints = false
+
+        // `NSTextField`'s own `placeholderString` renders in a fixed system
+        // grey - the token this codebase removed everywhere else - and an
+        // attributed placeholder on a chromeless field inside a container is
+        // easy to get wrong, so the placeholder is a real label the well owns.
+        placeholderLabel.font = editor.font
+        placeholderLabel.stringValue = placeholder
+        placeholderLabel.lineBreakMode = .byTruncatingTail
+        placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
+        placeholderLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        addSubview(well)
+        well.addSubview(icon)
+        well.addSubview(editor)
+        well.addSubview(placeholderLabel)
+
+        let iconSide: CGFloat = size == .prominent ? 15 : 13
+        let inset: CGFloat = size == .prominent ? 12 : 9
+        var constraints: [NSLayoutConstraint] = [
+            well.leadingAnchor.constraint(equalTo: leadingAnchor),
+            well.trailingAnchor.constraint(equalTo: trailingAnchor),
+            well.topAnchor.constraint(equalTo: topAnchor),
+            well.bottomAnchor.constraint(equalTo: bottomAnchor),
+            heightAnchor.constraint(equalToConstant: size == .prominent
+                                    ? HelmField.prominentHeight : HelmField.controlHeight),
+            icon.leadingAnchor.constraint(equalTo: well.leadingAnchor, constant: inset),
+            icon.centerYAnchor.constraint(equalTo: well.centerYAnchor),
+            icon.widthAnchor.constraint(equalToConstant: iconSide),
+            icon.heightAnchor.constraint(equalToConstant: iconSide),
+            editor.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 7),
+            editor.centerYAnchor.constraint(equalTo: well.centerYAnchor),
+            placeholderLabel.leadingAnchor.constraint(equalTo: editor.leadingAnchor, constant: 2),
+            placeholderLabel.centerYAnchor.constraint(equalTo: editor.centerYAnchor),
+        ]
+
+        if let shortcutHint {
+            let chip = NSView()
+            chip.wantsLayer = true
+            chip.layer?.cornerRadius = 5
+            chip.translatesAutoresizingMaskIntoConstraints = false
+            let label = NSTextField(labelWithString: shortcutHint)
+            label.font = HelmType.code()
+            label.translatesAutoresizingMaskIntoConstraints = false
+            chip.addSubview(label)
+            well.addSubview(chip)
+            hintChip = chip
+            hintLabel = label
+            constraints += [
+                label.leadingAnchor.constraint(equalTo: chip.leadingAnchor, constant: 5),
+                label.trailingAnchor.constraint(equalTo: chip.trailingAnchor, constant: -5),
+                label.topAnchor.constraint(equalTo: chip.topAnchor, constant: 1),
+                label.bottomAnchor.constraint(equalTo: chip.bottomAnchor, constant: -1),
+                chip.trailingAnchor.constraint(equalTo: well.trailingAnchor, constant: -inset),
+                chip.centerYAnchor.constraint(equalTo: well.centerYAnchor),
+                editor.trailingAnchor.constraint(equalTo: chip.leadingAnchor, constant: -7),
+                placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: chip.leadingAnchor, constant: -7),
+            ]
+        } else {
+            constraints += [
+                editor.trailingAnchor.constraint(equalTo: well.trailingAnchor, constant: -inset),
+                placeholderLabel.trailingAnchor.constraint(lessThanOrEqualTo: well.trailingAnchor,
+                                                           constant: -inset),
+            ]
+        }
+        NSLayoutConstraint.activate(constraints)
+
+        observation = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
+        focus = HelmFocusSensing.shared.register(editor) { [weak self] focused in
+            guard let self else { return }
+            self.isFocused = focused
+            self.applyTheme(self.lastTheme)
+        }
+        updatePlaceholderVisibility()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    deinit {
+        if let observation { ThemeManager.shared.unobserve(observation) }
+        if let focus { HelmFocusSensing.shared.unregister(focus) }
+    }
+
+    /// See `HelmTextField.viewDidMoveToWindow()`.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        HelmFocusSensing.shared.noteWindowChanged(for: editor)
+    }
+
+    override func layout() {
+        super.layout()
+        layer?.shadowPath = CGPath(roundedRect: bounds,
+                                   cornerWidth: HelmField.cornerRadius,
+                                   cornerHeight: HelmField.cornerRadius, transform: nil)
+    }
+
+    /// Put the caret in this field - what a page's own "focus the search box"
+    /// menu action or ⌘K reveal calls.
+    func focusEditor() {
+        window?.makeFirstResponder(editor)
+    }
+
+    func applyTheme(_ theme: HelmTheme) {
+        lastTheme = theme
+        HelmInputSurface.apply(chrome: well, shadowHost: self, theme: theme, focused: isFocused)
+        let ink = HelmField.ink(theme)
+        editor.textColor = ink
+        placeholderLabel.textColor = HelmField.mutedInk(theme)
+        // The glyph is decorative next to real text, so it takes the muted
+        // token rather than the accent - the accent is reserved for the focus
+        // lamp on this same well (audit P1, "the accent is a light, not paint").
+        icon.contentTintColor = isFocused ? HelmTheme.nsColor(theme.accentHex) : HelmField.mutedInk(theme)
+        hintChip?.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex)
+            .withAlphaComponent(0.45).cgColor
+        hintLabel?.textColor = HelmField.mutedInk(theme)
+    }
+
+    private func updatePlaceholderVisibility() {
+        placeholderLabel.isHidden = !editor.stringValue.isEmpty
+    }
+
+    // MARK: NSTextFieldDelegate
+
+    func controlTextDidChange(_ obj: Notification) {
+        updatePlaceholderVisibility()
+        onTextChanged?(editor.stringValue)
+    }
+
+    func control(_ control: NSControl, textView: NSTextView,
+                 doCommandBy commandSelector: Selector) -> Bool {
+        onCommand?(commandSelector) ?? false
+    }
+
+    // MARK: Probe / self-test surface
+
+    #if FM_SELFTESTS
+    var debugEditor: NSTextField { editor }
+    var debugPlaceholderHidden: Bool { placeholderLabel.isHidden }
+    var debugHasShortcutChip: Bool { hintChip != nil }
+    #endif
 }
 
 // MARK: - HelmFieldCard

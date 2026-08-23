@@ -19,7 +19,14 @@ import ApplicationServices
 
 final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate {
     private let store: ShiftStore
-    private let inputField = NSTextField()
+    /// The one typing affordance in this panel, in the app's own well
+    /// (Phase 0's raw-input purge): it used to be a bare `NSTextField()` with
+    /// a system fill, which is the wallpaper-tinted chrome the audit measured
+    /// (D2). `.prominent` is the same well one step up, for a panel whose
+    /// whole content is this field.
+    private let inputField = HelmTextField(
+        placeholder: "Quick capture \u{2014} try \u{201C}tomorrow 3pm review deploy notes\u{201D}",
+        style: .prominent)
     private let hintLabel = NSTextField(labelWithString: "")
     private let capturedLabel = NSTextField(labelWithString: "\u{2713} Captured \u{2014} landed straight in My Tasks.")
     var onCaptured: (() -> Void)?
@@ -27,7 +34,7 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
     init(store: ShiftStore) {
         self.store = store
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 64),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 80),
             styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered, defer: false
         )
@@ -54,13 +61,7 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
         content.layer?.cornerRadius = 12
         content.layer?.borderWidth = 1.5
 
-        inputField.placeholderString = "Quick capture \u{2014} try \u{201C}tomorrow 3pm review deploy notes\u{201D}"
-        inputField.font = .systemFont(ofSize: 15)
-        inputField.isBordered = false
-        inputField.focusRingType = .none
-        inputField.drawsBackground = false
         inputField.delegate = self
-        inputField.translatesAutoresizingMaskIntoConstraints = false
 
         hintLabel.font = .systemFont(ofSize: 11)
         hintLabel.stringValue = "\u{23CE} to capture \u{00B7} Esc to dismiss"
@@ -82,7 +83,6 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
             inputField.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
             inputField.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
             inputField.topAnchor.constraint(equalTo: content.topAnchor, constant: 14),
-            inputField.heightAnchor.constraint(equalToConstant: 24),
 
             divider.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             divider.trailingAnchor.constraint(equalTo: content.trailingAnchor),
@@ -167,7 +167,6 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
         let accent = HelmTheme.nsColor(theme.accentHex)
         window?.contentView?.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         window?.contentView?.layer?.borderColor = accent.cgColor
-        inputField.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         hintLabel.textColor = HelmTheme.mutedInk(theme)
         capturedLabel.textColor = HelmTheme.nsColor(theme.ansiHex[2])
         dividerRef?.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6).cgColor

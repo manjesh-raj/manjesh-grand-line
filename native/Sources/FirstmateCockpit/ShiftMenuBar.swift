@@ -146,7 +146,7 @@ private final class ShiftMenuBarPopoverController: NSViewController {
     private let tasksRow = ShiftMenuBarStatRow(label: "Tasks today")
     private let followUpRow = ShiftMenuBarStatRow(label: "Next follow-up")
     private let nextFollowUpTitle = NSTextField(labelWithString: "")
-    private let quickAddField = NSTextField()
+    private let quickAddField = HelmTextField(placeholder: "Quick add a task, press \u{23CE}\u{2026}")
     var onQuickAdd: ((String) -> Void)?
 
     override func loadView() {
@@ -166,8 +166,6 @@ private final class ShiftMenuBarPopoverController: NSViewController {
         let divider = NSBox()
         divider.boxType = .separator
 
-        quickAddField.placeholderString = "Quick add a task, press \u{23CE}\u{2026}"
-        quickAddField.font = .systemFont(ofSize: 12)
         quickAddField.target = self
         quickAddField.action = #selector(quickAddSubmitted)
 

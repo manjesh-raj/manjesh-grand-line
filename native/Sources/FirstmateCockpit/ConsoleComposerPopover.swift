@@ -416,6 +416,10 @@ private final class ConsoleComposerViewController: NSViewController, NSTextViewD
         // it.)
         intentTextView.drawsBackground = false
         intentTextView.delegate = self
+        // Phase 0's D1 fix: the card lights from this view's first-responder
+        // state, not from `textDidBeginEditing` (which fires on the first
+        // keystroke, so a click used to look like it had missed).
+        composerCard.senseFocus(on: intentTextView)
 
         intentScroll.documentView = intentTextView
         intentScroll.hasVerticalScroller = true
@@ -436,18 +440,6 @@ private final class ConsoleComposerViewController: NSViewController, NSTextViewD
 
     func textDidChange(_ notification: Notification) {
         updateIntentPlaceholderVisibility()
-    }
-
-    /// The composer card's own focus glow, driven by whichever `NSTextView`
-    /// inside it currently has focus - the field is the only focusable
-    /// control in this card (the footer's buttons don't retain focus the
-    /// same way), so this is the whole story.
-    func textDidBeginEditing(_ notification: Notification) {
-        composerCard.setFocused(true)
-    }
-
-    func textDidEndEditing(_ notification: Notification) {
-        composerCard.setFocused(false)
     }
 
     private func updateIntentPlaceholderVisibility() {

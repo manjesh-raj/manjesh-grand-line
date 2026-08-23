@@ -708,6 +708,13 @@ final class HelmComposerCard: NSView {
 
     private var isFocused = false
     private var lastTheme: HelmTheme?
+    /// Phase 0's D1 fix. Set by `senseFocus(on:)`; the card lights itself from
+    /// first-responder changes rather than from its caller's
+    /// `textDidBeginEditing`, which Apple documents as firing when the user
+    /// begins *changing* the text - so all three composers used to show
+    /// nothing until the first keystroke.
+    private var focus: HelmFocusRegistration?
+    private weak var focusTarget: NSTextView?
 
     var cornerRadius: CGFloat {
         didSet {
@@ -748,32 +755,46 @@ final class HelmComposerCard: NSView {
                                    cornerHeight: cornerRadius, transform: nil)
     }
 
-    /// Toggle the focused look - driven by whichever text control inside
-    /// `contentContainer` currently has focus. Re-applies whatever theme was
-    /// last given to `applyTheme(_:)` rather than requiring the caller to
-    /// re-call it on every focus change.
-    func setFocused(_ focused: Bool) {
+    /// Light this card from `textView`'s own first-responder state - the one
+    /// call a caller makes instead of implementing `textDidBeginEditing`/
+    /// `textDidEndEditing`. Also themes that view's text selection, so a
+    /// composer never shows a system-blue highlight (D4).
+    func senseFocus(on textView: NSTextView) {
+        focusTarget = textView
+        if let focus { HelmFocusSensing.shared.unregister(focus) }
+        focus = HelmFocusSensing.shared.register(textView) { [weak self] focused in
+            self?.setFocused(focused)
+        }
+    }
+
+    deinit {
+        if let focus { HelmFocusSensing.shared.unregister(focus) }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let focusTarget { HelmFocusSensing.shared.noteWindowChanged(for: focusTarget) }
+    }
+
+    /// Toggle the focused look. Re-applies whatever theme was last given to
+    /// `applyTheme(_:)` rather than requiring the caller to re-call it on
+    /// every focus change.
+    private func setFocused(_ focused: Bool) {
         guard focused != isFocused else { return }
         isFocused = focused
         if let lastTheme { applyTheme(lastTheme) }
     }
 
+    /// The chrome routes through `HelmInputSurface` so this card, a
+    /// `HelmTextField` and a `HelmSearchField` all answer a click the same
+    /// way - and so Phase 1 re-tokenizes one place. The recipe is unchanged
+    /// from what this class shipped: 1.5pt accent border plus an accent glow
+    /// on the un-clipped wrapper.
     func applyTheme(_ theme: HelmTheme) {
         lastTheme = theme
-        contentContainer.layer?.backgroundColor = HelmField.fill(theme).cgColor
-        let accent = HelmTheme.nsColor(theme.accentHex)
-        if isFocused {
-            contentContainer.layer?.borderWidth = 1.5
-            contentContainer.layer?.borderColor = accent.withAlphaComponent(0.7).cgColor
-            layer?.shadowColor = accent.cgColor
-            layer?.shadowOpacity = Float(theme.mode == .dark ? 0.35 : 0.22)
-            layer?.shadowRadius = 8
-            layer?.shadowOffset = .zero
-        } else {
-            contentContainer.layer?.borderWidth = 1
-            contentContainer.layer?.borderColor = HelmField.border(theme).cgColor
-            layer?.shadowOpacity = 0
-        }
+        HelmInputSurface.apply(chrome: contentContainer, shadowHost: self,
+                               theme: theme, focused: isFocused)
+        if let focusTarget { HelmSelection.apply(to: focusTarget, theme: theme) }
     }
 }
 
