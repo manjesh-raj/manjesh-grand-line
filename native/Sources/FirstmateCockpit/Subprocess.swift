@@ -567,6 +567,54 @@ enum Subprocess {
     private static func excerpt(_ text: String, limit: Int = 400) -> String {
         text.count <= limit ? text : String(text.prefix(limit)) + "…"
     }
+
+    // MARK: Detached
+
+    /// Starts a child and returns immediately, without waiting for it, and
+    /// without capturing its output.
+    ///
+    /// This is the one shape `run` cannot express, and it exists for exactly
+    /// one caller: the self-update relaunch helper (`AppUpdateInstaller`),
+    /// whose child is waiting for *this* process to exit before it opens the
+    /// replaced bundle. Waiting for it, as every other call site does, would
+    /// deadlock by construction.
+    ///
+    /// It is on `Subprocess` rather than hand-rolled at the call site so that
+    /// `Phase2HardeningSelfTest`'s "no hand-rolled `Process`" source guard
+    /// stays meaningful - a second exception in that allowlist is how a
+    /// deadlock-prone `Process()` quietly comes back.
+    ///
+    /// Deliberately narrow, and it should stay that way: no stdin, no output
+    /// capture, no timeout (there is nobody left to enforce one), and no
+    /// result beyond "did it start". Anything that wants to know what the
+    /// child did wants `run`.
+    @discardableResult
+    static func launchDetached(
+        executable: String,
+        arguments: [String],
+        log: os.Logger = AppLog.subprocess,
+        label: String? = nil
+    ) -> Bool {
+        _ = ignoreSIGPIPE
+        let name = label ?? (executable as NSString).lastPathComponent
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: executable)
+        proc.arguments = arguments
+        proc.environment = childEnvironmentDict()
+        // Nothing will ever read these, and an inherited pipe that nobody
+        // drains is the deadlock this whole file exists to prevent.
+        proc.standardInput = FileHandle.nullDevice
+        proc.standardOutput = FileHandle.nullDevice
+        proc.standardError = FileHandle.nullDevice
+        do {
+            try proc.run()
+            log.info("\(name, privacy: .public) launched detached (pid \(proc.processIdentifier))")
+            return true
+        } catch {
+            log.error("\(name, privacy: .public) failed to launch detached: \(error.localizedDescription, privacy: .public)")
+            return false
+        }
+    }
 }
 
 // MARK: - Concurrent stream drain

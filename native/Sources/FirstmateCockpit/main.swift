@@ -1127,6 +1127,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_DESTINATION_MOUNTING_TESTS"] == "
     exit(DestinationMountingSelfTest.run() ? 0 : 1)
 }
 
+// F3: version comparison, GitHub release parsing, and the rule that an
+// artifact this app cannot verify is refused rather than installed. See
+// AppUpdateSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_APP_UPDATE_TESTS"] == "1" {
+    exit(AppUpdateSelfTest.run() ? 0 : 1)
+}
+
 // fm/grandline-app-lock: same convention, for `AppLockController`'s idle/
 // hard-logout timing math against a fake clock/idle-time provider - see
 // AppLockSelfTest.swift's header.
