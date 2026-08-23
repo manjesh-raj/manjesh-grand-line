@@ -159,6 +159,13 @@ struct MultiHostSendSelection {
 
     var selectedCount: Int { selected.count }
 
+    /// How many ticked hosts the active filter is currently showing. The
+    /// difference against `selectedCount` is what the picker reports as
+    /// "N selected hosts aren't shown by this filter" - a ticked host stays
+    /// ticked across a filter change, so without that line the button's count
+    /// can exceed the boxes on screen with nothing explaining why.
+    var visibleSelectedCount: Int { visibleHosts.filter { selected.contains($0.id) }.count }
+
     /// The mockup's primary button. Disabled at zero, which is also the state
     /// the sheet opens in.
     var sendButtonTitle: String {

@@ -42,6 +42,8 @@ final class MultiHostSendPickerController: NSViewController {
     private let form: HelmFormSheet
     private let pillsRow = NSStackView()
     private var pillButtons: [(option: MultiHostSendFilterOption, button: HelmButton)] = []
+    private let pillsScroll = NSScrollView()
+    private let hiddenSelectionLabel = NSTextField(labelWithString: "")
     private let commandBox = NSView()
     private let commandLabel = NSTextField(wrappingLabelWithString: "")
     private let listStack = NSStackView()
@@ -99,12 +101,27 @@ final class MultiHostSendPickerController: NSViewController {
         ])
         form.addRow(commandBox)
 
+        // The pill row scrolls horizontally rather than squeezing, the same
+        // treatment `HostsController` gives its own tag chips: a captain with
+        // a handful of tags overflows a 520pt sheet, and every pill here has
+        // required hugging (its count has to stay readable).
         pillsRow.orientation = .horizontal
         pillsRow.spacing = HelmMetrics.s1
         pillsRow.alignment = .centerY
         pillsRow.translatesAutoresizingMaskIntoConstraints = false
+        pillsScroll.documentView = pillsRow
+        pillsScroll.drawsBackground = false
+        pillsScroll.hasHorizontalScroller = false
+        pillsScroll.hasVerticalScroller = false
+        pillsScroll.translatesAutoresizingMaskIntoConstraints = false
         buildPills()
-        form.addRow(pillsRow)
+        NSLayoutConstraint.activate([
+            pillsRow.leadingAnchor.constraint(equalTo: pillsScroll.contentView.leadingAnchor),
+            pillsRow.topAnchor.constraint(equalTo: pillsScroll.contentView.topAnchor),
+            pillsRow.bottomAnchor.constraint(equalTo: pillsScroll.contentView.bottomAnchor),
+            pillsScroll.heightAnchor.constraint(equalToConstant: 26),
+        ])
+        form.addRow(pillsScroll)
 
         listStack.orientation = .vertical
         listStack.alignment = .leading
@@ -136,6 +153,16 @@ final class MultiHostSendPickerController: NSViewController {
             listScroll.heightAnchor.constraint(equalToConstant: Self.listHeight),
         ])
         form.addRow(listScroll)
+
+        // A ticked host stays ticked when the filter changes (see
+        // `MultiHostSendSelection.setFilter` for why dropping it would be
+        // worse) - but then the button's count can exceed what is visibly
+        // ticked on screen, which on a screen that sends commands to machines
+        // is exactly the wrong kind of ambiguity. This line closes it.
+        hiddenSelectionLabel.font = HelmType.caption()
+        hiddenSelectionLabel.translatesAutoresizingMaskIntoConstraints = false
+        hiddenSelectionLabel.isHidden = true
+        form.addRow(hiddenSelectionLabel)
 
         let footer = form.setFooter(
             target: self,
@@ -208,7 +235,13 @@ final class MultiHostSendPickerController: NSViewController {
                     : "No saved host carries that tag.")
             empty.translatesAutoresizingMaskIntoConstraints = false
             listStack.addArrangedSubview(empty)
-            empty.widthAnchor.constraint(equalTo: listStack.widthAnchor).isActive = true
+            NSLayoutConstraint.activate([
+                empty.widthAnchor.constraint(equalTo: listStack.widthAnchor),
+                // `.compact` centres within whatever cell it is handed, so
+                // hand it the whole list rather than letting it sit as a
+                // short row pinned to the top edge.
+                empty.heightAnchor.constraint(equalToConstant: Self.listHeight),
+            ])
             return
         }
 
@@ -232,6 +265,12 @@ final class MultiHostSendPickerController: NSViewController {
     private func updateSendButton() {
         sendButton?.title = selection.sendButtonTitle
         sendButton?.isEnabled = selection.canSend
+
+        let hidden = selection.selectedCount - selection.visibleSelectedCount
+        hiddenSelectionLabel.isHidden = hidden <= 0
+        hiddenSelectionLabel.stringValue = hidden == 1
+            ? "1 selected host isn\u{2019}t shown by this filter, and is still in the send."
+            : "\(hidden) selected hosts aren\u{2019}t shown by this filter, and are still in the send."
     }
 
     private func applyOwnTheme(_ theme: HelmTheme) {
@@ -240,6 +279,7 @@ final class MultiHostSendPickerController: NSViewController {
         // `onApplyTheme` exists for rather than a second `ThemeManager`
         // observation - `HelmFormSheet`'s header is explicit about that.
         HelmField.applySunken(to: commandBox, theme: theme)
+        hiddenSelectionLabel.textColor = HelmTheme.mutedInk(theme)
         // A sunken fill is measurably closer to the ink than the page surface
         // the palette's contrast was pinned against, so field text goes
         // through `HelmField.ink` rather than the system `.labelColor` (see

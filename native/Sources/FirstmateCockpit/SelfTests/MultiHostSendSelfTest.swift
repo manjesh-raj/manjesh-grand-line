@@ -124,8 +124,15 @@ enum MultiHostSendSelfTest {
         check(kept.selectedCount == 1 && kept.isSelected(prodA.id),
               "changing the filter must not silently drop a ticked host")
         check(kept.sendButtonTitle == "Send to 1 host", "the button count follows the selection, not the filter")
+        // ...and the picker can say so: the ticked host is not on screen under
+        // STAGING, which is what the "N aren't shown by this filter" line
+        // exists to explain.
+        check(kept.visibleSelectedCount == 0,
+              "a ticked host hidden by the active filter must be reported as not visible")
         kept.toggle(staging.id)
         check(kept.sendButtonTitle == "Send to 2 hosts", "the button count is live")
+        check(kept.visibleSelectedCount == 1,
+              "exactly the on-screen ticked host counts as visibly selected")
         check(kept.selectedHosts.map(\.id) == [prodA.id, staging.id],
               "selected hosts come back in store order, not Set order")
         kept.toggle(prodA.id)
