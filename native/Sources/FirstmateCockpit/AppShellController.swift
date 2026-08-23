@@ -59,6 +59,10 @@ final class AppShellController: NSViewController {
     /// off the Automation page onto its own rail destination - see
     /// `SchedulesController.swift`'s header.
     private let schedules: SchedulesController
+    /// `fm/grandline-health-sidebar-move`: F1/GL-11's Health card, promoted
+    /// off the Settings page onto its own rail destination - see
+    /// `HealthController.swift`'s header.
+    private let health = HealthController()
     private let docs = DocsController()
     private let updates = UpdatesController()
     private let bootstrap: BootstrapController
@@ -275,6 +279,7 @@ final class AppShellController: NSViewController {
         mounter.register(DestinationSlot(id: .vault, title: RailDestination.vault.bodyTitle, mountsEagerly: false, controller: vault))
         mounter.register(DestinationSlot(id: .dictation, title: RailDestination.dictation.bodyTitle, mountsEagerly: false, controller: dictation))
         mounter.register(DestinationSlot(id: .schedules, title: RailDestination.schedules.bodyTitle, mountsEagerly: false, controller: schedules))
+        mounter.register(DestinationSlot(id: .health, title: RailDestination.health.bodyTitle, mountsEagerly: false, controller: health))
         mounter.register(DestinationSlot(id: .docs, title: RailDestination.docs.bodyTitle, mountsEagerly: false, controller: docs))
         mounter.register(DestinationSlot(id: .setup, title: RailDestination.updates.bodyTitle, mountsEagerly: false, controller: setup))
         mounter.register(DestinationSlot(id: .settings, title: RailDestination.settings.bodyTitle, mountsEagerly: false, controller: settings))
@@ -431,8 +436,9 @@ final class AppShellController: NSViewController {
         // background queues that know nothing about destinations, so they get
         // their navigation from here - the same forward-don't-own split every
         // other signal in `NotificationSources` uses. Set once; both entries
-        // point at Settings, where the Health card lives.
-        NotificationSources.navigateToHealth = { [weak self] in self?.show(.settings) }
+        // point at `.health` - fm/grandline-health-sidebar-move gave the
+        // Health card its own rail destination, off the Settings page.
+        NotificationSources.navigateToHealth = { [weak self] in self?.show(.health) }
 
         review.onOpenPRCountChanged = { [weak self] count in
             self?.rail.setBadgeCount(count, for: .review)

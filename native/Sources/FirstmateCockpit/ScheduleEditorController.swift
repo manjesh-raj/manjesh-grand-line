@@ -126,7 +126,7 @@ final class ScheduleEditorController: NSViewController {
         }
         form.addRow(notifyCard)
         form.addCaption(
-            "Every run is recorded on the Health card in Settings whichever of these you pick. "
+            "Every run is recorded on the Health page whichever of these you pick. "
             + "This only decides when a run also raises a notification."
         )
 
