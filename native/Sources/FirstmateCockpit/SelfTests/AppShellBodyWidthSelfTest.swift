@@ -56,6 +56,24 @@
 // fix (dropping that tie back to `.required`) fails this case at every one
 // of its swept widths, not just one, and reapplying the fix passes it again.
 //
+// `fm/grandline-body-width-regression-recur` found and fixed a THIRD way to
+// reach this same symptom, and - unlike the first two, which were each fixed
+// in isolation - closed the actual structural gap this time: neither of the
+// two cases above ever visits a *lazily*-mounted destination
+// (`DestinationRegistry.swift`'s non-`mountsEagerly` set - Hosts, Tasks, Log
+// Analyzer, Tools, Vault, Dictation, Schedules, Health, Docs, the other three
+// Setup pages, Settings), so a bug confined to one of those could ship clean
+// through this whole file, and did: `ToolsController`'s landing-grid title
+// label set `.byTruncatingTail` but never lowered its horizontal compression
+// resistance off `NSTextField`'s own >500-priority default, so a rebuild at a
+// wide window baked an oversized floor into the (permanently-mounted, only-
+// ever-hidden - GL-37) Tools view that stuck around long after Tools was
+// hidden again, capping every other destination's minimum window width via
+// the shared `bodyContainer`. See `test_widthTracksAcrossAllDestinations`'s
+// own doc comment for the full root-cause writeup and why its sweep - every
+// `RailDestination`, not just the eager three - is what should keep this from
+// recurring a fourth time.
+//
 // Run with:
 //   swift build && FM_RUN_APP_SHELL_BODY_WIDTH_TESTS=1 .build/debug/FirstmateCockpit; echo $?
 
@@ -83,6 +101,7 @@ enum AppShellBodyWidthSelfTest {
             ("bodyContainerWidthTracksASeriesOfResizes", test_widthTracksResizeSeries),
             ("widthSelfHealsAfterATieIsSilentlyBroken", test_widthSelfHealsAfterTieBroken),
             ("bodyContainerTracksWindowAcrossRealisticWidths", test_widthTracksAcrossRealisticWidths),
+            ("bodyContainerTracksWindowAcrossAllDestinations", test_widthTracksAcrossAllDestinations),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -269,6 +288,105 @@ enum AppShellBodyWidthSelfTest {
                 }
             }
             return nil
+        }
+    }
+    /// `fm/grandline-body-width-regression-recur`: the captain reported the
+    /// exact same "black/blank area on the right side of the window" symptom
+    /// again, this time on `.console`. The two cases above only ever exercise
+    /// the *eagerly*-mounted slots (`.overview`/`.console`/`.review` -
+    /// `DestinationRegistry.swift`'s `mountsEagerly` set) plus whatever the
+    /// app happens to land on by default (`.console`, or `.bootstrap`/`.setup`
+    /// when `FirstmateHome.homeOk()` is false, as it always is in this file's
+    /// scratch env) - every *lazily*-mounted destination (Hosts, Tasks, Log
+    /// Analyzer, Tools, Vault, Dictation, Schedules, Health, Docs, the other
+    /// three Setup pages, Settings) was never visited by either case, so a
+    /// bug that only manifests once one of THOSE destinations has been shown
+    /// could ship clean through this whole file.
+    ///
+    /// That is exactly what happened. Root cause, found by mounting every
+    /// destination and sweeping widths across each in turn (not just at the
+    /// end): `ToolsController.toolCard(_:width:)`'s `titleLabel` sets
+    /// `lineBreakMode = .byTruncatingTail` but never lowers its horizontal
+    /// compression resistance off `NSTextField`'s own default
+    /// (`.defaultHigh`, 750) - a priority *above*
+    /// `NSLayoutPriorityWindowSizeStayPut` (500, AGENTS.md gotcha (13)), so
+    /// the truncation mode was dead code and the label instead refused to
+    /// compress below its own intrinsic width. `ToolsController.rebuildGrid()`
+    /// only re-lays its landing grid out while the picker is on screen
+    /// (`containerWidthMayHaveChanged()`'s `!view.isHidden` guard, itself a
+    /// deliberate GL-20/performance fix - see that method's own doc comment),
+    /// so once a captain opened Tools at a wide window, that title label's
+    /// too-high floor got baked into a row width and never shrank back down
+    /// after Tools was hidden again - and since GL-37 mounts destinations
+    /// once and only ever hides them (never tears them down), that stale,
+    /// oversized floor stayed active in the view tree forever after,
+    /// captured through the required leading/trailing ties every destination
+    /// shares via `embed(_:)` into the one `bodyContainer` - exactly AGENTS.md
+    /// gotcha (11)'s "a hidden view's constraints still fully participate in
+    /// layout" class of bug, with the ToolsController grid as the source
+    /// this time rather than `LogAnalyzerController`'s Compare-tab popups
+    /// (the previous instance of this same class, see this file's header
+    /// above). Fixed the same way this codebase always fixes this shape:
+    /// `titleLabel.setContentCompressionResistancePriority(.defaultLow, for:
+    /// .horizontal)`, so the label can never outrank the window's own resize
+    /// preference and its `.byTruncatingTail` mode actually gets to fire.
+    ///
+    /// This case closes the actual structural gap, not just today's culprit:
+    /// it visits **every** `RailDestination`, sweeping several widths while
+    /// each one is showing (reproducing the exact "rebuild wide, then hide"
+    /// sequence that baked in the stale floor above), and then makes a
+    /// second full pass re-visiting every destination at a narrow width - so
+    /// a floor left behind by destination A that only shows up once
+    /// destination B (visited later) is narrowed cannot slip through. Any
+    /// future destination or card that repeats this mistake (a label with a
+    /// truncating/wrapping line-break mode and no lowered compression
+    /// resistance, tied - however many stack views deep - into
+    /// `bodyContainer`) fails this case by name instead of shipping.
+    ///
+    /// Confirmed to actually catch the regression, not just to pass:
+    /// reverting `ToolsController.swift`'s `titleLabel` fix reproduces this
+    /// exact failure (`.tools` leaves `bodyContainerFrameForTests` stuck at a
+    /// wider-than-requested width for every destination shown after it, at a
+    /// window width below roughly 1290pt), and reapplying the fix passes it
+    /// again.
+    private static func test_widthTracksAcrossAllDestinations() -> String? {
+        withScratchEnv {
+            let (window, shell) = makeMountedShell()
+            var failures: [String] = []
+
+            // First pass: visit every destination in rail order, sweeping a
+            // narrow-to-wide range of widths *while each one is showing* -
+            // this is what actually triggers a destination's own resize-
+            // driven re-layout (like `ToolsController.rebuildGrid()`) at a
+            // wide size before it gets hidden again.
+            for dest in RailDestination.allCases {
+                shell.show(dest)
+                for width in [CGFloat(1100), 1512, 2000] {
+                    window.setFrame(NSRect(x: 0, y: 0, width: width, height: 900), display: true)
+                    let actual = shell.bodyContainerFrameForTests.width
+                    let expected = width - IconRailController.width
+                    if abs(actual - expected) >= 0.5 {
+                        failures.append("\(dest) at width \(width): expected bodyContainer \(expected), got \(actual)")
+                    }
+                }
+            }
+
+            // Second pass: revisit every destination at one narrow width with
+            // no further resizing in between - this is what actually caught
+            // the `.tools` regression above, since the floor it left behind
+            // only shows up once a *different*, later-visited destination is
+            // shown at a width below the stale floor.
+            for dest in RailDestination.allCases {
+                shell.show(dest)
+                window.setFrame(NSRect(x: 0, y: 0, width: 1100, height: 900), display: true)
+                let actual = shell.bodyContainerFrameForTests.width
+                let expected = CGFloat(1100) - IconRailController.width
+                if abs(actual - expected) >= 0.5 {
+                    failures.append("(revisit) \(dest) at width 1100: expected bodyContainer \(expected), got \(actual)")
+                }
+            }
+
+            return failures.isEmpty ? nil : failures.joined(separator: " | ")
         }
     }
 }

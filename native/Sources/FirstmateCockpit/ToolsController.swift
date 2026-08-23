@@ -420,6 +420,23 @@ final class ToolsController: NSViewController {
         let titleLabel = NSTextField(labelWithString: kind.title)
         titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
         titleLabel.lineBreakMode = .byTruncatingTail
+        // `fm/grandline-body-width-regression-recur`: this label's own
+        // `.byTruncatingTail` mode is meaningless without this - an
+        // `NSTextField` defaults to `.defaultHigh` (750) horizontal
+        // compression resistance, which is above
+        // `NSLayoutPriorityWindowSizeStayPut` (500, AGENTS.md gotcha (13)),
+        // so the label refused to compress below its own intrinsic width
+        // instead of ever truncating. Once a wide window drove
+        // `rebuildGrid()` to lay a row out with a long tool title at that
+        // width, the title's required-ish floor got baked into this
+        // (permanently-mounted, only-hidden-not-torn-down - GL-37) view's
+        // own width and never shrank back down, capping every OTHER
+        // destination's minimum window width via `bodyContainer`'s shared
+        // required leading/trailing ties. See
+        // `AppShellBodyWidthSelfTest.bodyContainerTracksWindowAcrossAllDestinations`
+        // for the regression coverage across every destination, not just
+        // this one.
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         let descLabel = NSTextField(wrappingLabelWithString: kind.description)
         descLabel.font = .systemFont(ofSize: 11)
