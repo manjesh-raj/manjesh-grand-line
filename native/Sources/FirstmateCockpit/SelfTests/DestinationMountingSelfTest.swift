@@ -310,7 +310,7 @@ enum DestinationMountingSelfTest {
             console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
             settings: SettingsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore),
             hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, shiftStore: shiftStore,
-            dictationStore: dictationStore, commandLibraryStore: CommandLibraryStore(),
+            dictationStore: dictationStore, commandLibraryStore: CommandLibraryStore(), scheduleStore: ScheduleStore(),
             makeHostConsole: { ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false) }
         )
         window.contentViewController = shell

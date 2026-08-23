@@ -64,6 +64,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // last-writer-wins on `recent.yaml`. Same one-store convention as
     // `shiftStore` and `dictationStore` above.
     let commandLibraryStore = CommandLibraryStore()
+    // F11: the schedules the Automation page's Schedules card manages and
+    // `ScheduleRunner` reads. Same one-store convention as `shiftStore`,
+    // `dictationStore` and `commandLibraryStore` above - the runner and the
+    // card must see the same list, and two instances would be two writers to
+    // the same JSON file.
+    let scheduleStore = ScheduleStore()
     // fm/grandline-dictation-visual-feedback-hud: the floating on-screen HUD
     // - see DictationHUD.swift's header. Owned here (not by `AppShellController`)
     // since it must appear regardless of whether Grand Line's own window is
@@ -100,6 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             hostsPanel: hostsPanel, console: console, settings: settingsController,
             hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, shiftStore: shiftStore,
             dictationStore: dictationStore, commandLibraryStore: commandLibraryStore,
+            scheduleStore: scheduleStore,
             makeHostConsole: { ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false) }
         )
     }()
@@ -171,6 +178,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for backupPath in dictationStore.loadFailureBackupPaths {
             storeFailureNotices.append("Couldn't read a dictation file - backed up to \((backupPath as NSString).lastPathComponent)")
         }
+        // F11: same treatment for schedules. Worth saying out loud rather than
+        // silently starting with none, because an unreadable file means every
+        // scheduled run stops happening with nothing else anywhere reporting
+        // it - the schedules simply are not there to be due.
+        if let backupPath = scheduleStore.loadFailureBackupPath {
+            storeFailureNotices.append("Couldn't read saved schedules - backed up to \((backupPath as NSString).lastPathComponent). "
+                + "Nothing is scheduled until they are set up again.")
+        }
         for (index, notice) in storeFailureNotices.enumerated() {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5 + Double(index) * 4) { [weak self] in
                 self?.appShell.showToast(notice)
@@ -224,6 +239,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         BackgroundSignalsPoller.shared.onNavigateToVault = { [weak self] in self?.appShell.show(.vault) }
         BackgroundSignalsPoller.shared.onNavigateToBootstrap = { [weak self] in self?.appShell.show(.bootstrap) }
         BackgroundSignalsPoller.shared.start()
+
+        // F11: the schedule runner. Distinct from the poller above in the one
+        // way that matters - the poller answers "is anything wrong right now"
+        // on a cadence nobody chose, while this runs the specific actions the
+        // captain asked for at the times they asked for. Both are timers; only
+        // this one has a captain-authored schedule behind it.
+        ScheduleRunner.shared.onNavigateToAutomation = { [weak self] in self?.appShell.show(.automation) }
+        ScheduleRunner.shared.start(store: scheduleStore,
+                                    hostStore: hostStore,
+                                    keyStore: keyStore,
+                                    snippetStore: snippetStore,
+                                    dictationStore: dictationStore)
 
         // Phase 5 (cockpit-shift-power-features): search palette + menu bar
         // popover + global quick capture + due-item notifications. All four
@@ -420,6 +447,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         shiftHotkey.stop()
         shiftNotifications.stop()
         BackgroundSignalsPoller.shared.stop()
+        ScheduleRunner.shared.stop()
         dictationHotkey.stop()
         appLock.stop()
     }
@@ -1309,6 +1337,15 @@ if ProcessInfo.processInfo.environment["FM_RUN_REVIEW_PR_LIST_VOLUME_TESTS"] == 
 // ReviewPRRowButtonLayoutSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_REVIEW_PR_ROW_BUTTON_LAYOUT_TESTS"] == "1" {
     exit(ReviewPRRowButtonLayoutSelfTest.run() ? 0 : 1)
+}
+
+// F11: the scheduler's due / missed-while-asleep / catch-up decision, the
+// store's anchoring rules, and the notify-on gate. See
+// ScheduleRunnerSelfTest.swift's header for why the missed-run case is the one
+// worth pinning: every symptom of getting it wrong is a run that did not
+// happen, which looks exactly like a quiet night.
+if ProcessInfo.processInfo.environment["FM_RUN_SCHEDULE_RUNNER_TESTS"] == "1" {
+    exit(ScheduleRunnerSelfTest.run() ? 0 : 1)
 }
 
 #endif

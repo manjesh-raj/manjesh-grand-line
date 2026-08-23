@@ -115,6 +115,7 @@ Behaviour overrides. Everything here is optional; the app has working defaults f
 | `FM_HOSTS_FILE` | `hosts.json` (saved SSH hosts) |
 | `FM_KEYS_FILE` | `keys.json` (SSH key *metadata*; key material is Keychain-only) |
 | `FM_SNIPPETS_FILE` | `snippets.json` |
+| `FM_SCHEDULES_FILE` | `schedules.json` (the Automation page's scheduled automations) |
 | `FM_SHIFT_DIR` | Shift's data root. Setting it bypasses git sync entirely, and is also the fallback root for the command library |
 | `FM_COMMAND_LIBRARY_DIR` | The DevOps command library only |
 | `FM_SHIFT_GIT_CLONE_PATH` | Where the `manjesh-config` clone lives |

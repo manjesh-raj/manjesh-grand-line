@@ -276,6 +276,76 @@ enum NotificationSources {
         )
     }
 
+    // MARK: #12 - A scheduled automation ran (F11)
+
+    static func scheduleResultID(_ scheduleID: UUID) -> String { "schedule-result.\(scheduleID.uuidString)" }
+
+    /// One entry per schedule, replaced by that schedule's next run.
+    ///
+    /// A run *result* looks like a point-in-time event rather than a standing
+    /// condition, which is what this center's entries normally are - but the
+    /// thing being reported is standing: "the nightly drift check found drift"
+    /// and "the weekly export failed" both stay true until a later run says
+    /// otherwise, which is exactly when this entry is replaced or cleared.
+    ///
+    /// `.changed` is `.actionNeeded` and a failure is too; a `.clean` run
+    /// reported only because the captain asked for `notifyOn == .always` is
+    /// `.informational`, so it can be dismissed and does not sit in the
+    /// "waiting for you" half of the panel.
+    static func setScheduleResult(scheduleID: UUID,
+                                 action: ScheduledActionKind,
+                                 verdict: ScheduleRunVerdict,
+                                 summary: String,
+                                 notifyOn: ScheduleNotifyOn,
+                                 navigate: @escaping () -> Void) {
+        let id = scheduleResultID(scheduleID)
+        guard shouldNotify(verdict: verdict, notifyOn: notifyOn) else {
+            // Not worth surfacing - and clearing is the point, not an
+            // afterthought: a clean run is how last night's "found drift"
+            // entry goes away.
+            GrandLineNotificationCenter.shared.set(nil, id: id)
+            return
+        }
+        let title: String
+        let kind: AppNotificationKind
+        let tint: HelmTint
+        switch verdict {
+        case .failed:
+            title = "\(action.title) failed"
+            kind = .actionNeeded
+            tint = .critical
+        case .changed:
+            title = action.title
+            kind = .actionNeeded
+            tint = .warn
+        case .clean:
+            title = "\(action.title): clean"
+            kind = .informational
+            tint = .good
+        }
+        GrandLineNotificationCenter.shared.set(
+            AppNotification(
+                id: id, title: title,
+                subtext: "Scheduled \u{00B7} \(shortDetail(summary))",
+                kind: kind, tint: tint, navigate: navigate
+            ),
+            id: id
+        )
+    }
+
+    /// The notify-on decision, split out so it is testable without a run.
+    static func shouldNotify(verdict: ScheduleRunVerdict, notifyOn: ScheduleNotifyOn) -> Bool {
+        switch notifyOn {
+        case .always: return true
+        case .failureOnly: return verdict == .failed
+        case .changeOnly: return verdict != .clean
+        }
+    }
+
+    static func clearScheduleResult(scheduleID: UUID) {
+        GrandLineNotificationCenter.shared.set(nil, id: scheduleResultID(scheduleID))
+    }
+
     /// One line, bounded - a notification subtext is a headline; the full text
     /// lives on the Health card.
     private static func shortDetail(_ detail: String, limit: Int = 90) -> String {
