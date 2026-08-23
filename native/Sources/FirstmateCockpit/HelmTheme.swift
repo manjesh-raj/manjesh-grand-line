@@ -1,7 +1,10 @@
 // Manjesh Grand Line - native macOS app.
 //
 // The "Helm" terminal palette (design report section 9), plus 10 real named
-// theme families (cockpit-theme-overhaul). `helm-dark`/`helm-light` are the
+// theme families (cockpit-theme-overhaul), plus `daylight` - the
+// captain-approved Daylight design language's own palette, which lives in
+// `HelmDaylight.swift` alongside the rest of its token layer.
+// `helm-dark`/`helm-light` are the
 // original, hand-pinned Helm tokens; the other 10 are sourced verbatim from
 // each family's own canonical repo (see `data/cockpit-theme-research/report.md`
 // for exact sources, per-family tables, and the reasoning behind every
@@ -132,13 +135,24 @@ struct HelmTheme {
     private static let mutedAlphaCache = MutedAlphaCache()
 
     static func mutedInk(_ theme: HelmTheme) -> NSColor {
-        nsColor(theme.chromeInkHex).withAlphaComponent(mutedAlpha(for: theme))
+        // Daylight publishes a real muted token (§2.1's `muted`, corrected in
+        // §2.4) rather than leaving this to be an alpha of its ink. That
+        // matters for more than precision: `muted` is a warm grey-brown, and
+        // `ink` at any alpha over warm paper lands on a *cool* grey of roughly
+        // the same luminance - legible, but off-palette. Every other theme
+        // keeps the bisected-alpha derivation below unchanged.
+        if theme.isDaylight { return nsColor(DaylightPalette.muted) }
+        return nsColor(theme.chromeInkHex).withAlphaComponent(mutedAlpha(for: theme))
     }
 
     /// The alpha `mutedInk` actually uses for `theme` - exposed so the
     /// contrast self-test can report it, and so a probe can confirm a given
     /// theme was or was not raised.
     static func mutedAlpha(for theme: HelmTheme) -> CGFloat {
+        // Daylight's `mutedInk` is an opaque token, so it is composited at
+        // full strength - reported here for the self-test's own printout
+        // rather than used to derive anything.
+        if theme.isDaylight { return 1 }
         if let cached = mutedAlphaCache.value(for: theme.id) { return cached }
         let resolved = computeMutedAlpha(for: theme)
         mutedAlphaCache.store(resolved, for: theme.id)
@@ -471,10 +485,17 @@ extension HelmTheme {
         ]
     )
 
-    /// All 12 palettes: the two hand-pinned Helm originals, then the 10
-    /// sourced-family themes grouped by family (dark variant then its
-    /// light pair).
+    /// All 13 palettes: `daylight` (the captain-approved design language's
+    /// own palette - see `HelmDaylight.swift`), then the two hand-pinned Helm
+    /// originals, then the 10 sourced-family themes grouped by family (dark
+    /// variant then its light pair).
+    ///
+    /// Daylight leads the list but is **not** the default theme - Phase 1 of
+    /// its migration is tokens only, and flipping the default is a visible
+    /// change that belongs with the shell that makes Daylight mean something
+    /// (Phase 2). `ThemeManager`'s own default is still `helm-dark`.
     static let allThemes: [HelmTheme] = [
+        daylight,
         dark, light,
         solarizedDark, solarizedLight,
         catppuccinMocha, catppuccinLatte,

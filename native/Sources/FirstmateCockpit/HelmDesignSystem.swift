@@ -72,6 +72,58 @@ enum HelmMetrics {
     static let tileBase: CGFloat = 34
     /// A page-level or empty-state focal tile.
     static let tileLarge: CGFloat = 40
+
+    // MARK: Daylight radii (migration §2.6)
+    //
+    // The Daylight design doc states its radius scale as *complete*: "no
+    // other radius values are allowed". These nine are that scale, named by
+    // the surface each one belongs to, and `daylightRadii` below is the set
+    // itself - `HelmContrastSelfTest.checkDaylightRadiiScale` asserts that
+    // every token here is a member of it and that the set is exactly the
+    // spec's nine values, so a Daylight surface cannot quietly introduce a
+    // tenth.
+    //
+    // They sit alongside the pre-Daylight `rChip`/`rControl`/`rCard`/`rPanel`/
+    // `rRow` tokens rather than replacing them: those are what the app's 39
+    // existing cards and every chip render with today, and re-pointing them
+    // would restyle every page in every theme, which Phase 1 is explicitly
+    // not allowed to do. The overlap is real and intended - `rCard` (12) is
+    // already `dTileLarge`'s value, `rRow` (10) already `dTileSmall`'s - and
+    // the surfaces converge as Phase 4/5 migrates each page.
+
+    /// Modules, drill cards, tool plates.
+    static let dModule: CGFloat = 20
+    /// Editor sheets.
+    static let dSheet: CGFloat = 24
+    /// The floating top bar.
+    static let dBar: CGFloat = 18
+    /// The terminal card and the ⌘K palette.
+    static let dSurface: CGFloat = 16
+    /// Input wells, the back button, drill-page rows that need their own
+    /// rounding.
+    static let dWell: CGFloat = 14
+    /// A 34pt icon tile, the avatar, the bell.
+    static let dTileLarge: CGFloat = 12
+    /// A 30pt icon tile (module headers).
+    static let dTileSmall: CGFloat = 10
+    /// The 22pt logo dot.
+    static let dLogoDot: CGFloat = 8
+    /// Buttons, chips, space pills, tokens, progress tracks, the search pill.
+    /// A sentinel, not a real corner: callers clamp it to half the shorter
+    /// side, which is what makes a capsule a capsule at any height.
+    static let dCapsule: CGFloat = 999
+
+    /// §2.6's complete set. A Daylight surface's corner radius must be one of
+    /// these.
+    static let daylightRadii: Set<CGFloat> = [
+        dModule, dSheet, dBar, dSurface, dWell, dTileLarge, dTileSmall, dLogoDot, dCapsule,
+    ]
+
+    /// A capsule's real corner radius for a given height - `dCapsule` is a
+    /// sentinel and must never reach a layer unclamped, or a short control
+    /// renders as a circle-ish blob on some AppKit versions and correctly on
+    /// others.
+    static func capsuleRadius(forHeight height: CGFloat) -> CGFloat { height / 2 }
 }
 
 // MARK: - Type
@@ -169,6 +221,79 @@ enum HelmType {
     static func metric(_ size: CGFloat, weight: NSFont.Weight = .semibold) -> NSFont {
         .monospacedDigitSystemFont(ofSize: scaled(size), weight: weight)
     }
+
+    // MARK: Daylight display roles (migration §3)
+    //
+    // Daylight's display voice is Apple's **rounded** system design, its body
+    // is plain system sans, and its data is mono. These are the roles §3's
+    // table adds; they are additive, and Phase 1 deliberately leaves every
+    // role above untouched even where §3 retunes one:
+    //
+    // - `body()` stays at 12 rather than §3's 13.5. Bumping the app's one
+    //   shared body size is a visible restyle of every page in every theme,
+    //   which is Phase 4's job, not the token phase's.
+    // - `pageTitle(.serif)` still resolves to Georgia. §3 retires the serif as
+    //   the page-title voice, and that happens when its callers move onto
+    //   `heroTitle()`/`drillTitle()` below (Phase 2/4) - not by re-resolving
+    //   the same accessor per active theme, which would restyle every existing
+    //   hero title the moment Daylight is selected.
+    // - `rowTitle()` (13), `caption()` (11.5), `code()`/`metric()` and
+    //   `kicker()` already match §3's table and are reused as-is.
+
+    /// The rounded system face, per §3's own snippet. Falls back to plain
+    /// system rather than trapping: `withDesign(.rounded)` can return nil on
+    /// an OS that lacks the design, and a nil font here would take down every
+    /// title in the app.
+    static func rounded(_ size: CGFloat, _ weight: NSFont.Weight) -> NSFont {
+        let base = NSFont.systemFont(ofSize: size, weight: weight)
+        guard let descriptor = base.fontDescriptor.withDesign(.rounded),
+              let font = NSFont(descriptor: descriptor, size: size) else { return base }
+        return font
+    }
+
+    /// The canvas greeting - "Good morning, Manjesh". Rounded 30 heavy.
+    static func heroTitle() -> NSFont { rounded(scaled(30), .heavy) }
+
+    /// A drill page's h1. Rounded 26 heavy.
+    static func drillTitle() -> NSFont { rounded(scaled(26), .heavy) }
+
+    /// A canvas module's header title. Rounded 13.5 bold.
+    static func moduleTitle() -> NSFont { rounded(scaled(13.5), .bold) }
+
+    /// The one big number inside a module. Rounded 34 heavy, tabular digits so
+    /// it does not reflow as it counts.
+    static func moduleMetric() -> NSFont {
+        let size = scaled(34)
+        let rounded = rounded(size, .heavy)
+        let descriptor = rounded.fontDescriptor.addingAttributes([
+            .featureSettings: [[
+                NSFontDescriptor.FeatureKey.typeIdentifier: kNumberSpacingType,
+                NSFontDescriptor.FeatureKey.selectorIdentifier: kMonospacedNumbersSelector,
+            ]],
+        ])
+        return NSFont(descriptor: descriptor, size: size) ?? rounded
+    }
+
+    /// The small unit beside a big number ("open", "ready"). Sans 12
+    /// semibold, painted `mutedInk`.
+    static func metricUnit() -> NSFont { .systemFont(ofSize: scaled(12), weight: .semibold) }
+
+    /// A drill-page card's header title. Sans 13.5 semibold - deliberately a
+    /// step under `sectionTitle()` (15), which is the pre-Daylight card title
+    /// and stays put until Phase 4 migrates those cards.
+    static func cardTitle() -> NSFont { .systemFont(ofSize: scaled(13.5), weight: .semibold) }
+
+    /// A module header's subtitle, a KPI caption - the smallest role Daylight
+    /// has. Sans 10.5 designed, which `scaled` floors to
+    /// `minimumUIPointSize` (GL-32), so it renders at 11 and reads a hair
+    /// tighter than `caption()` only once the captain scales chrome text up.
+    static func captionSmall() -> NSFont { .systemFont(ofSize: scaled(10.5)) }
+
+    /// A chip or tag label. Sans 10.5 bold, same floor as `captionSmall()`.
+    static func chip() -> NSFont { .systemFont(ofSize: scaled(10.5), weight: .bold) }
+
+    /// The tracking a hero or drill title is set with - §3's -0.02em at 30pt.
+    static let displayKern: CGFloat = -0.5
 
     // MARK: Scale and floor (GL-32)
 
@@ -473,11 +598,57 @@ final class HelmCard: NSView {
     /// far less to read as depth without looking smudged. Offset is
     /// **negative** y because this is used from an unflipped `draw(_:)`
     /// context, where -y is visually downward.
-    static func elevation(for theme: HelmTheme) -> NSShadow {
+    /// The two depth levels Daylight's §2.5 defines - and, by extension, the
+    /// only two this app has.
+    ///
+    /// `resting` is a card sitting on the workspace floor; `raised` is
+    /// something genuinely lifted above it on purpose - a hover state, a
+    /// sheet, the ⌘K palette. There is deliberately no third: the migration's
+    /// §2.5 states the depth system as "exactly two levels", and a third would
+    /// be a new definition rather than a use of this one.
+    enum Elevation {
+        case resting
+        case raised
+    }
+
+    static func elevation(for theme: HelmTheme, level: Elevation = .resting) -> NSShadow {
         let shadow = NSShadow()
-        shadow.shadowColor = NSColor.black.withAlphaComponent(theme.mode == .dark ? 0.45 : 0.24)
-        shadow.shadowBlurRadius = 16
-        shadow.shadowOffset = NSSize(width: 0, height: -5)
+        if theme.isDaylight {
+            // §2.5 verbatim. The CSS is a two-shadow stack; a `CALayer`/
+            // `NSShadow` carries one, so these are the dominant (outer) half
+            // of each pair, which is what actually reads as depth. The colour
+            // is `#2A2B33`-tinted rather than pure black - a black shadow over
+            // warm paper reads grey-green.
+            let ink = HelmTheme.nsColor(DaylightPalette.shadowInk)
+            switch level {
+            case .resting:
+                shadow.shadowColor = ink.withAlphaComponent(0.10)
+                shadow.shadowBlurRadius = 15
+                shadow.shadowOffset = NSSize(width: 0, height: -6)
+            case .raised:
+                shadow.shadowColor = ink.withAlphaComponent(0.15)
+                shadow.shadowBlurRadius = 28
+                shadow.shadowOffset = NSSize(width: 0, height: -14)
+            }
+            return shadow
+        }
+        // Every other palette keeps the mode-weighted definition this method
+        // has always had, byte for byte at `.resting` - so `ConsoleCardChrome`,
+        // its one caller today, renders exactly as it did before Daylight.
+        // `.raised` scales that definition by the same ratios §2.5 uses
+        // between its own two levels (alpha x1.5, blur x1.87, offset x2.33),
+        // so a fallback theme gets a real second level rather than none.
+        let base = NSColor.black.withAlphaComponent(theme.mode == .dark ? 0.45 : 0.24)
+        switch level {
+        case .resting:
+            shadow.shadowColor = base
+            shadow.shadowBlurRadius = 16
+            shadow.shadowOffset = NSSize(width: 0, height: -5)
+        case .raised:
+            shadow.shadowColor = base.withAlphaComponent(min(1, base.alphaComponent * 1.5))
+            shadow.shadowBlurRadius = 16 * 1.87
+            shadow.shadowOffset = NSSize(width: 0, height: -5 * 2.33)
+        }
         return shadow
     }
 }

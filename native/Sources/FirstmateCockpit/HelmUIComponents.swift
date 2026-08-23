@@ -283,6 +283,43 @@ enum HelmContrast {
         return endpoint
     }
 
+    /// A **white glyph** on an opaque coloured fill, corrected only as far as
+    /// the non-text floor demands.
+    ///
+    /// `legible` above cannot do this job, which is worth stating plainly
+    /// because it looks like it can: it picks its blend endpoint from the
+    /// *surface's* luminance, so when the base already **is** that endpoint it
+    /// has nowhere to go and returns the base unchanged. Passing
+    /// `NSColor.white` into it against a mid-luminance hue is therefore a
+    /// silent no-op - measured, not theorised: it left five of the twelve
+    /// fallback palettes' gradient tiles at 2.64-2.91:1 while reporting
+    /// success.
+    ///
+    /// The rule here is directional on purpose. White is Daylight's design
+    /// choice for a tile glyph and is **preferred**, not merely allowed: it is
+    /// kept whenever it clears `target`, which on Daylight's own seven hues it
+    /// always does (lowest amber at 3.27). Only when white genuinely cannot
+    /// carry the fill - an arbitrary `HelmTint` slot on one of the 12
+    /// pre-existing palettes, e.g. `catppuccin-latte`'s pale violet - does it
+    /// step toward whichever endpoint has real headroom, stopping at the first
+    /// step that clears. That yields a grey glyph rather than a hard black
+    /// one, which is the smallest correction that stays legible.
+    ///
+    /// Deliberately **not** "pick whichever of white/black scores higher":
+    /// black scores higher than white on several of Daylight's own hues
+    /// (amber measures 6.42 black against 3.27 white), so that rule would put
+    /// a black glyph on the amber tile and abandon the approved design for a
+    /// floor white already clears.
+    static func legibleGlyph(over fill: NSColor, target: Double = nonTextTarget) -> NSColor {
+        if ratio(.white, fill) >= target { return .white }
+        let endpoint: NSColor = ratio(.black, fill) > ratio(.white, fill) ? .black : .white
+        for step in stride(from: 0.05, through: 1.0, by: 0.05) {
+            guard let blended = NSColor.white.blended(withFraction: CGFloat(step), of: endpoint) else { break }
+            if ratio(blended, fill) >= target { return blended }
+        }
+        return endpoint
+    }
+
     /// A tint hue used as **text** on an already-known opaque fill, corrected
     /// to clear `textTarget` by the smallest blend toward the theme's own ink.
     ///
