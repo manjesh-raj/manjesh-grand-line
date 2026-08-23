@@ -706,3 +706,102 @@ enum OpenPRsSource {
         }
     }
 }
+
+// MARK: - Greeting and answer summary (Daylight migration §5.4)
+
+/// Overview's greeting line and its answer-banner summary, extracted so the
+/// Daylight home canvas can show the **same** two things Overview shows
+/// rather than a second, drifting implementation of either.
+///
+/// §5.4 is explicit about this ("reuse `FleetController`'s existing greeting
+/// logic", "this is the answer-banner logic Overview already computes"), and
+/// the reason it matters is not tidiness: a hub screen whose one-line summary
+/// disagreed with the page it links to would be worse than no summary at all.
+/// `FleetController.render`/`renderBanner` call these, so there is exactly one
+/// definition of "what time of day is it" and one of "does anything need the
+/// captain right now".
+///
+/// Pure functions over values the caller already has - no store, no clock but
+/// the one passed in, nothing to mock.
+enum FleetGreeting {
+
+    /// "Good morning" / "Good afternoon" / "Good evening" / "Still up".
+    /// The exact four-way split Overview has always used.
+    static func timeOfDay(at date: Date = Date()) -> String {
+        let hour = Calendar.current.component(.hour, from: date)
+        if hour < 5 { return "Still up" }
+        if hour < 12 { return "Good morning" }
+        if hour < 17 { return "Good afternoon" }
+        return "Good evening"
+    }
+
+    /// "Good morning, Manjesh".
+    static func greeting(captain: String, at date: Date = Date()) -> String {
+        "\(timeOfDay(at: date)), \(captain)"
+    }
+
+    /// What the answer banner says, as values rather than as a built view -
+    /// so Overview can render it as a `HelmAccentRow` and the canvas can
+    /// render `canvasLine` under its hero title, from one computation.
+    struct Answer {
+        let tint: HelmTint
+        let kicker: String
+        let title: String
+        let meta: String
+        let badgeSymbol: String
+        /// Set only for the not-configured case, where the banner is
+        /// clickable and leads into Setup.
+        let isSetupPrompt: Bool
+        /// The canvas's single-line form: the headline plus its detail.
+        var canvasLine: String { "\(title). \(meta)" }
+    }
+
+    /// The three states Overview's banner has always had, unchanged in copy.
+    ///
+    /// GL-14's rule is baked in: with `prFetchFailure` set, the "all clear"
+    /// branch reports the PR half as *unknown* rather than printing a
+    /// confident zero it could not actually verify.
+    static func answer(tasks: [FleetTask],
+                       readyCount: Int,
+                       prFetchFailure: String?,
+                       homeOk: Bool) -> Answer {
+        guard homeOk else {
+            return Answer(
+                tint: .info,
+                kicker: "Finish setup",
+                title: "Point Manjesh Grand Line at your firstmate home",
+                meta: "Nothing was found at \(FirstmateHome.root.path). Open Setup to choose the directory firstmate keeps its projects, backlog and crew state in.",
+                badgeSymbol: "wrench.and.screwdriver.fill",
+                isSetupPrompt: true)
+        }
+
+        let working = tasks.filter { $0.status == "working" }
+        let needs = tasks.filter { $0.status == "needs_decision" || $0.status == "blocked" }
+
+        guard !needs.isEmpty else {
+            let prPhrase = prFetchFailure == nil
+                ? "\(readyCount) PR\(readyCount == 1 ? "" : "s") ready to merge"
+                : "PR status unavailable"
+            return Answer(
+                tint: prFetchFailure == nil ? .good : .warn,
+                kicker: prFetchFailure == nil ? "All clear" : "Partly unknown",
+                title: prFetchFailure == nil ? "Nothing needs you right now" : "Nothing known needs you right now",
+                meta: "\(working.count) crew working \u{00B7} \(prPhrase) \u{00B7} nobody is parked on a decision.",
+                badgeSymbol: prFetchFailure == nil ? "checkmark" : "wifi.exclamationmark",
+                isSetupPrompt: false)
+        }
+
+        let decisions = needs.filter { $0.status == "needs_decision" }.count
+        let blocked = needs.filter { $0.status == "blocked" }.count
+        var bits: [String] = []
+        if decisions > 0 { bits.append("\(decisions) decision\(decisions > 1 ? "s" : "") waiting") }
+        if blocked > 0 { bits.append("\(blocked) blocked") }
+        return Answer(
+            tint: .warn,
+            kicker: "Needs you",
+            title: "\(needs.count) task\(needs.count > 1 ? "s" : "") need your call",
+            meta: bits.joined(separator: " \u{00B7} ") + " - the crew is holding for you.",
+            badgeSymbol: "exclamationmark.triangle.fill",
+            isSetupPrompt: false)
+    }
+}

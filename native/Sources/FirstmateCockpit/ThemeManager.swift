@@ -169,6 +169,20 @@ final class ThemeManager {
     func unobserve(_ token: ThemeObservation) {
         observers.removeAll { $0.token === token }
     }
+
+    /// How many observers are registered right now.
+    ///
+    /// Daylight Phase 2: the home canvas rebuilds fifteen self-theming module
+    /// cards (each of which also owns a self-theming gradient tile) on every
+    /// space switch and every width change, so it is the first surface in this
+    /// app that churns observers in bulk. A card that failed to deallocate
+    /// would leak a dead closure into `observers` on every rebuild - the exact
+    /// bug `ConsoleController.shutdown()`'s own `unobserve` call was added to
+    /// prevent, just at fifteen times the rate. `DaylightModuleSelfTest`
+    /// asserts this count is stable across repeated space switches.
+    #if FM_SELFTESTS
+    var observerCountForTests: Int { observers.count }
+    #endif
 }
 
 extension NSWindow {

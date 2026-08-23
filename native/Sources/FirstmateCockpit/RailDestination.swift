@@ -10,10 +10,11 @@
 // that used it - and 108 lines of enum plus its accumulated doc comment
 // sitting above a 1,900-line view controller made both harder to find.
 //
-// Nothing about the enum changed in the move. In particular **the case order
-// is still load-bearing**: `CaseIterable.allCases` follows declaration order,
-// and `IconRailController` iterates it directly to lay the rail out top to
-// bottom. Reordering these cases reorders the rail.
+// Nothing about the enum changed in that move. **Daylight Phase 2 did change
+// one thing about it**: the case order used to be load-bearing (the rail
+// iterated `allCases` to lay itself out top to bottom), and with the rail
+// gone nothing iterates it for layout any more. See the enum's own doc
+// comment below.
 
 import AppKit
 
@@ -107,11 +108,40 @@ import AppKit
 /// utility, and per-host) the same labeled icon-over-text treatment after
 /// live captain feedback that icon-only utility rows looked inconsistent
 /// once the rest of the rail had labels - see `labeledRailButton(for:)`.
+/// **Daylight Phase 2 note.** The icon rail this enum is named after no
+/// longer exists as a visible surface - `DaylightBarController`'s floating
+/// bar plus `HomeCanvasController`'s module grid replaced it (migration
+/// §5.1). The enum itself survives unchanged and un-renamed, deliberately:
+/// §5.1's own "survives" list names it as the routing enum, every menu item,
+/// keyboard shortcut and deep-link closure in the app switches on it, and
+/// `DestinationRegistry` keys its table off it. Renaming it would be a
+/// large, purely cosmetic diff across ~20 files.
+///
+/// Two consequences of the rail's removal that matter when editing this file:
+///   - **Case order is no longer load-bearing.** It used to be the rail's
+///     top-to-bottom order (`allCases` drove `navStack`'s loop). Nothing
+///     iterates `allCases` for layout any more; the canvas's own order is
+///     `DaylightModule.canvasOrder`. The long history below is kept because
+///     it records real captain decisions about grouping, not because
+///     reordering these cases still moves anything on screen.
+///   - `isDailyUse` and `flyoutTint` have no remaining consumer in the shell.
+///     They are left in place rather than deleted so the rail's own
+///     decision history stays greppable; if a future phase wants a rail-like
+///     surface back, they are what it should read.
 enum RailDestination: CaseIterable {
+    /// Daylight Phase 2: the home canvas (`HomeCanvasController`) - the hub
+    /// every module card and every drill page's back button returns to. It is
+    /// a real destination in every sense (a registered slot, an eager mount,
+    /// reachable through `show(_:)`), so nothing about routing needed a
+    /// second concept.
+    case homeCanvas
     case overview, console, hosts, shift, review, logAnalyzer, tools, vault, dictation, schedules, health, docs, updates, bootstrap, automation, githubSync, settings
 
     var symbol: String {
         switch self {
+        // §4's tile table: the canvas is the app itself, so it takes the
+        // app's own mark.
+        case .homeCanvas: return "sailboat.fill"
         case .overview: return "square.grid.2x2"
         // fm/grandline-rail-followup-fixes: the captain asked for the menu
         // bar's Shift/Tasks status item to use the same "sailboat" glyph as
@@ -152,7 +182,8 @@ enum RailDestination: CaseIterable {
 
     var title: String {
         switch self {
-        case .overview: return "Overview"
+        case .homeCanvas: return "Home"
+        case .overview: return "Fleet"
         case .shift: return "Tasks"
         case .hosts: return "Hosts"
         case .console: return "Console"
@@ -212,14 +243,14 @@ enum RailDestination: CaseIterable {
         case .bootstrap: return .warn
         case .automation: return .accent
         case .githubSync: return .violet
-        case .overview, .console, .hosts, .shift, .review, .logAnalyzer,
+        case .homeCanvas, .overview, .console, .hosts, .shift, .review, .logAnalyzer,
              .tools, .vault, .dictation, .schedules, .health, .docs, .settings: return .accent
         }
     }
 
     var isDailyUse: Bool {
         switch self {
-        case .overview, .console, .hosts, .shift, .review, .logAnalyzer: return true
+        case .homeCanvas, .overview, .console, .hosts, .shift, .review, .logAnalyzer: return true
         case .tools, .vault, .dictation, .schedules, .health, .docs, .updates, .bootstrap, .automation, .githubSync, .settings: return false
         }
     }

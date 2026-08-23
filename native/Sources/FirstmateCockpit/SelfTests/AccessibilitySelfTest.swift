@@ -369,9 +369,17 @@ enum AccessibilitySelfTest {
             fail("could not locate the app sources - this check would silently pass", &ok)
             return
         }
+        // Daylight Phase 2 swapped one entry here for another, and the swap
+        // is the point rather than bookkeeping: `IconRailController.swift`
+        // (the rail's bobbing sailboat mark) no longer exists - the rail's
+        // visible surface is gone (migration §5.1) and the bar's logo tile is
+        // a static gradient with no animation at all. The new animated surface
+        // is `HelmModuleCard`'s hover lift, which the spec explicitly says to
+        // skip under Reduce Motion, so it takes the rail's place in this list
+        // rather than the list simply getting shorter.
         let required = [
             "LockScreenController.swift",
-            "IconRailController.swift",
+            "HelmModuleCard.swift",
             "DictationHUD.swift",
             "HelmUIComponents.swift",
         ]
@@ -391,7 +399,7 @@ enum AccessibilitySelfTest {
                 fail("\(file) checks Reduce Motion but never observes changes to it - the setting would need a relaunch", &ok)
             }
         }
-        print("  OK - lock screen, rail mark, dictation HUD and hover fade all consult it")
+        print("  OK - lock screen, module hover lift, dictation HUD and hover fade all consult it")
     }
 
     // MARK: Helpers
