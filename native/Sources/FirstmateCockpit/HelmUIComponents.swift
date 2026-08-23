@@ -512,6 +512,15 @@ class HoverHighlightView: NSView {
     /// movement between pills.
     var onKeyDown: ((NSEvent) -> Bool)?
 
+    #if FM_SELFTESTS
+    /// `fm/grandline-daylight-shell-regressions`: a live-instance counter,
+    /// same convention as `HelmModuleCard.debugLiveInstanceCount`, used to
+    /// isolate whether a `HoverHighlightView` (the inner view every
+    /// `HelmModuleCard` and many other clickable rows in this app own) is
+    /// what a suspected retention actually holds onto.
+    static var debugLiveInstanceCount = 0
+    #endif
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         wantsLayer = true
@@ -522,11 +531,18 @@ class HoverHighlightView: NSView {
         // focusable ones showed nothing; a view that is a button by role has
         // to show where the keyboard is.
         focusRingType = .exterior
+        #if FM_SELFTESTS
+        Self.debugLiveInstanceCount += 1
+        #endif
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) not supported")
     }
+
+    #if FM_SELFTESTS
+    deinit { Self.debugLiveInstanceCount -= 1 }
+    #endif
 
     /// The one definition of "this view does something when pressed": an
     /// explicit press handler, or an enabled click recognizer someone

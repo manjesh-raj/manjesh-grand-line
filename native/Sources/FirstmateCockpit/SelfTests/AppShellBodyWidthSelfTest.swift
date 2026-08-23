@@ -74,6 +74,69 @@
 // `RailDestination`, not just the eager three - is what should keep this from
 // recurring a fourth time.
 //
+// `fm/grandline-daylight-shell-regressions` investigated a captain-reported
+// recurrence of this same symptom against Daylight Phase 2 (#257) - a
+// "blank/black area on the right side of the window" while `.console` was
+// showing - plus a separately-reported sustained-CPU/input-lag symptom the
+// captain suspected was related (Activity Monitor: ~85% CPU, near-zero idle
+// wake-ups). `test_widthTracksAcrossAllSpaces` below is the width-cap half of
+// that investigation: it closes a real, previously-untested combination
+// (every `DaylightSpace`, swept across widths), but it did **not** reproduce
+// the reported blank area - every width/space/destination combination this
+// file's five original cases now cover (well beyond what any single prior
+// regression needed) resolves `bodyContainer` correctly. Live captain
+// evidence during this task also narrowed, then retracted, a "only in genuine
+// full screen" framing, and finally landed on "CPU is normal on a fresh
+// relaunch, only rising over a long session" - i.e. a per-usage accumulation,
+// not a static geometry bug.
+//
+// The remaining cases are that CPU half. Four separate, concrete mechanisms
+// were investigated with a real test each, not just reasoned about:
+// `test_healthCardLayoutConverges` (an AppKit scrollbar/wrap-width feedback
+// loop - not reproduced), `test_moduleCardTrackingAreaDoesNotLeak` (an
+// `NSTrackingArea` retain cycle on one card in isolation - not reproduced),
+// `test_moduleCardLayoutRunsOnceForOneRequest` (a self-re-triggering layout
+// pass - not reproduced), and `test_moduleCardCountDoesNotAccumulateOverALongSession`
+// (a per-switch accumulation across a real, 300-switch, per-event-pooled,
+// real-display-pass session - not reproduced: flat at every checkpoint).
+// That last one **did** turn up one real, if narrow, finding along the way -
+// isolated into its own case, `test_initialCanvasRenderIsOrphanedOnce`:
+// `HomeCanvasController`'s very first render, at app-launch mount time, is
+// never replaced by the next `.overview` visit the way every later
+// generation correctly is, orphaning one fixed batch of fifteen cards once,
+// at startup. Real, and worth fixing on its own merits, but its magnitude
+// (one small, bounded batch, exactly once) cannot be the mechanism behind a
+// cost the captain's own report says *grows over a session* - that shape
+// needs something that keeps recurring, and nothing found here does.
+//
+// Also confirmed, along the way, as a real self-test-harness pitfall worth
+// recording rather than repeating: an early version of the long-session test
+// ran 300 raw `selectSpace` calls with **no** enclosing `autoreleasepool`
+// anywhere in the call stack (`main.swift` dispatches to
+// `AppShellBodyWidthSelfTest.run()` with none of its own), and that
+// specific arrangement produced a large, apparently-permanent excess that an
+// explicit `RunLoop.main.run(until:)` drain afterward did *not* clear. Wrapping
+// each iteration in its own `autoreleasepool` - which is what a real app's
+// `NSApp.run()` already guarantees happens once per discrete event, so this
+// is the only arrangement that actually represents the shipped app - made the
+// excess disappear completely. Treat "a headless burst with zero
+// autoreleasepools anywhere" as a test-harness artifact, not evidence about
+// the real app, and always wrap a repeated-call stress test the same way a
+// real event loop would.
+//
+// Combined with a full line-by-line scan of Daylight Phase 0/1/2's entire
+// diff (`git diff e21a7e8 9195e29 -- native/Sources`) for any new `Timer`/
+// `RunLoop`/`DispatchSourceTimer`/busy-`while` construct - there is exactly
+// one new `DispatchQueue.main.async` in the whole diff
+// (`HomeCanvasController.setNeedsRender()`'s render-coalescing hop, which is
+// itself guarded against re-entry by its own `renderPending` flag) - this
+// did not find a reproducible, growing app-side root cause for either report
+// in the Daylight shell code. See this file's own PR description for what
+// would actually make further progress: a live `sample`/spindump of the
+// captain's own running process, which is the one piece of evidence that
+// would show the exact thread and call stack responsible and that nothing in
+// this sandboxed, headless environment can produce.
+//
 // Run with:
 //   swift build && FM_RUN_APP_SHELL_BODY_WIDTH_TESTS=1 .build/debug/FirstmateCockpit; echo $?
 
@@ -102,6 +165,13 @@ enum AppShellBodyWidthSelfTest {
             ("widthSelfHealsAfterATieIsSilentlyBroken", test_widthSelfHealsAfterTieBroken),
             ("bodyContainerTracksWindowAcrossRealisticWidths", test_widthTracksAcrossRealisticWidths),
             ("bodyContainerTracksWindowAcrossAllDestinations", test_widthTracksAcrossAllDestinations),
+            ("bodyContainerTracksWindowAcrossAllSpaces", test_widthTracksAcrossAllSpaces),
+            ("healthCardDescriptionWidthConverges", test_healthCardLayoutConverges),
+            ("moduleCardDeallocatesAfterRemoval", test_moduleCardTrackingAreaDoesNotLeak),
+            ("moduleCardLayoutSettlesForOneRequest", test_moduleCardLayoutRunsOnceForOneRequest),
+            ("moduleCardCountDoesNotAccumulateOverALongSession", test_moduleCardCountDoesNotAccumulateOverALongSession),
+            ("initialCanvasRenderIsOrphanedOnce", test_initialCanvasRenderIsOrphanedOnce),
+            ("plainStackViewArrangedSubviewRemovalDoesNotLeak", test_stackViewArrangedSubviewRemovalLeaksOneGeneration),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -394,6 +464,415 @@ enum AppShellBodyWidthSelfTest {
 
             return failures.isEmpty ? nil : failures.joined(separator: " | ")
         }
+    }
+
+    /// `fm/grandline-daylight-shell-regressions`: closes a real gap in the
+    /// case above. `test_widthTracksAcrossAllDestinations` visits every
+    /// `RailDestination` but only ever at `.homeCanvas`'s *default* space
+    /// (`.overview`), and `DaylightModuleSelfTest.checkCanvasAndDrillHeader`
+    /// selects every space but never resizes the window - neither exercises
+    /// "a non-default space, at a swept range of widths" together. Sweeps
+    /// every `DaylightSpace` via `selectSpace`, at 11 widths from 700 to
+    /// 2400, checking `bodyContainer`'s width tracks the window exactly at
+    /// each combination. This did not reproduce the captain's reported
+    /// "blank area on the right side of the window" - every combination
+    /// passes on the code as shipped in Daylight Phase 2 (#257) - but it is
+    /// real, previously-missing coverage for a class of regression this
+    /// codebase has hit five times before (AGENTS.md gotchas (13)/(14) and
+    /// their history), so it stays as a permanent guard against a future one.
+    private static func test_widthTracksAcrossAllSpaces() -> String? {
+        withScratchEnv {
+            let (window, shell) = makeMountedShell()
+            var failures: [String] = []
+            for space in DaylightSpace.allCases {
+                shell.selectSpace(space)
+                for width in [CGFloat(700), 820, 900, 1000, 1100, 1250, 1400, 1512, 1700, 2000, 2400] {
+                    window.setFrame(NSRect(x: 0, y: 0, width: width, height: 900), display: true)
+                    let actual = shell.bodyContainerFrameForTests.width
+                    if abs(actual - width) >= 0.5 {
+                        failures.append("space=\(space.rawValue) width=\(width): expected bodyContainer \(width), got \(actual)")
+                    }
+                }
+            }
+            return failures.isEmpty ? nil : failures.joined(separator: " | ")
+        }
+    }
+
+    /// `fm/grandline-daylight-shell-regressions`: investigates a specific
+    /// hypothesis for the captain's reported sustained-CPU/input-lag report.
+    /// `HealthCardView.layoutDidChange()` (added in Daylight Phase 0) re-derives
+    /// each description label's `preferredMaxLayoutWidth` from `card.bounds.width`
+    /// on every layout pass - a real, live AppKit feedback loop is possible
+    /// here in principle (wrap width -> wrapped line count -> document height ->
+    /// non-overlay vertical scroller visibility -> clip width -> wrap width
+    /// again), which would show up as continuous main-thread layout work with
+    /// no user input at all. Seeds every `HealthService` with a long failure
+    /// detail so the description labels genuinely wrap, then forces 40
+    /// explicit layout passes at 11 window heights spanning the range where a
+    /// scroller could plausibly toggle, checking `card.bounds.width` settles
+    /// rather than alternating. **Result: it converges at every height
+    /// tried** - this hypothesis did not reproduce. (Separately confirmed by
+    /// reading `NSScrollView`'s own behaviour: with a non-overlay/`.legacy`
+    /// scroller style, `hasVerticalScroller = true` reserves the scrollbar's
+    /// width track unconditionally, not only once content overflows, so the
+    /// clip width this card reads never actually depends on the document's
+    /// own height in the first place - there is no feedback path to close.)
+    /// Kept as permanent coverage since `layoutDidChange()`'s mechanism is
+    /// still real, load-bearing code that a future edit could genuinely break.
+    private static func test_healthCardLayoutConverges() -> String? {
+        withScratchEnv {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 700),
+                                  styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+            let health = HealthController()
+            window.contentViewController = health
+            // Force the non-overlay scroller style: without a real mouse
+            // attached, this sandbox's own `NSScroller.preferredScrollerStyle`
+            // would default to `.overlay` (no width impact at all), which
+            // would make this test incapable of ever exercising the one
+            // scroller behaviour ("Show scroll bars: Always", AGENTS.md
+            // gotcha #4) that could plausibly feed back into this card's
+            // width in the first place.
+            health.debugForceLegacyScrollerStyle()
+
+            // Seed every known service with a real failure carrying a long
+            // detail string, so the description labels actually wrap (the
+            // mechanism this probe is checking) rather than fitting on one
+            // line regardless of width.
+            for service in HealthService.allCases {
+                ServiceHealthRegistry.shared.recordFailure(
+                    service,
+                    "A deliberately long failure detail string, long enough to wrap across "
+                    + "more than one line at any width this probe will try, so a change in "
+                    + "available width always changes the number of wrapped lines.")
+            }
+            // Let the registry's async `DispatchQueue.main.async` notify land
+            // before measuring - `recordFailure`/`mutate` dispatch to main.
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+            var failures: [String] = []
+            for height in [CGFloat(300), 340, 360, 380, 400, 420, 460, 520, 600, 700, 900] {
+                window.setFrame(NSRect(x: 0, y: 0, width: 620, height: height), display: true)
+                var widths: [CGFloat] = []
+                for _ in 0..<40 {
+                    health.view.layoutSubtreeIfNeeded()
+                    widths.append(health.debugCardWidth)
+                }
+                let distinctTrailing = Set(widths.suffix(10).map { ($0 * 10).rounded() / 10 })
+                if distinctTrailing.count > 1 {
+                    failures.append("height=\(height): card width did not converge over 40 forced layout "
+                        + "passes - last 10 values: \(widths.suffix(10))")
+                }
+            }
+            return failures.isEmpty ? nil : failures.joined(separator: " | ")
+        }
+    }
+
+    /// `fm/grandline-daylight-shell-regressions`: a second hypothesis for the
+    /// sustained-CPU report. `HelmModuleCard`'s own hover `NSTrackingArea`
+    /// (`owner: self`) is a textbook shape for an un-breakable retain cycle -
+    /// the tracking area retains its owner, and the card retains the tracking
+    /// area as a stored property - and `HomeCanvasController.rebuildGrid()`
+    /// tears down and rebuilds all fifteen cards on every space switch and
+    /// every width change. `DaylightModuleSelfTest`'s own leak check already
+    /// covers `ThemeManager` observer count (with an `autoreleasepool`
+    /// wrapper it explicitly notes is needed only because a headless suite
+    /// never drains the pool a real run loop would) but never puts a card in
+    /// a real window, so `updateTrackingAreas()` may never actually run there
+    /// - a leak sourced from *that* mechanism specifically would be invisible
+    /// to it. This test mounts one card in a real (never shown - see the
+    /// window comment below) `NSWindow`, forces a real layout+display pass so
+    /// tracking areas genuinely resolve, removes the card, and checks a
+    /// `weak` reference. **Result: it deallocates cleanly** - this hypothesis
+    /// did not reproduce either; whatever this AppKit version does with a
+    /// removed view's own tracking areas, it does not leave this pair
+    /// permanently retaining each other. Kept as permanent regression
+    /// coverage for exactly the failure mode it was written to catch.
+    private static func test_moduleCardTrackingAreaDoesNotLeak() -> String? {
+        // Deliberately never ordered front - per this project's own
+        // convention (see `makeMountedShell()`'s comment above), a self-test
+        // window must never visibly disturb a shared machine. `layout()` +
+        // `displayIfNeeded()` still resolve tracking areas for a view that is
+        // genuinely part of a real window's view hierarchy.
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
+                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+
+        weak var weakCard: HelmModuleCard?
+        autoreleasepool {
+            let card = HelmModuleCard()
+            card.configure(.init(title: "Title", subtitle: "sub", symbol: "sailboat.fill",
+                                 hue: .teal, chip: nil, body: .note("hi")))
+            card.frame = NSRect(x: 0, y: 0, width: 300, height: 170)
+            window.contentView?.addSubview(card)
+            // Force AppKit to actually resolve tracking areas for a view that
+            // is genuinely in a real, ordered-front window - `layout()` alone
+            // (what the headless suite calls) does not guarantee
+            // `updateTrackingAreas()` runs; a real display pass does.
+            window.contentView?.layoutSubtreeIfNeeded()
+            window.displayIfNeeded()
+            card.removeFromSuperview()
+            weakCard = card
+        }
+        // Give the real run loop a moment to drain autorelease pools /
+        // process any deferred AppKit cleanup, exactly as a live app's event
+        // loop would between ticks.
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+
+        guard weakCard == nil else {
+            return "HelmModuleCard did not deallocate after removeFromSuperview() - "
+                + "its own hover NSTrackingArea (owner: self) is a likely retain cycle"
+        }
+        return nil
+    }
+
+    /// `fm/grandline-daylight-shell-regressions`: a third hypothesis for the
+    /// sustained-CPU report - a genuine internal re-layout storm, where
+    /// something inside `HelmModuleCard.layout()`/`applyShadow()`/
+    /// `applyTheme()` re-marks the same view dirty on every pass it runs,
+    /// so a single logical layout request never actually settles. Forces one
+    /// canvas render plus one explicit `layoutSubtreeIfNeeded()` and reads
+    /// `HelmModuleCard.debugLayoutCallCount` (a plain counter incremented
+    /// inside `layout()`, `#if FM_SELFTESTS`-gated so it costs nothing in a
+    /// release build) on all fifteen cards: a small, bounded count is
+    /// AppKit legitimately resolving the fresh constraint graph in a couple
+    /// of internal passes; dozens or more would be the runaway signature.
+    /// A second, completely idle request (nothing changed) should add zero
+    /// further calls - real settling, not merely "bounded per request".
+    /// **Result: it settles cleanly both times** - this hypothesis did not
+    /// reproduce either.
+    private static func test_moduleCardLayoutRunsOnceForOneRequest() -> String? {
+        withScratchEnv {
+            let (window, shell) = makeMountedShell()
+            window.setFrame(NSRect(x: 0, y: 0, width: 1400, height: 900), display: true)
+            shell.selectSpace(.overview)
+            window.setFrame(NSRect(x: 0, y: 0, width: 1400, height: 900), display: true)
+
+            let canvas = shell.homeCanvasForTests
+            let cards = canvas.moduleCardsForTests
+            guard !cards.isEmpty else { return "no module cards were built to measure" }
+
+            // One more explicit, isolated layout request - the same call this
+            // controller's own `select(space:)`/`viewWillAppear()` already make.
+            shell.view.layoutSubtreeIfNeeded()
+            let counts = cards.map(\.debugLayoutCallCount)
+            let maxCount = counts.max() ?? 0
+            // A handful of internal AppKit passes is normal; dozens or more
+            // for a single explicit request is the runaway signature.
+            if maxCount > 6 {
+                return "a module card's layout() ran \(maxCount) times for one "
+                    + "layoutSubtreeIfNeeded() request - counts: \(counts)"
+            }
+
+            // A second, completely idle request (nothing changed) should not
+            // add any further layout() calls at all - real settling, not just
+            // "bounded per request".
+            shell.view.layoutSubtreeIfNeeded()
+            let secondCounts = cards.map(\.debugLayoutCallCount)
+            if secondCounts != counts {
+                return "an idle layoutSubtreeIfNeeded() (nothing changed) still called layout() again - "
+                    + "before: \(counts), after: \(secondCounts) - the tree is not settling"
+            }
+            return nil
+        }
+    }
+
+    /// `fm/grandline-daylight-shell-regressions`: a fourth, more direct check
+    /// of the observer-leak hypothesis than `DaylightModuleSelfTest.
+    /// checkCanvasAndDrillHeader`'s own 20-switch check - live captain
+    /// evidence (sustained ~85% CPU, worse over a session, clearing on
+    /// relaunch) raised the possibility that check's `autoreleasepool`
+    /// wrapper was masking a real leak a much longer session would still
+    /// show. Drives 60 space-switch cycles (300 individual `selectSpace`
+    /// calls plus a real `window.displayIfNeeded()` after each one, so actual
+    /// compositing runs, not just layout) through the real, mounted shell,
+    /// each wrapped in its own `autoreleasepool` - matching what a real app's
+    /// run loop already guarantees per discrete event, which is the only
+    /// scenario worth testing here (a headless burst with **no** enclosing
+    /// pool anywhere, tried and discarded while building this test, produced
+    /// a large, apparently-permanent excess that a per-event pool immediately
+    /// erased in full - i.e. a self-test-harness artifact from `main.swift`'s
+    /// own dispatch to `AppShellBodyWidthSelfTest.run()` having no top-level
+    /// `autoreleasepool` of its own, not a finding about the shipped app,
+    /// which always runs inside `NSApp.run()`'s own per-event draining).
+    /// Tracks `HelmModuleCard.debugLiveInstanceCount`/`HelmGradientTile.
+    /// debugLiveInstanceCount`/`HoverHighlightView.debugLiveInstanceCount`
+    /// (three independent, direct construct/destruct counters) and
+    /// `ThemeManager.observerCountForTests`, at five checkpoints along the
+    /// way, so a genuinely *growing* leak can be told apart from a bounded
+    /// one. **One real, if minor, finding**: the very first render
+    /// `HomeCanvasController.loadView()` performs at mount time (before this
+    /// test - or any real navigation - ever revisits `.overview`) is not
+    /// replaced by the *next* visit to `.overview` the way every later
+    /// generation is - a one-time, bounded (one batch, never grows) orphaned
+    /// set of fifteen cards from app launch, not a per-switch leak. This test
+    /// starts by switching away from and back to `.overview` once specifically
+    /// so its baseline is a genuine steady-state generation, not that
+    /// original one, and isolates that finding to a separate, narrower probe
+    /// (`test_initialCanvasRenderIsOrphanedOnce`) rather than let it read as
+    /// "the steady state itself leaks". **Result here: flat at every
+    /// checkpoint** - no growth, no excess, across a session 15x longer than
+    /// the existing suite's own check.
+    private static func test_moduleCardCountDoesNotAccumulateOverALongSession() -> String? {
+        withScratchEnv {
+            let (window, shell) = makeMountedShell()
+            window.setFrame(NSRect(x: 0, y: 0, width: 1400, height: 900), display: true)
+
+            // Move away from `.overview` (the controller's own initial
+            // default - `HomeCanvasController.loadView()` already rendered
+            // it once before this test ever runs, via `mountEagerSlots()`)
+            // and back, so "baseline" reflects a genuine steady-state
+            // generation rather than that one-time initial render - see
+            // `test_initialCanvasRenderIsOrphanedOnce` for that one, in
+            // isolation.
+            autoreleasepool { shell.selectSpace(.command) }
+            autoreleasepool { shell.selectSpace(.overview) }
+            let baselineInstances = HelmModuleCard.debugLiveInstanceCount
+            let baselineObservers = ThemeManager.shared.observerCountForTests
+            let baselineTiles = HelmGradientTile.debugLiveInstanceCount
+            let baselineHovers = HoverHighlightView.debugLiveInstanceCount
+
+            var checkpointExcess: [Int] = []
+            for outer in 0..<60 {
+                for space in DaylightSpace.allCases {
+                    autoreleasepool {
+                        shell.selectSpace(space)
+                        window.displayIfNeeded()
+                    }
+                }
+                if (outer + 1).isMultiple(of: 12) {
+                    autoreleasepool {
+                        shell.selectSpace(.overview)
+                        window.displayIfNeeded()
+                    }
+                    checkpointExcess.append(HelmModuleCard.debugLiveInstanceCount - baselineInstances)
+                }
+            }
+            let finalInstances = HelmModuleCard.debugLiveInstanceCount
+            let finalObservers = ThemeManager.shared.observerCountForTests
+            guard finalInstances != baselineInstances || finalObservers != baselineObservers else {
+                return nil
+            }
+            let distinctExcess = Set(checkpointExcess)
+            let shape = distinctExcess.count <= 1
+                ? "constant at \(checkpointExcess.first ?? 0) extra across all 5 checkpoints - a "
+                  + "bounded, one-time artifact, not a growing leak"
+                : "growing across checkpoints (\(checkpointExcess)) - a genuine, unbounded leak"
+            let tileExcess = HelmGradientTile.debugLiveInstanceCount - baselineTiles
+            let hoverExcess = HoverHighlightView.debugLiveInstanceCount - baselineHovers
+            return "300 space switches (each with its own autoreleasepool and a real display pass) left "
+                + "\(finalInstances - baselineInstances) extra live HelmModuleCard instances, "
+                + "\(tileExcess) extra HelmGradientTile, \(hoverExcess) extra HoverHighlightView, "
+                + "and \(finalObservers - baselineObservers) extra ThemeManager observers behind - "
+                + "shape: \(shape)"
+        }
+    }
+
+    /// `fm/grandline-daylight-shell-regressions`: isolates the one real,
+    /// bounded finding the test above deliberately excludes from its own
+    /// baseline - `HomeCanvasController.loadView()`'s very first render (at
+    /// `mountEagerSlots()` time, before the captain ever revisits `.overview`)
+    /// is not replaced when `.overview` is next selected, the way every later
+    /// generation correctly is. Fifteen cards (one full Overview batch) from
+    /// that one-time initial render stay alive permanently - confirmed not to
+    /// clear even after several further idle re-selections of `.overview` -
+    /// but the excess never exceeds that one batch, however many further
+    /// switches happen (see the test above). This is a real, worth-fixing
+    /// piece of dead weight from every app launch, but its magnitude (one
+    /// small, fixed batch, once, at startup) cannot explain a CPU cost that
+    /// the captain's own report says *grows over a session* - that shape
+    /// needs something that keeps recurring, not something that happens once.
+    private static func test_initialCanvasRenderIsOrphanedOnce() -> String? {
+        withScratchEnv {
+            let (window, shell) = makeMountedShell()
+            window.setFrame(NSRect(x: 0, y: 0, width: 1400, height: 900), display: true)
+
+            // No prior `.command` detour here, deliberately - this baseline
+            // is taken right after the controller's own initial render, the
+            // one generation the test above steps around.
+            let initialInstances = HelmModuleCard.debugLiveInstanceCount
+
+            autoreleasepool { shell.selectSpace(.command) }
+            autoreleasepool { shell.selectSpace(.overview) }
+            let afterOneRoundTrip = HelmModuleCard.debugLiveInstanceCount - initialInstances
+
+            for _ in 0..<5 {
+                autoreleasepool { shell.selectSpace(.command) }
+                autoreleasepool { shell.selectSpace(.overview) }
+            }
+            let afterFiveMoreRoundTrips = HelmModuleCard.debugLiveInstanceCount - initialInstances
+
+            guard afterOneRoundTrip == 15, afterFiveMoreRoundTrips == 15 else {
+                return "expected the initial render's orphaned batch to be a constant 15 cards after "
+                    + "1 round trip and after 6 - got \(afterOneRoundTrip) then \(afterFiveMoreRoundTrips). "
+                    + "If this is 0, the orphaning itself may already be fixed and this test's own "
+                    + "assumption is stale; if it grows past 15, that IS the growing leak this whole "
+                    + "investigation was looking for and needs to be re-escalated immediately."
+            }
+            return nil
+        }
+    }
+
+    /// `fm/grandline-daylight-shell-regressions`: isolates the mechanism
+    /// behind `test_moduleCardCountDoesNotAccumulateOverALongSession`'s
+    /// finding (a real, permanent-but-bounded one-batch-behind retention,
+    /// not a growing leak) by removing `HomeCanvasController`/`HelmModuleCard`
+    /// from the picture entirely, while matching `rebuildGrid()`'s exact
+    /// two-level structure: an outer `gridStack`-equivalent holding
+    /// per-rebuild *row* stack views (not the cards directly), each row
+    /// carrying the same explicit `row.widthAnchor.constraint(equalTo:
+    /// gridStack.widthAnchor).isActive = true` `rebuildGrid()` adds after
+    /// `addArrangedSubview` - plain `NSView`s inside each row, added/removed
+    /// the same way (`addArrangedSubview` then, on the next cycle,
+    /// `removeArrangedSubview` + `removeFromSuperview()`), with no theme
+    /// observers, no gesture recognizers, no tracking areas at all. If the
+    /// same shape reproduces here, the mechanism is this exact
+    /// two-level-stack-plus-explicit-constraint structure (or `NSStackView`'s
+    /// own internal bookkeeping around it), not anything specific to this
+    /// app's module cards.
+    private static func test_stackViewArrangedSubviewRemovalLeaksOneGeneration() -> String? {
+        let gridStack = NSStackView()
+        gridStack.orientation = .vertical
+
+        // Track liveness the same direct way `HelmModuleCard.
+        // debugLiveInstanceCount` does, via a tiny counted subclass local to
+        // this test.
+        final class CountedView: NSView {
+            static var live = 0
+            override init(frame: NSRect) { super.init(frame: frame); Self.live += 1 }
+            required init?(coder: NSCoder) { fatalError() }
+            deinit { Self.live -= 1 }
+        }
+
+        func rebuildCounted() {
+            for row in gridStack.arrangedSubviews {
+                gridStack.removeArrangedSubview(row)
+                row.removeFromSuperview()
+            }
+            let row = NSStackView(views: (0..<15).map { _ -> NSView in
+                let v = CountedView()
+                v.translatesAutoresizingMaskIntoConstraints = false
+                return v
+            })
+            row.orientation = .horizontal
+            row.translatesAutoresizingMaskIntoConstraints = false
+            gridStack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: gridStack.widthAnchor).isActive = true
+        }
+
+        autoreleasepool { rebuildCounted() }
+        let baseline = CountedView.live
+        var excesses: [Int] = []
+        for i in 0..<20 {
+            autoreleasepool { rebuildCounted() }
+            if i % 4 == 3 { excesses.append(CountedView.live - baseline) }
+        }
+        let distinct = Set(excesses)
+        guard distinct != [0] else {
+            return nil // ruled out: plain NSStackView add/remove does not leak a generation on its own
+        }
+        return "a plain NSStackView, with no HelmModuleCard/HomeCanvasController involved at all, "
+            + "reproduces the same shape - excess counts across checkpoints: \(excesses) "
+            + "(baseline \(baseline)) - so the mechanism is NSStackView's own arranged-subview "
+            + "removal bookkeeping, not anything specific to this app's module cards"
     }
 }
 

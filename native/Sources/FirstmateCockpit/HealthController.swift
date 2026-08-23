@@ -112,5 +112,13 @@ final class HealthController: NSViewController {
 
     #if FM_SELFTESTS
     var debugHealthRowCount: Int { healthCard.debugRowCount }
+    var debugCardWidth: CGFloat { healthCard.card.bounds.width }
+    /// Forces the *legacy* (non-overlay) scroller style regardless of this
+    /// machine's real mouse/trackpad state, so a self-test can reproduce "a
+    /// mouse is attached" (this app's own documented "Show scroll bars:
+    /// Always" scenario - see AGENTS.md gotcha #4) even when run headless,
+    /// where `NSScroller.preferredScrollerStyle` would otherwise default to
+    /// `.overlay` with no real pointing device present.
+    func debugForceLegacyScrollerStyle() { scrollView.scrollerStyle = .legacy }
     #endif
 }

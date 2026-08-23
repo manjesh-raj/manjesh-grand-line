@@ -189,6 +189,15 @@ final class HelmModuleCard: NSView {
     private var metricLabels: [NSTextField] = []
     private var unitLabels: [NSTextField] = []
 
+    #if FM_SELFTESTS
+    /// `fm/grandline-daylight-shell-regressions`: a live-instance counter
+    /// (incremented in `init`, decremented in `deinit`), independent of
+    /// `ThemeManager.observerCountForTests` - direct evidence of whether
+    /// cards from *every* rebuild cycle over a long, repeated session
+    /// actually deallocate, rather than inferring it from one proxy signal.
+    static var debugLiveInstanceCount = 0
+    #endif
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         buildChrome()
@@ -199,6 +208,9 @@ final class HelmModuleCard: NSView {
             forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
             object: nil, queue: .main
         ) { [weak self] _ in self?.applyHoverState(animated: false) }
+        #if FM_SELFTESTS
+        Self.debugLiveInstanceCount += 1
+        #endif
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -208,6 +220,9 @@ final class HelmModuleCard: NSView {
         if let reduceMotionObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(reduceMotionObserver)
         }
+        #if FM_SELFTESTS
+        Self.debugLiveInstanceCount -= 1
+        #endif
     }
 
     // MARK: Build
@@ -583,8 +598,20 @@ final class HelmModuleCard: NSView {
 
     // MARK: Layout and theme
 
+    #if FM_SELFTESTS
+    /// How many times `layout()` has actually run for this card instance -
+    /// `AppShellBodyWidthSelfTest.test_moduleCardLayoutRunsOnceForOneRequest`'s
+    /// evidence that a single logical layout request settles rather than
+    /// re-triggering itself (a real, if not-yet-observed, mechanism for
+    /// sustained CPU - see that test's own doc comment).
+    var debugLayoutCallCount = 0
+    #endif
+
     override func layout() {
         super.layout()
+        #if FM_SELFTESTS
+        debugLayoutCallCount += 1
+        #endif
         ribbon.frame = CGRect(x: 0, y: card.bounds.height - Self.ribbonHeight,
                               width: card.bounds.width, height: Self.ribbonHeight)
         for label in noteLabels { label.preferredMaxLayoutWidth = bodyContainer.bounds.width }
