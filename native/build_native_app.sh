@@ -88,8 +88,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <!-- GL-05: Launch Services activates the running copy instead of starting
          a second process. Two instances share one set of JSON stores (all
          last-writer-wins) and one Shift git working tree, so the second one
-         silently discards the first's saves. `SingleInstanceGuard` covers the
-         paths that bypass Launch Services (`open -n`, an unbundled binary). -->
+         silently discards the first's saves. SingleInstanceGuard covers the
+         paths that bypass Launch Services (open -n, an unbundled binary). -->
     <key>LSMultipleInstancesProhibited</key>
     <true/>
     <key>NSMicrophoneUsageDescription</key>
