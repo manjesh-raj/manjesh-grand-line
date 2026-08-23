@@ -14,6 +14,28 @@ See `native/README.md` for full instructions, including `swift build`/`swift run
 
 The app's version is derived from `git describe`, so a release is cut by tagging (`git tag -a v0.2.0 -m ...`) rather than by editing a constant.
 
+## Releasing
+
+Push a `v*` tag and `.github/workflows/release.yml` builds the `.app`, zips it with
+`ditto` (which `zip` cannot substitute for - it is what preserves the extended attributes
+a signed bundle needs), and publishes a GitHub release with the artifact and its SHA-256:
+
+```bash
+git tag -a v0.2.0 -m "…" && git push origin v0.2.0
+```
+
+The app's own Updates page has an **App** row that compares the running build against the
+newest published release.
+
+**Releases are unsigned today, and the in-app updater refuses to install an unsigned
+artifact** - that is deliberate, not an oversight. Installing whatever was downloaded
+would make this a remote code execution channel on a machine holding the captain's SSH
+keys. Developer ID signing and notarization need a paid Apple Developer Program
+membership; the workflow's signing and notarization steps are written out in full and
+disabled behind `SIGNING_ENABLED`, and its header lists the exact secrets and the two
+places to flip (the workflow, and `AppUpdateInstaller.expectedTeamIdentifier`). Until
+then, a release is download-and-install-by-hand.
+
 ## ⚠️ Never launch a built copy from a worktree
 
 Every build of this app - a `swift run` binary, `.build/debug/FirstmateCockpit`, and the packaged `dist/Manjesh Grand Line.app` - shares one bundle identity (`com.firstmate.cockpit.native`).

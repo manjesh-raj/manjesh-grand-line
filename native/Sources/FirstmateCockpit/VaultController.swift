@@ -772,6 +772,15 @@ final class VaultController: NSViewController {
 /// this app; `av save` prompts for it in the real Console terminal this
 /// sheet's Save action opens.
 final class VaultSaveSecretSheetController: NSViewController {
+    /// P3 (production review, section 21): this controller is built fresh on
+    /// every presentation, so a `ThemeManager` observation registered in
+    /// `loadView` and never removed leaves a dead closure in
+    /// `ThemeManager.observers` for the rest of the session - one per
+    /// presentation, growing without bound. `ThemeManager.swift`'s own
+    /// checklist calls for storing the token and unobserving; the six
+    /// `HelmFormSheet` editors already do. This is the same fix.
+    private var themeObservation: ThemeObservation?
+
     var onSave: ((String) -> Void)?
 
     private let nameField = NSTextField()
@@ -780,7 +789,7 @@ final class VaultSaveSecretSheetController: NSViewController {
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 170))
         view = root
-        ThemeManager.shared.observe { [weak root] theme in
+        themeObservation = ThemeManager.shared.observe { [weak root] theme in
             root?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
         }
 
@@ -840,6 +849,11 @@ final class VaultSaveSecretSheetController: NSViewController {
     @objc private func cancel() {
         dismiss(self)
     }
+
+    deinit {
+        if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }
+    }
+
 }
 
 // MARK: - Recipe replay checklist sheet
@@ -851,6 +865,15 @@ final class VaultSaveSecretSheetController: NSViewController {
 /// brief's explicit "this app never invents or stores a value it doesn't
 /// get from `av` itself."
 final class VaultRecipeChecklistSheetController: NSViewController {
+    /// P3 (production review, section 21): this controller is built fresh on
+    /// every presentation, so a `ThemeManager` observation registered in
+    /// `loadView` and never removed leaves a dead closure in
+    /// `ThemeManager.observers` for the rest of the session - one per
+    /// presentation, growing without bound. `ThemeManager.swift`'s own
+    /// checklist calls for storing the token and unobserving; the six
+    /// `HelmFormSheet` editors already do. This is the same fix.
+    private var themeObservation: ThemeObservation?
+
 
     private let items: [VaultRecipeChecklistItem]
     private let generatedAt: String
@@ -882,7 +905,7 @@ final class VaultRecipeChecklistSheetController: NSViewController {
         root.translatesAutoresizingMaskIntoConstraints = false
         view = root
         root.widthAnchor.constraint(equalToConstant: 480).isActive = true
-        ThemeManager.shared.observe { [weak self, weak root] theme in
+        themeObservation = ThemeManager.shared.observe { [weak self, weak root] theme in
             self?.theme = theme
             root?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
         }
@@ -1023,11 +1046,25 @@ final class VaultRecipeChecklistSheetController: NSViewController {
     }
 
     @objc private func closeTapped() { dismiss(self) }
+
+    deinit {
+        if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }
+    }
+
 }
 
 // MARK: - Run injected sheet
 
 final class VaultInjectSheetController: NSViewController {
+    /// P3 (production review, section 21): this controller is built fresh on
+    /// every presentation, so a `ThemeManager` observation registered in
+    /// `loadView` and never removed leaves a dead closure in
+    /// `ThemeManager.observers` for the rest of the session - one per
+    /// presentation, growing without bound. `ThemeManager.swift`'s own
+    /// checklist calls for storing the token and unobserving; the six
+    /// `HelmFormSheet` editors already do. This is the same fix.
+    private var themeObservation: ThemeObservation?
+
     var onRun: ((String, String) -> Void)?
 
     private let secretNames: [String]
@@ -1047,7 +1084,7 @@ final class VaultInjectSheetController: NSViewController {
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 380, height: 190))
         view = root
-        ThemeManager.shared.observe { [weak root] theme in
+        themeObservation = ThemeManager.shared.observe { [weak root] theme in
             root?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
         }
 
@@ -1122,4 +1159,9 @@ final class VaultInjectSheetController: NSViewController {
     @objc private func cancel() {
         dismiss(self)
     }
+
+    deinit {
+        if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }
+    }
+
 }

@@ -1,0 +1,222 @@
+# F3 (production review section 25): build and publish the app itself on a
+# version tag, so the Updates page's App row has something real to compare
+# against and, once signing exists, something real to install.
+#
+# Trigger: pushing a tag that looks like a version (`git tag v0.2.0 && git
+# push origin v0.2.0`). Deliberately not every push - `ci.yml` already covers
+# those, and a release is a decision, not a side effect of merging.
+#
+# ## What is real here, and what is not
+#
+# Real and working today: the build, the version derivation (`git describe`,
+# GL-18 - which is why `fetch-depth: 0` matters), the zip, the checksum, and
+# the GitHub release with the artifact attached. That is enough for the in-app
+# check-and-notify half of F3 to be genuinely useful.
+#
+# **Not done, and not faked: Developer ID signing and notarization.** Both
+# require a paid Apple Developer Program membership and certificates that only
+# the captain can obtain; no workflow can substitute for them. The two steps
+# below are written out in full and gated behind `env.SIGNING_ENABLED`, which
+# is `'false'`. Nothing pretends otherwise, and the in-app installer
+# (`AppUpdateInstaller`) independently refuses to install an artifact it
+# cannot verify - so an unsigned release published by this workflow is
+# download-and-install-by-hand only, by design, not by oversight.
+#
+# ## Turning signing on (the captain's own steps)
+#
+# 1. Join the Apple Developer Program and create a **Developer ID Application**
+#    certificate. Export it as a `.p12` with a password.
+# 2. Create an **App Store Connect API key** (Keys tab) for notarization, or
+#    use an app-specific password - the step below uses the API key form.
+# 3. Add these repository secrets (Settings → Secrets and variables → Actions):
+#
+#      MACOS_CERTIFICATE_P12       base64 of the exported .p12
+#      MACOS_CERTIFICATE_PASSWORD  the .p12 password
+#      MACOS_SIGNING_IDENTITY      e.g. "Developer ID Application: Name (TEAMID)"
+#      MACOS_KEYCHAIN_PASSWORD     any throwaway string; unlocks the temp keychain
+#      APPLE_TEAM_ID               the 10-character Team ID
+#      APPLE_API_KEY_ID            App Store Connect key id
+#      APPLE_API_ISSUER_ID         App Store Connect issuer id
+#      APPLE_API_PRIVATE_KEY       the .p8 key contents
+#
+# 4. Flip `SIGNING_ENABLED` below to `'true'`.
+# 5. Set `AppUpdateInstaller.expectedTeamIdentifier` (currently `nil`) to the
+#    same Team ID. The workflow and the installer have to agree, or a
+#    correctly signed artifact will still be refused - which is the safe
+#    direction to fail, but is confusing if it is not expected.
+#
+# Until step 4, every run skips those two steps and says so in its log.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and release"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  # See the header. Flip to 'true' only once every secret listed above exists.
+  SIGNING_ENABLED: 'false'
+
+jobs:
+  release:
+    name: build and publish
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          # `build_native_app.sh` derives the version from `git describe`
+          # (GL-18); a shallow clone has no tags and every build would be
+          # "0.0.0".
+          fetch-depth: 0
+
+      - name: Show toolchain and resolved version
+        working-directory: native
+        run: |
+          swift --version
+          echo "git describe: $(git describe --tags --dirty --always)"
+
+      # The same gate `ci.yml` enforces. A release should never be the first
+      # place a warning or a broken release configuration is noticed.
+      - name: Build (release configuration)
+        working-directory: native
+        run: swift build -c release 2>&1 | tee release-build.log
+
+      - name: Fail on a warning in this app's own sources
+        working-directory: native
+        run: |
+          if grep -E "Sources/FirstmateCockpit/.*warning:" release-build.log; then
+            echo "::error::the app's own sources must build warning-clean"
+            exit 1
+          fi
+
+      - name: Prove the release binary carries no test code
+        working-directory: native
+        run: |
+          BIN=.build/release/FirstmateCockpit
+          if strings -a "$BIN" | grep -q 'FM_RUN_'; then
+            echo "::error::the release binary still contains FM_RUN_* self-test flags"
+            exit 1
+          fi
+
+      - name: Assemble the .app bundle
+        working-directory: native
+        # The same script the captain runs locally, so a released bundle and a
+        # locally built one can never diverge in layout, Info.plist or
+        # embedded resources. It signs with the local dev identity when one
+        # exists; on a runner none does, so it warns and produces an unsigned
+        # bundle - which the signing step below is what replaces.
+        run: ./build_native_app.sh
+
+      # ---------------------------------------------------------------
+      # DISABLED: needs the captain's own Apple Developer credentials.
+      # See this file's header for the exact secrets and how to enable.
+      # This is a no-op today, not a silently skipped requirement - the
+      # installer refuses unsigned artifacts on the other side.
+      # ---------------------------------------------------------------
+      - name: Import Developer ID certificate (disabled - needs credentials)
+        if: env.SIGNING_ENABLED == 'true'
+        env:
+          MACOS_CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$MACOS_CERTIFICATE_P12" | base64 --decode > /tmp/certificate.p12
+          security create-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          security import /tmp/certificate.p12 -k build.keychain \
+            -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: \
+            -s -k "$MACOS_KEYCHAIN_PASSWORD" build.keychain
+          rm -f /tmp/certificate.p12
+
+      - name: Sign, notarize and staple (disabled - needs credentials)
+        if: env.SIGNING_ENABLED == 'true'
+        env:
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          APP="dist/Manjesh Grand Line.app"
+          # `--options runtime` is the hardened runtime, which notarization
+          # requires; `--timestamp` is a secure timestamp, likewise.
+          codesign --force --deep --options runtime --timestamp \
+            --sign "$MACOS_SIGNING_IDENTITY" \
+            --identifier com.firstmate.cockpit.native "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+
+          mkdir -p /tmp/notary
+          printf '%s' "$APPLE_API_PRIVATE_KEY" > /tmp/notary/key.p8
+          ditto -c -k --keepParent "$APP" /tmp/notary/upload.zip
+          xcrun notarytool submit /tmp/notary/upload.zip \
+            --key /tmp/notary/key.p8 \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          # Stapling is what makes the app pass Gatekeeper offline; without
+          # it, `spctl --assess` fails on a machine with no network.
+          xcrun stapler staple "$APP"
+          rm -rf /tmp/notary
+
+      - name: Report the signing state honestly
+        if: env.SIGNING_ENABLED != 'true'
+        run: |
+          echo "::warning::This release is UNSIGNED and NOT notarized - Developer ID credentials are not configured."
+          echo "::warning::The in-app updater will refuse to install it; download and install it by hand."
+          echo "::warning::See .github/workflows/release.yml's header to enable signing."
+
+      - name: Package
+        id: package
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if [ -n "${{ github.event.inputs.tag }}" ]; then TAG="${{ github.event.inputs.tag }}"; fi
+          ZIP="Manjesh-Grand-Line-${TAG}.zip"
+          # `ditto -c -k --keepParent`, not `zip`: it preserves the extended
+          # attributes and symlinks a signed bundle needs. A bundle zipped
+          # with `zip` can arrive with a broken signature, which the installer
+          # would then (correctly, but confusingly) refuse.
+          ditto -c -k --keepParent "dist/Manjesh Grand Line.app" "$ZIP"
+          shasum -a 256 "$ZIP" > "$ZIP.sha256"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          ls -lh "$ZIP"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ steps.package.outputs.tag }}"
+          ZIP="${{ steps.package.outputs.zip }}"
+          NOTES_FILE=$(mktemp)
+          {
+            echo "Built from \`$(git describe --tags --always)\` on $(sw_vers -productVersion)."
+            echo
+            if [ "${SIGNING_ENABLED}" != "true" ]; then
+              echo "> **Unsigned build.** Developer ID signing and notarization are not configured"
+              echo "> yet, so the in-app updater will refuse this artifact. Download it here and"
+              echo "> move it into /Applications by hand; macOS will ask you to confirm on first"
+              echo "> launch. See \`.github/workflows/release.yml\` for what enabling signing needs."
+              echo
+            fi
+            echo "SHA-256: \`$(cut -d' ' -f1 < "$ZIP.sha256")\`"
+          } > "$NOTES_FILE"
+
+          # `--generate-notes` appends the commit/PR list to these notes.
+          gh release create "$TAG" "$ZIP" "$ZIP.sha256" \
+            --title "$TAG" \
+            --notes-file "$NOTES_FILE" \
+            --generate-notes \
+            || gh release upload "$TAG" "$ZIP" "$ZIP.sha256" --clobber

@@ -670,8 +670,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(hostsMenuItem)
         let hostsMenu = NSMenu(title: "Hosts")
         hostsMenuItem.submenu = hostsMenu
-        let newHostItem = NSMenuItem(title: "New Host…", action: #selector(HostsController.newHost), keyEquivalent: "n")
-        newHostItem.target = hostsPanel
+        let newHostItem = NSMenuItem(title: "New Host…", action: #selector(AppShellController.newHostFromMenu), keyEquivalent: "n")
+        newHostItem.target = appShell
         hostsMenu.addItem(newHostItem)
         // No keyboard shortcut (⌘K now belongs to Find in Terminal above) -
         // reachable via this menu item or by clicking the Hosts rail icon.
@@ -1118,6 +1118,20 @@ if ProcessInfo.processInfo.environment["FM_RUN_VAULT_DATA_TESTS"] == "1" {
 // header.
 if ProcessInfo.processInfo.environment["FM_RUN_APP_SHELL_BODY_WIDTH_TESTS"] == "1" {
     exit(AppShellBodyWidthSelfTest.run() ? 0 : 1)
+}
+
+// GL-37: the destination table and lazy-mount-with-permanent-retention -
+// only the eager slots exist at launch, a first visit builds exactly one,
+// and a revisit reuses it. See DestinationMountingSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_DESTINATION_MOUNTING_TESTS"] == "1" {
+    exit(DestinationMountingSelfTest.run() ? 0 : 1)
+}
+
+// F3: version comparison, GitHub release parsing, and the rule that an
+// artifact this app cannot verify is refused rather than installed. See
+// AppUpdateSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_APP_UPDATE_TESTS"] == "1" {
+    exit(AppUpdateSelfTest.run() ? 0 : 1)
 }
 
 // fm/grandline-app-lock: same convention, for `AppLockController`'s idle/
