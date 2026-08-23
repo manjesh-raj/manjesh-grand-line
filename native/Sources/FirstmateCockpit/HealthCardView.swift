@@ -48,11 +48,16 @@ final class HealthCardView: NSObject {
     }
 
     private func buildCard() {
+        // D5: this used to be the *third* statement of "Health" / "last run
+        // and last error" on one page (top bar, page subtitle, card header).
+        // The top bar names the destination and the card header names what
+        // this particular card lists - the page-level restatement and this
+        // one's duplicate subtitle are both gone.
         card.setHeader(
             symbol: "waveform.path.ecg",
             tint: .good,
-            title: "Health",
-            subtitle: "Last run and last error for each background service"
+            title: "Background services",
+            subtitle: "Last run and last error for each one"
         )
         healthStack.orientation = .vertical
         healthStack.alignment = .leading
@@ -73,7 +78,38 @@ final class HealthCardView: NSObject {
 
     // MARK: Rendering
 
+    /// Every wrapping description label this card has built, so the width
+    /// they wrap at can be re-derived from the card's real width on every
+    /// layout pass instead of being guessed once (see `descriptionWidth()`).
+    /// Cleared on each rebuild, which is when the labels themselves go.
+    private var descriptionLabels: [NSTextField] = []
+
+    /// The width a description label may actually use: the card's own width
+    /// less the body insets, the row's internal padding, the icon tile and
+    /// the trailing pill/button column. Falls back to the old constant before
+    /// the first layout pass, when the card has no width yet.
+    private func descriptionWidth() -> CGFloat {
+        let cardWidth = card.bounds.width
+        guard cardWidth > 0 else { return 360 }
+        let chrome: CGFloat = HelmCard.contentInsets.left + HelmCard.contentInsets.right
+            + 16                                    // the row container's own 8pt padding, both sides
+            + HelmMetrics.tileSmall + 10            // icon tile + its gap
+            + 12 + 120                              // row spacing + the trailing pill/button column
+        return max(240, cardWidth - chrome)
+    }
+
+    /// Re-wrap on a real resize. `HealthController` calls this from its own
+    /// `viewDidLayout`, which is the first moment the card's width is known.
+    func layoutDidChange() {
+        let width = descriptionWidth()
+        for label in descriptionLabels where abs(label.preferredMaxLayoutWidth - width) > 0.5 {
+            label.preferredMaxLayoutWidth = width
+            label.invalidateIntrinsicContentSize()
+        }
+    }
+
     private func rebuild() {
+        descriptionLabels.removeAll()
         for v in healthStack.arrangedSubviews {
             healthStack.removeArrangedSubview(v)
             v.removeFromSuperview()
@@ -87,9 +123,10 @@ final class HealthCardView: NSObject {
             // launch is simply true.
             let label = NSTextField(wrappingLabelWithString:
                 "No background service has reported yet. Rows appear as each one runs.")
-            label.font = .systemFont(ofSize: 11)
+            label.font = HelmType.caption()
             label.textColor = HelmTheme.mutedInk(theme)
-            label.preferredMaxLayoutWidth = 420
+            label.preferredMaxLayoutWidth = descriptionWidth()
+            descriptionLabels.append(label)
             rows.append(label)
         } else {
             for (index, service) in services.enumerated() {
@@ -214,12 +251,20 @@ final class HealthCardView: NSObject {
     // in) on every call to `refresh(theme:)` - see this file's header.
 
     private func descRow(title: String, desc: String, trailing: NSView) -> NSView {
+        // D6: `HelmType`, not raw `.systemFont(ofSize:)` sizes - which is
+        // also what restores the captain's own chrome-text-scale setting
+        // (GL-32) on this page, since every `HelmType` role runs through
+        // `HelmType.scaled(_:)`.
         let titleLabel = NSTextField(labelWithString: title)
-        titleLabel.font = .systemFont(ofSize: 12.5, weight: .medium)
+        titleLabel.font = HelmType.rowTitle()
         let descLabel = NSTextField(wrappingLabelWithString: desc)
-        descLabel.font = .systemFont(ofSize: 11)
+        descLabel.font = HelmType.caption()
         descLabel.textColor = HelmTheme.mutedInk(theme)
-        descLabel.preferredMaxLayoutWidth = 360
+        // Was a hardcoded 360pt, which is what left the audit's screenshot-4
+        // text column adrift in the right half of a wide window. The real
+        // width is not known until layout, so it is read back then.
+        descLabel.preferredMaxLayoutWidth = descriptionWidth()
+        descriptionLabels.append(descLabel)
 
         let textStack = NSStackView(views: [titleLabel, descLabel])
         textStack.orientation = .vertical
@@ -251,24 +296,22 @@ final class HealthCardView: NSObject {
         return container
     }
 
+    /// The app's one status pill (audit D3).
+    ///
+    /// This method used to be a private re-implementation of it, painting the
+    /// label in the **raw** tint hue over a 15% wash of itself - which is
+    /// exactly the §5.7 contrast defect the first audit measured failing
+    /// 4.5:1 in 44 of 72 theme/hue pairs, and which the shared
+    /// `ToolRowLayout.pill` fixed (and `HelmContrastSelfTest.checkPills`
+    /// guards) via `HelmContrast.tintedSurface`. The regression rode in with
+    /// this card when it was moved verbatim out of `SettingsController`; a
+    /// contrast fix landed in the shared component is only a fix for the
+    /// callers that actually call it.
     private func pillView(text: String, colorHex: String) -> NSView {
-        let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 9.5, weight: .semibold)
-        label.textColor = HelmTheme.nsColor(colorHex)
-        label.translatesAutoresizingMaskIntoConstraints = false
-        let container = NSView()
-        container.wantsLayer = true
-        container.layer?.cornerRadius = 7
-        container.layer?.backgroundColor = HelmTheme.nsColor(colorHex).withAlphaComponent(0.15).cgColor
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 6),
-            label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -6),
-            label.topAnchor.constraint(equalTo: container.topAnchor, constant: 2),
-            label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -2),
-        ])
-        return container
+        let pill = NSView()
+        ToolRowLayout.pill(text: text, colorHex: colorHex, into: pill,
+                           label: NSTextField(labelWithString: ""), theme: theme)
+        return pill
     }
 
     private func separator() -> NSView {

@@ -111,7 +111,7 @@ final class DocsController: NSViewController {
     private var editingRunbookID: String?
     private var editingIsNew = false
     private let runbookEditorContainer = NSView()
-    private let runbookTitleField = NSTextField()
+    private let runbookTitleField = HelmTextField(placeholder: "Title")
     private let runbookBodyScroll = NSScrollView()
     private let runbookBodyTextView = NSTextView()
     private let runbookSaveButton = HelmButton(title: "", variant: .primary)
@@ -558,9 +558,6 @@ final class DocsController: NSViewController {
         runbookEditorTitleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
         runbookEditorTitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        runbookTitleField.placeholderString = "Title"
-        runbookTitleField.font = .systemFont(ofSize: 13)
-        runbookTitleField.translatesAutoresizingMaskIntoConstraints = false
 
         runbookBodyTextView.isRichText = false
         runbookBodyTextView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)

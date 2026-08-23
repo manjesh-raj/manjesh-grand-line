@@ -258,6 +258,8 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
         // text area and the toolbar below reading as one surface, not two.
         textView.drawsBackground = false
         textView.delegate = self
+        // Phase 0's D1 fix - see `HelmComposerCard.senseFocus(on:)`.
+        composerCard.senseFocus(on: textView)
 
         textScroll.documentView = textView
         textScroll.hasVerticalScroller = true
@@ -557,7 +559,11 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
     /// non-selectable, which is why none of this pane's text could be
     /// selected before this fix.
     private func wrappingLabel(_ text: NSAttributedString) -> NSTextField {
-        let label = NSTextField()
+        // `labelWithString:` rather than a bare `NSTextField()` - the label
+        // initializer is what the rest of the app uses for a non-editable
+        // label, and it keeps this out of the way of `checkNoRawTextInputs`
+        // (which bans the bare initializer, an *input* construction).
+        let label = NSTextField(labelWithString: "")
         label.isEditable = false
         label.isSelectable = true
         label.isBordered = false
@@ -698,14 +704,6 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
         updateTextPlaceholderVisibility()
         updateTextViewHeight()
         updateSendButtonEnabled()
-    }
-
-    func textDidBeginEditing(_ notification: Notification) {
-        composerCard.setFocused(true)
-    }
-
-    func textDidEndEditing(_ notification: Notification) {
-        composerCard.setFocused(false)
     }
 
     /// Plain Return still submits - this pane's pre-existing exact behaviour

@@ -60,7 +60,7 @@ enum HostsTab: String, CaseIterable {
     }
 }
 
-final class HostsController: NSViewController, NSSearchFieldDelegate {
+final class HostsController: NSViewController {
 
     private let hostStore: HostStore
     private let keyStore: SSHKeyStore
@@ -95,7 +95,13 @@ final class HostsController: NSViewController, NSSearchFieldDelegate {
     private let keysTabView = NSView()
     private let snippetsTabView = NSView()
 
-    private let searchField = NSSearchField()
+    /// Quick connect / live filter, in the app's own search well
+    /// (Phase 0's raw-input purge). An `NSSearchField` paints its own system
+    /// chrome and system fill, which is what the audit measured as the
+    /// wallpaper-tinted field on this page (D2) - forcing its `appearance`
+    /// only picks the light-or-dark side of that system colour.
+    private let searchField = HelmSearchField(
+        placeholder: "Find a host, or type ssh user@host to connect")
     private let tagsScroll = NSScrollView()
     private let tagsStack = NSStackView()
     private var tagButtons: [String: HelmButton] = [:]
@@ -210,12 +216,15 @@ final class HostsController: NSViewController, NSSearchFieldDelegate {
     }
 
     private func buildHostsTab() {
-        searchField.placeholderString = "Find a host, or type ssh user@host to connect"
-        searchField.delegate = self
-        searchField.translatesAutoresizingMaskIntoConstraints = false
-        // Typing filters the list live (`controlTextDidChange`); Return
-        // connects (`control(_:textView:doCommandBy:)`). Deliberately no
-        // target/action - an NSSearchField would otherwise fire it mid-typing.
+        // Typing filters the list live; Return connects. Both arrive through
+        // `HelmSearchField`'s own closures, which is also why this page no
+        // longer needs to be an `NSSearchFieldDelegate`.
+        searchField.onTextChanged = { [weak self] query in self?.applyHostFilter(query) }
+        searchField.onCommand = { [weak self] selector in
+            guard selector == #selector(NSResponder.insertNewline(_:)) else { return false }
+            self?.quickConnectFromField()
+            return true
+        }
 
         tagsStack.orientation = .horizontal
         tagsStack.spacing = HelmMetrics.s1
@@ -586,7 +595,7 @@ final class HostsController: NSViewController, NSSearchFieldDelegate {
     /// The Hosts menu's Quick Connect: focus the quick-connect field.
     @objc func focusQuickConnect() {
         select(tab: .hosts)
-        view.window?.makeFirstResponder(searchField)
+        searchField.focusEditor()
     }
 
     /// Return in the quick-connect field: match a saved host, else parse an
@@ -750,22 +759,6 @@ final class HostsController: NSViewController, NSSearchFieldDelegate {
         alert.informativeText = error.localizedDescription
         alert.alertStyle = .critical
         alert.runModal()
-    }
-
-    // MARK: NSSearchFieldDelegate
-
-    func controlTextDidChange(_ obj: Notification) {
-        applyHostFilter(searchField.stringValue)
-    }
-
-    /// Return in the quick-connect field connects; everything else is left to
-    /// the field editor (so typing, arrows and delete behave normally).
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        guard control === searchField, commandSelector == #selector(NSResponder.insertNewline(_:)) else {
-            return false
-        }
-        quickConnectFromField()
-        return true
     }
 
     // MARK: Probe / self-test surface

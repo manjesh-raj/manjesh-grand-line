@@ -209,11 +209,11 @@ final class PortForwardingController: NSViewController {
 private final class PortForwardRuleRowView: NSView {
 
     private let kindPopup = HelmPopUpButton()
-    private let bindField = NSTextField()
-    private let listenField = NSTextField()
+    private let bindField = HelmTextField(placeholder: "bind (optional)")
+    private let listenField = HelmTextField(placeholder: "listen port")
     private let arrow = NSTextField(labelWithString: "\u{2192}")
-    private let destHostField = NSTextField()
-    private let destPortField = NSTextField()
+    private let destHostField = HelmTextField(placeholder: "dest host")
+    private let destPortField = HelmTextField(placeholder: "dest port")
     private let removeButton = NSButton()
 
     var onRemove: (() -> Void)?
@@ -230,10 +230,10 @@ private final class PortForwardRuleRowView: NSView {
         kindPopup.target = self
         kindPopup.action = #selector(kindChanged)
 
-        configure(bindField, placeholder: "bind (optional)", value: rule.bindAddress, width: 100)
-        configure(listenField, placeholder: "listen port", value: String(rule.listenPort), width: 74)
-        configure(destHostField, placeholder: "dest host", value: rule.destHost, width: 110)
-        configure(destPortField, placeholder: "dest port", value: String(rule.destPort), width: 64)
+        configure(bindField, value: rule.bindAddress, width: 100)
+        configure(listenField, value: String(rule.listenPort), width: 74)
+        configure(destHostField, value: rule.destHost, width: 110)
+        configure(destPortField, value: String(rule.destPort), width: 64)
         applyTheme(ThemeManager.shared.theme)
 
         removeButton.isBordered = false
@@ -267,10 +267,11 @@ private final class PortForwardRuleRowView: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    private func configure(_ field: NSTextField, placeholder: String, value: String, width: CGFloat) {
-        field.placeholderString = placeholder
+    /// Placeholder and chrome are `HelmTextField`'s own (Phase 0's raw-input
+    /// purge) - these rows are a dense table, so only the column width is set
+    /// here.
+    private func configure(_ field: NSTextField, value: String, width: CGFloat) {
         field.stringValue = value
-        field.translatesAutoresizingMaskIntoConstraints = false
         field.widthAnchor.constraint(equalToConstant: width).isActive = true
     }
 

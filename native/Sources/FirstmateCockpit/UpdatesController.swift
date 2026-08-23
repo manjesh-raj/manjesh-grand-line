@@ -116,7 +116,12 @@ final class UpdatesController: NSViewController {
     /// The summary strip's four tiles. Each themes itself; this list is what
     /// `renderStats` writes the numbers into and `applyTheme` hands the theme to.
     private var statTiles: [HelmStatTile] = []
-    private let searchField = NSSearchField()
+    /// The tool filter, in the app's own search well (Phase 0's raw-input
+    /// purge). This is the audit's screenshot-5 brown field: a stock
+    /// `NSSearchField` whose only theming was a forced `appearance`, which
+    /// selects the light-or-dark side of a *system* fill rather than a
+    /// theme-derived one (D2).
+    private let searchField = HelmSearchField(placeholder: "Filter tools\u{2026}")
     private var filterMode: ToolFilterMode = .all
     /// The All / Needs Attention filter, now the app's shared
     /// `HelmSegmentedTabs` (`HelmDesignSystem.swift`, audit §6.3 component 6) at
@@ -277,12 +282,12 @@ final class UpdatesController: NSViewController {
             self.applyFilter()
         }
 
-        searchField.placeholderString = "Filter tools\u{2026}"
-        searchField.delegate = self
-        searchField.translatesAutoresizingMaskIntoConstraints = false
+        searchField.onTextChanged = { [weak self] _ in self?.applyFilter() }
         searchField.widthAnchor.constraint(equalToConstant: 200).isActive = true
-        searchField.setContentHuggingPriority(.required, for: .horizontal)
-        searchField.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // AGENTS.md gotcha (12): `HelmSearchField` is a plain `NSView` with no
+        // intrinsic content size, so a content-priority call would be a no-op -
+        // the explicit width above is what holds this column, and the toolbar
+        // stack's own `.fill` distribution does the rest.
 
         checkAllIcon.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
@@ -811,7 +816,6 @@ final class UpdatesController: NSViewController {
             v.layer?.backgroundColor = line.withAlphaComponent(0.5).cgColor
         }
         for tile in statTiles { tile.applyTheme(theme) }
-        searchField.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
         for row in rows { applyThemeToRow(row) }
         renderAppRow()
     }
@@ -835,8 +839,3 @@ final class UpdatesController: NSViewController {
     }
 }
 
-extension UpdatesController: NSSearchFieldDelegate {
-    func controlTextDidChange(_ obj: Notification) {
-        applyFilter()
-    }
-}

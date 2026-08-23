@@ -81,6 +81,7 @@ enum HelmContrastSelfTest {
         checkSegmentedTabsRecipe(&ok)
         checkFieldRecipe(&ok)
         checkNoReDerivedFieldChrome(&ok)
+        checkNoRawTextInputs(&ok)
         checkPageToolbarRecipe(&ok)
         checkResponsiveGrid(&ok)
         checkPageTitleVoice(&ok)
@@ -1213,6 +1214,79 @@ enum HelmContrastSelfTest {
         } else {
             for o in offenders { print("  FAIL \(o)") }
             print("  \(offenders.count) re-derived field-chrome site(s) - use HelmField instead")
+            ok = false
+        }
+    }
+
+    // MARK: 13b. No raw text inputs (audit D2/R2, Daylight Phase 0)
+
+    /// The guard that stops this review being needed a third time.
+    ///
+    /// Buttons got a source guard in Phase 2 (`checkNoStockBezels`) and stock
+    /// bezels have stayed at ~zero since. Inputs got the component
+    /// (`HelmTextField`/`HelmTextView`, Phase 6) and no guard, and drifted
+    /// immediately: by the time the Daylight audit swept the tree there were
+    /// **27 bare `NSTextField()` construction sites across 16 files** plus 2
+    /// `NSSearchField()`s - every one of them either a surface built after
+    /// Phase 6 or one its scope ("the six editor sheets") never covered:
+    /// search fields, filter fields, quick-add fields, inline parameter
+    /// fields, settings fields. A stock field paints the dynamic system
+    /// `.textBackgroundColor`, which under wallpaper tinting is the brown box
+    /// the captain reported inside otherwise-themed cards (D2).
+    ///
+    /// Bans the bare *input* initializers only. `NSTextField(labelWithString:)`
+    /// and `NSTextField(wrappingLabelWithString:)` are the label initializers
+    /// and are used everywhere on purpose - a label is not an input.
+    private static func checkNoRawTextInputs(_ ok: inout Bool) {
+        print("\n-- raw text inputs (must not appear in Sources/) --")
+        let sourcesDir = SelfTestSources.appSourceDirectory() ?? URL(fileURLWithPath: "/nonexistent")
+        guard let files = try? FileManager.default.contentsOfDirectory(at: sourcesDir, includingPropertiesForKeys: nil),
+              files.contains(where: { $0.lastPathComponent == "HelmTheme.swift" }) else {
+            print("  SKIP - sources not present next to this binary (\(sourcesDir.path))")
+            return
+        }
+        // `HelmForm.swift` is where the input language lives: `HelmSearchField`
+        // builds its editor out of one chromeless `NSTextField` sitting inside
+        // a well the component itself paints, which is the whole point of the
+        // component. This file names the banned tokens in prose above.
+        let exemptFiles: Set<String> = ["HelmForm.swift", "HelmContrastSelfTest.swift"]
+        // The one allowed site outside those, with the reason: `TabChipView`'s
+        // inline-rename field is the audit's own documented bespoke one-off
+        // (`ui-report.md` §3.1 row 10 - not part of row 7's migration list),
+        // and it is already the single documented exception in
+        // `checkNoStockBezels` for the same control.
+        //
+        // The second allowed site is an `NSAlert` accessory view. An alert's
+        // box is drawn by AppKit itself, so a theme-derived well inside it
+        // would read as *less* consistent, not more - the same reasoning that
+        // keeps the lock screen's bespoke scene out of scope. It is listed
+        // here rather than left to a different initializer, because a guard
+        // one initializer away from useless gets bypassed by accident: the
+        // audit's own sweep grepped `NSTextField()` and missed this site
+        // entirely for exactly that reason.
+        let allowedSites: Set<String> = [
+            "TabChipView.swift:private let label = NSTextField()",
+            "ConsoleController+Incident.swift:let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))",
+        ]
+        let banned = ["NSTextField()", "NSSearchField()", "NSTextField(frame:", "NSSearchField(frame:"]
+        var offenders: [String] = []
+        for file in files where file.pathExtension == "swift" {
+            if exemptFiles.contains(file.lastPathComponent) { continue }
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            for (n, line) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                if trimmed.hasPrefix("//") || trimmed.hasPrefix("///") { continue }
+                for token in banned where trimmed.contains(token) {
+                    if allowedSites.contains("\(file.lastPathComponent):\(trimmed)") { continue }
+                    offenders.append("\(file.lastPathComponent):\(n + 1) \(trimmed)")
+                }
+            }
+        }
+        if offenders.isEmpty {
+            print("  OK - no raw NSTextField()/NSSearchField() inputs (1 documented exception allowed)")
+        } else {
+            for o in offenders { print("  FAIL \(o)") }
+            print("  \(offenders.count) raw input site(s) - use HelmTextField/HelmTextView/HelmSearchField")
             ok = false
         }
     }

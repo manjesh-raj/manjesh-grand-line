@@ -1581,6 +1581,15 @@ if ProcessInfo.processInfo.environment["FM_RUN_FLEET_REPLY_LAYOUT_TESTS"] == "1"
     exit(FleetReplyLayoutSelfTest.run() ? 0 : 1)
 }
 
+// Phase 0 of the Daylight UI migration: the click-answering focus ring (D1),
+// themed text selection (D4), the shared search well, and Health's pill/font/
+// title fixes (D3/D5/D6) - see InputSurfaceSelfTest.swift's header. Window-
+// backed (focus is meaningless without a window), so `run-all-tests.sh` lists
+// it in NEEDS_SESSION.
+if ProcessInfo.processInfo.environment["FM_RUN_INPUT_SURFACE_TESTS"] == "1" {
+    exit(InputSurfaceSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_FLEET_LOG_TESTS"] == "1" {
     exit(FleetLogSelfTest.run() ? 0 : 1)
 }

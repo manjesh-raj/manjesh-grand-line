@@ -147,6 +147,8 @@ final class FleetMessageComposer: NSView, NSTextViewDelegate {
         // toolbar read as two surfaces instead of one.
         textView.drawsBackground = false
         textView.delegate = self
+        // Phase 0's D1 fix - see `HelmComposerCard.senseFocus(on:)`.
+        card.senseFocus(on: textView)
 
         textScroll.documentView = textView
         textScroll.hasVerticalScroller = true
@@ -291,9 +293,6 @@ final class FleetMessageComposer: NSView, NSTextViewDelegate {
         updateTextHeight()
         updateSendEnabled()
     }
-
-    func textDidBeginEditing(_ notification: Notification) { card.setFocused(true) }
-    func textDidEndEditing(_ notification: Notification) { card.setFocused(false) }
 
     /// ⌘Return sends; a plain Return inserts a newline. The opposite of
     /// `SRELeadChatView`, deliberately: that pane is a chat, where a one-line

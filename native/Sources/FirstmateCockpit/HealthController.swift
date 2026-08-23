@@ -46,16 +46,14 @@ final class HealthController: NSViewController {
             self?.healthCard.refresh(theme: theme)
         }
 
-        let subtitle = NSTextField(wrappingLabelWithString: "Last run and last error for every background service in one place.")
-        subtitle.font = .systemFont(ofSize: 12)
-        subtitle.translatesAutoresizingMaskIntoConstraints = false
-
-        let stack = NSStackView(views: [subtitle, healthCard.card])
+        // D5: the page used to carry its own subtitle restating what the top
+        // bar and the card header already say ("Health", "last run and last
+        // error"), three times on one screen. The card is the page.
+        let stack = NSStackView(views: [healthCard.card])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.setCustomSpacing(16, after: subtitle)
 
         let content = FlippedView()
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -65,7 +63,6 @@ final class HealthController: NSViewController {
             stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
             stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
             stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
-            subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
             healthCard.card.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
 
@@ -94,6 +91,15 @@ final class HealthController: NSViewController {
         super.viewWillAppear()
         healthCard.refresh(theme: theme)
         scrollToTop()
+    }
+
+    /// The card's wrapping description labels wrap at a width derived from the
+    /// card's own - which is only known once a layout pass has run (D6's
+    /// other half: the hardcoded 360pt cap that left the right half of a wide
+    /// window empty).
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        healthCard.layoutDidChange()
     }
 
     private func scrollToTop() {
