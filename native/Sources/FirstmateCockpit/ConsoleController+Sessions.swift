@@ -283,6 +283,54 @@ extension ConsoleController {
         currentTab?.terminal.send(txt: text + "\n")
     }
 
+    // MARK: F7 - the general "message first mate" channel
+
+    /// What `sendToFirstmateMirror` actually did. Three cases rather than a
+    /// `Bool` for the same reason `FleetReplyOutcome` has three: the captain
+    /// must never be told a message landed when it did not, and "there is no
+    /// live firstmate session here yet" is a genuinely different thing to fix
+    /// than "there is no Mirror tab in this console".
+    enum FirstmateMirrorSendResult: Equatable {
+        case sent
+        /// This console has no mirror/herdr tab at all - only possible on a
+        /// per-host console, which never opens one.
+        case noMirrorTab
+        /// The tab exists but its backing session has not started yet (its
+        /// process is forked on first appearance). Nothing was typed.
+        case notStarted
+    }
+
+    /// F7's general-message channel: type `text` into the live firstmate
+    /// session's own tab - the tmux mirror or the real `herdr session attach`
+    /// client, whichever this fleet resolved to.
+    ///
+    /// Deliberately **not** `currentTab`, unlike `runSnippetInActiveTab` and
+    /// `sendCommandLibraryTextToActiveTab` above: those two mean "whatever I
+    /// am looking at", while this one addresses one specific session by name.
+    /// Sending a message meant for the first mate into whatever shell happened
+    /// to be in front would be worse than not sending it.
+    ///
+    /// This is the same `TerminalView.send(txt:)` injection Snippets' Run
+    /// action and the SRE Lead bridge already use - no new mechanism, and no
+    /// task-addressed send path involvement (there is no task id here, so the
+    /// verified-submit script has nothing to target - see
+    /// `FleetActions.swift`'s header).
+    /// `text` is assumed non-empty - `AppShellController.sendToFirstmate` is
+    /// the only caller and refuses an empty message there, where it can give
+    /// the real reason rather than borrowing one of these three.
+    func sendToFirstmateMirror(_ text: String) -> FirstmateMirrorSendResult {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let tab = tabs.first(where: { if case .mirror = $0.launch { return true } else { return false } }) else {
+            return .noMirrorTab
+        }
+        // `startProcess` has not run yet, so there is no PTY to write into -
+        // typing here would silently vanish.
+        guard tab.started, !tab.isAwaitingMirrorResolution else { return .notStarted }
+        select(tabID: tab.id, focus: false)
+        tab.terminal.send(txt: trimmed + "\n")
+        return .sent
+    }
+
     /// Delete a tab's materialized key scratch dir, if it has one. Called
     /// before every (re)start, on close, and on quit - never left for a crash
     /// to clean up.

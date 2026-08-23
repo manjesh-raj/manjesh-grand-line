@@ -1492,6 +1492,22 @@ if ProcessInfo.processInfo.environment["FM_RUN_MORNING_BRIEFING_TESTS"] == "1" {
 // the merge with Shift's own activity YAML. See FleetLogSelfTest.swift's
 // header for why the retention cap in particular is worth pinning - it is the
 // one property no amount of using the app would ever surface.
+// F7 (`fm/grandline-feature-f7-answer-crew-from-cockpit`): the reply-routing
+// logic behind Overview's Reply affordance - the decision-key fold, the
+// exactly-one `--resolve-key` rule, the argv, and `fm-send.sh`'s three-way
+// exit-status contract. See `FleetActionsSelfTest.swift`'s header for what is
+// faked (the script itself) and what is genuinely exercised.
+if ProcessInfo.processInfo.environment["FM_RUN_FLEET_ACTIONS_TESTS"] == "1" {
+    exit(FleetActionsSelfTest.run() ? 0 : 1)
+}
+
+// F7's rendering half - a real off-screen `FleetController`, real Reply
+// clicks. Window-backed, so `Scripts/run-all-tests.sh` lists it in
+// NEEDS_SESSION alongside its peers.
+if ProcessInfo.processInfo.environment["FM_RUN_FLEET_REPLY_LAYOUT_TESTS"] == "1" {
+    exit(FleetReplyLayoutSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_FLEET_LOG_TESTS"] == "1" {
     exit(FleetLogSelfTest.run() ? 0 : 1)
 }
