@@ -63,7 +63,7 @@ import AppKit
 /// `RailDestination` directly.
 enum DestinationSlotID: String, CaseIterable {
     case overview, console, hosts, shift, review, logAnalyzer
-    case tools, vault, dictation, schedules, docs, setup, settings
+    case tools, vault, dictation, schedules, health, docs, setup, settings
 }
 
 extension RailDestination {
@@ -80,6 +80,7 @@ extension RailDestination {
         case .vault: return .vault
         case .dictation: return .dictation
         case .schedules: return .schedules
+        case .health: return .health
         case .docs: return .docs
         case .updates, .bootstrap, .automation, .githubSync: return .setup
         case .settings: return .settings

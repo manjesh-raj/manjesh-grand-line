@@ -16,7 +16,9 @@
 // know what "healthy" means for it.
 //
 // Two consumers:
-//  - `HealthCardView` (Settings) renders one row per service.
+//  - `HealthCardView` (its own `.health` rail destination,
+//    `fm/grandline-health-sidebar-move` - previously the last card on
+//    Settings) renders one row per service.
 //  - After `failureThreshold` consecutive failures, `NotificationSources`
 //    raises a `.actionNeeded` entry (GL-30). One failure is noise - a laptop
 //    on a train fails a `gh` call constantly; repeated failure is a real

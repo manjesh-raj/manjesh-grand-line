@@ -69,6 +69,18 @@ import AppKit
 /// (-> Updates, Bootstrap, Automation, GitHub Sync flyout), avatar.
 /// `.automation`'s own "Run Automation" pipeline stepper is unaffected and
 /// stays exactly where it was.
+/// `.health` (fm/grandline-health-sidebar-move) is the same move applied to
+/// F1/GL-11's Health card: it used to be the last card on the Settings page,
+/// scrolled to past Connection/Appearance/Terminal/Security/Backup. It is a
+/// utility (`isDailyUse == false` - it reports on background services rather
+/// than being something a captain checks in on daily), pinned directly
+/// *above* "Setup" and below `.docs` - the same "it's the thing you check
+/// when something feels stale, so it goes last" placement its old Settings-
+/// card comment used to explain - so the bottom-anchored group now reads
+/// Tools, Vault, Dictation, Schedules, Docs, Health, Setup (-> Updates,
+/// Bootstrap, Automation, GitHub Sync flyout), avatar. Settings' own
+/// Connection/Appearance/Terminal/Security/Backup cards are unaffected and
+/// stay exactly where they were.
 /// `fm/grandline-avatar-menu-and-setup-guide` removed `.settings`'s own
 /// standalone rail row entirely - it is still a real `RailDestination` for
 /// switching purposes (`AppShellController.show(.settings)` is unchanged),
@@ -96,7 +108,7 @@ import AppKit
 /// live captain feedback that icon-only utility rows looked inconsistent
 /// once the rest of the rail had labels - see `labeledRailButton(for:)`.
 enum RailDestination: CaseIterable {
-    case overview, console, hosts, shift, review, logAnalyzer, tools, vault, dictation, schedules, docs, updates, bootstrap, automation, githubSync, settings
+    case overview, console, hosts, shift, review, logAnalyzer, tools, vault, dictation, schedules, health, docs, updates, bootstrap, automation, githubSync, settings
 
     var symbol: String {
         switch self {
@@ -126,6 +138,9 @@ enum RailDestination: CaseIterable {
         // `SchedulesCardView`'s own header icon, so the rail row and the
         // card it opens onto agree.
         case .schedules: return "calendar"
+        // `fm/grandline-health-sidebar-move`: matches `HealthCardView`'s own
+        // header icon, so the rail row and the card it opens onto agree.
+        case .health: return "waveform.path.ecg"
         case .docs: return "book.closed"
         case .updates: return "steeringwheel"
         case .bootstrap: return "hammer"
@@ -147,6 +162,7 @@ enum RailDestination: CaseIterable {
         case .vault: return "Vault"
         case .dictation: return "Dictation"
         case .schedules: return "Schedules"
+        case .health: return "Health"
         case .docs: return "Docs"
         case .updates: return "Updates"
         case .bootstrap: return "Bootstrap"
@@ -197,14 +213,14 @@ enum RailDestination: CaseIterable {
         case .automation: return .accent
         case .githubSync: return .violet
         case .overview, .console, .hosts, .shift, .review, .logAnalyzer,
-             .tools, .vault, .dictation, .schedules, .docs, .settings: return .accent
+             .tools, .vault, .dictation, .schedules, .health, .docs, .settings: return .accent
         }
     }
 
     var isDailyUse: Bool {
         switch self {
         case .overview, .console, .hosts, .shift, .review, .logAnalyzer: return true
-        case .tools, .vault, .dictation, .schedules, .docs, .updates, .bootstrap, .automation, .githubSync, .settings: return false
+        case .tools, .vault, .dictation, .schedules, .health, .docs, .updates, .bootstrap, .automation, .githubSync, .settings: return false
         }
     }
 }

@@ -135,16 +135,13 @@ final class SettingsController: NSViewController {
                             subtitle: "One generated summary of your fleet, PRs, tasks, drift and quota",
                             content: buildMorningBriefingSection())
         let security = card(icon: "lock.shield", tint: .violet, title: "Security", subtitle: "System-level convenience toggles", content: buildSecuritySection())
+        // F1 / GL-11's Health card moved off this page entirely, onto its own
+        // rail destination (`fm/grandline-health-sidebar-move`,
+        // `HealthController.swift`) - the same correction F11's Schedules
+        // card already got. Backup & Restore is the last card here now.
         let backup = card(icon: "tray.and.arrow.up.fill", tint: .info, title: "Backup & Restore", subtitle: "Move saved hosts, snippets, and preferences between machines", content: buildBackupSection())
-        // F1 / GL-11: the Health card. Placed last because it is a diagnostic,
-        // not a preference - it is the thing you scroll to when something feels
-        // stale, and the Notification Center's "keeps failing" entry links
-        // straight here.
-        let health = card(icon: "waveform.path.ecg", tint: .good, title: "Health",
-                          subtitle: "Last run and last error for each background service",
-                          content: buildHealthSection())
 
-        let stack = NSStackView(views: [header, connection, appearance, terminal, briefing, security, backup, health])
+        let stack = NSStackView(views: [header, connection, appearance, terminal, briefing, security, backup])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
@@ -166,7 +163,6 @@ final class SettingsController: NSViewController {
             briefing.widthAnchor.constraint(equalTo: stack.widthAnchor),
             security.widthAnchor.constraint(equalTo: stack.widthAnchor),
             backup.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            health.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
 
         let scroll = NSScrollView()
@@ -797,164 +793,6 @@ final class SettingsController: NSViewController {
         AppSettings.shared.morningBriefingEnabled = morningBriefingSwitch.state == .on
     }
 
-    // MARK: Health (F1 / GL-11)
-
-    private let healthStack = NSStackView()
-
-    private func buildHealthSection() -> NSView {
-        healthStack.orientation = .vertical
-        healthStack.alignment = .leading
-        healthStack.spacing = 10
-        healthStack.translatesAutoresizingMaskIntoConstraints = false
-        // Rebuilt on every report rather than mutated in place: the row count
-        // grows as services register, and a row's trailing control differs by
-        // verdict (a pill, or nothing) - the same reason
-        // `rebuildSecuritySection` rebuilds.
-        ServiceHealthRegistry.shared.observe { [weak self] _ in
-            guard let self, self.isViewLoaded else { return }
-            self.rebuildHealthSection()
-        }
-        rebuildHealthSection()
-        return healthStack
-    }
-
-    private func rebuildHealthSection() {
-        guard isViewLoaded else { return }
-        for v in healthStack.arrangedSubviews {
-            healthStack.removeArrangedSubview(v)
-            v.removeFromSuperview()
-        }
-        hoverRows.removeAll { $0.superview == nil }
-        subtitleViews.removeAll { $0.superview == nil }
-
-        let services = ServiceHealthRegistry.shared.knownServices()
-        var rows: [NSView] = []
-
-        if services.isEmpty {
-            // Honest rather than reassuring: nothing has reported yet, which at
-            // launch is simply true.
-            let label = NSTextField(wrappingLabelWithString:
-                "No background service has reported yet. Rows appear as each one runs.")
-            label.font = .systemFont(ofSize: 11)
-            mutedLabel(label)
-            label.preferredMaxLayoutWidth = 420
-            rows.append(label)
-        } else {
-            for (index, service) in services.enumerated() {
-                if index > 0 { rows.append(separator()) }
-                rows.append(healthRow(for: service))
-            }
-        }
-
-        rows.append(separator())
-        rows.append(healthFooter())
-
-        for row in rows {
-            healthStack.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: healthStack.widthAnchor).isActive = true
-        }
-        applyTheme()
-    }
-
-    private func healthRow(for service: HealthService) -> NSView {
-        let state = ServiceHealthRegistry.shared.state(service)
-        let (tint, chip) = Self.healthVisuals(state)
-
-        var lines: [String] = [service.detail]
-        if let last = state.lastSuccess {
-            lines.append("Last ran \(Self.relative(last)).")
-        } else if state.hasReported {
-            lines.append("Has never completed successfully.")
-        } else {
-            lines.append("Not run yet.")
-        }
-        if let failure = state.lastFailureDetail, let when = state.lastFailure {
-            lines.append("Last error (\(Self.relative(when))): \(failure)")
-        }
-
-        let tile = IconTileView(size: HelmMetrics.tileSmall, cornerRadius: 8)
-        tile.configure(symbol: service.symbol, tint: tint, pointSize: 12)
-        tile.applyTheme(theme)
-        let row = descRow(title: service.title, desc: lines.joined(separator: " "),
-                          trailing: pillView(text: chip, colorHex: tint.hex(in: theme)))
-        let combined = NSStackView(views: [tile, row])
-        combined.orientation = .horizontal
-        combined.alignment = .centerY
-        combined.spacing = 10
-        combined.distribution = .fill
-        // AGENTS.md gotcha (12): a content-priority call is a no-op on an
-        // `NSStackView`, so `row` (itself a stack) has to yield through the
-        // stack-level API while the leaf tile holds its size through the
-        // content-level one.
-        tile.setContentHuggingPriority(.required, for: .horizontal)
-        combined.setHuggingPriority(.defaultLow, for: .horizontal)
-        return combined
-    }
-
-    /// "Copy diagnostics" - the F1 spec's own affordance. Assembles the same
-    /// text the rows show plus the recent persistence failures, so a captain can
-    /// paste it somewhere without hand-transcribing timestamps. Deliberately not
-    /// a log dump: reading the unified log needs a separate tool, and this
-    /// button must not be the thing that surprises anyone by exporting more than
-    /// what is on screen.
-    private func healthFooter() -> NSView {
-        let button = HelmButton(title: "Copy diagnostics", variant: .secondary,
-                                symbol: "doc.on.doc", target: self, action: #selector(copyDiagnostics))
-        button.controlSize = .small
-        let row = descRow(title: "Diagnostics",
-                          desc: "Copies these rows as text. Everything stays on this machine - "
-                              + "detailed logs are in Console.app under \"com.firstmate.cockpit.native\".",
-                          trailing: button)
-        return row
-    }
-
-    @objc private func copyDiagnostics() {
-        var lines: [String] = ["Manjesh Grand Line - service health"]
-        for service in ServiceHealthRegistry.shared.knownServices() {
-            let state = ServiceHealthRegistry.shared.state(service)
-            let (_, chip) = Self.healthVisuals(state)
-            var line = "- \(service.title): \(chip)"
-            if let last = state.lastSuccess { line += ", last ran \(Self.relative(last))" }
-            if let detail = state.lastFailureDetail { line += ", last error: \(detail)" }
-            lines.append(line)
-        }
-        if PersistenceFailureReporter.recent.isEmpty {
-            lines.append("- No failed saves recorded this session.")
-        } else {
-            lines.append("Failed saves this session (newest first):")
-            for failure in PersistenceFailureReporter.recent {
-                lines.append("- \(failure.what) -> \(failure.path): \(failure.reason)")
-            }
-        }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(lines.joined(separator: "\n"), forType: .string)
-        Toast.show(in: view, message: "Diagnostics copied")
-        PersistenceFailureReporter.acknowledge()
-    }
-
-    private static func healthVisuals(_ state: ServiceHealthState) -> (HelmTint, String) {
-        switch state.verdict {
-        case .unknown: return (.neutral, "Not run yet")
-        case .running: return (.info, "Checking\u{2026}")
-        case .healthy: return (.good, "Healthy")
-        case .degraded: return (.warn, "1 recent failure")
-        case .failing: return (.critical, "Failing")
-        }
-    }
-
-    private static func relative(_ date: Date) -> String {
-        let formatter = relativeFormatter
-        return formatter.localizedString(for: date, relativeTo: Date())
-    }
-
-    /// Built once - `DateFormatter`/`RelativeDateTimeFormatter` construction is
-    /// expensive and this runs inside a rebuilt row path.
-    private static let relativeFormatter: RelativeDateTimeFormatter = {
-        let f = RelativeDateTimeFormatter()
-        f.unitsStyle = .full
-        return f
-    }()
-
     // MARK: Security
 
     private let securityStack = NSStackView()
@@ -1178,7 +1016,6 @@ final class SettingsController: NSViewController {
         rebuildAppearanceGrid()
         refreshSessions()
         refreshBackupStatus()
-        rebuildHealthSection()
         applyTheme()
     }
 

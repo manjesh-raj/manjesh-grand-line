@@ -491,16 +491,19 @@ final class IconRailController: NSViewController, NSPopoverDelegate {
             navStack.addArrangedSubview(button)
         }
 
-        // Tools/Vault/Dictation/Schedules/Docs/"Setup" (fm/grandline-rail-unify-and-mark-polish,
-        // extended by fm/grandline-schedules-sidebar-move for Schedules)
-        // continue `navStack`'s own loop directly - one continuous,
-        // evenly-spaced list with the daily-use rows above, separated by the
-        // same `navStackDivider()` rhythm, rather than a separately-anchored
-        // group. All of these are still real `RailDestination` cases for
-        // switching purposes (Bootstrap/Updates/Automation/Settings
-        // included); only their vertical position (or, for Settings, entry
-        // point) is what moves.
-        for dest: RailDestination in [.tools, .vault, .dictation, .schedules, .docs] {
+        // Tools/Vault/Dictation/Schedules/Health/Docs/"Setup" (fm/grandline-rail-unify-and-mark-polish,
+        // extended by fm/grandline-schedules-sidebar-move for Schedules and by
+        // fm/grandline-health-sidebar-move for Health) continue `navStack`'s
+        // own loop directly - one continuous, evenly-spaced list with the
+        // daily-use rows above, separated by the same `navStackDivider()`
+        // rhythm, rather than a separately-anchored group. All of these are
+        // still real `RailDestination` cases for switching purposes
+        // (Bootstrap/Updates/Automation/Settings included); only their
+        // vertical position (or, for Settings, entry point) is what moves.
+        // Health sits last in this group, directly above "Setup" - the same
+        // "it's a diagnostic you check when something feels stale" placement
+        // its old Settings-card comment used to explain.
+        for dest: RailDestination in [.tools, .vault, .dictation, .schedules, .docs, .health] {
             navStackDivider()
             let button = railButton(for: dest)
             buttons[dest] = button

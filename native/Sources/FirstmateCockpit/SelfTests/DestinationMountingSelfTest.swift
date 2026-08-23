@@ -60,6 +60,7 @@ enum DestinationMountingSelfTest {
             ("revisitReusesTheSameView", test_revisitReusesSameView),
             ("everySlotIsReachableAndMountsCleanly", test_everySlotMounts),
             ("schedulesHasItsOwnSlotAndAutomationNoLongerRendersIt", test_schedulesIsSeparateFromAutomation),
+            ("healthHasItsOwnSlotAndSettingsNoLongerRendersIt", test_healthIsSeparateFromSettings),
             ("mounterIsLazyAndBuildsEachSlotOnce", test_mounterUnitBehaviour),
         ]
         var failures = 0
@@ -129,7 +130,7 @@ enum DestinationMountingSelfTest {
                 return "expected at most the launch destination beyond the eager set, also mounted: \(extra.map(\.rawValue).sorted())"
             }
             // The expensive ones must not be among them under any launch path.
-            let mustBeLazy: Set<DestinationSlotID> = [.docs, .tools, .logAnalyzer, .vault, .dictation, .schedules, .hosts, .shift, .settings]
+            let mustBeLazy: Set<DestinationSlotID> = [.docs, .tools, .logAnalyzer, .vault, .dictation, .schedules, .health, .hosts, .shift, .settings]
             let eagerlyBuilt = mounted.intersection(mustBeLazy)
             guard eagerlyBuilt.isEmpty else {
                 return "these should not be built at launch: \(eagerlyBuilt.map(\.rawValue).sorted())"
@@ -264,6 +265,59 @@ enum DestinationMountingSelfTest {
             }
             guard !labels.contains(where: { $0.localizedCaseInsensitiveContains("new schedule") }) else {
                 return "the Automation page still renders a schedule-creation control"
+            }
+            return nil
+        }
+    }
+
+    /// `fm/grandline-health-sidebar-move`: F1/GL-11's Health card used to be
+    /// the last card on the Settings page - a diagnostic surface scrolled to
+    /// past Connection/Appearance/Terminal/Security/Backup. The captain's own
+    /// correction was the same one `.schedules` already got: its own rail
+    /// icon, directly visible, and the card must actually leave the Settings
+    /// page rather than just gaining a second entry point. Both halves are
+    /// checked here, mirroring `test_schedulesIsSeparateFromAutomation`
+    /// exactly: `.health` mounts to a slot of its own (not `.settings`), and
+    /// the real `SettingsController` root no longer contains a "Health" card
+    /// header anywhere in its view tree.
+    ///
+    /// Confirmed to catch a real regression, not just to pass: temporarily
+    /// re-adding a `HealthCardView`'s card to `SettingsController`'s own
+    /// stack (the pre-move shape) makes this fail on the second assertion,
+    /// naming the leftover "Health" label, while every other case in this
+    /// file keeps passing.
+    private static func test_healthIsSeparateFromSettings() -> String? {
+        withScratchEnv {
+            let (_, shell) = makeMountedShell()
+
+            guard RailDestination.health.slot != RailDestination.settings.slot else {
+                return "health must not share a slot with settings"
+            }
+
+            shell.show(.health)
+            guard let healthView = shell.destinationViewIfMountedForTests(.health) else {
+                return "show(.health) did not mount the health slot"
+            }
+            guard healthView.isHidden == false else {
+                return "the health view should be visible right after show(.health)"
+            }
+
+            // Visiting Health must not have built the Settings slot as a side
+            // effect - it is a fully independent destination now.
+            guard shell.destinationViewIfMountedForTests(.settings) == nil else {
+                return "show(.health) unexpectedly mounted the settings slot too"
+            }
+
+            shell.show(.settings)
+            guard let settingsView = shell.destinationViewIfMountedForTests(.settings) else {
+                return "show(.settings) did not mount the settings slot"
+            }
+            let labels = collectTextFieldValues(in: settingsView)
+            guard !labels.contains("Health") else {
+                return "the Settings page still renders a \"Health\" card header - it should have moved to its own destination"
+            }
+            guard !labels.contains(where: { $0.localizedCaseInsensitiveContains("copy diagnostics") }) else {
+                return "the Settings page still renders the Health card's diagnostics control"
             }
             return nil
         }
