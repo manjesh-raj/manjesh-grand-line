@@ -304,21 +304,6 @@ final class MultiHostSendPickerController: NSViewController {
     @objc private func cancelClicked() {
         dismiss(self)
     }
-
-    // MARK: - Probe / self-test surface
-
-    #if FM_SELFTESTS
-    var debugSelectedCount: Int { selection.selectedCount }
-    var debugVisibleHostIDs: [UUID] { selection.visibleHosts.map(\.id) }
-    var debugSendButtonEnabled: Bool { sendButton?.isEnabled ?? false }
-    var debugSendButtonTitle: String { sendButton?.title ?? "" }
-    var debugPillTitles: [String] { pillButtons.map { $0.option.title } }
-    func debugClickPill(at index: Int) {
-        guard index < pillButtons.count else { return }
-        pillClicked(pillButtons[index].button)
-    }
-    func debugToggleHost(_ id: UUID) { toggle(id) }
-    #endif
 }
 
 // MARK: - One host row
