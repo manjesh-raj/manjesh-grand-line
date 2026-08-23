@@ -998,6 +998,19 @@ final class AppShellController: NSViewController {
     /// the space (the app delegate's launch landing).
     @objc func showHomeCanvas() { show(.homeCanvas) }
 
+    /// The View menu's "Toggle Light/Dark" (⌘⌥T). Targets this controller
+    /// explicitly rather than the responder chain
+    /// (`fm/grandline-daylight-theme-toggle-relocate`) - the toggle used to
+    /// live on Console's own toolbar and resolved via
+    /// `#selector(ConsoleController.toggleTheme)`, which only fired while a
+    /// Console tab held first responder. Now that the button itself lives on
+    /// the app-wide `DaylightBarController`, the shortcut needs to work
+    /// regardless of what has focus, matching the space shortcuts just above
+    /// it in `AppDelegate.buildMenu`.
+    @objc func toggleTheme() {
+        ThemeManager.shared.toggle()
+    }
+
     /// Fix 1: connect to `host` (its own dedicated page). The first call for
     /// a given host builds its `ConsoleController` (via `makeHostConsole`),
     /// embeds it, and opens its one ssh tab; every later call for the same

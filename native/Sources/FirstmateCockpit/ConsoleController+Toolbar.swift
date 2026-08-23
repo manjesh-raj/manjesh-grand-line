@@ -39,14 +39,16 @@ extension ConsoleController {
         // names, plus Block View, which is the same kind of thing: a named,
         // stateful feature toggle rather than a glyph-native utility.
         //
-        // Zoom in / zoom out / theme / "+" stay icon squares deliberately -
-        // they have no prototype counterpart, their glyphs are universally
-        // legible on their own, and labelling four more controls would leave
-        // a long tab strip nowhere to go.
+        // Zoom in / zoom out / "+" stay icon squares deliberately - they have
+        // no prototype counterpart, their glyphs are universally legible on
+        // their own, and labelling more controls would leave a long tab
+        // strip nowhere to go. The light/dark toggle that used to sit here
+        // moved onto `DaylightBarController`, next to the bell
+        // (`fm/grandline-daylight-theme-toggle-relocate`) - it is an
+        // app-wide preference, not something scoped to Console.
         findButton = makeLabeledButton(symbol: "magnifyingglass", title: "Find", tooltip: "Find (⌘F)", action: #selector(showFind))
         zoomOutButton = makeIconButton(symbol: "minus.magnifyingglass", tooltip: "Zoom Out (⌘−)", action: #selector(zoomOut))
         zoomInButton = makeIconButton(symbol: "plus.magnifyingglass", tooltip: "Zoom In (⌘+)", action: #selector(zoomIn))
-        themeButton = makeIconButton(symbol: "circle.lefthalf.filled", tooltip: "Toggle Light/Dark (⌘⌥T)", action: #selector(toggleTheme))
         blockViewToggleButton = makeLabeledButton(symbol: "rectangle.grid.1x2", title: "Blocks", tooltip: "Show Parsed Blocks (Stage 0)", action: #selector(toggleBlockView))
         blockViewRefreshButton = makeIconButton(symbol: "arrow.clockwise", tooltip: "Refresh Blocks", action: #selector(refreshBlockView))
         composeButton = makeLabeledButton(symbol: "sparkles", title: "Compose", tooltip: "Compose a command…", action: #selector(toggleComposer))
@@ -103,7 +105,7 @@ extension ConsoleController {
             incidentButton = button
             toolViews.append(button)
         }
-        toolViews += [findButton, zoomOutButton, zoomInButton, themeButton]
+        toolViews += [findButton, zoomOutButton, zoomInButton]
         if !isFirstmateConsole {
             toolViews += [blockViewToggleButton, blockViewRefreshButton]
         }
@@ -202,12 +204,6 @@ extension ConsoleController {
     }
 
     // MARK: Theme
-
-    @objc func toggleTheme() {
-        ThemeManager.shared.toggle()
-        // `applyTheme()` runs via the `observe` callback registered in
-        // `loadView`, so nothing else is needed here.
-    }
 
     func applyTheme() {
         for tab in tabs {

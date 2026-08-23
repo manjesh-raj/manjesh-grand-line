@@ -34,11 +34,14 @@ import AppKit
 /// `gauge.with.dots.needle.33percent` (SF Symbols 4, macOS 13+ - this
 /// project's minimum target per `Package.swift`) - a gauge-family glyph for
 /// the toolbar icon and the popover's own header tile, deliberately not a
-/// circle/dot shape, since the toolbar's own `themeButton` (a half-filled
-/// circle) sits right next to where this icon lives and a similar-looking
-/// icon would be confusable (flagged directly in visual review of the
-/// design mock). Top-level so `ConsoleController`'s toolbar-button
-/// construction can share it with the popover's own header tile.
+/// circle/dot shape: this toolbar used to sit right next to the light/dark
+/// toggle (a half-filled circle), and a similar-looking icon would have been
+/// confusable (flagged directly in visual review of the design mock). The
+/// toggle has since moved to `DaylightBarController`
+/// (`fm/grandline-daylight-theme-toggle-relocate`), but the gauge shape
+/// stays - it is still the right glyph for this icon regardless of what's
+/// beside it. Top-level so `ConsoleController`'s toolbar-button construction
+/// can share it with the popover's own header tile.
 let quotaUsageGaugeSymbol = "gauge.with.dots.needle.33percent"
 
 final class QuotaUsageController: NSObject, NSPopoverDelegate {

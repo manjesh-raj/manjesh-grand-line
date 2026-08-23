@@ -1066,8 +1066,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         viewMenu.addItem(withTitle: "Zoom Out", action: #selector(ConsoleController.zoomOut), keyEquivalent: "-")
         viewMenu.addItem(withTitle: "Actual Size", action: #selector(ConsoleController.zoomReset), keyEquivalent: "0")
         viewMenu.addItem(NSMenuItem.separator())
-        let themeItem = NSMenuItem(title: "Toggle Light/Dark", action: #selector(ConsoleController.toggleTheme), keyEquivalent: "t")
+        // The toggle button itself moved off Console's toolbar onto the
+        // app-wide `DaylightBarController` (`fm/grandline-daylight-theme-
+        // toggle-relocate`), so this item now targets `AppShellController`
+        // explicitly - like the space shortcuts above - rather than the
+        // responder chain, which would only have resolved while a Console
+        // tab held first responder.
+        let themeItem = NSMenuItem(title: "Toggle Light/Dark", action: #selector(AppShellController.toggleTheme), keyEquivalent: "t")
         themeItem.keyEquivalentModifierMask = [.command, .option]
+        themeItem.target = appShell
         viewMenu.addItem(themeItem)
 
         // GL-17: Window and Help. Before this, ⌘M did nothing at all, there
