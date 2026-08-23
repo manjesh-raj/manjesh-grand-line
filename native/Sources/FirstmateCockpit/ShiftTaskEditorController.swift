@@ -90,8 +90,12 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
                                             subtitle: "Add a date and optional time",
                                             trailing: dueDatePicker)
 
-    private let tagsField = HelmTextField(placeholder: "Add tags, separated by commas")
-    private let tagsChipsFlow = ChipFlowView()
+    /// Daylight §6.9's chips-in-well, replacing the field-plus-separate-flow
+    /// pattern this row used to be. The interaction is unchanged (Return or a
+    /// trailing comma commits, the ✕ on a chip removes it); Backspace on an
+    /// empty editor now pops the last tag, which the two-view version had no
+    /// way to offer.
+    private let tagsInput = HelmChipInput(placeholder: "Add a tag and press Return")
     private var tagChips: [String] = []
 
     private let descriptionView = HelmTextView(height: 110)
@@ -171,12 +175,16 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         // MARK: Tags
 
         form.addSection("Tags")
-        tagsField.delegate = self
-        form.addRow(tagsField)
-        form.setSpacingAfterLastRow(HelmMetrics.s2)
-        form.addRow(tagsChipsFlow)
         tagChips = editing?.tags ?? []
-        renderTagChips()
+        tagsInput.setTokens(tagChips)
+        tagsInput.onTokensChanged = { [weak self] tokens in
+            guard let self else { return }
+            self.tagChips = tokens
+            // The well grows and shrinks with its chip count, so the sheet
+            // re-measures - the same reason `renderTagChips` did.
+            self.form?.sizeToFitContent()
+        }
+        form.addRow(tagsInput)
 
         // MARK: Description
 
@@ -230,7 +238,7 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         detectedIcon.contentTintColor = HelmTheme.nsColor(theme.accentHex)
         detectedLabel.textColor = muted
         updatePriorityDotColor(theme: theme)
-        tagsChipsFlow.subviews.compactMap { $0 as? VocabularyChipView }.forEach { $0.applyTheme(theme) }
+        tagsInput.applyTheme(theme)
         attachmentWell.applyTheme(theme)
     }
 
@@ -312,10 +320,8 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
 
     func controlTextDidChange(_ notification: Notification) {
         guard let field = notification.object as? NSTextField else { return }
-        if field === tagsField {
-            tagsFieldDidChange()
-            return
-        }
+        // `HelmChipInput` owns its own editor and its own delegate, so the tag
+        // row no longer routes through here at all.
         guard field === titleField else { return }
         guard !dueManuallyEdited else { return }
         guard let parsed = ShiftDateParser.parse(titleField.stringValue) else {
@@ -369,53 +375,6 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         if !wasHidden { form.sizeToFitContent() }
     }
 
-    // MARK: Tags
-
-    /// A typed trailing comma commits everything before it as a chip and
-    /// clears the field, matching the mockup's own tag-entry interaction.
-    private func tagsFieldDidChange() {
-        let text = tagsField.stringValue
-        guard text.hasSuffix(",") else { return }
-        let candidate = String(text.dropLast())
-        tagsField.stringValue = ""
-        commitTagText(candidate)
-    }
-
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        guard control === tagsField, commandSelector == #selector(NSResponder.insertNewline(_:)) else { return false }
-        commitTagText(tagsField.stringValue)
-        tagsField.stringValue = ""
-        return true
-    }
-
-    private func commitTagText(_ raw: String) {
-        let trimmed = raw.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
-        guard !tagChips.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) else { return }
-        tagChips.append(trimmed)
-        renderTagChips()
-    }
-
-    private func renderTagChips() {
-        let theme = ThemeManager.shared.theme
-        let chips: [NSView] = tagChips.map { tag in
-            let chip = VocabularyChipView(word: tag)
-            chip.applyTheme(theme)
-            chip.onRemove = { [weak self] in
-                self?.tagChips.removeAll { $0 == tag }
-                self?.renderTagChips()
-            }
-            return chip
-        }
-        tagsChipsFlow.setChips(chips)
-        // Needed for every call after the first, once a tag is added/removed
-        // while the sheet is already showing - `ChipFlowView`'s wrap-to-width
-        // height changes with the chip count. The first call happens from
-        // inside `loadView()` before the window exists, and `loadView()`'s own
-        // final `sizeToFitContent()` supersedes it.
-        form?.sizeToFitContent()
-    }
-
     // MARK: Attachment
 
     @objc private func chooseImageClicked() {
@@ -440,8 +399,9 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
             NSSound.beep()
             return
         }
-        commitTagText(tagsField.stringValue)
-        tagsField.stringValue = ""
+        // Commit anything typed but not yet committed, or a captain who typed
+        // a tag and went straight for Save would silently lose it.
+        tagsInput.commitPendingText()
 
         var task = editing ?? ShiftTask.fresh()
         task.title = titleText

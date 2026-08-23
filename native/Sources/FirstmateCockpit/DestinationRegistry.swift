@@ -60,6 +60,41 @@
 
 import AppKit
 
+// MARK: - DaylightDrillActions
+
+/// Daylight §6.4: a destination's own "primary + quiet actions", hoisted into
+/// the shell's drill header.
+///
+/// **Why a protocol rather than a switch in `AppShellController`.** GL-37's
+/// whole point was that adding or migrating a destination should not mean
+/// editing the shell in lockstep with the page - so the shell *asks* the
+/// mounted controller what its actions are, and a destination Phase 4 has not
+/// reached yet simply does not conform. That also means the migration order is
+/// visible in the code: the set of conformers is exactly the set of restyled
+/// drill pages.
+///
+/// The views are caller-owned. A page keeps its Refresh button, its sync pill,
+/// and whatever enabled/spinner state it already manages on them - the header
+/// only positions them.
+protocol DaylightDrillActions: AnyObject {
+    var drillHeaderActions: [NSView] { get }
+
+    /// §6.4's "`caption()` subtitle with live numbers". `nil` falls back to
+    /// `RailDestination.drillSubtitle`, the static line about the *area* that
+    /// every unmigrated destination still shows.
+    ///
+    /// A page whose numbers change after the header was configured tells the
+    /// shell by calling the closure it was handed (`onDrillSubtitleChanged`),
+    /// rather than reaching into the header itself - the header belongs to the
+    /// shell, and a page writing to it directly is how two owners of one view
+    /// start disagreeing.
+    var drillHeaderSubtitle: String? { get }
+}
+
+extension DaylightDrillActions {
+    var drillHeaderSubtitle: String? { nil }
+}
+
 /// One mountable body view.
 ///
 /// Not one-to-one with `RailDestination`: the four Setup pages

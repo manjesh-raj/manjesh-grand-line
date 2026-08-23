@@ -143,7 +143,8 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
     private var statusTone: HelmTint = .critical
 
     override func loadView() {
-        let form = HelmFormSheet(title: editing == nil ? "New Key" : "Edit Key")
+        let form = HelmFormSheet(title: editing == nil ? "New Key" : "Edit Key",
+                                 domainHue: RailDestination.hosts.domainHue)
         self.form = form
         view = form
         form.onApplyTheme = { [weak self] theme in

@@ -55,6 +55,11 @@ private final class ReviewPRRowCellView: NSView {
     private let accentRow: HelmAccentRow
     private let reviewButton = HelmButton(title: "Review", variant: .secondary, size: .small)
     private let mergeButton = HelmButton(title: "Merge", variant: .primary, size: .small)
+    /// Daylight §7's Review row is "dot + tag + Review/Merge actions". The dot
+    /// takes `HelmAccentRow`'s existing `leadingControl` slot rather than
+    /// needing a new one - see `HelmSignalDot`'s own header for why a state
+    /// signal is a dot and an identity signal is a glyph tile.
+    private let signalDot = HelmSignalDot()
 
     override init(frame frameRect: NSRect) {
         let actionsRow = NSStackView(views: [reviewButton, mergeButton])
@@ -102,7 +107,19 @@ private final class ReviewPRRowCellView: NSView {
         // `rowViews` order: text column, chip, trailingAccessory) - which is
         // exactly the "status pill, then Review, then Merge" left-to-right
         // order this task asked for, so no new layout code was needed here.
-        accentRow = HelmAccentRow(chipPlacement: .trailing, trailingAccessory: actionsRow, hover: false)
+        // Merge is Review's page-level primary action and §7 pins it green:
+        // `.green` is exactly the hue §4 gives this destination
+        // (`RailDestination.review.domainHue`), so the button is filled from
+        // the page's own identity rather than from a literal.
+        mergeButton.domainHue = RailDestination.review.domainHue
+
+        // A dot in the badge's place. `leadingControl` is documented as "a
+        // caller-owned control in the badge's place", which is why this needs
+        // no change to `HelmAccentRow` itself - and why the dot is re-tinted
+        // from `configure(pr:)` below, in the same pass that sets the rest of
+        // the row's content.
+        accentRow = HelmAccentRow(chipPlacement: .trailing, leadingControl: signalDot,
+                                  trailingAccessory: actionsRow, hover: false)
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
         accentRow.translatesAutoresizingMaskIntoConstraints = false
@@ -158,11 +175,15 @@ private final class ReviewPRRowCellView: NSView {
             mergeButton.isHidden = true
         }
 
+        signalDot.configure(tint: visuals.tint, theme: theme)
+
         accentRow.configure(HelmAccentRow.Content(
             tint: visuals.tint,
             kicker: kickerParts.joined(separator: " \u{00B7} "),
             title: heading,
-            badgeSymbol: "arrow.triangle.pull",
+            // `badgeSymbol` is deliberately absent: `HelmAccentRow.Content`
+            // documents it as ignored once the row carries a `leadingControl`,
+            // and leaving a value there that never renders reads as live.
             chipText: visuals.chipLabel
         ), theme: theme)
     }

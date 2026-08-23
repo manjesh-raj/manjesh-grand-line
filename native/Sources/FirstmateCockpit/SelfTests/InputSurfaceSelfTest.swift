@@ -272,7 +272,7 @@ enum InputSurfaceSelfTest {
         check(search.debugPlaceholderHidden == false, "placeholder shows while empty", &ok)
 
         let geometry = HelmField.geometry(of: search.chromeView)
-        check(abs(geometry.radius - HelmField.cornerRadius) < 0.01,
+        check(abs(geometry.radius - HelmField.cornerRadius(for: theme)) < 0.01,
               "the well is the shared radius (\(geometry.radius))", &ok)
         let fill = geometry.fill?.usingColorSpace(.sRGB)
         let expected = HelmField.fill(theme).usingColorSpace(.sRGB)
@@ -344,7 +344,7 @@ enum InputSurfaceSelfTest {
         // number here exact rather than alpha-dependent.
         var pills = 0
         var worst = 99.0
-        for (fill, label) in pillPairs(in: card.card) {
+        for (fill, label) in pillPairs(in: card.card, theme: theme) {
             pills += 1
             worst = min(worst, HelmContrast.ratio(label, fill))
         }
@@ -356,15 +356,20 @@ enum InputSurfaceSelfTest {
         // D6: no label may carry a size `HelmType` would not have produced -
         // a raw `.systemFont(ofSize: 12.5)` ignores the captain's own
         // chrome-text-scale setting entirely.
+        // `cardTitle()` joined this list when Daylight Phase 4 made `HelmCard`
+        // resolve its header to §6.5's 13.5 semibold. It is a real `HelmType`
+        // role, which is what this check is about - not a raw point size.
         let allowed = Set([HelmType.rowTitle(), HelmType.caption(), HelmType.body(),
-                           HelmType.sectionTitle(), HelmType.kicker(), HelmType.code()]
+                           HelmType.sectionTitle(), HelmType.cardTitle(),
+                           HelmType.kicker(), HelmType.code()]
                           .map { Double($0.pointSize).rounded(toPlaces: 2) })
         var offenders: [String] = []
         walk(card.card) { view in
             guard let text = view as? NSTextField, let font = text.font else { return }
             // Pill labels are `ToolRowLayout.pill`'s own recipe, which owns
             // its size; a stat/metric font is likewise the component's.
-            if text.superview?.layer?.cornerRadius == 9 { return }
+            if text.superview?.layer?.cornerRadius
+                == ToolRowLayout.pillCornerRadius(for: theme) { return }
             let size = Double(font.pointSize).rounded(toPlaces: 2)
             if !allowed.contains(size) {
                 offenders.append("\(text.stringValue.prefix(24))@\(size)")
@@ -396,11 +401,15 @@ enum InputSurfaceSelfTest {
     }
 
     /// Every (opaque fill, label colour) pair inside a pill-shaped container.
-    private static func pillPairs(in root: NSView) -> [(NSColor, NSColor)] {
+    /// `theme` matters, and is not `ThemeManager.shared.theme`: the card under
+    /// test was themed explicitly, so the radius to look for is the one *that*
+    /// theme paints - not whatever the machine happens to have selected.
+    private static func pillPairs(in root: NSView, theme: HelmTheme) -> [(NSColor, NSColor)] {
         var pairs: [(NSColor, NSColor)] = []
         walk(root) { view in
             guard let fill = view.layer?.backgroundColor,
-                  abs((view.layer?.cornerRadius ?? 0) - 9) < 0.01,
+                  abs((view.layer?.cornerRadius ?? 0)
+                      - ToolRowLayout.pillCornerRadius(for: theme)) < 0.01,
                   let label = view.subviews.compactMap({ $0 as? NSTextField }).first,
                   let ink = label.textColor
             else { return }

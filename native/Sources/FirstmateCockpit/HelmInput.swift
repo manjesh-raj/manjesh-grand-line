@@ -321,7 +321,9 @@ enum HelmInputSurface {
     static let focusGlowRadius: CGFloat = 8
 
     static func focusGlowOpacity(_ theme: HelmTheme) -> Float {
-        theme.mode == .dark ? 0.35 : 0.22
+        // §6.9 states Daylight's ring as the hue at 15%.
+        if theme.isDaylight { return 0.15 }
+        return theme.mode == .dark ? 0.35 : 0.22
     }
 
     /// Apply the resting or focused chrome to a sunken well.
@@ -332,8 +334,9 @@ enum HelmInputSurface {
     ///   - shadowHost: an un-clipped ancestor that may carry the glow, or
     ///     `nil` for a border-only treatment.
     static func apply(chrome: NSView, shadowHost: NSView? = nil,
-                      theme: HelmTheme, focused: Bool) {
-        HelmField.applySunken(to: chrome, theme: theme)
+                      theme: HelmTheme, focused: Bool,
+                      hue: HelmDomainHue? = nil, isRow: Bool = false) {
+        HelmField.applySunken(to: chrome, theme: theme, isRow: isRow)
         guard focused else {
             // Explicitly back to the hairline: `applySunken` only recolours,
             // so without this a well that has been focused once keeps the
@@ -342,7 +345,15 @@ enum HelmInputSurface {
             shadowHost?.layer?.shadowOpacity = 0
             return
         }
-        let accent = HelmTheme.nsColor(theme.accentHex)
+        // §6.9's focused well: the fill flips to the *card* surface, the
+        // border becomes the page's own domain hue, and the glow is that hue
+        // at 15%. `hue` is opt-in, so a well on a page that has not claimed
+        // one still lights in the theme's accent exactly as it did before
+        // Phase 4.
+        let accent = hue.map { $0.baseColor(in: theme) } ?? HelmTheme.nsColor(theme.accentHex)
+        if theme.isDaylight {
+            chrome.layer?.backgroundColor = HelmTheme.nsColor(DaylightPalette.card).cgColor
+        }
         chrome.layer?.borderWidth = focusBorderWidth
         chrome.layer?.borderColor = accent.withAlphaComponent(focusBorderAlpha).cgColor
         guard let host = shadowHost else { return }
@@ -350,9 +361,14 @@ enum HelmInputSurface {
         host.layer?.masksToBounds = false
         host.layer?.shadowColor = accent.cgColor
         host.layer?.shadowOpacity = focusGlowOpacity(theme)
-        host.layer?.shadowRadius = focusGlowRadius
+        host.layer?.shadowRadius = theme.isDaylight ? daylightFocusRingRadius : focusGlowRadius
         host.layer?.shadowOffset = .zero
     }
+
+    /// §6.9's "4px outer ring" - a tighter, more ring-like glow than the 8pt
+    /// blur the twelve palettes use, because on warm paper a wide soft glow
+    /// reads as a smudge rather than as a focus ring.
+    static let daylightFocusRingRadius: CGFloat = 4
 
     /// What a well actually resolved to, read from the real layer rather than
     /// re-derived - so a self-test cannot pass by repeating the component's

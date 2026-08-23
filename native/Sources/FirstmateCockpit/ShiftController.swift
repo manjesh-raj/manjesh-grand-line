@@ -19,15 +19,13 @@
 
 import AppKit
 
-final class ShiftController: NSViewController {
+final class ShiftController: NSViewController, DaylightDrillActions {
 
     private let store: ShiftStore
 
     private let scroll = NSScrollView()
     private let contentStack = NSStackView()
 
-    private let greetingLabel = NSTextField(labelWithString: "")
-    private let subtitleLabel = NSTextField(labelWithString: "")
     /// GL-16: see `UpdatesController.checkAllPill` - a clear-coloured
     /// `HoverHighlightView` renders identically to the plain `NSView` this
     /// was and inherits the shared press/focus/keyboard behaviour.
@@ -193,19 +191,34 @@ final class ShiftController: NSViewController {
         let followUpSection = buildFollowUpSection()
         let projectsSection = buildProjectsSection()
 
-        // Side by side, not stacked (captain ask): two equal-width columns,
-        // matching this app's plain-horizontal-NSStackView convention for
-        // multi-column layout elsewhere (e.g. `statsRow` itself). No
-        // responsive breakpoint - this app has no existing convention for
-        // that (unlike `ToolsController`'s grid, which recomputes column
-        // count from measured width for a much larger, unbounded card
-        // count), and a fixed two-column row is the simpler, consistent
-        // choice for exactly two panels. `.fillEqually` sizes both panels to
-        // the same width; each panel keeps its own fixed scroll height (see
-        // `buildTaskSection`/`buildFollowUpSection`), so `.top` alignment
-        // keeps them flush at the top rather than vertically centered
-        // against each other.
-        let tasksRow = NSStackView(views: [taskSection, followUpSection])
+        // Daylight §7's board: **Today left, Follow-ups + Projects right**.
+        //
+        // Before this it was two equal columns of Today | Follow-ups with
+        // Projects full-width underneath. The board is the same idea one step
+        // further: a captain's daily loop is "what is due" on one side and
+        // "what is waiting / what is it part of" on the other, which is what
+        // §7 names for this page and what stops Projects being a slab below
+        // the fold.
+        //
+        // `.fillEqually` on the row keeps the two columns the same width; each
+        // column is a plain vertical stack, so Projects simply follows
+        // Follow-ups down the right-hand side. `.top` alignment keeps the two
+        // columns flush at the top rather than centred against each other -
+        // note this is AppKit's *unflipped* space, so "top-aligned" means
+        // equal `maxY`, not equal `minY`.
+        let leftColumn = NSStackView(views: [taskSection])
+        leftColumn.orientation = .vertical
+        leftColumn.alignment = .leading
+        leftColumn.spacing = 20
+        leftColumn.translatesAutoresizingMaskIntoConstraints = false
+
+        let rightColumn = NSStackView(views: [followUpSection, projectsSection])
+        rightColumn.orientation = .vertical
+        rightColumn.alignment = .leading
+        rightColumn.spacing = 20
+        rightColumn.translatesAutoresizingMaskIntoConstraints = false
+
+        let tasksRow = NSStackView(views: [leftColumn, rightColumn])
         tasksRow.orientation = .horizontal
         tasksRow.distribution = .fillEqually
         tasksRow.alignment = .top
@@ -218,7 +231,11 @@ final class ShiftController: NSViewController {
         dashboardContainer.translatesAutoresizingMaskIntoConstraints = false
         dashboardContainer.addArrangedSubview(statsRow)
         dashboardContainer.addArrangedSubview(tasksRow)
-        dashboardContainer.addArrangedSubview(projectsSection)
+        // The project *detail* stays a direct child of the dashboard rather
+        // than living inside the right column: it takes the whole page when
+        // open (`applyProjectDetailFullPage`), so nesting it in a half-width
+        // column would cap it at half the page.
+        dashboardContainer.addArrangedSubview(projectsDetailContainer)
 
         let weeklyReviewSection = buildWeeklyReviewSection()
         commandLibraryView.view.translatesAutoresizingMaskIntoConstraints = false
@@ -251,7 +268,12 @@ final class ShiftController: NSViewController {
             dashboardContainer.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             statsRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             tasksRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            projectsSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            projectsDetailContainer.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            // Each panel fills its own column - without these a `HelmCard`
+            // hugs its content and the two columns render ragged.
+            taskSection.widthAnchor.constraint(equalTo: leftColumn.widthAnchor),
+            followUpSection.widthAnchor.constraint(equalTo: rightColumn.widthAnchor),
+            projectsSection.widthAnchor.constraint(equalTo: rightColumn.widthAnchor),
             weeklyReviewSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             commandLibraryView.view.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
         ])
@@ -331,15 +353,18 @@ final class ShiftController: NSViewController {
 
     // MARK: Building chrome
 
+    /// Daylight §6.4 takes this page's title: "the old in-page hero titles and
+    /// the old top-bar title both disappear - the drill header IS the
+    /// destination name". So the greeting and the date line are gone from the
+    /// page, and the live counts they used to sit beside are what the drill
+    /// header's own subtitle now carries (`drillHeaderSubtitle`).
+    ///
+    /// What is left in the page's own header is the sync pill - and only when
+    /// there is real git backing to report on, which is decided once (see
+    /// below). It is handed to the drill header's action cluster rather than
+    /// rendered here, so this method's row exists purely to keep the pill in a
+    /// view the page owns; the drill header positions it.
     private func buildHeader() -> NSView {
-        greetingLabel.font = HelmType.pageTitle(.serif)
-        subtitleLabel.font = .systemFont(ofSize: 12)
-        let textStack = NSStackView(views: [greetingLabel, subtitleLabel])
-        textStack.orientation = .vertical
-        textStack.alignment = .leading
-        textStack.spacing = 4
-        textStack.translatesAutoresizingMaskIntoConstraints = false
-
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
@@ -361,18 +386,54 @@ final class ShiftController: NSViewController {
         // see fm/cockpit-fix-shift-sync-pill - but leaving a real, non-empty
         // pill sitting hidden in the tree is an unnecessary trap for the
         // next person who touches this header).
-        let row: NSStackView
-        if store.gitSync != nil {
-            row = NSStackView(views: [textStack, spacer, syncPill])
-        } else {
-            row = NSStackView(views: [textStack, spacer])
-        }
+        let row = NSStackView(views: [spacer])
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 8
         row.translatesAutoresizingMaskIntoConstraints = false
+        // A zero-height row: the header's whole content moved into the drill
+        // header, and the page keeps the (now empty) row rather than removing
+        // it from `contentStack` so `loadView`'s structure - and every width
+        // tie in it - is untouched by this restyle.
+        row.heightAnchor.constraint(equalToConstant: 0).isActive = true
+        row.isHidden = true
         return row
     }
+
+    // MARK: Drill header (Daylight §6.4)
+
+    /// The sync pill, and only when `store.gitSync` is real.
+    ///
+    /// `store.gitSync` is a `let` fixed for this controller's whole lifetime
+    /// (decided at store construction by whether `FM_SHIFT_DIR` was set), so
+    /// this is decided once here rather than by toggling `isHidden` - the same
+    /// call `buildHeader` made before Phase 4, for the same reason: a view
+    /// never handed over cannot be shown by a later code path that forgets the
+    /// rule, and cannot report a stale on-screen frame to anything walking the
+    /// view tree.
+    var drillHeaderActions: [NSView] {
+        store.gitSync == nil ? [] : [syncPill]
+    }
+
+    /// §6.4's live subtitle, from the same counts the page's own stat tiles
+    /// render - so the header and the tiles cannot disagree.
+    var drillHeaderSubtitle: String? {
+        let tasks = store.activeTasks
+        let pending = store.followUps.filter { $0.status == .pending }.count
+        let cal = Calendar.current
+        let overdue = tasks.filter { task in
+            guard let due = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return false }
+            return due < cal.startOfDay(for: Date())
+        }.count
+        var parts = ["\(tasks.count) open"]
+        if pending > 0 { parts.append("\(pending) follow-up\(pending == 1 ? "" : "s")") }
+        if overdue > 0 { parts.append("\(overdue) overdue") }
+        return parts.joined(separator: " \u{00B7} ")
+    }
+
+    /// Set by `AppShellController` - "my live numbers changed, re-read my
+    /// subtitle". See `DaylightDrillActions`.
+    var onDrillSubtitleChanged: (() -> Void)?
 
     /// Reflects `ShiftGitSync`'s real status - never a timer or a fake cycle.
     /// `nil` `store.gitSync` (an explicit `FM_SHIFT_DIR` override with no git
@@ -593,14 +654,12 @@ final class ShiftController: NSViewController {
         projectsDetailContainer.translatesAutoresizingMaskIntoConstraints = false
         buildDetailChrome()
 
-        let section = NSStackView(views: [projectsPanel, projectsDetailContainer])
-        section.orientation = .vertical
-        section.alignment = .leading
-        section.spacing = 8
-        section.translatesAutoresizingMaskIntoConstraints = false
-        projectsPanel.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
-        projectsDetailContainer.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
-        return section
+        // Just the panel now. Daylight §7's board puts Projects in the
+        // right-hand column beneath Follow-ups, while the project *detail*
+        // takes the whole page - so the detail container is added to the
+        // dashboard directly by `loadView` rather than being wrapped in here
+        // with the panel, which would have capped it at half the page width.
+        return projectsPanel
     }
 
     // MARK: Weekly Review
@@ -807,12 +866,10 @@ final class ShiftController: NSViewController {
     // MARK: Rendering
 
     private func render() {
-        let hour = Calendar.current.component(.hour, from: Date())
-        let part = hour < 5 ? "Still up" : hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening"
-        greetingLabel.stringValue = "\(part)"
-        let df = DateFormatter()
-        df.setLocalizedDateFormatFromTemplate("EEEE, MMMM d")
-        subtitleLabel.stringValue = df.string(from: Date())
+        // §6.4: the greeting and the date line this used to write are gone
+        // with the in-page hero - the drill header carries the destination's
+        // name, and its subtitle carries these counts.
+        onDrillSubtitleChanged?()
 
         let tasks = store.activeTasks
         let followUps = store.followUps
@@ -1363,6 +1420,59 @@ final class ShiftController: NSViewController {
         }
     }
 
+    // MARK: Probe / self-test surface
+
+    // GL-27: debug hooks compile into debug builds only. The older probes in
+    // this app's pages predate that rule and are being guarded as each page is
+    // touched; these are new, so they carry it from the start.
+    #if FM_SELFTESTS
+
+    /// Where the three board panels and the project detail actually landed,
+    /// read from real frames after a real layout pass - so a check of §7's
+    /// "Today left, Follow-ups + Projects right" cannot pass by re-deriving
+    /// the same constraint math the layout used.
+    ///
+    /// A hidden panel reports `nil` rather than a stale frame, which is what
+    /// lets one probe cover both the board and the full-page detail state.
+    struct BoardGeometry {
+        let tasks: NSRect?
+        let followUps: NSRect?
+        let projects: NSRect?
+        let detail: NSRect?
+        let contentWidth: CGFloat
+    }
+
+    func debugBoardGeometry() -> BoardGeometry {
+        func frame(_ view: NSView) -> NSRect? {
+            view.isHidden ? nil : view.convert(view.bounds, to: view.window?.contentView ?? view)
+        }
+        return BoardGeometry(tasks: frame(taskPanel),
+                             followUps: frame(followUpPanel),
+                             projects: frame(projectsPanel),
+                             detail: projectsDetailContainer.isHidden
+                                 ? nil
+                                 : projectsDetailContainer.convert(projectsDetailContainer.bounds,
+                                                                   to: projectsDetailContainer.window?.contentView
+                                                                       ?? projectsDetailContainer),
+                             contentWidth: contentStack.bounds.width)
+    }
+
+    /// Opens a project's detail through the same path a card click takes, on a
+    /// project seeded for the test - or a fresh one when the scratch store is
+    /// empty, since the detail state is what is under test, not the data.
+    func debugOpenFirstProjectDetail() {
+        if store.projects.isEmpty {
+            var project = ShiftProject.fresh()
+            project.name = "Probe project"
+            store.addProject(project)
+        }
+        guard let first = store.projects.first else { return }
+        projectsView = .detail(first.id)
+        renderProjectsSection()
+    }
+
+    #endif
+
     // MARK: Theme
 
     private func applyTheme() {
@@ -1370,8 +1480,6 @@ final class ShiftController: NSViewController {
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let muted = HelmTheme.mutedInk(theme)
 
-        greetingLabel.textColor = ink
-        subtitleLabel.textColor = muted
         tasksHeader.textColor = ink
         followUpsHeader.textColor = ink
         projectsHeader.textColor = ink

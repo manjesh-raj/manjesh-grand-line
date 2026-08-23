@@ -79,6 +79,11 @@ final class AppShellController: NSViewController {
     /// this *and* `isHidden`: an ordinary hidden `NSView`'s constraints still
     /// participate fully in Auto Layout (AGENTS.md gotcha (11)).
     private var drillHeaderHeightConstraint: NSLayoutConstraint!
+    /// What the drill header was last pointed at, so a page whose live numbers
+    /// changed can have its subtitle re-read without the shell having to work
+    /// out which destination is showing all over again.
+    private var lastDrillContext: (title: String, subtitle: String, symbol: String,
+                                   hue: HelmDomainHue, controller: NSViewController?)?
 
     /// The hub. Owns the space filter and the module grid; knows nothing about
     /// navigation beyond the closures wired below.
@@ -580,6 +585,11 @@ final class AppShellController: NSViewController {
         // a count; this is the per-PR post that carries Merge / Open PR, and it
         // needs the rows themselves (URL, task id, checks) rather than a count.
         review.onPRsChanged = { prs in FleetNotifier.shared.reconcilePRs(prs) }
+        // Daylight §6.4: both migrated drill pages carry live numbers in the
+        // header's subtitle, and the header is the shell's. They ask; nothing
+        // writes into it but `applyDrillHeader`/`refreshDrillHeaderSubtitle`.
+        review.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        shift.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Trigger both pages' own refresh once at launch so the badges have
         // a real count before the captain ever visits Overview or Review -
         // every later update comes from those pages' existing refresh
@@ -954,7 +964,8 @@ final class AppShellController: NSViewController {
                          subtitle: dest.drillSubtitle,
                          symbol: dest.symbol,
                          hue: dest.domainHue,
-                         isCanvas: slot.id == .homeCanvas)
+                         isCanvas: slot.id == .homeCanvas,
+                         slotController: slot.controller)
     }
 
     /// Daylight §6.4: point the shell's drill header at whatever is showing,
@@ -965,11 +976,32 @@ final class AppShellController: NSViewController {
     /// participate fully in Auto Layout, so hiding alone would leave a
     /// `HelmDrillHeader.height` gap above the canvas.
     private func applyDrillHeader(title: String, subtitle: String, symbol: String,
-                                  hue: HelmDomainHue, isCanvas: Bool) {
+                                  hue: HelmDomainHue, isCanvas: Bool,
+                                  slotController: NSViewController?) {
         drillHeader.isHidden = isCanvas
         drillHeaderHeightConstraint.constant = isCanvas ? 0 : HelmDrillHeader.height
         guard !isCanvas else { return }
-        drillHeader.configure(title: title, subtitle: subtitle, symbol: symbol, hue: hue)
+        let page = slotController as? DaylightDrillActions
+        drillHeader.configure(title: title,
+                              subtitle: page?.drillHeaderSubtitle ?? subtitle,
+                              symbol: symbol, hue: hue)
+        // §6.4's action cluster. Asked of the destination rather than switched
+        // on here, so migrating a page in a later slice is one conformance on
+        // that page and no edit to the shell - and a page that has not been
+        // migrated yet answers `nil`, which clears the cluster rather than
+        // leaving the previous page's buttons showing.
+        drillHeader.setActions(page?.drillHeaderActions ?? [])
+        lastDrillContext = (title, subtitle, symbol, hue, slotController)
+    }
+
+    /// Re-read the showing page's own live subtitle (§6.4). Called by a
+    /// migrated destination whose numbers just changed - never by the header.
+    func refreshDrillHeaderSubtitle() {
+        guard let context = lastDrillContext, !drillHeader.isHidden else { return }
+        let page = context.controller as? DaylightDrillActions
+        drillHeader.configure(title: context.title,
+                              subtitle: page?.drillHeaderSubtitle ?? context.subtitle,
+                              symbol: context.symbol, hue: context.hue)
     }
 
     // MARK: Spaces (Daylight §5.3)
@@ -1052,7 +1084,8 @@ final class AppShellController: NSViewController {
                 controller.view.isHidden = false
                 self.applyDrillHeader(title: hostLabel, subtitle: "Dedicated host page",
                                       symbol: RailDestination.hosts.symbol,
-                                      hue: RailDestination.hosts.domainHue, isCanvas: false)
+                                      hue: RailDestination.hosts.domainHue, isCanvas: false,
+                                      slotController: controller)
                 self.activeHostID = hostID
                 controller.selectAndFocusTab(id: tab.id)
             }
@@ -1099,7 +1132,8 @@ final class AppShellController: NSViewController {
         controller.view.isHidden = false
         applyDrillHeader(title: host.label, subtitle: "Dedicated host page",
                          symbol: RailDestination.hosts.symbol,
-                         hue: RailDestination.hosts.domainHue, isCanvas: false)
+                         hue: RailDestination.hosts.domainHue, isCanvas: false,
+                         slotController: controller)
         activeHostID = host.id
         controller.focusCurrentTab()
         // fm/grandline-notification-center: this page coming back on screen

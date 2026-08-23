@@ -29,9 +29,7 @@ final class ShiftProjectCardView: NSView {
     private let nameLabel = NSTextField(labelWithString: "")
     private let descriptionLabel = NSTextField(labelWithString: "")
     private let progressLabel = NSTextField(labelWithString: "")
-    private let progressTrack = NSView()
-    private let progressFill = NSView()
-    private var progressFillWidthConstraint: NSLayoutConstraint?
+    private let progressTrack = HelmProgressBar()
 
     private let openRegion = HoverHighlightView()
     private let statusPill = NSView()
@@ -63,21 +61,10 @@ final class ShiftProjectCardView: NSView {
 
         progressLabel.font = .systemFont(ofSize: 10.5)
 
-        progressTrack.wantsLayer = true
-        progressTrack.layer?.cornerRadius = 2.5
-        progressTrack.translatesAutoresizingMaskIntoConstraints = false
-        progressTrack.heightAnchor.constraint(equalToConstant: 5).isActive = true
-
-        progressFill.wantsLayer = true
-        progressFill.layer?.cornerRadius = 2.5
-        progressFill.translatesAutoresizingMaskIntoConstraints = false
-        progressTrack.addSubview(progressFill)
-        NSLayoutConstraint.activate([
-            progressFill.leadingAnchor.constraint(equalTo: progressTrack.leadingAnchor),
-            progressFill.topAnchor.constraint(equalTo: progressTrack.topAnchor),
-            progressFill.bottomAnchor.constraint(equalTo: progressTrack.bottomAnchor),
-        ])
-
+        // Daylight §6.8's shared bar, in place of this card's own hand-rolled
+        // 5pt track (radius 2.5, a flat accent fill). It was the one instance
+        // of this idea the app had outside the canvas modules; §6.8 states one
+        // recipe, and `HelmProgressBar` is it.
         let infoStack = NSStackView(views: [nameLabel, descriptionLabel, progressLabel, progressTrack])
         infoStack.orientation = .vertical
         infoStack.alignment = .leading
@@ -170,14 +157,11 @@ final class ShiftProjectCardView: NSView {
         progressLabel.stringValue = "\(completed) of \(total) tasks completed"
         progressLabel.textColor = HelmTheme.mutedInk(theme)
 
-        progressFillWidthConstraint?.isActive = false
-        let fraction = total > 0 ? CGFloat(completed) / CGFloat(total) : 0
-        progressFillWidthConstraint = progressFill.widthAnchor.constraint(
-            equalTo: progressTrack.widthAnchor, multiplier: max(0, min(1, fraction))
-        )
-        progressFillWidthConstraint?.isActive = true
-        progressTrack.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.3).cgColor
-        progressFill.layer?.backgroundColor = HelmTheme.nsColor(theme.accentHex).cgColor
+        progressTrack.configure(fraction: total > 0 ? Double(completed) / Double(total) : 0)
+        // `.violet` is the hue Projects already carries in this page's own
+        // section header, so the bar reads as part of the same thing rather
+        // than borrowing the page-wide accent.
+        progressTrack.applyTheme(theme, hue: .violet)
 
         layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         layer?.borderWidth = 1

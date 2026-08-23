@@ -133,6 +133,49 @@ enum DaylightPalette {
     /// known fill through `HelmContrast.legible`, which computes the same
     /// correction. These are listed so a render can be checked by eye against
     /// known-good values, and so the self-test can assert the table is real.
+    /// §2.4's correction, resolved for any hue rather than only the four the
+    /// table lists.
+    ///
+    /// **Why the table alone is not the implementation, and why
+    /// `HelmContrast.legible` cannot do this job.** The obvious form of this -
+    /// keep the raw hue as the fill and correct the *label* - is a documented
+    /// no-op here: `legible` picks its blend endpoint from the surface's
+    /// luminance, so `legible(.white, over: <mid-luminance hue>)` returns white
+    /// unchanged (AGENTS.md records this as a real bug found in Phase 1). §2.4
+    /// is therefore explicit that the **fill** darkens, not the label.
+    ///
+    /// So: the table's hand-picked value when there is one, else the raw hue
+    /// if white already clears the icon-and-text floor on it, else the
+    /// smallest darkening that does clear. That last branch is what covers
+    /// `slate` - §2.4 says slate "is not a primary-button hue", but a
+    /// component cannot refuse a hue a caller hands it, and rendering an
+    /// illegible button is worse than rendering a slightly darker one.
+    static func primaryButtonFill(for hue: HelmDomainHue, theme: HelmTheme) -> NSColor {
+        if let corrected = primaryButtonFills.first(where: { $0.hue == hue })?.corrected {
+            return HelmTheme.nsColor(corrected)
+        }
+        let base = hue.baseColor(in: theme)
+        if HelmContrast.ratio(.white, base) >= HelmContrast.textTarget { return base }
+        // Bisection rather than a fixed step: contrast against white is
+        // monotonic in "how far toward black", so the smallest fraction that
+        // clears the floor is findable in a handful of iterations and the
+        // result is the least visible change to the approved hue.
+        var low: CGFloat = 0
+        var high: CGFloat = 1
+        var best = NSColor.black
+        for _ in 0..<12 {
+            let mid = (low + high) / 2
+            let candidate = base.blended(withFraction: mid, of: .black) ?? base
+            if HelmContrast.ratio(.white, candidate) >= HelmContrast.textTarget {
+                best = candidate
+                high = mid
+            } else {
+                low = mid
+            }
+        }
+        return best
+    }
+
     static let primaryButtonFills: [(hue: HelmDomainHue, corrected: String)] = [
         (.green, "158760"),
         (.teal, "0D8292"),

@@ -1386,6 +1386,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_MODULE_TESTS"] == "1" {
     exit(DaylightModuleSelfTest.run() ? 0 : 1)
 }
 
+// Daylight Phase 4 slice 1: the shared drill-page components (§6.4-6.14) and
+// the two destinations §7 puts first - Tasks' board and Review's rows. See
+// DaylightDrillPageSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_TESTS"] == "1" {
+    exit(DaylightDrillPageSelfTest.run() ? 0 : 1)
+}
+
 // GL-37: the destination table and lazy-mount-with-permanent-retention -
 // only the eager slots exist at launch, a first visit builds exactly one,
 // and a revisit reuses it. See DestinationMountingSelfTest.swift's header.
