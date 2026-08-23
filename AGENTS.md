@@ -1117,6 +1117,97 @@ up anything still open.
   `ChromeTextScale` change until relaunch, and fixed table `rowHeight`s do not
   grow with it.
 
+## Morning briefing (F12, `fm/grandline-feature-f12-morning-briefing`)
+
+The first *feature* from the production-readiness review's roadmap (section 25's
+F12), after the four fix-side phases. One short generated paragraph atop
+Overview on the first activation of the day, each clause deep-linking to the
+page it came from. `MorningBriefingData.swift` owns what it says,
+`MorningBriefingCard.swift` how it looks, `FleetController` when.
+
+- **Off by default and off means nothing happens.** Settings > Morning briefing
+  (`AppSettings.morningBriefingEnabled`). With it off,
+  `FleetController.considerMorningBriefing` returns before reading a single
+  input - no quota fetch, no `claude` call, and the card is a hidden *arranged
+  subview* of an `NSStackView`, which leaves layout entirely (gotcha (11)), so
+  the feature costs Overview nothing.
+- **The local/AI split is the whole design, and it is `LogAnalyzerModels.swift`'s
+  split applied to a second feature** (the review names it as the precedent).
+  `MorningBriefingLocal.clauses(from:)` is deterministic, offline, and *always*
+  computed first; its joined form is `statLine`, the plain summary the degraded
+  card renders. `MorningBriefingAI` is one `ClaudeOneShot` call (GL-26's sixth
+  caller - do not add a seventh subprocess path) that only rephrases those same
+  numbers. Every failure - no `claude`, unlaunchable, timeout, garbled reply -
+  falls back to the local clauses with `isDegraded` set and the real reason on
+  the card's footnote, never to a blank card and never silently.
+- **No new collection, enforced by the input type.** `BriefingInputs` is a flat
+  struct of counts and short already-displayed titles; there is no field a
+  terminal buffer or log line could travel in. Four of the five inputs are
+  handed in by whoever already fetched them (Overview's own snapshot + merged
+  PRs, the shared `ShiftStore`, `BackgroundSignalsPoller.lastCounts`); only the
+  quota is fetched here, once per generated briefing, from the same
+  `QuotaSource.fetch()` the Claude-usage popover uses.
+- **`BackgroundSignalsPoller.lastCounts` is new and is why the briefing is
+  cheap.** That poller already computes fork drift / tool updates / setup drift
+  every 15 minutes for the Notification Center; it now records each result as it
+  publishes it. Recomputing them from the briefing would have been ~50 fresh
+  `brew`/`npm`/`gh api` spawns on the first Overview visit of the day. Every
+  field is `Int?` - `nil` means "not computed yet this session", rendered as an
+  *absent* clause, never a confident zero (GL-14's rule, one more signal).
+- **Two things the model is not allowed to decide, enforced in code** (mirroring
+  `LogAnalyzerAI`'s observed→inferred downgrade): a clause's `link` is matched
+  against `BriefingTarget`'s raw values and anything unrecognised becomes
+  `.none`, which renders as plain text rather than as a link that goes nowhere;
+  and the colour comes from `BriefingTarget.tint`, so `BriefingClause` has no
+  colour field at all. The `.tasks` deep link's task id is likewise resolved by
+  the app from its own store (`BriefingInputs.singleDueTaskID`), never from an
+  id a model wrote.
+- **Deep links reuse the existing navigation, they do not add any.**
+  `FleetController.onNavigateToDestination` is one closure over
+  `RailDestination` wired to `AppShellController.show(_:)`, plus the existing
+  `onNavigateToReview`/`onNavigateToSetup` and `openShiftTask(id:)`. The
+  `.quota` clause opens the same `QuotaUsageController` popover Console's
+  toolbar shows, anchored on the briefing paragraph - Console's own button only
+  exists on a Herdr-backed mirror tab, so it is not reachable from here.
+- **Once per day survives a relaunch** because the generated briefing is
+  persisted (`AppSettings.morningBriefingRecord`, JSON, the same
+  one-cohesive-value convention as `dictationShortcut`) and keyed by
+  `MorningBriefing.dayKey()`. Dismiss stamps the record rather than a separate
+  flag; the clock affordance regenerates regardless of day or dismissal.
+- **The paragraph is an `NSTextView`, and that is deliberate** - it is the only
+  AppKit control giving inline link ranges with a click callback the app can
+  intercept (a selectable `NSTextField` hands the URL to `NSWorkspace`). Two
+  mechanics worth knowing before editing `BriefingParagraphView`: it drives its
+  own height constraint from `NSLayoutManager.usedRect` inside `layout()` (with
+  an epsilon guard, which is what makes assigning a constraint constant there
+  converge), starting from a deliberately implausible 1pt so a broken
+  measurement fails the self-test instead of looking like one line of text; and
+  `linkTextAttributes` is set to the cursor only, because left at its default
+  `NSTextView` paints the system link blue over the per-clause `HelmContrast`
+  tint.
+- **One deliberate deviation from the captain-approved mockup**, flagged rather
+  than silently taken: the mockup titles the card "Good morning", which would
+  sit a few points under Overview's own "Good morning, <captain>" header. This
+  codebase has twice been corrected for that shape of duplication (Review's
+  in-page hero, Docs' headings), so the card is titled "Morning briefing" and
+  keeps the mockup's subtitle structure verbatim.
+- **Verified** with `swift build` (clean debug and release, zero warnings in
+  `Sources/FirstmateCockpit`), the release binary confirmed to carry no
+  `FM_RUN_*` strings, and all 55 runnable suites passing - **without launching
+  the app**, per the README's worktree rule. `FM_RUN_MORNING_BRIEFING_TESTS`
+  covers the local layer, the unknown-is-not-zero rule, the prompt's contents,
+  reply validation, the record/day key, the real `ShiftStore` due-item read, the
+  degradation path through the real `ClaudeOneShot` against a fake `claude`, and
+  the card's own rendering. **Confirmed to catch four real regressions**, not
+  just to pass: treating an unreadable PR scan as an all-clear, not downgrading
+  an unrecognised link marker, removing the clause cap, and a paragraph that
+  never measures its own height.
+- **Still open**: nothing about the AI *wording* is asserted (a model's prose is
+  not a deterministic function of its input - the prompt's contents are pinned
+  instead), and the briefing generated at launch runs before
+  `BackgroundSignalsPoller`'s first pass (~10s in), so the drift clauses are
+  absent on that first briefing of a cold launch and appear on a refresh.
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.

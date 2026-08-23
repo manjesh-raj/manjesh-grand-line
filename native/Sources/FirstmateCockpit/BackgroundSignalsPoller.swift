@@ -92,6 +92,34 @@ final class BackgroundSignalsPoller {
     /// something in the check path is hanging and deserves attention.
     private(set) var supersededPassCount = 0
 
+    // MARK: F12 - the counts this poller already computed
+    //
+    // The morning briefing (F12) needs "how many forks are behind", "how many
+    // tools have an update", "how many setup items drifted". Those are the
+    // exact three counts each check below already computes for the
+    // Notification Center - and recomputing them from the briefing would mean
+    // ~50 fresh `brew`/`npm`/`gh api` spawns on the first Overview visit of
+    // the day, which is precisely the "no new collection" the review's F12
+    // entry rules out. So each check records its result here as it publishes,
+    // and the briefing reads it.
+    //
+    // Every field is `Int?`: `nil` means "this poller has not produced a
+    // number yet this session" (the first pass runs ~10s after launch), which
+    // the briefing renders as an absent clause rather than as a confident
+    // zero. That distinction is GL-14's rule, applied to one more signal.
+
+    struct SignalCounts: Equatable {
+        var toolUpdates: Int?
+        var forkDrift: Int?
+        var vaultAttention: Int?
+        var setupDrift: Int?
+    }
+
+    /// Written on the main thread by each check's own completion block (the
+    /// same block that calls `NotificationSources.set*`), read on the main
+    /// thread by `FleetController` - so no lock is needed and none is implied.
+    private(set) var lastCounts = SignalCounts()
+
     /// Forwarded navigation - set once at launch by whoever owns
     /// `AppShellController` (mirrors `ConsoleComposerController.
     /// onRunInTerminal`'s own forward-don't-own convention). `show(_:)` is
@@ -216,6 +244,7 @@ final class BackgroundSignalsPoller {
     private func checkToolUpdates(statuses: [DependencyStatus]) {
         let count = statuses.filter { $0.showsUpdateButton }.count
         DispatchQueue.main.async { [weak self] in
+            self?.lastCounts.toolUpdates = count
             NotificationSources.setToolUpdates(count: count) { self?.onNavigateToUpdates?() }
         }
     }
@@ -225,6 +254,7 @@ final class BackgroundSignalsPoller {
     private func checkGitHubSync() {
         let count = GitHubSyncCatalog.repos.filter { GitHubSyncSource.check($0).status.showsSyncButton }.count
         DispatchQueue.main.async { [weak self] in
+            self?.lastCounts.forkDrift = count
             NotificationSources.setGitHubSync(count: count) { self?.onNavigateToGitHubSync?() }
         }
     }
@@ -238,6 +268,7 @@ final class BackgroundSignalsPoller {
             return false
         }.count
         DispatchQueue.main.async { [weak self] in
+            self?.lastCounts.vaultAttention = count
             NotificationSources.setVaultAttention(count: count) { self?.onNavigateToVault?() }
         }
     }
@@ -289,6 +320,7 @@ final class BackgroundSignalsPoller {
         let driftedCount = results.filter { !$0 }.count
 
         DispatchQueue.main.async { [weak self] in
+            self?.lastCounts.setupDrift = driftedCount
             NotificationSources.setSetupDrift(count: driftedCount) { self?.onNavigateToBootstrap?() }
         }
     }
