@@ -39,8 +39,12 @@
 //   - GL-20: the window-resize handler is gated on this page actually being
 //     visible, or a resize while the captain is on Console pays for the
 //     canvas's whole relayout.
-//   - gotcha (13): every width constraint the grid creates is priority 499
-//     (see `HelmResponsiveGrid.spanningRows`), so no card can cap the window.
+//   - gotcha (13): the grid is `HelmResponsiveGrid.rows(_:)`, whose rows are
+//     `.fillEqually` and create no per-card width constraint at all, so no
+//     card can cap the window. (Phase 2 used `spanningRows(_:)` for the wide
+//     briefing, which does create explicit widths - at priority 499 for this
+//     same reason. Uniform card sizing removed the need for it here; see
+//     `DaylightModule`'s own note.)
 
 import AppKit
 
@@ -377,9 +381,15 @@ final class HomeCanvasController: NSViewController {
         lastGridWidth = width
         let modules = visibleModules()
 
-        let rows = HelmResponsiveGrid.spanningRows(
+        // `rows(_:)`, not `spanningRows(_:)`: every module card is one column
+        // wide (see `DaylightModule`'s own note on the captain's override of
+        // §6.1's wide briefing variant). This is the plain `.fillEqually` grid
+        // every other card grid in this app uses, so uniform width is a
+        // property of the layout rather than something each card has to be
+        // asked for - and it carries the partial-last-row padding that stops a
+        // lone leftover card stretching.
+        let rows = HelmResponsiveGrid.rows(
             modules,
-            spans: { $0.span },
             containerWidth: width,
             minItemWidth: Self.minModuleWidth,
             spacing: Self.gridSpacing
@@ -480,8 +490,7 @@ final class HomeCanvasController: NSViewController {
             symbol: module.symbol,
             hue: module.hue,
             chip: nil,
-            body: .note(""),
-            isWide: module.span > 1)
+            body: .note(""))
 
         switch module {
         case .briefing: fillBriefing(&content)
@@ -491,7 +500,10 @@ final class HomeCanvasController: NSViewController {
         case .console: fillConsole(&content)
         case .health: fillHealth(&content)
         case .hosts: fillHosts(&content)
-        case .setup: fillSetup(&content)
+        case .updates: fillUpdates(&content)
+        case .bootstrap: fillBootstrap(&content)
+        case .automation: fillAutomation(&content)
+        case .githubSync: fillGitHubSync(&content)
         case .schedules: fillSchedules(&content)
         case .logAnalyzer: fillLogAnalyzer(&content)
         case .vault: fillVault(&content)
@@ -521,7 +533,20 @@ final class HomeCanvasController: NSViewController {
         formatter.dateStyle = .none
         content.subtitle = "generated \(formatter.string(from: record.generatedAt))"
         content.chip = record.isDegraded ? .warn("offline") : .mute("\(record.sources.count) sources")
-        content.body = .paragraph(record.clauses)
+
+        // One column now, so the paragraph is bounded (see
+        // `HelmModuleCard.maxBriefingClauses`). An overflow is stated rather
+        // than dropped in silence - a card that quietly showed three of six
+        // clauses would read as "that is the whole briefing", which is exactly
+        // the "no silent caps" failure. The trailing line is a plain
+        // `.none`-target clause, so it renders as text inside the same
+        // paragraph and needs no new mechanism.
+        var clauses = Array(record.clauses.prefix(HelmModuleCard.maxBriefingClauses))
+        let hidden = record.clauses.count - clauses.count
+        if hidden > 0 {
+            clauses.append(BriefingClause(text: "+\(hidden) more on Overview.", target: .none))
+        }
+        content.body = .paragraph(clauses)
     }
 
     private func fillFleet(_ content: inout HelmModuleCard.Content) {
@@ -652,36 +677,114 @@ final class HomeCanvasController: NSViewController {
         content.body = .peekRows(Array(rows))
     }
 
-    private func fillSetup(_ content: inout HelmModuleCard.Content) {
-        // `BackgroundSignalsPoller.lastCounts` - already computed for the
-        // Notification Center. §6.1 is explicit: "never a fresh check from
-        // the canvas".
-        let counts = BackgroundSignalsPoller.shared.lastCounts
-        content.subtitle = "toolchain"
-        guard let drift = counts.setupDrift else {
-            // Honest, and specific about which of the two "no number yet"
-            // states this is: the poller's first pass is genuinely in flight
-            // (it starts ~10s after launch), or a pass has completed without
-            // producing a count, which would be a real fault rather than
-            // ordinary startup. Neither renders a fake "Current" or a
-            // confident zero - GL-14's rule, one more signal.
-            content.chip = Self.pollerIsStillWarmingUp ? .mute("Checking\u{2026}") : nil
-            content.body = .note(Self.pollerIsStillWarmingUp
-                ? "Checking the toolchain\u{2026} this card fills itself in when the first pass lands."
-                : "Setup status hasn't been checked yet this session.")
+    // MARK: The four Setup sub-pages
+    //
+    // Each of these reads the one number its own page owns out of
+    // `BackgroundSignalsPoller.lastCounts` - already computed for the
+    // Notification Center, and §6.1 is explicit that the canvas takes the last
+    // published value and "never a fresh check". Splitting the old aggregate
+    // Setup card into four was the captain's call after seeing the hub live.
+    //
+    // Every one of them shares the same two-state "no number yet" handling
+    // (`fillPendingSetupSignal`): the poller's first pass is genuinely in
+    // flight, or a pass completed without producing a count, which is a real
+    // fault rather than ordinary startup. Neither ever renders a confident
+    // zero or an "all current" verdict - GL-14's rule.
+
+    /// The honest loading state shared by all four Setup modules and Vault.
+    private func fillPendingSetupSignal(_ content: inout HelmModuleCard.Content,
+                                        checking: String,
+                                        stale: String) {
+        content.chip = Self.pollerIsStillWarmingUp ? .mute("Checking\u{2026}") : nil
+        content.body = .note(Self.pollerIsStillWarmingUp ? checking : stale)
+    }
+
+    /// Updates: how many catalog tools have a newer version available. The
+    /// exact count `UpdatesController`'s own "Updates Available" tile shows.
+    private func fillUpdates(_ content: inout HelmModuleCard.Content) {
+        content.subtitle = "tools & packages"
+        guard let updates = BackgroundSignalsPoller.shared.lastCounts.toolUpdates else {
+            fillPendingSetupSignal(&content,
+                                   checking: "Checking every tool for a newer version\u{2026}",
+                                   stale: "Tool versions haven't been checked yet this session.")
+            return
+        }
+        guard updates > 0 else {
+            content.chip = .ok("Current")
+            content.body = .note("Every tool in the catalog is on its latest version.")
+            return
+        }
+        content.chip = .warn("\(updates) update\(updates == 1 ? "" : "s")")
+        content.body = .metric(value: "\(updates)",
+                               unit: updates == 1 ? "update" : "updates",
+                               note: "Ready to install from the Updates page.")
+    }
+
+    /// Bootstrap: how many of the five setup steps have drifted. This is the
+    /// progress body the aggregate Setup card used to carry, and it belongs
+    /// here because `SetupStepKind` *is* Bootstrap's own stepper.
+    private func fillBootstrap(_ content: inout HelmModuleCard.Content) {
+        content.subtitle = "machine setup"
+        guard let drift = BackgroundSignalsPoller.shared.lastCounts.setupDrift else {
+            fillPendingSetupSignal(&content,
+                                   checking: "Checking the setup steps\u{2026} this card fills itself in when the first pass lands.",
+                                   stale: "Setup status hasn't been checked yet this session.")
             return
         }
         let total = SetupStepKind.allCases.count
         let done = max(0, total - drift)
-        if let updates = counts.toolUpdates, updates > 0 {
-            content.chip = .warn("\(updates) update\(updates == 1 ? "" : "s")")
-        } else if drift == 0 {
-            content.chip = .ok("Current")
-        }
+        content.chip = drift == 0 ? .ok("Current") : .warn("\(drift) drifted")
         content.body = .progress(value: done, total: total,
                                  note: drift == 0
                                     ? "Every setup step matches."
                                     : "\(drift) step\(drift == 1 ? "" : "s") drifted.")
+    }
+
+    /// Automation: what a one-click "Run Automation" would actually do.
+    ///
+    /// Deliberately the same published `setupDrift` Bootstrap reads - that page
+    /// is the sequencer over the very same `SetupStepChecks` predicates, so a
+    /// second number would be a second opinion about one fact. What differs is
+    /// the question each card answers: Bootstrap's is "does my machine match?",
+    /// this one's is "is there anything for a run to do?".
+    private func fillAutomation(_ content: inout HelmModuleCard.Content) {
+        content.subtitle = "one-click setup"
+        guard let drift = BackgroundSignalsPoller.shared.lastCounts.setupDrift else {
+            fillPendingSetupSignal(&content,
+                                   checking: "Checking what a full run would need to do\u{2026}",
+                                   stale: "Setup status hasn't been checked yet this session.")
+            return
+        }
+        let total = SetupStepKind.allCases.count
+        guard drift > 0 else {
+            content.chip = .ok("Nothing to run")
+            content.body = .note("All \(total) steps are already satisfied - a full run would skip every one.")
+            return
+        }
+        content.chip = .warn("\(drift) to run")
+        content.body = .note("A full run would work through \(drift) drifted step\(drift == 1 ? "" : "s") in order, stopping at the first failure.")
+    }
+
+    /// GitHub Sync: how many of the captain's forks are behind upstream. The
+    /// same count `GitHubSyncController`'s own rows show a Sync button for.
+    private func fillGitHubSync(_ content: inout HelmModuleCard.Content) {
+        content.subtitle = "forks"
+        guard let drift = BackgroundSignalsPoller.shared.lastCounts.forkDrift else {
+            fillPendingSetupSignal(&content,
+                                   checking: "Checking each fork against its upstream\u{2026}",
+                                   stale: "Fork drift hasn't been checked yet this session.")
+            return
+        }
+        let total = GitHubSyncCatalog.repos.count
+        guard drift > 0 else {
+            content.chip = .ok("In sync")
+            content.body = .note("All \(total) forks match their upstream.")
+            return
+        }
+        content.chip = .warn("\(drift) behind")
+        content.body = .metric(value: "\(drift)",
+                               unit: drift == 1 ? "fork" : "forks",
+                               note: "Behind upstream, of \(total) tracked.")
     }
 
     private func fillSchedules(_ content: inout HelmModuleCard.Content) {
@@ -728,11 +831,11 @@ final class HomeCanvasController: NSViewController {
         let counts = BackgroundSignalsPoller.shared.lastCounts
         content.subtitle = "names only"
         guard let secrets = counts.vaultSecrets else {
-            // The same two states as Setup above, for the same reason.
-            content.chip = Self.pollerIsStillWarmingUp ? .mute("Checking\u{2026}") : nil
-            content.body = .note(Self.pollerIsStillWarmingUp
-                ? "Checking Automic Vault\u{2026} this card fills itself in when the first pass lands."
-                : "Vault hasn't been checked yet this session.")
+            // The same two states as the four Setup modules above, for the
+            // same reason.
+            fillPendingSetupSignal(&content,
+                                   checking: "Checking Automic Vault\u{2026} this card fills itself in when the first pass lands.",
+                                   stale: "Vault hasn't been checked yet this session.")
             return
         }
         if let attention = counts.vaultAttention, attention > 0 {

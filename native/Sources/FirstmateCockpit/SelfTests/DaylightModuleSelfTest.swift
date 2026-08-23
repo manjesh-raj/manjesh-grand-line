@@ -9,7 +9,7 @@
 //   1. **Module anatomy** - a module really is §6.1's card: ribbon, gradient
 //      tile, header text, optional chip, one of the body kinds, and one
 //      clickable target that announces as a button.
-//   2. **Span-2 grid math** - the wide briefing consumes two columns, rows
+//   2. **Uniform card sizing** - every card the same width, rows
 //      never overflow their column count, and a short row is padded rather
 //      than stretched.
 //   3. **The space table matches the locked decision exactly** - restated
@@ -45,7 +45,7 @@ enum DaylightModuleSelfTest {
         // stops printing OK lines after the first FAIL hides how much else is
         // broken, which is the opposite of what a regression run is for.
         var allOK = true
-        for check in [checkSpaceTable, checkSymbolsResolve, checkSpanGridMath,
+        for check in [checkSpaceTable, checkSymbolsResolve, checkUniformCardSizing, checkNoCardIsAWindowFloor,
                       checkModuleAnatomy, checkCanvasConstructsNoStores,
                       checkBarAnatomy, checkBarDoesNotCapWindow,
                       checkCanvasAndDrillHeader, checkLiveModuleWiring,
@@ -76,7 +76,7 @@ enum DaylightModuleSelfTest {
         .command: [.console, .tasks, .mergeQueue],
         .operations: [.hosts, .logAnalyzer, .health, .schedules],
         .stores: [.vault, .docs, .tools, .dictation],
-        .engineering: [.setup, .settings],
+        .engineering: [.updates, .bootstrap, .automation, .githubSync, .settings],
     ]
 
     /// The two that appear on Overview and nowhere else.
@@ -154,50 +154,17 @@ enum DaylightModuleSelfTest {
         if ok { print("  OK - all \(Set(names).count) symbols resolve") }
     }
 
-    // MARK: 2 - span-2 grid math
+    // MARK: 2 - uniform card sizing
+    //
+    // The captain's override of §6.1's wide briefing variant: every module
+    // card is the same size, on every space. This case is the direct encoding
+    // of that rule - it measures the *real* canvas grid rather than reasoning
+    // about a `span` property, so reintroducing per-card sizing by any route
+    // (a span value, a width constraint on one card, a stretched partial row)
+    // fails here.
 
-    private static func checkSpanGridMath(_ ok: inout Bool) {
-        print("\n-- grid: span-2 packing, no overflow, padded partial rows --")
-
-        // Pure packing first, with no views involved.
-        //
-        // Case A: the real canvas shape - one span-2 module (the briefing)
-        // followed by fourteen span-1 modules.
-        let canvasSpans = DaylightModule.canvasOrder.map(\.span)
-        if canvasSpans.filter({ $0 == 2 }).count != 1 {
-            fail("exactly one module should be wide (the briefing), \(canvasSpans.filter { $0 == 2 }.count) are", &ok)
-        }
-        if DaylightModule.briefing.span != 2 {
-            fail("the Morning briefing must span 2 columns (\u{00A7}6.1's wide variant)", &ok)
-        }
-
-        for columns in 1...6 {
-            let rows = HelmResponsiveGrid.packRows(spans: canvasSpans, columns: columns)
-            // No row may exceed the column count.
-            for (index, row) in rows.enumerated() {
-                let used = row.reduce(0) { $0 + $1.span }
-                if used > columns {
-                    fail("at \(columns) columns, row \(index) uses \(used) columns", &ok)
-                }
-            }
-            // Every item placed exactly once, in order.
-            let placed = rows.flatMap { $0 }.map(\.index)
-            if placed != Array(canvasSpans.indices) {
-                fail("at \(columns) columns, packing lost or reordered items: \(placed)", &ok)
-            }
-            // A span-2 item degrades rather than overflowing a 1-column grid.
-            if columns == 1 {
-                let spans = Set(rows.flatMap { $0 }.map(\.span))
-                if spans != [1] {
-                    fail("at 1 column every item must degrade to span 1, got spans \(spans.sorted())", &ok)
-                }
-            } else {
-                let briefing = rows.flatMap { $0 }.first { $0.index == 0 }
-                if briefing?.span != 2 {
-                    fail("at \(columns) columns the briefing should still span 2, got \(briefing?.span ?? -1)", &ok)
-                }
-            }
-        }
+    private static func checkUniformCardSizing(_ ok: inout Bool) {
+        print("\n-- grid: every module card the same size, on every space --")
 
         // Column count is monotonic in width and never below one.
         var previous = 0
@@ -210,53 +177,184 @@ enum DaylightModuleSelfTest {
             previous = columns
         }
 
-        // Now the built rows: every row is padded to the full column count, so
-        // a partial row's cards stay the same width as a full row's.
-        let container: CGFloat = 1100
-        let columns = HelmResponsiveGrid.columns(containerWidth: container,
-                                                 minItemWidth: HomeCanvasController.minModuleWidth,
-                                                 spacing: HomeCanvasController.gridSpacing)
-        let unit = HelmResponsiveGrid.itemWidth(containerWidth: container, columns: columns,
-                                                spacing: HomeCanvasController.gridSpacing)
-        let rows = HelmResponsiveGrid.spanningRows(
-            DaylightModule.canvasOrder,
-            spans: { $0.span },
-            containerWidth: container,
-            minItemWidth: HomeCanvasController.minModuleWidth,
-            spacing: HomeCanvasController.gridSpacing
-        ) { _, _ in
-            let v = NSView()
-            v.translatesAutoresizingMaskIntoConstraints = false
-            return v
-        }
-        for (index, row) in rows.enumerated() {
-            let widths = row.arrangedSubviews.compactMap { view in
-                view.constraints.first { $0.firstAttribute == .width }?.constant
-            }
-            let total = widths.reduce(0, +) + HomeCanvasController.gridSpacing * CGFloat(max(0, widths.count - 1))
-            // Padding to the column count means the *cell* total always fills
-            // the container, whatever mix of spans the row holds.
-            if abs(total - container) > 1.0 {
-                fail("row \(index) covers \(total)pt of a \(container)pt container - padding is wrong", &ok)
-            }
-            // Every width constraint must sit below the window's own
-            // stay-put priority (gotcha (13)).
-            for view in row.arrangedSubviews {
-                for constraint in view.constraints where constraint.firstAttribute == .width {
-                    if constraint.priority.rawValue >= 500 {
-                        fail("a grid width constraint is priority \(constraint.priority.rawValue) - "
-                             + "anything >= 500 can cap the window", &ok)
+        // The real grid, at several real widths, for every space - including
+        // the partial-last-row case, which is what a lone leftover card
+        // stretching to fill its row would look like.
+        for space in DaylightSpace.allCases {
+            let modules = DaylightModule.canvasOrder.filter { $0.isVisible(in: space) }
+            for container in [CGFloat(560), 820, 1100, 1512, 1900] {
+                let columns = HelmResponsiveGrid.columns(containerWidth: container,
+                                                         minItemWidth: HomeCanvasController.minModuleWidth,
+                                                         spacing: HomeCanvasController.gridSpacing)
+                let rows = HelmResponsiveGrid.rows(
+                    modules,
+                    containerWidth: container,
+                    minItemWidth: HomeCanvasController.minModuleWidth,
+                    spacing: HomeCanvasController.gridSpacing
+                ) { _, _ in
+                    let v = NSView()
+                    v.translatesAutoresizingMaskIntoConstraints = false
+                    return v
+                }
+
+                // Every row holds exactly one column's worth of cells, padded
+                // with spacers, so `.fillEqually` divides by the same number in
+                // every row - which is what makes the widths uniform.
+                for (index, row) in rows.enumerated() {
+                    if row.arrangedSubviews.count != columns {
+                        fail("\(space.rawValue) at \(container)pt: row \(index) has "
+                             + "\(row.arrangedSubviews.count) cells, expected \(columns) - "
+                             + "an unpadded row stretches its cards", &ok)
                     }
+                    if row.distribution != .fillEqually {
+                        fail("\(space.rawValue) at \(container)pt: row \(index) is "
+                             + "\(row.distribution.rawValue), not .fillEqually - cards can differ in width", &ok)
+                    }
+                    // No card may carry a width constraint of its own: a
+                    // per-card width is both how non-uniform sizing comes back
+                    // and how a card caps the window (gotcha (13)).
+                    for view in row.arrangedSubviews {
+                        for constraint in view.constraints where constraint.firstAttribute == .width {
+                            fail("\(space.rawValue) at \(container)pt: a grid cell carries its own width "
+                                 + "constraint (\(constraint.constant)pt, priority "
+                                 + "\(constraint.priority.rawValue)) - cards must be sized by "
+                                 + ".fillEqually alone", &ok)
+                        }
+                    }
+                }
+
+                // Every module placed exactly once, in order.
+                let placed = rows.reduce(0) { $0 + min($1.arrangedSubviews.count, columns) }
+                if placed < modules.count {
+                    fail("\(space.rawValue) at \(container)pt: laid out \(placed) cells for "
+                         + "\(modules.count) modules", &ok)
                 }
             }
         }
-        // Sanity: at 1100pt with a 255pt minimum there is genuinely more than
-        // one column, or the span check above proves nothing.
-        if columns < 2 {
-            fail("expected multiple columns at 1100pt (unit \(unit)), got \(columns)", &ok)
+
+        // Engineering's own lineup, in order - the captain's second
+        // refinement, stated as the list they asked for.
+        let engineering = DaylightModule.canvasOrder.filter { $0.isVisible(in: .engineering) }
+        let expected: [DaylightModule] = [.updates, .bootstrap, .automation, .githubSync, .settings]
+        if engineering != expected {
+            fail("Engineering should show \(expected.map(\.rawValue)) in that order, got "
+                 + "\(engineering.map(\.rawValue))", &ok)
+        }
+        for module in [DaylightModule.updates, .bootstrap, .automation, .githubSync] {
+            if module.opens == .updates && module != .updates {
+                fail("\(module.rawValue) opens .updates - each Setup card must open its own page", &ok)
+            }
+        }
+        let opened = Set([DaylightModule.updates, .bootstrap, .automation, .githubSync].map(\.opens))
+        if opened != [.updates, .bootstrap, .automation, .githubSync] {
+            fail("the four Engineering cards should open four distinct destinations, got "
+                 + "\(opened.map(String.init(describing:)).sorted())", &ok)
         }
 
-        if ok { print("  OK - packing, degradation, monotonic columns, padded rows, sub-500 widths") }
+        // The grid's span-2 packing math is still exercised, with literal
+        // spans rather than a module property: `spanningRows` is retained
+        // infrastructure (see `HelmResponsiveGrid`), nothing on the canvas
+        // calls it, and this keeps it honest if a later phase brings it back.
+        for columns in 1...6 {
+            let spans = [2, 1, 1, 1, 1, 1, 1]
+            let rows = HelmResponsiveGrid.packRows(spans: spans, columns: columns)
+            for (index, row) in rows.enumerated() {
+                let used = row.reduce(0) { $0 + $1.span }
+                if used > columns { fail("packRows: at \(columns) columns, row \(index) uses \(used)", &ok) }
+            }
+            let placed = rows.flatMap { $0 }.map(\.index)
+            if placed != Array(spans.indices) {
+                fail("packRows: at \(columns) columns, packing lost or reordered items: \(placed)", &ok)
+            }
+            let wide = rows.flatMap { $0 }.first { $0.index == 0 }
+            let expectedSpan = columns == 1 ? 1 : 2
+            if wide?.span != expectedSpan {
+                fail("packRows: at \(columns) columns a span-2 item should be \(expectedSpan), "
+                     + "got \(wide?.span ?? -1)", &ok)
+            }
+        }
+
+        if ok { print("  OK - uniform cells on 5 spaces x 5 widths, Engineering's five cards, packing math") }
+    }
+
+    /// Nothing inside a module card may outrank the window's own size.
+    ///
+    /// **The invariant, asserted structurally rather than by reproducing the
+    /// layout.** A grid row is `.fillEqually`, so a card that refuses to
+    /// compress does not cap the window at its own width - it caps it at
+    /// *column count times* that width. That is how one card holding a long
+    /// note produced a real 1135.5pt floor on every destination at once
+    /// (`.homeCanvas` is eagerly mounted, so its constraints are live whatever
+    /// page is showing - gotcha (11)).
+    ///
+    /// The emergent failure itself is caught by
+    /// `AppShellBodyWidthSelfTest.bodyContainerTracksWindowAcrossAllDestinations`,
+    /// which mounts a real shell in a real window and is the guard that
+    /// actually reproduced it. Reproducing it synthetically here needs the
+    /// whole scroll/clip/document/grid chain, at which point the test is just
+    /// a worse copy of that one - so this checks the *cause* instead, which
+    /// is deterministic and reads as a rule: no stack inside a card, and no
+    /// label or text view inside one, may sit at or above
+    /// `NSLayoutPriorityWindowSizeStayPut` (500) horizontally.
+    ///
+    /// It also covers the one body kind that other suite cannot reach: it
+    /// mounts a real shell against a scratch environment, where
+    /// `AppSettings.morningBriefingRecord` is nil, so the briefing card there
+    /// renders its `.note` fallback and the `.paragraph` body - an
+    /// `NSTextView`, the widest-intrinsic thing a card can hold - is never
+    /// laid out at all. In production it is.
+    private static func checkNoCardIsAWindowFloor(_ ok: inout Bool) {
+        print("\n-- module card: nothing inside outranks the window's own size --")
+
+        let longNote = "Two crew are working, one pull request is ready to merge, and nothing is blocked right now."
+        let bodies: [(String, HelmModuleCard.Body)] = [
+            ("paragraph", .paragraph([
+                BriefingClause(text: "Two crew are working and nothing is blocked.", target: .fleet),
+                BriefingClause(text: "One pull request is ready to merge whenever you are.", target: .review),
+                BriefingClause(text: "Claude usage is comfortable for the rest of the day.", target: .quota),
+            ])),
+            ("note", .note(longNote)),
+            ("metric", .metric(value: "12", unit: "updates", note: longNote)),
+            ("progress", .progress(value: 4, total: 5, note: longNote)),
+            ("ring", .ring(value: 4, total: 5, title: "Healthy", note: longNote)),
+            ("peekRows", .peekRows([
+                HelmModulePeekRow(state: .ok, text: "a-long-crew-task-identifier-here", value: "working"),
+                HelmModulePeekRow(state: .warn, text: "another-long-identifier-here", value: "needs decision"),
+            ])),
+        ]
+
+        let stayPut = NSLayoutConstraint.Priority(rawValue: 500)
+
+        for (name, body) in bodies {
+            let card = HelmModuleCard()
+            card.configure(.init(title: "Morning briefing", subtitle: "generated 9:41 AM",
+                                 symbol: "cup.and.saucer.fill", hue: .amber,
+                                 chip: .mute("3 sources"), body: body))
+            card.frame = NSRect(x: 0, y: 0, width: 263, height: 200)
+            card.layoutSubtreeIfNeeded()
+
+            // Stacks only, and that is the measured scope rather than a
+            // shortcut: a leaf's own compression resistance was tried as a
+            // suspect first and does *not* propagate through a stack that has
+            // already agreed to clip - reverting only the paragraph text
+            // view's 750 priority left the floor gone. The stack is what
+            // binds, so the stack is what this asserts.
+            func walk(_ view: NSView) {
+                if let stack = view as? NSStackView,
+                   stack.clippingResistancePriority(for: .horizontal) >= stayPut {
+                    // gotcha (12): a stack has no intrinsic content size, so
+                    // the *content* priority APIs are no-ops on it - clipping
+                    // resistance is the one that binds, and it defaults to 750.
+                    fail("\(name): a stack inside the card resists clipping at "
+                         + "\(stack.clippingResistancePriority(for: .horizontal).rawValue) - "
+                         + "at or above 500 that is a window-width floor", &ok)
+                }
+                view.subviews.forEach(walk)
+            }
+            walk(card)
+        }
+
+        if ok { print("  OK - 6 body kinds, every stack below the window's stay-put priority") }
     }
 
     // MARK: 1 - module anatomy
@@ -724,7 +822,10 @@ enum DaylightModuleSelfTest {
             poller.debugSetCounts(BackgroundSignalsPoller.SignalCounts())
             canvas.debugRenderNow()
 
-            for module in [DaylightModule.setup, .vault] {
+            // All four Setup modules read the poller too now, not just the
+            // one aggregate card - each must be honest about having no number
+            // yet, or four cards go stale instead of one.
+            for module in [DaylightModule.updates, .bootstrap, .automation, .githubSync, .vault] {
                 guard let a = card(module) else {
                     fail("no \(module.rawValue) card rendered", &ok)
                     continue
@@ -767,18 +868,42 @@ enum DaylightModuleSelfTest {
             // the fan-out count in 1c below.
             drainMainQueue()
 
-            if let a = card(.setup) {
+            if let a = card(.bootstrap) {
                 if a.chipText != "Current" {
-                    fail("Setup chip is \(a.chipText ?? "nil") after a clean pass, expected Current", &ok)
+                    fail("Bootstrap chip is \(a.chipText ?? "nil") after a clean pass, expected Current", &ok)
                 }
                 if a.metricTexts.isEmpty {
-                    fail("Setup still shows no progress figure after a pass published a count - "
+                    fail("Bootstrap still shows no progress figure after a pass published a count - "
                          + "the observer did not reach it", &ok)
                 }
                 if (a.noteTexts + a.metricTexts).joined().lowercased().contains("checking") {
-                    fail("Setup is still showing its loading copy after real data arrived", &ok)
+                    fail("Bootstrap is still showing its loading copy after real data arrived", &ok)
                 }
-            } else { fail("no Setup card after the pass", &ok) }
+            } else { fail("no Bootstrap card after the pass", &ok) }
+
+            // The other three Engineering cards read three different published
+            // numbers, so each has to leave its loading state on its own -
+            // one card working proves nothing about the other three.
+            if let a = card(.updates) {
+                if a.chipText != "Current" {
+                    fail("Updates chip is \(a.chipText ?? "nil") after a pass reported 0 updates, expected Current", &ok)
+                }
+            } else { fail("no Updates card after the pass", &ok) }
+
+            if let a = card(.githubSync) {
+                if a.chipText != "In sync" {
+                    fail("GitHub Sync chip is \(a.chipText ?? "nil") after a pass reported 0 drift, expected In sync", &ok)
+                }
+            } else { fail("no GitHub Sync card after the pass", &ok) }
+
+            if let a = card(.automation) {
+                if a.chipText != "Nothing to run" {
+                    fail("Automation chip is \(a.chipText ?? "nil") after a clean pass, expected Nothing to run", &ok)
+                }
+                if (a.noteTexts + a.metricTexts).joined().lowercased().contains("checking") {
+                    fail("Automation is still showing its loading copy after real data arrived", &ok)
+                }
+            } else { fail("no Automation card after the pass", &ok) }
 
             if let a = card(.vault) {
                 if a.metricTexts.first != "7" {

@@ -2795,6 +2795,18 @@ enum HelmResponsiveGrid {
     }
 
     // MARK: Span-aware layout (Daylight migration §6.1)
+    //
+    // **Currently uncalled by the app, deliberately retained.** This was built
+    // for §6.1's wide Morning-briefing card; the captain overrode that after
+    // seeing it live and every module card is one column now, so
+    // `HomeCanvasController` uses `rows(_:)` above instead. Kept rather than
+    // deleted because the *spec* still describes span-2 as a grid capability,
+    // the math is non-obvious enough to be worth not re-deriving, and
+    // `DaylightModuleSelfTest.checkUniformCardSizing` still exercises
+    // `packRows` directly - so it cannot rot silently. Note the difference if
+    // it is ever reinstated: this path creates explicit per-card width
+    // constraints (at priority 499, gotcha (13)), where `rows(_:)` creates
+    // none at all.
 
     /// One item's placement decision: which items share a row, and how many
     /// columns each consumes.
