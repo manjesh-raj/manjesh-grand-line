@@ -315,6 +315,43 @@ def _validate_runbook_line(line):
     return subcommand, args, None
 
 
+def _emit_runbook_event(title, ran, total, ok, refused):
+    """Drop a one-line summary of a finished runbook run into the bridge
+    directory for `SRELeadBridge` to pick up (F8, incident mode).
+
+    Purely a notification: the runbook has already run (or already been
+    refused) by the time this is called, and nothing here executes anything.
+    It exists because a bridge request carries only `{"command": ...}` - the
+    Swift side has no way to tell a runbook's steps apart from any other
+    kubectl call, and inferring it would be guesswork.
+
+    Carries no command text and no output, only the runbook's own title and
+    step counts. Best effort: a failure to write this must never affect the
+    tool's real result, so every error is swallowed."""
+    try:
+        bridge_dir = _bridge_dir()
+    except RuntimeError:
+        return
+    try:
+        event_id = uuid.uuid4().hex
+        path = os.path.join(bridge_dir, f"event-{event_id}.json")
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({
+                "kind": "runbook_run",
+                "runbook": title,
+                "ran": ran,
+                "total": total,
+                "ok": bool(ok),
+                "refused": bool(refused),
+            }, f)
+        # Renamed into place so a half-written file is never claimed - the
+        # same discipline `_execute_via_bridge` uses for a request.
+        os.rename(tmp, path)
+    except OSError:
+        pass
+
+
 def _run_runbook(name):
     found, error = _find_runbook(name)
     if error:
@@ -335,6 +372,7 @@ def _run_runbook(name):
     for step_num, line in enumerate(command_lines, start=1):
         subcommand, args, line_error = _validate_runbook_line(line)
         if line_error:
+            _emit_runbook_event(title, 0, len(command_lines), False, True)
             return {
                 "ok": False,
                 "runbook": title,
@@ -361,7 +399,9 @@ def _run_runbook(name):
             # sequence.
             break
 
-    return {"ok": all(s.get("ok") for s in steps), "runbook": title, "steps": steps}
+    ok = all(s.get("ok") for s in steps)
+    _emit_runbook_event(title, len(steps), len(parsed_steps), ok, False)
+    return {"ok": ok, "runbook": title, "steps": steps}
 
 
 def _tool_schema():

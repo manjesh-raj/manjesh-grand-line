@@ -24,15 +24,20 @@
 
 import Foundation
 
-/// The four kinds the captain-approved mockup's filter pills name (All /
-/// Merges / Tasks / Sync / Investigations). Deliberately closed: a fifth kind
-/// means a fifth pill and a real, already-existing signal to put behind it,
-/// not a free-text label a caller invents at the call site.
+/// The kinds the captain-approved mockup's filter pills name (All / Merges /
+/// Tasks / Sync / Investigations), plus Incidents. Deliberately closed: a new
+/// kind means a new pill (the filter row is built from `allCases`) and a real,
+/// already-existing signal to put behind it, not a free-text label a caller
+/// invents at the call site. `.incident` earned one when F8 gave incidents a
+/// real start/end event of their own - it is deliberately not folded into
+/// `.investigation`, which is a Log Analyzer artifact rather than a declared
+/// incident, and the two are filtered separately for exactly that reason.
 enum FleetLogEventKind: String, Codable, CaseIterable {
     case merge
     case task
     case sync
     case investigation
+    case incident
 
     /// The filter pill's label, and the plural used in the empty state.
     var pluralTitle: String {
@@ -41,6 +46,7 @@ enum FleetLogEventKind: String, Codable, CaseIterable {
         case .task: return "Tasks"
         case .sync: return "Sync"
         case .investigation: return "Investigations"
+        case .incident: return "Incidents"
         }
     }
 
@@ -54,6 +60,7 @@ enum FleetLogEventKind: String, Codable, CaseIterable {
         case .task: return "checkmark.circle.fill"
         case .sync: return "arrow.triangle.2.circlepath"
         case .investigation: return "sparkles"
+        case .incident: return "bolt.fill"
         }
     }
 
@@ -66,6 +73,10 @@ enum FleetLogEventKind: String, Codable, CaseIterable {
         case .task: return .good
         case .sync: return .info
         case .investigation: return .violet
+        // Red, matching the incident card's own header tile and the toolbar
+        // action that starts one - the one event kind in this feed that is
+        // about something going wrong rather than something completing.
+        case .incident: return .critical
         }
     }
 }
@@ -146,5 +157,24 @@ enum FleetLogSources {
     /// investigation is not saved and gets no event.
     static func investigationSaved(title: String, id: String) -> FleetLogEvent {
         FleetLogEvent(kind: .investigation, title: "Saved investigation \u{201C}\(title)\u{201D}", reference: id)
+    }
+
+    /// F8: an incident the captain declared on a host page, appended once the
+    /// record genuinely reached disk.
+    static func incidentStarted(id: String, title: String, hostLabel: String) -> FleetLogEvent {
+        FleetLogEvent(kind: .incident,
+                      title: "Started incident \(id) \u{2014} \u{201C}\(title)\u{201D} on \(hostLabel)",
+                      reference: id)
+    }
+
+    /// F8: the same incident ended. Carries how long it ran, which is the one
+    /// thing about an incident that only the log can say at a glance.
+    static func incidentEnded(id: String, title: String, hostLabel: String,
+                              startedAt: Date, endedAt: Date) -> FleetLogEvent {
+        let duration = Incident.elapsedText(from: startedAt, to: endedAt)
+            .replacingOccurrences(of: " ago", with: "")
+        return FleetLogEvent(kind: .incident,
+                             title: "Ended incident \(id) \u{2014} \u{201C}\(title)\u{201D} on \(hostLabel) after \(duration)",
+                             reference: id)
     }
 }

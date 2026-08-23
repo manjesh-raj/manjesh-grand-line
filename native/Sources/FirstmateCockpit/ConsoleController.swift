@@ -247,6 +247,45 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// nothing about the Log Analyzer destination.
     var onAnalyzeLogs: ((LogTerminalCapture, String) -> Void)?
 
+    /// F8 (incident mode): forwarded to `AppShellController`, which opens the
+    /// Log Analyzer on a saved investigation. Fired only from the incident
+    /// card's Evidence tab, for a row that carries a real investigation id.
+    var onOpenInvestigation: ((String) -> Void)?
+
+    // MARK: F8 - incident mode (dedicated host pages only)
+    //
+    // GL-36: stored here rather than in `ConsoleController+Incident.swift`
+    // with the rest of the feature, because a Swift extension cannot declare
+    // a stored property.
+
+    /// Which saved host this page belongs to, set by
+    /// `AppShellController.connectHost`. `nil` on the shared Firstmate
+    /// console, which has no single host and therefore no incidents - the
+    /// toolbar button hides itself in that case (`updateIncidentControls`).
+    var hostIdentity: ConsoleHostIdentity? {
+        didSet { updateIncidentControls() }
+    }
+
+    /// One store per page. It re-reads its own directory on demand and
+    /// memoises, so a second instance is cheap and never a second source of
+    /// truth - the same "each page keeps an independent copy of the same
+    /// underlying check" convention `UpdatesController`/`BootstrapController`
+    /// already use for `DependencyCatalog`.
+    lazy var incidentStore = IncidentStore()
+
+    /// The red toolbar action, and the always-visible active-incident
+    /// indicator - see `IncidentCardView`'s header for why the card itself is
+    /// a popover rather than an inline strip.
+    var incidentButton: HelmButton?
+    let incidentPopover = NSPopover()
+    let incidentCard = IncidentCardView()
+
+    /// How many SRE Lead turns each tab has completed during the current
+    /// incident, so a timeline entry can say "turn 3" without re-deriving it
+    /// from a chat view that may since have been torn down. Keyed by
+    /// `TabModel.id`, exactly like every other per-tab bookkeeping here.
+    var sreLeadTurnCounts: [UUID: Int] = [:]
+
     var composeButton: HelmButton!
     let composer = ConsoleComposerController()
     /// `fm/grandline-herdr-utilization-panel` - only ever shown for a
@@ -358,6 +397,8 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
 
         buildSRELeadPane()
         root.addSubview(sreLeadPane)
+
+        buildIncidentCard()
 
         // The one path that ever sends a composed command anywhere - see
         // `ConsoleComposerPopover.swift`'s header for why this is never

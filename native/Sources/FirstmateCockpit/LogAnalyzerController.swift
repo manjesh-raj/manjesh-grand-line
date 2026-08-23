@@ -188,6 +188,12 @@ final class LogAnalyzerController: NSViewController {
     private var neededEvidenceCard: HelmCard!
     private let neededEvidenceStack = NSStackView()
 
+    /// F8 (incident mode): fired after an investigation is genuinely written
+    /// to disk, with its id and title. Forwarded (never handled here) exactly
+    /// like every other cross-destination signal in this app - this page
+    /// knows nothing about incidents.
+    var onInvestigationSaved: ((String, String) -> Void)?
+
     // History rail (spec §23)
     private let historyRail = NSView()
     private var historyRailWidth: NSLayoutConstraint!
@@ -1826,6 +1832,14 @@ extension LogAnalyzerController {
         investigation.tags = tags
         store.save(investigation)
         reloadHistory()
+        // F8 (incident mode): a saved investigation attaches itself to an
+        // active incident as openable evidence. Fired on every save (this
+        // method also runs on a later storage-choice change for the same
+        // investigation), so the receiver dedupes by id - see
+        // `ConsoleController.noteInvestigationSaved`.
+        if investigation.storage != .doNotSave {
+            onInvestigationSaved?(investigation.id, investigation.title)
+        }
     }
 
     // MARK: Spec §23 - history
@@ -1860,6 +1874,20 @@ extension LogAnalyzerController {
             return content
         }
         historyList.setContents(contents, theme: theme)
+    }
+
+    /// F8 (incident mode): open a saved investigation by id, from outside
+    /// this page - the incident card's Evidence tab. Reuses the history
+    /// rail's own open path rather than a second one, so a saved
+    /// investigation is reopened exactly the same way regardless of where the
+    /// captain clicked.
+    func openSavedInvestigation(id: String) {
+        reloadHistory()
+        guard let index = historyEntries.firstIndex(where: { $0.id == id }) else {
+            Toast.show(in: view, message: "That investigation is no longer saved")
+            return
+        }
+        openHistoryEntry(at: index)
     }
 
     private func openHistoryEntry(at index: Int) {

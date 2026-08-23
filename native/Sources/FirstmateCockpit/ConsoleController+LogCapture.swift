@@ -77,6 +77,11 @@ extension ConsoleController {
             Toast.show(in: view, message: "This tab has no output to analyze yet")
             return
         }
+        // F8 (incident mode): the capture's *shape* attaches to an active
+        // incident on this host before the capture is handed on - never
+        // `capture.text`, which has not been through `LogRedactor` yet (that
+        // happens inside `LogAnalyzerController.addEvidence`).
+        noteLogCapture(capture, tabName: tab.name)
         onAnalyzeLogs?(capture, tab.name)
     }
 

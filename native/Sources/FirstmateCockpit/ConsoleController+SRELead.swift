@@ -220,6 +220,14 @@ extension ConsoleController {
                 case .success(let session):
                     state.session = session
                     state.bridge = SRELeadBridge(bridgeDir: session.bridgeDir, target: tab)
+                    // F8: a runbook that runs through this tab's bridge
+                    // attaches itself to an active incident on this host. The
+                    // bridge only *observes* the run - see its
+                    // `onRunbookRun` doc comment.
+                    state.bridge?.onRunbookRun = { [weak self] event in
+                        self?.noteRunbookRun(name: event.name, ran: event.ran, total: event.total,
+                                             ok: event.ok, refused: event.refused)
+                    }
                     state.bridge?.start()
                     state.runner = SRELeadRunner(session: session, claude: claude)
                     let chat = state.chatView ?? self.makeSRELeadChat(for: tab)
@@ -252,6 +260,12 @@ extension ConsoleController {
             switch result {
             case .success(let reply):
                 chat.append(SRELeadMessage(role: .assistant, text: reply))
+                // F8 (incident mode): a completed turn is one of the three
+                // things that attach themselves to an active incident on this
+                // host. Only ever a real reply - a failed turn is an error in
+                // this tab's own chat, not something that happened to the
+                // cluster - and a no-op when no incident is running.
+                if let self, let tab { self.noteSRELeadTurn(question: text, tab: tab) }
                 // fm/grandline-notification-center (#7): a reply that lands
                 // while this tab isn't the one on screen (a different tab
                 // selected, or this whole host page hidden) is exactly the

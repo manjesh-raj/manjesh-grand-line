@@ -90,6 +90,19 @@ extension ConsoleController {
             analyzeLogsButton = button
             toolViews.append(button)
         }
+        // F8 (incident mode): the red action that ties SRE Lead, the Log
+        // Analyzer and runbook runs on this host into one record. Sits at the
+        // end of the investigation cluster (SRE Lead / Compose / Analyze Logs)
+        // and, like SRE Lead, only exists on a dedicated host page - an
+        // incident belongs to a host.
+        if !isFirstmateConsole {
+            let button = makeLabeledButton(symbol: "bolt", title: "Start Incident",
+                                           tooltip: "Start an incident on this host",
+                                           action: #selector(incidentButtonClicked))
+            button.tint = .critical
+            incidentButton = button
+            toolViews.append(button)
+        }
         toolViews += [findButton, zoomOutButton, zoomInButton, themeButton]
         if !isFirstmateConsole {
             toolViews += [blockViewToggleButton, blockViewRefreshButton]
@@ -216,6 +229,9 @@ extension ConsoleController {
         updateBlockViewControls()
         updateComposeControls()
         updateUtilizationControls()
+        updateIncidentControls()
+        incidentCard.applyTheme(theme)
+        if incidentPopover.isShown { renderIncidentCard() }
 
         // The pane is a distinct surface/card, not a continuation of the
         // terminal - filled with `chromeBackgroundHex` (this app's "surface"

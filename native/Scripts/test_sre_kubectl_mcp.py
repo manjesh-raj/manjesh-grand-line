@@ -265,6 +265,16 @@ class RunbookExecutionTests(unittest.TestCase):
         t.start()
         return t
 
+    def _events(self):
+        return [f for f in os.listdir(self.bridge_dir) if f.startswith("event-") and f.endswith(".json")]
+
+    def _read_events(self):
+        out = []
+        for name in sorted(self._events()):
+            with open(os.path.join(self.bridge_dir, name)) as f:
+                out.append(json.load(f))
+        return out
+
     def test_no_runbooks_dir_env_fails_cleanly(self):
         del os.environ["SRE_LEAD_RUNBOOKS_DIR"]
         outcome = mcp._run_runbook("anything")
@@ -318,6 +328,66 @@ class RunbookExecutionTests(unittest.TestCase):
         self.assertTrue(outcome.get("refused"))
         self.assertIn("not a kubectl command", outcome["error"])
         self.assertEqual(self._requests(), [])
+
+    # F8 (incident mode): the summary event `_run_runbook` drops for
+    # `SRELeadBridge` to pick up. Purely a notification - it must never
+    # change what the tool returns, and it must never carry command text or
+    # output, only the runbook's own title and step counts.
+
+    def test_a_completed_runbook_emits_one_summary_event(self):
+        self._write_runbook("green.md", (
+            "# All Green\n\n"
+            "```\n"
+            "kubectl get pods -n prod\n"
+            "kubectl get nodes\n"
+            "```\n"
+        ))
+        t = self._respond_to_n_requests(2)
+        outcome = mcp._run_runbook("All Green")
+        t.join()
+        self.assertTrue(outcome["ok"])
+
+        events = self._read_events()
+        self.assertEqual(len(events), 1, "exactly one summary event per run")
+        event = events[0]
+        self.assertEqual(event["kind"], "runbook_run")
+        self.assertEqual(event["runbook"], "All Green")
+        self.assertEqual(event["ran"], 2)
+        self.assertEqual(event["total"], 2)
+        self.assertTrue(event["ok"])
+        self.assertFalse(event["refused"])
+        # No command text and no output ever crosses this boundary.
+        blob = json.dumps(event)
+        self.assertNotIn("kubectl", blob)
+        self.assertNotIn("output-", blob)
+
+    def test_a_refused_runbook_emits_a_refused_event_and_still_runs_nothing(self):
+        self._write_runbook("bad.md", (
+            "# Bad Runbook\n\n"
+            "```\n"
+            "kubectl get pods -n prod\n"
+            "kubectl delete pod api-1 -n prod\n"
+            "```\n"
+        ))
+        outcome = mcp._run_runbook("Bad Runbook")
+        self.assertFalse(outcome["ok"])
+        self.assertEqual(self._requests(), [], "a refusal must still run nothing")
+
+        events = self._read_events()
+        self.assertEqual(len(events), 1)
+        self.assertTrue(events[0]["refused"])
+        self.assertFalse(events[0]["ok"])
+        self.assertEqual(events[0]["ran"], 0)
+        self.assertEqual(events[0]["total"], 2)
+
+    def test_event_emission_never_breaks_the_tool_when_the_bridge_dir_is_gone(self):
+        self._write_runbook("green2.md", "# Green Two\n\n```\nkubectl get pods\n```\n")
+        del os.environ["SRE_LEAD_BRIDGE_DIR"]
+        # The run itself fails for the obvious reason (no bridge), but the
+        # emitter must swallow its own failure rather than raising over it.
+        outcome = mcp._run_runbook("Green Two")
+        self.assertFalse(outcome["ok"])
+        self.assertEqual(outcome["runbook"], "Green Two")
 
     def test_fully_compliant_runbook_runs_every_step_in_order(self):
         self._write_runbook("api-latency-spike.md", (

@@ -1261,6 +1261,83 @@ page it came from. `MorningBriefingData.swift` owns what it says,
 - **Verified with `swift build` (debug and release, zero warnings in this app's sources), the release binary carrying no `FM_RUN_*` strings, and all 62 runnable suites - without launching the app**, per the README's worktree rule. `FM_RUN_FLEET_ACTIONS_TESTS` is pure logic and runs in CI; `FM_RUN_FLEET_REPLY_LAYOUT_TESTS` mounts a real off-screen `FleetController` and drives real `NSButton` clicks, so it is in `run-all-tests.sh`'s `NEEDS_SESSION` list. **Both were confirmed to catch real regressions**, not merely to pass (collapsing exit 3 into success, guessing a key when several are open, reordering the argv, a fold that rewrites an invalid slug to `default`, a general message routed through `fm-send.sh`, a composer that stops expanding in place, and a refresh that discards it). **The layout suite also found a real shipped-in-progress bug on its first run**: the general composer activated a constraint against a label it never adds to the tree when there is no address line - a hard "no common ancestor" AppKit exception that took the whole process down, and exactly the class of defect `swift build` cannot see.
 - **`fm-send.sh` itself is never run by a self-test** - it resolves a live crewmate endpoint and would steer a real crewmate in the captain's actual fleet. `FleetActions.sendScriptOverrideForTests` points at a disposable recording script instead (the same seam `DictationCleanupSelfTest` uses for `claude`), so the subprocess plumbing, argv and outcome mapping are genuinely exercised while the script's own verified-submit behaviour is not. A real end-to-end send is the captain's own check.
 
+## Incident mode (F8, `fm/grandline-feature-f8-incident-mode`)
+
+F8 of the production-readiness review's feature roadmap (section 25 of
+`data/grandline-production-review/MANJESH_GRAND_LINE_PRODUCTION_REVIEW.md`, with the
+captain-approved mockup in that folder's `lavish-plan.html`) - "Start Incident" on a host page,
+after which SRE Lead turns, Log Analyzer captures and runbook runs attach themselves to one shared
+record, and "End Incident" feeds that record to the existing postmortem generator. Four files:
+`IncidentModels.swift` (record + `IncidentSources`, the phrasing layer), `IncidentStore.swift`
+(YAML-in-git persistence), `IncidentCardView.swift` (the card), `ConsoleController+Incident.swift`
+(the toolbar action and the attach points).
+
+- **Every attach point is a hook on an event that already happens - there is no detection here and
+  no second execution path anywhere.** SRE Lead's own reply completion (`handleSRELeadSubmit`), the
+  capture `analyzeLogsTapped` already built, `LogAnalyzerController`'s own save, and the runbook
+  summary `run_runbook` writes. `IncidentSources` is the direct counterpart of `FleetLogSources` /
+  `NotificationSources`: format at the edge, detect nowhere new.
+- **The runbook signal needed a new channel, and it is deliberately a notification rather than an
+  interception.** A bridge request carries only `{"command": ...}`, so the Swift side cannot tell a
+  runbook's steps from any other kubectl call and inferring it would be guesswork. `run_runbook`
+  now drops one `event-<id>.json` summary (title + step counts, never command text or output) into
+  the same bridge directory when it finishes, and `SRELeadBridge.drainEvents` claims it on the
+  **idle** cadence - not the 5Hz tick, for GL-34's reason. The runbook still executes exactly where
+  it always did.
+- **The card is an `NSPopover` on the toolbar button, not an inline strip, and that is a hard
+  constraint rather than a preference.** A strip between the toolbar and `content` would change
+  every `TerminalView`'s frame, which reflows the buffer and can garble scrollback (the bug
+  `fm/cockpit-sre-lead-ux-fixes` fixed, and `ConsoleController.terminalInset`'s whole reason for
+  being permanent) - during an incident, which is the worst possible moment. The *button* is the
+  always-visible active-incident indicator (red, showing `INC-014`), and starting an incident opens
+  the card immediately. This is the one deliberate deviation from the mockup's layout.
+- **Written as it happens, never batched.** `start`, every `append`, `end` and `setRCA` each reach
+  disk before returning, so a crash mid-incident costs at most the artifact of the entry being
+  written. **What that does *not* buy, and F2 (session restoration) is the only thing that will:**
+  after a relaunch the "Active incident" state is not re-attached to the host page it was running
+  on - the incident is still active and still shown the moment that page is opened again, but the
+  app will not reopen the page. Do not paper over this with partial session restore.
+- **Storage rides `ShiftGitSync` exactly like `LogAnalyzerStore`** (own `incidents/<YYYY>/<INC-nnn-slug>/`
+  subtree, `ShiftYamlBridge` for the YAML, `FM_INCIDENTS_DIR` override **and** the `FM_SHIFT_DIR`
+  fallback - see `CommandLibraryStore`'s own lesson about a store inside that subtree ignoring it).
+  An incident's whole job is to reference investigations, so putting the two in different places
+  would let the record and its evidence end up on different machines.
+- **The one free text this feature writes is an SRE Lead transcript snapshot, and it is redacted on
+  the way in.** `incident.yaml` holds ids, titles, counts and one-line summaries only
+  (`IncidentTimelineEntry.sanitize` makes the one-line rule structural, like `FleetLogEvent`'s);
+  the transcript lands in `artifacts/<entry-id>.md` via `LogRedactor.redact`, and the generated RCA
+  in `rca.md`. Neither is ever inlined in the record.
+- **`FleetLogEventKind` gained `.incident`** - the filter row is built from `allCases`, so it gets
+  its own pill. Deliberately not folded into `.investigation`: a Log Analyzer artifact and a
+  declared incident are different things and worth filtering apart.
+- **The postmortem is the existing generator, fed a different input.** `endIncidentClicked` calls
+  the same `SRELeadPostmortem.generate(hostLabel:transcript:)` the SRE Lead pane's own button
+  calls; what changes is only that `IncidentStore.aggregatedTranscript` assembles every turn's real
+  text plus a one-line account of every capture and runbook run, in order, instead of one tab's
+  chat. A generation failure leaves the incident ended with the whole timeline intact and no RCA -
+  it never un-ends anything.
+- **A saved investigation attaches to the incident on whichever host page handed over the capture
+  it was built from** (`AppShellController.logAnalyzerCaptureSource`, weak). That is the only
+  honest correlation available - the Log Analyzer has no notion of a host - and a clipboard
+  analysis or an investigation reopened from history clears it first, so a save then attaches to
+  nothing rather than to whichever host happened to be last.
+- **`FM_RUN_INCIDENT_TESTS`** covers the create/append/end round trip against real disk (every
+  persistence case builds a *fresh* store over the same directory), the one-active-incident-per-host
+  rule, the redaction boundary (grepped in the real bytes of every file under the incident
+  directory), the aggregate the generator is fed, and the F6 wiring - both the round trip and a
+  source guard that the call sites exist, since the round trip alone would still pass with them
+  deleted. **Confirmed to catch three real injected regressions**, not merely to pass: dropping the
+  one-active guard, skipping the redaction, and deleting the F6 append. `test_sre_kubectl_mcp.py`
+  gained three cases for the event emission, likewise confirmed to fail when the emitter is removed.
+- **Verified with `swift build` (clean debug and release, zero warnings in this app's sources), the
+  release binary confirmed to carry no `FM_RUN_*` strings, all 63 runnable suites, and the Python
+  suite - without launching the app**, per the README's worktree rule. (Re-verified after rebasing
+  onto F7 and then F9, both of which landed while this was in review. F7's conflict was AGENTS.md
+  only, additive on both sides - its console changes are in `ConsoleController+Sessions.swift`,
+  which this touches nowhere. F9's was one hunk in `connectHost`: **F8's per-connect wiring has to
+  sit before F9's `guard navigate else { return }`**, or a host connected by a multi-host send
+  would silently never get its incident button or its evidence-open route.)
+
 ## Maintaining this file
 
 Keep this file for knowledge useful to almost every future agent session in this project.
