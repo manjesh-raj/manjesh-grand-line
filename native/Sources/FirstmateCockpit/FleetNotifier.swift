@@ -40,6 +40,12 @@ final class FleetNotifier {
     private var timer: Timer?
     private var seenNeedsDecision: Set<String> = []
     private var seenFinishedForBanner: Set<String> = []
+    /// F4: PR URLs already banner-notified as ready to merge - see
+    /// `reconcilePRs`. Not seeded at launch (unlike the two sets above): a PR
+    /// sitting green when the app starts is genuinely news this app has not
+    /// told the captain yet, and the system's own identifier dedup keeps a
+    /// relaunch from stacking duplicates.
+    private var seenReadyPRs: Set<String> = []
     private var acknowledgedFinishedIDs: Set<String> = []
     private var osBannersEnabled = false
     private let pollInterval: TimeInterval = 30
@@ -162,6 +168,12 @@ final class FleetNotifier {
         content.title = task.status == "blocked" ? "Task blocked" : "Task needs your decision"
         content.body = task.repo != nil ? "\(task.id) (\(task.repo!))" : task.id
         content.sound = .default
+        // F4: an "Open task" button, so the captain does not have to activate
+        // the app and find Overview by hand. Title/body/identifier/sound are
+        // deliberately unchanged - a captain who never touches a button sees
+        // exactly the notification this posted before F4.
+        content.categoryIdentifier = NotificationCategory.fleetTask
+        content.userInfo = NotificationPayload(subject: .fleetTask, taskID: task.id).userInfo
         let request = UNNotificationRequest(identifier: "fm.needs-decision.\(task.id)", content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
     }
@@ -171,7 +183,65 @@ final class FleetNotifier {
         content.title = task.status == "failed" ? "Task failed" : "Task finished"
         content.body = task.repo != nil ? "\(task.id) (\(task.repo!))" : task.id
         content.sound = .default
+        content.categoryIdentifier = NotificationCategory.fleetTask
+        content.userInfo = NotificationPayload(subject: .fleetTask, taskID: task.id).userInfo
         let request = UNNotificationRequest(identifier: "fm.finished.\(task.id)", content: content, trigger: nil)
+        UNUserNotificationCenter.current().add(request)
+    }
+
+    // MARK: F4 - "a PR is green and ready to merge"
+
+    /// The one post in this app that carries a real Merge button, and the
+    /// reason F4 waited on GL-38.
+    ///
+    /// There was no OS banner for this signal at all before F4 - the in-app
+    /// Notification Center had `NotificationSources.setPRReady` (a count, fed
+    /// from Review's own `onOpenPRCountChanged`), but nothing ever reached the
+    /// captain while they were looking at something else. This lives here
+    /// rather than in `ReviewController` for the same reason the two posts
+    /// above do: this class already owns the "seen since launch" bookkeeping
+    /// and the `osBannersEnabled` gate, and duplicating either in a view
+    /// controller is how a signal starts double-firing.
+    ///
+    /// **The first half of the merge gate.** Only a PR that
+    /// `FleetDataSource.canMerge` already accepts is posted at all, so a
+    /// red/pending PR never carries a Merge action to begin with; the second
+    /// half (a re-check when the button is actually tapped) lives in
+    /// `NotificationActionRouting.resolve`. See `NotificationActions.swift`'s
+    /// header for why both exist.
+    ///
+    /// Called from `ReviewController.render` via `AppShellController` - i.e.
+    /// exactly when Review already recomputed its own list, with no new poll.
+    func reconcilePRs(_ prs: [MergedPR]) {
+        let mergeable = prs.filter { FleetDataSource.canMerge($0) }
+        let currentURLs = Set(mergeable.map(\.url))
+        let fresh = mergeable.filter { !seenReadyPRs.contains($0.url) }
+        // Assigned, not unioned: a PR whose checks go back to red (or that
+        // gets merged) drops out and can legitimately notify again if it
+        // later becomes ready once more.
+        seenReadyPRs = currentURLs
+        guard osBannersEnabled else { return }
+        for pr in fresh { notifyPRReady(pr) }
+    }
+
+    private func notifyPRReady(_ pr: MergedPR) {
+        guard Bundle.main.bundleIdentifier != nil else { return }
+        let content = UNMutableNotificationContent()
+        content.title = "PR ready to merge"
+        let label = pr.number != nil ? "PR #\(pr.number!)" : "A pull request"
+        let named = pr.title.isEmpty ? label : "\(label) \u{201C}\(pr.title)\u{201D}"
+        content.body = pr.repo.isEmpty
+            ? "\(named) is green and ready to merge."
+            : "\(named) in \(pr.repo) is green and ready to merge."
+        content.sound = .default
+        content.categoryIdentifier = NotificationCategory.prReady
+        content.userInfo = NotificationPayload(
+            subject: .prReady, taskID: pr.taskID, prURL: pr.url, prChecks: pr.checks
+        ).userInfo
+        // Keyed on the URL so re-posting for the same PR replaces rather than
+        // stacks - an `identifier` collision is the system's own dedup.
+        let request = UNNotificationRequest(
+            identifier: "fm.pr-ready.\(pr.url)", content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
     }
 }

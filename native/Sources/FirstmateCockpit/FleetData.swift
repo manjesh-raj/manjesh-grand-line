@@ -335,7 +335,23 @@ enum FleetDataSource {
     /// the technical half the script requires. Both were already being checked
     /// at the row level - this is the one definition of them.
     static func canMerge(_ pr: MergedPR) -> Bool {
-        pr.checks == "green" && !(pr.taskID ?? "").isEmpty
+        canMerge(checks: pr.checks, taskID: pr.taskID)
+    }
+
+    /// The same gate, reachable from a caller that holds the two values
+    /// without a whole `MergedPR` - specifically F4's notification action
+    /// handler, whose payload is an archived string dictionary rather than a
+    /// live row (see `NotificationActionRouting.resolve`). Kept as the one
+    /// definition both forms delegate to, so merge-from-notification cannot
+    /// drift away from merge-from-Review.
+    static func canMerge(checks: String, taskID: String?) -> Bool {
+        // Trimmed, not merely non-empty: a whitespace-only id reaches
+        // `bin/fm-pr-merge.sh` as a real argument that then fails its own
+        // validation, which is a guaranteed-failure merge rather than a
+        // refusal. Unreachable from a row built out of `state/*.meta`, but a
+        // notification payload is an archived string dictionary handed back by
+        // the system, so this form has to hold on its own.
+        checks == "green" && !(taskID ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// A guarded merge runs `gh`/`git` against a real remote. Minutes is

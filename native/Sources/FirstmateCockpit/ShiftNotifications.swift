@@ -115,7 +115,12 @@ final class ShiftNotificationScheduler {
             notify(
                 title: due <= now ? "Task due now" : "Task due soon",
                 body: task.title,
-                identifier: "shift.task.\(task.id)"
+                identifier: "shift.task.\(task.id)",
+                // F4: an "Open task" button routing through the same
+                // `AppShellController.openShiftTask(id:)` a search-palette hit
+                // uses. Everything else about this post is unchanged.
+                category: NotificationCategory.shiftTask,
+                payload: NotificationPayload(subject: .shiftTask, shiftTaskID: task.id)
             )
         }
 
@@ -129,19 +134,31 @@ final class ShiftNotificationScheduler {
             notify(
                 title: due <= now ? "Follow-up due now" : "Follow-up coming up",
                 body: followUp.title,
-                identifier: "shift.followup.\(followUp.id)"
+                identifier: "shift.followup.\(followUp.id)",
+                // F4: "Snooze 1h" (the real `ShiftStore.snoozeFollowUp`, the
+                // same write the row's own Snooze menu performs) plus "Open
+                // follow-up". A follow-up is the one signal in this app whose
+                // most common answer is "not now", which is why it gets the
+                // snooze rather than a generic "Show in app".
+                category: NotificationCategory.shiftFollowUp,
+                payload: NotificationPayload(subject: .shiftFollowUp, followUpID: followUp.id)
             )
         }
 
         onDueCountsChanged?(dueTaskCount, dueFollowUpCount)
     }
 
-    private func notify(title: String, body: String, identifier: String) {
+    private func notify(title: String, body: String, identifier: String,
+                        category: String, payload: NotificationPayload) {
         guard Bundle.main.bundleIdentifier != nil else { return }
         let content = UNMutableNotificationContent()
         content.title = title
         content.body = body
         content.sound = .default
+        // F4: which buttons this post carries, and what they act on. The
+        // handler is `NotificationActionRouter` - see NotificationActions.swift.
+        content.categoryIdentifier = category
+        content.userInfo = payload.userInfo
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: identifier, content: content, trigger: nil))
     }
 }

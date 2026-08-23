@@ -552,6 +552,76 @@ A rail section and a Tools panel for controlling Barracuda VPN and OpenVPN Conne
 - **Self-tests**: `GrandLineNotificationCenterSelfTest.swift` (`FM_RUN_NOTIFICATION_CENTER_TESTS=1`) covers the store's pure logic (dedup, both clear semantics, dismiss/resurface-on-change, badge count, observer fan-out). `NotificationCenterSRELeadSelfTest.swift` (`FM_RUN_NOTIFICATION_CENTER_SRE_LEAD_TESTS=1`) drives the real `ConsoleController` (via its existing `debugStartSRELead`/`debugAskSRELead`/`debugSelectTab`/`debugCloseTab` hooks, same fake-`claude` harness as `SRELeadPerTabSelfTest.swift`) for signal #7 specifically - the trickiest one, since nothing outside a tab's own pane previously observed its phase changing.
 - **`fm/grandline-notification-row-redesign` restyled each panel row (`NotificationRowView`, `NotificationCenterPopover.swift`) from a flat, borderless dot+title+subtext line into its own bordered card** - a colored left accent bar, a small round `IconTileView`-style icon badge, a bold uppercase kicker label, the body message, and a trailing chip carrying the entry's source/clear-rule text (captain reference: a Slack-RCA claims panel). Rendering-only: the store, the 9 signal adapters, dedup/clear semantics, and the badge count are untouched. `NotificationRowPresentation` maps each entry's already-stable `id` (from `NotificationSources.swift`) to a per-source icon + kicker - a rendering-layer lookup, not a new field on `AppNotification`; a future signal added without a matching case here still renders via a generic fallback. The card border/fill reuses `ToolRowLayout`'s `cardStyle` idiom and the chip reuses `ToolRowLayout.pill` directly (`HelmUIComponents.swift`), but the row itself stays a bespoke view rather than going through `ToolRowLayout.build` - that assembly's icon-tile/trailing-stack/chevron/log shape has no concept of a left accent bar and carries controls (expandable log, button stack) this row doesn't need. The panel widened from 320pt to 340pt to fit the richer card without feeling cramped. Each row's own leading/trailing anchors to `rowsStack` (not a width-equal-to-stack constraint) are what create the card's margin from the panel edges - the old full-bleed row relied on width-equal-to-stack. Verified live (temporary env-gated probe, reverted before commit, per this file's "Verifying native UI bugs" convention): all 8 real sourced entries rendered as distinct, non-overlapping cards with no element overflowing its card's bounds, across `helm-dark`/`helm-light`/`catppuccin-mocha`/`gruvbox-light`, plus confirmed click-to-navigate and "Mark all read" visibility are unaffected. The probe deliberately never called `ThemeManager.shared.setTheme` (which persists to the real `UserDefaults.standard` "fm.themeID" key) - it re-themed the panel instance directly via `applyTheme(_:)` to avoid clobbering the real captain's saved theme preference on a shared dev machine; any future multi-theme sweep probe in this codebase should do the same rather than reach for `setTheme`.
 
+## Actionable notifications (F4, `fm/grandline-feature-f4-actionable-notifications`)
+
+F4 from the production-readiness review's feature roadmap (section 25 of
+`data/grandline-production-review/MANJESH_GRAND_LINE_PRODUCTION_REVIEW.md`, with the
+captain-approved mockup in that folder's `lavish-plan.html`) - `UNNotification` action
+buttons on the OS banners this app already posted, so acting no longer means activating
+the app and navigating by hand. `NotificationActions.swift` is the whole feature; read its
+header before changing any of it.
+
+- **The split that matters: `NotificationActionRouting.resolve(...)` is pure, the router
+  performs.** Action identifier + the post's archived `userInfo` payload in, a list of
+  `NotificationRoutedAction` out, nothing executed. Every policy decision - including the
+  merge gate - lives in `resolve`, which is what makes the gate assertable without running
+  a real merge. `NotificationActionRouter` (the `UNUserNotificationCenterDelegate`) only
+  dispatches those values onto injected closures, wired in `main.swift` to
+  `AppShellController.show(_:)`/`openShiftTask(id:)`/`openShiftFollowUp(id:)` and
+  `ShiftStore.snoozeFollowUp(id:to:)` - the forward-don't-own convention every other
+  out-of-window surface here uses. There is no second merge, navigation or snooze path.
+- **The merge gate is enforced twice, and both halves are load-bearing.**
+  `FleetNotifier.reconcilePRs` only *posts* a PR notification for a PR
+  `FleetDataSource.canMerge` already accepts, so a red/pending PR never carries a Merge
+  button; and `resolve` re-checks the payload through the **same** `canMerge` when the
+  button is tapped, returning `.refused` instead. The second half is not belt-and-braces:
+  a `userInfo` dictionary is archived by the system and handed back to a *later* launch,
+  so a notification still sitting in Notification Center after its checks went red would
+  otherwise merge on a stale claim.
+- **`FleetDataSource.canMerge(checks:taskID:)` is the one definition both forms delegate
+  to** (`canMerge(_ pr:)` now calls it). It trims the task id rather than only checking
+  `isEmpty`, because a whitespace-only id reaches `bin/fm-pr-merge.sh` as a real argument
+  and fails *its* validation - a guaranteed-failure merge instead of a refusal. Unreachable
+  from a row built out of `state/*.meta`; reachable from a hand-crafted payload.
+- **The PR-ready OS banner is new; the in-app entry is not.**
+  `NotificationSources.setPRReady` (a count, fed from Review's `onOpenPRCountChanged`)
+  already existed, but nothing ever reached the captain looking at something else.
+  `FleetNotifier.reconcilePRs` is fed by a new `ReviewController.onPRsChanged` wired in
+  `AppShellController` next to the existing count callback - so it rides Review's own
+  refresh triggers and adds **no poll**. It lives on `FleetNotifier` rather than in the
+  view controller because that class already owns the seen-since-launch sets and the
+  `osBannersEnabled` gate; duplicating either in a controller is how a signal starts
+  double-firing.
+- **The three pre-existing posts are otherwise untouched.** Title, body, sound and
+  `identifier` are byte-for-byte what they were; only `categoryIdentifier` + `userInfo`
+  were added. A captain who never presses a button sees exactly the old notification.
+- **Category ids and action ids are a wire format.** They are written into posted
+  notifications, so renaming one silently strips the buttons off anything already sitting
+  in Notification Center.
+- **Merge is deliberately not a `.foreground` action** - it does not need the app brought
+  forward, and stealing focus to show a page nobody asked for is the opposite of the
+  one-click principle. That leaves no window for an `NSAlert`, so the outcome (and a
+  refusal) comes back as its own notification via `NotificationActionRouter.postFeedback`.
+  The button press is itself the confirmation, in place of the Review page's modal.
+- **GL-09: `AppLockedSurface.notificationAction`** gates every action uniformly - an action
+  runs while the main window is not frontmost and both navigates and writes, which is
+  exactly `AppLockGate`'s documented rule. A locked app therefore behaves as it did before
+  F4: activating shows the lock screen, nothing else moves.
+- **`willPresent` returns `[.banner, .sound]`** so a notification still shows while the app
+  is frontmost. Without it the system suppresses it entirely, which makes the buttons
+  unreachable precisely when the captain is at the keyboard.
+- **Verified with `swift build` (clean, zero warnings), `swift build -c release`, and all
+  55 runnable suites - without launching the app**, per the README's worktree rule.
+  `FM_RUN_NOTIFICATION_ACTIONS_TESTS` covers the gate (every non-green checks value, an
+  absent/blank/whitespace task id, a non-PR payload), the whole routing table, the
+  `userInfo` round trip, that every action a category offers resolves to *something*, that
+  a green tap reaches the real merge executor with the task id, and that Snooze 1h moves a
+  real `ShiftStore` follow-up's persisted fields and survives a reload. **Confirmed to
+  catch real regressions**: removing the gate (15 failures), turning Snooze into an Open
+  (3), and dropping the lock gate (2) each reproduced named failures, then restored.
+  **Not verifiable here, and not claimed:** real interactive delivery - there is no way to
+  raise a live macOS banner and click its buttons in this sandbox.
+
 ## Production-readiness phase 1 (`fm/grandline-review-phase1-stabilize`)
 
 The stabilisation pass over the captain-approved production-readiness review (`data/grandline-production-review/MANJESH_GRAND_LINE_PRODUCTION_REVIEW.md` on the firstmate side, findings GL-01..GL-38). Phase 1 was the "stop irreversible loss" slice; phases 2-4 (the shared `Subprocess` runner, `os.Logger`/Health, throwing persistence, CI, the accessibility sweep, architectural splits) are deliberately still open. Read that report before picking up any GL-numbered work - what follows is only what future sessions need to *not re-derive*.

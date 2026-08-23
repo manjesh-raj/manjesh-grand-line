@@ -95,6 +95,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // fm/grandline-app-lock: the app-level password lock's timing state
     // machine - see AppLock.swift's header for the idle/hard-logout math.
     let appLock = AppLockController()
+    // F4: the `UNUserNotificationCenterDelegate` behind every notification
+    // action button (Merge / Open PR / Open task / Snooze 1h / Show in app).
+    // Owned here rather than by `AppShellController` for the same reason
+    // `dictationHUD` is: it has to work when the app was launched *by* the tap,
+    // before any window exists. See NotificationActions.swift's header.
+    let notificationRouter = NotificationActionRouter()
     // Fix 1: `makeHostConsole` builds a fresh, host-scoped console (no
     // Mirror/Shell tabs) for `AppShellController.connectHost` - captured as
     // local constants (not `self`) so this closure, which `appShell` holds
@@ -228,6 +234,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         FleetNotifier.shared.setEnabled(AppSettings.shared.notifyOnNeedsDecision)
         FleetNotifier.shared.onNavigateToOverview = { [weak self] in self?.appShell.show(.overview) }
         FleetNotifier.shared.start()
+
+        // F4: notification action buttons. Every closure here points at the
+        // code path the in-app UI already uses - `AppShellController`'s own
+        // navigation and `ShiftStore.snoozeFollowUp` - so a notification action
+        // and a click inside the app cannot diverge. The merge path needs no
+        // wiring: the router defaults to `FleetDataSource.mergePR`, the exact
+        // function Review's own Merge button calls.
+        //
+        // Registered here (not later) because the delegate must be set before
+        // `applicationDidFinishLaunching` returns, or an action tap that
+        // cold-launched the app is dropped by the system.
+        notificationRouter.onShow = { [weak self] destination in self?.appShell.show(destination) }
+        notificationRouter.onOpenShiftTask = { [weak self] id in self?.appShell.openShiftTask(id: id) }
+        notificationRouter.onOpenShiftFollowUp = { [weak self] id in self?.appShell.openShiftFollowUp(id: id) }
+        notificationRouter.onSnoozeFollowUp = { [weak self] id, date in
+            self?.shiftStore.snoozeFollowUp(id: id, to: date)
+        }
+        notificationRouter.register()
 
         // fm/grandline-notification-center: the slow background poll for the
         // four signals that otherwise only ever recompute on a page visit
@@ -1235,6 +1259,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_CREDENTIAL_PATH_TESTS"] == "1" {
 // `FleetDataSelfTest.swift`'s header.
 if ProcessInfo.processInfo.environment["FM_RUN_FLEET_DATA_TESTS"] == "1" {
     exit(FleetDataSelfTest.run() ? 0 : 1)
+}
+
+// F4: notification action routing - which action maps to which real function
+// call, and whether the merge gate genuinely blocks a non-green PR. See
+// `NotificationActionsSelfTest.swift`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_ACTIONS_TESTS"] == "1" {
+    exit(NotificationActionsSelfTest.run() ? 0 : 1)
 }
 
 // GL-29 (Phase 3): `DictationEngine`'s finish/race/timeout state machine -
