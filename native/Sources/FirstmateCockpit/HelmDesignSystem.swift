@@ -2796,17 +2796,13 @@ enum HelmResponsiveGrid {
 
     // MARK: Span-aware layout (Daylight migration §6.1)
     //
-    // **Currently uncalled by the app, deliberately retained.** This was built
-    // for §6.1's wide Morning-briefing card; the captain overrode that after
-    // seeing it live and every module card is one column now, so
-    // `HomeCanvasController` uses `rows(_:)` above instead. Kept rather than
-    // deleted because the *spec* still describes span-2 as a grid capability,
-    // the math is non-obvious enough to be worth not re-deriving, and
-    // `DaylightModuleSelfTest.checkUniformCardSizing` still exercises
-    // `packRows` directly - so it cannot rot silently. Note the difference if
-    // it is ever reinstated: this path creates explicit per-card width
-    // constraints (at priority 499, gotcha (13)), where `rows(_:)` creates
-    // none at all.
+    // **This is the home canvas's grid.** It was built for §6.1's wide
+    // Morning-briefing card, went uncalled for one PR while every module card
+    // was one column (#259), and is called again now that the briefing's
+    // span-2 treatment is back (`DaylightModule.gridSpan`). The difference
+    // from `rows(_:)` that matters: this path creates an explicit per-card
+    // width constraint, so every one of them is priority 499 - see the note on
+    // `spanningRows` itself.
 
     /// One item's placement decision: which items share a row, and how many
     /// columns each consumes.
@@ -2914,6 +2910,14 @@ enum HelmResponsiveGrid {
             stack.distribution = .fill
             stack.alignment = .top
             stack.translatesAutoresizingMaskIntoConstraints = false
+            // gotcha (12)+(13), the same reason `HelmModuleCard.
+            // compressibleStack` exists: an `NSStackView` resists clipping
+            // below its arranged subviews' minimums at `.defaultHigh` (750),
+            // above `NSLayoutPriorityWindowSizeStayPut` - so a grid row is
+            // itself a window-width floor unless told to yield, however
+            // carefully the widths inside it were priced at 499.
+            stack.setClippingResistancePriority(.defaultLow, for: .horizontal)
+            stack.setHuggingPriority(.defaultLow, for: .horizontal)
             return stack
         }
     }

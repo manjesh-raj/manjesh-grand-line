@@ -71,14 +71,28 @@ enum DaylightSpace: String, CaseIterable {
 /// `RailDestination` is `opens` below, which is what a card's click calls
 /// `show(_:)` with.
 ///
-/// **Every module renders at the same single-column size.** The migration
-/// spec's §6.1 gave the Morning briefing a "wide variant" spanning two grid
-/// columns, and that is what Phase 2 shipped; the captain overrode it after
-/// seeing it live, because one double-width card among a dozen uniform ones
-/// reads as inconsistent rather than as emphasis. There is deliberately no
-/// `span` property here any more - reintroducing one is how per-card sizing
-/// creeps back, and `DaylightModuleSelfTest.checkUniformCardSizing` fails the
-/// build if any row ever renders cards of differing widths.
+/// **Every module is one column wide and every card is the same height,
+/// except the Morning briefing, which is two columns wide and the same
+/// height.** That reads as three decisions and is really the captain's own
+/// two, arrived at over three passes:
+///
+///   1. §6.1 gave the briefing a "wide variant" spanning two grid columns.
+///      Phase 2 shipped it.
+///   2. PR #259 read a captain instruction about uniform sizing as covering
+///      the briefing too and removed the wide variant entirely - `span` and
+///      `HelmModuleCard.Content.isWide` were deleted.
+///   3. That was a misreading. The briefing genuinely needs the extra width
+///      for its generated paragraph, so `gridSpan` below restores it; what
+///      the instruction was actually asking for is that *every other* card
+///      match, in **height** as well as width - which PR #259 never
+///      addressed, since each body kind still rendered at its own natural
+///      height and left the rows ragged.
+///
+/// So: `gridSpan` is 2 for exactly one module and 1 for the rest, and
+/// `HelmModuleCard.standardHeight` applies to all of them. Any *other* module
+/// asking for span 2 is per-card sizing creeping back;
+/// `DaylightModuleSelfTest.checkUniformCardSizing` fails the build if the set
+/// of wide modules changes or if a row ever renders cards of differing height.
 ///
 /// **The four Setup sub-pages each get their own card** (`.updates`,
 /// `.bootstrap`, `.automation`, `.githubSync`) rather than one aggregate
@@ -127,6 +141,26 @@ enum DaylightModule: String, CaseIterable {
     /// Is this module shown while `space` is selected?
     func isVisible(in space: DaylightSpace) -> Bool {
         space == .overview || self.space == space
+    }
+
+    /// How many grid columns this module's card consumes (§6.1's "wide
+    /// variant").
+    ///
+    /// Two for the Morning briefing and one for everything else - see the
+    /// three-pass history in this enum's own doc comment for why that is the
+    /// shape rather than "all one" or "whichever card feels important". The
+    /// briefing is the only module whose body is prose, and prose needs
+    /// measure: at one column its paragraph wrapped so tightly that it had to
+    /// be cut to three clauses to fit.
+    ///
+    /// `HelmResponsiveGrid.packRows` degrades a span-2 card to span 1 in a
+    /// single-column grid rather than overflowing, so a very narrow window
+    /// needs no special case here.
+    var gridSpan: Int {
+        switch self {
+        case .briefing: return 2
+        default: return 1
+        }
     }
 
     /// The destination a click on this module's card opens.

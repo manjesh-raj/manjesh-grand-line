@@ -135,14 +135,45 @@ final class HelmModuleCard: NSView {
     /// *reported*, never silently dropped - see `HomeCanvasController.
     /// fillBriefing`).
     ///
-    /// §6.1 gave the briefing a double-width card precisely so a full
-    /// paragraph could sit on it. The captain overrode that after seeing it
-    /// live, so the same copy now has one column: unbounded, it would make its
-    /// whole grid row as tall as the longest briefing of the day. Clauses stay
-    /// clauses rather than becoming peek rows because each one carries a real
-    /// `BriefingTarget` - turning them into rows would throw the deep links
-    /// away, which is the one thing on this card that does something.
-    static let maxBriefingClauses = 3
+    /// **Why a cap survives the return of §6.1's wide card, and why the number
+    /// went up.** PR #259 introduced this cap for a reason that no longer
+    /// applies - the briefing had been narrowed to one column, where an
+    /// unbounded paragraph would make its whole grid row as tall as the
+    /// longest briefing of the day. The captain has since restored the wide
+    /// (span-2) card, so that reason is gone; a *different* one replaces it.
+    /// Every card now resolves to `standardHeight`, so a paragraph taller than
+    /// the body area would be clipped by the card's own `masksToBounds` with
+    /// nothing said about it. The cap is what keeps that from happening, and
+    /// `DaylightModuleSelfTest.checkUniformCardHeight` measures a full-cap
+    /// paragraph at a real span-2 width to prove the number fits.
+    ///
+    /// Five rather than three because double width fits roughly twice the copy
+    /// per line - measured, not assumed, by that same case.
+    ///
+    /// Pairs with `maxNarrowBriefingClauses`: `packRows` degrades a span-2 card
+    /// to one column in a single-column grid, and the cap has to follow it
+    /// down or the paragraph overflows a card that is now half as wide.
+    ///
+    /// Clauses stay clauses rather than becoming peek rows because each one
+    /// carries a real `BriefingTarget` - turning them into rows would throw
+    /// the deep links away, which is the one thing on this card that does
+    /// something.
+    static let maxBriefingClauses = 5
+
+    /// The same cap for a briefing card that `HelmResponsiveGrid.packRows` has
+    /// degraded to a single column - a window narrow enough to fit only one
+    /// module across.
+    ///
+    /// Two, not PR #259's three: that number was measured against a card whose
+    /// height grew with its content, and this one's does not. Measured rather
+    /// than reasoned - the self-test below caught three overflowing a
+    /// one-column card by 16pt at GL-32's "Larger" scale, remembering that the
+    /// caller appends an overflow line of its own on top of the cap.
+    /// `HomeCanvasController.briefingClauseCap(forCardWidth:)` picks between
+    /// the two from the width the grid actually built the card for, and
+    /// `DaylightModuleSelfTest.checkUniformCardHeight` measures both at every
+    /// text scale.
+    static let maxNarrowBriefingClauses = 2
 
     struct Content {
         var title: String
@@ -163,6 +194,43 @@ final class HelmModuleCard: NSView {
     /// alone is acceptable motion, per that section's own note.
     static let hoverLift: CGFloat = 3
     static let hoverDuration: TimeInterval = 0.14
+
+    /// **Every module card is exactly this tall, on every space.**
+    ///
+    /// The captain's own words on the number were "you can choose the best
+    /// size", so here is the reasoning rather than just the value. Left to
+    /// their natural heights the six body kinds resolve to visibly different
+    /// cards - a `.note` is two lines and a `.progress` is a 34pt numeral over
+    /// a bar over a note - which makes each grid row a different height and
+    /// the hub read as ragged. One fixed height is what makes the canvas look
+    /// like a grid.
+    ///
+    /// The number is the tallest realistic body plus the card's own chrome,
+    /// with a little slack. `.progress` (numeral, bar, two-line note) is the
+    /// body that sets the floor; `.peekRows` at its own `maxPeekRows` cap is
+    /// close behind. Nothing is *sized* to this constant - each body keeps its
+    /// natural height and is top-aligned, so a short one simply leaves room
+    /// below it (see `rebuildBody`). `DaylightModuleSelfTest.
+    /// checkUniformCardHeight` measures every body kind against the real body
+    /// area and fails if any of them stops fitting.
+    ///
+    /// Safe to be a required constraint, unlike a *width*: this card lives
+    /// inside the canvas's scroll view, whose document height is free, so a
+    /// vertical constraint here cannot pressure the window's own size the way
+    /// AGENTS.md gotcha (13) describes.
+    ///
+    /// Run through `HelmType.scaled` rather than left a literal, because every
+    /// font inside the card is: at GL-32's "Larger" (x1.3) the tallest body
+    /// grows past a fixed 176 and would be clipped. A card carries the scale
+    /// it was *built* at - `applyTheme` re-themes a card but does not rebuild
+    /// its body - which is GL-32's own documented remaining half, and is
+    /// consistent either way: an existing card keeps both its old fonts and
+    /// its old height, a card built after the change gets both new.
+    static var standardHeight: CGFloat { HelmType.scaled(baseStandardHeight) }
+
+    /// `standardHeight` before the chrome text scale, i.e. the measured
+    /// number. Kept separate so the self-test can name what it measured.
+    static let baseStandardHeight: CGFloat = 176
 
     /// Fired on click (and on a VoiceOver/keyboard press, via
     /// `HoverHighlightView`'s own press replay).
@@ -317,6 +385,11 @@ final class HelmModuleCard: NSView {
             card.topAnchor.constraint(equalTo: topAnchor),
             card.bottomAnchor.constraint(equalTo: bottomAnchor),
 
+            // The one thing that makes the grid uniform vertically. See
+            // `standardHeight` for the number, and why a required *height*
+            // is safe here where a required width would not be.
+            heightAnchor.constraint(equalToConstant: Self.standardHeight),
+
             chipLabel.leadingAnchor.constraint(equalTo: chipView.leadingAnchor, constant: 10),
             chipLabel.trailingAnchor.constraint(equalTo: chipView.trailingAnchor, constant: -10),
             chipLabel.topAnchor.constraint(equalTo: chipView.topAnchor, constant: 3),
@@ -396,11 +469,27 @@ final class HelmModuleCard: NSView {
         content.translatesAutoresizingMaskIntoConstraints = false
         bodyContainer.addSubview(content)
         bodyViews.append(content)
+        let bodyBottom = content.bottomAnchor.constraint(lessThanOrEqualTo: bodyContainer.bottomAnchor)
+        bodyBottom.priority = .defaultHigh
         NSLayoutConstraint.activate([
             content.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
             content.topAnchor.constraint(equalTo: bodyContainer.topAnchor),
-            content.bottomAnchor.constraint(equalTo: bodyContainer.bottomAnchor),
+            // `<=`, not `==`, and that is what makes one fixed card height
+            // work across six body kinds of different natural sizes: the body
+            // keeps its own height, sits at the top of the area, and a short
+            // one leaves the slack below it rather than being stretched to
+            // fill it (`.fill` on a vertical stack would otherwise pull a
+            // two-line note apart). `.defaultHigh` rather than required so
+            // that if a body ever *did* outgrow the area, this is the
+            // constraint AppKit breaks - not `standardHeight`, and not a
+            // label's own height - which keeps the failure to one card
+            // instead of deforming the row. Nothing should reach that state:
+            // every body kind is capped at the content layer (`maxPeekRows`,
+            // `maxBriefingClauses`, `noteLabel`'s two lines) and
+            // `DaylightModuleSelfTest.checkUniformCardHeight` measures all of
+            // them against the real area.
+            bodyBottom,
         ])
     }
 
@@ -738,6 +827,15 @@ final class HelmModuleCard: NSView {
         let noteTexts: [String]
         /// Every big-number / metric-styled line the body rendered.
         let metricTexts: [String]
+        /// The height the card actually resolved to - `standardHeight` in
+        /// every case, which is the whole point of the constant.
+        let cardHeight: CGFloat
+        /// The body area this card gives its content, after the ribbon,
+        /// header and both body insets.
+        let bodyAreaHeight: CGFloat
+        /// What the body actually needs. Greater than `bodyAreaHeight` means
+        /// this body kind has outgrown `standardHeight` and would be clipped.
+        let bodyContentHeight: CGFloat
     }
 
     var anatomyForTests: Anatomy {
@@ -756,7 +854,10 @@ final class HelmModuleCard: NSView {
                 accessibilityLabel: card.accessibilityLabelOverride,
                 peekRowCount: peekTextLabels.count,
                 noteTexts: noteLabels.map(\.stringValue),
-                metricTexts: metricLabels.map(\.stringValue))
+                metricTexts: metricLabels.map(\.stringValue),
+                cardHeight: frame.height,
+                bodyAreaHeight: bodyContainer.frame.height,
+                bodyContentHeight: bodyViews.first?.fittingSize.height ?? 0)
     }
 
     /// Fires the card's real click path, exactly as a mouse click or a

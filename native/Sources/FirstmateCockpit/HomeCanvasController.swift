@@ -39,12 +39,13 @@
 //   - GL-20: the window-resize handler is gated on this page actually being
 //     visible, or a resize while the captain is on Console pays for the
 //     canvas's whole relayout.
-//   - gotcha (13): the grid is `HelmResponsiveGrid.rows(_:)`, whose rows are
-//     `.fillEqually` and create no per-card width constraint at all, so no
-//     card can cap the window. (Phase 2 used `spanningRows(_:)` for the wide
-//     briefing, which does create explicit widths - at priority 499 for this
-//     same reason. Uniform card sizing removed the need for it here; see
-//     `DaylightModule`'s own note.)
+//   - gotcha (13): the grid is `HelmResponsiveGrid.spanningRows(_:)`, because
+//     the Morning briefing is two columns wide (§6.1, `DaylightModule.
+//     gridSpan` - see that enum's own note for the three passes it took to
+//     land there). That path creates a real per-card width constraint, unlike
+//     `rows(_:)`, so every one of them is `HelmDaylightPriority.contentTie`
+//     (499) - below `NSLayoutPriorityWindowSizeStayPut` - and no card can cap
+//     the window.
 
 import AppKit
 
@@ -381,21 +382,23 @@ final class HomeCanvasController: NSViewController {
         lastGridWidth = width
         let modules = visibleModules()
 
-        // `rows(_:)`, not `spanningRows(_:)`: every module card is one column
-        // wide (see `DaylightModule`'s own note on the captain's override of
-        // §6.1's wide briefing variant). This is the plain `.fillEqually` grid
-        // every other card grid in this app uses, so uniform width is a
-        // property of the layout rather than something each card has to be
-        // asked for - and it carries the partial-last-row padding that stops a
-        // lone leftover card stretching.
-        let rows = HelmResponsiveGrid.rows(
+        // `spanningRows(_:)`, not `rows(_:)`: the Morning briefing spans two
+        // columns and every other module spans one (`DaylightModule.gridSpan`).
+        // Uniform *width* still comes from the layout rather than from
+        // anything a card asks for - a span-1 card is exactly one column in
+        // every row - and this path carries the same partial-row padding that
+        // stops a lone leftover card stretching, expressed in columns rather
+        // than cells. Uniform *height* is the card's own
+        // `HelmModuleCard.standardHeight`.
+        let rows = HelmResponsiveGrid.spanningRows(
             modules,
+            spans: { $0.gridSpan },
             containerWidth: width,
             minItemWidth: Self.minModuleWidth,
             spacing: Self.gridSpacing
-        ) { [weak self] module, _ in
+        ) { [weak self] module, cardWidth in
             guard let self else { return NSView() }
-            return self.makeCard(for: module)
+            return self.makeCard(for: module, cardWidth: cardWidth)
         }
 
         for row in rows {
@@ -404,9 +407,9 @@ final class HomeCanvasController: NSViewController {
         }
     }
 
-    private func makeCard(for module: DaylightModule) -> HelmModuleCard {
+    private func makeCard(for module: DaylightModule, cardWidth: CGFloat) -> HelmModuleCard {
         let card = HelmModuleCard()
-        card.configure(content(for: module))
+        card.configure(content(for: module, cardWidth: cardWidth))
         card.onOpen = { [weak self] in self?.onOpenDestination?(module.opens) }
         card.onFollowLink = { [weak self] target in self?.follow(target) }
         cards.append(card)
@@ -483,7 +486,9 @@ final class HomeCanvasController: NSViewController {
 
     // MARK: Module content (§6.1's table)
 
-    private func content(for module: DaylightModule) -> HelmModuleCard.Content {
+    /// `cardWidth` is the width the grid built this card for. Only the
+    /// briefing reads it, and only to size its paragraph - see `fillBriefing`.
+    private func content(for module: DaylightModule, cardWidth: CGFloat) -> HelmModuleCard.Content {
         var content = HelmModuleCard.Content(
             title: module.title,
             subtitle: "",
@@ -493,7 +498,7 @@ final class HomeCanvasController: NSViewController {
             body: .note(""))
 
         switch module {
-        case .briefing: fillBriefing(&content)
+        case .briefing: fillBriefing(&content, cardWidth: cardWidth)
         case .fleet: fillFleet(&content)
         case .tasks: fillTasks(&content)
         case .mergeQueue: fillMergeQueue(&content)
@@ -518,7 +523,7 @@ final class HomeCanvasController: NSViewController {
     /// F12's record, read straight out of `AppSettings` - already generated,
     /// never regenerated here. A canvas that could trigger a `claude -p` call
     /// would be a new cost on every visit.
-    private func fillBriefing(_ content: inout HelmModuleCard.Content) {
+    private func fillBriefing(_ content: inout HelmModuleCard.Content, cardWidth: CGFloat) {
         guard let record = AppSettings.shared.morningBriefingRecord, !record.clauses.isEmpty else {
             content.subtitle = AppSettings.shared.morningBriefingEnabled
                 ? "not generated yet today"
@@ -534,19 +539,35 @@ final class HomeCanvasController: NSViewController {
         content.subtitle = "generated \(formatter.string(from: record.generatedAt))"
         content.chip = record.isDegraded ? .warn("offline") : .mute("\(record.sources.count) sources")
 
-        // One column now, so the paragraph is bounded (see
-        // `HelmModuleCard.maxBriefingClauses`). An overflow is stated rather
-        // than dropped in silence - a card that quietly showed three of six
-        // clauses would read as "that is the whole briefing", which is exactly
-        // the "no silent caps" failure. The trailing line is a plain
-        // `.none`-target clause, so it renders as text inside the same
-        // paragraph and needs no new mechanism.
-        var clauses = Array(record.clauses.prefix(HelmModuleCard.maxBriefingClauses))
+        // Two columns wide again, and still bounded - see
+        // `HelmModuleCard.maxBriefingClauses` for why the cap survives the
+        // extra width (the card's height is fixed now) and why the number went
+        // from three to five. An overflow is stated rather than dropped in
+        // silence - a card that quietly showed five of eight clauses would
+        // read as "that is the whole briefing", which is exactly the "no
+        // silent caps" failure. The trailing line is a plain `.none`-target
+        // clause, so it renders as text inside the same paragraph and needs no
+        // new mechanism.
+        var clauses = Array(record.clauses.prefix(Self.briefingClauseCap(forCardWidth: cardWidth)))
         let hidden = record.clauses.count - clauses.count
         if hidden > 0 {
             clauses.append(BriefingClause(text: "+\(hidden) more on Overview.", target: .none))
         }
         content.body = .paragraph(clauses)
+    }
+
+    /// How many clauses the briefing's paragraph may carry on a card of this
+    /// width.
+    ///
+    /// A span-2 card is at least two minimum columns plus the gap between
+    /// them, so anything narrower than that is a briefing `packRows` degraded
+    /// to one column in a single-column grid - and its paragraph has to shrink
+    /// with it or it overflows the fixed card height and is clipped.
+    static func briefingClauseCap(forCardWidth width: CGFloat) -> Int {
+        let spanTwo = minModuleWidth * 2 + gridSpacing
+        return width + 0.5 >= spanTwo
+            ? HelmModuleCard.maxBriefingClauses
+            : HelmModuleCard.maxNarrowBriefingClauses
     }
 
     private func fillFleet(_ content: inout HelmModuleCard.Content) {

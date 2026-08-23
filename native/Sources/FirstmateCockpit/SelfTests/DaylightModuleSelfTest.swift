@@ -45,7 +45,8 @@ enum DaylightModuleSelfTest {
         // stops printing OK lines after the first FAIL hides how much else is
         // broken, which is the opposite of what a regression run is for.
         var allOK = true
-        for check in [checkSpaceTable, checkSymbolsResolve, checkUniformCardSizing, checkNoCardIsAWindowFloor,
+        for check in [checkSpaceTable, checkSymbolsResolve, checkUniformCardSizing,
+                      checkUniformCardHeight, checkNoCardIsAWindowFloor,
                       checkModuleAnatomy, checkCanvasConstructsNoStores,
                       checkBarAnatomy, checkBarDoesNotCapWindow,
                       checkCanvasAndDrillHeader, checkLiveModuleWiring,
@@ -156,12 +157,15 @@ enum DaylightModuleSelfTest {
 
     // MARK: 2 - uniform card sizing
     //
-    // The captain's override of §6.1's wide briefing variant: every module
-    // card is the same size, on every space. This case is the direct encoding
-    // of that rule - it measures the *real* canvas grid rather than reasoning
-    // about a `span` property, so reintroducing per-card sizing by any route
-    // (a span value, a width constraint on one card, a stretched partial row)
-    // fails here.
+    // The captain's rule, in the shape it finally settled into (see
+    // `DaylightModule`'s own doc comment for the three passes): the Morning
+    // briefing is two columns wide, every other module is one, and *every*
+    // card - briefing included - is the same height. This case measures the
+    // real canvas grid rather than reasoning about the `gridSpan` property,
+    // so per-card sizing creeping back by any route (a second module claiming
+    // span 2, a width constraint at a priority that can cap the window, a
+    // stretched partial row) fails here. The height half is
+    // `checkUniformCardHeight` below, which needs a real window.
 
     private static func checkUniformCardSizing(_ ok: inout Bool) {
         print("\n-- grid: every module card the same size, on every space --")
@@ -177,6 +181,16 @@ enum DaylightModuleSelfTest {
             previous = columns
         }
 
+        // Exactly one module is wide, and it is the briefing. A second one
+        // claiming span 2 is the misreading this case exists to catch.
+        let wide = DaylightModule.allCases.filter { $0.gridSpan != 1 }
+        if wide != [.briefing] {
+            fail("the wide modules should be exactly [briefing], got \(wide.map(\.rawValue))", &ok)
+        }
+        if DaylightModule.briefing.gridSpan != 2 {
+            fail("the briefing should span 2 columns, got \(DaylightModule.briefing.gridSpan)", &ok)
+        }
+
         // The real grid, at several real widths, for every space - including
         // the partial-last-row case, which is what a lone leftover card
         // stretching to fill its row would look like.
@@ -186,48 +200,82 @@ enum DaylightModuleSelfTest {
                 let columns = HelmResponsiveGrid.columns(containerWidth: container,
                                                          minItemWidth: HomeCanvasController.minModuleWidth,
                                                          spacing: HomeCanvasController.gridSpacing)
-                let rows = HelmResponsiveGrid.rows(
+                let unit = HelmResponsiveGrid.itemWidth(containerWidth: container,
+                                                        columns: columns,
+                                                        spacing: HomeCanvasController.gridSpacing)
+                let rows = HelmResponsiveGrid.spanningRows(
                     modules,
+                    spans: { $0.gridSpan },
                     containerWidth: container,
                     minItemWidth: HomeCanvasController.minModuleWidth,
                     spacing: HomeCanvasController.gridSpacing
-                ) { _, _ in
+                ) { module, width in
                     let v = NSView()
+                    v.identifier = NSUserInterfaceItemIdentifier("\(module.rawValue)|\(width)")
                     v.translatesAutoresizingMaskIntoConstraints = false
                     return v
                 }
 
-                // Every row holds exactly one column's worth of cells, padded
-                // with spacers, so `.fillEqually` divides by the same number in
-                // every row - which is what makes the widths uniform.
                 for (index, row) in rows.enumerated() {
-                    if row.arrangedSubviews.count != columns {
-                        fail("\(space.rawValue) at \(container)pt: row \(index) has "
-                             + "\(row.arrangedSubviews.count) cells, expected \(columns) - "
-                             + "an unpadded row stretches its cards", &ok)
-                    }
-                    if row.distribution != .fillEqually {
-                        fail("\(space.rawValue) at \(container)pt: row \(index) is "
-                             + "\(row.distribution.rawValue), not .fillEqually - cards can differ in width", &ok)
-                    }
-                    // No card may carry a width constraint of its own: a
-                    // per-card width is both how non-uniform sizing comes back
-                    // and how a card caps the window (gotcha (13)).
+                    // Every cell's width is an explicit constraint on this
+                    // path, and every one of them must sit below the window's
+                    // own stay-put priority or a card becomes a window-width
+                    // floor (gotcha (13)) - the failure `AppShellBody-
+                    // WidthSelfTest` reproduces end to end.
+                    var rowWidth: CGFloat = 0
                     for view in row.arrangedSubviews {
-                        for constraint in view.constraints where constraint.firstAttribute == .width {
-                            fail("\(space.rawValue) at \(container)pt: a grid cell carries its own width "
-                                 + "constraint (\(constraint.constant)pt, priority "
-                                 + "\(constraint.priority.rawValue)) - cards must be sized by "
-                                 + ".fillEqually alone", &ok)
+                        let widths = view.constraints.filter { $0.firstAttribute == .width }
+                        guard let width = widths.first, widths.count == 1 else {
+                            fail("\(space.rawValue) at \(container)pt: row \(index) has a cell with "
+                                 + "\(widths.count) width constraints, expected exactly 1", &ok)
+                            continue
                         }
+                        if width.priority != HelmDaylightPriority.contentTie {
+                            fail("\(space.rawValue) at \(container)pt: a cell's width is priority "
+                                 + "\(width.priority.rawValue), expected "
+                                 + "\(HelmDaylightPriority.contentTie.rawValue) - above 500 it caps the window", &ok)
+                        }
+                        // A cell is one column, or two columns plus the gap
+                        // between them. Nothing else.
+                        let single = abs(width.constant - unit) < 0.01
+                        let double = abs(width.constant - (unit * 2 + HomeCanvasController.gridSpacing)) < 0.01
+                        if !(single || (double && columns >= 2)) {
+                            fail("\(space.rawValue) at \(container)pt: a cell is \(width.constant)pt, "
+                                 + "which is neither one column (\(unit)) nor two", &ok)
+                        }
+                        rowWidth += width.constant
+                    }
+                    // The row fills its container exactly - no overflow, and
+                    // no short row left stretching its cards.
+                    let gaps = HomeCanvasController.gridSpacing * CGFloat(max(0, row.arrangedSubviews.count - 1))
+                    if abs(rowWidth + gaps - container) > 0.5 {
+                        fail("\(space.rawValue) at \(container)pt: row \(index) resolves to "
+                             + "\(rowWidth + gaps)pt, not the container's \(container)pt", &ok)
                     }
                 }
 
                 // Every module placed exactly once, in order.
-                let placed = rows.reduce(0) { $0 + min($1.arrangedSubviews.count, columns) }
-                if placed < modules.count {
-                    fail("\(space.rawValue) at \(container)pt: laid out \(placed) cells for "
-                         + "\(modules.count) modules", &ok)
+                let placed = rows.flatMap { $0.arrangedSubviews }
+                    .compactMap { $0.identifier?.rawValue.split(separator: "|").first.map(String.init) }
+                if placed != modules.map(\.rawValue) {
+                    fail("\(space.rawValue) at \(container)pt: laid out \(placed), expected "
+                         + "\(modules.map(\.rawValue))", &ok)
+                }
+
+                // At two or more columns the briefing is genuinely built for
+                // the double width - not handed one column's worth and left
+                // to wrap.
+                if columns >= 2, modules.contains(.briefing) {
+                    let built = rows.flatMap { $0.arrangedSubviews }
+                        .first { $0.identifier?.rawValue.hasPrefix("briefing|") == true }?
+                        .identifier?.rawValue.split(separator: "|").last.flatMap { Double($0) }
+                    let expected = Double(unit * 2 + HomeCanvasController.gridSpacing)
+                    if let built, abs(built - expected) > 0.01 {
+                        fail("\(space.rawValue) at \(container)pt: the briefing card was built for "
+                             + "\(built)pt, expected \(expected)pt", &ok)
+                    } else if built == nil {
+                        fail("\(space.rawValue) at \(container)pt: no briefing cell was built", &ok)
+                    }
                 }
             }
         }
@@ -251,10 +299,10 @@ enum DaylightModuleSelfTest {
                  + "\(opened.map(String.init(describing:)).sorted())", &ok)
         }
 
-        // The grid's span-2 packing math is still exercised, with literal
-        // spans rather than a module property: `spanningRows` is retained
-        // infrastructure (see `HelmResponsiveGrid`), nothing on the canvas
-        // calls it, and this keeps it honest if a later phase brings it back.
+        // The packing math itself, at every column count including the
+        // single-column case a span-2 card has to degrade into rather than
+        // overflow. Literal spans rather than the module property, so this
+        // stays a test of the arithmetic.
         for columns in 1...6 {
             let spans = [2, 1, 1, 1, 1, 1, 1]
             let rows = HelmResponsiveGrid.packRows(spans: spans, columns: columns)
@@ -274,7 +322,150 @@ enum DaylightModuleSelfTest {
             }
         }
 
-        if ok { print("  OK - uniform cells on 5 spaces x 5 widths, Engineering's five cards, packing math") }
+        if ok {
+            print("  OK - briefing wide + every other cell one column, on 5 spaces x 5 widths, "
+                  + "Engineering's five cards, packing math")
+        }
+    }
+
+    // MARK: 2b - uniform card height
+    //
+    // The half PR #259 never addressed. Matching widths alone still left the
+    // rows ragged, because each body kind rendered at its own natural height -
+    // a `.note` is two lines and a `.progress` is a 34pt numeral over a bar
+    // over a note. `HelmModuleCard.standardHeight` is the fix, and this case
+    // is what makes the number defensible rather than a guess: it measures
+    // every body kind's real content against the real body area, at the
+    // narrowest realistic column, in a real window.
+    //
+    // It also prints each measurement, so the next agent changing a body kind
+    // can see how much slack is left rather than re-deriving it.
+
+    private static func checkUniformCardHeight(_ ok: inout Bool) {
+        print("\n-- module card: one height for every body kind --")
+
+        // Deliberately pessimistic content: the longest note that fits two
+        // lines, a peek list at its own cap, a wide metric, and a briefing
+        // paragraph at `maxBriefingClauses` - the states that actually set the
+        // floor, not the tidy ones.
+        let longNote = "Two crew are working, one pull request is ready to merge, and nothing is blocked right now."
+        let bodies: [(String, HelmModuleCard.Body)] = [
+            ("metric", .metric(value: "128", unit: "updates", note: longNote)),
+            ("progress", .progress(value: 4, total: 5, note: longNote)),
+            ("ring", .ring(value: 4, total: 5, title: "Healthy", note: longNote)),
+            ("peekRows", .peekRows((1...HelmModuleCard.maxPeekRows).map {
+                HelmModulePeekRow(state: .warn, text: "a-long-crew-task-identifier-\($0)",
+                                  value: "needs decision")
+            })),
+            ("note", .note(longNote)),
+        ]
+
+        // The narrowest column the grid ever hands a card: one column at the
+        // minimum column width. Anything wider only makes the text shorter.
+        let narrow = HomeCanvasController.minModuleWidth
+
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 700),
+                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let host = NSView(frame: window.contentLayoutRect)
+        window.contentView = host
+
+        func measure(_ name: String, _ body: HelmModuleCard.Body, width: CGFloat) {
+            let card = HelmModuleCard()
+            card.configure(.init(title: "Morning briefing", subtitle: "generated 9:41 AM",
+                                 symbol: "cup.and.saucer.fill", hue: .amber,
+                                 chip: .mute("3 sources"), body: body))
+            host.addSubview(card)
+            let widthConstraint = card.widthAnchor.constraint(equalToConstant: width)
+            widthConstraint.priority = HelmDaylightPriority.contentTie
+            NSLayoutConstraint.activate([
+                widthConstraint,
+                card.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+                card.topAnchor.constraint(equalTo: host.topAnchor),
+            ])
+            host.layoutSubtreeIfNeeded()
+
+            let a = card.anatomyForTests
+            if abs(a.cardHeight - HelmModuleCard.standardHeight) > 0.5 {
+                fail("\(name) at \(width)pt: the card resolved to \(a.cardHeight)pt, not "
+                     + "standardHeight (\(HelmModuleCard.standardHeight)) - the grid row would be ragged", &ok)
+            }
+            if a.bodyContentHeight > a.bodyAreaHeight + 0.5 {
+                fail("\(name) at \(width)pt: the body needs \(a.bodyContentHeight)pt but the card gives "
+                     + "it \(a.bodyAreaHeight)pt - it would be clipped with nothing said about it. "
+                     + "Raise standardHeight or cap this body kind's content.", &ok)
+            }
+            let slack = a.bodyAreaHeight - a.bodyContentHeight
+            print(String(format: "     %-10@ body needs %6.1fpt of %6.1fpt (%+.1f slack)",
+                         name as NSString, a.bodyContentHeight, a.bodyAreaHeight, slack))
+            card.removeFromSuperview()
+        }
+
+        // The briefing, at the span-2 width it actually gets, carrying a full
+        // cap's worth of realistic clauses plus the overflow line the caller
+        // appends. If this stops fitting, `maxBriefingClauses` is too high -
+        // which is the whole reason that constant exists now that the card's
+        // height is fixed.
+        let clauses = [
+            BriefingClause(text: "Two crew are working and nothing is blocked.", target: .fleet),
+            BriefingClause(text: "One pull request is ready to merge whenever you are.", target: .review),
+            BriefingClause(text: "Two tasks are due today and the cert renewal is the urgent one.", target: .tasks),
+            BriefingClause(text: "Three tools have updates waiting in Setup.", target: .updates),
+            BriefingClause(text: "Claude usage is comfortable for the rest of the day.", target: .quota),
+        ]
+        if clauses.count != HelmModuleCard.maxBriefingClauses {
+            fail("this case measures \(clauses.count) clauses but the cap is "
+                 + "\(HelmModuleCard.maxBriefingClauses) - measure the cap, not a number beside it", &ok)
+        }
+        var capped = clauses
+        capped.append(BriefingClause(text: "+3 more on Overview.", target: .none))
+        let spanTwo = narrow * 2 + HomeCanvasController.gridSpacing
+
+        // Swept across GL-32's chrome text scale, because that is what makes
+        // one fixed height a real claim rather than one true at the default
+        // setting: at x1.3 every font in the card grows, so `standardHeight`
+        // is scaled too and the fit has to hold at the top of the range.
+        //
+        // `ChromeTextScale.setScale` writes through to the real
+        // `AppSettings.uiTextScale`, so the captain's own setting is saved and
+        // restored - the same care `BackupSelfTest` takes with the dictation
+        // shortcut for the same reason.
+        let captainScale = ChromeTextScale.shared.scale
+        defer { ChromeTextScale.shared.setScale(captainScale) }
+
+        for (title, scale) in ChromeTextScale.steps {
+            ChromeTextScale.shared.setScale(scale)
+            print("   \(title) (x\(scale)), card \(HelmModuleCard.standardHeight)pt:")
+            for (name, body) in bodies { measure(name, body, width: narrow) }
+            measure("paragraph", .paragraph(capped), width: spanTwo)
+            // And the same paragraph on a briefing `packRows` has degraded to
+            // one column, which takes the narrower cap.
+            measure("paragraph-1col",
+                    .paragraph(Array(capped.prefix(HelmModuleCard.maxNarrowBriefingClauses))
+                               + [BriefingClause(text: "+3 more on Overview.", target: .none)]),
+                    width: narrow)
+            // And the fallback the briefing renders before the day's first one
+            // is generated, which is a plain note on the same wide card.
+            measure("briefing-empty",
+                    .note("Your first briefing of the day appears here."),
+                    width: spanTwo)
+        }
+
+        // The cap the canvas actually picks, from the width the grid built the
+        // card for - the wide number only above a real span-2 width.
+        let spanTwoCap = HomeCanvasController.briefingClauseCap(forCardWidth: spanTwo)
+        let narrowCap = HomeCanvasController.briefingClauseCap(forCardWidth: narrow)
+        if spanTwoCap != HelmModuleCard.maxBriefingClauses {
+            fail("a span-2 card should take \(HelmModuleCard.maxBriefingClauses) clauses, got \(spanTwoCap)", &ok)
+        }
+        if narrowCap != HelmModuleCard.maxNarrowBriefingClauses {
+            fail("a one-column card should take \(HelmModuleCard.maxNarrowBriefingClauses) clauses, "
+                 + "got \(narrowCap)", &ok)
+        }
+
+        if ok {
+            print("  OK - every body kind fits one \(HelmModuleCard.baseStandardHeight)pt card "
+                  + "(briefing included, at span-2 width) across \(ChromeTextScale.steps.count) text scales")
+        }
     }
 
     /// Nothing inside a module card may outrank the window's own size.
