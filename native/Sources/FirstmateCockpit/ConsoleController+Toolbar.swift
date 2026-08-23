@@ -248,7 +248,8 @@ extension ConsoleController {
         // through it.
         let paneBg = HelmTheme.nsColor(theme.chromeBackgroundHex)
         sreLeadPane.layer?.backgroundColor = NSColor.clear.cgColor
-        HelmCard.applyCardSurface(to: sreLeadCard, theme: theme, cornerRadius: HelmMetrics.rPanel)
+        HelmCard.applyCardSurface(to: sreLeadCard, theme: theme, cornerRadius: HelmMetrics.rPanel,
+                                  daylightRadius: HelmMetrics.rPanel)
         // Transparent, so the card's own fill shows through - the header used
         // to paint `chromeBackgroundHex` itself, which is the same colour but
         // would square off the card's top corners inside its clip.

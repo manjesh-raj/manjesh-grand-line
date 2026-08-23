@@ -394,6 +394,58 @@ enum HelmContrast {
         return hi
     }
 }
+/// A small filled circle carrying one semantic colour - Daylight §6.5's "dot"
+/// for a row whose leading signal is a *state*, not a domain identity.
+///
+/// **Why this exists rather than a 26pt `IconTileView`.** A tile with a glyph
+/// in it says "this is a thing of kind X"; a PR row's leading signal says
+/// "these checks are green", which is a state and needs no glyph to carry it -
+/// the row's own chip already spells the state out in words beside it. §7's
+/// Review row is specified as "dot + tag + Review/Merge actions", and this is
+/// that dot.
+///
+/// It is deliberately **not** a new slot on `HelmAccentRow`: that class already
+/// has `leadingControl` for exactly this ("a caller-owned control in the
+/// badge's place"), so a caller passes one of these and the shared row needs no
+/// change at all.
+///
+/// Unlike `IconTileView` this does not observe the theme: it is always owned by
+/// a row that re-configures it per record, so the owner re-tints it in the same
+/// pass it sets the rest of the row's content.
+final class HelmSignalDot: NSView {
+    /// Small enough to read as a status light rather than a bullet, and sized
+    /// so a column of them lines up with a `HelmMetrics.tileSmall` badge's
+    /// centre in the same row layout.
+    static let diameter: CGFloat = 10
+
+    init() {
+        super.init(frame: NSRect(x: 0, y: 0, width: Self.diameter, height: Self.diameter))
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        layer?.cornerRadius = Self.diameter / 2
+        // A fixed-size signal never flexes, in either direction.
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+        NSLayoutConstraint.activate([
+            widthAnchor.constraint(equalToConstant: Self.diameter),
+            heightAnchor.constraint(equalToConstant: Self.diameter),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    /// A hue is safe as a fill and is never automatically safe as text
+    /// (`HelmContrast`'s rule) - a dot is pure fill, so the tint is used at
+    /// full saturation and nothing here needs correcting.
+    func configure(tint: HelmTint, theme: HelmTheme) {
+        layer?.backgroundColor = HelmTheme.nsColor(tint.hex(in: theme)).cgColor
+    }
+
+    // MARK: Probe / self-test surface
+
+    var fillForTests: NSColor? { layer?.backgroundColor.flatMap { NSColor(cgColor: $0) } }
+}
+
 
 /// The shared "icon-in-colored-tile" view (mockup's `.tile` squares): an SF
 /// Symbol centered over a ~34x34pt, ~9pt-corner-radius layer-backed square,
@@ -1364,17 +1416,45 @@ enum ToolRowLayout {
     /// `theme` defaults to the active one so no existing caller changed; pass
     /// it explicitly from a caller that already has the theme in hand (or is
     /// re-theming to a theme that is not yet current).
+    /// The chip's corner radius, per theme - the one definition, so a check
+    /// that has to *find* chips in a view tree reads the same number the
+    /// component paints (`InputSurfaceSelfTest.pillPairs` does exactly that,
+    /// and a hardcoded 9 there silently stopped finding any chip at all the
+    /// moment Daylight made them capsules).
+    static func pillCornerRadius(for theme: HelmTheme) -> CGFloat {
+        // A capsule under Daylight (§6.7), derived from the chip's own
+        // resolved height (label + 3pt top and bottom) rather than from a
+        // freshly built chip's `bounds`, which is 0 - the exact reason
+        // `dCapsule` is documented as a sentinel that must never reach a layer
+        // unclamped.
+        theme.isDaylight
+            ? HelmMetrics.capsuleRadius(forHeight: HelmType.chip().pointSize + 9)
+            : 9
+    }
+
     static func pill(text: String, colorHex: String, into pill: NSView, label: NSTextField,
                      theme: HelmTheme = ThemeManager.shared.theme) {
         let resolved = HelmContrast.tintedSurface(tintHex: colorHex,
                                                   theme: theme,
                                                   target: HelmContrast.textTarget)
         label.stringValue = text
-        label.font = .systemFont(ofSize: 10.5, weight: .semibold)
+        // Daylight §6.7 sets a chip's label **bold** at the same 10.5 the
+        // twelve palettes render semibold, and makes the chip a capsule. The
+        // 9/3 padding stays as-is in both: the label's constraints are created
+        // once (see below), so a padding change would only reach chips built
+        // after it, and §6.7's 3/10 is one point off what is already here -
+        // not worth a mutable-constraint mechanism to express.
+        let daylight = theme.isDaylight
+        label.font = daylight ? HelmType.chip() : .systemFont(ofSize: 10.5, weight: .semibold)
         label.textColor = resolved.foreground
         label.translatesAutoresizingMaskIntoConstraints = false
         pill.wantsLayer = true
-        pill.layer?.cornerRadius = 9
+        // A capsule under Daylight. Derived from the chip's own resolved
+        // height (label + 3pt top and bottom, so ~20 at every text scale that
+        // matters) rather than from `pill.bounds`, which is 0 the first time a
+        // freshly built chip is styled - the exact reason `dCapsule` is
+        // documented as a sentinel that must never reach a layer unclamped.
+        pill.layer?.cornerRadius = pillCornerRadius(for: theme)
         // Opaque, already flattened over the surface - not re-applied as
         // alpha, so the measured contrast above is exactly what renders.
         pill.layer?.backgroundColor = resolved.fill.cgColor

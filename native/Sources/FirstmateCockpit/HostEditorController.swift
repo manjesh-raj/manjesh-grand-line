@@ -159,7 +159,8 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     override func loadView() {
         let form = HelmFormSheet(title: editing == nil ? "New Host" : "Edit Host",
                                  scrolls: true,
-                                 maxContentWidth: Self.maxContentWidth)
+                                 maxContentWidth: Self.maxContentWidth,
+                                 domainHue: RailDestination.hosts.domainHue)
         form.autoresizingMask = [.width, .height]
         form.setFrameSize(NSSize(width: 640, height: 780))
         view = form

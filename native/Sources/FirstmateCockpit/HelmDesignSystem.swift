@@ -532,15 +532,49 @@ final class HelmCard: NSView {
 
     func applyTheme(_ theme: HelmTheme) {
         Self.applyCardSurface(to: self, theme: theme)
-        divider.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex)
-            .withAlphaComponent(Self.dividerAlpha).cgColor
+        // §6.5's `hairRow` under the header, which is a *lighter* line than
+        // the card's own outline (the pre-Daylight themes get the same effect
+        // by damping `chromeLineHex`).
+        divider.layer?.backgroundColor = theme.isDaylight
+            ? HelmTheme.nsColor(DaylightPalette.hairRow).cgColor
+            : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(Self.dividerAlpha).cgColor
+        applyDaylightElevation(theme)
         headerTile?.applyTheme(theme)
+        headerTitle?.font = theme.isDaylight ? HelmType.cardTitle() : HelmType.sectionTitle()
         // Theme-derived, never the system `labelColor` the four card copies
         // this replaced relied on - a forced `appearance` only picks the right
         // side of light/dark for a system grey, it cannot make it match the
         // palette (audit §5.3, Phase 0's rule).
         headerTitle?.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         headerSubtitle?.textColor = HelmTheme.mutedInk(theme)
+    }
+
+    /// §6.5's resting shadow. A `HelmCard` is deliberately **flat** in every
+    /// pre-Daylight palette (the design system's 39 cards were all built that
+    /// way on purpose - `elevation(for:)`'s own comment), so this only paints
+    /// under Daylight and explicitly clears itself otherwise: a captain
+    /// switching away from Daylight must not be left with a stale shadow.
+    ///
+    /// Safe on this view specifically because `HelmCard` never sets
+    /// `masksToBounds` on its own layer - a clipped layer casts no shadow at
+    /// all, which is the trap `HelmComposerCard`'s two-layer arrangement
+    /// exists to work around.
+    private func applyDaylightElevation(_ theme: HelmTheme) {
+        guard theme.isDaylight else {
+            layer?.shadowOpacity = 0
+            return
+        }
+        let shadow = Self.elevation(for: theme, level: .resting)
+        layer?.masksToBounds = false
+        // `CALayer` multiplies `shadowColor`'s own alpha by `shadowOpacity`,
+        // so handing it a pre-multiplied colour *and* the same value as the
+        // opacity squares the alpha and renders a shadow half as strong as
+        // §2.5 specifies. The colour goes in opaque; the alpha is the opacity.
+        let alpha = Float(shadow.shadowColor?.alphaComponent ?? 0)
+        layer?.shadowColor = shadow.shadowColor?.withAlphaComponent(1).cgColor
+        layer?.shadowOpacity = alpha
+        layer?.shadowRadius = shadow.shadowBlurRadius
+        layer?.shadowOffset = CGSize(width: shadow.shadowOffset.width, height: shadow.shadowOffset.height)
     }
 
     // MARK: The one card surface
@@ -557,13 +591,27 @@ final class HelmCard: NSView {
     /// this replaced were translucent, and translucency here buys nothing
     /// (there is only the flat page background behind a card) while making
     /// the card's effective colour depend on what it happens to sit on.
-    static func applyCardSurface(to view: NSView, theme: HelmTheme, cornerRadius: CGFloat = HelmMetrics.rCard) {
+    static func applyCardSurface(to view: NSView, theme: HelmTheme,
+                                 cornerRadius: CGFloat = HelmMetrics.rCard,
+                                 daylightRadius: CGFloat? = nil) {
         view.wantsLayer = true
-        view.layer?.cornerRadius = cornerRadius
+        // Daylight §6.5: radius 20, `card` fill, a **full-strength** 1px
+        // `hair` border. The border alpha below exists because the twelve
+        // pre-Daylight palettes derive their outline from `chromeLineHex`,
+        // which is a heavier tone than `hair` and needs damping; `hair` is
+        // already the design's own hairline value, so damping it would erase
+        // the one thing separating a white card from warm paper.
+        //
+        // `daylightRadius` is how a surface that shares this chrome without
+        // being a drill card keeps its own rounding: `HelmStatTile` is a
+        // 56pt tile, and a 20pt radius on it renders as a lozenge. It passes
+        // its own value; a real card passes nothing and gets §6.5's 20.
+        view.layer?.cornerRadius = theme.isDaylight ? (daylightRadius ?? HelmMetrics.dModule) : cornerRadius
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         view.layer?.borderWidth = 1
-        view.layer?.borderColor = HelmTheme.nsColor(theme.chromeLineHex)
-            .withAlphaComponent(borderAlpha).cgColor
+        view.layer?.borderColor = theme.isDaylight
+            ? HelmTheme.nsColor(theme.chromeLineHex).cgColor
+            : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(borderAlpha).cgColor
     }
 
     /// The card border opacity. `chromeBackgroundHex == backgroundHex` in
@@ -736,9 +784,17 @@ final class HelmButton: NSButton {
         case small
 
         var font: NSFont {
+            font(for: ThemeManager.shared.theme)
+        }
+
+        /// §6.6's Daylight weight is **bold** at the same two point sizes the
+        /// twelve palettes render semibold. Same physical size, so nothing
+        /// re-flows; only the weight changes, and only under Daylight.
+        func font(for theme: HelmTheme) -> NSFont {
+            let weight: NSFont.Weight = theme.isDaylight ? .bold : .semibold
             switch self {
-            case .regular: return .systemFont(ofSize: 12, weight: .semibold)
-            case .small: return .systemFont(ofSize: 11, weight: .semibold)
+            case .regular: return .systemFont(ofSize: 12, weight: weight)
+            case .small: return .systemFont(ofSize: 11, weight: weight)
             }
         }
 
@@ -749,11 +805,18 @@ final class HelmButton: NSButton {
             }
         }
 
-        /// Vertical padding above/below the label.
-        var vInset: CGFloat {
-            switch self {
-            case .regular: return 6
-            case .small: return 4
+        /// Vertical padding above/below the label. §6.6's Daylight capsule is
+        /// one point taller top and bottom than the twelve palettes' control,
+        /// which is what turns a rounded rect into a capsule that still reads
+        /// as a button rather than a tag.
+        var vInset: CGFloat { vInset(for: ThemeManager.shared.theme) }
+
+        func vInset(for theme: HelmTheme) -> CGFloat {
+            switch (self, theme.isDaylight) {
+            case (.regular, true): return 7
+            case (.regular, false): return 6
+            case (.small, true): return 5
+            case (.small, false): return 4
             }
         }
 
@@ -786,6 +849,19 @@ final class HelmButton: NSButton {
     /// and by `.destructive` (its hue is already the point).
     var tint: HelmTint? {
         didSet { if tint != oldValue { restyle() } }
+    }
+
+    /// The page's own domain hue (Daylight §6.6): what a `.primary` button on
+    /// this page is filled with, and what a focus ring on it takes.
+    ///
+    /// **Opt-in, and deliberately so.** Left `nil` a `.primary` button is the
+    /// theme's `accentHex`, exactly as it has always been - which is what
+    /// `HelmContrastSelfTest.checkButtonVariants` asserts for every theme, and
+    /// what keeps every existing primary button in the app unchanged. A drill
+    /// page that owns a hue (§4's table, `RailDestination.domainHue`) sets it
+    /// on the one primary action it has.
+    var domainHue: HelmDomainHue? {
+        didSet { if domainHue != oldValue { restyle() } }
     }
 
     /// SF Symbol shown before the title, or alone when the title is empty.
@@ -892,6 +968,20 @@ final class HelmButton: NSButton {
         set { super.isEnabled = newValue; restyle() }
     }
 
+    /// §6.6: every Daylight button is a capsule. `HelmMetrics.dCapsule` is a
+    /// sentinel and must never reach a layer unclamped, so this resolves it
+    /// against the button's real height - which is why `layout()` re-applies
+    /// it (a button restyled before its first layout pass has height 0).
+    static func cornerRadius(for theme: HelmTheme, height: CGFloat) -> CGFloat {
+        guard theme.isDaylight else { return HelmMetrics.rControl }
+        return HelmMetrics.capsuleRadius(forHeight: max(height, 1))
+    }
+
+    override func layout() {
+        super.layout()
+        layer?.cornerRadius = Self.cornerRadius(for: ThemeManager.shared.theme, height: bounds.height)
+    }
+
     override var intrinsicContentSize: NSSize {
         var s = super.intrinsicContentSize
         s.width += 2 * hInset
@@ -939,11 +1029,15 @@ final class HelmButton: NSButton {
     /// Horizontal padding. `.quiet` is tighter, so a bare toolbar glyph does
     /// not carry a pill's worth of dead space around it.
     private var hInset: CGFloat {
+        // §6.6's Daylight padding is 16 / 12; the twelve palettes keep 13 / 10.
+        // `.quiet` stays tighter in both, so a bare toolbar glyph never
+        // carries a pill's worth of dead space around it.
+        let daylight = ThemeManager.shared.theme.isDaylight
         switch (variant, size) {
         case (.quiet, .regular): return 8
         case (.quiet, .small): return 6
-        case (_, .regular): return 13
-        case (_, .small): return 10
+        case (_, .regular): return daylight ? 16 : 13
+        case (_, .small): return daylight ? 12 : 10
         }
     }
 
@@ -960,21 +1054,32 @@ final class HelmButton: NSButton {
         let label: NSColor
     }
 
-    static func palette(variant: Variant, tint: HelmTint?, theme: HelmTheme) -> Palette {
+    static func palette(variant: Variant, tint: HelmTint?, theme: HelmTheme,
+                        domainHue: HelmDomainHue? = nil) -> Palette {
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let line = HelmTheme.nsColor(theme.chromeLineHex)
         let hoverWash = line.withAlphaComponent(0.30)
 
+        if theme.isDaylight { return daylightPalette(variant: variant, tint: tint, theme: theme, domainHue: domainHue) }
+
         switch variant {
         case .primary:
-            let accent = HelmTheme.nsColor(theme.accentHex)
+            let accent = domainHue.map { $0.baseColor(in: theme) } ?? HelmTheme.nsColor(theme.accentHex)
             return Palette(fill: accent,
                            hoverFill: accent.hoverShifted(by: 0.12, forMode: theme.mode),
                            // Pressed goes the *other* way from hover, so the
                            // two states are never confusable.
                            pressedFill: accent.hoverShifted(by: 0.14, forMode: theme.mode == .dark ? .light : .dark),
                            border: .clear,
-                           label: HelmTheme.nsColor(theme.selectionTextHex))
+                           // `selectionTextHex` is the palette's own
+                           // on-accent tone and is guaranteed against
+                           // `accentHex`; a *domain hue* fill is a different
+                           // surface, so it gets the same correction every
+                           // other label in this file gets rather than being
+                           // assumed safe.
+                           label: domainHue == nil
+                               ? HelmTheme.nsColor(theme.selectionTextHex)
+                               : HelmContrast.legible(HelmTheme.nsColor(theme.selectionTextHex), over: accent))
 
         case .secondary:
             // The one "sunken control fill" in this app: `chromeInkHex`
@@ -1030,6 +1135,82 @@ final class HelmButton: NSButton {
         }
     }
 
+    /// §6.6's Daylight recipe table. Same four variants, resolved against
+    /// Daylight's own tokens rather than the twelve palettes' derivations:
+    ///
+    /// - `.primary` - the page's domain hue (or the theme accent when a page
+    ///   has not claimed one), white label. §2.4 lists four hues whose raw
+    ///   `h1` cannot carry a white label at 4.5:1 as an opaque fill; rather
+    ///   than consuming that table as four literals, the label goes through
+    ///   `HelmContrast.legible`, which computes the same correction and
+    ///   therefore also covers a hue added later.
+    /// - `.secondary` - §6.6's "soft": `inset` fill, `ink` label, `hair` on
+    ///   hover, and **no border**. §6.6's "line" look (a 1.5px `hair` outline
+    ///   over nothing) folds into the same case for a *bordered* row-level
+    ///   action, which is what `HelmPageToolbar.iconButton` needs and asserts.
+    /// - `.quiet` - "ghost": transparent, `muted` label, `inset` on hover.
+    /// - `.destructive` - a `bad` wash with §2.4's corrected `badText` label.
+    private static func daylightPalette(variant: Variant, tint: HelmTint?, theme: HelmTheme,
+                                        domainHue: HelmDomainHue?) -> Palette {
+        let ink = HelmTheme.nsColor(DaylightPalette.ink)
+        let muted = HelmTheme.nsColor(DaylightPalette.muted)
+        let inset = HelmTheme.nsColor(DaylightPalette.inset)
+        let hair = HelmTheme.nsColor(DaylightPalette.hair)
+
+        switch variant {
+        case .primary:
+            // §2.4's correction lives on the *fill*, not the label - see
+            // `DaylightPalette.primaryButtonFill(for:theme:)` for why
+            // correcting the label here would be a silent no-op.
+            let fill = domainHue.map { DaylightPalette.primaryButtonFill(for: $0, theme: theme) }
+                ?? HelmTheme.nsColor(theme.accentHex)
+            return Palette(fill: fill,
+                           hoverFill: fill.hoverShifted(by: 0.10, forMode: .light),
+                           pressedFill: fill.hoverShifted(by: 0.10, forMode: .dark),
+                           border: .clear,
+                           label: .white)
+
+        case .secondary:
+            return Palette(fill: inset,
+                           hoverFill: hair,
+                           pressedFill: hair.hoverShifted(by: 0.08, forMode: .dark),
+                           // §6.6 leaves the soft button unbordered, but the
+                           // toolbar's icon square is the app's one place a
+                           // `.secondary` genuinely has to read as an outlined
+                           // control (`checkPageToolbarRecipe` asserts a
+                           // painted border), so the hairline stays. It is
+                           // `hair`, the design's own outline token, which is
+                           // faint enough that a filled soft button still
+                           // reads as soft.
+                           border: hair,
+                           label: Self.label(tint: tint, over: inset, theme: theme)
+                               ?? HelmContrast.legible(ink, over: inset))
+
+        case .quiet:
+            return Palette(fill: .clear,
+                           hoverFill: inset,
+                           pressedFill: hair,
+                           border: .clear,
+                           label: Self.label(tint: tint,
+                                             over: HelmTheme.nsColor(DaylightPalette.card),
+                                             theme: theme) ?? muted)
+
+        case .destructive:
+            // §2.4's measured pair: the `bad` hue as a wash, with the
+            // separately-corrected `badText` on top of it (the raw hue as its
+            // own label measures 3.72 there).
+            let wash = HelmTheme.nsColor(DaylightPalette.card)
+                .blended(withFraction: 0.12, of: HelmTheme.nsColor(DaylightPalette.bad))
+                ?? inset
+            let label = HelmContrast.legible(HelmTheme.nsColor(DaylightPalette.badText), over: wash)
+            return Palette(fill: wash,
+                           hoverFill: wash.hoverShifted(by: 0.08, forMode: .dark),
+                           pressedFill: wash.hoverShifted(by: 0.14, forMode: .dark),
+                           border: HelmTheme.nsColor(DaylightPalette.bad).withAlphaComponent(0.30),
+                           label: label)
+        }
+    }
+
     /// A tinted label, contrast-corrected against the surface it lands on -
     /// `nil` when no tint was asked for, so the caller falls back to ink.
     ///
@@ -1045,7 +1226,7 @@ final class HelmButton: NSButton {
 
     private func restyle() {
         let theme = ThemeManager.shared.theme
-        let p = Self.palette(variant: variant, tint: tint, theme: theme)
+        let p = Self.palette(variant: variant, tint: tint, theme: theme, domainHue: domainHue)
 
         let fill: NSColor
         if !isEnabled { fill = p.fill }
@@ -1053,10 +1234,14 @@ final class HelmButton: NSButton {
         else if isHovering { fill = p.hoverFill }
         else { fill = p.fill }
 
-        layer?.cornerRadius = HelmMetrics.rControl
+        layer?.cornerRadius = Self.cornerRadius(for: theme, height: bounds.height)
         layer?.backgroundColor = fill.cgColor
         layer?.borderColor = p.border.cgColor
-        layer?.borderWidth = p.border.alphaComponent > 0 ? 1 : 0
+        // §6.6's outline is 1.5px, up from the hairline the twelve palettes
+        // use - the same weight `HelmInputSurface.focusBorderWidth` settled
+        // on, since a capsule on warm paper needs a touch more edge than a
+        // squared control on a tonal one.
+        layer?.borderWidth = p.border.alphaComponent > 0 ? (theme.isDaylight ? 1.5 : 1) : 0
         // Dim the whole control, not just chrome the cell no longer draws.
         alphaValue = isEnabled ? 1 : 0.42
 
@@ -1071,7 +1256,7 @@ final class HelmButton: NSButton {
         paragraph.alignment = .center
         paragraph.lineBreakMode = .byTruncatingTail
         super.attributedTitle = NSAttributedString(string: plainTitle, attributes: [
-            .font: size.font,
+            .font: size.font(for: theme),
             .foregroundColor: labelColor,
             .paragraphStyle: paragraph,
         ])
@@ -1681,9 +1866,15 @@ final class HelmAccentRow: NSView {
             card.layer?.borderColor = accent.withAlphaComponent(Self.selectionBorderAlpha).cgColor
         } else {
             card.normalColor = baseFill
-            card.hoverColor = hoverEnabled
-                ? (baseFill.blended(withFraction: 0.08, of: tintColor) ?? baseFill)
-                : baseFill
+            // Daylight §6.5 names its own row hover token (`rowHover`, a warm
+            // near-white) rather than a tint wash: on warm paper a hue-blended
+            // hover reads as the row changing *state*, which is what the
+            // signal edge is for. The twelve palettes keep the tint blend,
+            // which is what every existing row renders today.
+            let hover = theme.isDaylight
+                ? HelmTheme.nsColor(DaylightPalette.rowHover)
+                : (baseFill.blended(withFraction: 0.08, of: tintColor) ?? baseFill)
+            card.hoverColor = hoverEnabled ? hover : baseFill
             card.layer?.borderWidth = 1
             card.layer?.borderColor = tintColor.withAlphaComponent(Self.borderAlpha).cgColor
         }
@@ -1926,7 +2117,8 @@ final class HelmStatTile: NSView {
     }
 
     func applyTheme(_ theme: HelmTheme) {
-        HelmCard.applyCardSurface(to: self, theme: theme, cornerRadius: HelmMetrics.rRow)
+        HelmCard.applyCardSurface(to: self, theme: theme, cornerRadius: HelmMetrics.rRow,
+                                  daylightRadius: HelmMetrics.rRow)
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
         let metricColor = tint.map {
@@ -2013,6 +2205,12 @@ final class HelmEmptyState: NSView {
     }
 
     private let iconView = NSImageView()
+    /// Daylight §6.14's 40pt gradient plate. Built for every theme (so a
+    /// theme switch never has to rebuild the view tree) and shown only under
+    /// Daylight, where it takes the plain glyph's place - the two are always
+    /// exactly one visible, which is what keeps `debugGeometry().glyphFrame`
+    /// meaningful in both.
+    private let tile = HelmGradientTile(size: .hero)
     private let titleLabel = NSTextField(labelWithString: "")
     private let bodyLabel = NSTextField(labelWithString: "")
     private let stack: NSStackView
@@ -2039,12 +2237,17 @@ final class HelmEmptyState: NSView {
     ///     state with an action already owns a button *and* a spinner it
     ///     enables/disables around its own async work, so a component-owned
     ///     button would have taken behaviour away rather than sharing it.
+    ///   - hue: the domain hue for Daylight's gradient plate. Defaults to the
+    ///     accent role, which resolves to the theme's own accent in every
+    ///     fallback palette (`HelmDomainHue.fallbackTint`), so a caller that
+    ///     does not care gets the page's ordinary colour.
     init(symbol: String,
          title: String? = nil,
          body: String,
          size: Size = .compact,
          boxed: Bool = false,
-         accessory: NSView? = nil) {
+         accessory: NSView? = nil,
+         hue: HelmDomainHue = .teal) {
         self.size = size
         self.boxed = boxed
         self.accessory = accessory
@@ -2068,7 +2271,9 @@ final class HelmEmptyState: NSView {
         bodyLabel.stringValue = body
         bodyLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        var views: [NSView] = [iconView, titleLabel, bodyLabel]
+        tile.configure(symbol: symbol, hue: hue)
+
+        var views: [NSView] = [iconView, tile, titleLabel, bodyLabel]
         if let accessory {
             accessory.translatesAutoresizingMaskIntoConstraints = false
             views.append(accessory)
@@ -2130,6 +2335,17 @@ final class HelmEmptyState: NSView {
     func applyTheme(_ theme: HelmTheme) {
         let muted = HelmTheme.mutedInk(theme)
         iconView.contentTintColor = muted
+        // §6.14: under Daylight the glyph becomes a gradient plate and the
+        // headline takes the rounded display face. Exactly one of the two is
+        // ever visible.
+        tile.isHidden = !theme.isDaylight
+        iconView.isHidden = theme.isDaylight
+        tile.applyTheme(theme)
+        if theme.isDaylight {
+            titleLabel.font = HelmType.rounded(HelmType.scaled(15), .heavy)
+        } else {
+            titleLabel.font = size == .compact ? HelmType.rowTitle() : HelmType.sectionTitle()
+        }
         // A `.compact` state is one muted line under a card header, so its
         // title (when it has one) stays muted too; a `.standard` state is the
         // whole page, and its headline carries the weight.
@@ -2139,7 +2355,8 @@ final class HelmEmptyState: NSView {
         // already themes (a `HelmButton` themes itself), so nothing here
         // reaches into it.
         if boxed {
-            HelmCard.applyCardSurface(to: self, theme: theme, cornerRadius: HelmMetrics.rRow)
+            HelmCard.applyCardSurface(to: self, theme: theme, cornerRadius: HelmMetrics.rRow,
+                                  daylightRadius: HelmMetrics.rRow)
         }
     }
 
@@ -2161,7 +2378,13 @@ final class HelmEmptyState: NSView {
     func debugGeometry() -> Geometry {
         layoutSubtreeIfNeeded()
         return Geometry(frame: frame,
-                        glyphFrame: iconView.convert(iconView.bounds, to: self),
+                        // Whichever of the two is actually showing - a check
+                        // that only ever read `iconView` would report a
+                        // zero-width glyph under Daylight and read as a real
+                        // rendering bug.
+                        glyphFrame: iconView.isHidden
+                            ? tile.convert(tile.bounds, to: self)
+                            : iconView.convert(iconView.bounds, to: self),
                         titleVisible: !titleLabel.isHidden,
                         titleFont: titleLabel.font,
                         bodyFont: bodyLabel.font,

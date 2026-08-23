@@ -67,7 +67,8 @@ final class ScheduleEditorController: NSViewController {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func loadView() {
-        let form = HelmFormSheet(title: editing == nil ? "New Schedule" : "Edit Schedule")
+        let form = HelmFormSheet(title: editing == nil ? "New Schedule" : "Edit Schedule",
+                                 domainHue: RailDestination.schedules.domainHue)
         self.form = form
         view = form
 

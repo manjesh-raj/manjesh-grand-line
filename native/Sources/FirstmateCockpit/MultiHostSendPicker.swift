@@ -66,7 +66,7 @@ final class MultiHostSendPickerController: NSViewController {
         // `MultiHostSendSelection`'s header for why that is structural rather
         // than a default this initializer happens to pass.
         self.selection = MultiHostSendSelection(hosts: hosts, filter: .allHosts)
-        self.form = HelmFormSheet(title: "Send to\u{2026}")
+        self.form = HelmFormSheet(title: "Send to\u{2026}", domainHue: RailDestination.hosts.domainHue)
         super.init(nibName: nil, bundle: nil)
     }
 

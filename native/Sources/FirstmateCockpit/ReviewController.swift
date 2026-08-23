@@ -61,18 +61,18 @@
 
 import AppKit
 
-final class ReviewController: NSViewController {
+final class ReviewController: NSViewController, DaylightDrillActions {
 
     private let scroll = NSScrollView()
     private let contentStack = NSStackView()
 
     /// The hero title. "Ready to merge" is real information (which PRs need
-    /// the captain, not just "here is the Review page") - not a restatement
-    /// of the destination's own name, which is the bar `HelmType.pageTitle`'s
-    /// doc comment sets and the reason Phase 7 removed this page's old
-    /// literal "Review" title. Serif voice, matching every other page hero
-    /// in the app (`FleetController`'s greeting, Shift's project name).
-    private let heroLabel = NSTextField(labelWithString: "Ready to merge")
+    /// Daylight §6.4: "the old in-page hero titles and the old top-bar title
+    /// both disappear - the drill header IS the destination name". This page's
+    /// hero ("Ready to merge", a serif line Phase 7 had already trimmed once
+    /// from a literal "Review") is gone with it; its live count survives as
+    /// the drill header's own subtitle, which is exactly what §6.4 specifies a
+    /// subtitle is for.
     /// Seeded rather than left blank: `render` does not fill it in until the
     /// background PR fetch returns - so an empty string here left the header
     /// row with nothing under the hero for the first second or two.
@@ -134,6 +134,15 @@ final class ReviewController: NSViewController {
     private var isLoading = false
     /// The PR set behind what is currently on screen - see `render`.
     private var lastRenderedPRs: [MergedPR] = []
+    /// The last fetch's degraded-state explanation, or `nil` for a clean
+    /// fetch. Read by `drillHeaderSubtitle`, so a header on a machine that
+    /// could not reach a forge says so instead of reporting a confident zero
+    /// (GL-14).
+    private var lastFetchFailure: String?
+
+    /// Set by `AppShellController`: "my live numbers changed, re-read my
+    /// subtitle". See `DaylightDrillActions.drillHeaderSubtitle`.
+    var onDrillSubtitleChanged: (() -> Void)?
 
     /// fm/grandline-sidebar-badges: fires every time `render` recomputes the
     /// full open-PR list - the same `mergedPRs` this page already shows, not
@@ -273,12 +282,21 @@ final class ReviewController: NSViewController {
 
     // MARK: Building the static chrome
 
+    /// What is left of this page's own header once §6.4's drill header owns
+    /// the title and the actions: nothing but the live count line, which the
+    /// drill header shows as its subtitle and this keeps for the one case the
+    /// header cannot express - a degraded fetch's own explanation, which is a
+    /// sentence rather than a count.
+    ///
+    /// `headerRow` stays a real (if now single-view) row so `loadView`'s
+    /// width tie and `render`'s `subtitleLabel` writes both keep working
+    /// untouched - a restyle that rewrote the render path would be a
+    /// behaviour change, and §7 is explicit that Review's fetch/degraded-state
+    /// logic is unchanged.
     private func buildHeader() -> NSView {
-        heroLabel.font = HelmType.pageTitle(.serif)
-        heroLabel.translatesAutoresizingMaskIntoConstraints = false
-
         subtitleLabel.font = HelmType.body()
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        subtitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         refreshButton.target = self
         refreshButton.action = #selector(refreshTapped)
@@ -287,29 +305,11 @@ final class ReviewController: NSViewController {
         refreshButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         refreshButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let textStack = NSStackView(views: [heroLabel, subtitleLabel])
-        textStack.orientation = .vertical
-        textStack.alignment = .leading
-        textStack.spacing = 4
-        textStack.translatesAutoresizingMaskIntoConstraints = false
-        textStack.setHuggingPriority(.defaultLow, for: .horizontal)
-
-        // `.fill` plus a flexible spacer, so Refresh sits at the page's own
-        // trailing edge (prototype `.phead .row`) instead of hugging the
-        // hero text. See AGENTS.md gotcha (10)/(12): a nested stack has no
-        // intrinsic size, so the spacer - not the text stack - is what
-        // carries the low hugging priority the distribution actually
-        // stretches.
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        let row = NSStackView(views: [textStack, spacer, refreshButton])
+        let row = NSStackView(views: [subtitleLabel])
         row.orientation = .horizontal
-        row.alignment = .lastBaseline
+        row.alignment = .centerY
         row.distribution = .fill
-        row.spacing = 12
+        row.spacing = HelmMetrics.s3
         row.translatesAutoresizingMaskIntoConstraints = false
         headerRow = row
         return row
@@ -401,6 +401,29 @@ final class ReviewController: NSViewController {
         return card
     }
 
+    // MARK: Drill header (Daylight §6.4)
+
+    /// This page's own primary action, hoisted into the shell's drill header.
+    /// Still the same `HelmButton` instance `refresh()` enables and disables -
+    /// the header positions it, it does not own it.
+    var drillHeaderActions: [NSView] { [refreshButton] }
+
+    /// §6.4's live subtitle. Derived from the same list the page has already
+    /// rendered (`lastRenderedPRs`) and the same merge gate the rows use
+    /// (`FleetDataSource.canMerge`), so the header, the stat tiles and the
+    /// Merge buttons can never disagree about how many PRs are ready.
+    ///
+    /// GL-14's rule rides along: a failed fetch reports its own explanation
+    /// rather than a confident "0 open".
+    var drillHeaderSubtitle: String? {
+        if let failure = lastFetchFailure { return failure }
+        guard hasLoadedOnce else { return "Checking your projects\u{2026}" }
+        let ready = lastRenderedPRs.filter(FleetDataSource.canMerge).count
+        let open = lastRenderedPRs.count
+        guard open > 0 else { return "No open pull requests right now" }
+        return "\(open) open \u{00B7} \(ready) ready to merge"
+    }
+
     // MARK: Refresh
 
     @objc private func refreshTapped() { refresh() }
@@ -456,6 +479,10 @@ final class ReviewController: NSViewController {
         // the argv contract (GL-38) - so the display fields have to come from
         // the list this page already rendered.
         lastRenderedPRs = prs
+        lastFetchFailure = fetchFailure
+        // §6.4: the header's subtitle is live, and the shell owns the header -
+        // so the page asks for a re-read rather than writing into it.
+        onDrillSubtitleChanged?()
 
         let sorted = prs.sorted { ($0.repo, $0.number ?? 0) < ($1.repo, $1.number ?? 0) }
         let github = sorted.filter { $0.forge == "github" }
@@ -638,7 +665,6 @@ final class ReviewController: NSViewController {
         let line = HelmTheme.nsColor(theme.chromeLineHex)
         let muted = HelmTheme.mutedInk(theme)
 
-        heroLabel.textColor = ink
         subtitleLabel.textColor = muted
         // `refreshButton` is a `HelmButton` and themes itself - never set
         // `contentTintColor` on one, `restyle()` owns that property.
@@ -680,5 +706,17 @@ final class ReviewController: NSViewController {
     var debugIsLoadingSkeletonVisible: Bool { !loadingContainer.isHidden }
     var debugAreForgeSectionsVisible: Bool { !githubSectionView.isHidden && !bitbucketSectionView.isHidden }
     var debugGithubRowCount: Int { githubList.debugRowCount }
+    // GL-27: new probes carry the guard from the start (see
+    // `ShiftController`'s matching note).
+    #if FM_SELFTESTS
+    /// Daylight Phase 4 slice 1: the real button state of a rendered GitHub
+    /// row, so `DaylightDrillPageSelfTest` can re-assert §7's "gated exactly
+    /// as today" merge gate through the page rather than by rebuilding a list
+    /// of its own (`ReviewPRRowButtonLayoutSelfTest` does the latter, for the
+    /// geometry half).
+    func debugGitHubRowButtonState(at row: Int) -> (reviewFrame: NSRect, mergeFrame: NSRect, mergeHidden: Bool)? {
+        githubList.debugRowButtonState(at: row)
+    }
+    #endif
     var debugBitbucketRowCount: Int { bitbucketList.debugRowCount }
 }

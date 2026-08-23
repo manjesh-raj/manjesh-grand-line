@@ -1141,8 +1141,14 @@ enum HelmContrastSelfTest {
             for (name, view) in shapes {
                 let g = HelmField.geometry(of: view)
                 // The field card and the toggle row are row-shaped surfaces, so
-                // they carry `rRow`; everything else is a control at `rControl`.
-                let wantRadius = (name == "card" || name == "toggle") ? HelmMetrics.rRow : HelmField.cornerRadius
+                // they carry the row radius; everything else is a control.
+                // Both resolve **per theme** since Daylight §6.9 rounds a well
+                // to `dWell` - the check is still "one radius per theme", it
+                // just no longer assumes that radius is the same in all of
+                // them.
+                let wantRadius = (name == "card" || name == "toggle")
+                    ? HelmField.rowCornerRadius(for: theme)
+                    : HelmField.cornerRadius(for: theme)
                 if abs(g.radius - wantRadius) > 0.01 { problems.append("\(name) radius \(g.radius)") }
                 if abs(g.borderWidth - 1) > 0.01 { problems.append("\(name) border width \(g.borderWidth)") }
                 guard let fill = g.fill else { problems.append("\(name) no fill"); continue }
@@ -1192,7 +1198,7 @@ enum HelmContrastSelfTest {
                 ok = false
             }
         }
-        print("  OK - one fill / one border / radius \(HelmField.cornerRadius) control + \(HelmMetrics.rRow) row, worst field text \(fmt(worstInk.ratio)) (\(worstInk.label)), worst field muted \(fmt(worstMuted.ratio)) (\(worstMuted.label)), worst fill-vs-surface \(fmt(worstEdge.ratio)) (\(worstEdge.label))")
+        print("  OK - one fill / one border / one control + one row radius per theme, worst field text \(fmt(worstInk.ratio)) (\(worstInk.label)), worst field muted \(fmt(worstMuted.ratio)) (\(worstMuted.label)), worst fill-vs-surface \(fmt(worstEdge.ratio)) (\(worstEdge.label))")
     }
 
     // MARK: 13. The sunken fill must stay defined once (audit §3.2, Phase 6)
@@ -1357,8 +1363,14 @@ enum HelmContrastSelfTest {
             print("  FAIL toolbar glyph is \(glyph.frame.size), not a \(side)pt square")
             ok = false
         }
-        if abs((glyph.layer?.cornerRadius ?? -1) - HelmMetrics.rControl) > 0.01 {
-            print("  FAIL toolbar glyph radius \(glyph.layer?.cornerRadius ?? -1), want \(HelmMetrics.rControl)")
+        // Theme-aware: Daylight §6.6 makes every button a capsule, so the
+        // toolbar's icon square rounds to half its own side there. The point
+        // of the check is unchanged - one radius, from the shared helper,
+        // never a literal at the call site.
+        let wantGlyphRadius = HelmButton.cornerRadius(for: ThemeManager.shared.theme,
+                                                     height: glyph.bounds.height)
+        if abs((glyph.layer?.cornerRadius ?? -1) - wantGlyphRadius) > 0.01 {
+            print("  FAIL toolbar glyph radius \(glyph.layer?.cornerRadius ?? -1), want \(wantGlyphRadius)")
             ok = false
         }
 

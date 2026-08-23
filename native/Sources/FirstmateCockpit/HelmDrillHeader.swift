@@ -19,9 +19,12 @@
 //      would mean touching every destination in the shell phase, which is how
 //      a structural migration turns into an unreviewable diff.
 //
-// So the version here is §6.4's row minus the per-page action cluster: back
-// button, tile, title, subtitle. Phase 4 moves each page's own primary/quiet
-// actions into the trailing slot this leaves room for.
+// Phase 2 shipped §6.4's row minus the action cluster (back button, tile,
+// title, subtitle). **Phase 4 slice 1 filled that slot** (`setActions`), and
+// it is filled per destination as each one is migrated: a page that has not
+// been reached yet hands over nothing, `actions` hides itself, and the header
+// renders exactly as it did before. `DaylightDrillActions` is the seam - see
+// `AppShellController.applyDrillHeader`.
 //
 // **The canvas has no drill header**, by definition - it is the hub, not a
 // spoke. `AppShellController` collapses this to zero height there, and
@@ -50,6 +53,11 @@ final class HelmDrillHeader: NSView {
     private let tile = HelmGradientTile(size: .drill)
     private let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
+    /// §6.4's right-aligned action cluster - "that page's primary + quiet
+    /// actions". Phase 2 left the room; Phase 4 fills it, one destination per
+    /// slice, and a destination that has not been migrated simply hands over
+    /// nothing and renders exactly as it did before.
+    private let actions = NSStackView()
     private var themeToken: ThemeObservation?
 
     override init(frame frameRect: NSRect) {
@@ -93,9 +101,22 @@ final class HelmDrillHeader: NSView {
         textStack.setHuggingPriority(.defaultLow, for: .horizontal)
         textStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
 
+        actions.orientation = .horizontal
+        actions.alignment = .centerY
+        actions.spacing = HelmMetrics.s2
+        actions.distribution = .fill
+        actions.translatesAutoresizingMaskIntoConstraints = false
+        // AGENTS.md gotcha (12): the *stack*-level APIs are the ones that bite
+        // on a view with no intrinsic content size. Without these the action
+        // cluster is what a `.fill` parent stretches, and the title column -
+        // the one thing that should flex - stays at its natural width.
+        actions.setHuggingPriority(.required, for: .horizontal)
+        actions.setClippingResistancePriority(.required, for: .horizontal)
+
         addSubview(backButton)
         addSubview(tile)
         addSubview(textStack)
+        addSubview(actions)
 
         NSLayoutConstraint.activate([
             backButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.pageGutter),
@@ -110,8 +131,12 @@ final class HelmDrillHeader: NSView {
 
             textStack.leadingAnchor.constraint(equalTo: tile.trailingAnchor, constant: HelmMetrics.s3),
             textStack.centerYAnchor.constraint(equalTo: centerYAnchor),
-            textStack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor,
-                                                constant: -HelmMetrics.pageGutter),
+            // The title yields to the actions rather than running under them.
+            textStack.trailingAnchor.constraint(lessThanOrEqualTo: actions.leadingAnchor,
+                                                constant: -HelmMetrics.s3),
+
+            actions.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.pageGutter),
+            actions.centerYAnchor.constraint(equalTo: centerYAnchor),
         ])
 
         themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
@@ -133,6 +158,26 @@ final class HelmDrillHeader: NSView {
         tile.configure(symbol: symbol, hue: hue)
     }
 
+    /// Hand the header this destination's own actions, or `[]` to clear them.
+    ///
+    /// The views are **caller-owned**: a page keeps its own Refresh button, its
+    /// own sync pill, and the state on them (enabled, spinner showing) that it
+    /// already manages - which is the same "a view slot, not a
+    /// `(title, closure)` pair" call `HelmEmptyState.accessory` made, for the
+    /// same reason.
+    func setActions(_ views: [NSView]) {
+        actions.arrangedSubviews.forEach {
+            actions.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+        for view in views {
+            view.setContentHuggingPriority(.required, for: .horizontal)
+            view.setContentCompressionResistancePriority(.required, for: .horizontal)
+            actions.addArrangedSubview(view)
+        }
+        actions.isHidden = views.isEmpty
+    }
+
     @objc private func backClicked() { onBack?() }
 
     private func applyTheme(_ theme: HelmTheme) {
@@ -148,6 +193,19 @@ final class HelmDrillHeader: NSView {
             : line.withAlphaComponent(0.5)
         backButton.layer?.borderColor = line.withAlphaComponent(theme.isDaylight ? 1.0 : 0.6).cgColor
         backGlyph.contentTintColor = ink
+        // §6.4's resting shadow. `HoverHighlightView` does not clip its own
+        // layer, so the shadow reads; cleared outright off Daylight so a
+        // captain switching palettes is not left with a stale one.
+        if theme.isDaylight {
+            let shadow = HelmCard.elevation(for: theme, level: .resting)
+            backButton.layer?.masksToBounds = false
+            backButton.layer?.shadowColor = shadow.shadowColor?.withAlphaComponent(1).cgColor
+            backButton.layer?.shadowOpacity = Float(shadow.shadowColor?.alphaComponent ?? 0)
+            backButton.layer?.shadowRadius = shadow.shadowBlurRadius
+            backButton.layer?.shadowOffset = CGSize(width: 0, height: shadow.shadowOffset.height)
+        } else {
+            backButton.layer?.shadowOpacity = 0
+        }
 
         titleLabel.font = HelmType.drillTitle()
         titleLabel.textColor = ink
@@ -158,6 +216,7 @@ final class HelmDrillHeader: NSView {
     // MARK: Probe / self-test surface
 
     var titleForTests: String { titleLabel.stringValue }
+    var actionsForTests: [NSView] { actions.arrangedSubviews }
     var subtitleForTests: String { subtitleLabel.stringValue }
 
     /// Fires the real back path a click or a VoiceOver press would.

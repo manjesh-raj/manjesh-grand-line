@@ -62,8 +62,24 @@ import AppKit
 /// differ in every theme (otherwise text would not be readable), so blending
 /// toward ink by a small fraction always lands on something distinct.
 enum HelmField {
-    /// The one field/control corner radius.
+    /// The one field/control corner radius, in the twelve pre-Daylight
+    /// palettes. Daylight's is `dWell` - see `cornerRadius(for:)`, which is
+    /// what every well actually resolves through.
     static let cornerRadius: CGFloat = HelmMetrics.rControl
+
+    /// §6.9's well radius, per theme. Daylight rounds a well to 14 (`dWell`,
+    /// the radius its own scale names for exactly this surface); every other
+    /// palette keeps `rControl`, so no existing form moves.
+    static func cornerRadius(for theme: HelmTheme) -> CGFloat {
+        theme.isDaylight ? HelmMetrics.dWell : cornerRadius
+    }
+
+    /// The same resolution for a *row*-shaped well - a field card, a toggle
+    /// row. Daylight uses one well radius for both, since both are the same
+    /// physical object at different widths.
+    static func rowCornerRadius(for theme: HelmTheme) -> CGFloat {
+        theme.isDaylight ? HelmMetrics.dWell : HelmMetrics.rRow
+    }
 
     /// The resting border weight of a well. `HelmInputSurface` thickens it to
     /// `HelmInputSurface.focusBorderWidth` while focused and back to this when
@@ -120,9 +136,14 @@ enum HelmField {
         return chromeBackground.blended(withFraction: 0.08, of: ink) ?? chromeBackground
     }
 
-    /// The matching hairline outline.
+    /// The matching hairline outline. Daylight's `hair` is already the
+    /// design's own hairline value, so it is used at full strength - damping
+    /// it would erase the only edge a white-on-paper well has (the same
+    /// reasoning `HelmCard.applyCardSurface` records for the card outline).
     static func border(_ theme: HelmTheme) -> NSColor {
-        HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(borderAlpha)
+        theme.isDaylight
+            ? HelmTheme.nsColor(theme.chromeLineHex)
+            : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(borderAlpha)
     }
 
     /// The colour text takes **on a field**, which is not the same as ink on
@@ -159,9 +180,15 @@ enum HelmField {
     }
 
     /// Recolour, on every theme change.
-    static func applySunken(to view: NSView, theme: HelmTheme) {
+    ///
+    /// `isRow` picks which of the two radii above this well takes. The radius
+    /// is re-applied here, not only at `makeSunken` time, because it is now
+    /// theme-dependent: a captain switching into Daylight has to see wells
+    /// round to 14 without the view tree being rebuilt.
+    static func applySunken(to view: NSView, theme: HelmTheme, isRow: Bool = false) {
         view.layer?.backgroundColor = fill(theme).cgColor
         view.layer?.borderColor = border(theme).cgColor
+        view.layer?.cornerRadius = isRow ? rowCornerRadius(for: theme) : cornerRadius(for: theme)
     }
 
     /// What a sunken control actually resolved to, for `HelmContrastSelfTest`
@@ -216,6 +243,11 @@ private final class SunkenFieldTheming {
     private var focus: HelmFocusRegistration?
     private var isFocused = false
     private var lastTheme: HelmTheme = ThemeManager.shared.theme
+    /// §6.9: the domain hue this well's focus ring takes. `nil` keeps the
+    /// theme accent, which is every unmigrated page.
+    var domainHue: HelmDomainHue? {
+        didSet { if domainHue != oldValue { apply(lastTheme) } }
+    }
     /// Kept as a plain string so the placeholder can be re-rendered in the new
     /// theme's muted ink on every change. `NSTextField.placeholderString` is
     /// drawn in a fixed system grey, which is exactly the §5.3 token this
@@ -242,7 +274,7 @@ private final class SunkenFieldTheming {
     func apply(_ theme: HelmTheme) {
         guard let field else { return }
         lastTheme = theme
-        HelmInputSurface.apply(chrome: field, theme: theme, focused: isFocused)
+        HelmInputSurface.apply(chrome: field, theme: theme, focused: isFocused, hue: domainHue)
         // Both, deliberately. With `drawsBackground = true` the *cell* paints
         // `backgroundColor` over the layer's own fill, and its default is the
         // system `.textBackgroundColor` - so setting only the layer (which is
@@ -285,6 +317,13 @@ final class HelmTextField: NSTextField {
     }
 
     private var theming: SunkenFieldTheming!
+
+    /// §6.9: the domain hue this field's focus ring takes. Forwards to the
+    /// shared `SunkenFieldTheming`, which is where the focus treatment lives.
+    var domainHue: HelmDomainHue? {
+        get { theming.domainHue }
+        set { theming.domainHue = newValue }
+    }
     private let style: Style
     private var leadObservation: ThemeObservation?
 
@@ -357,6 +396,13 @@ final class HelmTextField: NSTextField {
 final class HelmSecureTextField: NSSecureTextField {
     private var theming: SunkenFieldTheming!
 
+    /// §6.9: the domain hue this field's focus ring takes. Forwards to the
+    /// shared `SunkenFieldTheming`, which is where the focus treatment lives.
+    var domainHue: HelmDomainHue? {
+        get { theming.domainHue }
+        set { theming.domainHue = newValue }
+    }
+
     init(placeholder: String = "") {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -395,6 +441,12 @@ final class HelmTextView: NSView {
     private var focus: HelmFocusRegistration?
     private var isFocused = false
     private var lastTheme: HelmTheme = ThemeManager.shared.theme
+
+    /// §6.9: the domain hue this well's focus ring takes (`nil` = the theme
+    /// accent, which is every page that has not claimed a hue).
+    var domainHue: HelmDomainHue? {
+        didSet { if domainHue != oldValue { applyTheme(lastTheme) } }
+    }
 
     var string: String {
         get { textView.string }
@@ -471,14 +523,16 @@ final class HelmTextView: NSView {
         // full rectangular bounds rather than the rounded rect `scroll`
         // actually draws - the same resync `HelmComposerCard.layout()` does,
         // and for the same reason.
+        let radius = HelmField.cornerRadius(for: ThemeManager.shared.theme)
         layer?.shadowPath = CGPath(roundedRect: bounds,
-                                   cornerWidth: HelmField.cornerRadius,
-                                   cornerHeight: HelmField.cornerRadius, transform: nil)
+                                   cornerWidth: radius,
+                                   cornerHeight: radius, transform: nil)
     }
 
     func applyTheme(_ theme: HelmTheme) {
         lastTheme = theme
-        HelmInputSurface.apply(chrome: scroll, shadowHost: self, theme: theme, focused: isFocused)
+        HelmInputSurface.apply(chrome: scroll, shadowHost: self, theme: theme,
+                               focused: isFocused, hue: domainHue)
         let ink = HelmField.ink(theme)
         textView.backgroundColor = HelmField.fill(theme)
         textView.textColor = ink
@@ -590,6 +644,11 @@ final class HelmSearchField: NSView, NSTextFieldDelegate {
     private var focus: HelmFocusRegistration?
     private var isFocused = false
     private var lastTheme: HelmTheme = ThemeManager.shared.theme
+    /// §6.9: the domain hue this well's focus ring takes (`nil` = the theme
+    /// accent, which is every page that has not claimed a hue).
+    var domainHue: HelmDomainHue? {
+        didSet { if domainHue != oldValue { applyTheme(lastTheme) } }
+    }
     private let size: Size
 
     init(placeholder: String = "", size: Size = .standard, shortcutHint: String? = nil) {
@@ -720,7 +779,8 @@ final class HelmSearchField: NSView, NSTextFieldDelegate {
 
     func applyTheme(_ theme: HelmTheme) {
         lastTheme = theme
-        HelmInputSurface.apply(chrome: well, shadowHost: self, theme: theme, focused: isFocused)
+        HelmInputSurface.apply(chrome: well, shadowHost: self, theme: theme,
+                               focused: isFocused, hue: domainHue)
         let ink = HelmField.ink(theme)
         editor.textColor = ink
         placeholderLabel.textColor = HelmField.mutedInk(theme)
@@ -755,6 +815,240 @@ final class HelmSearchField: NSView, NSTextFieldDelegate {
     var debugEditor: NSTextField { editor }
     var debugPlaceholderHidden: Bool { placeholderLabel.isHidden }
     var debugHasShortcutChip: Bool { hintChip != nil }
+    #endif
+}
+
+// MARK: - HelmChipInput
+
+/// Daylight §6.9's **chips-in-well** input: tokens live *inside* the well, with
+/// the editor as the last inline element.
+///
+/// This replaces the app's "a field, and separately a `ChipFlowView` below it"
+/// pattern - `ShiftTaskEditorController`'s tags row, and Dictation's raw
+/// vocabulary field. The difference is not decoration: with the chips in a
+/// separate view below, a committed token reads as a *result* of the field
+/// rather than as the field's own content, which is why the task editor needed
+/// a caption explaining that Enter commits.
+///
+/// Interaction, per §6.9: **Enter commits**, a trailing comma commits (kept
+/// from the pattern this replaces, since it is how the captain's existing
+/// muscle memory works), and **Backspace on an empty editor pops the last
+/// token**. Nothing here owns the token list - the caller does, and hands it
+/// back in through `setTokens`, exactly like `HelmFieldCard` does with its
+/// value. That is what keeps a migrated editor's save path untouched.
+///
+/// The well is the same physical object as every other input
+/// (`HelmField.makeSunken` + `HelmInputSurface`), so the focus ring, the
+/// selection colour and the Daylight radius all come from the shared
+/// definitions rather than being rebuilt here.
+final class HelmChipInput: NSView, NSTextFieldDelegate {
+
+    /// Fired whenever the token list changes - committed or popped. The caller
+    /// re-reads `tokens` rather than being handed a delta, since every caller
+    /// already keeps the list as its own model.
+    var onTokensChanged: (([String]) -> Void)?
+
+    /// §6.9: the domain hue this well's focus ring takes.
+    var domainHue: HelmDomainHue? {
+        didSet { if domainHue != oldValue { applyTheme(lastTheme) } }
+    }
+
+    private(set) var tokens: [String] = []
+
+    private let well = NSView()
+    private let flow = ChipFlowView()
+    private let editor = NSTextField()
+    private var chips: [VocabularyChipView] = []
+    private var observation: ThemeObservation?
+    private var focus: HelmFocusRegistration?
+    private var isFocused = false
+    private var lastTheme: HelmTheme = ThemeManager.shared.theme
+
+    init(placeholder: String = "") {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        // The well clips (its fill has to respect the corner radius) and this
+        // outer view does not, so the focus glow has an un-clipped host - the
+        // two-layer arrangement `HelmInputSurface`'s doc comment describes.
+        layer?.masksToBounds = false
+
+        HelmField.makeSunken(well)
+        well.translatesAutoresizingMaskIntoConstraints = false
+
+        // A chrome-less editor: the *well* is the input surface, so the field
+        // inside it must paint nothing of its own or it renders as a second,
+        // smaller well. `HelmForm.swift` is the one file
+        // `checkNoRawTextInputs` exempts for exactly this reason.
+        editor.isBordered = false
+        editor.isBezeled = false
+        editor.drawsBackground = false
+        editor.focusRingType = .none
+        editor.font = HelmType.body()
+        editor.usesSingleLineMode = true
+        editor.cell?.wraps = false
+        editor.cell?.isScrollable = true
+        editor.placeholderString = placeholder
+        editor.delegate = self
+        editor.translatesAutoresizingMaskIntoConstraints = false
+        // AGENTS.md gotcha (13): an editor's own >500 compression resistance
+        // inside a card inside a page is a window-width floor.
+        editor.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let column = NSStackView(views: [flow, editor])
+        column.orientation = .vertical
+        column.alignment = .leading
+        column.spacing = HelmMetrics.s1 + 2
+        column.translatesAutoresizingMaskIntoConstraints = false
+
+        addSubview(well)
+        well.addSubview(column)
+        NSLayoutConstraint.activate([
+            well.leadingAnchor.constraint(equalTo: leadingAnchor),
+            well.trailingAnchor.constraint(equalTo: trailingAnchor),
+            well.topAnchor.constraint(equalTo: topAnchor),
+            well.bottomAnchor.constraint(equalTo: bottomAnchor),
+            column.leadingAnchor.constraint(equalTo: well.leadingAnchor, constant: HelmMetrics.s2),
+            column.trailingAnchor.constraint(equalTo: well.trailingAnchor, constant: -HelmMetrics.s2),
+            column.topAnchor.constraint(equalTo: well.topAnchor, constant: 7),
+            column.bottomAnchor.constraint(equalTo: well.bottomAnchor, constant: -7),
+            flow.widthAnchor.constraint(equalTo: column.widthAnchor),
+            editor.widthAnchor.constraint(equalTo: column.widthAnchor),
+            editor.heightAnchor.constraint(equalToConstant: 20),
+        ])
+
+        observation = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
+        focus = HelmFocusSensing.shared.register(editor) { [weak self] focused in
+            guard let self else { return }
+            self.isFocused = focused
+            self.applyTheme(self.lastTheme)
+        }
+        applyTheme(ThemeManager.shared.theme)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    deinit {
+        if let observation { ThemeManager.shared.unobserve(observation) }
+        if let focus { HelmFocusSensing.shared.unregister(focus) }
+    }
+
+    var chromeView: NSView { well }
+
+    /// Replace the whole token list - how a caller seeds an editor it is
+    /// opening on an existing record.
+    func setTokens(_ values: [String]) {
+        tokens = values
+        rebuildChips()
+    }
+
+    /// Commit whatever is still sitting in the editor. An editor closing with
+    /// text typed but not yet committed would otherwise silently drop it,
+    /// which is the one way a chip input can lose the captain's work.
+    func commitPendingText() {
+        let pending = editor.stringValue
+        editor.stringValue = ""
+        commit(pending)
+    }
+
+    private func commit(_ raw: String) {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        // Case-insensitive dedup, matching the behaviour of both patterns this
+        // replaces.
+        guard !tokens.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) else { return }
+        tokens.append(trimmed)
+        rebuildChips()
+        onTokensChanged?(tokens)
+    }
+
+    private func popLast() {
+        guard !tokens.isEmpty else { return }
+        tokens.removeLast()
+        rebuildChips()
+        onTokensChanged?(tokens)
+    }
+
+    private func rebuildChips() {
+        chips = tokens.map { token in
+            let chip = VocabularyChipView(word: token)
+            chip.onRemove = { [weak self] in
+                guard let self else { return }
+                self.tokens.removeAll { $0 == token }
+                self.rebuildChips()
+                self.onTokensChanged?(self.tokens)
+            }
+            chip.applyTheme(lastTheme)
+            return chip
+        }
+        flow.setChips(chips)
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        // The glow's shape has to track the well's rounded rect, or AppKit
+        // casts it from this view's full rectangular bounds.
+        let radius = HelmField.cornerRadius(for: lastTheme)
+        layer?.shadowPath = CGPath(roundedRect: bounds, cornerWidth: radius,
+                                   cornerHeight: radius, transform: nil)
+    }
+
+    func applyTheme(_ theme: HelmTheme) {
+        lastTheme = theme
+        HelmInputSurface.apply(chrome: well, shadowHost: self, theme: theme,
+                               focused: isFocused, hue: domainHue)
+        editor.textColor = HelmField.ink(theme)
+        editor.placeholderAttributedString = NSAttributedString(
+            string: editor.placeholderString ?? "",
+            attributes: [.font: HelmType.body(), .foregroundColor: HelmField.mutedInk(theme)])
+        chips.forEach { $0.applyTheme(theme) }
+        needsLayout = true
+    }
+
+    // MARK: NSTextFieldDelegate
+
+    func controlTextDidChange(_ obj: Notification) {
+        guard editor.stringValue.hasSuffix(",") else { return }
+        let candidate = String(editor.stringValue.dropLast())
+        editor.stringValue = ""
+        commit(candidate)
+    }
+
+    func control(_ control: NSControl, textView: NSTextView,
+                 doCommandBy commandSelector: Selector) -> Bool {
+        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+            commitPendingText()
+            return true
+        }
+        // Backspace on an empty editor pops the last token (§6.9). Anything
+        // typed means the captain is editing text, not removing a token.
+        if commandSelector == #selector(NSResponder.deleteBackward(_:)), editor.stringValue.isEmpty {
+            popLast()
+            return true
+        }
+        return false
+    }
+
+    // MARK: Probe / self-test surface
+
+    #if FM_SELFTESTS
+    var chipCountForTests: Int { chips.count }
+    var editorTextForTests: String { editor.stringValue }
+    func debugType(_ text: String) {
+        editor.stringValue = text
+        controlTextDidChange(Notification(name: NSControl.textDidChangeNotification, object: editor))
+    }
+
+    @discardableResult
+    func debugPressReturn() -> Bool {
+        control(editor, textView: NSTextView(), doCommandBy: #selector(NSResponder.insertNewline(_:)))
+    }
+
+    @discardableResult
+    func debugPressBackspace() -> Bool {
+        control(editor, textView: NSTextView(), doCommandBy: #selector(NSResponder.deleteBackward(_:)))
+    }
     #endif
 }
 
@@ -983,6 +1277,10 @@ final class HelmFieldCard: NSView {
         card.hoverColor = fill.hoverShifted(by: 0.10, forMode: theme.mode)
         card.layer?.borderWidth = 1
         card.layer?.borderColor = HelmField.border(theme).cgColor
+        // §6.9's choice well: the same well as a single-line field, so the
+        // radius resolves through the same helper rather than staying pinned
+        // to the pre-Daylight row radius.
+        card.cornerRadius = HelmField.rowCornerRadius(for: theme)
         fieldLabelView.textColor = HelmField.mutedInk(theme)
         valueLabel.textColor = HelmField.ink(theme)
         chevron.contentTintColor = HelmField.mutedInk(theme)
@@ -1079,7 +1377,7 @@ final class HelmToggleRow: NSView {
     @objc private func toggled() { onToggle?() }
 
     func applyTheme(_ theme: HelmTheme) {
-        HelmField.applySunken(to: self, theme: theme)
+        HelmField.applySunken(to: self, theme: theme, isRow: true)
         titleLabel.textColor = HelmField.ink(theme)
         subtitleLabel?.textColor = HelmField.mutedInk(theme)
     }
@@ -1105,6 +1403,9 @@ final class HelmFormSheet: NSView {
 
     /// The horizontal inset from the sheet's edge to the form column.
     static let gutter: CGFloat = 22
+
+    /// §6.10's domain ribbon weight.
+    static let ribbonHeight: CGFloat = 6
 
     /// Raised after the sheet has themed everything it owns, for a controller
     /// with chrome the scaffold knows nothing about.
@@ -1146,15 +1447,46 @@ final class HelmFormSheet: NSView {
     /// tie makes AppKit's window-auto-fit machinery treat the one width where
     /// that tie has zero slack as the window's true size and snap back to it
     /// after every user resize.
-    init(title: String, scrolls: Bool = false, maxContentWidth: CGFloat = HelmFormSheet.width) {
+    /// §6.10's 6pt gradient ribbon across the very top of the sheet.
+    private let ribbon = NSView()
+    private let ribbonGradient = CAGradientLayer()
+    /// Which domain owns this sheet - the ribbon's hue, and the hue every
+    /// field inside it lights with when focused. Defaults to `.rose`, the hue
+    /// §6.10 names for the task editor and the one §4 gives to Tasks.
+    private let domainHue: HelmDomainHue
+    private var ribbonHeightConstraint: NSLayoutConstraint?
+    /// Every well the sheet was handed, as a "point this at a hue" closure -
+    /// so §6.10's "the sheet's domain hue drives focus" holds for every field
+    /// without `HelmFormSheet` having to know which concrete input type each
+    /// row is (there are five, and a sixth would otherwise mean editing this).
+    private var fieldHues: [(HelmDomainHue) -> Void] = []
+
+    init(title: String, scrolls: Bool = false, maxContentWidth: CGFloat = HelmFormSheet.width,
+         domainHue: HelmDomainHue = .rose) {
         self.scrolls = scrolls
         self.maxContentWidth = maxContentWidth
+        self.domainHue = domainHue
         super.init(frame: NSRect(x: 0, y: 0, width: Self.width, height: 480))
         wantsLayer = true
 
         headingLabel.stringValue = title
         headingLabel.font = HelmType.sectionTitle()
         headingLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        ribbon.wantsLayer = true
+        ribbon.layer?.addSublayer(ribbonGradient)
+        ribbonGradient.startPoint = HelmDomainHue.ribbonStart
+        ribbonGradient.endPoint = HelmDomainHue.ribbonEnd
+        ribbon.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(ribbon)
+        NSLayoutConstraint.activate([
+            ribbon.leadingAnchor.constraint(equalTo: leadingAnchor),
+            ribbon.trailingAnchor.constraint(equalTo: trailingAnchor),
+            ribbon.topAnchor.constraint(equalTo: topAnchor),
+        ])
+        let ribbonHeight = ribbon.heightAnchor.constraint(equalToConstant: Self.ribbonHeight)
+        ribbonHeight.isActive = true
+        ribbonHeightConstraint = ribbonHeight
 
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
@@ -1536,6 +1868,16 @@ final class HelmFormSheet: NSView {
     private func register(_ view: NSView) {
         if let card = view as? HelmFieldCard { fieldCards.append(card) }
         if let row = view as? HelmToggleRow { toggleRows.append(row) }
+        // §6.10: "the sheet's domain hue driving focus". Recorded as a closure
+        // per concrete type rather than through a protocol, because these are
+        // five unrelated `NSView` subclasses (two of them `NSTextField`
+        // subclasses that cannot share one) and a protocol with an `is`-cast
+        // ladder behind it buys nothing over the ladder itself.
+        if let field = view as? HelmTextField { fieldHues.append { field.domainHue = $0 } }
+        if let field = view as? HelmSecureTextField { fieldHues.append { field.domainHue = $0 } }
+        if let field = view as? HelmTextView { fieldHues.append { field.domainHue = $0 } }
+        if let field = view as? HelmSearchField { fieldHues.append { field.domainHue = $0 } }
+        if let field = view as? HelmChipInput { fieldHues.append { field.domainHue = $0 } }
     }
 
     // MARK: Footer
@@ -1651,14 +1993,38 @@ final class HelmFormSheet: NSView {
 
     // MARK: Theme
 
+    override func layout() {
+        super.layout()
+        ribbonGradient.frame = ribbon.bounds
+    }
+
     private func applyTheme(_ theme: HelmTheme) {
         // A plain `NSView` with no explicit fill paints nothing, so forcing an
         // appearance alone leaves the sheet showing its window's own default
         // (light) backing - three of the six editors had exactly that bug
         // (AGENTS.md gotcha #8).
         appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
-        layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
+        // §6.10: the sheet's own ground is `card`, not the page's `paper` -
+        // an editor is a floating surface, not a page. Every other palette
+        // keeps `backgroundHex`, which is what the six sheets render today.
+        layer?.backgroundColor = theme.isDaylight
+            ? HelmTheme.nsColor(DaylightPalette.card).cgColor
+            : HelmTheme.nsColor(theme.backgroundHex).cgColor
+        // The ribbon shows only under Daylight, and `isHidden` alone is not
+        // enough - an ordinary hidden `NSView`'s constraints still hold its
+        // 6pt of layout (AGENTS.md gotcha (11)), which would leave a gap above
+        // the heading in every other theme.
+        ribbon.isHidden = !theme.isDaylight
+        ribbonHeightConstraint?.constant = theme.isDaylight ? Self.ribbonHeight : 0
+        let pair = domainHue.pair(in: theme)
+        ribbonGradient.colors = [pair.h1.cgColor, pair.h2.cgColor]
+        // §6.10's heading is the rounded display face at 20 heavy; the twelve
+        // palettes keep `sectionTitle()`.
+        headingLabel.font = theme.isDaylight
+            ? HelmType.rounded(HelmType.scaled(20), .heavy)
+            : HelmType.sectionTitle()
         headingLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+        fieldHues.forEach { $0(domainHue) }
         footerDivider.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex)
             .withAlphaComponent(HelmCard.dividerAlpha).cgColor
         let muted = HelmTheme.mutedInk(theme)

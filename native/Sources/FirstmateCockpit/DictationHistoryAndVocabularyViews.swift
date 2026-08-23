@@ -257,11 +257,61 @@ final class VocabularyChipView: NSView {
 
     @objc private func removeTapped() { onRemove?() }
 
+    // Daylight §6.9 asks for the remove affordance to turn `bad` on hover -
+    // the one piece of state feedback a token has, and the difference between
+    // "there is an x here" and "clicking this removes the tag".
+    private var removeHovering = false
+    private var removeTracking: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let removeTracking { removeButton.removeTrackingArea(removeTracking) }
+        let area = NSTrackingArea(rect: removeButton.bounds,
+                                  options: [.mouseEnteredAndExited, .activeInActiveApp],
+                                  owner: self, userInfo: nil)
+        removeButton.addTrackingArea(area)
+        removeTracking = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        removeHovering = true
+        applyTheme(lastTheme)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        removeHovering = false
+        applyTheme(lastTheme)
+    }
+
+    private var lastTheme: HelmTheme = ThemeManager.shared.theme
+
     func applyTheme(_ theme: HelmTheme) {
-        layer?.backgroundColor = HelmTheme.nsColor(theme.accentHex).withAlphaComponent(0.16).cgColor
+        lastTheme = theme
+        // §6.9's Daylight token: a plain white capsule with a `hair` outline,
+        // because these sit *inside* a tinted well and a second tinted fill
+        // there reads as two competing surfaces. Every other palette keeps the
+        // accent wash this chip has always rendered.
+        if theme.isDaylight {
+            layer?.backgroundColor = HelmTheme.nsColor(DaylightPalette.card).cgColor
+            layer?.borderColor = HelmTheme.nsColor(DaylightPalette.hair).cgColor
+        } else {
+            layer?.backgroundColor = HelmTheme.nsColor(theme.accentHex).withAlphaComponent(0.16).cgColor
+            layer?.borderColor = HelmTheme.nsColor(theme.accentHex).withAlphaComponent(0.4).cgColor
+        }
         layer?.borderWidth = 1
-        layer?.borderColor = HelmTheme.nsColor(theme.accentHex).withAlphaComponent(0.4).cgColor
         label.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        removeButton.contentTintColor = HelmTheme.mutedInk(theme)
+        removeButton.contentTintColor = removeHovering
+            ? HelmContrast.legibleTintedText(tintHex: theme.isDaylight ? DaylightPalette.bad : theme.ansiHex[1],
+                                             over: HelmTheme.nsColor(theme.chromeBackgroundHex),
+                                             theme: theme)
+            : HelmTheme.mutedInk(theme)
+    }
+
+    // MARK: Probe / self-test surface
+
+    var removeGlyphColorForTests: NSColor? { removeButton.contentTintColor }
+    func debugSetRemoveHovering(_ hovering: Bool) {
+        removeHovering = hovering
+        applyTheme(lastTheme)
     }
 }
