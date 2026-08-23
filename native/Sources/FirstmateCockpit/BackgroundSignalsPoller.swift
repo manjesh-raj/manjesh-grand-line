@@ -127,8 +127,76 @@ final class BackgroundSignalsPoller {
 
     /// Written on the main thread by each check's own completion block (the
     /// same block that calls `NotificationSources.set*`), read on the main
-    /// thread by `FleetController` - so no lock is needed and none is implied.
-    private(set) var lastCounts = SignalCounts()
+    /// thread by `FleetController` and `HomeCanvasController` - so no lock is
+    /// needed and none is implied.
+    private(set) var lastCounts = SignalCounts() {
+        didSet {
+            guard lastCounts != oldValue else { return }
+            notifyCountsObservers()
+        }
+    }
+
+    // MARK: Daylight Phase 3 - publishing what this poller already computed
+    //
+    // The Setup and Vault modules on the Daylight hub render `lastCounts`
+    // (§6.1 is explicit that neither may run a fresh check from the canvas).
+    // Phase 2 wired both reads correctly, but nothing told the canvas when a
+    // number arrived - and the canvas is the *launch landing*, so a captain
+    // sitting on it watched both cards say "hasn't been checked yet this
+    // session" for the rest of the session, however long the app stayed open.
+    //
+    // The tempting fix - riding `GrandLineNotificationCenter.observe`, which
+    // this poller already publishes into on the same main-thread hop - is
+    // wrong, and wrong in the worse direction: `NotificationSources.set*`
+    // collapses a zero count into `set(nil, id:)`, which is a silent no-op
+    // when nothing was there to remove. So a *clean* machine (no updates, no
+    // drift, no vault attention - the common case) would notify nobody and
+    // stay stuck on "unknown", while only a machine with a real problem
+    // updated. Verified by reading `GrandLineNotificationCenter.set`'s own
+    // `if changed` guard, not assumed.
+    //
+    // Hence this: the smallest possible fan-out over state this poller
+    // already produced, on the main thread it already produced it on. It adds
+    // no timer, no pass, and no subprocess - `notifyCountsObservers` cannot
+    // start work, it can only hand out numbers that already exist.
+
+    /// Token returned by `observeCounts` - mirrors `ThemeObservation`'s shape
+    /// so a view controller can unregister in `deinit` rather than leaking a
+    /// dead closure (this app's most-repeated bug class; see
+    /// `ThemeManager.swift`'s checklist).
+    final class CountsObservation {}
+
+    private var countsObservers: [(token: CountsObservation, fn: (SignalCounts) -> Void)] = []
+
+    /// Observe `lastCounts`. Fires on the main thread whenever a pass produces
+    /// a value that differs from the last one, and **not** at registration -
+    /// unlike `ThemeManager.observe`, a caller here is asking to be told about
+    /// a *change*, and every caller already reads `lastCounts` directly when
+    /// it renders.
+    @discardableResult
+    func observeCounts(_ fn: @escaping (SignalCounts) -> Void) -> CountsObservation {
+        let token = CountsObservation()
+        countsObservers.append((token, fn))
+        return token
+    }
+
+    func unobserveCounts(_ token: CountsObservation) {
+        countsObservers.removeAll { $0.token === token }
+    }
+
+    /// Always already on the main thread: every write to `lastCounts` happens
+    /// inside a `DispatchQueue.main.async` block below.
+    /// Only read by the self-test hook below.
+    fileprivate var countsObserverCountForTests: Int { countsObservers.count }
+
+    private func notifyCountsObservers() {
+        // The claim above, enforced rather than only stated: every write to
+        // `lastCounts` is inside a `DispatchQueue.main.async` block, and an
+        // observer here rebuilds a view hierarchy. GL-25's convention.
+        dispatchPrecondition(condition: .onQueue(.main))
+        let counts = lastCounts
+        for observer in countsObservers { observer.fn(counts) }
+    }
 
     /// Forwarded navigation - set once at launch by whoever owns
     /// `AppShellController` (mirrors `ConsoleComposerController.
@@ -279,8 +347,13 @@ final class BackgroundSignalsPoller {
         }.count
         let secretCount = snapshot.secrets.count
         DispatchQueue.main.async { [weak self] in
-            self?.lastCounts.vaultAttention = count
-            self?.lastCounts.vaultSecrets = secretCount
+            // One assignment, not two: `lastCounts`'s `didSet` fires per
+            // write, and two writes would rebuild the canvas twice for one
+            // pass's single result.
+            var counts = self?.lastCounts ?? SignalCounts()
+            counts.vaultAttention = count
+            counts.vaultSecrets = secretCount
+            self?.lastCounts = counts
             NotificationSources.setVaultAttention(count: count) { self?.onNavigateToVault?() }
         }
     }
@@ -337,3 +410,29 @@ final class BackgroundSignalsPoller {
         }
     }
 }
+
+// MARK: - Probe / self-test surface
+//
+// `lastCounts` and `lastCompletedPassAt` are `private(set)`, so a hook that
+// sets them has to live in this file rather than in a `+TestSupport`
+// extension. Behind `FM_SELFTESTS` (GL-27) so the shipped binary carries
+// neither - verified the same way as `ConsoleController`'s hooks.
+//
+// These exist so `DaylightModuleSelfTest` can drive the warming-up -> real
+// -data transition of the Setup and Vault modules without waiting on a real
+// 15-minute poll pass, and without spawning the ~50 `brew`/`npm`/`gh`/`av`
+// subprocesses a real pass runs.
+#if FM_SELFTESTS
+extension BackgroundSignalsPoller {
+
+    /// Publish a set of counts as if a pass had produced them - fires the
+    /// same `didSet` fan-out a real pass does.
+    func debugSetCounts(_ counts: SignalCounts) { lastCounts = counts }
+
+    /// Move the "a pass has completed" clock, which is what decides between
+    /// the two honest no-number-yet states on the hub.
+    func debugSetLastCompletedPassAt(_ date: Date?) { lastCompletedPassAt = date }
+
+    var debugCountsObserverCount: Int { countsObserverCountForTests }
+}
+#endif

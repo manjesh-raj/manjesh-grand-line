@@ -664,6 +664,12 @@ final class HelmModuleCard: NSView {
         let isCardActivatable: Bool
         let accessibilityLabel: String?
         let peekRowCount: Int
+        /// Every `note`-styled line the body rendered, in order. Enough to
+        /// tell a loading state from real content without exposing the body
+        /// enum itself.
+        let noteTexts: [String]
+        /// Every big-number / metric-styled line the body rendered.
+        let metricTexts: [String]
     }
 
     var anatomyForTests: Anatomy {
@@ -680,7 +686,9 @@ final class HelmModuleCard: NSView {
                 chipText: chipView.isHidden ? nil : chipLabel.stringValue,
                 isCardActivatable: card.isActivatable,
                 accessibilityLabel: card.accessibilityLabelOverride,
-                peekRowCount: peekTextLabels.count)
+                peekRowCount: peekTextLabels.count,
+                noteTexts: noteLabels.map(\.stringValue),
+                metricTexts: metricLabels.map(\.stringValue))
     }
 
     /// Fires the card's real click path, exactly as a mouse click or a

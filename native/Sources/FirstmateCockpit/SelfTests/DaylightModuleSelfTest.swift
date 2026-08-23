@@ -48,7 +48,8 @@ enum DaylightModuleSelfTest {
         for check in [checkSpaceTable, checkSymbolsResolve, checkSpanGridMath,
                       checkModuleAnatomy, checkCanvasConstructsNoStores,
                       checkBarAnatomy, checkBarDoesNotCapWindow,
-                      checkCanvasAndDrillHeader] {
+                      checkCanvasAndDrillHeader, checkLiveModuleWiring,
+                      checkNoNewPolling] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -650,6 +651,241 @@ enum DaylightModuleSelfTest {
     /// Scratch overrides for every store the shell builds, so this suite never
     /// touches the captain's real hosts/keys/snippets/tasks/dictation data -
     /// the same convention `AppShellBodyWidthSelfTest` established.
+    // MARK: 7 - Phase 3: the modules are live, and honest before they are
+
+    /// Two things Phase 2 shipped that only a behavioural check could catch,
+    /// because both look completely correct in the source.
+    ///
+    /// 1. **The Setup and Vault modules never left their loading state.** Both
+    ///    read `BackgroundSignalsPoller.lastCounts`, whose first pass lands
+    ///    ~10s after launch. The canvas is the launch landing, so no
+    ///    `viewWillAppear` fires afterwards, and nothing else the canvas
+    ///    observed changed when a pass completed - so both cards said "hasn't
+    ///    been checked yet this session" for the rest of the session. Fixed by
+    ///    `BackgroundSignalsPoller.observeCounts`, and pinned here by driving a
+    ///    real count publish and asserting the cards actually changed.
+    ///
+    /// 2. **`HomeCanvasController.applyDictationStatus` was dead code.** It
+    ///    existed and was correct; nothing ever called it, so the Dictation
+    ///    module's chip showed its initial value forever. Driven here through
+    ///    the *real* `AppShellController.setDictationEngineStatus`, the same
+    ///    entry point the engine's own callback uses - calling
+    ///    `applyDictationStatus` directly would pass with the bug present.
+    private static func checkLiveModuleWiring(_ ok: inout Bool) {
+        print("\n-- modules: live data in, honest loading state before it arrives --")
+
+        let poller = BackgroundSignalsPoller.shared
+        // The poller is a process-wide singleton shared with every other check
+        // in this suite, so its state is restored on the way out.
+        let savedCounts = poller.lastCounts
+        let savedCompletedAt = poller.lastCompletedPassAt
+        defer {
+            poller.debugSetLastCompletedPassAt(savedCompletedAt)
+            poller.debugSetCounts(savedCounts)
+        }
+
+        withScratchEnv {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
+                                  styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+            let hostStore = HostStore()
+            let keyStore = SSHKeyStore()
+            let snippetStore = SnippetStore()
+            let shell = AppShellController(
+                hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
+                console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
+                settings: SettingsController(hostStore: hostStore, keyStore: keyStore,
+                                             snippetStore: snippetStore, dictationStore: DictationStore()),
+                hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore,
+                shiftStore: ShiftStore(), dictationStore: DictationStore(),
+                commandLibraryStore: CommandLibraryStore(), scheduleStore: ScheduleStore(),
+                makeHostConsole: { ConsoleController(keyStore: keyStore, snippetStore: snippetStore,
+                                                     isFirstmateConsole: false) }
+            )
+            window.contentViewController = shell
+            window.layoutIfNeeded()
+            let canvas = shell.homeCanvasForTests
+            shell.selectSpace(.overview)
+
+            func card(_ module: DaylightModule) -> HelmModuleCard.Anatomy? {
+                guard let index = canvas.visibleModulesForTests.firstIndex(of: module),
+                      index < canvas.moduleCardsForTests.count else { return nil }
+                return canvas.moduleCardsForTests[index].anatomyForTests
+            }
+
+            // --- The canvas actually subscribed. Without this the whole
+            // transition below is untestable, and the bug is silent.
+            if poller.debugCountsObserverCount == 0 {
+                fail("the canvas registered no counts observer - Setup and Vault can never leave "
+                     + "their loading state (Phase 3's whole point)", &ok)
+            }
+
+            // --- 1a. Warming up: no pass has completed, no count exists.
+            poller.debugSetLastCompletedPassAt(nil)
+            poller.debugSetCounts(BackgroundSignalsPoller.SignalCounts())
+            canvas.debugRenderNow()
+
+            for module in [DaylightModule.setup, .vault] {
+                guard let a = card(module) else {
+                    fail("no \(module.rawValue) card rendered", &ok)
+                    continue
+                }
+                // An honest loading state: it says it is checking, and it does
+                // NOT claim a number or an "all current" verdict.
+                if a.chipText != "Checking\u{2026}" {
+                    fail("\(module.rawValue) shows chip \(a.chipText ?? "nil") before the first pass - "
+                         + "expected a Checking\u{2026} chip", &ok)
+                }
+                let body = (a.noteTexts + a.metricTexts).joined(separator: " ")
+                if !body.lowercased().contains("checking") {
+                    fail("\(module.rawValue)'s pre-pass body is '\(body)' - it does not say it is checking", &ok)
+                }
+                if !a.metricTexts.isEmpty {
+                    fail("\(module.rawValue) rendered metric text \(a.metricTexts) before any pass - "
+                         + "a fabricated number is exactly GL-14's failure", &ok)
+                }
+                for word in ["Current", "0 issues", "All current"] where body.contains(word) {
+                    fail("\(module.rawValue) claims '\(word)' before anything was checked", &ok)
+                }
+            }
+
+            // --- 1b. A pass publishes real counts. The cards must change
+            // WITHOUT any visit, refresh or space switch - the observer alone.
+            poller.debugSetLastCompletedPassAt(Date())
+            poller.debugSetCounts(.init(toolUpdates: 0, forkDrift: 0, vaultAttention: 2,
+                                        setupDrift: 0, vaultSecrets: 7))
+            // The canvas coalesces renders onto the next main-queue turn, so
+            // one turn has to be drained - not a sleep, and not a re-render
+            // this check performs itself.
+            //
+            // What this half proves, precisely: that the *content* a real
+            // published count produces is right, and that it is no longer the
+            // loading copy. It does NOT attribute the render to the counts
+            // observer specifically - a window resize notification arriving
+            // during the drained turn would relayout the grid too. The wiring
+            // itself is proven by `debugCountsObserverCount` above (which is
+            // what actually failed when the subscription was removed) and by
+            // the fan-out count in 1c below.
+            drainMainQueue()
+
+            if let a = card(.setup) {
+                if a.chipText != "Current" {
+                    fail("Setup chip is \(a.chipText ?? "nil") after a clean pass, expected Current", &ok)
+                }
+                if a.metricTexts.isEmpty {
+                    fail("Setup still shows no progress figure after a pass published a count - "
+                         + "the observer did not reach it", &ok)
+                }
+                if (a.noteTexts + a.metricTexts).joined().lowercased().contains("checking") {
+                    fail("Setup is still showing its loading copy after real data arrived", &ok)
+                }
+            } else { fail("no Setup card after the pass", &ok) }
+
+            if let a = card(.vault) {
+                if a.metricTexts.first != "7" {
+                    fail("Vault metric is \(a.metricTexts.first ?? "nil") after a pass reported 7 secrets", &ok)
+                }
+                if a.chipText?.contains("2") != true {
+                    fail("Vault chip is \(a.chipText ?? "nil") - it should carry the 2 tools needing a look", &ok)
+                }
+            } else { fail("no Vault card after the pass", &ok) }
+
+            // --- 1c. An unchanged publish must not fan out. A pass runs every
+            // 15 minutes and usually reports the same numbers; rebuilding
+            // fifteen cards for no change is pure waste.
+            var fanouts = 0
+            let probe = poller.observeCounts { _ in fanouts += 1 }
+            poller.debugSetCounts(.init(toolUpdates: 0, forkDrift: 0, vaultAttention: 2,
+                                        setupDrift: 0, vaultSecrets: 7))
+            if fanouts != 0 { fail("an identical counts publish fanned out \(fanouts) time(s)", &ok) }
+            poller.debugSetCounts(.init(toolUpdates: 1, forkDrift: 0, vaultAttention: 2,
+                                        setupDrift: 0, vaultSecrets: 7))
+            if fanouts != 1 { fail("a changed counts publish fanned out \(fanouts) time(s), expected 1", &ok) }
+            poller.unobserveCounts(probe)
+
+            // --- 2. Dictation, through the real forwarding path.
+            for status in [DictationStatus.recording, .needsMicrophone, .ready] {
+                shell.setDictationEngineStatus(status)
+                drainMainQueue()
+                guard let a = card(.dictation) else {
+                    fail("no Dictation card rendered", &ok)
+                    break
+                }
+                let expected: String
+                switch status {
+                case .recording: expected = status.title
+                case .ready: expected = "Ready"
+                default: expected = "Needs access"
+                }
+                if a.chipText != expected {
+                    fail("Dictation chip is \(a.chipText ?? "nil") after the engine reported "
+                         + "\(status) - expected \(expected). `applyDictationStatus` is not being called.", &ok)
+                }
+            }
+        }
+
+        if ok {
+            print("  OK - canvas observes the poller, Setup/Vault load then fill in, "
+                  + "no fan-out on an unchanged pass, dictation status reaches the hub")
+        }
+    }
+
+    // MARK: 8 - Phase 3's one-line rule
+
+    /// "No new polling." A source guard rather than a behavioural check,
+    /// because a timer added here is invisible in a passing render test and
+    /// only shows up as background cost.
+    ///
+    /// The companion behavioural halves are `checkCanvasConstructsNoStores`
+    /// above (no fetch) and the `debugCountsObserverCount` assertion in
+    /// `checkLiveModuleWiring` (the live path really is a subscription).
+    private static func checkNoNewPolling(_ ok: inout Bool) {
+        print("\n-- Phase 3's rule: the hub subscribes, it never polls --")
+        guard let dir = SelfTestSources.appSourceDirectory() else {
+            print("  SKIP - app sources are not next to this binary")
+            return
+        }
+        let url = dir.appendingPathComponent("HomeCanvasController.swift")
+        guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+            fail("could not read HomeCanvasController.swift - this check would silently pass", &ok)
+            return
+        }
+        let code = text.split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+
+        for token in ["Timer(", "Timer.scheduledTimer", "DispatchSourceTimer",
+                      "asyncAfter(", "DispatchQueue.global"] where code.contains(token) {
+            fail("HomeCanvasController contains `\(token)` - \u{00A7}6.1's refresh model is "
+                 + "\"viewWillAppear plus the existing signals\", with no timer of its own", &ok)
+        }
+        // The subscription itself, so a future edit that deletes it fails here
+        // as well as in the behavioural check above.
+        if !code.contains("BackgroundSignalsPoller.shared.observeCounts") {
+            fail("the canvas no longer subscribes to the signals poller - Setup and Vault "
+                 + "would go back to showing a permanent loading state", &ok)
+        }
+        // And it must unregister: the canvas is app-lifetime today, but the
+        // poller holds these closures forever and this app's most-repeated bug
+        // is a leaked observer (see ThemeManager.swift's checklist).
+        if !code.contains("unobserveCounts") {
+            fail("the canvas registers a counts observer it never removes", &ok)
+        }
+        if ok { print("  OK - no timer, no background queue, one subscription, unregistered in deinit") }
+    }
+
+    /// Runs the main queue until the blocks already enqueued have run.
+    ///
+    /// The canvas coalesces render requests with a `DispatchQueue.main.async`
+    /// hop (a burst of health reports or dictation transitions would otherwise
+    /// rebuild fifteen cards several times for one change). A headless suite
+    /// never turns the run loop, so those hops need draining explicitly - a
+    /// `sleep` would not run them at all.
+    private static func drainMainQueue() {
+        for _ in 0..<4 {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+    }
+
     private static func withScratchEnv(_ body: () -> Void) {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("grandline-daylight-module-test-\(UUID().uuidString)")
