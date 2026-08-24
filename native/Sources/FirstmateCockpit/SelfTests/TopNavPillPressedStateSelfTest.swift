@@ -77,6 +77,20 @@ import AppKit
 enum TopNavPillPressedStateSelfTest {
 
     static func run() -> Bool {
+
+        // A suite that changes the active theme MUST put it back. `setTheme`
+        // persists to the real `FirstmateCockpit` UserDefaults domain (the
+        // unbundled test binary has no bundle id, so that is its domain), and
+        // `run-all-tests.sh` runs every suite as a separate process against
+        // it - so a theme left behind becomes the *ambient* theme for every
+        // suite that runs afterwards, and the ones measuring theme-derived
+        // geometry then fail intermittently for no visible reason. Worse, a
+        // run interrupted before the restore poisons every later run until the
+        // domain is cleared by hand. `Phase3PolishSelfTest.checkSuitesRestoreTheTheme`
+        // is the guard that stops this recurring a fifth time.
+        let savedTheme = ThemeManager.shared.theme
+        defer { ThemeManager.shared.setTheme(savedTheme) }
+
         var allOK = true
         for check in [checkPressedStateContrastAcrossEveryThemeAndPill,
                       checkArrowKeyActivationAlsoRepaintsWhileHovering,

@@ -1,26 +1,85 @@
 // Manjesh Grand Line - native macOS app.
 //
-// The app-level lock screen (fm/grandline-app-lock): a sailing scene per the
-// captain-approved design - gradient sky, a bobbing sailboat, a drifting
-// wave, and a password form. Originally a fixed, non-Helm-themed dark night
-// scene by deliberate choice ("a distinct gate, not another themed page");
-// `fm/grandline-lockscreen-theme` reversed that per later captain ask - it
-// now follows the app's active Helm theme's light/dark `mode` like every
-// other view (see `ThemeManager.swift`'s header checklist), with a genuine
-// second "daytime sailing" palette (sun instead of stars, a lighter sky/wave,
-// dark ink/boat tint for contrast) rather than a dimmed copy of the dark one.
-// Only the palette follows the theme - the password-check logic, timers, and
-// avatar/logout flow this screen sits in front of are unaffected.
+// The app-level lock screen: the "Daylight Harbour" gate
+// (`fm/grandline-home-login-redesign-plan`).
 //
-// Ordinary AppKit + Core Animation only (`CAGradientLayer`/`CAShapeLayer`/
-// `CABasicAnimation`) - the first use of any of these three in this codebase,
-// confirmed buildable natively during design review rather than assumed.
+// # Why this file was rewritten
 //
-// This controller only collects a password and reports it via `onAttempt` -
-// it knows nothing about Automic Vault or `av`; `AppShellController` wires
-// `onAttempt` to `VaultSource.verifyAppPassword` on a background queue (see
-// its own header) so a slow/approval-gated `av inject` call never blocks the
-// main thread or this view.
+// The seven-phase Daylight migration deliberately excluded this screen twice,
+// in writing - the spec's own must-NOT-change list says "The lock screen's
+// bespoke scene (`LockScreenController`) - out of scope", and the earlier full
+// UI audit reached the same call ("Lock screen is a deliberate scene - keep").
+// That decision outlived its reason: by the end of Phase 6 this was the only
+// full-window surface in the app with *zero* design-system usage - measured,
+// `grep -c "isDaylight\|HelmCard\|HelmButton\|HelmType\|HelmMetrics"` returned
+// 28 for `BootstrapController`, 7 for `HomeCanvasController` and 0 for this
+// file - while being the first thing seen on every single launch.
+//
+// The captain reviewed a design proposal
+// (`data/grandline-home-login-redesign-plan/report.md`) and chose Direction A,
+// "Daylight Harbour": keep the sailing scene, rebuild it out of tokens, and
+// turn the loose hand-rolled form into a real floating card.
+//
+// # What that means concretely
+//
+// - Every colour is theme-derived. There is not one `NSColor(calibratedRed:)`
+//   literal left in this file; the previous version had eleven, plus a second
+//   hand-tuned palette for dark mode. Dark now resolves through
+//   `DaylightTokens.dusk` like every other Daylight surface.
+// - The form is a `HelmCard`-recipe card (radius `dModule`, `hair` border,
+//   `HelmCard.elevation(.raised)`, a 6pt domain-gradient ribbon across the
+//   top) - §6.10's editor-sheet recipe, which is what buys the coherence.
+// - The password field is `HelmSecureTextField`, so it inherits Phase 0's
+//   first-responder focus ring (the D1 fix) and themed selection for free.
+// - Both buttons are `HelmButton`. The previous ones painted a literal
+//   `rgb(0.20, 0.48, 0.92)` that was not even the theme accent.
+// - Type goes through `HelmType`, so GL-32's chrome-text-scale setting reaches
+//   this screen for the first time.
+//
+// # The one deliberate deviation from the approved mockup
+//
+// The mockup drew a small `lock.fill` glyph inside the password well. It is
+// not built, and that is a decision rather than an omission: `HelmSecureTextField`
+// owns its own chrome, and the only ways to get a glyph inside it were to fork
+// a second secure-field component or to hand-roll a well around a raw
+// `NSSecureTextField` - which `checkNoRawTextInputs` bans outright, and which
+// would re-split the input taxonomy Phase 0 spent a whole phase unifying. The
+// well is the app's one secure input, unmodified. The gate's identity is
+// carried by the gradient mark above it instead.
+//
+// # What did NOT change (and must not)
+//
+// This is presentation only. Every one of the following is byte-for-byte what
+// it was, and each is load-bearing for a reason recorded at its own site:
+//
+// - The auth flow. This controller still only collects a password and reports
+//   it via `onAttempt`; `AppShellController` still verifies it on a background
+//   queue through `VaultSource.verifyAppPassword`, which shells out to Automic
+//   Vault with the typed candidate passed by *environment variable* so it never
+//   appears in `ps`. There is no `LAContext`/Touch ID path on this screen and
+//   never was - that is SSH key unlock (`KeychainKeyStore`), a different
+//   mechanism entirely.
+// - The six `ContentState` cases and their distinct semantics.
+//   `.serviceNotRunning` / `.transientFailure` stay separate from
+//   `.noPasswordConfigured`: conflating them is exactly the bug
+//   `fm/grandline-vault-wake-recheck-fix` closed.
+// - `onUnlockAnimationFinished` is still what hides the overlay, not
+//   `onAttempt`'s own completion - see `submitTapped`.
+// - Reduce Motion gating: the bob and the wave drift are gated, the success
+//   sail-away deliberately is not (it carries the `CATransaction` completion
+//   block that actually lifts the overlay).
+// - GL-31's copyable setup command row.
+//
+// # One structural change worth knowing
+//
+// The sky gradient used to *be* `root.layer`. That is why this screen could
+// never be screenshotted: `bitmapImageRepForCachingDisplay`/`cacheDisplay`
+// render a view whose root layer is a `CAGradientLayer` as blank white, which
+// the full UI audit hit and recorded ("Not verifiable by off-screen capture ...
+// Assessed from source only"). The sky is a *sublayer* of a plain
+// `wantsLayer` root now, exactly like every other Daylight surface - so this
+// screen is visible to the off-screen render probe for the first time, and
+// `FM_RUN_LOCK_SCREEN_TESTS` uses that to verify its own work.
 import AppKit
 
 final class LockScreenController: NSViewController {
@@ -49,6 +108,33 @@ final class LockScreenController: NSViewController {
         /// too; `AppShellController` retries on the same cadence as
         /// `.serviceNotRunning` - this screen just displays it.
         case transientFailure
+
+        /// The domain hue this state's ribbon, mark and primary action take.
+        ///
+        /// Captain's call, delegated to the design proposal's own
+        /// recommendation: the resting/locked states take blue (the app's own
+        /// logo pair, and the hue §2.2 gives to generic gates and default
+        /// focus), while the two states that are really *setup* instructions
+        /// take amber - Setup's own hue - so the gate borrows Setup's colour
+        /// exactly when it is telling the captain to go do setup.
+        var hue: HelmDomainHue {
+            switch self {
+            case .noPasswordConfigured, .avUnavailable: return .amber
+            case .locked, .serviceNotRunning, .transientFailure: return .blue
+            }
+        }
+
+        /// The mark tile's glyph. Every symbol here is verified to resolve in
+        /// `LockScreenSelfTest` - `NSImage(systemSymbolName:)` returns nil
+        /// silently, and this app has shipped an invisible icon that way
+        /// before (the `anchor` incident).
+        var symbol: String {
+            switch self {
+            case .locked, .serviceNotRunning, .transientFailure: return "sailboat.fill"
+            case .noPasswordConfigured: return "flag.fill"
+            case .avUnavailable: return "arrow.down.circle.fill"
+            }
+        }
     }
 
     /// `(typed password, completion(success))` - the caller verifies on a
@@ -71,56 +157,165 @@ final class LockScreenController: NSViewController {
     /// already been hidden out from under it.
     var onUnlockAnimationFinished: (() -> Void)?
 
+    // MARK: Geometry
+
+    /// The gate card's fixed content width. Narrower than the old 360pt loose
+    /// column because the card now carries its own padding either side.
+    static let cardWidth: CGFloat = 352
+    /// §6.10's ribbon weight, shared with `HelmFormSheet`.
+    private static let ribbonHeight: CGFloat = 6
+    private static let cardPadding: CGFloat = 20
+
+    // MARK: Scene
+
     private let boatImageView = NSImageView()
     private let waveLayer = CAShapeLayer()
+    /// A second, paler swell drawn behind and slightly above the first. One
+    /// wave at this scale reads as a flat wedge; two give the sea a horizon.
+    private let backWaveLayer = CAShapeLayer()
     private var waveWidth: CGFloat = 0
+    /// The sky. A **sublayer** of a plain `wantsLayer` root, never the root
+    /// layer itself - see this file's header for why that one detail is what
+    /// makes this screen screenshottable.
+    private let skyLayer = CAGradientLayer()
+    private var starLayers: [CALayer] = []
+    private let sunLayer = CALayer()
+    /// Punched out of `sunLayer` in the dark register to read as a crescent
+    /// moon rather than a blue sun. Hidden in light mode.
+    private let moonBiteLayer = CALayer()
 
-    private let titleLabel = NSTextField(labelWithString: "Welcome back, Captain")
-    private let subtitleLabel = NSTextField(labelWithString: "")
-    private let passwordField = NSSecureTextField()
-    private let fieldContainer = NSView()
-    private let lockIcon = NSImageView()
-    private let unlockButton = NSButton(title: "Unlock", target: nil, action: nil)
+    // MARK: Card
+
+    /// The un-clipped shadow host. §2.5: a layer with a shadow must not clip,
+    /// and a rounded fill must - so the card is the two-layer arrangement
+    /// `HelmComposerCard` already proved here, with `shadowPath` resynced on
+    /// every layout pass.
+    private let cardShadowHost = NSView()
+    /// The clipped content layer - this is the view that carries the fill,
+    /// border and corner radius.
+    private let card = NSView()
+    private let ribbonView = NSView()
+    private let ribbonLayer = CAGradientLayer()
+    private let markTile = HelmGradientTile(size: .hero)
+
+    // MARK: Content
+
+    private let titleLabel = NSTextField(labelWithString: "Welcome back, Manjesh")
+    private let subtitleLabel = NSTextField(wrappingLabelWithString: "")
+    private let passwordField = HelmSecureTextField(placeholder: "Password")
+    private let unlockButton = HelmButton(title: "Unlock", variant: .primary)
     private let formStack = NSStackView()
+    /// Shown only after a rejected password. Previously the failure was
+    /// signalled by the shake alone, with no words at all.
+    private let errorLabel = NSTextField(wrappingLabelWithString: "")
     private let messageLabel = NSTextField(wrappingLabelWithString: "")
     /// GL-31: the first-run instruction used to be prose containing a command
     /// the captain had to retype by hand, on the one screen in the app where
-    /// nothing else is reachable. The command now renders as a real code line
+    /// nothing else is reachable. The command renders as a real code well
     /// with a Copy button beside it.
     private let setupCommandLabel = NSTextField(labelWithString: VaultSource.appPasswordSetupCommand)
-    private let copyCommandButton = NSButton(title: "Copy", target: nil, action: nil)
+    private let copyCommandButton = HelmButton(title: "Copy", variant: .secondary, size: .small)
     private let setupCommandStack = NSStackView()
 
     // `.avUnavailable`-only UI: a distinct message plus a real install
     // action - see `onInstallAutomicVault` above.
     private let avMessageLabel = NSTextField(wrappingLabelWithString: "")
-    private let installButton = NSButton(title: "Install Automic Vault", target: nil, action: nil)
+    private let installButton = HelmButton(title: "Install Automic Vault", variant: .primary)
     private let installStatusLabel = NSTextField(wrappingLabelWithString: "")
     private let avUnavailableStack = NSStackView()
 
-    // Theme-following scene elements. `skyLayer` is `root.layer` itself;
-    // `starLayers` (night) and `sunLayer` (day) are both built once up front
-    // and toggled via `isHidden` in `applyTheme` rather than swapped in/out,
-    // so there is never a moment with neither (or both) attached.
-    private let skyLayer = CAGradientLayer()
-    private var starLayers: [CALayer] = []
-    private let sunLayer = CALayer()
+    /// The two "retrying, nothing to type yet" states show a spinner instead
+    /// of a form, because there is nothing useful the captain can do yet.
+    private let waitingSpinner = NSProgressIndicator()
+    private let waitingStack = NSStackView()
+    private let waitingLabel = NSTextField(labelWithString: "")
+
+    // §6.10's footer: a hairline, then a caption line.
+    private let footerDivider = NSView()
+    private let footerLeftLabel = NSTextField(labelWithString: "")
+    private let footerRightLabel = NSTextField(labelWithString: "")
+    private let footerStack = NSStackView()
+
+    private var contentStack = NSStackView()
+
+    /// The hue currently driving the ribbon, mark and primary button. Held so
+    /// a theme change can re-derive them without the caller re-applying state.
+    private var currentHue: HelmDomainHue = .blue
+    private var currentSymbol: String = "sailboat.fill"
 
     override func loadView() {
+        // A plain layer-backed root with a real background - NOT a
+        // `CAGradientLayer` assigned as `root.layer`, which is what made this
+        // screen invisible to every render probe. The fill is set per theme in
+        // `applyTheme`; `wantsLayer` here is what guarantees `root.layer`
+        // exists by the time the theme observer fires (this codebase's
+        // most-repeated gotcha - see `ThemeManager.swift`'s checklist).
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 1220, height: 720))
         root.wantsLayer = true
         view = root
 
+        buildScene(in: root)
+        buildCard()
+
+        contentStack = NSStackView(views: [cardShadowHost])
+        contentStack.orientation = .vertical
+        contentStack.alignment = .centerX
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(contentStack)
+        root.addSubview(boatImageView)
+
+        // The boat sails on the sea, below the gate - but it is positioned by
+        // Auto Layout, never by a fixed fraction of the window's height. That
+        // fraction WAS this file's first draft, and a captain screenshot on a
+        // real, much taller window caught it landing squarely on top of the
+        // password field: a height fraction and an Auto-Layout-centred card
+        // are two independent systems with no reason to agree at every size.
+        //
+        // The arrangement below cannot reproduce that, and the priorities are
+        // the reason. Only the anti-overlap constraint is required, and it
+        // relates two subviews to each other rather than to the window, so it
+        // can never cap the window's size (gotcha (13)). The two that pull the
+        // boat down to the waterline both sit *below*
+        // `NSLayoutPriorityWindowSizeStayPut` (500), so on a window too short
+        // for both the boat simply rides up and the card stays intact.
+        NSLayoutConstraint.activate([
+            contentStack.centerXAnchor.constraint(equalTo: root.centerXAnchor),
+            contentStack.centerYAnchor.constraint(equalTo: root.centerYAnchor, constant: -30),
+            boatImageView.centerXAnchor.constraint(equalTo: root.centerXAnchor),
+            boatImageView.topAnchor.constraint(greaterThanOrEqualTo: cardShadowHost.bottomAnchor,
+                                               constant: HelmMetrics.s5),
+        ])
+        let onTheWater = boatImageView.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -78)
+        onTheWater.priority = NSLayoutConstraint.Priority(250)
+        let stayOnScreen = boatImageView.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor,
+                                                                constant: -8)
+        stayOnScreen.priority = NSLayoutConstraint.Priority(400)
+        NSLayoutConstraint.activate([onTheWater, stayOnScreen])
+
+        // Follow the app's active Helm theme, live - see `ThemeManager.swift`'s
+        // header checklist. Registered last, after every view above exists, so
+        // the synchronous first firing has a fully-built tree to paint; this
+        // controller is a permanent, app-lifetime singleton owned by
+        // `AppShellController`, so the returned token can be discarded per that
+        // file's own convention for such observers.
+        ThemeManager.shared.observe { [weak self] theme in
+            self?.applyTheme(theme)
+        }
+    }
+
+    // MARK: - Construction
+
+    private func buildScene(in root: NSView) {
         skyLayer.locations = [0, 0.55, 1]
         skyLayer.startPoint = CGPoint(x: 0.5, y: 1)
         skyLayer.endPoint = CGPoint(x: 0.5, y: 0)
-        root.layer = skyLayer
+        root.layer?.addSublayer(skyLayer)
 
-        // A handful of small, fixed-position stars (night) - deterministic
-        // rather than randomized so this view renders identically on every
-        // launch and every live-verification probe. Always built, hidden in
-        // day mode via `applyTheme` rather than added/removed, so there's
-        // never a frame where the sky has neither stars nor a sun.
+        // A handful of small, fixed-position stars (dark register only) -
+        // deterministic rather than randomized so this view renders identically
+        // on every launch and every render probe. Always built, hidden in the
+        // light register via `applyTheme` rather than added/removed, so there's
+        // never a frame with neither stars nor a sun.
         let starPositions: [(CGFloat, CGFloat, CGFloat)] = [
             (0.08, 0.85, 1.4), (0.15, 0.72, 1.0), (0.22, 0.90, 1.6), (0.30, 0.65, 1.1),
             (0.38, 0.88, 1.3), (0.46, 0.70, 1.0), (0.55, 0.92, 1.5), (0.63, 0.78, 1.1),
@@ -129,7 +324,6 @@ final class LockScreenController: NSViewController {
         ]
         for (xFrac, yFrac, radius) in starPositions {
             let star = CALayer()
-            star.backgroundColor = NSColor.white.withAlphaComponent(0.85).cgColor
             star.cornerRadius = radius / 2
             star.frame = NSRect(x: 0, y: 0, width: radius, height: radius)
             star.setValue(xFrac, forKey: "xFrac")
@@ -138,368 +332,469 @@ final class LockScreenController: NSViewController {
             starLayers.append(star)
         }
 
-        // Sun (day) - same xFrac/yFrac positioning convention as the stars
-        // above (`layoutSceneLayers` repositions any sublayer carrying those
-        // keys, star or sun alike), a warm glowing disc via a soft shadow
-        // rather than a plain flat circle.
-        sunLayer.backgroundColor = NSColor(calibratedRed: 1.0, green: 0.82, blue: 0.45, alpha: 1).cgColor
+        // Sun (light) / moon (dark) - same xFrac/yFrac positioning convention
+        // as the stars above. `moonBiteLayer` is a same-coloured disc offset
+        // over it, punching the crescent out against the sky; it is filled with
+        // the sky's own top colour in `applyTheme`, so it reads as absence
+        // rather than as a second object.
         sunLayer.cornerRadius = 44
         sunLayer.frame = NSRect(x: 0, y: 0, width: 88, height: 88)
-        sunLayer.shadowColor = NSColor(calibratedRed: 1.0, green: 0.75, blue: 0.35, alpha: 1).cgColor
         sunLayer.shadowOpacity = 0.75
         sunLayer.shadowRadius = 28
         sunLayer.shadowOffset = .zero
         sunLayer.setValue(CGFloat(0.78), forKey: "xFrac")
         sunLayer.setValue(CGFloat(0.82), forKey: "yFrac")
+        moonBiteLayer.cornerRadius = 36
+        moonBiteLayer.frame = NSRect(x: 26, y: 18, width: 72, height: 72)
+        sunLayer.addSublayer(moonBiteLayer)
         root.layer?.addSublayer(sunLayer)
 
-        // Wave: a simple sine-ish shape near the bottom, drawn twice as wide
-        // as the view and drifted horizontally in a seamless loop.
+        // Wave: a smooth swell near the bottom, drawn twice as wide as the
+        // view and drifted horizontally in a seamless loop. Two layers - the
+        // paler one behind - because a single wedge does not read as water.
+        root.layer?.addSublayer(backWaveLayer)
         root.layer?.addSublayer(waveLayer)
 
-        // Sailboat mark - the same "sailboat" SF Symbol used for the rail's
-        // own mark and the Tasks icon/menu-bar item. A real `NSImageView`
-        // laid out as part of `contentStack` below (not a freeform `CALayer`
-        // positioned by a fixed fraction of the window's height, which is
-        // this file's first draft) - a captain screenshot on a real, much
-        // taller window than the 1220x720 default caught the fraction-based
-        // position landing squarely on top of the password field/Unlock
-        // button, since a height-fraction and an Auto-Layout-centered stack
-        // are two independent layout systems with no reason to agree at
-        // every window size. Living inside the stack means Auto Layout
-        // keeps it correctly spaced above the title at any window size; it's
-        // still layer-animatable (`wantsLayer = true` + `.layer?.add` in
-        // `startAnimationsIfNeeded`), so the bob animation is unaffected.
-        let config = NSImage.SymbolConfiguration(pointSize: 56, weight: .regular)
+        let config = NSImage.SymbolConfiguration(pointSize: 38, weight: .regular)
         boatImageView.image = NSImage(systemSymbolName: "sailboat", accessibilityDescription: "Manjesh Grand Line")?
             .withSymbolConfiguration(config)
         boatImageView.wantsLayer = true
         boatImageView.translatesAutoresizingMaskIntoConstraints = false
-        boatImageView.widthAnchor.constraint(equalToConstant: 72).isActive = true
-        boatImageView.heightAnchor.constraint(equalToConstant: 72).isActive = true
+        boatImageView.widthAnchor.constraint(equalToConstant: 52).isActive = true
+        boatImageView.heightAnchor.constraint(equalToConstant: 52).isActive = true
+    }
 
-        titleLabel.font = .systemFont(ofSize: 26, weight: .semibold)
+    private func buildCard() {
+        // Outer: shadow only, never clipped (§2.5).
+        cardShadowHost.wantsLayer = true
+        cardShadowHost.layer?.masksToBounds = false
+        cardShadowHost.translatesAutoresizingMaskIntoConstraints = false
+
+        // Inner: fill, border, radius - and it clips, which is why the shadow
+        // cannot live here.
+        card.wantsLayer = true
+        card.layer?.masksToBounds = true
+        card.layer?.cornerRadius = HelmMetrics.dModule
+        card.layer?.borderWidth = 1
+        card.translatesAutoresizingMaskIntoConstraints = false
+        cardShadowHost.addSubview(card)
+
+        ribbonView.wantsLayer = true
+        ribbonView.layer?.addSublayer(ribbonLayer)
+        ribbonView.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(ribbonView)
+
+        markTile.translatesAutoresizingMaskIntoConstraints = false
+
+        titleLabel.font = HelmType.rounded(HelmType.scaled(20), .heavy)
         titleLabel.alignment = .center
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        subtitleLabel.font = .systemFont(ofSize: 14, weight: .regular)
+        subtitleLabel.font = HelmType.body()
         subtitleLabel.alignment = .center
+        subtitleLabel.maximumNumberOfLines = 3
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        // A glassy, translucent field matching the scene rather than the
-        // stock white/square-cornered/blue-focus-ring system text field -
-        // per live captain feedback that the first draft's plain form
-        // clashed with the rest of the scene. `focusRingType = .none` +
-        // `isBordered = false` hand all the drawing to this field's own
-        // layer (rounded corners, a soft border, translucent fill);
-        // `placeholderAttributedString` is needed because the plain
-        // `placeholderString` setter always renders in the system's default
-        // placeholder gray, which doesn't track this view's own palette.
-        // Actual colors (both here and below) are set by `applyTheme`, which
-        // `loadView` calls via `ThemeManager.shared.observe` at the end of
-        // this method - this is just static/structural setup.
-        passwordField.font = .systemFont(ofSize: 17)
-        passwordField.isBordered = false
-        passwordField.drawsBackground = false
-        passwordField.focusRingType = .none
+        // The app's one secure input. It brings the §6.9 well (inset fill,
+        // radius `dWell`, `muted` placeholder) plus Phase 0's first-responder
+        // focus ring and themed selection with it - none of which the
+        // hand-rolled pill this replaces had.
         passwordField.target = self
         passwordField.action = #selector(submitTapped)
-        passwordField.translatesAutoresizingMaskIntoConstraints = false
-        passwordField.widthAnchor.constraint(equalToConstant: 230).isActive = true
-        if let cell = passwordField.cell as? NSTextFieldCell {
-            cell.usesSingleLineMode = true
-        }
 
-        // A small lock glyph inside the field, left of the text - the kind
-        // of detail that made the first plain-fill draft read as unfinished.
-        lockIcon.image = NSImage(systemSymbolName: "lock.fill", accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .medium))
-        lockIcon.translatesAutoresizingMaskIntoConstraints = false
-
-        fieldContainer.wantsLayer = true
-        fieldContainer.layer?.cornerRadius = 10
-        fieldContainer.layer?.borderWidth = 1
-        fieldContainer.translatesAutoresizingMaskIntoConstraints = false
-        fieldContainer.heightAnchor.constraint(equalToConstant: 44).isActive = true
-        fieldContainer.addSubview(lockIcon)
-        fieldContainer.addSubview(passwordField)
-        NSLayoutConstraint.activate([
-            lockIcon.leadingAnchor.constraint(equalTo: fieldContainer.leadingAnchor, constant: 14),
-            lockIcon.centerYAnchor.constraint(equalTo: fieldContainer.centerYAnchor),
-            lockIcon.widthAnchor.constraint(equalToConstant: 14),
-
-            // Centered on the container's Y, not top/bottom-pinned to the
-            // container's full height - a plain `NSTextFieldCell` doesn't
-            // vertically center its text within a frame taller than its own
-            // natural line height (it stays top-aligned), which is why the
-            // first draft's placeholder text sat visibly above center inside
-            // its 40pt-tall field. Letting the field keep its own natural,
-            // font-driven height and centering *that* inside the taller pill
-            // sidesteps the cell's own vertical layout entirely.
-            passwordField.leadingAnchor.constraint(equalTo: lockIcon.trailingAnchor, constant: 8),
-            passwordField.trailingAnchor.constraint(equalTo: fieldContainer.trailingAnchor, constant: -14),
-            passwordField.centerYAnchor.constraint(equalTo: fieldContainer.centerYAnchor),
-        ])
-
-        // A real filled pill, not the stock `.rounded` bezel (a light-gray
-        // system button that read as an afterthought against the scene) -
-        // `isBordered = false` + a layer fill hands the whole look to this
-        // button, with `attributedTitle` carrying the white bold label since
-        // a borderless `NSButton`'s plain `title` renders in the system's
-        // default (dark) label color regardless of `contentTintColor`.
-        unlockButton.isBordered = false
-        unlockButton.wantsLayer = true
-        unlockButton.layer?.cornerRadius = 10
-        unlockButton.layer?.backgroundColor = NSColor(calibratedRed: 0.20, green: 0.48, blue: 0.92, alpha: 1).cgColor
-        unlockButton.attributedTitle = NSAttributedString(
-            string: "Unlock",
-            attributes: [
-                .foregroundColor: NSColor.white,
-                .font: NSFont.systemFont(ofSize: 13.5, weight: .semibold),
-            ]
-        )
         unlockButton.target = self
         unlockButton.action = #selector(submitTapped)
         unlockButton.keyEquivalent = "\r"
         unlockButton.translatesAutoresizingMaskIntoConstraints = false
-        unlockButton.widthAnchor.constraint(equalToConstant: 280).isActive = true
-        unlockButton.heightAnchor.constraint(equalToConstant: 44).isActive = true
 
         formStack.orientation = .vertical
         formStack.alignment = .centerX
-        formStack.spacing = 12
+        formStack.spacing = HelmMetrics.s3
         formStack.translatesAutoresizingMaskIntoConstraints = false
-        formStack.addArrangedSubview(fieldContainer)
+        formStack.addArrangedSubview(passwordField)
         formStack.addArrangedSubview(unlockButton)
 
-        messageLabel.font = .systemFont(ofSize: 13.5)
+        errorLabel.font = HelmType.caption()
+        errorLabel.alignment = .center
+        errorLabel.maximumNumberOfLines = 2
+        errorLabel.translatesAutoresizingMaskIntoConstraints = false
+        errorLabel.isHidden = true
+
+        messageLabel.font = HelmType.body()
         messageLabel.alignment = .center
-        messageLabel.maximumNumberOfLines = 4
+        messageLabel.maximumNumberOfLines = 5
         messageLabel.translatesAutoresizingMaskIntoConstraints = false
         messageLabel.isHidden = true
 
-        setupCommandLabel.font = .monospacedSystemFont(ofSize: 12.5, weight: .regular)
+        setupCommandLabel.font = HelmType.code()
         setupCommandLabel.isSelectable = true
         setupCommandLabel.lineBreakMode = .byTruncatingMiddle
         setupCommandLabel.translatesAutoresizingMaskIntoConstraints = false
+        setupCommandLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        copyCommandButton.isBordered = false
-        copyCommandButton.wantsLayer = true
-        copyCommandButton.layer?.cornerRadius = 6
         copyCommandButton.target = self
         copyCommandButton.action = #selector(copySetupCommandTapped)
-        copyCommandButton.translatesAutoresizingMaskIntoConstraints = false
         copyCommandButton.setContentHuggingPriority(.required, for: .horizontal)
+        copyCommandButton.setContentCompressionResistancePriority(.required, for: .horizontal)
 
+        // A code well, not a bespoke tinted box: `HelmField.makeSunken` is the
+        // one sunken recipe, and `applySunken` recolours it per theme.
+        HelmField.makeSunken(setupCommandStack)
         setupCommandStack.orientation = .horizontal
         setupCommandStack.alignment = .centerY
-        setupCommandStack.spacing = 10
+        setupCommandStack.spacing = HelmMetrics.s2
         setupCommandStack.distribution = .fill
-        setupCommandStack.edgeInsets = NSEdgeInsets(top: 8, left: 12, bottom: 8, right: 10)
-        setupCommandStack.wantsLayer = true
-        setupCommandStack.layer?.cornerRadius = 8
-        setupCommandStack.layer?.borderWidth = 1
+        setupCommandStack.edgeInsets = NSEdgeInsets(top: 8, left: 13, bottom: 8, right: 9)
         setupCommandStack.translatesAutoresizingMaskIntoConstraints = false
         setupCommandStack.addArrangedSubview(setupCommandLabel)
         setupCommandStack.addArrangedSubview(copyCommandButton)
         setupCommandStack.isHidden = true
 
-        avMessageLabel.font = .systemFont(ofSize: 13.5)
+        avMessageLabel.font = HelmType.body()
         avMessageLabel.alignment = .center
-        avMessageLabel.maximumNumberOfLines = 5
+        avMessageLabel.maximumNumberOfLines = 6
         avMessageLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        // Styled like `unlockButton` above (a filled pill, not the stock
-        // bezel) so it reads as a real primary action on this screen rather
-        // than an afterthought.
-        installButton.isBordered = false
-        installButton.wantsLayer = true
-        installButton.layer?.cornerRadius = 10
-        installButton.layer?.backgroundColor = NSColor(calibratedRed: 0.20, green: 0.48, blue: 0.92, alpha: 1).cgColor
-        installButton.attributedTitle = NSAttributedString(
-            string: "Install Automic Vault",
-            attributes: [
-                .foregroundColor: NSColor.white,
-                .font: NSFont.systemFont(ofSize: 13.5, weight: .semibold),
-            ]
-        )
         installButton.target = self
         installButton.action = #selector(installTapped)
         installButton.translatesAutoresizingMaskIntoConstraints = false
-        installButton.widthAnchor.constraint(equalToConstant: 280).isActive = true
-        installButton.heightAnchor.constraint(equalToConstant: 40).isActive = true
 
-        installStatusLabel.font = .systemFont(ofSize: 12.5)
+        installStatusLabel.font = HelmType.caption()
         installStatusLabel.alignment = .center
         installStatusLabel.maximumNumberOfLines = 4
-        installStatusLabel.lineBreakMode = .byWordWrapping
         installStatusLabel.translatesAutoresizingMaskIntoConstraints = false
 
         avUnavailableStack.orientation = .vertical
         avUnavailableStack.alignment = .centerX
-        avUnavailableStack.spacing = 12
+        avUnavailableStack.spacing = HelmMetrics.s3
         avUnavailableStack.translatesAutoresizingMaskIntoConstraints = false
         avUnavailableStack.addArrangedSubview(avMessageLabel)
         avUnavailableStack.addArrangedSubview(installButton)
         avUnavailableStack.addArrangedSubview(installStatusLabel)
         avUnavailableStack.isHidden = true
 
-        let contentStack = NSStackView(views: [boatImageView, titleLabel, subtitleLabel, formStack, messageLabel, setupCommandStack, avUnavailableStack])
-        contentStack.orientation = .vertical
-        contentStack.alignment = .centerX
-        contentStack.spacing = 18
-        contentStack.setCustomSpacing(24, after: boatImageView)
-        contentStack.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(contentStack)
+        waitingSpinner.style = .spinning
+        waitingSpinner.controlSize = .small
+        waitingSpinner.isIndeterminate = true
+        waitingSpinner.translatesAutoresizingMaskIntoConstraints = false
+        waitingLabel.font = HelmType.caption()
+        waitingLabel.translatesAutoresizingMaskIntoConstraints = false
+        waitingStack.orientation = .horizontal
+        waitingStack.alignment = .centerY
+        waitingStack.spacing = HelmMetrics.s2
+        waitingStack.translatesAutoresizingMaskIntoConstraints = false
+        waitingStack.addArrangedSubview(waitingSpinner)
+        waitingStack.addArrangedSubview(waitingLabel)
+        waitingStack.isHidden = true
 
-        NSLayoutConstraint.activate([
-            contentStack.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-            contentStack.centerYAnchor.constraint(equalTo: root.centerYAnchor, constant: 40),
-            contentStack.widthAnchor.constraint(lessThanOrEqualToConstant: 360),
-            messageLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            avMessageLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            installStatusLabel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+        footerDivider.wantsLayer = true
+        footerDivider.translatesAutoresizingMaskIntoConstraints = false
+        footerDivider.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        footerLeftLabel.font = HelmType.caption()
+        footerRightLabel.font = HelmType.code()
+        footerLeftLabel.translatesAutoresizingMaskIntoConstraints = false
+        footerRightLabel.translatesAutoresizingMaskIntoConstraints = false
+        footerRightLabel.setContentHuggingPriority(.required, for: .horizontal)
+        let footerRow = NSStackView(views: [footerLeftLabel, footerRightLabel])
+        footerRow.orientation = .horizontal
+        footerRow.distribution = .fill
+        footerRow.alignment = .centerY
+        footerRow.translatesAutoresizingMaskIntoConstraints = false
+        footerLeftLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        footerStack.orientation = .vertical
+        footerStack.alignment = .leading
+        footerStack.spacing = HelmMetrics.s3
+        footerStack.translatesAutoresizingMaskIntoConstraints = false
+        footerStack.addArrangedSubview(footerDivider)
+        footerStack.addArrangedSubview(footerRow)
+
+        let body = NSStackView(views: [
+            markTile, titleLabel, subtitleLabel, formStack, errorLabel,
+            messageLabel, setupCommandStack, avUnavailableStack, waitingStack, footerStack,
         ])
+        body.orientation = .vertical
+        body.alignment = .centerX
+        body.spacing = HelmMetrics.s3
+        body.setCustomSpacing(HelmMetrics.s2, after: titleLabel)
+        body.setCustomSpacing(HelmMetrics.s4, after: subtitleLabel)
+        body.translatesAutoresizingMaskIntoConstraints = false
+        card.addSubview(body)
 
-        // Follow the app's active Helm theme's light/dark mode, live - see
-        // `ThemeManager.swift`'s header checklist. `applyTheme` is called
-        // immediately here (current theme) and again on every later change,
-        // including while this screen is on screen and locked; this
-        // controller is a permanent, app-lifetime singleton owned by
-        // `AppShellController`, so the returned token can be discarded per
-        // that file's own convention for such observers.
-        ThemeManager.shared.observe { [weak self] theme in
-            self?.applyTheme(theme)
-        }
+        let pad = Self.cardPadding
+        NSLayoutConstraint.activate([
+            cardShadowHost.widthAnchor.constraint(equalToConstant: Self.cardWidth),
+            card.leadingAnchor.constraint(equalTo: cardShadowHost.leadingAnchor),
+            card.trailingAnchor.constraint(equalTo: cardShadowHost.trailingAnchor),
+            card.topAnchor.constraint(equalTo: cardShadowHost.topAnchor),
+            card.bottomAnchor.constraint(equalTo: cardShadowHost.bottomAnchor),
+
+            ribbonView.leadingAnchor.constraint(equalTo: card.leadingAnchor),
+            ribbonView.trailingAnchor.constraint(equalTo: card.trailingAnchor),
+            ribbonView.topAnchor.constraint(equalTo: card.topAnchor),
+            ribbonView.heightAnchor.constraint(equalToConstant: Self.ribbonHeight),
+
+            body.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: pad),
+            body.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -pad),
+            body.topAnchor.constraint(equalTo: ribbonView.bottomAnchor, constant: pad),
+            body.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -pad),
+
+            // Everything that can wrap is pinned to the body's own width, so a
+            // long message grows the card downward rather than sideways.
+            subtitleLabel.widthAnchor.constraint(equalTo: body.widthAnchor),
+            errorLabel.widthAnchor.constraint(equalTo: body.widthAnchor),
+            messageLabel.widthAnchor.constraint(equalTo: body.widthAnchor),
+            avMessageLabel.widthAnchor.constraint(equalTo: body.widthAnchor),
+            installStatusLabel.widthAnchor.constraint(equalTo: body.widthAnchor),
+            formStack.widthAnchor.constraint(equalTo: body.widthAnchor),
+            passwordField.widthAnchor.constraint(equalTo: formStack.widthAnchor),
+            unlockButton.widthAnchor.constraint(equalTo: formStack.widthAnchor),
+            setupCommandStack.widthAnchor.constraint(equalTo: body.widthAnchor),
+            avUnavailableStack.widthAnchor.constraint(equalTo: body.widthAnchor),
+            installButton.widthAnchor.constraint(equalTo: avUnavailableStack.widthAnchor),
+            footerStack.widthAnchor.constraint(equalTo: body.widthAnchor),
+            footerDivider.widthAnchor.constraint(equalTo: footerStack.widthAnchor),
+        ])
     }
 
-    /// Repaints every themed element of the scene for `theme.mode` - a
-    /// genuine second "daytime sailing" palette (sun, lighter sky/wave, dark
-    /// ink/boat tint for contrast), not a dimmed copy of the night one. Does
-    /// not force `view.appearance`: every color here is drawn explicitly
-    /// (layer fills, `NSAttributedString` foregrounds) rather than via a
-    /// system-semantic color, so there's nothing here that would resolve
-    /// against the OS's own light/dark setting regardless.
-    private func applyTheme(_ theme: HelmTheme) {
+    // MARK: - Theme
+
+    /// Every colour on this screen, resolved from `theme` alone.
+    ///
+    /// Deliberately theme-derived rather than register-branched: the 12
+    /// pre-Daylight palettes are still selectable (§2.8 keeps
+    /// `HelmTheme.allThemes` intact until Dusk can replace them all), so a
+    /// captain on `gruvbox-light` has to get a legible gate too. The card,
+    /// well, buttons and type all resolve through the shared components, which
+    /// already branch internally; only the *scene* needs its own resolution,
+    /// and it builds from `HelmDomainHue` pairs (which fall back to the
+    /// theme's own `HelmTint` slots off Daylight) over the theme's own ground.
+    private struct SceneColors {
+        let skyTop: NSColor
+        let skyMid: NSColor
+        let ground: NSColor
+        let wave: NSColor
+        let backWave: NSColor
+        let boat: NSColor
+        let celestial: NSColor
+        let celestialGlow: NSColor
+        let star: NSColor
+        let isDarkRegister: Bool
+    }
+
+    /// A straight sRGB mix of `hue` into `ground`.
+    ///
+    /// `HelmContrast.mix`, never `NSColor.blended(withFraction:of:)`: that one
+    /// converts both operands into a *calibrated* space first, so its result
+    /// drifts from the straight-sRGB composite alpha compositing actually
+    /// performs - a lesson this codebase has already recorded twice (the
+    /// segmented-tabs correction and the §6.5 signal wash).
+    private static func blend(_ hue: NSColor, into ground: NSColor, fraction: Double) -> NSColor {
+        HelmContrast.color(HelmContrast.mix(HelmContrast.components(hue),
+                                            HelmContrast.components(ground),
+                                            fraction))
+    }
+
+    private func sceneColors(for theme: HelmTheme) -> SceneColors {
+        let ground = HelmTheme.nsColor(theme.backgroundHex)
+        let sea = HelmDomainHue.teal.pair(in: theme)
+        let sky = HelmDomainHue.blue.pair(in: theme)
         let isDark = theme.mode == .dark
 
-        let skyColors: [NSColor]
-        let waveColor: NSColor
-        let boatTint: NSColor
-        let inkPrimary: NSColor
-        let inkSecondary: NSColor
-        let inkTertiary: NSColor
-        let fieldFill: NSColor
-        let fieldBorder: NSColor
-        let placeholderColor: NSColor
-        let lockTint: NSColor
-
         if isDark {
-            skyColors = [
-                NSColor(calibratedRed: 0.02, green: 0.04, blue: 0.11, alpha: 1),
-                NSColor(calibratedRed: 0.06, green: 0.10, blue: 0.22, alpha: 1),
-                NSColor(calibratedRed: 0.10, green: 0.16, blue: 0.32, alpha: 1),
-            ]
-            waveColor = NSColor(calibratedRed: 0.09, green: 0.22, blue: 0.38, alpha: 0.9)
-            boatTint = .white
-            inkPrimary = .white
-            inkSecondary = NSColor.white.withAlphaComponent(0.75)
-            inkTertiary = NSColor.white.withAlphaComponent(0.85)
-            fieldFill = NSColor.white.withAlphaComponent(0.10)
-            fieldBorder = NSColor.white.withAlphaComponent(0.30)
-            placeholderColor = NSColor.white.withAlphaComponent(0.45)
-            lockTint = NSColor.white.withAlphaComponent(0.55)
-        } else {
-            // A daytime sailing scene, not a dimmed night one: a brighter
-            // sky blue at the zenith fading to a pale, warm horizon; a
-            // lighter turquoise wave; dark ink/boat/field chrome, since
-            // white text and a translucent white pill both lose contrast
-            // against a pale sky.
-            skyColors = [
-                NSColor(calibratedRed: 0.32, green: 0.58, blue: 0.86, alpha: 1),
-                NSColor(calibratedRed: 0.58, green: 0.78, blue: 0.93, alpha: 1),
-                NSColor(calibratedRed: 0.90, green: 0.93, blue: 0.90, alpha: 1),
-            ]
-            waveColor = NSColor(calibratedRed: 0.16, green: 0.52, blue: 0.62, alpha: 0.85)
-            boatTint = NSColor(calibratedRed: 0.10, green: 0.20, blue: 0.32, alpha: 1)
-            inkPrimary = NSColor(calibratedRed: 0.08, green: 0.12, blue: 0.20, alpha: 1)
-            inkSecondary = inkPrimary.withAlphaComponent(0.68)
-            inkTertiary = inkPrimary.withAlphaComponent(0.80)
-            fieldFill = NSColor.black.withAlphaComponent(0.06)
-            fieldBorder = NSColor.black.withAlphaComponent(0.18)
-            placeholderColor = inkPrimary.withAlphaComponent(0.40)
-            lockTint = inkPrimary.withAlphaComponent(0.55)
+            // Night harbour: a deep sky reading down into the theme's own
+            // ground, a cool moon, and a sea that all but dissolves into the
+            // horizon. Every value is a blend of real tokens - there is no
+            // second hand-tuned palette here, which is the whole point.
+            return SceneColors(
+                skyTop: Self.blend(sky.h1, into: ground, fraction: 0.34),
+                skyMid: Self.blend(sky.h1, into: ground, fraction: 0.11),
+                ground: ground,
+                wave: Self.blend(sea.h1, into: ground, fraction: 0.5),
+                backWave: Self.blend(sea.h1, into: ground, fraction: 0.28),
+                boat: HelmTheme.nsColor(theme.chromeInkHex),
+                celestial: sky.h2,
+                celestialGlow: sky.h2.withAlphaComponent(0.35),
+                star: HelmTheme.nsColor(theme.chromeInkHex).withAlphaComponent(0.85),
+                isDarkRegister: true
+            )
         }
-
-        skyLayer.colors = skyColors.map(\.cgColor)
-        waveLayer.fillColor = waveColor.cgColor
-        boatImageView.contentTintColor = boatTint
-        starLayers.forEach { $0.isHidden = !isDark }
-        sunLayer.isHidden = isDark
-
-        titleLabel.textColor = inkPrimary
-        subtitleLabel.textColor = inkSecondary
-        messageLabel.textColor = inkTertiary
-        setupCommandLabel.textColor = inkPrimary
-        setupCommandStack.layer?.backgroundColor = inkTertiary.withAlphaComponent(0.10).cgColor
-        setupCommandStack.layer?.borderColor = inkTertiary.withAlphaComponent(0.35).cgColor
-        copyCommandButton.layer?.backgroundColor = inkTertiary.withAlphaComponent(0.18).cgColor
-        copyCommandButton.attributedTitle = NSAttributedString(
-            string: "Copy",
-            attributes: [.foregroundColor: inkPrimary, .font: NSFont.systemFont(ofSize: 12, weight: .medium)]
+        // Daylight harbour: a soft blue zenith fading into the theme's own warm
+        // paper at the horizon, an amber sun, a turquoise sea.
+        let sun = HelmDomainHue.amber.pair(in: theme)
+        return SceneColors(
+            skyTop: Self.blend(sky.h2, into: ground, fraction: 0.46),
+            skyMid: Self.blend(sky.h2, into: ground, fraction: 0.13),
+            ground: ground,
+            wave: Self.blend(sea.h1, into: ground, fraction: 0.5),
+            backWave: Self.blend(sea.h2, into: ground, fraction: 0.3),
+            boat: Self.blend(sea.h1, into: HelmTheme.nsColor(theme.chromeInkHex), fraction: 0.55),
+            celestial: sun.h2,
+            celestialGlow: sun.h1.withAlphaComponent(0.4),
+            star: .clear,
+            isDarkRegister: false
         )
-        avMessageLabel.textColor = inkTertiary
-        installStatusLabel.textColor = inkSecondary
-
-        fieldContainer.layer?.backgroundColor = fieldFill.cgColor
-        fieldContainer.layer?.borderColor = fieldBorder.cgColor
-        passwordField.textColor = inkPrimary
-        passwordField.placeholderAttributedString = NSAttributedString(
-            string: "Password",
-            attributes: [
-                .foregroundColor: placeholderColor,
-                .font: NSFont.systemFont(ofSize: 17),
-            ]
-        )
-        lockIcon.contentTintColor = lockTint
     }
+
+    private func applyTheme(_ theme: HelmTheme) {
+        let scene = sceneColors(for: theme)
+        let ink = HelmTheme.nsColor(theme.chromeInkHex)
+        let muted = HelmTheme.mutedInk(theme)
+
+        // Scene. Implicit CALayer animation is off for every one of these:
+        // a standalone sublayer's property change animates by default (Phase 6
+        // measured this on the gradient tiles), which would cross-fade the
+        // whole sky on a theme switch - motion nobody designed.
+        HelmMotion.withoutImplicitAnimation {
+            view.layer?.backgroundColor = scene.ground.cgColor
+            skyLayer.colors = [scene.skyTop, scene.skyMid, scene.ground].map(\.cgColor)
+            waveLayer.fillColor = scene.wave.cgColor
+            backWaveLayer.fillColor = scene.backWave.cgColor
+            sunLayer.backgroundColor = scene.celestial.cgColor
+            sunLayer.shadowColor = scene.celestialGlow.cgColor
+            moonBiteLayer.backgroundColor = scene.skyTop.cgColor
+            moonBiteLayer.isHidden = !scene.isDarkRegister
+            for star in starLayers {
+                star.backgroundColor = scene.star.cgColor
+                star.isHidden = !scene.isDarkRegister
+            }
+        }
+        boatImageView.contentTintColor = scene.boat
+
+        // Card chrome. `applyCardSurface` is the app's one card fill/border, so
+        // this gate cannot drift from the sheets it is meant to match; the
+        // shadow is `HelmCard.elevation(.raised)`, §6.10's own level.
+        HelmCard.applyCardSurface(to: card, theme: theme, cornerRadius: HelmMetrics.dModule)
+        let shadow = HelmCard.elevation(for: theme, level: .raised)
+        HelmMotion.withoutImplicitAnimation {
+            cardShadowHost.layer?.shadowColor = (shadow.shadowColor ?? .black).cgColor
+            cardShadowHost.layer?.shadowOpacity = 1
+            cardShadowHost.layer?.shadowRadius = shadow.shadowBlurRadius
+            cardShadowHost.layer?.shadowOffset = CGSize(width: shadow.shadowOffset.width,
+                                                        height: shadow.shadowOffset.height)
+        }
+        applyRibbon(theme: theme)
+        markTile.configure(symbol: currentSymbol, hue: currentHue)
+
+        titleLabel.textColor = ink
+        subtitleLabel.textColor = muted
+        messageLabel.textColor = muted
+        avMessageLabel.textColor = muted
+        installStatusLabel.textColor = muted
+        waitingLabel.textColor = muted
+        footerLeftLabel.textColor = muted
+        footerRightLabel.textColor = muted
+        setupCommandLabel.textColor = HelmField.ink(theme)
+        footerDivider.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex).cgColor
+
+        // §2.4: a raw semantic hue used as its own label fails the text floor.
+        // `legible` is what turns `bad` into #BC4142 on Daylight's card and
+        // #E07272 on Dusk's, and does the equivalent on the other eleven.
+        errorLabel.textColor = HelmContrast.legible(
+            HelmTheme.nsColor(theme.ansiHex[1]),
+            over: HelmTheme.nsColor(theme.chromeBackgroundHex)
+        )
+
+        HelmField.applySunken(to: setupCommandStack, theme: theme)
+        passwordField.applyTheme(theme)
+        // The well's focus ring takes this state's hue, per §6.9.
+        passwordField.domainHue = currentHue
+        // A `HelmButton`'s `domainHue` re-points its `.primary` fill on every
+        // theme, so it is set here (from the state) rather than at construction -
+        // and the corrected fill is `DaylightPalette.primaryButtonFill`'s job,
+        // not a literal: white on the raw amber measures 3.27:1.
+        unlockButton.domainHue = currentHue
+        installButton.domainHue = currentHue
+        applyLayerGeometry()
+    }
+
+    private func applyRibbon(theme: HelmTheme) {
+        let pair = currentHue.pair(in: theme)
+        HelmMotion.withoutImplicitAnimation {
+            ribbonLayer.colors = [pair.h1.cgColor, pair.h2.cgColor]
+            ribbonLayer.startPoint = HelmDomainHue.ribbonStart
+            ribbonLayer.endPoint = HelmDomainHue.ribbonEnd
+        }
+    }
+
+    // MARK: - Layout
 
     override func viewDidLayout() {
         super.viewDidLayout()
         layoutSceneLayers()
+        applyLayerGeometry()
+    }
+
+    /// Frames for the layers Auto Layout does not own. Kept out of
+    /// `layoutSceneLayers` so `applyTheme` can call it too - a theme change can
+    /// alter a shadow's radius, and `shadowPath` has to be resynced with it.
+    private func applyLayerGeometry() {
+        HelmMotion.withoutImplicitAnimation {
+            ribbonLayer.frame = ribbonView.bounds
+            let cardBounds = cardShadowHost.bounds
+            if cardBounds.width > 0, cardBounds.height > 0 {
+                cardShadowHost.layer?.shadowPath = CGPath(
+                    roundedRect: cardBounds,
+                    cornerWidth: HelmMetrics.dModule,
+                    cornerHeight: HelmMetrics.dModule,
+                    transform: nil
+                )
+            }
+        }
     }
 
     private func layoutSceneLayers() {
         let bounds = view.bounds
         guard bounds.width > 0, bounds.height > 0 else { return }
 
-        for star in view.layer?.sublayers ?? [] where star.value(forKey: "xFrac") != nil {
-            let xFrac = star.value(forKey: "xFrac") as? CGFloat ?? 0
-            let yFrac = star.value(forKey: "yFrac") as? CGFloat ?? 0
-            let size = star.bounds.width
-            star.position = CGPoint(x: bounds.width * xFrac, y: bounds.height * yFrac)
-            star.bounds = CGRect(x: 0, y: 0, width: size, height: size)
+        HelmMotion.withoutImplicitAnimation {
+            skyLayer.frame = bounds
+
+            for layer in view.layer?.sublayers ?? [] where layer.value(forKey: "xFrac") != nil {
+                let xFrac = layer.value(forKey: "xFrac") as? CGFloat ?? 0
+                let yFrac = layer.value(forKey: "yFrac") as? CGFloat ?? 0
+                let size = layer.bounds.width
+                layer.position = CGPoint(x: bounds.width * xFrac, y: bounds.height * yFrac)
+                layer.bounds = CGRect(x: 0, y: 0, width: size, height: size)
+            }
         }
 
         waveWidth = bounds.width * 2
-        let waveHeight: CGFloat = 90
-        let path = CGMutablePath()
-        path.move(to: CGPoint(x: 0, y: 0))
-        let segments = 8
-        let segmentWidth = waveWidth / CGFloat(segments)
-        for i in 0...segments {
-            let x = CGFloat(i) * segmentWidth
-            let y = (i % 2 == 0) ? waveHeight : waveHeight * 0.6
-            path.addLine(to: CGPoint(x: x, y: y))
+        HelmMotion.withoutImplicitAnimation {
+            waveLayer.path = Self.swellPath(width: waveWidth, height: 96, crest: 18)
+            waveLayer.bounds = CGRect(x: 0, y: 0, width: waveWidth, height: 96)
+            waveLayer.position = .zero
+            waveLayer.anchorPoint = .zero
+            backWaveLayer.path = Self.swellPath(width: waveWidth, height: 128, crest: 13)
+            backWaveLayer.bounds = CGRect(x: 0, y: 0, width: waveWidth, height: 128)
+            backWaveLayer.position = .zero
+            backWaveLayer.anchorPoint = .zero
         }
-        path.addLine(to: CGPoint(x: waveWidth, y: 0))
-        path.closeSubpath()
-        waveLayer.path = path
-        waveLayer.bounds = CGRect(x: 0, y: 0, width: waveWidth, height: waveHeight)
-        waveLayer.position = CGPoint(x: 0, y: 0)
-        waveLayer.anchorPoint = CGPoint(x: 0, y: 0)
 
         startAnimationsIfNeeded()
+    }
+
+    /// A smooth, seamlessly-tiling swell: four quadratic arcs across `width`,
+    /// oscillating `crest` points either side of `height`.
+    ///
+    /// Deliberately curves rather than the straight-line zigzag this file used
+    /// to draw - at the sea's real on-screen size that read as a row of
+    /// triangles, which the old near-black night palette hid and Daylight's
+    /// pale one does not.
+    private static func swellPath(width: CGFloat, height: CGFloat, crest: CGFloat) -> CGPath {
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: 0, y: 0))
+        path.addLine(to: CGPoint(x: 0, y: height))
+        let arcs = 4
+        let arcWidth = width / CGFloat(arcs)
+        for i in 0..<arcs {
+            let startX = CGFloat(i) * arcWidth
+            let controlY = height + (i % 2 == 0 ? crest : -crest)
+            path.addQuadCurve(to: CGPoint(x: startX + arcWidth, y: height),
+                              control: CGPoint(x: startX + arcWidth / 2, y: controlY))
+        }
+        path.addLine(to: CGPoint(x: width, y: 0))
+        path.closeSubpath()
+        return path
     }
 
     private var animationsStarted = false
@@ -517,8 +812,7 @@ final class LockScreenController: NSViewController {
     /// alone: they are brief, non-looping, and the success one carries the
     /// `CATransaction` completion block that actually unlocks the app - a
     /// change there risks a state where the password is accepted and the
-    /// overlay never lifts. Motion in the shared components (`HelmAccentRow`'s
-    /// hover, etc.) already honours the setting.
+    /// overlay never lifts.
     private static var prefersReducedMotion: Bool {
         HelmMotion.isReduced
     }
@@ -547,6 +841,7 @@ final class LockScreenController: NSViewController {
         if Self.prefersReducedMotion {
             boatImageView.layer?.removeAnimation(forKey: "bob")
             waveLayer.removeAnimation(forKey: "drift")
+            backWaveLayer.removeAnimation(forKey: "drift")
         } else if animationsStarted, boatImageView.layer?.animation(forKey: "bob") == nil {
             addLoopingAnimations()
         }
@@ -577,6 +872,15 @@ final class LockScreenController: NSViewController {
         drift.isRemovedOnCompletion = false
         drift.fillMode = .forwards
         waveLayer.add(drift, forKey: "drift")
+
+        let backDrift = CABasicAnimation(keyPath: "position.x")
+        backDrift.fromValue = 0
+        backDrift.toValue = -(waveWidth / 2)
+        backDrift.duration = 22
+        backDrift.repeatCount = .infinity
+        backDrift.isRemovedOnCompletion = false
+        backDrift.fillMode = .forwards
+        backWaveLayer.add(backDrift, forKey: "drift")
     }
 
     deinit {
@@ -588,16 +892,30 @@ final class LockScreenController: NSViewController {
     // MARK: - Content
 
     func apply(_ state: ContentState) {
+        currentHue = state.hue
+        currentSymbol = state.symbol
+
+        // Defaults: every state below turns on only what it needs.
+        formStack.isHidden = true
+        errorLabel.isHidden = true
+        messageLabel.isHidden = true
+        setupCommandStack.isHidden = true
+        avUnavailableStack.isHidden = true
+        waitingStack.isHidden = true
+        waitingSpinner.stopAnimation(nil)
+        footerLeftLabel.stringValue = ""
+        footerRightLabel.stringValue = ""
+
         switch state {
         case .locked(let subtitle):
+            titleLabel.stringValue = "Welcome back, Manjesh"
             subtitleLabel.stringValue = subtitle
             formStack.isHidden = false
-            messageLabel.isHidden = true
-            setupCommandStack.isHidden = true
-            avUnavailableStack.isHidden = true
             passwordField.stringValue = ""
             passwordField.isEnabled = true
             unlockButton.isEnabled = true
+            footerLeftLabel.stringValue = "Automic Vault"
+            footerRightLabel.stringValue = "\u{21A9} to unlock"
             // This same controller instance is reused for every lock, so a
             // previous success animation's boat position/opacity needs
             // resetting - otherwise the *next* lock screen would show a
@@ -605,44 +923,47 @@ final class LockScreenController: NSViewController {
             boatImageView.layer?.removeAnimation(forKey: "sailAway")
             boatImageView.layer?.removeAnimation(forKey: "fadeAway")
             boatImageView.layer?.opacity = 1
+
         case .noPasswordConfigured:
-            subtitleLabel.stringValue = "No password is set yet"
-            formStack.isHidden = true
-            avUnavailableStack.isHidden = true
-            messageLabel.isHidden = false
+            titleLabel.stringValue = "First run"
             // Vault-tab wording deliberately doesn't offer it as a first-setup
             // option here either - the Vault tab lives behind this same lock
             // screen, so it's only ever reachable to rotate an already-set
             // password, never to set the first one. See `setup-guide.md`.
-            // GL-31: the command itself moved out of this sentence and into
-            // the copyable row below, so the prose can just say what to do
-            // with it.
-            messageLabel.stringValue = "Run this in a terminal (or set the password from Automic Vault's own app), then relaunch Manjesh Grand Line."
+            // GL-31: the command itself lives in the copyable well below, so
+            // the prose can just say what to do with it.
+            subtitleLabel.stringValue = "No app password is saved yet. Run this in a terminal (or set it from Automic Vault's own app), then relaunch."
             setupCommandStack.isHidden = false
+            footerLeftLabel.stringValue = "The one screen where nothing else is reachable"
+
         case .avUnavailable:
-            subtitleLabel.stringValue = "Automic Vault isn't installed"
-            formStack.isHidden = true
-            messageLabel.isHidden = true
-            setupCommandStack.isHidden = true
+            titleLabel.stringValue = "Automic Vault isn't installed"
+            subtitleLabel.stringValue = "Grand Line keeps your app password in Automic Vault's keychain. Install it to continue."
             avUnavailableStack.isHidden = false
-            avMessageLabel.stringValue = "Automic Vault isn't installed on this Mac. Install it below, then set a password with \u{201c}av save GRANDLINE_APP_PASSWORD\u{201d} (or Automic Vault's own app) and relaunch."
+            avMessageLabel.stringValue = "Once it's installed, set a password with \u{201c}\(VaultSource.appPasswordSetupCommand)\u{201d} (or Automic Vault's own app) and relaunch Manjesh Grand Line."
             installButton.isEnabled = true
             installStatusLabel.stringValue = ""
+            footerLeftLabel.stringValue = "Installs via Homebrew"
+
         case .serviceNotRunning:
-            subtitleLabel.stringValue = "Starting Automic Vault"
-            formStack.isHidden = true
-            avUnavailableStack.isHidden = true
-            messageLabel.isHidden = false
-            setupCommandStack.isHidden = true
-            messageLabel.stringValue = "Automic Vault's background service isn't running yet - starting it now. This should only take a moment."
+            titleLabel.stringValue = "Waking Automic Vault"
+            subtitleLabel.stringValue = "Its approval service isn't answering yet. Retrying - this usually clears in a few seconds."
+            waitingStack.isHidden = false
+            waitingLabel.stringValue = "Checking\u{2026}"
+            waitingSpinner.startAnimation(nil)
+
         case .transientFailure:
-            subtitleLabel.stringValue = "Checking Automic Vault"
-            formStack.isHidden = true
-            avUnavailableStack.isHidden = true
-            messageLabel.isHidden = false
-            setupCommandStack.isHidden = true
-            messageLabel.stringValue = "Automic Vault didn't respond in time - retrying automatically. This should only take a moment."
+            titleLabel.stringValue = "Couldn't reach the vault"
+            subtitleLabel.stringValue = "The check timed out. Your password is probably fine - retrying."
+            waitingStack.isHidden = false
+            waitingLabel.stringValue = "Retrying\u{2026}"
+            waitingSpinner.startAnimation(nil)
         }
+
+        // The footer only earns its divider when it has something to say.
+        footerStack.isHidden = footerLeftLabel.stringValue.isEmpty && footerRightLabel.stringValue.isEmpty
+        // Re-derive everything the hue drives for the state just applied.
+        applyTheme(ThemeManager.shared.theme)
     }
 
     /// Focuses the password field - called every time the overlay becomes
@@ -656,6 +977,7 @@ final class LockScreenController: NSViewController {
     @objc private func submitTapped() {
         let typed = passwordField.stringValue
         guard !typed.isEmpty, let onAttempt else { return }
+        errorLabel.isHidden = true
         passwordField.isEnabled = false
         unlockButton.isEnabled = false
         onAttempt(typed) { [weak self] success in
@@ -671,6 +993,8 @@ final class LockScreenController: NSViewController {
                 self.passwordField.isEnabled = true
                 self.unlockButton.isEnabled = true
                 self.passwordField.stringValue = ""
+                self.errorLabel.stringValue = "That password didn't match. Try again."
+                self.errorLabel.isHidden = false
                 self.playUnlockFailureAnimation()
                 self.view.window?.makeFirstResponder(self.passwordField)
             }
@@ -680,13 +1004,11 @@ final class LockScreenController: NSViewController {
     @objc private func copySetupCommandTapped() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(VaultSource.appPasswordSetupCommand, forType: .string)
-        copyCommandButton.attributedTitle = NSAttributedString(
-            string: "Copied",
-            attributes: [.foregroundColor: NSColor.white, .font: NSFont.systemFont(ofSize: 12, weight: .medium)]
-        )
+        // `HelmButton` owns its own `attributedTitle` (`restyle()` rebuilds it
+        // on every theme change), so the confirmation goes through `title`.
+        copyCommandButton.title = "Copied"
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { [weak self] in
-            guard let self else { return }
-            self.applyTheme(ThemeManager.shared.theme)
+            self?.copyCommandButton.title = "Copy"
         }
     }
 
@@ -706,16 +1028,16 @@ final class LockScreenController: NSViewController {
     }
 
     /// A calmer alternative to a harsh red flash, per the approved design: a
-    /// small horizontal shake on the password field's whole pill container,
-    /// paired with a quick distressed rock on the boat itself (captain ask:
-    /// a distinct animation for success vs. failure, not just the field).
+    /// small horizontal shake on the password well, paired with a quick
+    /// distressed rock on the boat itself (captain ask: a distinct animation
+    /// for success vs. failure, not just the field).
     private func playUnlockFailureAnimation() {
         let shake = CAKeyframeAnimation(keyPath: "position.x")
-        let base = fieldContainer.layer?.position.x ?? 0
+        let base = passwordField.layer?.position.x ?? 0
         shake.values = [base, base - 8, base + 8, base - 5, base + 5, base]
         shake.duration = 0.36
         shake.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-        fieldContainer.layer?.add(shake, forKey: "shake")
+        passwordField.layer?.add(shake, forKey: "shake")
 
         let rock = CAKeyframeAnimation(keyPath: "transform.rotation.z")
         rock.values = [0, -0.09, 0.09, -0.05, 0.05, 0]
@@ -759,3 +1081,40 @@ final class LockScreenController: NSViewController {
         CATransaction.commit()
     }
 }
+
+#if FM_SELFTESTS
+extension LockScreenController {
+    /// Probe surface for `LockScreenSelfTest`. Deliberately read-only: the
+    /// suite drives the real `apply(_:)`/`applyTheme(_:)` paths and only reads
+    /// resolved geometry and colour back out.
+    var debugCard: NSView { card }
+    var debugCardShadowHost: NSView { cardShadowHost }
+    var debugRibbonLayer: CAGradientLayer { ribbonLayer }
+    var debugSkyLayer: CAGradientLayer { skyLayer }
+    var debugMarkTile: HelmGradientTile { markTile }
+    var debugTitle: NSTextField { titleLabel }
+    var debugSubtitle: NSTextField { subtitleLabel }
+    var debugPasswordField: HelmSecureTextField { passwordField }
+    var debugUnlockButton: HelmButton { unlockButton }
+    var debugInstallButton: HelmButton { installButton }
+    var debugCopyButton: HelmButton { copyCommandButton }
+    var debugErrorLabel: NSTextField { errorLabel }
+    var debugSetupCommandWell: NSStackView { setupCommandStack }
+    var debugFormStack: NSStackView { formStack }
+    var debugAvStack: NSStackView { avUnavailableStack }
+    var debugWaitingStack: NSStackView { waitingStack }
+    var debugFooterStack: NSStackView { footerStack }
+    var debugBoat: NSImageView { boatImageView }
+    var debugStarLayers: [CALayer] { starLayers }
+    var debugMoonBite: CALayer { moonBiteLayer }
+    var debugCurrentHue: HelmDomainHue { currentHue }
+
+    /// Drives the rejected-password branch without needing a real `av`
+    /// subprocess - `submitTapped`'s own failure path, verbatim.
+    func debugSimulateFailedAttempt() {
+        errorLabel.stringValue = "That password didn't match. Try again."
+        errorLabel.isHidden = false
+        playUnlockFailureAnimation()
+    }
+}
+#endif

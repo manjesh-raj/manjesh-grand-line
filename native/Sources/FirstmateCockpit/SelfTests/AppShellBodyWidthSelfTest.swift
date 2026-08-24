@@ -241,6 +241,27 @@ enum AppShellBodyWidthSelfTest {
                 if let value { setenv(key, value, 1) } else { unsetenv(key) }
             }
         }
+
+        // The env overrides above isolate every FILE this suite touches, but
+        // not `UserDefaults` - and mounting a real `AppShellController` writes
+        // there. Measured: this suite left `fm.themeID = dusk` behind, and the
+        // suites that run after it in `run-all-tests.sh` then measured
+        // theme-derived geometry under an ambient theme nobody selected, so
+        // `FM_RUN_CONTRAST_TESTS` and `FM_RUN_DAYLIGHT_DRILL_SLICE2_TESTS`
+        // failed intermittently on a clean tree. Worse, the leak is
+        // *persistent*: a run interrupted before this restore poisons every
+        // subsequent run of every suite until the domain is cleared by hand,
+        // which reads exactly like a flaky test and is not one.
+        //
+        // Saved and restored here rather than fixed at the write site, because
+        // writing the selection is correct behaviour for the app - it is only
+        // a test that must not keep it.
+        let savedTheme = ThemeManager.shared.theme
+        let savedFontSize = AppSettings.shared.fontSize
+        defer {
+            ThemeManager.shared.setTheme(savedTheme)
+            AppSettings.shared.fontSize = savedFontSize
+        }
         return body()
     }
 
