@@ -45,6 +45,7 @@ enum ScheduleRunnerSelfTest {
         checkNotifyGate(&ok)
         checkActionSafetyBar(&ok)
         checkPersistenceRoundTrip(&ok)
+        checkDailyUpdatesSeeding(&ok)
         print(ok ? "ScheduleRunnerSelfTest: all checks passed" : "ScheduleRunnerSelfTest: FAILED")
         return ok
     }
@@ -322,13 +323,23 @@ enum ScheduleRunnerSelfTest {
     // The whole point of `ScheduledActionKind` being a closed enum is that
     // nothing destructive or interactive can become unattended. This case is a
     // guard against a future edit quietly widening that: every schedulable
-    // action must still be one of the five reviewed against F11's stated
+    // action must still be one of the six reviewed against F11's stated
     // ceiling ("git pushes and exports are the ceiling; `av harden`-class
-    // interactive actions are excluded").
+    // interactive actions are excluded") -
+    // OR the one deliberate, captain-approved exception to that ceiling
+    // (`toolUpdateInstall`, `grandline-schedule-daily-updates`): the captain
+    // was shown the exact tradeoff - unattended `brew`/`npm` installs,
+    // including firstmate's own self-update and the Automic Vault security
+    // cask, with zero exceptions - and asked for it anyway. Widening
+    // `reviewed` for a *seventh* action still needs the same deliberate
+    // review this comment describes, not a copy-paste of this exception.
 
     private static func checkActionSafetyBar(_ ok: inout Bool) {
         print("\n-- the schedulable set is still the reviewed one --")
-        let reviewed: Set<String> = ["driftCheck", "toolUpdateCheck", "forkSync", "vaultRecipeExport", "configBackupExport"]
+        let reviewed: Set<String> = [
+            "driftCheck", "toolUpdateCheck", "forkSync", "vaultRecipeExport", "configBackupExport",
+            "toolUpdateInstall",
+        ]
         let actual = Set(ScheduledActionKind.allCases.map { $0.rawValue })
         let added = actual.subtracting(reviewed)
         if !added.isEmpty {
@@ -346,7 +357,8 @@ enum ScheduleRunnerSelfTest {
         // keys off this, so a wrong value there is a misleading claim about an
         // unattended action.
         for action in ScheduledActionKind.allCases {
-            let expectWrites = ["forkSync", "vaultRecipeExport", "configBackupExport"].contains(action.rawValue)
+            let expectWrites = ["forkSync", "vaultRecipeExport", "configBackupExport", "toolUpdateInstall"]
+                .contains(action.rawValue)
             if action.writesRemotely != expectWrites {
                 fail("\(action.rawValue).writesRemotely should be \(expectWrites)", &ok)
             }
@@ -416,6 +428,134 @@ enum ScheduleRunnerSelfTest {
 
         unsetenv("FM_SCHEDULES_FILE")
         try? FileManager.default.removeItem(at: dir)
+    }
+
+    // MARK: grandline-schedule-daily-updates
+    //
+    // `ScheduleActions.toolUpdateInstall` itself is deliberately not driven
+    // here - see this file's header: it calls real `brew`/`npm`/`git` paths,
+    // same as every other arm in `ScheduleActions`, and this suite never
+    // spawns a subprocess. What *is* tested here, all pure logic against a
+    // scratch file: the seed-once persistence contract
+    // (`ScheduleStore.seedDailyUpdatesScheduleIfNeeded`) and that the seeded
+    // cadence is genuinely a daily-at-11:00 schedule under
+    // `ScheduleDueCalculator` - the same machinery every other cadence in
+    // this file is proven against, exercised here specifically for the
+    // config this task seeds.
+
+    private static func checkDailyUpdatesSeeding(_ ok: inout Bool) {
+        print("\n-- daily-updates: seed once, respect deletion, fires at 11:00 --")
+        var scratchDirs: [URL] = []
+        defer {
+            unsetenv("FM_SCHEDULES_FILE")
+            for dir in scratchDirs { try? FileManager.default.removeItem(at: dir) }
+        }
+        /// A brand-new scratch `schedules.json` path, distinct from every
+        /// other call - each phase of this test needs its own "has this file
+        /// ever existed" starting point, since that is exactly what
+        /// `seedDailyUpdatesScheduleIfNeeded` gates on.
+        func freshScratchPath() -> String? {
+            guard let dir = scratchDir() else { return nil }
+            scratchDirs.append(dir)
+            let path = dir.appendingPathComponent("schedules.json").path
+            setenv("FM_SCHEDULES_FILE", path, 1)
+            return path
+        }
+        guard freshScratchPath() != nil else {
+            fail("could not create a scratch directory", &ok)
+            return
+        }
+
+        // A brand-new file: seeding should create exactly one schedule with
+        // the requested action and cadence.
+        let first = ScheduleStore(calendar: utc)
+        first.seedDailyUpdatesScheduleIfNeeded(now: at(2026, 3, 10, 8, 0))
+        guard first.schedules.count == 1, let seeded = first.schedules.first else {
+            fail("seeding a fresh schedules.json should create exactly one schedule, got \(first.schedules.count)", &ok)
+            return
+        }
+        if seeded.action != .toolUpdateInstall {
+            fail("the seeded schedule's action should be .toolUpdateInstall, got \(seeded.action)", &ok)
+        }
+        if seeded.cadence != .daily(hour: 11, minute: 0) {
+            fail("the seeded schedule's cadence should be daily at 11:00, got \(seeded.cadence)", &ok)
+        }
+        if !seeded.isEnabled {
+            fail("the seeded schedule should start enabled", &ok)
+        }
+        if seeded.notifyOn != .changeOnly {
+            fail("the seeded schedule should default to notifyOn = .changeOnly", &ok)
+        }
+
+        // A second launch against the same (now-existing) file must not
+        // duplicate it - the schedule already having been fired for or not
+        // is irrelevant, only the file's prior existence gates this.
+        let second = ScheduleStore(calendar: utc)
+        second.seedDailyUpdatesScheduleIfNeeded(now: at(2026, 3, 11, 8, 0))
+        if second.schedules.count != 1 {
+            fail("re-seeding an already-existing schedules.json should not duplicate the schedule, got \(second.schedules.count)", &ok)
+        }
+
+        // Simulate the captain deleting it, then a later launch: deletion
+        // must stick, never silently resurrected. This matters specifically
+        // because the seeded action auto-installs software with zero
+        // confirmation - a captain who removes it must be able to trust it
+        // stays gone.
+        guard let idToDelete = second.schedules.first?.id else {
+            fail("expected a schedule to delete", &ok)
+            return
+        }
+        second.delete(id: idToDelete)
+        if !second.schedules.isEmpty {
+            fail("delete() should leave zero schedules", &ok)
+        }
+        let third = ScheduleStore(calendar: utc)
+        third.seedDailyUpdatesScheduleIfNeeded(now: at(2026, 3, 12, 8, 0))
+        if !third.schedules.isEmpty {
+            fail("a deliberately deleted daily-updates schedule must not be resurrected on a later launch, got \(third.schedules.count)", &ok)
+        }
+
+        // The cadence itself, exercised on the *actually seeded* schedule -
+        // seeded at 08:00 (before 11:00), so `add(_:)`'s own "anchor to the
+        // current occurrence" behaviour (see `ScheduleStore.add`'s doc
+        // comment) points `lastFiredOccurrence` at yesterday's 11:00, not
+        // today's - which is what makes "not due yet today" a real assertion
+        // here rather than true of any brand-new, unseeded schedule
+        // regardless of cadence (a schedule with no `lastFiredOccurrence` at
+        // all is unconditionally due the moment anyone asks, by design - see
+        // `ScheduleDueCalculator.verdict`'s own doc comment - so testing that
+        // shape would prove nothing about 11:00 specifically). A fresh
+        // scratch path, since the one above now has zero schedules on disk
+        // (the simulated deletion) and would no longer seed.
+        guard freshScratchPath() != nil else {
+            fail("could not create a second scratch directory", &ok)
+            return
+        }
+        let fresh = ScheduleStore(calendar: utc)
+        fresh.seedDailyUpdatesScheduleIfNeeded(now: at(2026, 3, 10, 8, 0))
+        guard let seededForCadence = fresh.schedules.first else {
+            fail("expected the seed to have produced a schedule to check cadence against", &ok)
+            return
+        }
+        let beforeEleven = ScheduleDueCalculator.verdict(for: seededForCadence, now: at(2026, 3, 10, 10, 59), calendar: utc)
+        if beforeEleven.isDue {
+            fail("a schedule seeded this morning at 08:00 should not read as due again at 10:59 the same day", &ok)
+        }
+        let atEleven = ScheduleDueCalculator.verdict(for: seededForCadence, now: at(2026, 3, 10, 11, 1), calendar: utc)
+        guard case .due(let occurrence, _) = atEleven else {
+            fail("an 11:00 daily schedule should be due shortly after 11:00", &ok)
+            return
+        }
+        var firedToday = seededForCadence
+        firedToday.lastFiredOccurrence = occurrence
+        let laterSameDay = ScheduleDueCalculator.verdict(for: firedToday, now: at(2026, 3, 10, 15, 0), calendar: utc)
+        if laterSameDay.isDue {
+            fail("an 11:00 daily schedule already fired for today's occurrence must not fire again the same day", &ok)
+        }
+        let nextDay = ScheduleDueCalculator.verdict(for: firedToday, now: at(2026, 3, 11, 11, 5), calendar: utc)
+        if !nextDay.isDue {
+            fail("an 11:00 daily schedule should be due again the next day at 11:05", &ok)
+        }
     }
 
     // MARK: Scratch helpers

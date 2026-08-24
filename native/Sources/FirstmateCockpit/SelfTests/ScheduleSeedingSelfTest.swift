@@ -183,17 +183,35 @@ enum ScheduleSeedingSelfTest {
     // MARK: The safety bar this task must not touch
 
     /// The task's own explicit constraint: reuse the existing "Sync All" call
-    /// exactly, never a new or widened schedulable action. `.forkSync` already
-    /// existed before this task, so seeding it must not have required, and
-    /// must not have come bundled with, a new `ScheduledActionKind` case.
+    /// exactly, never a new or widened schedulable action for *this* feature.
+    /// `.forkSync` already existed before this task, so seeding it must not
+    /// have required, and must not have come bundled with, a new
+    /// `ScheduledActionKind` case of daily-github-sync's own making.
+    ///
+    /// **This is deliberately not "the set must be frozen forever".** A
+    /// separate, later, independently captain-approved task
+    /// (`grandline-schedule-daily-updates`) widened the reviewed set by one -
+    /// `.toolUpdateInstall`, a deliberate, reviewed exception to F11's
+    /// original ceiling, for reasons that have nothing to do with GitHub sync
+    /// - and `reviewed` here was updated to match that reality rather than
+    /// block it. The canonical, permanent guard against a *future* silent
+    /// widening is `ScheduleRunnerSelfTest.checkActionSafetyBar`, which every
+    /// task that adds a schedulable action must update deliberately; this
+    /// check's remaining job is narrower - confirming daily-github-sync
+    /// itself still uses exactly `.forkSync` and introduced nothing new.
     private static func checkNeverAddsANewActionKind(_ ok: inout Bool) {
         print("\n-- no new schedulable action was introduced --")
-        let reviewed: Set<String> = ["driftCheck", "toolUpdateCheck", "forkSync", "vaultRecipeExport", "configBackupExport"]
+        let reviewed: Set<String> = [
+            "driftCheck", "toolUpdateCheck", "forkSync", "vaultRecipeExport", "configBackupExport",
+            "toolUpdateInstall",
+        ]
         let actual = Set(ScheduledActionKind.allCases.map { $0.rawValue })
         if actual != reviewed {
             fail("""
-                the schedulable action set changed to \(actual.sorted()) - this task must only seed a \
-                schedule using the pre-existing, already-reviewed .forkSync action
+                the schedulable action set changed to \(actual.sorted()) - if this grew because of a \
+                different, deliberately-reviewed task, update `reviewed` here to match (see this method's \
+                own doc comment); if it grew because of daily-github-sync itself, that is the actual bug \
+                this check exists to catch
                 """, &ok)
         }
         if !ScheduledActionKind.forkSync.writesRemotely {
