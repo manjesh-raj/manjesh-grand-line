@@ -21,10 +21,16 @@
 //      tokens**, and every other palette is untouched. The second half is the
 //      point: a "restyle the card" change that quietly moves all thirteen
 //      themes is a regression for the twelve captains not on Daylight.
-//   4. **Tasks' board is two columns with Projects on the right** (§7), and
-//      the project *detail* is still full-page. That pairing is easy to break:
-//      the obvious implementation nests the detail in the right-hand column,
-//      which caps it at half the page.
+//   4. **Tasks' board is Today | Follow-ups as a two-column row, with
+//      Projects as its own full-width section below it** (fm/grandline-
+//      tasks-projects-width-fix, correcting slice 1's original "Follow-ups +
+//      Projects share the right column" reading once a live captain
+//      screenshot showed that squeezed Projects' own multi-card grid into
+//      half the page - the shape the captain describes and wants back), and
+//      the project *detail* is still full-page. Both pairings are easy to
+//      break the same way: the obvious implementation nests Projects (or its
+//      detail) inside a column, which caps it at that column's width instead
+//      of the whole page.
 //   5. **`HelmChipInput`'s three interactions** - Return commits, a trailing
 //      comma commits, Backspace on an empty editor pops. The third is new
 //      capability, and the first two are behaviour the task editor already
@@ -444,10 +450,18 @@ enum DaylightDrillPageSelfTest {
         if ok { print("  OK - 8pt capsule bar / 66pt 7pt ring, and the project card uses the shared bar") }
     }
 
-    // MARK: 4. Tasks' board layout (§7)
+    // MARK: 4. Tasks' board layout (§7, corrected per the captain's own ask)
 
+    /// Today/Follow-ups are a two-column row; Projects is its own full-width
+    /// section below that row - not a third item squeezed into the
+    /// Follow-ups column. This is the regression `fm/grandline-tasks-
+    /// projects-width-fix` exists to catch: the tempting "obvious"
+    /// implementation nests Projects inside whichever column Follow-ups is
+    /// in (exactly what slice 1 originally shipped, per §7's literal text),
+    /// which is indistinguishable from a bug once real project cards are
+    /// squeezed into half the page.
     private static func checkTasksBoardLayout(_ ok: inout Bool) {
-        print("\n-- Tasks board: Today left, Follow-ups + Projects right (§7) --")
+        print("\n-- Tasks board: Today | Follow-ups row, Projects full-width below --")
         let shift = ShiftController(store: scratchShiftStore(),
                                     commandLibraryStore: CommandLibraryStore())
         let window = mount(shift)
@@ -461,34 +475,46 @@ enum DaylightDrillPageSelfTest {
             ok = false
             return
         }
-        // Two columns: Today on the left, the other two stacked on its right.
+        // Today and Follow-ups are still a two-column row: Today on the left.
         if tasks.minX >= followUps.minX - 1 {
             print("  FAIL Today (minX \(fmt(tasks.minX))) is not left of Follow-ups (minX \(fmt(followUps.minX)))")
-            ok = false
-        }
-        if abs(followUps.minX - projects.minX) > 1 {
-            print("  FAIL Follow-ups and Projects are not in the same column "
-                  + "(\(fmt(followUps.minX)) vs \(fmt(projects.minX)))")
-            ok = false
-        }
-        // Same unflipped space every AppKit layout check in this repo uses:
-        // "below" means a smaller maxY.
-        if projects.maxY >= followUps.maxY - 1 {
-            print("  FAIL Projects is not below Follow-ups in the right column")
             ok = false
         }
         if abs(tasks.width - followUps.width) > 1 {
             print("  FAIL the two columns are not equal width (\(fmt(tasks.width)) vs \(fmt(followUps.width)))")
             ok = false
         }
+        // Projects spans the full page width, not just the Follow-ups
+        // column's width - this is the exact regression this test exists to
+        // catch (Projects narrowed to `followUps.width` reads as "confined to
+        // the right half of the page", the captain's own description).
+        if abs(projects.width - geometry.contentWidth) > 2 {
+            print("  FAIL Projects is \(fmt(projects.width)) wide, not the full "
+                  + "\(fmt(geometry.contentWidth)) page content width - it looks confined to a column")
+            ok = false
+        }
+        // Projects starts at the page's own left edge (Today's left edge),
+        // not at Follow-ups' left edge - i.e. it is not a right-column member.
+        if abs(projects.minX - tasks.minX) > 1 {
+            print("  FAIL Projects' left edge (\(fmt(projects.minX))) is not the page's left edge "
+                  + "(\(fmt(tasks.minX))) - it reads as confined to the right column")
+            ok = false
+        }
+        // Same unflipped space every AppKit layout check in this repo uses:
+        // "below" means a smaller maxY.
+        if projects.maxY >= followUps.maxY - 1 || projects.maxY >= tasks.maxY - 1 {
+            print("  FAIL Projects is not below the Today/Follow-ups row")
+            ok = false
+        }
 
-        // And the project detail is still the whole page, not half of it.
+        // And the project detail is still the whole page, not confined to a
+        // column either.
         shift.debugOpenFirstProjectDetail()
         shift.view.layoutSubtreeIfNeeded()
         let detail = shift.debugBoardGeometry()
         if let detailFrame = detail.detail, detailFrame.width < geometry.contentWidth - 2 {
             print("  FAIL the project detail is \(fmt(detailFrame.width)) wide inside a "
-                  + "\(fmt(geometry.contentWidth)) column - it should take the whole page")
+                  + "\(fmt(geometry.contentWidth)) page - it should take the whole page")
             ok = false
         }
         if detail.tasks != nil || detail.followUps != nil || detail.projects != nil {
@@ -496,8 +522,8 @@ enum DaylightDrillPageSelfTest {
             ok = false
         }
         if ok {
-            print("  OK - equal columns at x \(fmt(tasks.minX)) / \(fmt(followUps.minX)), "
-                  + "Projects under Follow-ups, detail full-width")
+            print("  OK - Today/Follow-ups at x \(fmt(tasks.minX)) / \(fmt(followUps.minX)), "
+                  + "Projects full-width below at x \(fmt(projects.minX)), detail full-width")
         }
     }
 
