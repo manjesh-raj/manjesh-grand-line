@@ -27,6 +27,7 @@ final class AppSettings {
         static let dictationLocalWhisperEnabled = "fm.dictationLocalWhisperEnabled"
         static let morningBriefingEnabled = "fm.morningBriefingEnabled"
         static let morningBriefingRecord = "fm.morningBriefingRecord"
+        static let didSeedDailyGitHubSyncSchedule = "fm.didSeedDailyGitHubSyncSchedule"
     }
 
     private init() {}
@@ -189,5 +190,18 @@ final class AppSettings {
             guard let data = try? JSONEncoder().encode(newValue) else { return }
             defaults.set(data, forKey: Keys.morningBriefingRecord)
         }
+    }
+
+    /// Guards the one-time seed of the "daily-github-sync" schedule
+    /// (`ScheduledActionKind.forkSync`, daily at 11:10 AM local time) - see
+    /// `ScheduleSeeding.seedDailyGitHubSyncIfNeeded` and its call site in
+    /// `main.swift`. Seeded exactly once: flipping this to `true` right after
+    /// adding the schedule is what lets a captain later edit or delete it
+    /// without it being silently re-added on the next launch - the same
+    /// "seed once, never resurrect" contract `CommandLibraryStore.
+    /// seedIfEmpty()` follows for its own starter catalog.
+    var didSeedDailyGitHubSyncSchedule: Bool {
+        get { defaults.bool(forKey: Keys.didSeedDailyGitHubSyncSchedule) }
+        set { defaults.set(newValue, forKey: Keys.didSeedDailyGitHubSyncSchedule) }
     }
 }
