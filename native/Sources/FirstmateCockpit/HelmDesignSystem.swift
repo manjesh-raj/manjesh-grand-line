@@ -864,6 +864,38 @@ final class HelmButton: NSButton {
         didSet { if domainHue != oldValue { restyle() } }
     }
 
+    /// §6.10's "primary Save (domain gradient capsule)" - paint a `.primary`
+    /// button's fill as its `domainHue`'s gradient instead of a flat colour.
+    ///
+    /// Opt-in, and only ever consulted for `.primary` under Daylight: every
+    /// other variant, and every one of the twelve pre-Daylight palettes,
+    /// renders byte-identically whether this is set or not. Both stops come
+    /// from `DaylightPalette.primaryButtonGradient`, which corrects them so a
+    /// white label clears 4.5:1 anywhere on the ramp - see that method for why
+    /// a raw pair is not usable behind a label.
+    var gradientFill: Bool = false {
+        didSet { if gradientFill != oldValue { restyle() } }
+    }
+
+    /// Force the label (and glyph) colour, overriding the variant's own.
+    ///
+    /// The one legitimate exception to "a page must not set `attributedTitle`
+    /// on a `HelmButton`" (`restyle()` owns that property and overwrites it on
+    /// the next theme change, which is why setting it from outside does not
+    /// survive). Exists for §6.14's Daylight toast: an ink capsule is not a
+    /// page surface, so a `.quiet` button's `muted` label - correct everywhere
+    /// else - disappears on it. `nil`, the default, changes nothing anywhere.
+    var labelColorOverride: NSColor? {
+        didSet { if labelColorOverride != oldValue { restyle() } }
+    }
+
+    /// Drawn *below* the layer's own background colour, which `restyle` sets
+    /// to clear while the gradient is showing. Clipped correctly with no extra
+    /// work because this view already sets `masksToBounds` and a corner radius
+    /// on its own layer.
+    private let fillGradient = CAGradientLayer()
+    private var fillGradientInstalled = false
+
     /// SF Symbol shown before the title, or alone when the title is empty.
     var symbolName: String? {
         didSet { if symbolName != oldValue { rebuildImage(); invalidateIntrinsicContentSize(); restyle() } }
@@ -980,6 +1012,10 @@ final class HelmButton: NSButton {
     override func layout() {
         super.layout()
         layer?.cornerRadius = Self.cornerRadius(for: ThemeManager.shared.theme, height: bounds.height)
+        if fillGradientInstalled, !fillGradient.isHidden {
+            fillGradient.frame = layer?.bounds ?? .zero
+            fillGradient.cornerRadius = layer?.cornerRadius ?? 0
+        }
     }
 
     override var intrinsicContentSize: NSSize {
@@ -1235,7 +1271,35 @@ final class HelmButton: NSButton {
         else { fill = p.fill }
 
         layer?.cornerRadius = Self.cornerRadius(for: theme, height: bounds.height)
-        layer?.backgroundColor = fill.cgColor
+        let showsGradient = gradientFill && variant == .primary && theme.isDaylight
+        if showsGradient {
+            if !fillGradientInstalled, let layer {
+                fillGradient.startPoint = HelmDomainHue.ribbonStart
+                fillGradient.endPoint = HelmDomainHue.ribbonEnd
+                layer.insertSublayer(fillGradient, at: 0)
+                fillGradientInstalled = true
+            }
+            let hue = domainHue ?? .blue
+            let pair = DaylightPalette.primaryButtonGradient(for: hue, theme: theme)
+            // Hover/press still read, by shifting the whole ramp the same way
+            // the flat fill is shifted - the ramp's own legibility floor is
+            // computed on the base pair, and both shifts move away from white
+            // or by 10%, which cannot cross it.
+            let shift: (NSColor) -> NSColor = {
+                if !self.isEnabled { return { $0 } }
+                if self.isPressed { return { $0.hoverShifted(by: 0.10, forMode: .dark) } }
+                if self.isHovering { return { $0.hoverShifted(by: 0.10, forMode: .light) } }
+                return { $0 }
+            }()
+            fillGradient.colors = [shift(pair.h1).cgColor, shift(pair.h2).cgColor]
+            fillGradient.frame = layer?.bounds ?? .zero
+            fillGradient.cornerRadius = layer?.cornerRadius ?? 0
+            fillGradient.isHidden = false
+            layer?.backgroundColor = NSColor.clear.cgColor
+        } else {
+            fillGradient.isHidden = true
+            layer?.backgroundColor = fill.cgColor
+        }
         layer?.borderColor = p.border.cgColor
         // §6.6's outline is 1.5px, up from the hairline the twelve palettes
         // use - the same weight `HelmInputSurface.focusBorderWidth` settled
@@ -1245,9 +1309,10 @@ final class HelmButton: NSButton {
         // Dim the whole control, not just chrome the cell no longer draws.
         alphaValue = isEnabled ? 1 : 0.42
 
-        let labelColor = (variant == .quiet && isHovering && isEnabled)
+        let variantLabel = (variant == .quiet && isHovering && isEnabled)
             ? HelmTheme.nsColor(theme.chromeInkHex)
             : p.label
+        let labelColor = labelColorOverride ?? variantLabel
         let paragraph = NSMutableParagraphStyle()
         // `NSButton.attributedTitle` lays text out with the *string's* own
         // paragraph alignment, not the button's `alignment` - omitting this

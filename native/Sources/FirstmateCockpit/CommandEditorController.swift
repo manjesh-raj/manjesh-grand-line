@@ -135,6 +135,7 @@ final class CommandEditorController: NSViewController, NSTextFieldDelegate {
                        confirm: #selector(saveClicked),
                        cancel: #selector(cancelClicked))
 
+        form.setSubtitle("Saved to your command library.")
         form.refreshTheme()
     }
 

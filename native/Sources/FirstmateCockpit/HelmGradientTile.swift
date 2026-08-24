@@ -39,6 +39,8 @@ final class HelmGradientTile: NSView {
         case drill
         /// An empty state's focal tile (Daylight §6.14's 40pt plate).
         case hero
+        /// §6.11's ⌘K palette row tile.
+        case palette
 
         var side: CGFloat {
             switch self {
@@ -46,6 +48,7 @@ final class HelmGradientTile: NSView {
             case .module: return 30
             case .drill: return 34
             case .hero: return 40
+            case .palette: return 28
             }
         }
 
@@ -57,6 +60,7 @@ final class HelmGradientTile: NSView {
             // §2.6 names no radius for a 40pt tile; `dWell` (14) is the scale's
             // own next step up from `dTileLarge` (12) and keeps the set closed.
             case .hero: return HelmMetrics.dWell
+            case .palette: return HelmMetrics.dTileSmall
             }
         }
 
@@ -67,6 +71,7 @@ final class HelmGradientTile: NSView {
             case .logo: return 12
             case .module: return 13
             case .drill: return 14
+            case .palette: return 13
             case .hero: return 17
             }
         }

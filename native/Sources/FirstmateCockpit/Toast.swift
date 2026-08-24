@@ -61,17 +61,34 @@ enum Toast {
         show(in: container, message: message, undo: nil)
     }
 
+    /// §6.14's toast hue - the one a Daylight undo's action word takes.
+    ///
+    /// Blue, not the calling page's own domain hue: a toast is presented on
+    /// whatever container the caller hands over (`AppShellController.view` for a
+    /// host save, `HostsController.view` for a key save), and it has no way to
+    /// know which destination that is. §6.14 asks for "the domain hue's light
+    /// stop" and the app's own identity hue is the honest answer to "which
+    /// domain" for a control that floats above all of them.
+    private static let toastHue: HelmDomainHue = .blue
+
     private static func show(in container: NSView, message: String, undo: (() -> Void)?) {
         let theme = ThemeManager.shared.theme
+        // §6.14: capsule, `ink` fill, white 12 semibold text, raised shadow,
+        // top-centre. The other twelve palettes keep the bordered
+        // `chromeBackground` pill they have always rendered - a dark-on-dark
+        // toast on `helm-dark` would be worse, not more consistent.
+        let daylight = theme.isDaylight
 
         let glyph = NSTextField(labelWithString: "\u{2713}")
         glyph.font = .systemFont(ofSize: 12, weight: .bold)
-        glyph.textColor = HelmTheme.nsColor(theme.ansiHex[2])
+        glyph.textColor = daylight ? .white : HelmTheme.nsColor(theme.ansiHex[2])
         glyph.translatesAutoresizingMaskIntoConstraints = false
 
         let label = NSTextField(labelWithString: message)
-        label.font = .systemFont(ofSize: 12.5, weight: .medium)
-        label.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+        label.font = daylight
+            ? .systemFont(ofSize: HelmType.scaled(12), weight: .semibold)
+            : .systemFont(ofSize: 12.5, weight: .medium)
+        label.textColor = daylight ? .white : HelmTheme.nsColor(theme.chromeInkHex)
         label.translatesAutoresizingMaskIntoConstraints = false
 
         var arranged: [NSView] = [glyph, label]
@@ -80,6 +97,13 @@ enum Toast {
             let button = HelmButton(title: "Undo", variant: .quiet, size: .small)
             button.setContentHuggingPriority(.required, for: .horizontal)
             button.setContentCompressionResistancePriority(.required, for: .horizontal)
+            // A `.quiet` button's own label is `muted`, which is a *page*
+            // colour and would disappear against the ink capsule. §6.14's
+            // "action word in the domain hue's light stop" is what replaces it,
+            // through `labelColorOverride` rather than by assigning
+            // `attributedTitle` - `restyle()` owns that property and would
+            // overwrite an external assignment on the next theme change.
+            if daylight { button.labelColorOverride = toastHue.pair(in: theme).h2 }
             arranged.append(button)
             undoButton = button
         }
@@ -92,10 +116,26 @@ enum Toast {
 
         let pill = NSView()
         pill.wantsLayer = true
-        pill.layer?.cornerRadius = 10
-        pill.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
-        pill.layer?.borderWidth = 1
+        pill.layer?.backgroundColor = daylight
+            ? HelmTheme.nsColor(DaylightPalette.ink).cgColor
+            : HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
+        pill.layer?.borderWidth = daylight ? 0 : 1
         pill.layer?.borderColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6).cgColor
+        if daylight {
+            // The capsule radius has to come from the pill's *resolved* height,
+            // which is only known after a layout pass - so the radius is set
+            // below, once the constraints have run. The raised shadow is drawn
+            // on this same layer: nothing clips it, because a pill has no
+            // rounded child to mask.
+            let shadow = HelmCard.elevation(for: theme, level: .raised)
+            pill.layer?.shadowColor = shadow.shadowColor?.cgColor
+            pill.layer?.shadowOpacity = 1
+            pill.layer?.shadowRadius = shadow.shadowBlurRadius / 2
+            pill.layer?.shadowOffset = CGSize(width: shadow.shadowOffset.width,
+                                              height: shadow.shadowOffset.height)
+        } else {
+            pill.layer?.cornerRadius = 10
+        }
         pill.translatesAutoresizingMaskIntoConstraints = false
         pill.alphaValue = 0
         pill.addSubview(stack)
@@ -109,6 +149,11 @@ enum Toast {
             pill.centerXAnchor.constraint(equalTo: container.centerXAnchor),
             pill.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
         ])
+
+        if daylight {
+            container.layoutSubtreeIfNeeded()
+            pill.layer?.cornerRadius = HelmMetrics.capsuleRadius(forHeight: pill.bounds.height)
+        }
 
         // A new pill supersedes whatever was on screen - including, for an
         // undo pill, committing the previous delete by simply never running

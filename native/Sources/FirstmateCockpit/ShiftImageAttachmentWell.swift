@@ -31,6 +31,15 @@ final class ShiftImageAttachmentWell: NSView {
     private var isDropTargeted = false {
         didSet { needsDisplay = true }
     }
+    /// Daylight §6.10's dashed `hair` outline. A `CALayer` border cannot be
+    /// dashed, so the dashed edge is its own shape layer sized in `layout()`,
+    /// and the solid layer border is switched off while it is showing. Built
+    /// for every theme and shown only under Daylight, so a theme switch never
+    /// rebuilds the view.
+    private let dashBorder = CAShapeLayer()
+    /// The placeholder's copy, split so its last clause can take the link hue.
+    private static let placeholderLead = "Drop an image, paste, or "
+    private static let placeholderLink = "choose a file"
 
     static let wellHeight: CGFloat = 96
 
@@ -38,6 +47,11 @@ final class ShiftImageAttachmentWell: NSView {
         super.init(frame: frameRect)
         wantsLayer = true
         layer?.cornerRadius = 8
+        dashBorder.fillColor = nil
+        dashBorder.lineWidth = 1
+        dashBorder.lineDashPattern = [4, 3]
+        dashBorder.isHidden = true
+        layer?.addSublayer(dashBorder)
         translatesAutoresizingMaskIntoConstraints = false
         heightAnchor.constraint(equalToConstant: Self.wellHeight).isActive = true
 
@@ -124,12 +138,84 @@ final class ShiftImageAttachmentWell: NSView {
     }
 
     func applyTheme(_ theme: HelmTheme) {
+        self.theme = theme
         layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         layer?.borderColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(isDropTargeted ? 0.9 : 0.5).cgColor
-        layer?.borderWidth = isDropTargeted ? 2 : 1
+        // §6.10: dashed `hair` on radius 14 under Daylight, and the solid
+        // border steps aside so the two are never both painted.
+        layer?.cornerRadius = theme.isDaylight ? HelmMetrics.dWell : 8
+        layer?.borderWidth = theme.isDaylight ? 0 : (isDropTargeted ? 2 : 1)
+        dashBorder.isHidden = !theme.isDaylight
+        dashBorder.strokeColor = HelmTheme.nsColor(theme.chromeLineHex)
+            .withAlphaComponent(isDropTargeted ? 1 : 0.9).cgColor
+        dashBorder.lineWidth = isDropTargeted ? 2 : 1
         placeholderIcon.contentTintColor = HelmTheme.mutedInk(theme)
-        placeholderLabel.textColor = HelmTheme.mutedInk(theme)
+        applyPlaceholderText(theme)
+        needsLayout = true
     }
+
+    /// §6.10's "domain-blue 'choose a file' link". `accentHex` is §2.4's
+    /// contrast-corrected `linkBlue`, which is legal as a label on either
+    /// Daylight surface - the raw domain blue is not.
+    private func applyPlaceholderText(_ theme: HelmTheme) {
+        let muted = HelmTheme.mutedInk(theme)
+        guard theme.isDaylight else {
+            placeholderLabel.attributedStringValue = NSAttributedString(
+                string: Self.placeholderLead + Self.placeholderLink,
+                attributes: [.font: placeholderLabel.font ?? HelmType.caption(),
+                             .foregroundColor: muted])
+            return
+        }
+        let font = placeholderLabel.font ?? HelmType.caption()
+        let text = NSMutableAttributedString(string: Self.placeholderLead,
+                                             attributes: [.font: font, .foregroundColor: muted])
+        text.append(NSAttributedString(string: Self.placeholderLink,
+                                       attributes: [.font: font,
+                                                    .foregroundColor: HelmTheme.nsColor(theme.accentHex),
+                                                    .underlineStyle: NSUnderlineStyle.single.rawValue]))
+        placeholderLabel.attributedStringValue = text
+    }
+
+    private var theme: HelmTheme = ThemeManager.shared.theme
+
+    override func layout() {
+        super.layout()
+        guard !dashBorder.isHidden else { return }
+        let inset = dashBorder.lineWidth / 2
+        let rect = bounds.insetBy(dx: inset, dy: inset)
+        let radius = max(HelmMetrics.dWell - inset, 0)
+        dashBorder.frame = bounds
+        dashBorder.path = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius,
+                                 transform: nil)
+    }
+
+    #if FM_SELFTESTS
+    /// §6.10's attachment-well recipe, read off the real layers.
+    struct DaylightGeometry {
+        let dashHidden: Bool
+        let dashPattern: [Int]
+        let dashStroke: NSColor?
+        let solidBorderWidth: CGFloat
+        let cornerRadius: CGFloat
+        let linkColor: NSColor?
+    }
+
+    var debugDaylightGeometry: DaylightGeometry {
+        var linkColor: NSColor?
+        let attributed = placeholderLabel.attributedStringValue
+        if attributed.length > 0 {
+            let tail = max(0, attributed.length - Self.placeholderLink.count)
+            linkColor = attributed.attribute(.foregroundColor, at: tail,
+                                             effectiveRange: nil) as? NSColor
+        }
+        return DaylightGeometry(dashHidden: dashBorder.isHidden,
+                                dashPattern: (dashBorder.lineDashPattern ?? []).map(\.intValue),
+                                dashStroke: dashBorder.strokeColor.flatMap { NSColor(cgColor: $0) },
+                                solidBorderWidth: layer?.borderWidth ?? 0,
+                                cornerRadius: layer?.cornerRadius ?? 0,
+                                linkColor: linkColor)
+    }
+    #endif
 
     // MARK: Image intake (shared by picker / drop / paste)
 

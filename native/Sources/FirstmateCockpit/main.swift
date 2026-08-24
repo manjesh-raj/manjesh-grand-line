@@ -1406,6 +1406,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_SLICE2_TESTS"] == 
 if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_SLICE6_TESTS"] == "1" {
     exit(DaylightDrillPageSlice6SelfTest.run() ? 0 : 1)
 }
+// Daylight Phase 5: the chrome that is not a destination page - editor sheets,
+// the ⌘K palette, the notification panel, toasts and empty states. See
+// DaylightChromeSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_CHROME_TESTS"] == "1" {
+    exit(DaylightChromeSelfTest.run() ? 0 : 1)
+}
 if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_TESTS"] == "1" {
     exit(DaylightDrillPageSelfTest.run() ? 0 : 1)
 }
