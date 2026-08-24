@@ -83,6 +83,14 @@ enum DaylightModuleSelfTest {
     /// The two that appear on Overview and nowhere else.
     private static let overviewOnly: Set<DaylightModule> = [.briefing, .fleet]
 
+    /// `fm/grandline-overview-canvas-trim`'s own captain decision, restated
+    /// as literal data for the same reason `lockedMembership` above is: a
+    /// test that reads `appearsOnOverview` to check `appearsOnOverview`
+    /// asserts nothing. This is the exact six the captain named as staying
+    /// on the Overview canvas after a screenshot review.
+    private static let overviewVisibleModules: Set<DaylightModule> =
+        [.briefing, .fleet, .mergeQueue, .console, .health, .schedules]
+
     private static func checkSpaceTable(_ ok: inout Bool) {
         print("\n-- space filter: the table matches the locked captain decision --")
 
@@ -98,10 +106,12 @@ enum DaylightModuleSelfTest {
             fail("Overview-only set should be \(overviewOnly.map(\.rawValue).sorted()), got \(actualOverviewOnly.map(\.rawValue).sorted())", &ok)
         }
 
-        // Overview shows everything; each other space shows only its own.
-        let onOverview = DaylightModule.allCases.filter { $0.isVisible(in: .overview) }
-        if onOverview.count != DaylightModule.allCases.count {
-            fail("Overview must show every module, showed \(onOverview.count) of \(DaylightModule.allCases.count)", &ok)
+        // Overview shows exactly the trimmed six; each other space shows
+        // only its own.
+        let onOverview = Set(DaylightModule.allCases.filter { $0.isVisible(in: .overview) })
+        if onOverview != overviewVisibleModules {
+            fail("Overview should show exactly \(overviewVisibleModules.map(\.rawValue).sorted()), "
+                 + "showed \(onOverview.map(\.rawValue).sorted())", &ok)
         }
         for (space, expected) in lockedMembership {
             let visible = Set(DaylightModule.allCases.filter { $0.isVisible(in: space) })
@@ -112,6 +122,35 @@ enum DaylightModuleSelfTest {
                 fail("\(module.rawValue) must appear only on Overview, but is visible in \(space.rawValue)", &ok)
             }
         }
+
+        // Every one of the twelve trimmed-from-Overview modules must still be
+        // fully reachable on its own space's canvas - the trim removes a
+        // card from Overview specifically, never the module, its destination,
+        // or its own canvas presence. A module that fell out of both would be
+        // a real regression this suite has to catch, not just assume away.
+        let trimmed = DaylightModule.allCases.filter { !overviewVisibleModules.contains($0) }
+        if trimmed.count != 12 {
+            fail("expected exactly 12 modules trimmed from Overview, got \(trimmed.count): "
+                 + "\(trimmed.map(\.rawValue).sorted())", &ok)
+        }
+        for module in trimmed {
+            guard let ownSpace = module.space else {
+                fail("\(module.rawValue) is trimmed from Overview but has no other space to live in - "
+                     + "it would be unreachable from the canvas entirely", &ok)
+                continue
+            }
+            if !module.isVisible(in: ownSpace) {
+                fail("\(module.rawValue) is trimmed from Overview but is not visible in its own "
+                     + "space (\(ownSpace.rawValue)) either", &ok)
+            }
+        }
+        // Its destination - the thing a click, the nav, or `⌘K` actually
+        // opens - is untouched by this trim: the module's card is
+        // presentation, `RailDestination` is the functional path, and every
+        // one of these twelve is still driven through its real drill page
+        // (mount, title, back button) by `checkCanvasAndDrillHeader`'s own
+        // `RailDestination.allCases` loop below, unaffected by which modules
+        // Overview shows.
 
         // Every module belongs somewhere reachable, and every space has
         // something in it - a space pill that filters to nothing is a dead end.
@@ -134,7 +173,10 @@ enum DaylightModuleSelfTest {
             fail("\(space.rawValue) has no subtitle copy", &ok)
         }
 
-        if ok { print("  OK - 4 spaces x their locked modules, 2 Overview-only, 5 pills in \u{2318}1-\u{2318}5 order") }
+        if ok {
+            print("  OK - 4 spaces x their locked modules, 2 Overview-only, Overview trimmed to "
+                  + "\(overviewVisibleModules.count), 5 pills in \u{2318}1-\u{2318}5 order")
+        }
     }
 
     // MARK: symbols
@@ -807,15 +849,16 @@ enum DaylightModuleSelfTest {
                 fail("the home canvas is not mounted at launch", &ok)
             }
 
-            // Overview shows every module; each other space shows only its own.
+            // Overview shows exactly the trimmed six (`fm/grandline-overview-
+            // canvas-trim`); each other space shows only its own.
             shell.selectSpace(.overview)
-            if canvas.visibleModulesForTests.count != DaylightModule.allCases.count {
-                fail("Overview shows \(canvas.visibleModulesForTests.count) modules, expected all "
-                     + "\(DaylightModule.allCases.count)", &ok)
+            if Set(canvas.visibleModulesForTests) != overviewVisibleModules {
+                fail("Overview shows \(Set(canvas.visibleModulesForTests).map(\.rawValue).sorted()), "
+                     + "expected exactly \(overviewVisibleModules.map(\.rawValue).sorted())", &ok)
             }
-            if canvas.moduleCardsForTests.count != DaylightModule.allCases.count {
+            if canvas.moduleCardsForTests.count != overviewVisibleModules.count {
                 fail("Overview built \(canvas.moduleCardsForTests.count) cards for "
-                     + "\(DaylightModule.allCases.count) modules", &ok)
+                     + "\(overviewVisibleModules.count) modules", &ok)
             }
             for space in DaylightSpace.allCases where space != .overview {
                 shell.selectSpace(space)
@@ -993,7 +1036,6 @@ enum DaylightModuleSelfTest {
             window.contentViewController = shell
             window.layoutIfNeeded()
             let canvas = shell.homeCanvasForTests
-            shell.selectSpace(.overview)
 
             func card(_ module: DaylightModule) -> HelmModuleCard.Anatomy? {
                 guard let index = canvas.visibleModulesForTests.firstIndex(of: module),
@@ -1008,6 +1050,13 @@ enum DaylightModuleSelfTest {
                      + "their loading state (Phase 3's whole point)", &ok)
             }
 
+            // Updates/Bootstrap/Automation/GitHub Sync no longer render on
+            // Overview (`fm/grandline-overview-canvas-trim`) - they live on
+            // Engineering now, per the locked space table, and the
+            // observer-driven live-update behaviour below is unaffected by
+            // which space a card happens to be on, so it is exercised there.
+            shell.selectSpace(.engineering)
+
             // --- 1a. Warming up: no pass has completed, no count exists.
             poller.debugSetLastCompletedPassAt(nil)
             poller.debugSetCounts(BackgroundSignalsPoller.SignalCounts())
@@ -1016,7 +1065,7 @@ enum DaylightModuleSelfTest {
             // All four Setup modules read the poller too now, not just the
             // one aggregate card - each must be honest about having no number
             // yet, or four cards go stale instead of one.
-            for module in [DaylightModule.updates, .bootstrap, .automation, .githubSync, .vault] {
+            for module in [DaylightModule.updates, .bootstrap, .automation, .githubSync] {
                 guard let a = card(module) else {
                     fail("no \(module.rawValue) card rendered", &ok)
                     continue
@@ -1096,18 +1145,10 @@ enum DaylightModuleSelfTest {
                 }
             } else { fail("no Automation card after the pass", &ok) }
 
-            if let a = card(.vault) {
-                if a.metricTexts.first != "7" {
-                    fail("Vault metric is \(a.metricTexts.first ?? "nil") after a pass reported 7 secrets", &ok)
-                }
-                if a.chipText?.contains("2") != true {
-                    fail("Vault chip is \(a.chipText ?? "nil") - it should carry the 2 tools needing a look", &ok)
-                }
-            } else { fail("no Vault card after the pass", &ok) }
-
             // --- 1c. An unchanged publish must not fan out. A pass runs every
             // 15 minutes and usually reports the same numbers; rebuilding
-            // fifteen cards for no change is pure waste.
+            // every visible card for no change is pure waste. Space-agnostic -
+            // this exercises the poller's own fan-out logic, not a card.
             var fanouts = 0
             let probe = poller.observeCounts { _ in fanouts += 1 }
             poller.debugSetCounts(.init(toolUpdates: 0, forkDrift: 0, vaultAttention: 2,
@@ -1118,7 +1159,41 @@ enum DaylightModuleSelfTest {
             if fanouts != 1 { fail("a changed counts publish fanned out \(fanouts) time(s), expected 1", &ok) }
             poller.unobserveCounts(probe)
 
-            // --- 2. Dictation, through the real forwarding path.
+            // Vault and Dictation are on Stores now, likewise no longer on
+            // Overview - repeat the same warming-up -> real-count cycle there.
+            shell.selectSpace(.stores)
+
+            poller.debugSetLastCompletedPassAt(nil)
+            poller.debugSetCounts(BackgroundSignalsPoller.SignalCounts())
+            canvas.debugRenderNow()
+
+            if let a = card(.vault) {
+                if a.chipText != "Checking\u{2026}" {
+                    fail("Vault shows chip \(a.chipText ?? "nil") before the first pass - "
+                         + "expected a Checking\u{2026} chip", &ok)
+                }
+                if !a.metricTexts.isEmpty {
+                    fail("Vault rendered metric text \(a.metricTexts) before any pass - "
+                         + "a fabricated number is exactly GL-14's failure", &ok)
+                }
+            } else { fail("no Vault card rendered before the first pass", &ok) }
+
+            poller.debugSetLastCompletedPassAt(Date())
+            poller.debugSetCounts(.init(toolUpdates: 0, forkDrift: 0, vaultAttention: 2,
+                                        setupDrift: 0, vaultSecrets: 7))
+            drainMainQueue()
+
+            if let a = card(.vault) {
+                if a.metricTexts.first != "7" {
+                    fail("Vault metric is \(a.metricTexts.first ?? "nil") after a pass reported 7 secrets", &ok)
+                }
+                if a.chipText?.contains("2") != true {
+                    fail("Vault chip is \(a.chipText ?? "nil") - it should carry the 2 tools needing a look", &ok)
+                }
+            } else { fail("no Vault card after the pass", &ok) }
+
+            // --- 2. Dictation, through the real forwarding path. Still on
+            // Stores, where Dictation now lives.
             for status in [DictationStatus.recording, .needsMicrophone, .ready] {
                 shell.setDictationEngineStatus(status)
                 drainMainQueue()
