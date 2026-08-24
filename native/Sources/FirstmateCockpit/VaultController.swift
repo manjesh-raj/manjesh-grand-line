@@ -51,7 +51,7 @@
 
 import AppKit
 
-final class VaultController: NSViewController {
+final class VaultController: NSViewController, DaylightDrillActions {
 
     /// Bootstrap/Settings' exact shape: a command that needs a real
     /// interactive terminal runs in the shared Console via
@@ -66,7 +66,9 @@ final class VaultController: NSViewController {
     private let scroll = NSScrollView()
     private let contentStack = NSStackView()
 
-    private let subtitleLabel = NSTextField(labelWithString: "")
+    // Daylight §6.4: the page's own standing subtitle row is gone - the drill
+    // header carries that line now (`drillHeaderSubtitle`), computed from the
+    // same counts, and Refresh moved into its action cluster.
     // A labeled quiet button ("Refresh" + icon), not a bare icon-only one -
     // matches this page's own reviewed design pass and the labeled toolbar
     // controls Console already established (`HelmPageToolbar.labeledButton`'s
@@ -131,6 +133,36 @@ final class VaultController: NSViewController {
     private var hasLoadedOnce = false
     private var theme: HelmTheme = ThemeManager.shared.theme
 
+    // MARK: - Drill header (Daylight §6.4)
+
+    /// Set by `AppShellController` - "re-read my subtitle". The header is the
+    /// shell's; this page only says when its numbers moved.
+    var onDrillSubtitleChanged: (() -> Void)?
+
+    /// §6.4's live subtitle - the same line this page used to render itself,
+    /// counted off the same `secrets`/`tools` the cards below list, so the two
+    /// can never disagree. The "names and metadata only, never a value" clause
+    /// stays: it is the one thing about this page a captain most needs to know
+    /// and the page has nowhere else to say it now that the standing subtitle
+    /// row is gone.
+    var drillHeaderSubtitle: String? {
+        guard installStatus != .notInstalled else {
+            return "Automic Vault isn't installed on this machine yet"
+        }
+        let secretText = secrets.count == 1 ? "1 secret" : "\(secrets.count) secrets"
+        let toolText = tools.count == 1 ? "1 verified launcher" : "\(tools.count) verified launchers"
+        let attention = tools.filter { if case .needsAttention = $0.status { return true } else { return false } }.count
+        if attention > 0 {
+            return "\(secretText) \u{00B7} \(toolText) \u{00B7} \(attention) needing attention"
+        }
+        return "\(secretText) \u{00B7} \(toolText) \u{00B7} names and metadata only, never a value"
+    }
+
+    /// §6.4's action cluster. Refresh is this page's one page-level action;
+    /// everything else acts on a single record and stays in that record's own
+    /// row or card header (Add Secret, Export Recipe).
+    var drillHeaderActions: [NSView] { [refreshButton] }
+
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 940, height: 720))
         root.wantsLayer = true
@@ -142,7 +174,7 @@ final class VaultController: NSViewController {
         let content = FlippedView()
         content.translatesAutoresizingMaskIntoConstraints = false
 
-        let header = buildHeader()
+        configureHeaderActions()
         _ = buildSecretsSection()
         _ = buildToolsSection()
         _ = buildRecipeSection()
@@ -151,7 +183,6 @@ final class VaultController: NSViewController {
         contentStack.alignment = .leading
         contentStack.spacing = 20
         contentStack.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.addArrangedSubview(header)
         contentStack.addArrangedSubview(attentionBanner)
         contentStack.addArrangedSubview(secretsPanel)
         contentStack.addArrangedSubview(toolsPanel)
@@ -205,25 +236,15 @@ final class VaultController: NSViewController {
 
     // MARK: Building the static chrome
 
-    private func buildHeader() -> NSView {
-        subtitleLabel.font = .systemFont(ofSize: 12)
-        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-
+    /// Daylight §6.4: this page's one page-level action, prepared here (with
+    /// the rest of the page's chrome) and positioned by the shell's drill
+    /// header via `drillHeaderActions`. The button instance stays this page's
+    /// own, per `DaylightDrillActions`.
+    private func configureHeaderActions() {
         refreshButton.target = self
         refreshButton.action = #selector(refreshTapped)
         refreshButton.toolTip = "Refresh Vault status"
         refreshButton.translatesAutoresizingMaskIntoConstraints = false
-
-        // No in-page "Vault" title - the top bar already shows the
-        // destination name (see TopBarController), matching Tools/
-        // Updates/Bootstrap/Settings/Overview, which likewise show only a
-        // subtitle here rather than repeating the destination name.
-        let row = NSStackView(views: [subtitleLabel, refreshButton])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 12
-        row.translatesAutoresizingMaskIntoConstraints = false
-        return row
     }
 
     private func attentionBannerView() -> NSView {
@@ -242,7 +263,6 @@ final class VaultController: NSViewController {
         row.translatesAutoresizingMaskIntoConstraints = false
 
         attentionBanner.wantsLayer = true
-        attentionBanner.layer?.cornerRadius = 9
         attentionBanner.translatesAutoresizingMaskIntoConstraints = false
         attentionBanner.addSubview(row)
         NSLayoutConstraint.activate([
@@ -430,6 +450,7 @@ final class VaultController: NSViewController {
         rebuildToolsStack()
 
         applyTheme()
+        onDrillSubtitleChanged?()
         view.layoutSubtreeIfNeeded()
         scrollToTop()
     }
@@ -573,7 +594,15 @@ final class VaultController: NSViewController {
             kicker: isHardened ? "Hardened" : "Needs Attention",
             title: tool.name,
             meta: meta,
-            badgeSymbol: "checkmark.shield.fill"
+            badgeSymbol: "checkmark.shield.fill",
+            // §7's "signal row for launcher issues", and the only row on this
+            // page that gets one: a launcher `av doctor --json` itself reports
+            // issues for is the one thing here the captain has to act on. A
+            // hardened launcher and a stored secret are records, not signals -
+            // washing them too would leave the page with nothing standing out,
+            // which is the state PRODUCT.md's "quiet until it matters" is
+            // about.
+            isSignal: !isHardened
         ), theme: theme)
         return row
     }
@@ -741,13 +770,17 @@ final class VaultController: NSViewController {
         let muted = HelmTheme.mutedInk(theme)
         let warn = HelmTheme.nsColor(theme.ansiHex[3])
 
-        subtitleLabel.textColor = muted
-        subtitleLabel.stringValue = installStatus == .notInstalled
-            ? "Automic Vault isn't installed on this machine yet."
-            : "\(secrets.count) secret\(secrets.count == 1 ? "" : "s") \u{00B7} \(tools.count) verified launcher\(tools.count == 1 ? "" : "s") \u{00B7} names and metadata only, never a value"
-
+        // §2.6 allows no radius outside its own scale, so this banner takes
+        // `dWell` under Daylight rather than the pre-Daylight literal 9.
+        attentionBanner.layer?.cornerRadius = theme.isDaylight ? HelmMetrics.dWell : 9
         attentionBanner.layer?.backgroundColor = warn.withAlphaComponent(0.14).cgColor
-        attentionLabel.textColor = ink
+        // §2.4 measures the raw warn tone at 2.82:1 as a label on its own 14%
+        // wash - exactly this banner's pairing - and gives `warnText` as the
+        // corrected value for it. The pre-Daylight themes keep the plain ink
+        // they have always used, which is already a full-contrast tone here.
+        attentionLabel.textColor = theme.isDaylight
+            ? HelmTheme.nsColor(DaylightPalette.warnText)
+            : ink
         attentionIcon.contentTintColor = warn
 
         // Theme-derived, never the system `labelColor` default these two
@@ -764,6 +797,27 @@ final class VaultController: NSViewController {
         // doc comment for the bug this closes.
         recipeDetailLabel.textColor = recipeLabelColor(for: recipeLabelKind)
     }
+
+    // MARK: Probe / self-test surface
+
+    #if FM_SELFTESTS
+    /// Render a fixture snapshot through the page's **real** render path,
+    /// without shelling out to `av`. The page's own `av` plumbing is untouched
+    /// and covered by `VaultDataSelfTest`; what this exists for is the
+    /// presentation layer above it.
+    func debugRender(secrets: [VaultSecret], tools: [VaultTool]) {
+        _ = view  // force `loadView` - this hook may be the first thing to touch the page
+        installStatus = .upToDate
+        self.secrets = secrets
+        self.tools = tools
+        renderAll()
+    }
+
+    /// The real row views the Verified Launchers card is showing, in order.
+    var debugToolRows: [HelmAccentRow] { toolsStack.arrangedSubviews.compactMap { $0 as? HelmAccentRow } }
+    var debugSecretRows: [HelmAccentRow] { secretsStack.arrangedSubviews.compactMap { $0 as? HelmAccentRow } }
+    var debugAttentionBannerVisible: Bool { !attentionBanner.isHidden }
+    #endif
 }
 
 // MARK: - Add Secret sheet

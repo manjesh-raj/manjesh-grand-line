@@ -606,6 +606,8 @@ final class AppShellController: NSViewController {
         // this too.
         setup.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         schedules.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        logAnalyzer.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        vault.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Trigger both pages' own refresh once at launch so the badges have
         // a real count before the captain ever visits Overview or Review -
         // every later update comes from those pages' existing refresh
