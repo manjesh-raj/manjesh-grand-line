@@ -28,8 +28,76 @@ enum Phase3PolishSelfTest {
         checkTextScaleFloor(&ok)
         checkGrowthCaps(&ok)
         checkUndoToastShape(&ok)
+        checkSuitesRestoreTheTheme(&ok)
         print(ok ? "Phase3PolishSelfTest: all checks passed" : "Phase3PolishSelfTest: FAILED")
         return ok
+    }
+
+    // MARK: Suite hygiene - the theme must be put back
+
+    /// Every suite that changes the active theme must save and restore it.
+    ///
+    /// This is not tidiness. `ThemeManager.setTheme` persists to the real
+    /// `FirstmateCockpit` `UserDefaults` domain - the unbundled test binary
+    /// has no bundle id, so that is its domain - and `run-all-tests.sh` runs
+    /// each suite as a separate process against it. A theme left behind
+    /// becomes the **ambient** theme for every suite that runs afterwards, so
+    /// the ones that measure theme-derived geometry (`FM_RUN_CONTRAST_TESTS`,
+    /// `FM_RUN_DAYLIGHT_DRILL_SLICE2_TESTS`) fail intermittently on a
+    /// perfectly good tree. Worse, the leak is *persistent*: a run interrupted
+    /// before the restore poisons every subsequent run of every suite until
+    /// the domain is cleared by hand, which reads exactly like flaky tests and
+    /// is not.
+    ///
+    /// Measured four times before this guard existed -
+    /// `AppShellBodyWidthSelfTest` (leaked `dusk` via a mounted
+    /// `AppShellController`), `TopNavPillPressedStateSelfTest` (`dusk`) and
+    /// `UpdatesRefreshButtonThemeSelfTest` (`catppuccin-latte`) - so it is
+    /// worth a guard rather than a convention.
+    ///
+    /// The rule checked is a **necessary** condition rather than a proof: a
+    /// file that calls `setTheme` must also capture `ThemeManager.shared.theme`
+    /// somewhere, because you cannot restore what you never read. That catches
+    /// every real instance of this defect seen so far and cannot false-positive
+    /// on a suite that genuinely does save and restore.
+    private static func checkSuitesRestoreTheTheme(_ ok: inout Bool) {
+        print("\n-- suite hygiene: a suite that changes the theme puts it back --")
+        let dir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+        guard let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
+            fail("could not list \(dir.path) - this check would silently pass", &ok)
+            return
+        }
+        let suites = files.filter { $0.pathExtension == "swift" }
+        guard suites.count > 40 else {
+            fail("found only \(suites.count) files in SelfTests/ - has the directory moved?", &ok)
+            return
+        }
+        var offenders: [String] = []
+        var checked = 0
+        for file in suites.sorted(by: { $0.lastPathComponent < $1.lastPathComponent }) {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else {
+                fail("could not read \(file.lastPathComponent)", &ok)
+                continue
+            }
+            // Comments discuss `setTheme` (this one does), so look at code only.
+            let code = text.split(separator: "\n", omittingEmptySubsequences: false)
+                .map(String.init)
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+                .joined(separator: "\n")
+            guard code.contains("ThemeManager.shared.setTheme") else { continue }
+            checked += 1
+            if !code.contains("= ThemeManager.shared.theme") {
+                offenders.append(file.lastPathComponent)
+            }
+        }
+        if offenders.isEmpty {
+            print("  OK - \(checked) suite(s) change the theme, and every one captures it to restore")
+        } else {
+            fail("these change the active theme without saving it first, so they leak it into every "
+                 + "suite that runs after them: \(offenders.joined(separator: ", ")) "
+                 + "- add `let saved = ThemeManager.shared.theme` + "
+                 + "`defer { ThemeManager.shared.setTheme(saved) }`", &ok)
+        }
     }
 
     private static func fail(_ message: String, _ ok: inout Bool) {
