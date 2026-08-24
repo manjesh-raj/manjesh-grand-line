@@ -16,6 +16,13 @@
 // history accumulate. The vocabulary chip row, by contrast, is a genuinely
 // small, bounded list (a captain's personal vocabulary), so a plain
 // frame-based flow layout (`ChipFlowView`) is fine there - no table needed.
+//
+// Daylight Phase 4 slice 5 restyled the history row to §6.5 (see
+// `DictationHistoryRowView`) and moved the vocabulary chips *inside* an input
+// well: `ChipFlowView` and `VocabularyChipView` both survive unchanged, but
+// their caller is now the shared `HelmChipInput` (§6.9) rather than this
+// page's own field-plus-flow-plus-Add-button trio. Nothing here builds that
+// row any more - `DictationController.buildVocabularySection` owns one well.
 
 import AppKit
 
@@ -31,6 +38,12 @@ final class DictationHistoryListView: NSObject {
     /// it with the entry itself (not a row index), so a list that has been
     /// re-read since the row was drawn cannot delete the wrong entry.
     var onDeleteEntry: ((DictationHistoryEntry) -> Void)?
+
+    /// A §6.5 row card is taller than the two bare labels it replaces: it
+    /// carries a kicker line over the transcript and its own card insets.
+    /// Measured from `HelmAccentRow`'s own fitting height plus the 2pt the row
+    /// view insets it by, the same way Shift's two lists arrived at 78.
+    static let rowHeight: CGFloat = 78
 
     private static let columnID = NSUserInterfaceItemIdentifier("dictationHistoryCol")
     private static let rowViewID = NSUserInterfaceItemIdentifier("dictationHistoryRow")
@@ -62,17 +75,32 @@ final class DictationHistoryListView: NSObject {
     }
 }
 
+#if FM_SELFTESTS
+extension DictationHistoryListView {
+    /// The row view the table would build for `row`, so the suite can assert
+    /// the §6.5 restyle landed on the real cell rather than on a stand-in.
+    func debugRowView(at row: Int) -> NSView? {
+        tableView(tableView, viewFor: tableView.tableColumns.first, row: row)
+    }
+
+    var debugEntryCount: Int { entries.count }
+}
+#endif
+
 extension DictationHistoryListView: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { max(entries.count, 1) }
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        entries.isEmpty ? 100 : 46
+        entries.isEmpty ? 100 : Self.rowHeight
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard !entries.isEmpty else {
             let empty = (tableView.makeView(withIdentifier: Self.emptyViewID, owner: nil) as? HelmEmptyState)
-                ?? { let v = HelmEmptyState(symbol: "waveform", body: "No dictations yet - hold the shortcut and speak."); v.identifier = Self.emptyViewID; return v }()
+                ?? { let v = HelmEmptyState(symbol: "waveform",
+                                            body: "No dictations yet - hold the shortcut and speak.",
+                                            hue: RailDestination.dictation.domainHue)
+                     v.identifier = Self.emptyViewID; return v }()
             empty.applyTheme(theme)
             return empty
         }
@@ -85,61 +113,43 @@ extension DictationHistoryListView: NSTableViewDataSource, NSTableViewDelegate {
     }
 }
 
+/// Daylight §6.5 / §7: "history rows as §6.5". The two bare labels over a
+/// hover rectangle this replaces are now the app's one accent-carrying row -
+/// so a dictation reads like every other record in the app, with a gradient
+/// badge under Daylight and the accent-bar card treatment on the other twelve
+/// palettes.
+///
+/// `HelmAccentRow` fixes its structure at `init` and takes content on
+/// `configure`, which is exactly what a reused table cell needs. The delete
+/// glyph is passed as the row's `trailingAccessory` - a single control, not a
+/// stack, so there is no distribution to get wrong (the reused-cell hazard
+/// AGENTS.md documents for a row whose action column has several buttons).
 private final class DictationHistoryRowView: NSView {
-    private let hoverBackground = HoverHighlightView()
-    private let textLabel = NSTextField(labelWithString: "")
-    private let metaLabel = NSTextField(labelWithString: "")
     private let deleteButton = HelmButton(symbol: "trash", variant: .quiet, size: .small)
+    private let row: HelmAccentRow
 
     /// GL-35. Reassigned on every `configure`, since table cell views are
     /// reused.
     var onDelete: (() -> Void)?
 
     init() {
+        deleteButton.setContentHuggingPriority(.required, for: .horizontal)
+        deleteButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        row = HelmAccentRow(trailingAccessory: deleteButton, gradientBadge: true)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
-
-        hoverBackground.cornerRadius = 6
-        hoverBackground.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(hoverBackground)
-        NSLayoutConstraint.activate([
-            hoverBackground.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
-            hoverBackground.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
-            hoverBackground.topAnchor.constraint(equalTo: topAnchor, constant: 1),
-            hoverBackground.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
-        ])
-
-        textLabel.font = .systemFont(ofSize: 12.5)
-        textLabel.lineBreakMode = .byTruncatingTail
-        textLabel.maximumNumberOfLines = 1
-        textLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        metaLabel.font = .systemFont(ofSize: 10.5)
-        metaLabel.lineBreakMode = .byTruncatingTail
-        metaLabel.maximumNumberOfLines = 1
-        metaLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        let textStack = NSStackView(views: [textLabel, metaLabel])
-        textStack.orientation = .vertical
-        textStack.alignment = .leading
-        textStack.spacing = 2
-        textStack.translatesAutoresizingMaskIntoConstraints = false
 
         deleteButton.toolTip = "Delete this transcription"
         deleteButton.target = self
         deleteButton.action = #selector(deleteClicked)
-        deleteButton.translatesAutoresizingMaskIntoConstraints = false
-        deleteButton.setContentHuggingPriority(.required, for: .horizontal)
-        deleteButton.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        addSubview(textStack)
-        addSubview(deleteButton)
+        row.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(row)
         NSLayoutConstraint.activate([
-            textStack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
-            textStack.trailingAnchor.constraint(lessThanOrEqualTo: deleteButton.leadingAnchor, constant: -8),
-            textStack.centerYAnchor.constraint(equalTo: centerYAnchor),
-            deleteButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
-            deleteButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            row.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
+            row.topAnchor.constraint(equalTo: topAnchor, constant: 1),
+            row.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
         ])
     }
 
@@ -148,12 +158,18 @@ private final class DictationHistoryRowView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     func configure(entry: DictationHistoryEntry, theme: HelmTheme) {
-        textLabel.stringValue = entry.text
-        metaLabel.stringValue = "\(DictationRelativeTime.string(from: entry.date)) · \(DictationRelativeTime.duration(entry.durationSeconds))"
-        textLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        metaLabel.textColor = HelmTheme.mutedInk(theme)
-        hoverBackground.normalColor = .clear
-        hoverBackground.hoverColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.35)
+        // `.neutral` rather than a semantic hue: a past transcription is not a
+        // state - nothing about it is healthy, failing or overdue - and a red
+        // or amber bar on every history row would read as an alert on the
+        // twelve palettes that resolve those tints literally. Under Daylight
+        // `HelmDomainHue(tint: .neutral)` is slate, which is the honest
+        // "carries no signal" plate for the same reason.
+        row.configure(.init(tint: .neutral,
+                            kicker: DictationRelativeTime.string(from: entry.date),
+                            title: entry.text,
+                            meta: DictationRelativeTime.duration(entry.durationSeconds),
+                            badgeSymbol: "waveform"),
+                      theme: theme)
     }
 }
 

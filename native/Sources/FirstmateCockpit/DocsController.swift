@@ -36,7 +36,7 @@
 import AppKit
 import WebKit
 
-final class DocsController: NSViewController {
+final class DocsController: NSViewController, DaylightDrillActions {
 
     static let liveSiteURL = URL(string: "https://manjesh-raj.github.io/devops-playbook/")!
 
@@ -58,9 +58,16 @@ final class DocsController: NSViewController {
 
     /// The shared page toolbar (Phase 7) - see `buildTabBar()`.
     private let pageToolbar = HelmPageToolbar()
-    /// The active tab's own actions, in that toolbar's trailing slot.
+    /// The Playbook tab's own *browser* navigation, in that toolbar's
+    /// trailing slot. Deliberately the only thing left there: back / forward /
+    /// reload act on the embedded web view a few points below them, so
+    /// hoisting them into the shell's drill header would separate them from
+    /// the thing they drive. Every page-*level* action (Open Live Site, New
+    /// Runbook) moved into that header instead - §6.4's action cluster.
     private let playbookActions = NSStackView()
-    private let runbooksActions = NSStackView()
+    /// The Runbooks tab's primary action, now in the drill header's cluster
+    /// rather than this page's toolbar - see `drillHeaderActions`.
+    private let newRunbookButton = HelmButton(title: "New Runbook", variant: .primary, symbol: "plus")
     /// The tab switcher, now the app's shared `HelmSegmentedTabs`
     /// (`HelmDesignSystem.swift`, audit §6.3 component 6). This page used to
     /// build **bare pills** on a 44pt divider bar - and the audit's finding was
@@ -72,18 +79,75 @@ final class DocsController: NSViewController {
     private let tabs = HelmSegmentedTabs(items: DocsTab.allCases.map {
         .init(id: $0.rawValue, title: $0.title)
     }, selected: DocsTab.playbook.rawValue)
-    /// Keeps `ClosureSleeve`/gesture-recognizer targets alive for as long as
-    /// the rows they're attached to exist - reset on every full row rebuild.
+    /// Keeps `ClosureSleeve` targets alive for as long as the controls they
+    /// are attached to exist. Since Daylight Phase 4 slice 5 this holds only
+    /// the runbook editor's three buttons, appended once in
+    /// `buildRunbookEditor` - the grid's cards used to append one per card on
+    /// every rebuild and nothing ever cleared it, so it grew for the life of
+    /// the process. `HelmPlateCard` takes its actions as plain closures, so
+    /// there is nothing per-card to retain any more.
     private var rowSleeves: [ClosureSleeve] = []
-    /// The compact card containers built by `buildDocCard`, one list per tab
-    /// so reloading one tab's list never drops the other's theming refs -
-    /// kept so `applyTheme()` can re-tint their border, matching
-    /// `ToolsController.cardBorderViews`'s own convention. Each list is reset
-    /// on its own tab's full row rebuild alongside `rowSleeves`.
-    private var runbookRowCards: [HoverHighlightView] = []
-    private var postmortemRowCards: [HoverHighlightView] = []
+    /// The plates built by `buildDocCard`, one list per tab so reloading one
+    /// tab's grid never drops the other's references. Each list is emptied by
+    /// its own tab's `rebuild*Grid`, which also removes the rows holding them -
+    /// so the plates deallocate and unregister their own theme observations.
+    /// A `HelmPlateCard` themes itself, so this exists to re-theme a plate
+    /// built between two theme changes, not to paint one.
+    private var runbookRowCards: [HelmPlateCard] = []
+    private var postmortemRowCards: [HelmPlateCard] = []
 
     private let runbookStore = DocsRunbookStore()
+
+    // MARK: Drill header (Daylight §6.4)
+
+    /// Set by `AppShellController`. Called - never written to the header
+    /// directly - whenever this page's own live numbers or action cluster
+    /// change: the header belongs to the shell, and two owners of one view is
+    /// how they start disagreeing.
+    var onDrillSubtitleChanged: (() -> Void)?
+    var onDrillActionsChanged: (() -> Void)?
+
+    /// §6.4's action cluster: the showing tab's *page-level* primary action.
+    /// The same button instance moves in and out (Hosts' precedent) rather
+    /// than a copy being built, so the target and tooltip this page set on it
+    /// survive every tab switch.
+    ///
+    /// Empty while the runbook editor is open: "New Runbook" beside a form
+    /// that is already creating one reads as a second, competing action - the
+    /// exact rule the toolbar gate it replaces already encoded. Postmortems
+    /// has no page-level action at all (generation happens in SRE Lead), so it
+    /// answers empty rather than being given an invented one.
+    var drillHeaderActions: [NSView] {
+        switch activeTab {
+        case .playbook: return [openLiveButton]
+        case .runbooks: return runbookEditorContainer.isHidden ? [newRunbookButton] : []
+        case .postmortems: return []
+        }
+    }
+
+    /// §6.4's live subtitle - the counts this page already reads off
+    /// `DocsRunbookStore`, plus the Playbook tab's real sync state. Nothing
+    /// new is collected, and nothing is fabricated: an unsynced playbook says
+    /// so rather than claiming an offline copy exists.
+    var drillHeaderSubtitle: String? {
+        func plural(_ n: Int, _ one: String, _ many: String) -> String {
+            "\(n) \(n == 1 ? one : many)"
+        }
+        switch activeTab {
+        case .playbook:
+            return DocsStore.isSynced ? "DevOps Playbook \u{00B7} offline copy" : "Playbook not synced yet"
+        case .runbooks:
+            // The list the grid below is *actually* rendering, not a fresh
+            // directory scan - so the header and the grid cannot disagree, and
+            // reading the subtitle costs no disk. `showTab` reloads the list
+            // before it asks for the subtitle, so this is never stale.
+            let count = runbookGridItems.count
+            return count == 0 ? "No runbooks yet" : plural(count, "runbook", "runbooks")
+        case .postmortems:
+            let count = postmortemGridItems.count
+            return count == 0 ? "No postmortems yet" : plural(count, "postmortem", "postmortems")
+        }
+    }
 
     // MARK: Playbook (unchanged from before this task)
 
@@ -93,6 +157,10 @@ final class DocsController: NSViewController {
     private var reloadButton: HelmButton!
     private let openLiveButton = HelmButton(title: "", variant: .secondary, symbol: "arrow.up.forward.square")
     private let emptyStateContainer = NSView()
+    /// §7's radius-16 card around the embedded playbook - see
+    /// `buildPlaybookContainer()`.
+    private let playbookCard = NSView()
+    private static let playbookCardInset: CGFloat = HelmMetrics.s3
     private var playbookEmptyState: HelmEmptyState?
     private let syncButton = HelmButton(title: "", variant: .primary)
     private let syncSpinner = NSProgressIndicator()
@@ -104,7 +172,6 @@ final class DocsController: NSViewController {
     private let runbooksContainer = NSView()
     private let runbookListScroll = NSScrollView()
     private let runbookListStack = NSStackView()
-    private let runbooksHeaderCountLabel = NSTextField(labelWithString: "")
     /// `nil` = showing the list. `.some(id)` = editing an existing runbook.
     /// A brand-new (unsaved) runbook is represented separately - see
     /// `editingIsNew`.
@@ -137,7 +204,8 @@ final class DocsController: NSViewController {
     private let postmortemDetailTextView = NSTextView()
     private let postmortemEmptyState = HelmEmptyState(
         symbol: "doc.text.magnifyingglass",
-        body: "No postmortems yet. Generate one from an SRE Lead investigation and it will appear here.")
+        body: "No postmortems yet. Generate one from an SRE Lead investigation and it will appear here.",
+        hue: RailDestination.docs.domainHue)
     /// Only built while the runbook grid is genuinely empty, so it is optional
     /// rather than a stored instance.
     private var runbookGridEmptyState: HelmEmptyState?
@@ -285,7 +353,7 @@ final class DocsController: NSViewController {
         // Hidden arranged subviews of an `NSStackView` drop out of layout
         // entirely (unlike an ordinary hidden `NSView` - AGENTS.md gotcha
         // (11)), so the inactive tabs' action groups take up no width.
-        let actions = NSStackView(views: [playbookActions, runbooksActions])
+        let actions = NSStackView(views: [playbookActions])
         actions.orientation = .horizontal
         actions.alignment = .centerY
         actions.spacing = HelmMetrics.s2
@@ -309,41 +377,34 @@ final class DocsController: NSViewController {
         openLiveButton.action = #selector(openLiveTapped)
         openLiveButton.translatesAutoresizingMaskIntoConstraints = false
 
-        playbookActions.setViews([backButton, forwardButton, reloadButton, openLiveButton], in: .leading)
+        playbookActions.setViews([backButton, forwardButton, reloadButton], in: .leading)
         playbookActions.orientation = .horizontal
         playbookActions.alignment = .centerY
         playbookActions.spacing = HelmMetrics.s1
         playbookActions.translatesAutoresizingMaskIntoConstraints = false
     }
 
-    /// The Runbooks tab's own actions - the count and "+ New Runbook" that
-    /// used to sit in an in-page header row beside a duplicate "Runbooks"
-    /// heading.
+    /// The Runbooks tab's primary action. It lives in the shell's drill
+    /// header now (§6.4), so this only builds it - `drillHeaderActions`
+    /// decides when it is on screen. The "N runbooks" count that used to sit
+    /// beside it moved into `drillHeaderSubtitle`, where it reads as the
+    /// destination's own live line rather than a label floating in a toolbar.
     private func buildRunbooksToolbarActions() {
-        runbooksHeaderCountLabel.font = HelmType.caption()
-        runbooksHeaderCountLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        let newButton = HelmButton(title: "New Runbook", variant: .primary, symbol: "plus")
-        newButton.controlSize = .small
-        let newSleeve = ClosureSleeve { [weak self] in self?.beginNewRunbook() }
-        rowSleeves.append(newSleeve)
-        newButton.target = newSleeve
-        newButton.action = #selector(ClosureSleeve.invoke)
-        newButton.translatesAutoresizingMaskIntoConstraints = false
-
-        runbooksActions.setViews([runbooksHeaderCountLabel, newButton], in: .leading)
-        runbooksActions.orientation = .horizontal
-        runbooksActions.alignment = .centerY
-        runbooksActions.spacing = HelmMetrics.s2
-        runbooksActions.translatesAutoresizingMaskIntoConstraints = false
+        newRunbookButton.controlSize = .small
+        newRunbookButton.target = self
+        newRunbookButton.action = #selector(newRunbookTapped)
+        newRunbookButton.translatesAutoresizingMaskIntoConstraints = false
     }
 
-    /// Only the active tab's actions are in the toolbar - and none at all
-    /// while the runbook editor is open, since "New Runbook" beside a form
-    /// that is already creating one reads as a second, competing action.
+    @objc private func newRunbookTapped() { beginNewRunbook() }
+
+    /// The browser nav triplet is only meaningful on the tab that owns a
+    /// browser. Everything else the toolbar used to gate now lives in the
+    /// drill header, which re-reads `drillHeaderActions` on the same events.
     private func updateToolbarActions() {
         playbookActions.isHidden = activeTab != .playbook
-        runbooksActions.isHidden = activeTab != .runbooks || !runbookEditorContainer.isHidden
+        onDrillActionsChanged?()
+        onDrillSubtitleChanged?()
     }
 
     private func showTab(_ tab: DocsTab) {
@@ -371,23 +432,45 @@ final class DocsController: NSViewController {
 
         buildEmptyState()
 
-        playbookContainer.addSubview(webView)
-        playbookContainer.addSubview(emptyStateContainer)
+        // Daylight §7: "playbook webview untouched inside a radius-16 card".
+        // The web view, its navigation delegate and the local-only load path
+        // are byte-for-byte what they were - only the surround is new: the
+        // page's own card (`HelmMetrics.dSurface` under Daylight, the shared
+        // card radius elsewhere) instead of a full-bleed browser filling the
+        // destination edge to edge.
+        //
+        // The card clips (a rounded fill has to), which is why it carries no
+        // shadow: a clipping layer casts none, and the two-layer arrangement
+        // that would fix it buys nothing here - this card is the whole tab
+        // body, so there is no sibling surface for it to float above.
+        playbookCard.translatesAutoresizingMaskIntoConstraints = false
+        playbookCard.wantsLayer = true
+        playbookCard.layer?.masksToBounds = true
+        playbookContainer.addSubview(playbookCard)
+
+        playbookCard.addSubview(webView)
+        playbookCard.addSubview(emptyStateContainer)
         emptyStateContainer.translatesAutoresizingMaskIntoConstraints = false
 
-        // The web view now starts at the container's own top edge: this tab's
-        // second 40pt toolbar is gone, its controls having moved into the one
-        // shared page toolbar (see `buildTabBar()`).
         NSLayoutConstraint.activate([
-            webView.leadingAnchor.constraint(equalTo: playbookContainer.leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: playbookContainer.trailingAnchor),
-            webView.topAnchor.constraint(equalTo: playbookContainer.topAnchor),
-            webView.bottomAnchor.constraint(equalTo: playbookContainer.bottomAnchor),
+            playbookCard.leadingAnchor.constraint(equalTo: playbookContainer.leadingAnchor,
+                                                  constant: Self.playbookCardInset),
+            playbookCard.trailingAnchor.constraint(equalTo: playbookContainer.trailingAnchor,
+                                                   constant: -Self.playbookCardInset),
+            playbookCard.topAnchor.constraint(equalTo: playbookContainer.topAnchor,
+                                              constant: Self.playbookCardInset),
+            playbookCard.bottomAnchor.constraint(equalTo: playbookContainer.bottomAnchor,
+                                                 constant: -Self.playbookCardInset),
 
-            emptyStateContainer.leadingAnchor.constraint(equalTo: playbookContainer.leadingAnchor),
-            emptyStateContainer.trailingAnchor.constraint(equalTo: playbookContainer.trailingAnchor),
-            emptyStateContainer.topAnchor.constraint(equalTo: playbookContainer.topAnchor),
-            emptyStateContainer.bottomAnchor.constraint(equalTo: playbookContainer.bottomAnchor),
+            webView.leadingAnchor.constraint(equalTo: playbookCard.leadingAnchor),
+            webView.trailingAnchor.constraint(equalTo: playbookCard.trailingAnchor),
+            webView.topAnchor.constraint(equalTo: playbookCard.topAnchor),
+            webView.bottomAnchor.constraint(equalTo: playbookCard.bottomAnchor),
+
+            emptyStateContainer.leadingAnchor.constraint(equalTo: playbookCard.leadingAnchor),
+            emptyStateContainer.trailingAnchor.constraint(equalTo: playbookCard.trailingAnchor),
+            emptyStateContainer.topAnchor.constraint(equalTo: playbookCard.topAnchor),
+            emptyStateContainer.bottomAnchor.constraint(equalTo: playbookCard.bottomAnchor),
         ])
     }
 
@@ -431,7 +514,8 @@ final class DocsController: NSViewController {
                                    title: "Docs not synced yet",
                                    body: "The DevOps Playbook hasn't been synced to this Mac yet. Sync it once to browse it here, fully offline afterward.",
                                    size: .standard,
-                                   accessory: actionRow)
+                                   accessory: actionRow,
+                                   hue: RailDestination.docs.domainHue)
         playbookEmptyState = empty
         emptyStateContainer.addSubview(empty)
         NSLayoutConstraint.activate([
@@ -466,6 +550,7 @@ final class DocsController: NSViewController {
     }
 
     private func loadDocsIfAvailable() {
+        defer { onDrillSubtitleChanged?() }
         guard DocsStore.isSynced else {
             webView.isHidden = true
             emptyStateContainer.isHidden = false
@@ -555,19 +640,24 @@ final class DocsController: NSViewController {
     }
 
     private func buildRunbookEditor() {
-        runbookEditorTitleLabel.font = .systemFont(ofSize: 15, weight: .semibold)
+        runbookEditorTitleLabel.font = HelmType.sectionTitle()
         runbookEditorTitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
 
         runbookBodyTextView.isRichText = false
-        runbookBodyTextView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        runbookBodyTextView.font = HelmType.code()
         runbookBodyTextView.isEditable = true
         runbookBodyTextView.isAutomaticQuoteSubstitutionEnabled = false
         runbookBodyTextView.isAutomaticDashSubstitutionEnabled = false
         runbookBodyTextView.textContainerInset = NSSize(width: 8, height: 8)
         runbookBodyScroll.documentView = runbookBodyTextView
         runbookBodyScroll.hasVerticalScroller = true
-        runbookBodyScroll.borderType = .lineBorder
+        runbookBodyScroll.borderType = .noBorder
+        runbookBodyScroll.drawsBackground = false
+        // §6.9: the well *is* the input surface, so the scroll view carries the
+        // fill/border/radius and the text view inside paints nothing of its
+        // own beyond matching that fill (`applyTheme`).
+        HelmField.makeSunken(runbookBodyScroll)
         runbookBodyScroll.translatesAutoresizingMaskIntoConstraints = false
 
         runbookSaveButton.title = "Save"
@@ -618,9 +708,6 @@ final class DocsController: NSViewController {
 
     private func reloadRunbooksList() {
         let runbooks = runbookStore.listRunbooks()
-        // Reads as a sentence now that it sits in the toolbar rather than
-        // beside a "Runbooks" heading - a bare "6" there says nothing.
-        runbooksHeaderCountLabel.stringValue = runbooks.count == 1 ? "1 runbook" : "\(runbooks.count) runbooks"
         runbookGridItems = runbooks.map { runbook in
             // The card's own metadata line - "Kubernetes \u{00B7} 3 steps" -
             // read out of the runbook's own fenced steps
@@ -641,6 +728,7 @@ final class DocsController: NSViewController {
             )
         }
         rebuildRunbookGrid()
+        onDrillSubtitleChanged?()
     }
 
     /// Re-flows `runbookGridItems` into a wrapping multi-column grid, sized
@@ -660,7 +748,8 @@ final class DocsController: NSViewController {
             // whole tab body, so it gets the real treatment rather than a
             // sentence floating at the top-left.
             let empty = HelmEmptyState(symbol: "list.bullet.rectangle",
-                                       body: "No runbooks yet. Create one to get started.")
+                                       body: "No runbooks yet. Create one to get started.",
+                                       hue: RailDestination.docs.domainHue)
             empty.heightAnchor.constraint(equalToConstant: 110).isActive = true
             runbookGridEmptyState = empty
             runbookListStack.addArrangedSubview(empty)
@@ -809,11 +898,13 @@ final class DocsController: NSViewController {
 
         postmortemDetailTextView.isEditable = false
         postmortemDetailTextView.isRichText = false
-        postmortemDetailTextView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        postmortemDetailTextView.font = HelmType.code()
         postmortemDetailTextView.textContainerInset = NSSize(width: 8, height: 8)
         postmortemDetailScroll.documentView = postmortemDetailTextView
         postmortemDetailScroll.hasVerticalScroller = true
-        postmortemDetailScroll.borderType = .lineBorder
+        postmortemDetailScroll.borderType = .noBorder
+        postmortemDetailScroll.drawsBackground = false
+        HelmField.makeSunken(postmortemDetailScroll)
         postmortemDetailScroll.translatesAutoresizingMaskIntoConstraints = false
         postmortemDetailScroll.isHidden = true
 
@@ -861,6 +952,7 @@ final class DocsController: NSViewController {
             postmortemDetailScroll.isHidden = true
         }
         applyTheme()
+        onDrillSubtitleChanged?()
     }
 
     /// Re-flows `postmortemGridItems` - see `rebuildRunbookGrid`'s doc
@@ -930,21 +1022,6 @@ final class DocsController: NSViewController {
     /// list shape from `fm/grandline-docs-runbook-list-compact-fix`).
     private static let docMinCardWidth: CGFloat = 260
     private static let docCardSpacing: CGFloat = 14
-    private static let docCardPadding: CGFloat = 14
-    /// A fixed height for every card, tall enough to comfortably fit a
-    /// 3-line wrapped title (captain-reported: "Identifying Unhealthy /
-    /// NotReady Nodes" truncated to "...Nod…" on a single line) plus the
-    /// subtitle line - deliberately NOT content-dependent, so a short title
-    /// just leaves empty space below it rather than every card in the grid
-    /// growing/shrinking to match its own content (the same "avoid a
-    /// scrollable-item's height silently growing" lesson already applied to
-    /// this app's other lists - see AGENTS.md's Shift/Diff-tool entries).
-    private static let docCardHeight: CGFloat = 100
-    /// The card's corner delete glyph, sized like a toolbar icon square
-    /// rather than left at a regular button's intrinsic width - see
-    /// `buildDocCard`.
-    private static let docCardDeleteButtonSide: CGFloat = 24
-
     /// Lays `items` out as a grid of rows, each row a `.fillEqually`
     /// horizontal stack of cards sized to `containerWidth` - byte-for-byte
     /// the same columns-from-width + partial-last-row-padding approach as
@@ -957,148 +1034,68 @@ final class DocsController: NSViewController {
     /// definition into `HelmResponsiveGrid`. What is left here is what is
     /// genuinely this page's: which card to build, and collecting the built
     /// cards so `applyTheme` can re-tint their borders.
-    private func layoutDocGrid(items: [DocGridItem], containerWidth: CGFloat) -> (rows: [NSView], cards: [HoverHighlightView]) {
-        var cards: [HoverHighlightView] = []
+    private func layoutDocGrid(items: [DocGridItem], containerWidth: CGFloat) -> (rows: [NSView], cards: [HelmPlateCard]) {
+        var cards: [HelmPlateCard] = []
         let rows = HelmResponsiveGrid.rows(items,
                                            containerWidth: containerWidth,
                                            minItemWidth: Self.docMinCardWidth,
-                                           spacing: Self.docCardSpacing) { item, width in
-            let card = self.buildDocCard(item, width: width)
+                                           spacing: Self.docCardSpacing) { item, _ in
+            // The width the grid computed is unused: a plate takes its width
+            // from the row's `.fillEqually` distribution and its height from
+            // its own constant, and it reads the real text-column width back
+            // in `layout()` rather than being told an estimate up front.
+            let card = self.buildDocCard(item)
             cards.append(card)
             return card
         }
         return (rows, cards)
     }
 
-    private func buildDocCard(_ item: DocGridItem, width: CGFloat) -> HoverHighlightView {
-        let iconTile = IconTileView(size: 26, cornerRadius: 7)
-        iconTile.configure(symbol: item.icon, tint: item.tint, pointSize: 12)
-        iconTile.setContentHuggingPriority(.required, for: .horizontal)
-
-        let titleLabel = NSTextField(wrappingLabelWithString: item.title)
-        titleLabel.font = .systemFont(ofSize: 12.5, weight: .semibold)
-        titleLabel.maximumNumberOfLines = 3
-        // Everything to the title column's right: the delete glyph plus the
-        // 10pt gap `row`'s trailing constraint leaves in front of it.
-        let deleteColumnWidth: CGFloat = item.onDelete != nil ? Self.docCardDeleteButtonSide + 10 : 0
-        // Card width varies with the container (see `layoutDocGrid`), so this
-        // is recomputed on every rebuild rather than a fixed guess - matching
-        // `ToolsController.toolCard`'s own reasoning for its description
-        // label.
-        //
-        // **It has to be the column's real width, not an over-estimate.** An
-        // over-estimate is the dangerous direction: AppKit computes a
-        // one-line `intrinsicContentSize` at the estimate, lays the label out
-        // one line tall, and the text then wraps to two lines *inside* that
-        // one-line frame and draws the second line outside its own bounds -
-        // no ellipsis, just a silently missing tail. Measured before this
-        // fix: "Debugging High CPU Usage" estimated at 179.6pt, laid out at
-        // 167pt, rendered as a bare "Debugging High" (visible in the
-        // captain's own `12-live-docs-runbooks.png` too). The old formula
-        // missed both the 10pt gap above and the delete button's real width.
-        titleLabel.preferredMaxLayoutWidth = max(60, width - Self.docCardPadding * 2 - 26 - 10 - deleteColumnWidth)
-
-        let subtitleLabel = NSTextField(labelWithString: item.subtitle)
-        subtitleLabel.font = .systemFont(ofSize: 10.5)
-        subtitleLabel.lineBreakMode = .byTruncatingTail
-        subtitleLabel.maximumNumberOfLines = 1
-        subtitleLabel.textColor = HelmTheme.mutedInk(theme)
-
-        let textStack = NSStackView(views: [titleLabel, subtitleLabel])
-        textStack.orientation = .vertical
-        textStack.alignment = .leading
-        textStack.spacing = 3
-        textStack.translatesAutoresizingMaskIntoConstraints = false
-        // Stack-level priorities, not the content ones - AGENTS.md gotcha
-        // (12): `setContentHuggingPriority` is a no-op on an `NSStackView`,
-        // which has no intrinsic size of its own.
-        textStack.setHuggingPriority(.defaultLow, for: .horizontal)
-        textStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
-        // Both labels take exactly the text column's width, so a title that
-        // does not fit wraps or truncates instead of being **clipped**.
-        // Measured before this fix: "Debugging High CPU Usage" had an
-        // intrinsic width of 170.5 inside a 161.5pt text stack in a 373pt
-        // card, and rendered as a bare "Debugging High" with no ellipsis -
-        // visible in the captain's own live screenshot
-        // (`12-live-docs-runbooks.png`) as well as in a real off-screen
-        // render. The text stack was that narrow because `row` below was left
-        // at `.gravityAreas`.
-        titleLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            titleLabel.widthAnchor.constraint(equalTo: textStack.widthAnchor),
-            subtitleLabel.widthAnchor.constraint(equalTo: textStack.widthAnchor),
-        ])
-
-        // The delete button is pinned directly to the container's own
-        // top-right corner below, not laid out inside `row` alongside the
-        // title - a plain horizontal NSStackView left at its default
-        // `.gravityAreas` distribution doesn't stretch to fill leftover
-        // width (see AGENTS.md gotcha (10)), so a delete button placed as
-        // a trailing arranged subview of `row` used to sit immediately
-        // after the title text instead of at the card's fixed corner,
-        // drifting left/right and up/down with the title's own length and
-        // wrap (`fm/grandline-docs-runbook-delete-icon-corner`).
-        let row = NSStackView(views: [iconTile, textStack])
-        row.orientation = .horizontal
-        row.alignment = .top
-        row.spacing = 10
-        // `.fill`, explicitly - at the default `.gravityAreas` the text stack
-        // was laid out at its own natural width rather than the card's, which
-        // is what clipped a long title (see the constraints above).
-        row.distribution = .fill
-        row.translatesAutoresizingMaskIntoConstraints = false
-
-        let container = HoverHighlightView()
-        container.cornerRadius = 9
-        container.layer?.borderWidth = 1
-        container.toolTip = item.tooltip
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(row)
-
-        var rowTrailingAnchor = container.trailingAnchor
-        var rowTrailingConstant: CGFloat = -Self.docCardPadding
-
-        if let onDelete = item.onDelete {
-            let deleteButton = HelmButton(symbol: "trash", variant: .quiet, size: .small)
-            let sleeve = ClosureSleeve(onDelete)
-            rowSleeves.append(sleeve)
-            deleteButton.target = sleeve
-            deleteButton.action = #selector(ClosureSleeve.invoke)
-            deleteButton.toolTip = "Delete"
-            deleteButton.translatesAutoresizingMaskIntoConstraints = false
-            container.addSubview(deleteButton)
-            // **A real width, matching the `deleteButtonWidth` the title's own
-            // wrap math above already assumes.** Left to its intrinsic size a
-            // `HelmButton` carries a regular button's horizontal padding even
-            // with an empty title - measured 87pt on a 265pt card, a third of
-            // the card, which squeezed the title column to 104pt and clipped
-            // any title longer than that. Compensated for the button's own
-            // `alignmentRectInsets` exactly as `HelmPageToolbar.iconButton`
-            // does, so the visible box really is this size.
-            let insets = deleteButton.alignmentRectInsets
-            NSLayoutConstraint.activate([
-                deleteButton.topAnchor.constraint(equalTo: container.topAnchor, constant: Self.docCardPadding),
-                deleteButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -Self.docCardPadding),
-                deleteButton.widthAnchor.constraint(equalToConstant: Self.docCardDeleteButtonSide - insets.left - insets.right),
-                deleteButton.heightAnchor.constraint(equalToConstant: Self.docCardDeleteButtonSide - insets.top - insets.bottom),
-            ])
-            rowTrailingAnchor = deleteButton.leadingAnchor
-            rowTrailingConstant = -10
-        }
-
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: Self.docCardPadding),
-            row.trailingAnchor.constraint(equalTo: rowTrailingAnchor, constant: rowTrailingConstant),
-            row.topAnchor.constraint(equalTo: container.topAnchor, constant: Self.docCardPadding),
-            container.heightAnchor.constraint(equalToConstant: Self.docCardHeight),
-        ])
-        let openSleeve = ClosureSleeve(item.onOpen)
-        rowSleeves.append(openSleeve)
-        let click = NSClickGestureRecognizer(target: openSleeve, action: #selector(ClosureSleeve.invoke))
-        container.addGestureRecognizer(click)
-        return container
+    /// Daylight §7: a "module-style plate" - `HelmPlateCard`, the shared
+    /// sibling of the canvas's own `HelmModuleCard` (see that file's header
+    /// for why it is a separate type). The compact `IconTileView` card this
+    /// replaces had no visible affordance at all: the whole surface was a
+    /// click target and nothing said so. The plate keeps that whole-surface
+    /// click and adds §7's explicit Open button.
+    ///
+    /// The per-kind hue comes from the item's own `HelmTint` through
+    /// `HelmDomainHue(tint:)` rather than a second mapping, so a runbook
+    /// stays blue (Docs' own domain hue) and a postmortem stays amber exactly
+    /// as they did before, in every palette.
+    private func buildDocCard(_ item: DocGridItem) -> HelmPlateCard {
+        let plate = HelmPlateCard()
+        plate.configure(.init(title: item.title,
+                              subtitle: item.subtitle,
+                              symbol: item.icon,
+                              hue: HelmDomainHue(tint: item.tint),
+                              tooltip: item.tooltip,
+                              onOpen: item.onOpen,
+                              onDelete: item.onDelete,
+                              deleteTooltip: "Delete"))
+        return plate
     }
+
+    // MARK: Probe / self-test surface
+
+    #if FM_SELFTESTS
+    /// Daylight Phase 4 slice 5's suite reaches the real page rather than
+    /// building components standalone - a plate built by a probe cannot prove
+    /// this page wires one.
+    func debugSelectTab(_ raw: String) {
+        guard let tab = DocsTab(rawValue: raw) else { return }
+        showTab(tab)
+    }
+
+    var debugActiveTabID: String { activeTab.rawValue }
+    var debugRunbookPlates: [HelmPlateCard] { runbookRowCards }
+    var debugPostmortemPlates: [HelmPlateCard] { postmortemRowCards }
+    var debugPlaybookCard: NSView { playbookCard }
+    var debugWebView: NSView { webView }
+    var debugRunbookEditorIsOpen: Bool { !runbookEditorContainer.isHidden }
+    func debugBeginNewRunbook() { beginNewRunbook() }
+    func debugCancelRunbookEditor() { cancelRunbookEditor() }
+    func debugReloadRunbooks() { reloadRunbooksList() }
+    #endif
 
     private static func relativeDate(_ date: Date) -> String {
         let formatter = RelativeDateTimeFormatter()
@@ -1110,9 +1107,6 @@ final class DocsController: NSViewController {
 
     private func applyTheme() {
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
-        let muted = HelmTheme.mutedInk(theme)
-        let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
-        let line = HelmTheme.nsColor(theme.chromeLineHex)
 
         for container in [playbookContainer, runbooksContainer, postmortemsContainer] {
             container.wantsLayer = true
@@ -1123,37 +1117,40 @@ final class DocsController: NSViewController {
         // in it is a `HelmButton` that re-derives its own tint - so there is
         // nothing here to re-colour for either.
         pageToolbar.applyTheme(theme)
+        HelmCard.applyCardSurface(to: playbookCard, theme: theme,
+                                  cornerRadius: HelmMetrics.rCard,
+                                  daylightRadius: HelmMetrics.dSurface)
         playbookEmptyState?.applyTheme(theme)
         emptyStateContainer.wantsLayer = true
-        emptyStateContainer.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
+        // Transparent, so the card's own fill shows through rather than a
+        // second, differently-coloured rectangle inside it.
+        emptyStateContainer.layer?.backgroundColor = NSColor.clear.cgColor
 
         tabs.applyTheme(theme)
 
-        runbooksHeaderCountLabel.textColor = muted
         runbookEditorTitleLabel.textColor = ink
-        runbookBodyTextView.textColor = ink
-        runbookBodyTextView.backgroundColor = surface
+        // Both editors read as §6.9 wells: the scroll view owns the fill and
+        // border, and the text view matches that fill rather than the card
+        // surface (which under Daylight is white and would show the well's
+        // own border wrapping a differently-coloured interior).
+        HelmField.applySunken(to: runbookBodyScroll, theme: theme)
+        runbookBodyTextView.textColor = HelmField.ink(theme)
+        runbookBodyTextView.backgroundColor = HelmField.fill(theme)
         postmortemEmptyState.applyTheme(theme)
         runbookGridEmptyState?.applyTheme(theme)
-        postmortemDetailTextView.textColor = ink
-        postmortemDetailTextView.backgroundColor = surface
+        HelmField.applySunken(to: postmortemDetailScroll, theme: theme)
+        postmortemDetailTextView.textColor = HelmField.ink(theme)
+        postmortemDetailTextView.backgroundColor = HelmField.fill(theme)
 
+        // A `HelmPlateCard` themes itself end to end - fill, border, ribbon,
+        // shadow, both labels and (via `HelmGradientTile`'s own observation)
+        // its tile. It also carries its own `ThemeManager` observation, so
+        // this call is only here to keep a plate built *between* two theme
+        // changes correct on the very next render; the hand-walk over each
+        // card's subview tree that used to live here is gone with the bespoke
+        // card it was reaching into.
         for cards in [runbookRowCards, postmortemRowCards] {
-            for hover in cards {
-                hover.normalColor = .clear
-                hover.hoverColor = line.withAlphaComponent(0.18)
-                hover.layer?.borderColor = line.withAlphaComponent(0.5).cgColor
-                for case let sub as NSStackView in hover.subviews {
-                    for view in sub.arrangedSubviews {
-                        if let iconTile = view as? IconTileView { iconTile.applyTheme(theme) }
-                        if let textStack = view as? NSStackView {
-                            for label in textStack.arrangedSubviews.compactMap({ $0 as? NSTextField }) {
-                                label.textColor = label === textStack.arrangedSubviews.first ? ink : muted
-                            }
-                        }
-                    }
-                }
-            }
+            for plate in cards { plate.applyTheme(theme) }
         }
     }
 }

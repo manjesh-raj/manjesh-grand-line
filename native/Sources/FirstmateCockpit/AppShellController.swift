@@ -608,6 +608,12 @@ final class AppShellController: NSViewController {
         schedules.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         logAnalyzer.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         vault.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        // Docs is the second page after Hosts whose *cluster* changes while it
+        // is on screen: the action is per-tab, and the runbook editor empties
+        // it entirely.
+        docs.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        docs.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
+        dictation.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Trigger both pages' own refresh once at launch so the badges have
         // a real count before the captain ever visits Overview or Review -
         // every later update comes from those pages' existing refresh
