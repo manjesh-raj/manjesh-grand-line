@@ -90,13 +90,26 @@ enum FirstmateBackend {
     /// genuinely live. Every caller that needs both pieces together
     /// (`TabLaunch.defaultName`, `ConsoleController.openFirstmateHost`) must
     /// get them from this one function - never pair a separate `resolve()`
-    /// call with a separately-derived target. `TabModel.launch` then keeps
-    /// this result frozen for the tab's whole lifetime (per `TabLaunch`'s
-    /// own "reusable recipe" contract - see its header comment): `⌘R`/
-    /// auto-reconnect replay the same resolved kind+target rather than
-    /// resolving again, so a reconnect can never introduce a fresh
-    /// disagreement either. This preserves the existing override contract
-    /// unchanged (`FM_MIRROR_TARGET`/Settings' "Mirror target" still wins,
+    /// call with a separately-derived target. `TabModel.launch` keeps this
+    /// result frozen for the tab's very first start (per `TabLaunch`'s own
+    /// "reusable recipe" contract - see its header comment), which is what
+    /// this function's own atomicity guarantee is protecting.
+    ///
+    /// `fm/grandline-mirror-herdr-boot-race`: a *restart* (⌘R, or the auto-
+    /// reconnect timer) is a different call to this same function, not a
+    /// replay of the first one - `ConsoleController.reresolveMirrorTab`
+    /// calls it fresh and re-freezes `tab.launch` before reconnecting. Right
+    /// after a machine restart, herdr's own server can still be a few
+    /// seconds from coming up at the one moment a tab is created, so a
+    /// permanently-frozen answer would leave that tab stuck on a
+    /// correct-at-the-time-but-now-wrong backend for its whole session, with
+    /// no way to recover short of closing and reopening the tab. Re-resolving
+    /// on a later restart does not reintroduce the two-calls-disagree race
+    /// this function exists to prevent: each restart still makes exactly one
+    /// atomic call deciding kind and target together for *that* attempt -
+    /// only the tab's first-ever start is guaranteed to still be using the
+    /// answer it was created with. This preserves the existing override
+    /// contract unchanged (`FM_MIRROR_TARGET`/Settings' "Mirror target" still wins,
     /// verbatim, regardless of which backend is live).
     /// GL-12/GL-04: the async form, for the launch path. `resolveMirrorTarget()`
     /// is three serial subprocess calls (each individually bounded, but serial
