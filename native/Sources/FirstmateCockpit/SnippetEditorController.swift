@@ -53,6 +53,7 @@ final class SnippetEditorController: NSViewController {
                        cancel: #selector(cancel),
                        delete: editing == nil ? nil : (title: "Delete", action: #selector(deleteSnippet)))
 
+        form.setSubtitle("Sends its text into the active terminal tab.")
         form.refreshTheme()
         form.sizeToFitContent()
     }

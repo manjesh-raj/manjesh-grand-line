@@ -154,12 +154,18 @@ enum DaylightPalette {
         if let corrected = primaryButtonFills.first(where: { $0.hue == hue })?.corrected {
             return HelmTheme.nsColor(corrected)
         }
-        let base = hue.baseColor(in: theme)
+        return darkenedForWhiteLabel(hue.baseColor(in: theme))
+    }
+
+    /// The smallest darkening of `base` that carries a **white label** at
+    /// 4.5:1, or `base` itself when it already does.
+    ///
+    /// Bisection rather than a fixed step: contrast against white is monotonic
+    /// in "how far toward black", so the smallest fraction that clears the
+    /// floor is findable in a handful of iterations and the result is the
+    /// least visible change to the approved hue.
+    static func darkenedForWhiteLabel(_ base: NSColor) -> NSColor {
         if HelmContrast.ratio(.white, base) >= HelmContrast.textTarget { return base }
-        // Bisection rather than a fixed step: contrast against white is
-        // monotonic in "how far toward black", so the smallest fraction that
-        // clears the floor is findable in a handful of iterations and the
-        // result is the least visible change to the approved hue.
         var low: CGFloat = 0
         var high: CGFloat = 1
         var best = NSColor.black
@@ -174,6 +180,27 @@ enum DaylightPalette {
             }
         }
         return best
+    }
+
+    /// §6.10's "primary Save (domain gradient capsule)" - the hue's pair with
+    /// **both stops** corrected so a white label clears 4.5:1 anywhere on it.
+    ///
+    /// This is the one place a Daylight gradient is corrected rather than used
+    /// raw, and the reason is that a button's label is the *sole* carrier of
+    /// its meaning. §2.4's own tile caveat (recorded in AGENTS.md) is that the
+    /// seven raw pairs only clear the 3:1 icon floor against `h1`, and against
+    /// the 135° midpoint they measure 2.53-3.68 - acceptable for a
+    /// `HelmGradientTile`, whose glyph always sits beside a text label saying
+    /// the same thing, and not acceptable for a Save button whose word *is*
+    /// the affordance. So `h1` is `primaryButtonFill` (already at or above the
+    /// floor) and `h2` is the raw lighter stop darkened by the same bisection
+    /// until it clears too. A real gradient in the approved direction, every
+    /// stop of which is legible - rather than either a flat fill (dropping the
+    /// design) or a raw pair (shipping a 2.5:1 label).
+    static func primaryButtonGradient(for hue: HelmDomainHue,
+                                      theme: HelmTheme) -> (h1: NSColor, h2: NSColor) {
+        (primaryButtonFill(for: hue, theme: theme),
+         darkenedForWhiteLabel(hue.pair(in: theme).h2))
     }
 
     static let primaryButtonFills: [(hue: HelmDomainHue, corrected: String)] = [

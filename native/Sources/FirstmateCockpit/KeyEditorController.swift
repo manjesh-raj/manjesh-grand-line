@@ -193,6 +193,7 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
         saveButton = footer.confirm
         updateSaveEnabled()
 
+        form.setSubtitle("Private key material never leaves the Keychain.")
         form.refreshTheme()
         form.sizeToFitContent()
     }

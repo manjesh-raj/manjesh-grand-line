@@ -238,11 +238,17 @@ final class NotificationCenterController: NSObject, NSPopoverDelegate {
     }
 
     func popoverDidClose(_ notification: Notification) {}
+
+    #if FM_SELFTESTS
+    /// The panel content itself, so a suite can drive the real header action
+    /// and the real rows without having to show a popover.
+    var debugPanelController: NSViewController { content }
+    #endif
 }
 
 /// The panel content: a header ("Notifications" + "Mark all read"), one row
 /// per entry, and an empty state when there is nothing to show.
-private final class NotificationPanelViewController: NSViewController {
+final class NotificationPanelViewController: NSViewController {
     private var theme = ThemeManager.shared.theme
 
     // Widened from the original flat-list width (320) to give the card
@@ -257,13 +263,17 @@ private final class NotificationPanelViewController: NSViewController {
     /// captain opens it - and it matches the store's own contract, where an
     /// `.actionNeeded` entry clears itself the moment its condition resolves.
     private let titleLabel = NSTextField(labelWithString: "Waiting for you")
-    private let markAllReadLabel = NSTextField(labelWithString: "Mark all read")
+    /// §6.12's "ghost 'Mark all read'" - the app's own `.quiet` button, which
+    /// is what "ghost" resolves to under Daylight (§6.6) and what keeps this
+    /// control on the shared button recipe in the other twelve palettes too.
+    /// The label-in-a-`HoverHighlightView` this replaced predates
+    /// `HelmButton`'s existence.
+    private let markAllReadButton = HelmButton(title: "Mark all read", variant: .quiet, size: .small)
     /// GL-16: the click recognizer used to sit on the label itself, which
     /// VoiceOver reads as static text with no way to activate it. A
     /// clear-coloured `HoverHighlightView` wrapper (visually identical - it
     /// paints nothing) carries the recognizer instead, so this reads and
     /// behaves as the button it always was.
-    private let markAllReadButton = HoverHighlightView()
     /// Was a bare wrapping `NSTextField` - one of the four §3.2 called out.
     /// This panel is 340pt wide, so `.compact` is the right size; the glyph and
     /// the centred copy now match every other empty list in the app.
@@ -280,23 +290,14 @@ private final class NotificationPanelViewController: NSViewController {
         root.wantsLayer = true
         view = root
 
-        titleLabel.font = .systemFont(ofSize: 13.5, weight: .semibold)
         titleLabel.translatesAutoresizingMaskIntoConstraints = false
         titleLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
 
-        markAllReadLabel.font = .systemFont(ofSize: 11, weight: .medium)
-        markAllReadLabel.translatesAutoresizingMaskIntoConstraints = false
-        markAllReadLabel.setContentHuggingPriority(.required, for: .horizontal)
         markAllReadButton.translatesAutoresizingMaskIntoConstraints = false
-        markAllReadButton.addSubview(markAllReadLabel)
-        markAllReadButton.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(markAllReadClicked)))
-        markAllReadButton.accessibilityLabelOverride = "Mark all read"
-        NSLayoutConstraint.activate([
-            markAllReadLabel.leadingAnchor.constraint(equalTo: markAllReadButton.leadingAnchor),
-            markAllReadLabel.trailingAnchor.constraint(equalTo: markAllReadButton.trailingAnchor),
-            markAllReadLabel.topAnchor.constraint(equalTo: markAllReadButton.topAnchor),
-            markAllReadLabel.bottomAnchor.constraint(equalTo: markAllReadButton.bottomAnchor),
-        ])
+        markAllReadButton.target = self
+        markAllReadButton.action = #selector(markAllReadClicked)
+        markAllReadButton.setContentHuggingPriority(.required, for: .horizontal)
+        markAllReadButton.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         let headerRow = NSStackView(views: [titleLabel, markAllReadButton])
         headerRow.orientation = .horizontal
@@ -396,11 +397,11 @@ private final class NotificationPanelViewController: NSViewController {
         self.theme = theme
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let line = HelmTheme.nsColor(theme.chromeLineHex)
-        let accent = HelmTheme.nsColor(theme.accentHex)
 
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
+        // §6.12's header is "13 semibold" - the shared row-title role.
+        titleLabel.font = HelmType.rowTitle()
         titleLabel.textColor = ink
-        markAllReadLabel.textColor = accent
         separator.layer?.backgroundColor = line.cgColor
         emptyState.applyTheme(theme)
         for case let row as HelmAccentRow in rowsStack.arrangedSubviews {

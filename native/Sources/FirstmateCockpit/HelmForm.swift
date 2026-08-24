@@ -1407,11 +1407,35 @@ final class HelmFormSheet: NSView {
     /// §6.10's domain ribbon weight.
     static let ribbonHeight: CGFloat = 6
 
+    /// §6.10's close square.
+    static let closeSquareSide: CGFloat = 28
+
     /// Raised after the sheet has themed everything it owns, for a controller
     /// with chrome the scaffold knows nothing about.
     var onApplyTheme: ((HelmTheme) -> Void)?
 
     let headingLabel = NSTextField(labelWithString: "")
+
+    /// §6.10's header block: `muted` 12 under the title. Hidden (and out of
+    /// layout, being an `NSStackView` arranged subview) when no subtitle was
+    /// given, so a sheet that does not want one is unchanged.
+    private let subtitleLabel = NSTextField(labelWithString: "")
+    /// §6.10's 28pt `inset` close square (radius 10), top-trailing of the
+    /// header block.
+    ///
+    /// Daylight only, for the reason every slice of this migration has held to:
+    /// adding a control to all thirteen palettes is a visible change to twelve
+    /// of them. Wired from `setFooter`'s own `cancel` selector rather than
+    /// taking a second one, so the square and Cancel can never dismiss
+    /// differently - and hidden until `setFooter` runs, since before that there
+    /// is nothing for it to do.
+    private let closeSquare = HoverHighlightView()
+    private let closeGlyph = NSImageView()
+    private let closeButton = NSButton()
+    private var headerBlock: NSView!
+    private var footerHintLabel: NSTextField?
+    private weak var footerCancelButton: HelmButton?
+    private weak var footerConfirmButton: HelmButton?
 
     private let contentStack = NSStackView()
     private let footerContainer = NSView()
@@ -1472,6 +1496,7 @@ final class HelmFormSheet: NSView {
         headingLabel.stringValue = title
         headingLabel.font = HelmType.sectionTitle()
         headingLabel.translatesAutoresizingMaskIntoConstraints = false
+        buildHeaderBlock()
 
         ribbon.wantsLayer = true
         ribbon.layer?.addSublayer(ribbonGradient)
@@ -1512,6 +1537,73 @@ final class HelmFormSheet: NSView {
 
     // MARK: Layout
 
+    /// The header block both layouts mount: title over optional subtitle on
+    /// the leading side, the close square pinned trailing.
+    private func buildHeaderBlock() {
+        subtitleLabel.font = HelmType.body()
+        subtitleLabel.lineBreakMode = .byWordWrapping
+        subtitleLabel.maximumNumberOfLines = 2
+        subtitleLabel.isHidden = true
+        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        mutedLabels.append(subtitleLabel)
+
+        let textColumn = NSStackView(views: [headingLabel, subtitleLabel])
+        textColumn.orientation = .vertical
+        textColumn.alignment = .leading
+        textColumn.spacing = HelmMetrics.s1
+        textColumn.translatesAutoresizingMaskIntoConstraints = false
+        // AGENTS.md gotcha (12): the *stack*-level priority is the one that
+        // bites for a view with no intrinsic content size. The text column is
+        // the one thing allowed to flex so the close square keeps its 28pt.
+        textColumn.setHuggingPriority(.defaultLow, for: .horizontal)
+        textColumn.setClippingResistancePriority(.defaultLow, for: .horizontal)
+
+        closeGlyph.image = NSImage(systemSymbolName: "xmark",
+                                   accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 11, weight: .semibold))
+        closeGlyph.translatesAutoresizingMaskIntoConstraints = false
+        closeSquare.cornerRadius = HelmMetrics.dTileSmall
+        closeSquare.translatesAutoresizingMaskIntoConstraints = false
+        closeSquare.isHidden = true
+        closeSquare.accessibilityLabelOverride = "Close"
+        closeSquare.addSubview(closeGlyph)
+        // The real target/action lives on a hidden `NSButton` so the recognizer
+        // and any keyboard/VoiceOver activation both dispatch through one
+        // place, exactly like `HoverHighlightView`'s own press replay expects.
+        closeSquare.addGestureRecognizer(NSClickGestureRecognizer(target: self,
+                                                                  action: #selector(closeSquareClicked)))
+        NSLayoutConstraint.activate([
+            closeSquare.widthAnchor.constraint(equalToConstant: Self.closeSquareSide),
+            closeSquare.heightAnchor.constraint(equalToConstant: Self.closeSquareSide),
+            closeGlyph.centerXAnchor.constraint(equalTo: closeSquare.centerXAnchor),
+            closeGlyph.centerYAnchor.constraint(equalTo: closeSquare.centerYAnchor),
+        ])
+        closeSquare.setContentHuggingPriority(.required, for: .horizontal)
+        closeSquare.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let row = NSStackView(views: [textColumn, closeSquare])
+        row.orientation = .horizontal
+        row.alignment = .top
+        // AGENTS.md gotcha (10): `.gravityAreas` honours no hugging priority at
+        // all, so the square would drift with the title's own width.
+        row.distribution = .fill
+        row.spacing = HelmMetrics.s3
+        row.translatesAutoresizingMaskIntoConstraints = false
+        headerBlock = row
+    }
+
+    @objc private func closeSquareClicked() {
+        guard let action = closeButton.action else { return }
+        NSApp.sendAction(action, to: closeButton.target, from: self)
+    }
+
+    /// §6.10's header subtitle. Empty (the default) leaves the header a single
+    /// line, exactly as it was.
+    func setSubtitle(_ text: String) {
+        subtitleLabel.stringValue = text
+        subtitleLabel.isHidden = text.isEmpty
+    }
+
     private func buildFixedLayout() {
         // A real, required width - not just an initial frame guess. This is
         // what makes `sizeToFitContent`'s `fittingSize` height read stable:
@@ -1520,7 +1612,7 @@ final class HelmFormSheet: NSView {
         // make unstable (see `ShiftTaskEditorController`'s own history).
         widthAnchor.constraint(equalToConstant: Self.width).isActive = true
 
-        let outer = NSStackView(views: [headingLabel, contentStack, footerContainer])
+        let outer = NSStackView(views: [headerBlock, contentStack, footerContainer])
         outer.orientation = .vertical
         outer.alignment = .leading
         outer.spacing = HelmMetrics.s3 + 2
@@ -1531,6 +1623,7 @@ final class HelmFormSheet: NSView {
             outer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.gutter),
             outer.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s5 - 4),
             outer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -(HelmMetrics.s4 + 2)),
+            headerBlock.widthAnchor.constraint(equalTo: outer.widthAnchor),
             contentStack.widthAnchor.constraint(equalTo: outer.widthAnchor),
             footerContainer.widthAnchor.constraint(equalTo: outer.widthAnchor),
         ])
@@ -1567,7 +1660,7 @@ final class HelmFormSheet: NSView {
         // words "New Host" in the window while every field below stayed
         // left-aligned in its capped column.
         let headerColumn = cappedColumn(in: headerBox)
-        headerColumn.addSubview(headingLabel)
+        headerColumn.addSubview(headerBlock)
 
         footerDivider.wantsLayer = true
         footerDivider.translatesAutoresizingMaskIntoConstraints = false
@@ -1579,12 +1672,12 @@ final class HelmFormSheet: NSView {
             headerBox.leadingAnchor.constraint(equalTo: leadingAnchor),
             headerBox.trailingAnchor.constraint(equalTo: trailingAnchor),
             headerBox.topAnchor.constraint(equalTo: topAnchor),
-            headingLabel.leadingAnchor.constraint(equalTo: headerColumn.leadingAnchor),
-            headingLabel.trailingAnchor.constraint(lessThanOrEqualTo: headerColumn.trailingAnchor),
+            headerBlock.leadingAnchor.constraint(equalTo: headerColumn.leadingAnchor),
+            headerBlock.trailingAnchor.constraint(equalTo: headerColumn.trailingAnchor),
             headerColumn.topAnchor.constraint(equalTo: headerBox.topAnchor, constant: HelmMetrics.s5 - 4),
             headerColumn.bottomAnchor.constraint(equalTo: headerBox.bottomAnchor, constant: -HelmMetrics.s3),
-            headingLabel.topAnchor.constraint(equalTo: headerColumn.topAnchor),
-            headingLabel.bottomAnchor.constraint(equalTo: headerColumn.bottomAnchor),
+            headerBlock.topAnchor.constraint(equalTo: headerColumn.topAnchor),
+            headerBlock.bottomAnchor.constraint(equalTo: headerColumn.bottomAnchor),
 
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -1899,11 +1992,20 @@ final class HelmFormSheet: NSView {
         footerContainer.subviews.forEach { $0.removeFromSuperview() }
 
         var views: [NSView] = []
-        if let hint {
-            let label = NSTextField(labelWithString: hint)
-            label.font = HelmType.caption()
+        // §6.10's mono "⌘⏎ to save" hint. Derived from `confirmModifiers` when
+        // the caller passed none, rather than hardcoded: only the task editor
+        // confirms on ⌘Return (its multi-line description eats a plain one),
+        // and printing "⌘⏎" on the eight sheets where a bare Return saves
+        // would be telling the captain the wrong shortcut. `muted`, never
+        // `faint` - §6.10 calls that out because `faint` fails the text floor.
+        let resolvedHint = hint ?? (confirmModifiers.contains(.command)
+                                    ? "\u{2318}\u{23ce} to save"
+                                    : "\u{23ce} to save")
+        do {
+            let label = NSTextField(labelWithString: resolvedHint)
             label.translatesAutoresizingMaskIntoConstraints = false
             mutedLabels.append(label)
+            footerHintLabel = label
             views.append(label)
         }
         var deleteButton: HelmButton?
@@ -1917,6 +2019,10 @@ final class HelmFormSheet: NSView {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         views.append(spacer)
 
+        // §6.10's "ghost Cancel". `variant` is settable, so `applyTheme` moves
+        // it between `.quiet` (Daylight's ghost) and `.secondary` (what the
+        // twelve palettes have always rendered) rather than this being fixed at
+        // construction.
         let cancelButton = HelmButton(title: "Cancel", variant: .secondary, target: target, action: cancel)
         cancelButton.keyEquivalent = "\u{1b}"
         let confirmButton = HelmButton(title: confirmTitle, variant: .primary, target: target, action: confirm)
@@ -1957,6 +2063,11 @@ final class HelmFormSheet: NSView {
                 row.bottomAnchor.constraint(equalTo: footerContainer.bottomAnchor),
             ])
         }
+        footerCancelButton = cancelButton
+        footerConfirmButton = confirmButton
+        // The close square dismisses through Cancel's own target/action.
+        closeButton.target = target
+        closeButton.action = cancel
         applyTheme(ThemeManager.shared.theme)
         return (confirmButton, cancelButton, deleteButton)
     }
@@ -2025,6 +2136,24 @@ final class HelmFormSheet: NSView {
             : HelmType.sectionTitle()
         headingLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         fieldHues.forEach { $0(domainHue) }
+        // §6.10's header block, close square and footer, Daylight-only so the
+        // twelve pre-Daylight palettes render exactly what they always did.
+        subtitleLabel.font = theme.isDaylight ? HelmType.body() : HelmType.caption()
+        closeSquare.isHidden = !(theme.isDaylight && closeButton.action != nil)
+        let insetFill = HelmField.fill(theme)
+        closeSquare.normalColor = insetFill
+        closeSquare.hoverColor = HelmTheme.nsColor(theme.chromeLineHex)
+        closeGlyph.contentTintColor = HelmTheme.mutedInk(theme)
+        footerHintLabel?.font = theme.isDaylight ? HelmType.code() : HelmType.caption()
+        footerCancelButton?.variant = theme.isDaylight ? .quiet : .secondary
+        // §6.10's "primary Save (domain gradient capsule)". Applied from here,
+        // not at construction, because `HelmButton.domainHue` re-points a
+        // `.primary`'s fill in *every* palette (from `accentHex` to that
+        // palette's own tint slot) - which the twelve pre-Daylight themes must
+        // not see. The capsule shape is already `HelmButton`'s Daylight radius;
+        // this is the gradient half.
+        footerConfirmButton?.domainHue = theme.isDaylight ? domainHue : nil
+        footerConfirmButton?.gradientFill = theme.isDaylight
         footerDivider.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex)
             .withAlphaComponent(HelmCard.dividerAlpha).cgColor
         let muted = HelmTheme.mutedInk(theme)
@@ -2070,6 +2199,59 @@ final class HelmFormSheet: NSView {
         let headingColor: NSColor?
         let backgroundColor: NSColor?
     }
+
+    #if FM_SELFTESTS
+    /// §6.10's Daylight resolution, read off the real views rather than
+    /// re-derived - what `DaylightChromeSelfTest` asserts for all nine sheets.
+    struct DaylightGeometry {
+        let ribbonHidden: Bool
+        let ribbonHeight: CGFloat
+        let ribbonColors: [NSColor]
+        let headingFont: NSFont?
+        let subtitleText: String
+        let subtitleHidden: Bool
+        let subtitleColor: NSColor?
+        let closeHidden: Bool
+        let closeSide: CGFloat
+        let closeRadius: CGFloat
+        let closeFill: NSColor?
+        let hintText: String
+        let hintFont: NSFont?
+        let hintColor: NSColor?
+        let cancelVariant: HelmButton.Variant?
+        let confirmVariant: HelmButton.Variant?
+        let confirmHue: HelmDomainHue?
+        let confirmGradient: Bool
+        let hue: HelmDomainHue
+    }
+
+    var debugDaylightGeometry: DaylightGeometry {
+        DaylightGeometry(ribbonHidden: ribbon.isHidden,
+                         ribbonHeight: ribbonHeightConstraint?.constant ?? 0,
+                         ribbonColors: (ribbonGradient.colors as? [CGColor] ?? [])
+                             .compactMap { NSColor(cgColor: $0) },
+                         headingFont: headingLabel.font,
+                         subtitleText: subtitleLabel.stringValue,
+                         subtitleHidden: subtitleLabel.isHidden,
+                         subtitleColor: subtitleLabel.textColor,
+                         closeHidden: closeSquare.isHidden,
+                         closeSide: closeSquare.frame.width,
+                         closeRadius: closeSquare.layer?.cornerRadius ?? 0,
+                         closeFill: closeSquare.layer?.backgroundColor
+                             .flatMap { NSColor(cgColor: $0) },
+                         hintText: footerHintLabel?.stringValue ?? "",
+                         hintFont: footerHintLabel?.font,
+                         hintColor: footerHintLabel?.textColor,
+                         cancelVariant: footerCancelButton?.variant,
+                         confirmVariant: footerConfirmButton?.variant,
+                         confirmHue: footerConfirmButton?.domainHue,
+                         confirmGradient: footerConfirmButton?.gradientFill ?? false,
+                         hue: domainHue)
+    }
+
+    /// Fire the close square exactly as a click (or a VoiceOver press) does.
+    func debugClickCloseSquare() { closeSquareClicked() }
+    #endif
 
     var geometry: Geometry {
         Geometry(width: bounds.width,

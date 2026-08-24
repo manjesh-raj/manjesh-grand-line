@@ -58,6 +58,7 @@ final class ShiftProjectEditorController: NSViewController {
                        confirm: #selector(save),
                        cancel: #selector(cancel))
 
+        form.setSubtitle("Groups tasks under one name.")
         form.refreshTheme()
         form.sizeToFitContent()
     }

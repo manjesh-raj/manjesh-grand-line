@@ -181,6 +181,7 @@ final class MultiHostSendPickerController: NSViewController {
         // for the scaffold is before this controller has added a single row -
         // so the first firing always finds empty registries. Every editor
         // sheet in this app ends `loadView` with this for that reason.
+        form.setSubtitle("One tab per host. The risk gate runs once per host.")
         form.refreshTheme()
         form.sizeToFitContent()
     }

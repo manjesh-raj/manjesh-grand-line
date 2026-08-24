@@ -244,6 +244,7 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
                        cancel: #selector(cancel),
                        delete: editing == nil ? nil : (title: "Delete Host", action: #selector(deleteHost)))
 
+        form.setSubtitle("Stored on this Mac. Credentials stay in the Keychain.")
         form.refreshTheme()
     }
 

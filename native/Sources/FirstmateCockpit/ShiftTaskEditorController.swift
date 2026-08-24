@@ -218,6 +218,7 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
                        confirmModifiers: [.command],
                        hint: "\u{2318}\u{23ce} to save")
 
+        form.setSubtitle("Something to do.")
         form.refreshTheme()
         form.sizeToFitContent()
     }

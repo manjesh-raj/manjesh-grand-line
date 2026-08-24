@@ -90,6 +90,10 @@ final class UnifiedSearchIndex {
 /// `main.swift` wires those two actions into `UnifiedSearchDocsProvider`
 /// instead, alongside every other domain's.
 final class UnifiedSearchController: NSWindowController {
+    /// §6.11's width. Was 580 before Daylight; one step wider gives the
+    /// grouped rows their gradient tile and mono shortcut hint room.
+    static let panelWidth: CGFloat = 600
+
     private let index: UnifiedSearchIndex
 
     /// The palette's query line, in the app's own search well (Phase 0's
@@ -123,7 +127,7 @@ final class UnifiedSearchController: NSWindowController {
     init(index: UnifiedSearchIndex) {
         self.index = index
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 580, height: 60),
+            contentRect: NSRect(x: 0, y: 0, width: Self.panelWidth, height: 60),
             styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel, .resizable],
             backing: .buffered, defer: false
         )
@@ -324,7 +328,11 @@ final class UnifiedSearchController: NSWindowController {
     /// A section header - the mockup's small uppercase group name.
     private func addGroupHeader(_ title: String) {
         let label = NSTextField(labelWithString: title.uppercased())
-        label.font = HelmType.kicker()
+        // §6.11's "10px uppercase" group label - one step down from the shared
+        // kicker, which the twelve palettes keep.
+        label.font = ThemeManager.shared.theme.isDaylight
+            ? .systemFont(ofSize: HelmType.scaled(10), weight: .bold)
+            : HelmType.kicker()
         label.textColor = HelmTheme.mutedInk(ThemeManager.shared.theme)
         label.translatesAutoresizingMaskIntoConstraints = false
         let padded = NSView()
@@ -417,6 +425,25 @@ final class UnifiedSearchController: NSWindowController {
 
     private func applyTheme(_ theme: HelmTheme) {
         window?.contentView?.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
+        // §6.11: radius 16 on `card` with a raised shadow. A titled `NSPanel`
+        // paints its own square background behind the content view, so the
+        // corner radius only reads once the *window* stops drawing one -
+        // hence `isOpaque = false` plus a clear window background, the
+        // standard rounded-floating-panel arrangement. The shadow is the
+        // window's own (`hasShadow`), because a layer shadow inside a
+        // clipped, rounded content view would be drawn inside its own mask.
+        if let panel = window {
+            panel.isOpaque = !theme.isDaylight
+            panel.backgroundColor = theme.isDaylight
+                ? .clear
+                : HelmTheme.nsColor(theme.chromeBackgroundHex)
+            panel.hasShadow = true
+            panel.invalidateShadow()
+        }
+        if let content = window?.contentView {
+            content.layer?.cornerRadius = theme.isDaylight ? HelmMetrics.dSurface : 0
+            content.layer?.masksToBounds = theme.isDaylight
+        }
         dividerRef?.wantsLayer = true
         dividerRef?.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6).cgColor
         for label in groupHeaderLabels { label.textColor = HelmTheme.mutedInk(theme) }
@@ -449,14 +476,62 @@ final class UnifiedSearchController: NSWindowController {
         guard index >= 0, index < rowViews.count else { return nil }
         return rowViews[index].debugGeometry
     }
+    /// §6.11's Daylight per-row recipe.
+    func debugDaylightRowGeometry(at index: Int) -> UnifiedSearchDaylightRowGeometry? {
+        guard index >= 0, index < rowViews.count else { return nil }
+        let g = rowViews[index].debugDaylightGeometry
+        return UnifiedSearchDaylightRowGeometry(
+            flatTileHidden: g.flatTileHidden, gradientTileHidden: g.gradientTileHidden,
+            gradientTileSide: g.gradientTileSide, selectionEdgeHidden: g.selectionEdgeHidden,
+            selectionEdgeWidth: g.selectionEdgeWidth, selectionEdgeColor: g.selectionEdgeColor,
+            backgroundFill: g.backgroundFill, backgroundRadius: g.backgroundRadius,
+            hintFont: g.hintFont)
+    }
+    /// The panel chrome §6.11 specifies - radius/opacity/width, read live.
+    var debugPanelChrome: (width: CGFloat, radius: CGFloat, masks: Bool,
+                           opaque: Bool, hasShadow: Bool) {
+        (window?.frame.width ?? 0,
+         window?.contentView?.layer?.cornerRadius ?? 0,
+         window?.contentView?.layer?.masksToBounds ?? false,
+         window?.isOpaque ?? true,
+         window?.hasShadow ?? false)
+    }
+    func debugApplyTheme(_ theme: HelmTheme) { applyTheme(theme) }
+    /// Re-theme every row too - `applyTheme` already does, but a row also
+    /// re-reads its own selection state, so this is the honest whole-panel
+    /// refresh a real `ThemeManager` firing performs.
+    func debugRefreshRows(_ theme: HelmTheme) { rowViews.forEach { $0.applyTheme(theme) } }
     #endif
 }
+
+#if FM_SELFTESTS
+/// §6.11's Daylight row recipe, surfaced out of the private row view so a
+/// suite can name the type.
+struct UnifiedSearchDaylightRowGeometry {
+    let flatTileHidden: Bool
+    let gradientTileHidden: Bool
+    let gradientTileSide: CGFloat
+    let selectionEdgeHidden: Bool
+    let selectionEdgeWidth: CGFloat
+    let selectionEdgeColor: NSColor?
+    let backgroundFill: NSColor?
+    let backgroundRadius: CGFloat
+    let hintFont: NSFont?
+}
+#endif
 
 /// One palette row, matching the mockup's shape: a small tinted icon tile,
 /// the title over a muted meta line, and an optional trailing chip carrying
 /// what Return will do ("Connect ↵").
 private final class UnifiedSearchRowView: NSView {
     private let tile = IconTileView(size: 24, cornerRadius: 6)
+    /// §6.11's 28pt gradient tile. Built for every theme and shown only under
+    /// Daylight, where it takes the flat tinted tile's place - the same
+    /// exactly-one-visible arrangement `HelmAccentRow` and `HelmEmptyState`
+    /// already use, so a theme switch never rebuilds a row.
+    private let gradientTile = HelmGradientTile(size: .palette)
+    /// §6.11's "3px `ink` inset left edge" on the selected row.
+    private let selectionEdge = NSView()
     private let titleLabel = NSTextField(labelWithString: "")
     private let metaLabel = NSTextField(labelWithString: "")
     private let hintLabel = NSTextField(labelWithString: "")
@@ -525,7 +600,33 @@ private final class UnifiedSearchRowView: NSView {
             hintBackground.heightAnchor.constraint(equalTo: hintLabel.heightAnchor, constant: 4),
         ])
 
-        let row = NSStackView(views: [tile, textColumn, hintBackground])
+        selectionEdge.wantsLayer = true
+        selectionEdge.isHidden = true
+        selectionEdge.translatesAutoresizingMaskIntoConstraints = false
+        background.addSubview(selectionEdge)
+        NSLayoutConstraint.activate([
+            selectionEdge.leadingAnchor.constraint(equalTo: background.leadingAnchor),
+            selectionEdge.topAnchor.constraint(equalTo: background.topAnchor),
+            selectionEdge.bottomAnchor.constraint(equalTo: background.bottomAnchor),
+            selectionEdge.widthAnchor.constraint(equalToConstant: Self.selectionEdgeWidth),
+        ])
+
+        let tileBox = NSView()
+        tileBox.translatesAutoresizingMaskIntoConstraints = false
+        tileBox.addSubview(tile)
+        tileBox.addSubview(gradientTile)
+        NSLayoutConstraint.activate([
+            tile.centerXAnchor.constraint(equalTo: tileBox.centerXAnchor),
+            tile.centerYAnchor.constraint(equalTo: tileBox.centerYAnchor),
+            gradientTile.centerXAnchor.constraint(equalTo: tileBox.centerXAnchor),
+            gradientTile.centerYAnchor.constraint(equalTo: tileBox.centerYAnchor),
+            tileBox.widthAnchor.constraint(equalToConstant: HelmGradientTile.Size.palette.side),
+            tileBox.heightAnchor.constraint(equalToConstant: HelmGradientTile.Size.palette.side),
+        ])
+        tileBox.setContentHuggingPriority(.required, for: .horizontal)
+        tileBox.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let row = NSStackView(views: [tileBox, textColumn, hintBackground])
         row.orientation = .horizontal
         row.spacing = 10
         row.alignment = .centerY
@@ -553,6 +654,7 @@ private final class UnifiedSearchRowView: NSView {
     func configure(item: UnifiedSearchItem, theme: HelmTheme, selected: Bool) {
         self.theme = theme
         tile.configure(symbol: item.kind.symbol, tint: item.kind.tint, pointSize: 11)
+        gradientTile.configure(symbol: item.kind.symbol, hue: HelmDomainHue(tint: item.kind.tint))
         titleLabel.stringValue = item.title
         metaLabel.stringValue = item.meta
         metaLabel.isHidden = item.meta.isEmpty
@@ -574,14 +676,61 @@ private final class UnifiedSearchRowView: NSView {
         let line = HelmTheme.nsColor(theme.chromeLineHex)
         titleLabel.textColor = ink
         metaLabel.textColor = muted
+        // §6.11's "right mono shortcut hint".
+        hintLabel.font = theme.isDaylight ? HelmType.code() : HelmType.caption()
         hintLabel.textColor = muted
         hintBackground.layer?.backgroundColor = line.withAlphaComponent(0.35).cgColor
+        tile.isHidden = theme.isDaylight
+        gradientTile.isHidden = !theme.isDaylight
         tile.applyTheme(theme)
-        background.normalColor = isSelected ? line.withAlphaComponent(0.3) : .clear
-        background.hoverColor = line.withAlphaComponent(0.3)
+        gradientTile.applyTheme(theme)
+        if theme.isDaylight {
+            // §6.11: selected row = `inset` fill plus a 3px `ink` inset left
+            // edge. The twelve palettes keep the accent-line wash they have.
+            background.cornerRadius = HelmMetrics.dTileSmall
+            let inset = HelmTheme.nsColor(DaylightPalette.inset)
+            background.normalColor = isSelected ? inset : .clear
+            background.hoverColor = HelmTheme.nsColor(DaylightPalette.rowHover)
+            selectionEdge.isHidden = !isSelected
+            selectionEdge.layer?.backgroundColor = HelmTheme.nsColor(DaylightPalette.ink).cgColor
+        } else {
+            background.cornerRadius = 6
+            background.normalColor = isSelected ? line.withAlphaComponent(0.3) : .clear
+            background.hoverColor = line.withAlphaComponent(0.3)
+            selectionEdge.isHidden = true
+        }
     }
 
+    /// §6.11's selected-row edge weight.
+    static let selectionEdgeWidth: CGFloat = 3
+
     #if FM_SELFTESTS
+    /// §6.11's Daylight row recipe, read off the real views.
+    struct DaylightRowGeometry {
+        let flatTileHidden: Bool
+        let gradientTileHidden: Bool
+        let gradientTileSide: CGFloat
+        let selectionEdgeHidden: Bool
+        let selectionEdgeWidth: CGFloat
+        let selectionEdgeColor: NSColor?
+        let backgroundFill: NSColor?
+        let backgroundRadius: CGFloat
+        let hintFont: NSFont?
+    }
+
+    var debugDaylightGeometry: DaylightRowGeometry {
+        DaylightRowGeometry(flatTileHidden: tile.isHidden,
+                            gradientTileHidden: gradientTile.isHidden,
+                            gradientTileSide: HelmGradientTile.Size.palette.side,
+                            selectionEdgeHidden: selectionEdge.isHidden,
+                            selectionEdgeWidth: Self.selectionEdgeWidth,
+                            selectionEdgeColor: selectionEdge.layer?.backgroundColor
+                                .flatMap { NSColor(cgColor: $0) },
+                            backgroundFill: background.normalColor,
+                            backgroundRadius: background.cornerRadius,
+                            hintFont: hintLabel.font)
+    }
+
     var debugGeometry: (rowWidth: CGFloat, chipWidth: CGFloat, chipHidden: Bool,
                         titleMaxX: CGFloat, chipMinX: CGFloat) {
         let titleInRow = titleLabel.convert(titleLabel.bounds, to: self)

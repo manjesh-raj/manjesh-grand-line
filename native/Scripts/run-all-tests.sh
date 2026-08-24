@@ -93,6 +93,9 @@ NEEDS_SESSION=(
   "FM_RUN_DAYLIGHT_DRILL_SLICE3_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_SLICE4_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_SLICE5_TESTS"
+  # Phase 5 mounts real editor sheets, a real `NSPanel` palette and real
+  # `NSButton` clicks - window-backed, like its Daylight peers above.
+  "FM_RUN_DAYLIGHT_CHROME_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_SLICE6_TESTS"
   "FM_RUN_DESTINATION_MOUNTING_TESTS"
   "FM_RUN_BLOCK_VIEW_HIERARCHY_TESTS"

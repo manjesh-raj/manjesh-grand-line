@@ -149,6 +149,7 @@ final class ScheduleEditorController: NSViewController {
         // a scaffold is before any row exists - so the first firing always
         // finds empty registries and every editor here ends `loadView` this
         // way. See `HelmFormSheet.refreshTheme`.
+        form.setSubtitle("Runs on its own and reports to Health.")
         form.refreshTheme()
         form.sizeToFitContent()
     }

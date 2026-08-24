@@ -93,6 +93,7 @@ final class ShiftFollowUpEditorController: NSViewController {
                        confirm: #selector(save),
                        cancel: #selector(cancel))
 
+        form.setSubtitle("Something to check on later.")
         form.refreshTheme()
         form.sizeToFitContent()
     }
