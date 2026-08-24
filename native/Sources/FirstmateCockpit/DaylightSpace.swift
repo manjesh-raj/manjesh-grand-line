@@ -138,9 +138,44 @@ enum DaylightModule: String, CaseIterable {
         }
     }
 
+    /// Whether this module's card renders on the Overview canvas
+    /// specifically (`fm/grandline-overview-canvas-trim`).
+    ///
+    /// True by default; false for the twelve modules the captain asked
+    /// removed from Overview after reviewing a live screenshot - the canvas
+    /// had grown to eighteen cards, most of which duplicated a page already
+    /// one click away via its own space (Command/Operations/Stores/
+    /// Engineering), the nav, or `⌘K`. What Overview keeps is the pair with
+    /// no other home (`.briefing`/`.fleet`, `space == nil`) plus the small
+    /// "operational pulse" set the captain wants visible at a glance without
+    /// switching spaces: `.mergeQueue`, `.console`, `.health`, `.schedules`.
+    ///
+    /// **This is presentation-only, exactly like `space`/`isVisible` above -
+    /// it removes a module's card from the Overview canvas, nothing else.**
+    /// A module with `appearsOnOverview == false` still has its own
+    /// `RailDestination`, is still fully functional, and still renders its
+    /// card on its own space's canvas via `isVisible(in:)` below (which only
+    /// special-cases `.overview`) - `.tasks`' card still shows on Command,
+    /// `.vault`'s still shows on Stores, and so on. Nothing was deleted.
+    var appearsOnOverview: Bool {
+        switch self {
+        case .tasks, .hosts, .updates, .bootstrap, .automation, .githubSync,
+             .logAnalyzer, .vault, .docs, .dictation, .tools, .settings:
+            return false
+        default:
+            return true
+        }
+    }
+
     /// Is this module shown while `space` is selected?
+    ///
+    /// Overview is special-cased to `appearsOnOverview` rather than "every
+    /// module" (§5.3's own model, extended by the trim above); every other
+    /// space is unaffected and still shows exactly the modules whose own
+    /// `space` matches.
     func isVisible(in space: DaylightSpace) -> Bool {
-        space == .overview || self.space == space
+        if space == .overview { return appearsOnOverview }
+        return self.space == space
     }
 
     /// How many grid columns this module's card consumes (§6.1's "wide
