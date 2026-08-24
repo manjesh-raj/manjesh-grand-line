@@ -195,16 +195,21 @@ enum InputSurfaceSelfTest {
                 fail("\(theme.id): selection is the system colour", &ok)
                 return
             }
-            if !sameHue(background, HelmTheme.nsColor(theme.accentHex)) {
-                fail("\(theme.id): selection wash is not the theme accent", &ok)
+            // `fm/grandline-text-selection-contrast-audit` made the fill
+            // **opaque** - a translucent wash's effective colour depends on
+            // whatever surface is underneath, and on Daylight no single
+            // foreground clears the floor against both a light field and
+            // §6.13's dark terminal card. So the assertion is no longer "the
+            // raw accent hue" but "a wash of the accent over the field fill":
+            // the fill has to sit on the segment between those two, which is
+            // exactly what an alpha composite produces.
+            if !isWashOfAccent(background, theme: theme) {
+                fail("\(theme.id): selection fill is not a wash of the theme accent", &ok)
                 return
             }
-            // The ink sits on the wash composited over the field fill, so it
-            // has to clear the floor against *that*, not against the page.
-            let composited = HelmContrast.color(
-                HelmContrast.mix(HelmContrast.components(HelmTheme.nsColor(theme.accentHex)),
-                                 HelmContrast.components(HelmField.fill(theme)),
-                                 Double(HelmSelection.alpha)))
+            // The ink sits on that opaque fill, so it is scored against the
+            // real drawn colour rather than against a reconstruction of it.
+            let composited = background
             let ratio = HelmContrast.ratio(foreground, composited)
             if ratio < HelmContrast.textTarget {
                 fail(String(format: "%@: selected text %.2f against its own wash (floor %.2f)",
@@ -237,7 +242,7 @@ enum InputSurfaceSelfTest {
             }
             let background = editor.selectedTextAttributes[.backgroundColor] as? NSColor
             check(background != nil && background != systemBlue
-                  && sameHue(background!, HelmTheme.nsColor(theme.accentHex)),
+                  && isWashOfAccent(background!, theme: theme),
                   "\(label) field's editor paints selection from the theme accent", &ok)
         }
         let owned = multi.textView.selectedTextAttributes[.backgroundColor] as? NSColor
@@ -246,8 +251,23 @@ enum InputSurfaceSelfTest {
         _ = window.makeFirstResponder(nil)
     }
 
-    /// Hue comparison rather than equality: `HelmSelection` applies its own
-    /// alpha, and the comparison must not care about it.
+    /// The selection fill has to be the theme's own accent washed over the
+    /// field fill - i.e. a point on the segment between them, at whichever
+    /// rung of `HelmSelection.alphaLadder` that palette needed. Comparing
+    /// against the raw accent would only be right for a translucent fill.
+    private static func isWashOfAccent(_ color: NSColor, theme: HelmTheme) -> Bool {
+        let accent = HelmContrast.components(HelmTheme.nsColor(theme.accentHex))
+        let field = HelmContrast.components(HelmField.fill(theme))
+        for step in HelmSelection.alphaLadder {
+            let candidate = HelmContrast.color(HelmContrast.mix(accent, field, Double(step)))
+            if sameHue(candidate, color) { return true }
+        }
+        return false
+    }
+
+    /// Hue comparison rather than equality: colours reconstructed through
+    /// `HelmContrast`'s sRGB maths can differ from the painted one in the last
+    /// bit, and the comparison must not care about that.
     private static func sameHue(_ a: NSColor, _ b: NSColor) -> Bool {
         guard let x = a.usingColorSpace(.sRGB), let y = b.usingColorSpace(.sRGB) else { return false }
         return abs(x.redComponent - y.redComponent) < 0.02

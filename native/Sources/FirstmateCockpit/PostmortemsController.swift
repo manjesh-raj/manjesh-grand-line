@@ -245,6 +245,7 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
 
         postmortemEmptyState.applyTheme(theme)
         HelmField.applySunken(to: postmortemDetailScroll, theme: theme)
+        HelmSelection.apply(to: postmortemDetailTextView, theme: theme)
         postmortemDetailTextView.textColor = HelmField.ink(theme)
         postmortemDetailTextView.backgroundColor = HelmField.fill(theme)
 

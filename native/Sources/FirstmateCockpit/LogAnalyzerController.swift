@@ -1750,6 +1750,7 @@ extension LogAnalyzerController {
         textView.string = body
         textView.isEditable = false
         textView.font = HelmType.code()
+        HelmSelection.apply(to: textView, theme: theme)
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 620, height: 360))
         scroll.documentView = textView
         scroll.hasVerticalScroller = true

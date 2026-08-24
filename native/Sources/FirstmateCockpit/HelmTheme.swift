@@ -293,13 +293,20 @@ extension HelmTheme {
         id: "solarized-light", mode: .light, name: "Solarized Light", pairId: "solarized-dark",
         chromeBackgroundHex: "eee8d5", chromeInkHex: "002b36", chromeLineHex: "93a1a1",
         accentHex: "2aa198",
-        // `base00`/`base3` - Solarized's own README-recommended default
-        // body-text pairing. Measures 4.13:1, a hair under the 4.5:1 floor
-        // (not flagged as a deviation in the sourcing report, which focused
-        // its contrast pass on the ANSI/accent/chrome slots) - consistent
-        // with this family's whole design philosophy of deliberately
-        // desaturated, lower-contrast tones (see the accent caveat below).
-        foregroundHex: "657b83", backgroundHex: "fdf6e3",
+        // `base01`/`base3`. This shipped as `base00` (`657b83`) - Solarized's
+        // own README-recommended default body pairing - which measures
+        // **4.13:1**, under the 4.5:1 floor, and was carried as an accepted
+        // limitation because the sourcing report's contrast pass only covered
+        // the ANSI/accent/chrome slots. `fm/grandline-text-selection-contrast-
+        // audit` swept normal text as well and this was the one theme of the
+        // fourteen that failed it.
+        //
+        // The correction is one step **up the family's own monotone ramp**
+        // (base00 -> base01), not a hand-mixed darkening: base01 is a
+        // canonical Solarized value that the spec itself lists for emphasized
+        // content on a light background, so there is no hue drift and the
+        // palette's identity is untouched. Measures 4.99:1 on `base3`.
+        foregroundHex: "586e75", backgroundHex: "fdf6e3",
         cursorHex: "2aa198", selectionHex: "2aa198", selectionTextHex: "002b36",
         ansiHex: [
             "073642", "dc322f", "859900",

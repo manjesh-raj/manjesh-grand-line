@@ -275,12 +275,64 @@ enum HelmContrast {
     /// as well; this is where a contrast correction belongs.
     static func legible(_ base: NSColor, over surface: NSColor) -> NSColor {
         if ratio(base, surface) >= textTarget { return base }
-        let endpoint: NSColor = relativeLuminance(components(surface)) > 0.35 ? .black : .white
+        // Evaluate both endpoints rather than deriving one from a luminance
+        // threshold, which is what this doc comment always claimed and what
+        // the code did not do. The crossover where black and white score
+        // equally against a surface is at relative luminance **0.179**, not
+        // the 0.35 the old heuristic used - so any surface landing in
+        // (0.179, 0.35] was corrected toward white when black had the
+        // headroom, and could end at pure white still below the floor with
+        // nothing reporting it. Picking the better endpoint also makes the
+        // floor genuinely reachable: max(black, white) against any surface is
+        // never worse than 4.58:1.
+        let endpoint: NSColor = ratio(.black, surface) > ratio(.white, surface) ? .black : .white
         for step in stride(from: 0.05, through: 1.0, by: 0.05) {
             guard let blended = base.blended(withFraction: CGFloat(step), of: endpoint) else { break }
             if ratio(blended, surface) >= textTarget { return blended }
         }
         return endpoint
+    }
+
+    /// Ink for an **opaque fill this app chose**, guaranteed to clear `target`.
+    ///
+    /// The difference from `legible` is the guarantee, and it comes from the
+    /// fill being known and opaque: `max(ratio(black, fill), ratio(white,
+    /// fill))` is never below 4.58:1 for any colour, so blending `preferring`
+    /// toward the better endpoint always terminates at or above the text
+    /// floor. `legible` cannot promise that for an arbitrary caller because it
+    /// may be handed a base that already *is* its endpoint (the documented
+    /// `legible(.white, over:)` no-op).
+    ///
+    /// Used by `HelmSelection`, whose whole contract is that the selected-text
+    /// pair is measurable rather than dependent on what is underneath.
+    static func legibleOn(fill: NSColor,
+                          preferring base: NSColor,
+                          target: Double = textTarget) -> NSColor {
+        if ratio(base, fill) >= target { return base }
+        let endpoint = ratio(.black, fill) > ratio(.white, fill)
+            ? components(NSColor.black) : components(NSColor.white)
+        let from = components(base)
+        var lo = 0.0, hi = 1.0
+        // Coarse scan first, for the same V-shaped-ratio reason `tintedSurface`
+        // documents: contrast against a fixed fill is not monotonic in the
+        // blend fraction when base and endpoint sit on opposite sides of the
+        // fill's own luminance.
+        var bracketed = false
+        for i in 1...32 {
+            let t = Double(i) / 32.0
+            if ratio(color(mix(endpoint, from, t)), fill) >= target {
+                hi = t
+                lo = Double(i - 1) / 32.0
+                bracketed = true
+                break
+            }
+        }
+        guard bracketed else { return color(endpoint) }
+        for _ in 0..<12 {
+            let mid = (lo + hi) / 2
+            if ratio(color(mix(endpoint, from, mid)), fill) >= target { hi = mid } else { lo = mid }
+        }
+        return color(mix(endpoint, from, hi))
     }
 
     /// A **white glyph** on an opaque coloured fill, corrected only as far as

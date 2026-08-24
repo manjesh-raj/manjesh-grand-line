@@ -287,6 +287,7 @@ enum BackupUI {
         textView.isSelectable = true
         textView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         textView.textContainerInset = NSSize(width: 6, height: 6)
+        HelmSelection.apply(to: textView, theme: ThemeManager.shared.theme)
 
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 440, height: 220))
         scroll.documentView = textView

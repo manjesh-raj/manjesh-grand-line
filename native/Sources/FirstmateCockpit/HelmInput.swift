@@ -250,39 +250,84 @@ final class HelmFocusSensing {
 /// work.
 enum HelmSelection {
 
-    /// How strongly the accent tints the selection. The terminal solved this
-    /// same problem years ago with its own `selectionHex`; this is the UI
-    /// layer's equivalent, at the alpha the audit's R4 specifies.
+    /// How strongly the accent tints the selection, and the ladder a palette
+    /// steps up when the weakest step does not separate the highlight from the
+    /// surface it is drawn on. The terminal solved this same problem years ago
+    /// with its own `selectionHex`; this is the UI layer's equivalent, at the
+    /// alpha the audit's R4 specifies.
+    ///
+    /// `alpha` stays the first rung so every palette that was already
+    /// separated renders exactly as before this correction.
     static let alpha: CGFloat = 0.35
+    static let alphaLadder: [CGFloat] = [alpha, 0.42, 0.50, 0.60, 0.70, 0.85, 1.0]
 
-    static func attributes(_ theme: HelmTheme = ThemeManager.shared.theme) -> [NSAttributedString.Key: Any] {
-        let accent = HelmTheme.nsColor(theme.accentHex)
-        // The selection wash sits over a field fill, so the ink on top of it
-        // is checked rather than assumed - the same rule `HelmField.ink`
-        // applies one level out. `HelmContrast.legible` returns its input
-        // untouched whenever it already clears the floor.
-        let wash = accent.withAlphaComponent(alpha)
-        // `HelmContrast.mix`, not `NSColor.blended(withFraction:of:)`: blended
-        // converts both operands into a calibrated space first, so its result
-        // drifts from the straight-sRGB composite alpha blending actually
-        // performs and `HelmContrast.ratio` then measures. The same correction
-        // Phase 4's segmented-tabs label needed.
-        let composited = HelmContrast.color(
-            HelmContrast.mix(HelmContrast.components(accent),
-                             HelmContrast.components(HelmField.fill(theme)),
-                             Double(alpha)))
-        return [.backgroundColor: wash,
-                .foregroundColor: HelmContrast.legible(HelmField.ink(theme), over: composited)]
+    /// How far the highlight has to sit from the surface under it before it
+    /// reads as a highlight at all. Deliberately **not** a WCAG number - WCAG
+    /// has nothing to say about "can you see which words are selected", and
+    /// its 3:1 non-text floor would turn a selection wash into a solid accent
+    /// block. 1.35 is the measured floor the twelve already-separated palettes
+    /// sit above (1.57-2.32); only `solarized-light` needed a rung.
+    static let minimumSurfaceSeparation: Double = 1.35
+
+    /// **The selection fill is opaque, and that is the whole fix for
+    /// `fm/grandline-text-selection-contrast-audit`.**
+    ///
+    /// A translucent wash's *effective* colour - and therefore the contrast of
+    /// the ink drawn on it - depends on whatever surface happens to be
+    /// underneath, and this app draws selectable text on surfaces that are not
+    /// all the same brightness even inside one theme. Measured: on Daylight
+    /// the accent at 0.35 composites to `#B3C0E3` over a field (a light blue)
+    /// and to a near-navy over §6.13's dark terminal card, and **no single
+    /// foreground clears 4.5:1 on both** - the best available lands at 1.94:1
+    /// on one of them. That is exactly the captain-reported shape: text left
+    /// in its own colour sitting on a dark selection block.
+    ///
+    /// So the fill is flattened to an opaque colour, the same reasoning
+    /// `HelmTheme.apply(to:)` already records for the terminal's own
+    /// `selectionHex` ("a solid fill keeps the contrast guarantee exact"). The
+    /// pair below is then a fixed, measurable pair rather than one that
+    /// depends on the caller.
+    static func background(_ theme: HelmTheme = ThemeManager.shared.theme) -> NSColor {
+        if let cached = cache.value(for: theme.id)?.background { return cached }
+        let resolved = resolve(theme)
+        cache.store(resolved, for: theme.id)
+        return resolved.background
     }
 
-    /// Paint an `NSTextView` this app owns (`HelmTextView`, the composers, the
-    /// Tools code editors).
+    /// The ink drawn on `background(_:)`, guaranteed to clear
+    /// `HelmContrast.textTarget` against it.
+    static func foreground(_ theme: HelmTheme = ThemeManager.shared.theme) -> NSColor {
+        if let cached = cache.value(for: theme.id)?.foreground { return cached }
+        let resolved = resolve(theme)
+        cache.store(resolved, for: theme.id)
+        return resolved.foreground
+    }
+
+    static func attributes(_ theme: HelmTheme = ThemeManager.shared.theme) -> [NSAttributedString.Key: Any] {
+        [.backgroundColor: background(theme), .foregroundColor: foreground(theme)]
+    }
+
+    /// Paint an `NSTextView` this app owns.
+    ///
+    /// **Every app-owned `NSTextView` must call this.** Left to AppKit a text
+    /// view paints `NSColor.selectedTextBackgroundColor` behind the run and
+    /// sets no `.foregroundColor` at all, so the text keeps whatever colour it
+    /// already had - a severity red, a tinted token, a link - on a system
+    /// highlight that knows nothing about the active theme. That pairing is
+    /// unbounded: it is how a maroon run ends up on a dark blue block.
+    /// `HelmContrastSelfTest.checkTextSelectionContrast`'s source guard fails
+    /// the build on a file that creates an `NSTextView` without reaching here.
     static func apply(to textView: NSTextView, theme: HelmTheme = ThemeManager.shared.theme) {
         textView.selectedTextAttributes = attributes(theme)
     }
 
     /// Paint whichever field editors are currently live. Called on every
     /// first-responder change.
+    ///
+    /// This is what covers a *selectable* `NSTextField` - a chat body, a log
+    /// line, a command label - which has no `selectedTextAttributes` of its
+    /// own: AppKit lends it the window's shared field editor, and painting
+    /// that editor paints the label's selection.
     static func applyToLiveFieldEditors(theme: HelmTheme = ThemeManager.shared.theme) {
         let attrs = attributes(theme)
         for window in NSApp?.windows ?? [] {
@@ -290,6 +335,70 @@ enum HelmSelection {
             editor.selectedTextAttributes = attrs
         }
     }
+
+    // MARK: Resolution
+
+    struct Resolved {
+        let background: NSColor
+        let foreground: NSColor
+        /// Which rung of `alphaLadder` this palette needed. Reported by the
+        /// self-test so a future palette's requirement is visible rather than
+        /// buried.
+        let washAlpha: CGFloat
+    }
+
+    /// The surfaces a selection genuinely lands on in this app, so the chosen
+    /// wash is separated from all of them rather than from a field alone.
+    static func surfaces(_ theme: HelmTheme) -> [NSColor] {
+        var result = [HelmField.fill(theme),
+                      HelmTheme.nsColor(theme.chromeBackgroundHex),
+                      HelmTheme.nsColor(theme.backgroundHex)]
+        // §6.13's dark terminal card is a real surface for selectable text
+        // (the Log Analyzer's raw pane) and is the one that broke the
+        // translucent recipe, so it is scored rather than assumed away.
+        if theme.isDaylight { result.append(HelmTheme.nsColor(theme.daylightTokens.termBackground)) }
+        return result
+    }
+
+    static func resolve(_ theme: HelmTheme) -> Resolved {
+        let accent = HelmContrast.components(HelmTheme.nsColor(theme.accentHex))
+        let field = HelmContrast.components(HelmField.fill(theme))
+        let surfaces = surfaces(theme).map(HelmContrast.components)
+        // `HelmContrast.mix`, not `NSColor.blended(withFraction:of:)`: blended
+        // converts both operands into a calibrated space first, so its result
+        // drifts from the straight-sRGB composite alpha blending actually
+        // performs and `HelmContrast.ratio` then measures. The same correction
+        // Phase 4's segmented-tabs label needed.
+        var chosen = (alpha: alphaLadder.last ?? 1.0, fill: accent)
+        for step in alphaLadder {
+            let fill = HelmContrast.mix(accent, field, Double(step))
+            if surfaces.allSatisfy({ HelmContrast.ratio(fill, $0) >= minimumSurfaceSeparation }) {
+                chosen = (step, fill)
+                break
+            }
+        }
+        let fill = HelmContrast.color(chosen.fill)
+        return Resolved(background: fill,
+                        foreground: HelmContrast.legibleOn(fill: fill,
+                                                           preferring: HelmTheme.nsColor(theme.chromeInkHex)),
+                        washAlpha: chosen.alpha)
+    }
+
+    /// Per-theme memo. The resolution is a short ladder search plus a blend
+    /// bisection; it is cheap, but it runs on every first-responder change.
+    private final class Cache {
+        private var storage: [String: Resolved] = [:]
+        private let lock = NSLock()
+        func value(for id: String) -> Resolved? {
+            lock.lock(); defer { lock.unlock() }
+            return storage[id]
+        }
+        func store(_ value: Resolved, for id: String) {
+            lock.lock(); defer { lock.unlock() }
+            storage[id] = value
+        }
+    }
+    private static let cache = Cache()
 }
 
 // MARK: - HelmInputSurface
