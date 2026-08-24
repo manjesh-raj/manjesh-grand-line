@@ -124,7 +124,7 @@ private final class AutomationStepDotView: NSView {
     }
 }
 
-final class AutomationController: NSViewController {
+final class AutomationController: NSViewController, SetupPageSummary {
 
     private let hostStore: HostStore
     private let keyStore: SSHKeyStore
@@ -835,8 +835,31 @@ final class AutomationController: NSViewController {
     /// that file uses elsewhere) - each row is built fresh from the current
     /// `steps` array, so there is no separate pass needed to patch pill/
     /// detail/dot state into an existing view afterward.
+    // MARK: Daylight §6.4 - the drill header's live line
+
+    /// This page already composes exactly the line the header wants -
+    /// `progressSummary` is what the pipeline's own subtitle renders - so the
+    /// header shows that rather than a second, differently-worded count of
+    /// the same five steps. While idle it prefixes the resolved-step count,
+    /// which the long idle sentence does not carry.
+    var setupSummaryLine: String {
+        if isRunning { return progressSummary }
+        let resolved = steps.filter {
+            if case .done = $0.status { return true }
+            if case .skipped = $0.status { return true }
+            return false
+        }.count
+        return "\(resolved) of \(steps.count) steps ready"
+    }
+
+    var onSetupSummaryChanged: (() -> Void)?
+
     private func rebuildStepper() {
         guard isViewLoaded else { return }
+        // Every step-status change reaches here (`updateStep`, the live
+        // re-sync, the initial build), so this is the one place the header's
+        // line is re-read from.
+        defer { onSetupSummaryChanged?() }
         stepContentBoxes.removeAll()
         stepAccentBars.removeAll()
         dynamicLabels.removeAll()

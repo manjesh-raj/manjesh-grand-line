@@ -600,6 +600,12 @@ final class AppShellController: NSViewController {
         hostsPanel.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
         health.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         console.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        // Setup's header line is per-tab (§7's four tabs count entirely
+        // different things), so it moves both when a sub-page's own numbers
+        // change and when the captain switches tabs - `select(tab:)` fires
+        // this too.
+        setup.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        schedules.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Trigger both pages' own refresh once at launch so the badges have
         // a real count before the captain ever visits Overview or Review -
         // every later update comes from those pages' existing refresh

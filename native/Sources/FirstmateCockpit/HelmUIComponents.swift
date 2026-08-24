@@ -1387,7 +1387,8 @@ enum ToolRowLayout {
             views.logContainer.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
         }
 
-        views.rowContainer.cornerRadius = cardStyle ? 10 : 8
+        views.rowContainer.cornerRadius = rowCornerRadius(for: ThemeManager.shared.theme,
+                                                          cardStyle: cardStyle)
         views.rowContainer.translatesAutoresizingMaskIntoConstraints = false
         let inset: CGFloat = cardStyle ? 14 : 4
         let verticalInset: CGFloat = cardStyle ? 12 : 4
@@ -1427,6 +1428,27 @@ enum ToolRowLayout {
     /// `theme` defaults to the active one so no existing caller changed; pass
     /// it explicitly from a caller that already has the theme in hand (or is
     /// re-theming to a theme that is not yet current).
+    /// §6.5's row rounding, per theme - the one definition, so `build()` (which
+    /// sets it once, at construction) and `applyTheme()` (which has to be able
+    /// to re-set it on a theme switch, because Updates and GitHub Sync build
+    /// their rows exactly once and only ever re-theme them afterwards) can
+    /// never disagree.
+    ///
+    /// Under Daylight a card row takes §2.6's 14 - the radius that scale
+    /// assigns to "drill-page rows that need their own rounding" - and a flat
+    /// row takes 10, which is only ever visible as its hover fill's shape.
+    /// The twelve palettes keep the 10/8 pair they always rendered.
+    static func rowCornerRadius(for theme: HelmTheme, cardStyle: Bool) -> CGFloat {
+        if theme.isDaylight { return cardStyle ? HelmMetrics.dWell : HelmMetrics.dTileSmall }
+        return cardStyle ? 10 : 8
+    }
+
+    /// §6.5's signal row: "a 3pt inset left edge in the semantic color plus a
+    /// 4-8% wash of it". The bar is `attachAccentBar`'s existing 3pt; this is
+    /// the wash, and it is the same 0.07 `HealthCardView` measured for its own
+    /// signal rows in slice 2 - one number for one idiom.
+    static let signalWashAlpha: CGFloat = 0.07
+
     /// The chip's corner radius, per theme - the one definition, so a check
     /// that has to *find* chips in a view tree reads the same number the
     /// component paints (`InputSurfaceSelfTest.pillPairs` does exactly that,
@@ -1527,16 +1549,50 @@ enum ToolRowLayout {
         views.detailsButton.contentTintColor = ink.withAlphaComponent(0.5)
         views.logField.textColor = muted
         views.logContainer.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
+        // §6.5's Daylight resolution. Every other palette keeps the fill,
+        // hover and border it always rendered - the radius call above is the
+        // one line both branches share, and it returns the pre-Daylight pair
+        // off Daylight.
+        views.rowContainer.cornerRadius = rowCornerRadius(for: theme, cardStyle: cardStyle)
+        let daylight = theme.isDaylight
         if cardStyle {
             let cardFill = HelmTheme.nsColor(theme.chromeBackgroundHex)
-            views.rowContainer.normalColor = cardFill
-            views.rowContainer.hoverColor = cardFill.blended(withFraction: 0.08, of: line) ?? cardFill
-            views.rowContainer.layer?.borderWidth = 1
-            let borderColor = attentionHex.map { HelmTheme.nsColor($0).withAlphaComponent(0.55) } ?? line.withAlphaComponent(0.6)
-            views.rowContainer.layer?.borderColor = borderColor.cgColor
+            if daylight {
+                // §6.5: `card` fill, a full-strength 1px `hair` border, and
+                // `rowHover` - and a signal row carries its state as a **wash
+                // of the semantic hue behind the row** rather than as a tinted
+                // border, which is what pairs with the 3pt accent bar the
+                // `accentBar` argument already shows. The border therefore
+                // stays neutral on a signal row too: two different signals in
+                // one outline is how a row starts reading as a different kind
+                // of card rather than as the same card needing attention.
+                //
+                // Flattened with `HelmContrast.mix`, not `NSColor.blended` -
+                // that method converts both operands into a *calibrated* RGB
+                // space first, so its result drifts from the straight-sRGB
+                // composite alpha compositing actually performs (the lesson
+                // Phase 4's segmented-tabs correction recorded).
+                let wash = attentionHex.map {
+                    HelmContrast.color(HelmContrast.mix(HelmContrast.components(HelmTheme.nsColor($0)),
+                                                        HelmContrast.components(cardFill),
+                                                        Double(signalWashAlpha)))
+                }
+                views.rowContainer.normalColor = wash ?? cardFill
+                views.rowContainer.hoverColor = wash ?? HelmTheme.nsColor(DaylightPalette.rowHover)
+                views.rowContainer.layer?.borderWidth = 1
+                views.rowContainer.layer?.borderColor = line.cgColor
+            } else {
+                views.rowContainer.normalColor = cardFill
+                views.rowContainer.hoverColor = cardFill.blended(withFraction: 0.08, of: line) ?? cardFill
+                views.rowContainer.layer?.borderWidth = 1
+                let borderColor = attentionHex.map { HelmTheme.nsColor($0).withAlphaComponent(0.55) } ?? line.withAlphaComponent(0.6)
+                views.rowContainer.layer?.borderColor = borderColor.cgColor
+            }
         } else {
             views.rowContainer.normalColor = .clear
-            views.rowContainer.hoverColor = line.withAlphaComponent(0.18)
+            views.rowContainer.hoverColor = daylight
+                ? HelmTheme.nsColor(DaylightPalette.rowHover)
+                : line.withAlphaComponent(0.18)
             views.rowContainer.layer?.borderWidth = 0
         }
         setAccentBar(views.accentBar, colorHex: (cardStyle && accentBar) ? attentionHex : nil)

@@ -68,7 +68,7 @@ enum SetupTab: String, CaseIterable {
     }
 }
 
-final class SetupContainerController: NSViewController {
+final class SetupContainerController: NSViewController, DaylightDrillActions {
 
     let updates: UpdatesController
     let bootstrap: BootstrapController
@@ -84,6 +84,36 @@ final class SetupContainerController: NSViewController {
     /// the rail's flyout instead. Forwarding rather than owning, matching
     /// `AppShellController`'s own convention for everything it doesn't own.
     var onTabSelected: ((RailDestination) -> Void)?
+
+    /// Set by `AppShellController` - "re-read my subtitle". The drill header
+    /// belongs to the shell; this container only says when its numbers moved.
+    var onDrillSubtitleChanged: (() -> Void)?
+
+    // MARK: Drill header (Daylight §6.4/§7)
+
+    /// §6.4's "`caption()` subtitle with live numbers", scoped to whichever of
+    /// the four sub-pages is showing - because "Setup" as one destination has
+    /// no single number, and the four pages count entirely different things.
+    /// Asked of the showing page through `SetupPageSummary` rather than
+    /// switched on here (see that protocol's own note).
+    var drillHeaderSubtitle: String? {
+        let line = (childController(for: activeTab) as? SetupPageSummary)?.setupSummaryLine
+        guard let line, !line.isEmpty else { return activeTab.title }
+        return "\(activeTab.title) \u{00B7} \(line)"
+    }
+
+    /// **Deliberately empty**, for the same reason Console's is (slice 2):
+    /// every one of the four sub-pages carries its own actions in its own
+    /// toolbar or card header, 44pt below this header - Updates' Refresh pill
+    /// (which swaps for a progress bar and its count while a sweep runs),
+    /// Bootstrap's "Run full setup" (which sits on its own progress track),
+    /// Automation's "Run Automation" (beside its live step line) and GitHub
+    /// Sync's "Sync All" (above the summary line it writes into). Hoisting a
+    /// copy of any of them would either duplicate a control §6.4's cluster
+    /// exists to de-duplicate, or separate the button from the state it
+    /// reports. The header still earns its place through the live subtitle
+    /// above, which is the signal none of the four pages states in one line.
+    var drillHeaderActions: [NSView] { [] }
 
     init(updates: UpdatesController,
          bootstrap: BootstrapController,
@@ -139,6 +169,15 @@ final class SetupContainerController: NSViewController {
             ])
         }
 
+        // Each page tells this container when its own numbers move; the
+        // container is the only thing that talks to the shell.
+        for tab in SetupTab.allCases {
+            (childController(for: tab) as? SetupPageSummary)?.onSetupSummaryChanged = { [weak self] in
+                guard let self, tab == self.activeTab else { return }
+                self.onDrillSubtitleChanged?()
+            }
+        }
+
         ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
         select(tab: activeTab, moveTabControl: true)
         applyTheme(ThemeManager.shared.theme)
@@ -162,6 +201,9 @@ final class SetupContainerController: NSViewController {
         for (candidate, page) in pageViews {
             page.isHidden = candidate != tab
         }
+        // The header's line is per-tab, so a tab switch changes it even
+        // though no page's own numbers moved.
+        onDrillSubtitleChanged?()
     }
 
     var currentTab: SetupTab { activeTab }

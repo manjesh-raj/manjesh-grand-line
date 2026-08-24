@@ -1389,6 +1389,9 @@ if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_MODULE_TESTS"] == "1" {
 // Daylight Phase 4 slice 1: the shared drill-page components (§6.4-6.14) and
 // the two destinations §7 puts first - Tasks' board and Review's rows. See
 // DaylightDrillPageSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_SLICE3_TESTS"] == "1" {
+    exit(DaylightDrillPageSlice3SelfTest.run() ? 0 : 1)
+}
 if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_SLICE2_TESTS"] == "1" {
     exit(DaylightDrillPageSlice2SelfTest.run() ? 0 : 1)
 }
