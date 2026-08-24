@@ -682,7 +682,15 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
     /// step") - both resolved against the active theme's own hues via
     /// `HelmTint`, never a literal color.
     private func calloutView(kind: SRELeadCalloutKind, runs: [SRELeadInlineRun]) -> NSView {
-        let tint: HelmTint = kind == .finding ? .accent : .good
+        // Daylight §6.13 names the two blocks' own hues: FINDING takes `ok`
+        // and NEXT ACTION takes `warn` - "here is what is true" reads as
+        // settled, "here is what to do next" reads as outstanding. The twelve
+        // palettes keep accent/good, which is what they have always rendered
+        // (`fm/grandline-sre-lead-chat-redesign`).
+        let daylight = ThemeManager.shared.theme.isDaylight
+        let tint: HelmTint = kind == .finding
+            ? (daylight ? .good : .accent)
+            : (daylight ? .warn : .good)
         let symbol = kind == .finding ? "magnifyingglass" : "arrow.right.circle.fill"
         return accentRow(kicker: kind.label, tint: tint, badgeSymbol: symbol,
                          content: wrappingLabel(attributedInline(runs)))
@@ -758,6 +766,12 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
         // measure the resolved colour against the pane's, per theme.
         layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         composerKicker.textColor = HelmTheme.mutedInk(theme)
+        // §6.13's "§6.9 ask-well": Console's own domain hue drives the focus
+        // ring, and the well takes §2.6's `dWell` radius. Off Daylight both
+        // fall back to what this composer already rendered (the theme accent,
+        // `rRow`), so nothing changes in the twelve palettes.
+        composerCard.domainHue = theme.isDaylight ? RailDestination.console.domainHue : nil
+        composerCard.cornerRadius = theme.isDaylight ? HelmMetrics.dWell : HelmMetrics.rRow
         composerCard.applyTheme(theme)
         let ink = HelmField.ink(theme)
         textView.textColor = ink

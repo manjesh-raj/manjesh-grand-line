@@ -585,11 +585,21 @@ final class AppShellController: NSViewController {
         // a count; this is the per-PR post that carries Merge / Open PR, and it
         // needs the rows themselves (URL, task id, checks) rather than a count.
         review.onPRsChanged = { prs in FleetNotifier.shared.reconcilePRs(prs) }
-        // Daylight §6.4: both migrated drill pages carry live numbers in the
+        // Daylight §6.4: every migrated drill page carries live numbers in the
         // header's subtitle, and the header is the shell's. They ask; nothing
         // writes into it but `applyDrillHeader`/`refreshDrillHeaderSubtitle`.
+
         review.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         shift.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        hostsPanel.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        // Hosts is the first migrated page whose *actions* change while it is
+        // on screen: §6.4's cluster carries the add action for the tab that is
+        // showing, and the three tabs add three different records. Same shape
+        // as the subtitle callback - the page says "re-ask me", the shell owns
+        // the header.
+        hostsPanel.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
+        health.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        console.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Trigger both pages' own refresh once at launch so the badges have
         // a real count before the captain ever visits Overview or Review -
         // every later update comes from those pages' existing refresh
@@ -1004,6 +1014,21 @@ final class AppShellController: NSViewController {
                               symbol: context.symbol, hue: context.hue)
     }
 
+    /// Re-read the showing page's own action cluster (§6.4) - the sibling of
+    /// `refreshDrillHeaderSubtitle`, for a page whose actions depend on
+    /// something the captain can change without leaving it (Hosts' three
+    /// tabs).
+    ///
+    /// Deliberately a second method rather than folding it into the subtitle
+    /// refresh: `setActions` removes and re-adds the caller's own views, so a
+    /// page whose cluster never changes (Review's Refresh button, Tasks' sync
+    /// pill) should not have it torn down and rebuilt on every render.
+    func refreshDrillHeaderActions() {
+        guard let context = lastDrillContext, !drillHeader.isHidden else { return }
+        let page = context.controller as? DaylightDrillActions
+        drillHeader.setActions(page?.drillHeaderActions ?? [])
+    }
+
     // MARK: Spaces (Daylight §5.3)
 
     /// A space pill (or `⌘1`…`⌘5`) was picked: land on the canvas if we are
@@ -1108,6 +1133,13 @@ final class AppShellController: NSViewController {
         // it is what makes the incident toolbar action appear at all (the
         // shared Firstmate console never gets one).
         controller.hostIdentity = ConsoleHostIdentity(id: host.id.uuidString, label: host.label)
+
+        // Daylight §6.4: a dedicated host page routes through this same
+        // controller class, so it gets the same live header subtitle the
+        // shared Console destination does. Assigned on every call for the same
+        // reason the closures above are - the page is created once and
+        // reconnected many times.
+        controller.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
 
         // The incident card's Evidence tab reopening a saved Log Analyzer
         // investigation. Routed through this controller because a console

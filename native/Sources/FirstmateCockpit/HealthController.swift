@@ -25,7 +25,7 @@
 
 import AppKit
 
-final class HealthController: NSViewController {
+final class HealthController: NSViewController, DaylightDrillActions {
 
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var scrollView: NSScrollView!
@@ -34,6 +34,31 @@ final class HealthController: NSViewController {
     /// self-contained view (owning rendering, deciding nothing) rather than
     /// business logic that belongs on this controller.
     private let healthCard = HealthCardView()
+
+    /// Set by `AppShellController` - "re-read my subtitle". The header is the
+    /// shell's; this page only says when its numbers moved.
+    var onDrillSubtitleChanged: (() -> Void)?
+
+    // MARK: Drill header (Daylight §6.4)
+
+    /// §7's "drill header with a live subtitle". Counted from the same
+    /// `ServiceHealthRegistry` state the rows below render, so the two can
+    /// never disagree - and honest about the launch case, where nothing has
+    /// reported yet.
+    var drillHeaderSubtitle: String? {
+        let counts = HealthCardView.verdictCounts()
+        guard counts.total > 0 else { return "No background service has reported yet" }
+        let services = counts.total == 1 ? "1 service" : "\(counts.total) services"
+        if counts.failing > 0 { return "\(services) \u{00B7} \(counts.failing) failing" }
+        if counts.degraded > 0 { return "\(services) \u{00B7} \(counts.degraded) with a recent failure" }
+        if counts.healthy == counts.total { return "\(services) \u{00B7} all healthy" }
+        return "\(services) \u{00B7} \(counts.healthy) healthy"
+    }
+
+    /// §7 hoists "Copy diagnostics" into the header - it is this page's one
+    /// action, and it applies to the whole card rather than to any one row.
+    /// Caller-owned: `HealthCardView` still owns the button and its handler.
+    var drillHeaderActions: [NSView] { [healthCard.diagnosticsButton] }
 
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 620, height: 720))
@@ -85,6 +110,9 @@ final class HealthController: NSViewController {
         scrollView = scroll
 
         healthCard.refresh(theme: theme)
+        // The card rebuilds itself on every `ServiceHealthRegistry` report;
+        // the header's own subtitle has to follow the same signal.
+        healthCard.onStateChanged = { [weak self] in self?.onDrillSubtitleChanged?() }
     }
 
     override func viewWillAppear() {
@@ -113,6 +141,7 @@ final class HealthController: NSViewController {
     #if FM_SELFTESTS
     var debugHealthRowCount: Int { healthCard.debugRowCount }
     var debugCardWidth: CGFloat { healthCard.card.bounds.width }
+    var debugHeaderChipCount: Int { healthCard.debugHeaderChipCount }
     /// Forces the *legacy* (non-overlay) scroller style regardless of this
     /// machine's real mouse/trackpad state, so a self-test can reproduce "a
     /// mouse is attached" (this app's own documented "Show scroll bars:

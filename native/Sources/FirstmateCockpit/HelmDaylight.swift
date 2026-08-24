@@ -236,6 +236,26 @@ enum HelmDomainHue: String, CaseIterable {
         }
     }
 
+    /// The hue that borrows `tint` - the exact inverse of `fallbackTint`.
+    ///
+    /// Safe to write as a total function because that mapping is 1:1 in both
+    /// directions (seven hues, seven `HelmTint` cases, mapped by role - see
+    /// `fallbackTint`'s own note). Phase 4 slice 2 needs it so a component
+    /// carrying a *semantic* `HelmTint` (`HelmAccentRow.Content.tint`) can
+    /// paint a Daylight gradient tile without every call site inventing its
+    /// own mapping.
+    init(tint: HelmTint) {
+        switch tint {
+        case .info: self = .blue
+        case .accent: self = .teal
+        case .good: self = .green
+        case .warn: self = .amber
+        case .critical: self = .rose
+        case .violet: self = .violet
+        case .neutral: self = .slate
+        }
+    }
+
     /// How much white is blended into a fallback theme's own hue to derive the
     /// gradient's lighter end.
     ///

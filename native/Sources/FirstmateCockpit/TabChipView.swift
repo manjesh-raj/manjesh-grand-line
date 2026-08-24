@@ -168,14 +168,45 @@ final class TabChipView: NSView, NSTextFieldDelegate {
     }
 
     /// Restyle for the current theme + selection state.
+    ///
+    /// Daylight §6.13 ("tab chips ... take the Daylight button/well/card
+    /// recipes") is a branch, exactly like every other Phase 4 restyle: the
+    /// twelve palettes render byte-identically to what they always have.
+    /// Under Daylight the chip becomes a capsule and its selected label is
+    /// **contrast-corrected against the wash it actually sits on** rather than
+    /// painted in the raw hue - a chip's accent can be any host's own
+    /// `accentHex`, and the raw-hue-over-a-wash-of-itself pairing is the
+    /// audit's §5.7 defect (see `HelmContrast`'s doc comment).
     func applyStyle(selected: Bool, accent: NSColor, muted: NSColor, tint: NSColor) {
         isSelectedChip = selected
+        let daylight = ThemeManager.shared.theme.isDaylight
+        // A capsule needs the chip's own height, which is 0 before the first
+        // layout pass - `layout()` re-derives it once real geometry exists.
+        layer?.cornerRadius = daylight ? Self.daylightRadius(forHeight: bounds.height) : 7
         layer?.backgroundColor = (selected ? tint : .clear).cgColor
+        let selectedInk = daylight ? HelmContrast.legible(accent, over: tint) : accent
         if !isRenaming {
-            label.textColor = selected ? accent : muted
-            label.font = .systemFont(ofSize: 13, weight: selected ? .semibold : .regular)
+            label.textColor = selected ? selectedInk : muted
+            let size = HelmType.scaled(13)
+            label.font = daylight
+                ? HelmType.rounded(size, selected ? .semibold : .medium)
+                : .systemFont(ofSize: 13, weight: selected ? .semibold : .regular)
         }
-        closeButton.contentTintColor = selected ? accent : muted
+        closeButton.contentTintColor = selected ? selectedInk : muted
+    }
+
+    /// A capsule's real radius for a chip of `height` - falling back to the
+    /// chip's own resolved content height before its first layout pass.
+    private static func daylightRadius(forHeight height: CGFloat) -> CGFloat {
+        HelmMetrics.capsuleRadius(forHeight: height > 0 ? height : 28)
+    }
+
+    /// Keeps the Daylight capsule a capsule across a resize. A no-op in the
+    /// twelve palettes, where the radius is a constant.
+    override func layout() {
+        super.layout()
+        guard ThemeManager.shared.theme.isDaylight else { return }
+        layer?.cornerRadius = Self.daylightRadius(forHeight: bounds.height)
     }
 
     /// Start an inline rename (also reachable by double-click and the menu).

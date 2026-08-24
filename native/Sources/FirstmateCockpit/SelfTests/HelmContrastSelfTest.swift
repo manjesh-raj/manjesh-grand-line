@@ -1063,16 +1063,37 @@ enum HelmContrastSelfTest {
                 var problems: [String] = []
                 if g.pillCount != 3 { problems.append("pill count \(g.pillCount)") }
                 if g.activeID != "b" { problems.append("active \(g.activeID)") }
-                if abs(g.capsuleBorderWidth - 1) > 0.01 { problems.append("no capsule border") }
-                if abs(g.capsuleRadius - size.capsuleRadius) > 0.01 { problems.append("capsule radius \(g.capsuleRadius)") }
-                if g.pillRadii.contains(where: { abs($0 - size.pillRadius) > 0.01 }) {
-                    problems.append("pill radii \(g.pillRadii)")
+                // Theme-aware rather than exempting Daylight: the assertion is
+                // still "one recipe per theme", it just no longer assumes the
+                // recipe is the same in all of them. §7 makes the Daylight
+                // strip space-pill-shaped - capsules on the page's own
+                // surface, so no bordered container to measure - while the
+                // twelve palettes keep the bordered translucent capsule.
+                if theme.isDaylight {
+                    if g.capsuleBorderWidth != 0 { problems.append("Daylight capsule still has a border") }
+                    let expected = size.daylightPillRadius(for: tabs.debugPillsForAccessibilityTests()[0])
+                    if g.pillRadii.contains(where: { abs($0 - expected) > 0.01 }) {
+                        problems.append("pill radii \(g.pillRadii) are not capsules (want \(expected))")
+                    }
+                } else {
+                    if abs(g.capsuleBorderWidth - 1) > 0.01 { problems.append("no capsule border") }
+                    if abs(g.capsuleRadius - size.capsuleRadius) > 0.01 { problems.append("capsule radius \(g.capsuleRadius)") }
+                    if g.pillRadii.contains(where: { abs($0 - size.pillRadius) > 0.01 }) {
+                        problems.append("pill radii \(g.pillRadii)")
+                    }
                 }
                 if Set(g.labelPointSizes).count != 1 { problems.append("label sizes \(g.labelPointSizes)") }
                 // The active label lands on the accent wash composited over the
                 // capsule's own fill, which itself sits over one of the two page
                 // surfaces - score the worse.
-                if let activeInk = g.activeInk, let wash = g.activeFill {
+                if theme.isDaylight, let activeInk = g.activeInk, let fill = g.activeFill {
+                    // Daylight's active pill is an opaque `ink` capsule, so the
+                    // label is scored straight against it - there is no
+                    // translucent capsule underneath to composite through.
+                    let r = HelmContrast.ratio(activeInk, fill)
+                    if r < worst.ratio { worst = (r, "\(theme.id) \(size)") }
+                    if r < HelmContrast.textTarget - 0.01 { problems.append("active label contrast \(fmt(r))") }
+                } else if let activeInk = g.activeInk, let wash = g.activeFill {
                     for behindHex in [theme.chromeBackgroundHex, theme.backgroundHex] {
                         let capsule = HelmContrast.mix(
                             HelmContrast.components(HelmTheme.nsColor(theme.chromeBackgroundHex)),

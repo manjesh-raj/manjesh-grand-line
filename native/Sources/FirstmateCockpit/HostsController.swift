@@ -60,7 +60,7 @@ enum HostsTab: String, CaseIterable {
     }
 }
 
-final class HostsController: NSViewController {
+final class HostsController: NSViewController, DaylightDrillActions {
 
     private let hostStore: HostStore
     private let keyStore: SSHKeyStore
@@ -110,6 +110,37 @@ final class HostsController: NSViewController {
     private let hostsList = HostsListSection()
     private let keysList = HostsListSection()
     private let snippetsList = HostsListSection()
+
+    /// The three "add" actions. Daylight §6.4 hoists a page's primary action
+    /// into the shell's drill header, and this page has one per tab - so they
+    /// are built here (rather than inline in each `build*Tab`) and handed over
+    /// through `drillHeaderActions`, which re-reads whichever tab is showing.
+    /// Caller-owned, exactly as `HelmDrillHeader.setActions` requires: this
+    /// page keeps the tooltips and the target/action it already set.
+    private lazy var addHostButton: HelmButton = {
+        let b = HelmButton(title: "Add Host", variant: .primary, size: .small,
+                           symbol: "plus", target: self, action: #selector(newHost))
+        b.toolTip = "Add Host (⌘N)"
+        return b
+    }()
+    private lazy var addKeyButton: HelmButton = {
+        let b = HelmButton(title: "New Key", variant: .primary, size: .small,
+                           symbol: "plus", target: self, action: #selector(newKey))
+        b.toolTip = "New Key (⌘⇧N)"
+        return b
+    }()
+    private lazy var addSnippetButton: HelmButton = {
+        let b = HelmButton(title: "New Snippet", variant: .primary, size: .small,
+                           symbol: "plus", target: self, action: #selector(newSnippet))
+        b.toolTip = "New Snippet (⌘⌥N)"
+        return b
+    }()
+
+    /// Set by `AppShellController` - "re-read my subtitle" / "re-read my
+    /// actions". The drill header belongs to the shell; a page writing into it
+    /// directly is how two owners of one view start disagreeing.
+    var onDrillSubtitleChanged: (() -> Void)?
+    var onDrillActionsChanged: (() -> Void)?
 
     private var hostsTitleLabel = NSTextField(labelWithString: HostsTab.hosts.title)
     private var keysTitleLabel = NSTextField(labelWithString: HostsTab.keys.title)
@@ -252,14 +283,13 @@ final class HostsController: NSViewController {
         top.spacing = HelmMetrics.s2
         top.translatesAutoresizingMaskIntoConstraints = false
 
-        let add = HelmButton(title: "Add Host", variant: .primary, size: .small,
-                             symbol: "plus", target: self, action: #selector(newHost))
-        add.toolTip = "Add Host (⌘N)"
+        // No `actions:` - §6.4 puts this page's primary action in the drill
+        // header, and a copy in the card header too would be the same button
+        // twice, a row apart.
         hostsList.card.setHeader(symbol: "server.rack",
                                  titleLabel: hostsTitleLabel,
                                  subtitleLabel: NSTextField(wrappingLabelWithString:
-                                    "Saved SSH connections. Connect opens the host's own page."),
-                                 actions: [add])
+                                    "Saved SSH connections. Connect opens the host's own page."))
 
         hostsTabView.addSubview(top)
         hostsTabView.addSubview(hostsList.card)
@@ -278,26 +308,18 @@ final class HostsController: NSViewController {
     }
 
     private func buildKeysTab() {
-        let add = HelmButton(title: "New Key", variant: .primary, size: .small,
-                             symbol: "plus", target: self, action: #selector(newKey))
-        add.toolTip = "New Key (⌘⇧N)"
         keysList.card.setHeader(symbol: "key.fill", tint: .violet,
                                 titleLabel: keysTitleLabel,
                                 subtitleLabel: NSTextField(wrappingLabelWithString:
-                                    "Private key material and passphrases are stored in the macOS Keychain, gated by Touch ID."),
-                                actions: [add])
+                                    "Private key material and passphrases are stored in the macOS Keychain, gated by Touch ID."))
         fill(keysTabView, with: keysList.card)
     }
 
     private func buildSnippetsTab() {
-        let add = HelmButton(title: "New Snippet", variant: .primary, size: .small,
-                             symbol: "plus", target: self, action: #selector(newSnippet))
-        add.toolTip = "New Snippet (⌘⌥N)"
         snippetsList.card.setHeader(symbol: "chevron.left.forwardslash.chevron.right", tint: .info,
                                     titleLabel: snippetsTitleLabel,
                                     subtitleLabel: NSTextField(wrappingLabelWithString:
-                                        "Run sends a snippet's command, then Enter, to the active terminal tab."),
-                                    actions: [add])
+                                        "Run sends a snippet's command, then Enter, to the active terminal tab."))
         fill(snippetsTabView, with: snippetsList.card)
     }
 
@@ -321,6 +343,49 @@ final class HostsController: NSViewController {
         hostsTabView.isHidden = tab != .hosts
         keysTabView.isHidden = tab != .keys
         snippetsTabView.isHidden = tab != .snippets
+        // §6.4: both halves of the header describe the tab that is showing.
+        onDrillActionsChanged?()
+        onDrillSubtitleChanged?()
+    }
+
+    // MARK: Drill header (Daylight §6.4)
+
+    /// The showing tab's own add action. Re-read (not rebuilt) on every tab
+    /// switch through `onDrillActionsChanged`, so the same three button
+    /// instances - with the tooltips and targets this page set on them - move
+    /// in and out of the header.
+    var drillHeaderActions: [NSView] {
+        switch activeTab {
+        case .hosts: return [addHostButton]
+        case .keys: return [addKeyButton]
+        case .snippets: return [addSnippetButton]
+        }
+    }
+
+    /// §6.4's live subtitle: the counts this page already renders in its own
+    /// card headers, read from the same stores. Nothing new is collected, and
+    /// the header cannot disagree with the list below it.
+    var drillHeaderSubtitle: String? {
+        let hosts = hostStore.hosts.count
+        let keys = keyStore.keys.count
+        let snippets = snippetStore.snippets.count
+        func plural(_ n: Int, _ one: String, _ many: String) -> String {
+            "\(n) \(n == 1 ? one : many)"
+        }
+        switch activeTab {
+        case .hosts:
+            return hosts == 0
+                ? "No saved hosts yet"
+                : "\(plural(hosts, "saved host", "saved hosts")) \u{00B7} \(plural(keys, "key", "keys"))"
+        case .keys:
+            return keys == 0
+                ? "No saved keys yet"
+                : "\(plural(keys, "key", "keys")) in the Keychain"
+        case .snippets:
+            return snippets == 0
+                ? "No snippets yet"
+                : plural(snippets, "saved snippet", "saved snippets")
+        }
     }
 
     var currentTab: HostsTab { activeTab }
@@ -417,6 +482,7 @@ final class HostsController: NSViewController {
             ? HostsTab.hosts.title
             : "\(HostsTab.hosts.title) (\(hostStore.hosts.count))"
         hostsList.setItems(items)
+        onDrillSubtitleChanged?()
     }
 
     private func filteredHosts(_ query: String) -> [Host] {
@@ -519,6 +585,7 @@ final class HostsController: NSViewController {
             ? HostsTab.keys.title
             : "\(HostsTab.keys.title) (\(keyStore.keys.count))"
         keysList.setItems(items)
+        onDrillSubtitleChanged?()
     }
 
     private func keyItem(_ key: SSHKey) -> HostsListSection.Item {
@@ -552,6 +619,7 @@ final class HostsController: NSViewController {
             ? HostsTab.snippets.title
             : "\(HostsTab.snippets.title) (\(snippetStore.snippets.count))"
         snippetsList.setItems(items)
+        onDrillSubtitleChanged?()
     }
 
     private func snippetItem(_ snippet: Snippet) -> HostsListSection.Item {

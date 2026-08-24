@@ -33,17 +33,37 @@ final class HealthCardView: NSObject {
     /// The card to drop into the page's stack.
     let card = HelmCard()
 
+    /// "Copy diagnostics", owned here and *positioned* by whoever hosts the
+    /// card - Daylight §7 hoists it into the drill header. Still this view's
+    /// button, with this view's handler, exactly as
+    /// `HelmDrillHeader.setActions` requires of a caller-owned action.
+    let diagnosticsButton: HelmButton
+
+    /// Fired whenever the registry reports, so a host page's own live header
+    /// line can follow the same signal the rows do rather than polling.
+    var onStateChanged: (() -> Void)?
+
     private let healthStack = NSStackView()
+    /// §7's "KPI chips in the header band region" - one per non-zero verdict
+    /// bucket, in the card header's trailing action slot. Rebuilt in place
+    /// (`refreshHeaderChips`) rather than recreated, so the header's own
+    /// action stack is built once.
+    private let headerChips = NSStackView()
     private var theme: HelmTheme = ThemeManager.shared.theme
 
     override init() {
+        diagnosticsButton = HelmButton(title: "Copy diagnostics", variant: .secondary,
+                                       size: .small, symbol: "doc.on.doc")
         super.init()
+        diagnosticsButton.target = self
+        diagnosticsButton.action = #selector(copyDiagnostics)
         buildCard()
         // Rebuilt on every report rather than mutated in place: the row count
         // grows as services register, and a row's trailing control differs by
         // verdict (a pill, or nothing).
         ServiceHealthRegistry.shared.observe { [weak self] _ in
             self?.rebuild()
+            self?.onStateChanged?()
         }
     }
 
@@ -53,11 +73,22 @@ final class HealthCardView: NSObject {
         // The top bar names the destination and the card header names what
         // this particular card lists - the page-level restatement and this
         // one's duplicate subtitle are both gone.
+        headerChips.orientation = .horizontal
+        headerChips.alignment = .centerY
+        headerChips.spacing = HelmMetrics.s1
+        headerChips.distribution = .fill
+        headerChips.translatesAutoresizingMaskIntoConstraints = false
+        // AGENTS.md gotcha (12): the *stack*-level pair, not the content one -
+        // this stack has no intrinsic content size, so without these it is
+        // what the header's `.fill` distribution stretches.
+        headerChips.setHuggingPriority(.required, for: .horizontal)
+        headerChips.setClippingResistancePriority(.required, for: .horizontal)
         card.setHeader(
             symbol: "waveform.path.ecg",
             tint: .good,
             title: "Background services",
-            subtitle: "Last run and last error for each one"
+            subtitle: "Last run and last error for each one",
+            actions: [headerChips]
         )
         healthStack.orientation = .vertical
         healthStack.alignment = .leading
@@ -108,7 +139,72 @@ final class HealthCardView: NSObject {
         }
     }
 
+    // MARK: §7's KPI chips and run ticks
+
+    /// How many known services sit in each verdict bucket. Static because
+    /// `HealthController`'s own drill-header subtitle reads it too, and two
+    /// separate counts of one registry is how a header and its rows start
+    /// disagreeing.
+    static func verdictCounts() -> (total: Int, healthy: Int, degraded: Int, failing: Int, pending: Int) {
+        var healthy = 0, degraded = 0, failing = 0, pending = 0
+        let services = ServiceHealthRegistry.shared.knownServices()
+        for service in services {
+            switch ServiceHealthRegistry.shared.state(service).verdict {
+            case .healthy: healthy += 1
+            case .degraded: degraded += 1
+            case .failing: failing += 1
+            case .running, .unknown: pending += 1
+            }
+        }
+        return (services.count, healthy, degraded, failing, pending)
+    }
+
+    /// §7's "run-tick strings", built strictly from what the registry actually
+    /// records.
+    ///
+    /// **There is no run history to draw**, and this deliberately does not
+    /// invent one: `ServiceHealthState` carries `lastSuccess`, `lastFailure`
+    /// and `consecutiveFailures` - not a series - and collecting a series
+    /// would be new data collection, which this slice forbids. So the ticks
+    /// are an exact rendering of the run *streak* the registry does know: one
+    /// cross per consecutive failure (newest first, capped) followed by a
+    /// check when a successful run is on record. A service that has never
+    /// reported gets no ticks at all rather than a fabricated one.
+    static func runTicks(_ state: ServiceHealthState) -> String {
+        guard state.hasReported else { return "" }
+        let failures = min(state.consecutiveFailures, maxRunTicks)
+        var ticks = String(repeating: "\u{2715}", count: failures)
+        if state.lastSuccess != nil, failures < maxRunTicks { ticks += "\u{2713}" }
+        return ticks
+    }
+
+    /// A streak longer than this is reported as a count in the row's own copy
+    /// ("Last error ...") rather than as an unbounded glyph run.
+    private static let maxRunTicks = 5
+
+    /// One chip per non-empty bucket, most urgent first. Rebuilt in place -
+    /// the header's action stack itself is built once, in `buildCard`.
+    private func refreshHeaderChips() {
+        for v in headerChips.arrangedSubviews {
+            headerChips.removeArrangedSubview(v)
+            v.removeFromSuperview()
+        }
+        let counts = Self.verdictCounts()
+        let buckets: [(Int, String, HelmTint)] = [
+            (counts.failing, "failing", .critical),
+            (counts.degraded, "recent failure", .warn),
+            (counts.healthy, "healthy", .good),
+            (counts.pending, "not run yet", .neutral),
+        ]
+        for (count, label, tint) in buckets where count > 0 {
+            headerChips.addArrangedSubview(
+                pillView(text: "\(count) \(label)", colorHex: tint.hex(in: theme)))
+        }
+        headerChips.isHidden = headerChips.arrangedSubviews.isEmpty
+    }
+
     private func rebuild() {
+        refreshHeaderChips()
         descriptionLabels.removeAll()
         for v in healthStack.arrangedSubviews {
             healthStack.removeArrangedSubview(v)
@@ -160,19 +256,59 @@ final class HealthCardView: NSObject {
             lines.append("Last error (\(Self.relative(when))): \(failure)")
         }
 
+        // §6.5's "34pt gradient tile (solid semantic fill ... when the row's
+        // icon expresses state rather than domain)" under Daylight; the twelve
+        // palettes keep the `IconTileView` wash they already render. Both are
+        // built and exactly one is shown, the same pair `HelmAccentRow` and
+        // `HelmEmptyState` already use.
+        let daylight = theme.isDaylight
         let tile = IconTileView(size: HelmMetrics.tileSmall, cornerRadius: 8)
         tile.configure(symbol: service.symbol, tint: tint, pointSize: 12)
         tile.applyTheme(theme)
+        tile.isHidden = daylight
+        let gradientTile = HelmGradientTile(size: .drill)
+        gradientTile.configure(symbol: service.symbol, hue: HelmDomainHue(tint: tint))
+        gradientTile.isHidden = !daylight
+
+        // §6.8's run ticks, in the trailing column beside the verdict chip.
+        let ticks = Self.runTicks(state)
+        var trailingViews: [NSView] = []
+        if !ticks.isEmpty {
+            let ticksLabel = NSTextField(labelWithString: ticks)
+            ticksLabel.font = HelmType.code()
+            ticksLabel.textColor = HelmTheme.nsColor(
+                (state.consecutiveFailures > 0 ? HelmTint.critical : .good).hex(in: theme))
+            ticksLabel.toolTip = state.consecutiveFailures > 0
+                ? "\(state.consecutiveFailures) consecutive failure(s) since the last recorded success"
+                : "The last recorded run succeeded"
+            ticksLabel.setContentHuggingPriority(.required, for: .horizontal)
+            trailingViews.append(ticksLabel)
+        }
+        trailingViews.append(pillView(text: chip, colorHex: tint.hex(in: theme)))
+        let trailing = NSStackView(views: trailingViews)
+        trailing.orientation = .horizontal
+        trailing.alignment = .centerY
+        trailing.spacing = HelmMetrics.s2
+        trailing.distribution = .fill
+        trailing.setHuggingPriority(.required, for: .horizontal)
+        trailing.setClippingResistancePriority(.required, for: .horizontal)
+
+        // §6.5's signal edge: a row that needs attention gets the 3pt inset
+        // semantic bar plus a wash of the same hue, through the shared helper
+        // that exists for exactly this case - a page with its own bespoke row
+        // container rather than a `ToolRowLayout.Views`.
+        let needsAttention = state.verdict == .degraded || state.verdict == .failing
         let row = descRow(title: service.title, desc: lines.joined(separator: " "),
-                          trailing: pillView(text: chip, colorHex: tint.hex(in: theme)))
-        let combined = NSStackView(views: [tile, row])
+                          trailing: trailing,
+                          signalHex: needsAttention ? tint.hex(in: theme) : nil)
+        let combined = NSStackView(views: [tile, gradientTile, row])
         combined.orientation = .horizontal
         combined.alignment = .centerY
         combined.spacing = 10
         combined.distribution = .fill
         // AGENTS.md gotcha (12): a content-priority call is a no-op on an
         // `NSStackView`, so `row` (itself a stack) has to yield through the
-        // stack-level API while the leaf tile holds its size through the
+        // stack-level API while the leaf tiles hold their size through the
         // content-level one.
         tile.setContentHuggingPriority(.required, for: .horizontal)
         combined.setHuggingPriority(.defaultLow, for: .horizontal)
@@ -185,14 +321,16 @@ final class HealthCardView: NSObject {
     /// a log dump: reading the unified log needs a separate tool, and this
     /// button must not be the thing that surprises anyone by exporting more than
     /// what is on screen.
+    /// The footer explains what "Copy diagnostics" does; the button itself has
+    /// moved into the drill header (§7), so this row carries no control - a
+    /// second copy of the same button a few rows apart is exactly the
+    /// duplication §6.4's action cluster exists to remove.
     private func healthFooter() -> NSView {
-        let button = HelmButton(title: "Copy diagnostics", variant: .secondary,
-                                symbol: "doc.on.doc", target: self, action: #selector(copyDiagnostics))
-        button.controlSize = .small
         let row = descRow(title: "Diagnostics",
-                          desc: "Copies these rows as text. Everything stays on this machine - "
-                              + "detailed logs are in Console.app under \"com.firstmate.cockpit.native\".",
-                          trailing: button)
+                          desc: "\"Copy diagnostics\" in the page header copies these rows as text. "
+                              + "Everything stays on this machine - detailed logs are in Console.app "
+                              + "under \"com.firstmate.cockpit.native\".",
+                          trailing: NSView())
         return row
     }
 
@@ -250,7 +388,11 @@ final class HealthCardView: NSObject {
     // view rebuilds every row from scratch (with the current `theme` baked
     // in) on every call to `refresh(theme:)` - see this file's header.
 
-    private func descRow(title: String, desc: String, trailing: NSView) -> NSView {
+    /// - Parameter signalHex: §6.5's signal edge - a 3pt inset bar in this
+    ///   hue plus a faint wash of it behind the row. `nil` for an ordinary
+    ///   row, which renders exactly as it did before.
+    private func descRow(title: String, desc: String, trailing: NSView,
+                         signalHex: String? = nil) -> NSView {
         // D6: `HelmType`, not raw `.systemFont(ofSize:)` sizes - which is
         // also what restores the captain's own chrome-text-scale setting
         // (GL-32) on this page, since every `HelmType` role runs through
@@ -282,19 +424,40 @@ final class HealthCardView: NSObject {
         row.translatesAutoresizingMaskIntoConstraints = false
 
         let container = HoverHighlightView()
-        container.cornerRadius = 8
+        container.cornerRadius = theme.isDaylight ? HelmMetrics.dTileSmall : 8
         container.addSubview(row)
+        // A signal row's content is pushed in past its own accent bar; an
+        // ordinary row keeps the 8pt inset it always had.
+        let leading: CGFloat = signalHex == nil ? 8 : 8 + Self.signalBarWidth + 6
         NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+            row.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: leading),
             row.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
             row.topAnchor.constraint(equalTo: container.topAnchor, constant: 6),
             row.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -6),
         ])
         let line = HelmTheme.nsColor(theme.chromeLineHex)
-        container.normalColor = .clear
-        container.hoverColor = line.withAlphaComponent(0.18)
+        if let signalHex {
+            // The shared accent-bar helper (`fm/grandline-setup-attention-row-
+            // style`), not a hand-rolled bar - it is the app's one definition
+            // of this idiom and already handles the vertical inset that keeps
+            // the bar clear of the row's own rounded corners.
+            let bar = NSView()
+            ToolRowLayout.attachAccentBar(bar, to: container, width: Self.signalBarWidth)
+            ToolRowLayout.setAccentBar(bar, colorHex: signalHex)
+            // §6.5's "4-8% wash" of the same hue, behind the row.
+            let wash = HelmTheme.nsColor(signalHex).withAlphaComponent(Self.signalWashAlpha)
+            container.normalColor = wash
+            container.hoverColor = wash
+        } else {
+            container.normalColor = .clear
+            container.hoverColor = line.withAlphaComponent(0.18)
+        }
         return container
     }
+
+    /// §6.5's signal-edge geometry.
+    private static let signalBarWidth: CGFloat = 3
+    private static let signalWashAlpha: CGFloat = 0.07
 
     /// The app's one status pill (audit D3).
     ///
@@ -326,5 +489,7 @@ final class HealthCardView: NSObject {
 
     #if FM_SELFTESTS
     var debugRowCount: Int { healthStack.arrangedSubviews.count }
+    /// §7's KPI chips - how many the header band is currently showing.
+    var debugHeaderChipCount: Int { headerChips.isHidden ? 0 : headerChips.arrangedSubviews.count }
     #endif
 }

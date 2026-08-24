@@ -34,6 +34,16 @@
 //     drawn trailing edge and the pane is simply covered, exactly as the pane
 //     itself already covers the 380pt beneath it.
 //
+// **Daylight (§6.13) shows this card permanently, not only with SRE Lead up.**
+// Its surround is warm `paper` rather than the terminal's own background, so
+// without the card the terminal would have no boundary at all - which is what
+// §6.13 means by "the same permanent-inset pattern ... re-tinted for a light
+// surround". Nothing about the mechanism changes: still an overlay, still no
+// frame change, still one `isHidden` flag (`ConsoleController
+// .updateTerminalCardStyle`). The shared Firstmate console has
+// `terminalInset == 0` and therefore no margin to draw a card in, so it stays
+// flush at full column count in every palette.
+//
 // The one visible cost of that trade: the card's drawn trailing edge sits
 // `gap` points left of the pane, so the terminal's rightmost ~1.5 columns are
 // hidden while SRE Lead is open - alongside the ~45 columns the pane itself
@@ -130,7 +140,9 @@ final class ConsoleCardChrome: NSView {
         let card = terminalCardRect
         guard !card.isEmpty, let ctx = NSGraphicsContext.current?.cgContext else { return }
 
-        let radius = HelmMetrics.rPanel
+        // §2.6 names `dSurface` (16) as "the terminal card" radius; the
+        // twelve palettes keep `rPanel`, which is what this has always drawn.
+        let radius = theme.isDaylight ? HelmMetrics.dSurface : HelmMetrics.rPanel
         let floor = HelmTheme.nsColor(theme.backgroundHex)
         let cardPath = NSBezierPath(roundedRect: card, xRadius: radius, yRadius: radius)
 
@@ -163,8 +175,11 @@ final class ConsoleCardChrome: NSView {
         let stroke = NSBezierPath(roundedRect: card.insetBy(dx: 0.5, dy: 0.5),
                                   xRadius: radius, yRadius: radius)
         stroke.lineWidth = 1
+        // Under Daylight `hair` is already the border token at full strength -
+        // the same call `HelmCard.applyCardSurface` makes for a Daylight card,
+        // rather than the twelve palettes' wash of `chromeLineHex`.
         HelmTheme.nsColor(theme.chromeLineHex)
-            .withAlphaComponent(HelmCard.borderAlpha).setStroke()
+            .withAlphaComponent(theme.isDaylight ? 1.0 : HelmCard.borderAlpha).setStroke()
         stroke.stroke()
     }
 

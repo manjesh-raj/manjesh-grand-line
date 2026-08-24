@@ -76,6 +76,9 @@ final class HelmGradientTile: NSView {
     private let gradient = CAGradientLayer()
     private let size: Size
     private var hue: HelmDomainHue = .blue
+    /// A user-chosen literal hue, when this tile carries a record's own colour
+    /// rather than an area of the app's - see `configure(symbol:literalHex:)`.
+    private var literalHex: String?
     private var symbolName: String?
     private var themeToken: ThemeObservation?
 
@@ -147,6 +150,7 @@ final class HelmGradientTile: NSView {
     /// exactly that way before (`anchor`, which is not an SF Symbol at all).
     func configure(symbol: String, hue: HelmDomainHue) {
         self.hue = hue
+        self.literalHex = nil
         self.symbolName = symbol
         let configured = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(pointSize: size.glyphPointSize, weight: .semibold))
@@ -163,15 +167,53 @@ final class HelmGradientTile: NSView {
         configure(symbol: destination.symbol, hue: destination.domainHue)
     }
 
+    /// Point the tile at a **literal** hue instead of a domain hue.
+    ///
+    /// Phase 4 slice 2 addition, for the one case §7 asks for by name: Hosts'
+    /// "per-host gradient tiles from `Host.accentHex`". A saved host's accent
+    /// is a colour the captain picked in the host editor - it is not an area
+    /// of the app, so there is no `HelmDomainHue` that honestly describes it,
+    /// and mapping it onto the nearest one would silently discard the choice.
+    /// This is the same distinction `HelmAccentRow.Content.tintHex` already
+    /// draws against its own semantic `tint`.
+    ///
+    /// The lighter end is derived exactly the way §2.8's fallback derives one
+    /// for a non-Daylight palette's hue - `fallbackLightenFraction`, measured
+    /// off Daylight's own seven pairs - so a per-host gradient reads in the
+    /// same direction and at the same strength as a real §2.2 one. Nothing
+    /// theme-dependent: a literal hue is literal in all thirteen palettes,
+    /// which is the whole point of the field it comes from.
+    func configure(symbol: String, literalHex: String) {
+        self.literalHex = literalHex
+        self.symbolName = symbol
+        let configured = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: size.glyphPointSize, weight: .semibold))
+        if configured == nil {
+            AppLog.ui.error("HelmGradientTile: SF Symbol '\(symbol, privacy: .public)' did not resolve")
+        }
+        imageView.image = configured
+        applyTheme(ThemeManager.shared.theme)
+    }
+
+    /// The pair this tile is actually painting - a literal hue's own derived
+    /// pair, or its domain hue's §2.2 pair resolved against `theme`.
+    private func resolvedPair(in theme: HelmTheme) -> (h1: NSColor, h2: NSColor) {
+        guard let literalHex else { return hue.pair(in: theme) }
+        let h1 = HelmTheme.nsColor(literalHex)
+        return (h1, h1.blended(withFraction: HelmDomainHue.fallbackLightenFraction, of: .white) ?? h1)
+    }
+
     override func layout() {
         super.layout()
         gradient.frame = bounds
     }
 
     func applyTheme(_ theme: HelmTheme) {
-        let pair = hue.pair(in: theme)
+        let pair = resolvedPair(in: theme)
         gradient.colors = [pair.h1.cgColor, pair.h2.cgColor]
-        imageView.contentTintColor = Self.glyphColor(for: hue, theme: theme)
+        // Scored against `h1`, the gradient's darker end, exactly as the
+        // domain-hue path does - see `glyphColor`.
+        imageView.contentTintColor = HelmContrast.legibleGlyph(over: pair.h1)
     }
 
     /// The glyph colour: white, corrected only when white genuinely cannot

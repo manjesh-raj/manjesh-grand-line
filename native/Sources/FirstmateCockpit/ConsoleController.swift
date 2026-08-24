@@ -63,7 +63,7 @@
 import AppKit
 import SwiftTerm
 
-final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegate {
+final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegate, DaylightDrillActions {
 
     /// The saved-keys Keychain (Phase 2) - consulted only to resolve a host's
     /// `.ssh` tab into a live `-i <path>` at start/reconnect time
@@ -170,6 +170,18 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// topmost subview of `content`, hidden unless the current tab has SRE
     /// Lead active.
     let cardChrome = ConsoleCardChrome(frame: .zero)
+
+    /// Set by `AppShellController`: "my live numbers changed, re-read my
+    /// subtitle" (Daylight §6.4). Fired from `styleChips()`, which is already
+    /// the one place every tab add / close / rename / selection funnels
+    /// through, so the header line and the tab strip cannot disagree.
+    var onDrillSubtitleChanged: (() -> Void)?
+
+    /// Whether the SRE Lead pane is currently up. Recorded rather than
+    /// re-derived so `refreshTerminalCardChrome()` - which a theme change also
+    /// calls - has one answer for "is a pane open" instead of inferring it
+    /// from a constraint's constant.
+    var sreLeadPaneIsOpen = false
 
     /// The workspace margin: how far the drawn card sits from `content`'s
     /// edges, and the gap between the terminal card and the SRE Lead panel.
