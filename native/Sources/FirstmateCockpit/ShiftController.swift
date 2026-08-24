@@ -191,28 +191,36 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         let followUpSection = buildFollowUpSection()
         let projectsSection = buildProjectsSection()
 
-        // Daylight §7's board: **Today left, Follow-ups + Projects right**.
+        // Daylight §7's board, as the captain has asked it to actually render:
+        // **Today | Follow-ups as a two-column row, Projects full-width below
+        // it.**
         //
-        // Before this it was two equal columns of Today | Follow-ups with
-        // Projects full-width underneath. The board is the same idea one step
-        // further: a captain's daily loop is "what is due" on one side and
-        // "what is waiting / what is it part of" on the other, which is what
-        // §7 names for this page and what stops Projects being a slab below
-        // the fold.
+        // §7's own written text groups Follow-ups and Projects into one
+        // right-hand column (`fm/grandline-daylight-migration-phase4-slice1`,
+        // PR #264, built it exactly that way), but a live captain screenshot
+        // showed that reading squeezes Projects' own multi-card grid into half
+        // the page width with the left column sitting empty beside it - not
+        // the "more comfortable, full-width" board the captain wants and
+        // recalls from before that slice. Per AGENTS.md's own instruction to
+        // treat an explicit captain description of desired behaviour as
+        // authoritative over the literal spec wording when the two conflict,
+        // Projects goes back to being its own full-width section under the
+        // Today/Follow-ups row - the shape the board had *before* PR #264,
+        // just with Today/Follow-ups still side by side above it.
         //
-        // `.fillEqually` on the row keeps the two columns the same width; each
-        // column is a plain vertical stack, so Projects simply follows
-        // Follow-ups down the right-hand side. `.top` alignment keeps the two
-        // columns flush at the top rather than centred against each other -
-        // note this is AppKit's *unflipped* space, so "top-aligned" means
-        // equal `maxY`, not equal `minY`.
+        // `.fillEqually` on `tasksRow` keeps Today and Follow-ups the same
+        // width; each column is a plain vertical stack holding just its one
+        // section, so neither one grows a second row of its own. `.top`
+        // alignment keeps the two columns flush at the top rather than
+        // centred against each other - note this is AppKit's *unflipped*
+        // space, so "top-aligned" means equal `maxY`, not equal `minY`.
         let leftColumn = NSStackView(views: [taskSection])
         leftColumn.orientation = .vertical
         leftColumn.alignment = .leading
         leftColumn.spacing = 20
         leftColumn.translatesAutoresizingMaskIntoConstraints = false
 
-        let rightColumn = NSStackView(views: [followUpSection, projectsSection])
+        let rightColumn = NSStackView(views: [followUpSection])
         rightColumn.orientation = .vertical
         rightColumn.alignment = .leading
         rightColumn.spacing = 20
@@ -231,10 +239,14 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         dashboardContainer.translatesAutoresizingMaskIntoConstraints = false
         dashboardContainer.addArrangedSubview(statsRow)
         dashboardContainer.addArrangedSubview(tasksRow)
-        // The project *detail* stays a direct child of the dashboard rather
-        // than living inside the right column: it takes the whole page when
-        // open (`applyProjectDetailFullPage`), so nesting it in a half-width
-        // column would cap it at half the page.
+        // Projects is its own full-width section, a direct child of the
+        // dashboard rather than nested in either column - it renders a
+        // multi-column card grid of its own and reads better spanning the
+        // page than confined to half of it.
+        dashboardContainer.addArrangedSubview(projectsSection)
+        // The project *detail* is also a direct child of the dashboard: it
+        // takes the whole page when open (`applyProjectDetailFullPage`), so
+        // nesting it inside any column would cap it at that column's width.
         dashboardContainer.addArrangedSubview(projectsDetailContainer)
 
         let weeklyReviewSection = buildWeeklyReviewSection()
@@ -272,7 +284,10 @@ final class ShiftController: NSViewController, DaylightDrillActions {
             // hugs its content and the two columns render ragged.
             taskSection.widthAnchor.constraint(equalTo: leftColumn.widthAnchor),
             followUpSection.widthAnchor.constraint(equalTo: rightColumn.widthAnchor),
-            projectsSection.widthAnchor.constraint(equalTo: rightColumn.widthAnchor),
+            // Projects is a full-width section, not a column member - it
+            // fills the whole page content width, matching `dashboardContainer`/
+            // `statsRow`/`tasksRow` above it.
+            projectsSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             weeklyReviewSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             commandLibraryView.view.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
         ])
@@ -625,11 +640,14 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         projectsDetailContainer.translatesAutoresizingMaskIntoConstraints = false
         buildDetailChrome()
 
-        // Just the panel now. Daylight §7's board puts Projects in the
-        // right-hand column beneath Follow-ups, while the project *detail*
-        // takes the whole page - so the detail container is added to the
-        // dashboard directly by `loadView` rather than being wrapped in here
-        // with the panel, which would have capped it at half the page width.
+        // Just the panel now. The board renders Projects as its own
+        // full-width section below the Today/Follow-ups row (per the
+        // captain's own correction of §7's literal two-column reading - see
+        // `loadView`'s board comment), and the project *detail* takes the
+        // whole page too - so both the panel and the detail container are
+        // added to the dashboard directly by `loadView` rather than being
+        // wrapped in here together, which would have capped either at
+        // whatever width this method returned.
         return projectsPanel
     }
 
