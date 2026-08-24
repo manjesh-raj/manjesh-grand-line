@@ -294,6 +294,27 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// data changed - which is worse than a slightly uneven pair of columns
     /// that always holds the same card in the same place.
     private func rebuildCardLayout() {
+        // `ThemeManager.shared.observe`'s closure fires *synchronously* at
+        // registration (this codebase's own, repeatedly-documented gotcha -
+        // see `HelmFormSheet`'s own header for the same trap). That
+        // registration sits at the very top of `loadView()`, right after
+        // `view = root` - which is what makes `isViewLoaded` true - and well
+        // before `cardsInOrder`/`cardsContainer` are ever populated a few
+        // lines later. Without this guard, that premature synchronous fire
+        // ran the whole method against an empty `cardsInOrder`, which did
+        // nothing *visible* but still set `lastLayoutWasTwoColumn` to a real,
+        // non-nil value - so the REAL call moments later (with all six cards
+        // finally in `cardsInOrder`) found `lastLayoutWasTwoColumn` already
+        // equal to the freshly computed `twoColumn` and returned via the
+        // no-op guard below without ever adding a single card. Confirmed live
+        // via a temporary probe: the page rendered its drill header
+        // correctly and then nothing else, on every theme (not just
+        // Daylight) - `cardsInOrder` held all 6 real `HelmCard` instances the
+        // whole time, but `cardsContainer` had zero arranged subviews.
+        // Bailing here, before that side effect can happen, means the first
+        // call that actually has cards to arrange is the one that decides
+        // `lastLayoutWasTwoColumn`.
+        guard !cardsInOrder.isEmpty else { return }
         // Re-entrancy guard - defence in depth, and honestly labelled as such.
         // Reparenting six cards mutates the view tree, which can drive a layout
         // pass, which calls `viewDidLayout`, which lands back here mid-teardown.
@@ -1276,6 +1297,14 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     var debugCards: [HelmCard] { cardsInOrder }
     var debugIsTwoColumn: Bool { lastLayoutWasTwoColumn == true }
     var debugToggles: [HelmToggle] { [autoReconnectSwitch, notifySwitch, morningBriefingSwitch] }
+    /// How many of the six real cards actually reached `cardsContainer`'s own
+    /// view tree - robust to one-column vs. two-column arrangement, since a
+    /// card sits either as a direct arranged subview of `cardsContainer`
+    /// (one column) or nested inside one of its two column stacks (two
+    /// columns). Exists for `checkSettingsRendersOnFirstLoad`, which guards
+    /// the exact "all six cards exist but none of them are on screen"
+    /// regression this file's `rebuildCardLayout()` fix closed.
+    var debugCardsInTree: Int { cardsInOrder.filter { $0.isDescendant(of: cardsContainer) }.count }
     #endif
 
     private func applyTheme() {

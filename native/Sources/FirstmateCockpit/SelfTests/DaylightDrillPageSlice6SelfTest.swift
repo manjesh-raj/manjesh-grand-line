@@ -64,7 +64,8 @@ enum DaylightDrillPageSlice6SelfTest {
                       checkToolsGridUsesModulePlates, checkPlateNoteFits,
                       checkPlatesDoNotAccumulate,
                       checkCodeEditorsAreWells, checkSettingsTwoColumnLayout,
-                      checkToggleRecipe, checkSharedPill, checkNoWindowWidthFloor] {
+                      checkToggleRecipe, checkSharedPill, checkNoWindowWidthFloor,
+                      checkSettingsRendersOnFirstLoad] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -689,6 +690,60 @@ enum DaylightDrillPageSlice6SelfTest {
             window.close()
         }
         if ok { print("  ok   both pages track the window from 760 to 1500 on Daylight") }
+    }
+
+    // MARK: 10. Settings actually renders content on its very first load
+    //
+    // A real, captain-reported regression, not a hypothetical: the drill
+    // header rendered correctly ("Settings / N themes...") and the entire
+    // body below it was completely empty - no cards, no wells, no toggles,
+    // no theme grid. Root cause was in `rebuildCardLayout()`, not in Dusk
+    // (Phase 6's 14th theme, which was the most recent change and the
+    // obvious first suspect): `ThemeManager.shared.observe`'s closure fires
+    // *synchronously* at registration - a documented, repeatedly-hit trap in
+    // this codebase (see `HelmFormSheet`'s own header for the same shape).
+    // That registration sits at the very top of `SettingsController.loadView`,
+    // right after `view = root` (which is what flips `isViewLoaded` to
+    // `true`) and well before `cardsInOrder`/`cardsContainer` are ever
+    // populated a few lines later. The premature synchronous fire ran
+    // `repaintForTheme()` -> `rebuildCardLayout()` against an *empty*
+    // `cardsInOrder`, which did nothing visible but still consumed
+    // `lastLayoutWasTwoColumn`'s "already built" cache state - so the real
+    // call moments later, with all six cards finally populated, found
+    // `lastLayoutWasTwoColumn` already matching the freshly computed
+    // `twoColumn` value and returned early via that cache guard without ever
+    // adding a single card to `cardsContainer`. It reproduces on every
+    // theme, Daylight or not - it is not specific to the Daylight-family
+    // theme count. Every *other* case in this file happens to mask it by
+    // calling `ThemeManager.shared.setTheme(daylight)` before construction,
+    // which flips `twoColumn`'s computed value on the very next real call
+    // and accidentally forces the cache guard to pass - this case
+    // deliberately mounts Settings with no theme forced first, the realistic
+    // path a captain's own launch takes.
+    private static func checkSettingsRendersOnFirstLoad(_ ok: inout Bool) {
+        print("\n-- regression: Settings renders real content on its very first load --")
+        let settings = makeSettings()
+        let window = mount(settings)
+        defer { _ = window }
+
+        guard settings.debugCards.count == 6 else {
+            print("  FAIL Settings built \(settings.debugCards.count) cards, want 6")
+            ok = false
+            return
+        }
+        let inTree = settings.debugCardsInTree
+        guard inTree == 6 else {
+            print("  FAIL Settings built 6 cards but only \(inTree) reached the screen - the rest are orphaned")
+            ok = false
+            return
+        }
+        let texts = allLabelTexts(in: settings.view)
+        guard texts.count > 20 else {
+            print("  FAIL Settings' view tree carries only \(texts.count) labels - the page is effectively blank")
+            ok = false
+            return
+        }
+        print("  ok   Settings: 6/6 cards reached the tree, \(texts.count) labels rendered")
     }
 }
 
