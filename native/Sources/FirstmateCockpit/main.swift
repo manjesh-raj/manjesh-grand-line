@@ -1772,6 +1772,16 @@ if ProcessInfo.processInfo.environment["FM_RUN_UPDATES_REFRESH_BUTTON_THEME_TEST
     exit(UpdatesRefreshButtonThemeSelfTest.run() ? 0 : 1)
 }
 
+// A real, captain-reported bug on the top nav's space pills
+// (`DaylightBarController`): clicking a pill and leaving the cursor in
+// place left its label blended into a stale, pre-click background, in both
+// light and dark mode - see TopNavPillPressedStateSelfTest.swift's header
+// for the root cause (a missing `HoverHighlightView.hoverColor` repaint
+// while already hovering).
+if ProcessInfo.processInfo.environment["FM_RUN_TOPNAV_PILL_PRESSED_STATE_TESTS"] == "1" {
+    exit(TopNavPillPressedStateSelfTest.run() ? 0 : 1)
+}
+
 #endif
 
 // GL-05: refuse to be a second instance. This sits *after* every

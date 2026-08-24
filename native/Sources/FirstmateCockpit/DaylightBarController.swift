@@ -350,6 +350,21 @@ final class DaylightBarController: NSViewController {
         return true
     }
 
+    /// Test-only entry to `handleArrowKey`, which takes a real `NSEvent` -
+    /// lets a self-test drive real arrow-key pill navigation without
+    /// depending on the rest of `NSEvent`'s construction surface. Matches
+    /// this file's existing `debugPills()`/`selectedSpaceForTests` convention
+    /// of a plain, always-compiled test accessor (this app has no `@testable`
+    /// import story - see AGENTS.md's GL-27 note).
+    func handleArrowKeyForTests(keyCode: UInt16, from space: DaylightSpace) -> Bool {
+        guard let event = NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
+            windowNumber: view.window?.windowNumber ?? 0, context: nil,
+            characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: keyCode
+        ) else { return false }
+        return handleArrowKey(event, from: space)
+    }
+
     // MARK: Avatar
 
     @objc private func avatarClicked() {
