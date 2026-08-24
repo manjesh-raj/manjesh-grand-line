@@ -62,6 +62,7 @@ enum DestinationMountingSelfTest {
             ("schedulesHasItsOwnSlotAndAutomationNoLongerRendersIt", test_schedulesIsSeparateFromAutomation),
             ("healthHasItsOwnSlotAndSettingsNoLongerRendersIt", test_healthIsSeparateFromSettings),
             ("mounterIsLazyAndBuildsEachSlotOnce", test_mounterUnitBehaviour),
+            ("everyDestinationRendersRealContentOnFirstLoad", test_everyDestinationRendersRealContentOnFirstLoad),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -210,6 +211,70 @@ enum DestinationMountingSelfTest {
             }
             guard Set(shell.mountedDestinationSlotsForTests) == Set(DestinationSlotID.allCases) else {
                 return "visiting every destination should end with every slot mounted"
+            }
+            return nil
+        }
+    }
+
+    /// The gap `everySlotIsReachableAndMountsCleanly` leaves open, and the
+    /// gap that let PR #278's Settings-page-completely-blank regression ship
+    /// undetected even though this whole suite already existed and already
+    /// visited `.settings` on every run: that case only proves a slot
+    /// *mounted* and *isHidden == false* - it says nothing about whether the
+    /// view actually painted any real content below the (always-present)
+    /// drill header. `SettingsController.rebuildCardLayout()`'s bug produced
+    /// exactly that shape - mounted, visible, drill header correct, body a
+    /// solid blank rectangle - and it would have sailed through the mounting
+    /// test above with every assertion in it passing.
+    ///
+    /// This closes that gap generically, for every destination, rather than
+    /// only for the one page a captain happened to report against
+    /// (`SettingsController.debugCardsInTree`/`checkSettingsRendersOnFirstLoad`,
+    /// in `DaylightDrillPageSlice6SelfTest.swift`, is the controller-specific
+    /// version of the same idea - kept as-is, since it asserts something this
+    /// generic check cannot: that all *six* cards specifically reached the
+    /// tree, not just "some text").
+    ///
+    /// The threshold (`minNonEmptyLabels`) is picked from a real, empirical
+    /// sweep of every destination's own non-empty label count on a fresh
+    /// scratch profile, not guessed: `review` is the tightest real page at 8
+    /// (its drill header's own "Refresh" action is a `HelmButton`, not an
+    /// `NSTextField`, so it doesn't even count here), `console` and `docs`
+    /// sit at 10, and every other destination measures well into the teens,
+    /// dozens, or - for the four Setup pages, which all share one built-once
+    /// container - 291. `4` sits comfortably below that real floor (leaving
+    /// margin for a legitimately sparser future page) and comfortably above
+    /// what the actual bug class produces: a poisoned cache guard like the
+    /// one PR #278 fixed skips populating the container entirely, so the
+    /// body renders 0 labels, not a handful.
+    ///
+    /// A `swift-build`-only, no-app-launch pass, per this project's worktree
+    /// rule: this drives the real `AppShellController`/real destination
+    /// controllers in a real (never shown) `NSWindow`, exactly like every
+    /// other case in this file, never the assembled `.app`.
+    ///
+    /// Confirmed to catch a real regression, not just to pass: reverting
+    /// `SettingsController.rebuildCardLayout()`'s fix (dropping the
+    /// `guard !cardsInOrder.isEmpty else { return }` line PR #278 added)
+    /// reproduces the exact failure this case is built to catch - `.settings`
+    /// renders 0 non-empty labels in its own body view instead of 59.
+    private static let minNonEmptyLabels = 4
+
+    private static func test_everyDestinationRendersRealContentOnFirstLoad() -> String? {
+        withScratchEnv {
+            let (_, shell) = makeMountedShell()
+            for dest in RailDestination.allCases {
+                shell.show(dest)
+                guard let view = shell.destinationViewIfMountedForTests(dest.slot) else {
+                    return "show(\(dest)) left slot \(dest.slot.rawValue) unmounted"
+                }
+                let labels = collectTextFieldValues(in: view).filter { !$0.isEmpty }
+                guard labels.count >= Self.minNonEmptyLabels else {
+                    return "\(dest) (slot \(dest.slot.rawValue)) rendered only \(labels.count) " +
+                        "non-empty text label(s) on its very first load - this is the exact " +
+                        "\"mounted, visible, but the body is blank\" shape PR #278 fixed for " +
+                        "Settings; want at least \(Self.minNonEmptyLabels)"
+                }
             }
             return nil
         }
