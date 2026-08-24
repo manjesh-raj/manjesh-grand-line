@@ -2080,3 +2080,225 @@ final class HelmFormSheet: NSView {
                  backgroundColor: layer?.backgroundColor.map { NSColor(cgColor: $0) ?? .clear })
     }
 }
+
+// MARK: - HelmToggle (Daylight §6.9's pill toggle)
+
+/// The app's one on/off control.
+///
+/// **Why this exists at all, and why it is not simply an `NSSwitch` restyle.**
+/// The full-app UI audit measured `NSSwitch` as the one control in AppKit that
+/// genuinely cannot be tinted - its header declares only `state`, and it
+/// answers `false` to `setTintColor:` / `setContentTintColor:` /
+/// `setAccentColor:` / `setFillColor:` / `setBezelColor:` (its runtime property
+/// list does expose a private `trackColor`, deliberately unused here). So six
+/// switches shipped in system chrome on a fully-themed page, and whether to
+/// build a bespoke toggle was registered as a captain decision
+/// (`grandline-full-ui-audit-decision-nsswitch-theming`) rather than silently
+/// built. Daylight §6.9 answers that decision **for Daylight**: the
+/// captain-approved prototype shows a custom pill, and states the recipe
+/// (40x24 capsule, 18pt white knob with a small shadow, on = `ok` fill).
+///
+/// **Both controls are built and exactly one is shown per theme**, which is the
+/// arrangement `HelmAccentRow` already uses for its gradient-vs-symbol badge.
+/// That is what keeps the twelve pre-Daylight palettes byte-identical - the
+/// registered decision above is still open for them, and answering it here
+/// would be answering it for every captain rather than for the one palette
+/// whose prototype the captain actually approved. It also means a theme switch
+/// needs no rebuild: `applyTheme` swaps which of the two is visible.
+///
+/// `isOn` is the single source of truth; the `NSSwitch` is kept in step with
+/// it rather than being consulted, so a caller never has to know which shape
+/// is currently on screen.
+final class HelmToggle: NSControl {
+
+    /// §6.9's measurements.
+    static let pillWidth: CGFloat = 40
+    static let pillHeight: CGFloat = 24
+    static let knobSide: CGFloat = 18
+    /// The gap between the knob and the pill's edge, both ends - derived so
+    /// the knob is vertically centred rather than positioned by a second
+    /// literal.
+    static var knobInset: CGFloat { (pillHeight - knobSide) / 2 }
+    static let animationDuration: TimeInterval = 0.16
+
+    /// Fired on any change the captain made - a click, a keyboard press, or a
+    /// VoiceOver activation. Not fired by `isOn`'s setter, so a caller
+    /// restoring persisted state (`refreshFromSettings`) cannot re-enter its
+    /// own handler.
+    var onToggle: (() -> Void)?
+
+    var isOn: Bool = false {
+        didSet {
+            guard isOn != oldValue else { return }
+            fallbackSwitch.state = isOn ? .on : .off
+            applyToggleState(animated: true)
+        }
+    }
+
+    /// The pre-Daylight shape, kept live so the twelve other palettes render
+    /// exactly what they always did.
+    private let fallbackSwitch = NSSwitch()
+    private let pill = NSView()
+    private let knob = NSView()
+    private var knobLeading: NSLayoutConstraint!
+    private var theme: HelmTheme = ThemeManager.shared.theme
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        build()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    private func build() {
+        translatesAutoresizingMaskIntoConstraints = false
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        fallbackSwitch.target = self
+        fallbackSwitch.action = #selector(fallbackSwitchChanged)
+        fallbackSwitch.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(fallbackSwitch)
+
+        pill.wantsLayer = true
+        pill.layer?.cornerRadius = HelmMetrics.capsuleRadius(forHeight: Self.pillHeight)
+        pill.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(pill)
+
+        knob.wantsLayer = true
+        knob.layer?.cornerRadius = Self.knobSide / 2
+        knob.layer?.backgroundColor = NSColor.white.cgColor
+        // §6.9's "knob 18pt white with a small shadow". Drawn on the knob's own
+        // layer rather than by `HelmCard.elevation`, which is the page-level
+        // depth system - this is an 18pt dot, not a floating card.
+        knob.layer?.shadowColor = HelmTheme.nsColor(DaylightPalette.shadowInk).cgColor
+        knob.layer?.shadowOpacity = 0.28
+        knob.layer?.shadowRadius = 2
+        knob.layer?.shadowOffset = CGSize(width: 0, height: -1)
+        knob.translatesAutoresizingMaskIntoConstraints = false
+        pill.addSubview(knob)
+
+        knobLeading = knob.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: Self.knobInset)
+        NSLayoutConstraint.activate([
+            pill.widthAnchor.constraint(equalToConstant: Self.pillWidth),
+            pill.heightAnchor.constraint(equalToConstant: Self.pillHeight),
+            pill.leadingAnchor.constraint(equalTo: leadingAnchor),
+            pill.topAnchor.constraint(equalTo: topAnchor),
+            pill.bottomAnchor.constraint(equalTo: bottomAnchor),
+            pill.trailingAnchor.constraint(equalTo: trailingAnchor),
+            knob.widthAnchor.constraint(equalToConstant: Self.knobSide),
+            knob.heightAnchor.constraint(equalToConstant: Self.knobSide),
+            knob.centerYAnchor.constraint(equalTo: pill.centerYAnchor),
+            knobLeading,
+            // The fallback sits in the same box. It is smaller than the pill,
+            // so it is centred rather than pinned - the row around it measures
+            // one control either way.
+            fallbackSwitch.centerXAnchor.constraint(equalTo: centerXAnchor),
+            fallbackSwitch.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+
+        let click = NSClickGestureRecognizer(target: self, action: #selector(pillClicked))
+        pill.addGestureRecognizer(click)
+
+        applyTheme(theme)
+    }
+
+    @objc private func fallbackSwitchChanged() {
+        setOnFromUser(fallbackSwitch.state == .on)
+    }
+
+    @objc private func pillClicked() {
+        setOnFromUser(!isOn)
+    }
+
+    private func setOnFromUser(_ value: Bool) {
+        guard isEnabled else { return }
+        isOn = value
+        onToggle?()
+        // Keeps a caller that wired `target`/`action` instead of `onToggle`
+        // working, exactly as `NSSwitch` would have.
+        if let action { NSApp.sendAction(action, to: target, from: self) }
+    }
+
+    override var isEnabled: Bool {
+        didSet {
+            fallbackSwitch.isEnabled = isEnabled
+            alphaValue = isEnabled ? 1 : 0.5
+        }
+    }
+
+    func applyTheme(_ theme: HelmTheme) {
+        self.theme = theme
+        let daylight = theme.isDaylight
+        pill.isHidden = !daylight
+        fallbackSwitch.isHidden = daylight
+        applyToggleState(animated: false)
+    }
+
+    private func applyToggleState(animated: Bool) {
+        let onFill = HelmTheme.nsColor(theme.isDaylight
+                                       ? DaylightPalette.ok
+                                       : HelmTint.good.hex(in: theme))
+        let offFill = HelmField.fill(theme)
+        let offBorder = HelmField.border(theme)
+        let target = isOn ? Self.pillWidth - Self.knobSide - Self.knobInset : Self.knobInset
+
+        // GL-16: a decorative slide is real motion, so it is skipped outright
+        // under Reduce Motion - the colour and position still change, just
+        // without the animation.
+        let animate = animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if animate {
+            // `constant` is set **synchronously** inside the group, with
+            // `allowsImplicitAnimation` doing the animating - deliberately not
+            // `knobLeading.animator().constant`, which defers the write to the
+            // animator and leaves the real constraint at its old value until a
+            // run loop turn. That difference is invisible in the app and fatal
+            // to a headless test, which never turns one.
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = Self.animationDuration
+                ctx.allowsImplicitAnimation = true
+                knobLeading.constant = target
+                pill.layoutSubtreeIfNeeded()
+            }
+        } else {
+            knobLeading.constant = target
+        }
+        pill.layer?.backgroundColor = (isOn ? onFill : offFill).cgColor
+        pill.layer?.borderWidth = isOn ? 0 : HelmField.hairlineBorderWidth
+        pill.layer?.borderColor = offBorder.cgColor
+    }
+
+    // MARK: Accessibility
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .checkBox }
+    override func accessibilityValue() -> Any? { isOn ? 1 : 0 }
+    override func accessibilityPerformPress() -> Bool {
+        setOnFromUser(!isOn)
+        return true
+    }
+
+    // MARK: Probe / self-test surface
+
+    #if FM_SELFTESTS
+    struct Geometry {
+        let showsPill: Bool
+        let showsFallbackSwitch: Bool
+        let pillSize: CGSize
+        let pillRadius: CGFloat
+        let knobSide: CGFloat
+        let knobLeading: CGFloat
+        let pillFill: NSColor?
+    }
+
+    var debugGeometry: Geometry {
+        Geometry(showsPill: !pill.isHidden,
+                 showsFallbackSwitch: !fallbackSwitch.isHidden,
+                 pillSize: CGSize(width: Self.pillWidth, height: Self.pillHeight),
+                 pillRadius: pill.layer?.cornerRadius ?? 0,
+                 knobSide: Self.knobSide,
+                 knobLeading: knobLeading.constant,
+                 pillFill: pill.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) })
+    }
+    #endif
+}

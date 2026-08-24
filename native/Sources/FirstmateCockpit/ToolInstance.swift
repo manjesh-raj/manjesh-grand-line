@@ -1131,20 +1131,54 @@ final class ToolInstance: NSObject {
 
         for label in mutedLabels { label.textColor = muted }
         for card in cards { card.applyTheme(theme) }
+        // §7's "code editors keep mono on `inset` wells". Under Daylight a code
+        // area is the same physical object as every other input on the page -
+        // `HelmField`'s well - so it resolves through that one definition
+        // rather than repainting `backgroundHex` (which is Daylight's warm
+        // *paper*, i.e. the page itself: a code area painted with it would have
+        // no boundary at all against the card behind it). The twelve
+        // pre-Daylight palettes keep exactly the chrome they always had.
+        let daylight = theme.isDaylight
+        let editorFill = daylight ? HelmField.fill(theme) : bg
         for scroll in editorScrollViews {
-            scroll.layer?.backgroundColor = bg.cgColor
-            scroll.layer?.borderWidth = 1
-            scroll.layer?.borderColor = line.withAlphaComponent(0.5).cgColor
+            if daylight {
+                // `masksToBounds` is what makes the rounded corner real rather
+                // than only rounding the border - see `HelmField.makeSunken`'s
+                // own note. Set here rather than at construction because the
+                // legacy path deliberately does not clip.
+                scroll.layer?.masksToBounds = true
+                HelmField.applySunken(to: scroll, theme: theme)
+            } else {
+                scroll.layer?.cornerRadius = 8
+                scroll.layer?.backgroundColor = bg.cgColor
+                scroll.layer?.borderWidth = 1
+                scroll.layer?.borderColor = line.withAlphaComponent(0.5).cgColor
+            }
         }
         for tv in editorTextViews {
-            tv.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-            tv.backgroundColor = bg
+            tv.textColor = daylight ? HelmField.ink(theme) : HelmTheme.nsColor(theme.chromeInkHex)
+            tv.backgroundColor = editorFill
             tv.insertionPointColor = accent
-            tv.selectedTextAttributes = [.backgroundColor: accent.withAlphaComponent(0.3)]
+            if daylight {
+                // D4: selection is the page's own hue at 35%, never system
+                // blue and never a second hand-rolled alpha - one definition,
+                // shared with every other text surface in the app.
+                HelmSelection.apply(to: tv, theme: theme)
+            } else {
+                tv.selectedTextAttributes = [.backgroundColor: accent.withAlphaComponent(0.3)]
+            }
         }
         recolorStatus()
         diffResultView?.applyTheme(theme)
     }
+
+    #if FM_SELFTESTS
+    /// Probe surface for `DaylightDrillPageSlice6SelfTest`: the real scroll
+    /// views and text views §7's "code editors keep mono on `inset` wells"
+    /// applies to, read from the live panel rather than rebuilt by the test.
+    var debugEditorScrollViews: [NSScrollView] { editorScrollViews }
+    var debugEditorTextViews: [NSTextView] { editorTextViews }
+    #endif
 
     /// Every monospace text area on this tab follows `FontSizeManager` -
     /// the same source Settings' Terminal presets and every terminal tab

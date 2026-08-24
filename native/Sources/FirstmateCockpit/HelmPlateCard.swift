@@ -9,12 +9,23 @@
 // affordance), and every instance resolves to one fixed
 // `HelmModuleCard.standardHeight` so the hub reads as a uniform grid. §7 asks
 // Docs' runbook grid for the module's *look* with neither of those - it calls
-// it the "non-navigating version with Open buttons" - and Tools' landing grid
-// wants the same thing. Rather than bolt an actions slot and a second height
-// mode onto the canvas component (two disjoint halves in one type, the shape
-// §6.3 keeps `HelmAccentRow` and `ToolRowLayout` apart to avoid), this is the
-// small sibling: same ribbon, same gradient tile, same card chrome, an
-// explicit action row instead of a whole-card navigation contract.
+// it the "non-navigating version with Open buttons". Rather than bolt an
+// actions slot and a second height mode onto the canvas component (two
+// disjoint halves in one type, the shape §6.3 keeps `HelmAccentRow` and
+// `ToolRowLayout` apart to avoid), this is the small sibling: same ribbon,
+// same gradient tile, same card chrome, an explicit action row instead of a
+// whole-card navigation contract.
+//
+// **Tools' landing grid is deliberately NOT a caller** - this file's first
+// draft (slice 5) guessed that it would be, written a slice before that grid
+// was migrated. Slice 6 measured it against the real page and both rejected
+// contracts turn out to be the ones Tools *wants*: clicking anywhere on a tool
+// card has opened that tool in a new tab since the page shipped (so removing
+// whole-card activation in favour of an Open button would be a behaviour
+// change, which Phase 4 forbids), and a nine-item picker is exactly the case
+// uniform height was introduced for. `Content` here also has no body slot,
+// and a tool plate's whole point is carrying that tool's description - which
+// a one-line truncating subtitle would cut. See `ToolsController.toolPlate`.
 //
 // Anatomy, top to bottom (§6.1's, minus the four body kinds):
 //   1. a 6pt `h1`->`h2` ribbon across the top, clipped by the card's radius,

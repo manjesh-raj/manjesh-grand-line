@@ -1401,6 +1401,11 @@ if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_SLICE3_TESTS"] == 
 if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_SLICE2_TESTS"] == "1" {
     exit(DaylightDrillPageSlice2SelfTest.run() ? 0 : 1)
 }
+// Daylight Phase 4 slice 6: the last two destinations in §7's table, Tools and
+// Settings. See DaylightDrillPageSlice6SelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_SLICE6_TESTS"] == "1" {
+    exit(DaylightDrillPageSlice6SelfTest.run() ? 0 : 1)
+}
 if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_TESTS"] == "1" {
     exit(DaylightDrillPageSelfTest.run() ? 0 : 1)
 }

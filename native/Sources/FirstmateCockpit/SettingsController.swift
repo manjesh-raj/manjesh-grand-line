@@ -28,7 +28,35 @@
 
 import AppKit
 
-final class SettingsController: NSViewController {
+final class SettingsController: NSViewController, DaylightDrillActions {
+
+    /// Set by `AppShellController` - "re-read my subtitle". The drill header
+    /// belongs to the shell; a page writing into it directly is how two owners
+    /// of one view start disagreeing.
+    var onDrillSubtitleChanged: (() -> Void)?
+
+    // MARK: Drill header (Daylight §6.4)
+
+    /// Nothing. Every action on this page belongs to one card - Detect to
+    /// Connection, Export/Import to Backup - and none of them is the *page's*
+    /// primary action, so hoisting any one of them into the header would
+    /// promote it over its five siblings for no reason.
+    var drillHeaderActions: [NSView] { [] }
+
+    /// §6.4's live subtitle - and the home of what the page's own caption used
+    /// to say.
+    ///
+    /// That caption read "Connection, appearance, and terminal - stored
+    /// locally on this machine", sitting one row under a drill header already
+    /// reading "Settings / Connection, appearance, terminal, security and
+    /// backup": the duplicate-title defect §6.4 exists to remove, and the
+    /// same one Review and Health were corrected for in slices 1 and 2. The
+    /// label is deleted; the one fact it carried that the header did not - that
+    /// none of this leaves the machine - is here, alongside a real number this
+    /// page owns.
+    var drillHeaderSubtitle: String? {
+        "\(HelmTheme.allThemes.count) themes \u{00B7} everything here is stored locally on this machine"
+    }
 
     /// The four stores the "Backup & Restore" card exports from / imports
     /// into (`BackupUI.swift`) - injected so this controller doesn't need any
@@ -70,12 +98,6 @@ final class SettingsController: NSViewController {
     private var sudoTouchIDStatus: SudoTouchIDStatus = .checking
     private var isHardeningSudo = false
 
-    // Header (Fix 1, cockpit-native-settings-compact): the topbar already
-    // shows "Settings" as the destination title, so this only carries the
-    // descriptive subtitle - mirrors the web app's page-head `.greet` line
-    // without duplicating the title text.
-    private let subtitleLabel = NSTextField(labelWithString: "Connection, appearance, and terminal - stored locally on this machine.")
-
     // Connection
     private let mirrorTargetField = HelmTextField(placeholder: "firstmate")
     private let sessionsStatusLabel = NSTextField(wrappingLabelWithString: "")
@@ -89,10 +111,38 @@ final class SettingsController: NSViewController {
     private var fontPresetButtons: [Int: HelmButton] = [:]
     /// Keyed by index into `ChromeTextScale.steps` (GL-32).
     private var uiScaleButtons: [Int: HelmButton] = [:]
-    private let autoReconnectSwitch = NSSwitch()
-    private let notifySwitch = NSSwitch()
+    /// §6.9's toggle. `HelmToggle` renders the prototype's pill under Daylight
+    /// and keeps a real `NSSwitch` on the other twelve palettes - see that
+    /// class's own header for why the fallback is deliberate rather than
+    /// transitional.
+    private let autoReconnectSwitch = HelmToggle()
+    private let notifySwitch = HelmToggle()
     /// F12's opt-in. Off by default - see `AppSettings.morningBriefingEnabled`.
-    private let morningBriefingSwitch = NSSwitch()
+    private let morningBriefingSwitch = HelmToggle()
+
+    /// The six section cards in reading order - the input to
+    /// `rebuildCardLayout()`, which decides whether they sit in one column or
+    /// two. Separate from `cards` (the re-theming registry) because that list
+    /// is append-on-create and says nothing about arrangement.
+    private var cardsInOrder: [HelmCard] = []
+
+    /// The page's own vertical stack. Holds either the six cards directly (one
+    /// column) or a single horizontal two-column row.
+    private let cardsContainer = NSStackView()
+
+    /// Which arrangement is currently built, so a resize or a theme change that
+    /// does not cross a boundary costs nothing.
+    private var lastLayoutWasTwoColumn: Bool?
+
+    /// The narrowest content width two columns are allowed at.
+    ///
+    /// Not a taste value: below this each card's own rows (a title, a wrapping
+    /// description and a trailing control cluster) start fighting for the same
+    /// ~400pt, and the honest fallback is one full-width column. It also keeps
+    /// this page clear of the window-width floor `AppShellBodyWidthSelfTest`
+    /// guards - two columns simply do not engage at the narrow end of its
+    /// sweep, rather than engaging and then having to be pried back open.
+    private static let twoColumnMinWidth: CGFloat = 940
 
     /// Every `HelmCard` on this page, re-themed together. The card owns its own
     /// header icon tile and subtitle label, so neither needs a registry here.
@@ -123,7 +173,6 @@ final class SettingsController: NSViewController {
             self?.repaintForTheme()
         }
 
-        let header = buildHeader()
         let connection = card(icon: "network", tint: .info, title: "Connection", subtitle: "Mirror target and working directory", content: buildConnectionSection())
         let appearance = card(icon: "paintpalette", tint: .violet, title: "Appearance", subtitle: "\(HelmTheme.allThemes.count) Helm themes, light and dark", content: buildAppearanceSection())
         let terminal = card(icon: "terminal", tint: .warn, title: "Terminal", subtitle: "Font size and behavior", content: buildTerminalSection())
@@ -141,12 +190,20 @@ final class SettingsController: NSViewController {
         // card already got. Backup & Restore is the last card here now.
         let backup = card(icon: "tray.and.arrow.up.fill", tint: .info, title: "Backup & Restore", subtitle: "Move saved hosts, snippets, and preferences between machines", content: buildBackupSection())
 
-        let stack = NSStackView(views: [header, connection, appearance, terminal, briefing, security, backup])
+        // §7's "two-column cards" is a *layout* decision taken per pass rather
+        // than a fixed stack, so `cardsInOrder` is the content and
+        // `rebuildCardLayout()` is the arrangement. Order is the reading order
+        // in one column and the round-robin source in two.
+        cardsInOrder = [connection, appearance, terminal, briefing, security, backup]
+
+        let stack = cardsContainer
         stack.orientation = .vertical
         stack.alignment = .leading
+        // 14 - unchanged from the flat stack this replaced, so a captain on any
+        // of the twelve pre-Daylight palettes sees the same page they always
+        // did. The two-column arrangement uses §2.7's own 16pt gap instead.
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.setCustomSpacing(16, after: header)
 
         let content = FlippedView()
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -156,14 +213,8 @@ final class SettingsController: NSViewController {
             stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
             stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
             stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
-            header.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            connection.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            appearance.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            terminal.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            briefing.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            security.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            backup.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
+        rebuildCardLayout()
 
         let scroll = NSScrollView()
         scroll.documentView = content
@@ -215,10 +266,181 @@ final class SettingsController: NSViewController {
         // fixed on the Tools page).
         guard !view.isHidden else { return }
         view.window?.contentView?.layoutSubtreeIfNeeded()
+        // §7's two-column arrangement is width-driven, so it re-decides on the
+        // same signal the theme grid's column count already did.
+        rebuildCardLayout()
+        layoutDidChangeWidths()
         let width = appearanceContainer.frame.width
         guard width > 0, abs(width - lastAppearanceGridWidth) > 0.5 else { return }
         lastAppearanceGridWidth = width
         rebuildAppearanceGrid()
+    }
+
+    // MARK: Card layout (Daylight §7's "two-column cards")
+
+    /// One column or two, decided from the container's real width.
+    ///
+    /// **Daylight only.** Two columns is this design's own arrangement for
+    /// this page; the twelve pre-Daylight palettes keep the single column they
+    /// have always had, which is the same rule slices 1 and 2 held to - a
+    /// half-migrated look is worse for a captain on another palette than no
+    /// migration at all.
+    ///
+    /// The split is a plain round robin over `cardsInOrder` rather than any
+    /// attempt to balance heights. Heights here are genuinely data-dependent
+    /// (the Appearance card grows with the theme grid's row count, Security
+    /// with its status, Connection with however many tmux panes Detect found),
+    /// so a balancing pass would reshuffle the cards under the captain as that
+    /// data changed - which is worse than a slightly uneven pair of columns
+    /// that always holds the same card in the same place.
+    private func rebuildCardLayout() {
+        // Re-entrancy guard - defence in depth, and honestly labelled as such.
+        // Reparenting six cards mutates the view tree, which can drive a layout
+        // pass, which calls `viewDidLayout`, which lands back here mid-teardown.
+        // The failure that was actually *measured* (all six cards left detached,
+        // no superview, the page stuck in one column at 1500pt) was fixed by
+        // reading the width from a source that does not move mid-rebuild - see
+        // `contentColumnWidth()`; re-checked by injection, this guard alone does
+        // not fix it and that fix alone does. It stays because a re-entrant
+        // rebuild is a real hazard on its own terms, not because it is what
+        // closed the bug.
+        guard !isRebuildingCardLayout else { return }
+        let twoColumn = theme.isDaylight && contentColumnWidth() >= Self.twoColumnMinWidth
+        guard lastLayoutWasTwoColumn != twoColumn else { return }
+        isRebuildingCardLayout = true
+        defer { isRebuildingCardLayout = false }
+        lastLayoutWasTwoColumn = twoColumn
+
+        for v in cardsContainer.arrangedSubviews {
+            cardsContainer.removeArrangedSubview(v)
+            v.removeFromSuperview()
+        }
+        // A card may be moving from one parent stack to another. The width tie
+        // its previous arrangement gave it is held by *that* parent, not by the
+        // card, and `removeFromSuperview()` is documented to drop any
+        // constraint referring to the view being removed - so detaching each
+        // card is what actually clears the old tie. Doing it explicitly (rather
+        // than relying on the column stacks above being discarded) also covers
+        // the one-column case, where the tie lives on `cardsContainer`, which
+        // survives.
+        for card in cardsInOrder { card.removeFromSuperview() }
+
+        guard twoColumn else {
+            for card in cardsInOrder {
+                cardsContainer.addArrangedSubview(card)
+                card.widthAnchor.constraint(equalTo: cardsContainer.widthAnchor).isActive = true
+            }
+            layoutDidChangeWidths()
+            return
+        }
+
+        let columns = (0..<2).map { index -> NSStackView in
+            let column = NSStackView(views: cardsInOrder.enumerated()
+                .filter { $0.offset % 2 == index }
+                .map { $0.element })
+            column.orientation = .vertical
+            column.alignment = .leading
+            column.spacing = HelmMetrics.s4
+            column.translatesAutoresizingMaskIntoConstraints = false
+            // AGENTS.md gotcha (12) + (13): an `NSStackView` resists clipping
+            // below its arranged subviews at `.defaultHigh` (750) by default,
+            // which is *above* `NSLayoutPriorityWindowSizeStayPut` (500) - so a
+            // column of cards left at the default is a window-width floor,
+            // doubled by `.fillEqually`. The stack-level API is the one that
+            // bites here; the content-level one is a no-op on a view with no
+            // intrinsic size.
+            column.setClippingResistancePriority(.defaultLow, for: .horizontal)
+            for card in column.arrangedSubviews {
+                card.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+            }
+            return column
+        }
+
+        let row = NSStackView(views: columns)
+        row.orientation = .horizontal
+        row.alignment = .top
+        row.distribution = .fillEqually
+        row.spacing = HelmMetrics.s4
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        cardsContainer.addArrangedSubview(row)
+        row.widthAnchor.constraint(equalTo: cardsContainer.widthAnchor).isActive = true
+        layoutDidChangeWidths()
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        rebuildCardLayout()
+        layoutDidChangeWidths()
+    }
+
+    /// Re-wrap every wrapping description on this page against the width it
+    /// actually has.
+    ///
+    /// The same fix `HealthCardView.layoutDidChange` carries, and needed for
+    /// the same reason plus one more. A `preferredMaxLayoutWidth` guessed once
+    /// (this file had 360 and 520 hardcoded) is an *over*-estimate the moment a
+    /// card is narrower than the guess - the dangerous direction, since AppKit
+    /// computes a one-line intrinsic height at the estimate and the text then
+    /// draws outside its own frame. Two-column mode halves every card, so the
+    /// old constants would have clipped. It is also what lets those labels sit
+    /// at `.defaultLow` compression resistance (see `wrapping(_:)`), which is
+    /// what stops a 520pt guess becoming a window-width floor.
+    private func layoutDidChangeWidths() {
+        let card = availableCardWidth()
+        for (label, reserve) in wrappingLabels {
+            let available = max(200, card - HelmCard.contentInsets.left - HelmCard.contentInsets.right - reserve)
+            guard abs(label.preferredMaxLayoutWidth - available) > 0.5 else { continue }
+            label.preferredMaxLayoutWidth = available
+            label.invalidateIntrinsicContentSize()
+        }
+    }
+
+    /// The width the six cards have to share.
+    ///
+    /// Read from the scroll view's own **clip** view rather than from
+    /// `cardsContainer.frame`, for two reasons: the clip view's width is set by
+    /// the window and is therefore stable even while the card tree is being
+    /// rebuilt underneath it (`cardsContainer.frame` mid-rebuild is whatever
+    /// the half-built tree happened to resolve to), and gotcha #4's scroller
+    /// track is already subtracted from it.
+    private func contentColumnWidth() -> CGFloat {
+        guard let scrollView else { return HelmResponsiveGrid.fallbackContainerWidth }
+        let usable = scrollView.contentView.bounds.width - HelmMetrics.pageGutter * 2
+        return usable > 0 ? usable : HelmResponsiveGrid.fallbackContainerWidth
+    }
+
+    /// How wide one card actually is - the whole content column in one-column
+    /// mode, half of it (less the gap) in two.
+    private func availableCardWidth() -> CGFloat {
+        let container = contentColumnWidth()
+        guard lastLayoutWasTwoColumn == true else { return container }
+        return (container - HelmMetrics.s4) / 2
+    }
+
+    private var isRebuildingCardLayout = false
+
+    /// Wrapping description labels, each with how much of its card's body
+    /// width is spoken for by chrome it sits beside (a `descRow`'s own padding,
+    /// its trailing control column). Zero for a label that spans the body.
+    private var wrappingLabels: [(NSTextField, CGFloat)] = []
+
+    /// Registers a wrapping description label for the width handling above and
+    /// drops its compression-resistance floor.
+    ///
+    /// Both halves are needed together. Dropping the floor alone would let a
+    /// narrow column squeeze the label's *frame* below the width its intrinsic
+    /// height was computed at, and the second line would draw outside its own
+    /// bounds (the Docs-card defect). Re-wrapping alone would leave the label's
+    /// 750-priority intrinsic width as a real minimum - above
+    /// `NSLayoutPriorityWindowSizeStayPut` (500), i.e. a window-width floor of
+    /// exactly the class AGENTS.md gotcha (13) describes, and doubled by two
+    /// columns.
+    @discardableResult
+    private func wrapping(_ label: NSTextField, reserve: CGFloat = 0) -> NSTextField {
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        wrappingLabels.append((label, reserve))
+        return label
     }
 
     override func viewWillAppear() {
@@ -245,14 +467,6 @@ final class SettingsController: NSViewController {
         guard let scroll = scrollView else { return }
         scroll.contentView.scroll(to: .zero)
         scroll.reflectScrolledClipView(scroll.contentView)
-    }
-
-    // MARK: Header
-
-    private func buildHeader() -> NSView {
-        subtitleLabel.font = .systemFont(ofSize: 12)
-        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        return subtitleLabel
     }
 
     // MARK: Card chrome
@@ -314,7 +528,12 @@ final class SettingsController: NSViewController {
         let descLabel = NSTextField(wrappingLabelWithString: desc)
         descLabel.font = .systemFont(ofSize: 11)
         mutedLabel(descLabel)
-        descLabel.preferredMaxLayoutWidth = 360
+        // 16 for the row container's own padding, 12 for the row spacing and
+        // ~160 for the trailing control column (three preset buttons is the
+        // widest one on this page) - the same shape as
+        // `HealthCardView.descriptionWidth`, re-derived on every layout pass
+        // rather than guessed once at 360.
+        wrapping(descLabel, reserve: 16 + 12 + 160)
 
         let textStack = NSStackView(views: [titleLabel, descLabel])
         textStack.orientation = .vertical
@@ -347,23 +566,21 @@ final class SettingsController: NSViewController {
         return container
     }
 
+    /// §6.7: the app's one chip.
+    ///
+    /// This used to be a private copy - a hue painted as its own label over a
+    /// 15% wash of itself, which is the audit's §5.7 contrast defect and
+    /// measured as low as 1.93:1 across the twelve palettes before
+    /// `HelmContrast.tintedSurface` fixed it *in the shared component*. Health
+    /// carried the identical copy and slice 2 deleted it; this is the last one.
+    /// `ToolRowLayout.pill` corrects the label against whichever surface the
+    /// chip lands on and makes it a capsule under Daylight.
     private func pillView(text: String, colorHex: String) -> NSView {
-        let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 9.5, weight: .semibold)
-        label.textColor = HelmTheme.nsColor(colorHex)
-        label.translatesAutoresizingMaskIntoConstraints = false
         let container = NSView()
-        container.wantsLayer = true
-        container.layer?.cornerRadius = 7
-        container.layer?.backgroundColor = HelmTheme.nsColor(colorHex).withAlphaComponent(0.15).cgColor
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(label)
-        NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 6),
-            label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -6),
-            label.topAnchor.constraint(equalTo: container.topAnchor, constant: 2),
-            label.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -2),
-        ])
+        let label = NSTextField(labelWithString: text)
+        ToolRowLayout.pill(text: text, colorHex: colorHex, into: container, label: label, theme: theme)
+        container.setContentHuggingPriority(.required, for: .horizontal)
+        container.setContentCompressionResistancePriority(.required, for: .horizontal)
         return container
     }
 
@@ -376,7 +593,7 @@ final class SettingsController: NSViewController {
         let desc = NSTextField(wrappingLabelWithString: "The tmux target the console's Mirror tab attaches to. Detect lists every discovered session below - click one to select it.")
         desc.font = .systemFont(ofSize: 11)
         mutedLabel(desc)
-        desc.preferredMaxLayoutWidth = 520
+        wrapping(desc)
 
         configure(mirrorTargetField)
         let detectButton = HelmButton(title: "Detect", variant: .secondary, symbol: "arrow.triangle.2.circlepath", target: self, action: #selector(detectClicked))
@@ -512,8 +729,12 @@ final class SettingsController: NSViewController {
         row.translatesAutoresizingMaskIntoConstraints = false
 
         let card = HoverHighlightView()
-        card.cornerRadius = 8
-        card.layer?.borderWidth = isSelected ? 1.5 : 1
+        // A session card is a row *inside* the Connection card, so under
+        // Daylight it takes the well treatment (§6.5/§6.9) rather than the card
+        // treatment: `chromeBackgroundHex` there is the same white the card
+        // behind it already is, and a white row on a white card is invisible.
+        card.cornerRadius = theme.isDaylight ? HelmField.rowCornerRadius(for: theme) : 8
+        card.layer?.borderWidth = isSelected ? 1.5 : HelmField.hairlineBorderWidth
         card.addSubview(row)
         NSLayoutConstraint.activate([
             row.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 10),
@@ -521,10 +742,16 @@ final class SettingsController: NSViewController {
             row.topAnchor.constraint(equalTo: card.topAnchor, constant: 6),
             row.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -6),
         ])
-        let base = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        let base = theme.isDaylight
+            ? HelmField.fill(theme)
+            : HelmTheme.nsColor(theme.chromeBackgroundHex)
         card.normalColor = base
-        card.hoverColor = base.hoverShifted(by: 0.08, forMode: theme.mode)
-        card.layer?.borderColor = (isSelected ? HelmTheme.nsColor(theme.accentHex) : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.5)).cgColor
+        card.hoverColor = theme.isDaylight
+            ? HelmTheme.nsColor(DaylightPalette.rowHover)
+            : base.hoverShifted(by: 0.08, forMode: theme.mode)
+        card.layer?.borderColor = (isSelected
+            ? HelmTheme.nsColor(theme.accentHex)
+            : HelmField.border(theme)).cgColor
 
         let click = NSClickGestureRecognizer(target: self, action: #selector(sessionCardClicked(_:)))
         card.addGestureRecognizer(click)
@@ -559,7 +786,7 @@ final class SettingsController: NSViewController {
         let desc = NSTextField(wrappingLabelWithString: "A curated set of light and dark instrument-panel palettes, each contrast-verified to WCAG AA.")
         desc.font = .systemFont(ofSize: 11)
         mutedLabel(desc)
-        desc.preferredMaxLayoutWidth = 520
+        wrapping(desc)
 
         appearanceContainer.orientation = .vertical
         appearanceContainer.alignment = .leading
@@ -681,13 +908,27 @@ final class SettingsController: NSViewController {
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let card = HoverHighlightView()
-        card.cornerRadius = 10
+        // §7: the grid mechanics stay exactly as they are - only the card
+        // chrome becomes Daylight's. That means `dTileSmall`'s radius (the same
+        // 10 this card already used, so nothing moves), a **full-strength**
+        // `hair` border rather than a damped one, and `inset` as the resting
+        // fill: a theme card sits on the Appearance card's own white, so a
+        // transparent card would be a swatch strip floating with no plate under
+        // it, and `chromeBackgroundHex` would be that same white again.
+        card.cornerRadius = theme.isDaylight ? HelmMetrics.dTileSmall : 10
         card.layer?.borderWidth = active ? 1.5 : 1
-        card.layer?.borderColor = (active ? HelmTheme.nsColor(t.accentHex) : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.5)).cgColor
+        card.layer?.borderColor = (active
+            ? HelmTheme.nsColor(t.accentHex)
+            : (theme.isDaylight
+                ? HelmTheme.nsColor(theme.chromeLineHex)
+                : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.5))).cgColor
         card.layer?.masksToBounds = true
         let base = HelmTheme.nsColor(theme.chromeBackgroundHex)
-        card.normalColor = active ? HelmTheme.nsColor(t.accentHex).withAlphaComponent(0.08) : .clear
-        card.hoverColor = base.hoverShifted(by: 0.06, forMode: theme.mode)
+        let resting: NSColor = theme.isDaylight ? HelmField.fill(theme) : .clear
+        card.normalColor = active ? HelmTheme.nsColor(t.accentHex).withAlphaComponent(0.08) : resting
+        card.hoverColor = theme.isDaylight
+            ? HelmTheme.nsColor(DaylightPalette.rowHover)
+            : base.hoverShifted(by: 0.06, forMode: theme.mode)
         card.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: card.leadingAnchor),
@@ -743,12 +984,10 @@ final class SettingsController: NSViewController {
         scaleRow.spacing = 6
         let interfaceRow = descRow(title: "Interface text", desc: "Scales the app's own labels, captions and titles. Some pages pick this up after a relaunch.", trailing: scaleRow)
 
-        autoReconnectSwitch.target = self
-        autoReconnectSwitch.action = #selector(autoReconnectToggled)
+        autoReconnectSwitch.onToggle = { [weak self] in self?.autoReconnectToggled() }
         let reconnectRow = descRow(title: "Reconnect automatically", desc: "If a tab's connection drops, restore it silently rather than waiting for \u{2318}R.", trailing: autoReconnectSwitch)
 
-        notifySwitch.target = self
-        notifySwitch.action = #selector(notifyToggled)
+        notifySwitch.onToggle = { [weak self] in self?.notifyToggled() }
         let notifyRow = descRow(title: "Bell & notifications", desc: "Surface a desktop notification the moment a crewmate needs your decision.", trailing: notifySwitch)
 
         let section = NSStackView(views: [fontRow, separator(), interfaceRow, separator(), reconnectRow, separator(), notifyRow])
@@ -764,8 +1003,7 @@ final class SettingsController: NSViewController {
     // MARK: Morning briefing (F12)
 
     private func buildMorningBriefingSection() -> NSView {
-        morningBriefingSwitch.target = self
-        morningBriefingSwitch.action = #selector(morningBriefingToggled)
+        morningBriefingSwitch.onToggle = { [weak self] in self?.morningBriefingToggled() }
         let toggleRow = descRow(
             title: "Show a morning briefing on Overview",
             desc: "On the first visit to Overview each day, generate one short paragraph from the fleet snapshot, PR queue, due tasks, drift and quota - each clause linking to the page it came from.",
@@ -778,7 +1016,7 @@ final class SettingsController: NSViewController {
             "Uses your own `claude` login for one call per day. Only counts and titles already shown elsewhere in the app are sent - never terminal output or logs. With `claude` unavailable the card still appears as a plain, locally-computed stat line with no AI call at all.")
         note.font = .systemFont(ofSize: 11)
         mutedLabel(note)
-        note.preferredMaxLayoutWidth = 520
+        wrapping(note)
 
         let section = NSStackView(views: [toggleRow, separator(), note])
         section.orientation = .vertical
@@ -790,7 +1028,7 @@ final class SettingsController: NSViewController {
     }
 
     @objc private func morningBriefingToggled() {
-        AppSettings.shared.morningBriefingEnabled = morningBriefingSwitch.state == .on
+        AppSettings.shared.morningBriefingEnabled = morningBriefingSwitch.isOn
     }
 
     // MARK: Security
@@ -913,7 +1151,7 @@ final class SettingsController: NSViewController {
         let desc = NSTextField(wrappingLabelWithString: "Write everything this app knows locally - saved hosts, snippets, and the preferences above - to a single file, or bring one in from another machine. SSH private keys never leave the Keychain; a restored host referencing a key not on this machine needs that key re-added from the Keys screen.")
         desc.font = .systemFont(ofSize: 11)
         mutedLabel(desc)
-        desc.preferredMaxLayoutWidth = 520
+        wrapping(desc)
 
         backupStatusLabel.font = .systemFont(ofSize: 11)
         mutedLabel(backupStatusLabel)
@@ -961,11 +1199,11 @@ final class SettingsController: NSViewController {
     }
 
     @objc private func autoReconnectToggled() {
-        AppSettings.shared.autoReconnect = autoReconnectSwitch.state == .on
+        AppSettings.shared.autoReconnect = autoReconnectSwitch.isOn
     }
 
     @objc private func notifyToggled() {
-        let on = notifySwitch.state == .on
+        let on = notifySwitch.isOn
         AppSettings.shared.notifyOnNeedsDecision = on
         FleetNotifier.shared.setEnabled(on)
     }
@@ -1009,9 +1247,9 @@ final class SettingsController: NSViewController {
             // is both on-palette and a stronger signal than the bezel ever was.
             fontPresetButtons[size]?.variant = Int(AppSettings.shared.fontSize) == size ? .primary : .secondary
         }
-        autoReconnectSwitch.state = AppSettings.shared.autoReconnect ? .on : .off
-        notifySwitch.state = AppSettings.shared.notifyOnNeedsDecision ? .on : .off
-        morningBriefingSwitch.state = AppSettings.shared.morningBriefingEnabled ? .on : .off
+        autoReconnectSwitch.isOn = AppSettings.shared.autoReconnect
+        notifySwitch.isOn = AppSettings.shared.notifyOnNeedsDecision
+        morningBriefingSwitch.isOn = AppSettings.shared.morningBriefingEnabled
 
         rebuildAppearanceGrid()
         refreshSessions()
@@ -1025,14 +1263,24 @@ final class SettingsController: NSViewController {
     /// own cards, which show every palette's swatches).
     private func repaintForTheme() {
         guard isViewLoaded else { return }
+        // Crossing the Daylight boundary changes the *arrangement*, not just
+        // the colours - one column becomes two. `rebuildCardLayout` no-ops
+        // unless that boundary actually moved.
+        rebuildCardLayout()
         rebuildAppearanceGrid()
         applyTheme()
     }
 
+    #if FM_SELFTESTS
+    /// Probe surface for `DaylightDrillPageSlice6SelfTest`.
+    var debugCards: [HelmCard] { cardsInOrder }
+    var debugIsTwoColumn: Bool { lastLayoutWasTwoColumn == true }
+    var debugToggles: [HelmToggle] { [autoReconnectSwitch, notifySwitch, morningBriefingSwitch] }
+    #endif
+
     private func applyTheme() {
         let line = HelmTheme.nsColor(theme.chromeLineHex)
         let muted = HelmTheme.mutedInk(theme)
-        subtitleLabel.textColor = muted
         for card in cards { card.applyTheme(theme) }
         // Sections that rebuild rather than re-theme register a fresh label
         // every time, so drop the ones whose view is gone - same convention
@@ -1043,9 +1291,16 @@ final class SettingsController: NSViewController {
         for label in subtitleViews {
             label.textColor = muted
         }
+        for toggle in [autoReconnectSwitch, notifySwitch, morningBriefingSwitch] {
+            toggle.applyTheme(theme)
+        }
         for row in hoverRows {
             row.normalColor = .clear
-            row.hoverColor = line.withAlphaComponent(0.18)
+            // §6.5's `rowHover` - a warm near-white, not a wash of the outline
+            // colour, which on paper reads as grey grime rather than a hover.
+            row.hoverColor = theme.isDaylight
+                ? HelmTheme.nsColor(DaylightPalette.rowHover)
+                : line.withAlphaComponent(0.18)
         }
         for v in separatorViews {
             v.layer?.backgroundColor = line.withAlphaComponent(0.5).cgColor
