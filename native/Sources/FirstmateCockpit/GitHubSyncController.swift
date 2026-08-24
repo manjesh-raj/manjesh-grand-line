@@ -67,7 +67,7 @@ private final class GitHubSyncRow {
     init(repo: GitHubSyncRepoConfig) { self.repo = repo }
 }
 
-final class GitHubSyncController: NSViewController {
+final class GitHubSyncController: NSViewController, SetupPageSummary {
 
     private var rows: [GitHubSyncRow] = GitHubSyncCatalog.repos.map(GitHubSyncRow.init)
     private var theme: HelmTheme = ThemeManager.shared.theme
@@ -391,7 +391,33 @@ final class GitHubSyncController: NSViewController {
 
     // MARK: Render
 
+    // MARK: Daylight §6.4 - the drill header's live line
+
+    /// Counted off the same `rows` array the page renders, and off the same
+    /// `showsSyncButton` / `isDiverged` predicates the rows' own buttons and
+    /// signal treatment already use - never a second notion of "behind".
+    var setupSummaryLine: String {
+        let total = rows.count
+        guard total > 0 else { return "No forks in the catalog" }
+        if rows.contains(where: { $0.status == .checking || $0.status == .syncing }) {
+            return "\(total) forks \u{00B7} checking\u{2026}"
+        }
+        if rows.allSatisfy({ $0.status == .unknown }) { return "\(total) forks \u{00B7} not checked yet" }
+        let behind = rows.filter { $0.status.showsSyncButton }.count
+        let diverged = rows.filter { $0.status.isDiverged }.count
+        var parts: [String] = ["\(total) forks"]
+        if behind > 0 { parts.append("\(behind) behind upstream") }
+        if diverged > 0 { parts.append("\(diverged) diverged") }
+        if behind == 0 && diverged == 0 { parts.append("all in sync") }
+        return parts.joined(separator: " \u{00B7} ")
+    }
+
+    var onSetupSummaryChanged: (() -> Void)?
+
     private func render(_ row: GitHubSyncRow) {
+        // Every status change for every row lands here, so this is the one
+        // place the header's line has to be re-read from.
+        defer { onSetupSummaryChanged?() }
         row.detailLabel.stringValue = row.detail
         row.logField.stringValue = row.log.isEmpty ? "No output yet." : row.log
 

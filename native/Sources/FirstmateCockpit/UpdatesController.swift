@@ -82,7 +82,7 @@ private final class UpdateRow {
     init(item: DependencyItem) { self.item = item }
 }
 
-final class UpdatesController: NSViewController {
+final class UpdatesController: NSViewController, SetupPageSummary {
 
     /// One category card's rows + the separators between them, kept so the
     /// search field can hide non-matching rows and collapse the separator
@@ -426,7 +426,31 @@ final class UpdatesController: NSViewController {
     }
 
 
+    // MARK: Daylight §6.4 - the drill header's live line
+
+    /// Read straight off the same `rows` array the four stat tiles above are
+    /// built from, so the header and the tiles can never disagree.
+    var setupSummaryLine: String {
+        let total = rows.count
+        guard total > 0 else { return "No tools in the catalog" }
+        // Phase 3's honesty rule: a first pass still running is "checking",
+        // not "0 updates". `.unknown` is the never-checked state.
+        if rows.contains(where: { $0.status == .checking || $0.status == .updating }) {
+            return "\(total) tools \u{00B7} checking\u{2026}"
+        }
+        if rows.allSatisfy({ $0.status == .unknown }) { return "\(total) tools \u{00B7} not checked yet" }
+        let needsUpdate = rows.filter { $0.status.showsUpdateButton }.count
+        if needsUpdate > 0 { return "\(total) tools \u{00B7} \(needsUpdate) need attention" }
+        return "\(total) tools \u{00B7} all up to date"
+    }
+
+    var onSetupSummaryChanged: (() -> Void)?
+
     private func renderStats() {
+        // Every path that changes a row's status already lands here (initial
+        // check, a single check/update, the check-all sweep), so this is the
+        // one place the header's line has to be re-read from.
+        onSetupSummaryChanged?()
         let total = rows.count
         let upToDate = rows.filter { $0.status == .upToDate }.count
         let needsUpdate = rows.filter { $0.status == .updateAvailable || $0.status == .notInstalled }.count
@@ -831,6 +855,19 @@ final class UpdatesController: NSViewController {
         // the exact flat/compact look it always has.
         let needsAttention = row.status.showsUpdateButton
         let attentionHex = needsAttention ? pillVisuals(row.status).1 : nil
+        // §7's "the update row is a warn signal row with an amber primary
+        // Update". The warn half was already true - `.updateAvailable`
+        // resolves `ansiHex[3]`, the palette's own amber - and §6.5's Daylight
+        // branch in `ToolRowLayout.applyTheme` is what turns the border tint
+        // into the bar-plus-wash signal treatment. This is the button half:
+        // Setup's own domain hue (§2.2 gives amber to Setup as one area), run
+        // through `DaylightPalette.primaryButtonFill`'s §2.4 correction so the
+        // white label clears 4.5:1.
+        //
+        // Set per theme rather than once, because `domainHue` also changes a
+        // `.primary` button on the twelve palettes (from `accentHex` to the
+        // fallback tint) - `nil` there keeps every other palette byte-identical.
+        row.updateButton.domainHue = theme.isDaylight ? RailDestination.updates.domainHue : nil
         ToolRowLayout.applyTheme(
             row.toolRowViews, theme: theme, detailFailed: failed,
             cardStyle: needsAttention, attentionHex: attentionHex, accentBar: needsAttention

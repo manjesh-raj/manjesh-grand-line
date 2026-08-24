@@ -185,7 +185,7 @@ extension SetupStepKind {
     var isPartOfFullSetupSequence: Bool { self != .restoreConfig }
 }
 
-final class BootstrapController: NSViewController {
+final class BootstrapController: NSViewController, SetupPageSummary {
 
     /// The three stores the "Restore Grand Line config" step reads/writes
     /// through the shared `BackupUI.importFlow` (fm/cockpit-local-state-
@@ -701,8 +701,40 @@ final class BootstrapController: NSViewController {
         return card
     }
 
+    // MARK: Daylight §6.4 - the drill header's live line
+
+    /// Read off `setupSteps` - the in-memory stepper state this page already
+    /// renders - so the header agrees with the progress track beside it and
+    /// costs nothing to read. `.checking` is a step whose own `stepIsDone`
+    /// answered "not known yet"; reporting it as pending would be a confident
+    /// claim the page has not earned.
+    var setupSummaryLine: String {
+        let total = setupSteps.count
+        guard total > 0 else { return "No setup steps" }
+        if isRunningFullSetup { return fullSetupSubtitle }
+        var done = 0, failed = 0, checking = 0
+        for step in setupSteps {
+            switch step.status {
+            case .done, .skipped: done += 1
+            case .failed: failed += 1
+            case .checking: checking += 1
+            default: break
+            }
+        }
+        if failed > 0 { return "\(done) of \(total) steps done \u{00B7} \(failed) failed" }
+        if checking > 0 { return "\(done) of \(total) steps done \u{00B7} checking\u{2026}" }
+        if done == total { return "\(total) of \(total) steps done" }
+        return "\(done) of \(total) steps done"
+    }
+
+    var onSetupSummaryChanged: (() -> Void)?
+
     private func rebuildSetupSection() {
         guard isViewLoaded else { return }
+        // Every step-status change funnels through here (the live re-sync
+        // below, a run's own `updateSetupStep`, and the initial build), so
+        // this is the one place the header's line is re-read from.
+        defer { onSetupSummaryChanged?() }
         syncSetupStepsWithLiveState()
         clearStack(setupStack)
         for step in setupSteps {

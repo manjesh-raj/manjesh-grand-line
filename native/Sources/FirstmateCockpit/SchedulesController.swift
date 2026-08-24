@@ -24,7 +24,7 @@
 
 import AppKit
 
-final class SchedulesController: NSViewController {
+final class SchedulesController: NSViewController, DaylightDrillActions {
 
     private let scheduleStore: ScheduleStore
 
@@ -43,6 +43,36 @@ final class SchedulesController: NSViewController {
     /// business logic that belongs on this controller.
     private let schedulesCard = SchedulesCardView()
 
+    /// Set by `AppShellController` - "re-read my subtitle". The header is the
+    /// shell's; this page only says when its numbers moved.
+    var onDrillSubtitleChanged: (() -> Void)?
+
+    // MARK: Drill header (Daylight §6.4)
+
+    /// Counted off the same `ScheduleStore` array the rows below render, and
+    /// off `ScheduleRunner`'s own "is one running" state - so the header and
+    /// the rows can never disagree, and nothing new is read to produce it.
+    var drillHeaderSubtitle: String? {
+        let all = scheduleStore.schedules
+        guard !all.isEmpty else { return "No schedules yet" }
+        let noun = all.count == 1 ? "1 schedule" : "\(all.count) schedules"
+        if ScheduleRunner.shared.runningScheduleID != nil { return "\(noun) \u{00B7} one running now" }
+        let paused = all.filter { !$0.isEnabled }.count
+        let failing = all.filter { $0.isEnabled && $0.lastRun?.verdict == .failed }.count
+        let needsYou = all.filter { $0.isEnabled && $0.lastRun?.verdict == .changed }.count
+        var parts = [noun]
+        if failing > 0 { parts.append("\(failing) failing") }
+        if needsYou > 0 { parts.append("\(needsYou) needs you") }
+        if paused > 0 { parts.append("\(paused) paused") }
+        if failing == 0 && needsYou == 0 && paused == 0 { parts.append("all running on their own") }
+        return parts.joined(separator: " \u{00B7} ")
+    }
+
+    /// §6.4's action cluster: this page's one primary action, hoisted out of
+    /// the card header. Caller-owned - `SchedulesCardView` still owns the
+    /// button and its handler.
+    var drillHeaderActions: [NSView] { [schedulesCard.addButton] }
+
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 620, height: 720))
         root.wantsLayer = true
@@ -54,18 +84,18 @@ final class SchedulesController: NSViewController {
             self?.refreshSchedules()
         }
 
-        let subtitle = NSTextField(wrappingLabelWithString: "Pick one of the app's existing actions and a cadence, and it runs on its own.")
-        subtitle.font = .systemFont(ofSize: 12)
-        subtitle.translatesAutoresizingMaskIntoConstraints = false
-
+        // The page-level explanatory line is gone (Daylight §6.4): the drill
+        // header above now names the destination and carries its live numbers,
+        // the card header states where runs are logged, and the empty state
+        // says the same sentence this label did, verbatim, at the one moment a
+        // captain actually needs it.
         let schedulesCardView = buildSchedulesCard()
 
-        let stack = NSStackView(views: [subtitle, schedulesCardView])
+        let stack = NSStackView(views: [schedulesCardView])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.setCustomSpacing(16, after: subtitle)
 
         let content = FlippedView()
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -75,7 +105,6 @@ final class SchedulesController: NSViewController {
             stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
             stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
             stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
-            subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
             schedulesCardView.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
 
@@ -138,6 +167,9 @@ final class SchedulesController: NSViewController {
         // The runner is what knows a run just finished; the card re-reads the
         // store rather than being handed a result, so there is one source of
         // truth for what a row shows.
+        // The card re-renders on every store change and every run-state
+        // change; the header's own line has to follow the same signal.
+        schedulesCard.onStateChanged = { [weak self] in self?.onDrillSubtitleChanged?() }
         ScheduleRunner.shared.onRunStateChanged = { [weak self] _ in self?.refreshSchedules() }
         scheduleStore.onChange = { [weak self] in self?.refreshSchedules() }
         refreshSchedules()
@@ -176,6 +208,12 @@ final class SchedulesController: NSViewController {
     /// A schedule is cheap to recreate, but deleting one silently on a menu
     /// click would still be a surprise - and this app confirms every other
     /// record delete (see `HostsController`'s own confirm alert).
+    #if FM_SELFTESTS
+    /// The card this page renders - so a suite can read the real time/tick
+    /// columns it built rather than re-deriving them.
+    var debugSchedulesCard: SchedulesCardView? { isViewLoaded ? schedulesCard : nil }
+    #endif
+
     private func confirmDeleteSchedule(_ schedule: AutomationSchedule) {
         let alert = NSAlert()
         alert.messageText = "Delete this schedule?"

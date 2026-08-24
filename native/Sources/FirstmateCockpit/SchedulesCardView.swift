@@ -52,7 +52,16 @@ final class SchedulesCardView: NSObject {
 
     private let rowsStack = NSStackView()
     private let countBadge = NSTextField(labelWithString: "")
-    private let addButton = HelmButton(title: "+ New Schedule", variant: .secondary)
+    /// "+ New Schedule", owned here and *positioned* by whoever hosts the card
+    /// - Daylight §6.4 hoists it into the drill header, the same
+    /// caller-owned-action arrangement `HealthCardView.diagnosticsButton`
+    /// already uses. Still this view's button with this view's handler.
+    let addButton = HelmButton(title: "+ New Schedule", variant: .secondary)
+
+    /// Fired whenever the rendered set of schedules changes, so a host page's
+    /// own live header line can follow the same signal the rows do rather than
+    /// polling.
+    var onStateChanged: (() -> Void)?
 
     override init() {
         super.init()
@@ -76,7 +85,11 @@ final class SchedulesCardView: NSObject {
             // both are worth stating: a run is always recorded (Health), and a
             // run only ever interrupts you when its own notify setting says so.
             subtitle: "Runs log to Health \u{00B7} notify only when something needs you",
-            actions: [countBadge, addButton]
+            // §6.4 hoists the add action into the drill header, so the card
+            // header keeps the count and the explanatory subtitle - exactly
+            // the split Hosts' three cards took in slice 2. The button
+            // instance itself is unchanged and is still this view's.
+            actions: [countBadge]
         )
 
         rowsStack.orientation = .vertical
@@ -98,6 +111,7 @@ final class SchedulesCardView: NSObject {
         self.theme = theme
         card.applyTheme(theme)
         rebuild()
+        onStateChanged?()
     }
 
     private func rebuild() {
@@ -148,7 +162,18 @@ final class SchedulesCardView: NSObject {
         overflow.identifier = NSUserInterfaceItemIdentifier("schedule-overflow:\(schedule.id.uuidString)")
         overflow.toolTip = "More actions"
 
-        let actions = NSStackView(views: [overflow, toggle])
+        // §7's "mono time column + tick strings". Both live in the row's own
+        // trailing cluster, which `HelmAccentRow` right-pins - which is what
+        // makes the time genuinely read as a *column* (one constant x across
+        // every row) rather than as a label that drifts with the title beside
+        // it. Both are built from data the row already shows in prose.
+        let timeColumn = timeColumnLabel(schedule)
+        let ticks = tickLabel(schedule, isRunning: isRunning)
+        #if FM_SELFTESTS
+        debugColumns[schedule.id] = (timeColumn, ticks)
+        #endif
+
+        let actions = NSStackView(views: [timeColumn, ticks, overflow, toggle])
         actions.orientation = .horizontal
         actions.alignment = .centerY
         actions.spacing = HelmMetrics.s2
@@ -162,7 +187,7 @@ final class SchedulesCardView: NSObject {
         actions.translatesAutoresizingMaskIntoConstraints = false
         actions.setHuggingPriority(.required, for: .horizontal)
         actions.setClippingResistancePriority(.required, for: .horizontal)
-        for control in [overflow, toggle] as [NSView] {
+        for control in [timeColumn, ticks, overflow, toggle] as [NSView] {
             control.setContentHuggingPriority(.required, for: .horizontal)
             control.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
@@ -177,6 +202,74 @@ final class SchedulesCardView: NSObject {
         }
         return row
     }
+
+    // MARK: §7's time column and run ticks
+
+    /// A fixed-width column so a `2:00 AM` and a `10:30 PM` line up down the
+    /// list. Mono for the same reason Console's and Log Analyzer's timestamps
+    /// are: proportional digits in a column read as ragged even when the
+    /// frames are identical.
+    static let timeColumnWidth: CGFloat = 62
+
+    /// The cadence's own clock time - `ScheduleCadence.clockString`, the exact
+    /// string `displayString` already puts in the meta line, not a second
+    /// formatting of the same two integers.
+    private func timeColumnLabel(_ schedule: AutomationSchedule) -> NSTextField {
+        let cadence = schedule.cadence.normalized
+        let label = NSTextField(labelWithString: ScheduleCadence.clockString(hour: cadence.hour,
+                                                                            minute: cadence.minute))
+        label.font = HelmType.code()
+        label.alignment = .right
+        label.lineBreakMode = .byClipping
+        label.textColor = schedule.isEnabled
+            ? HelmTheme.nsColor(theme.chromeInkHex)
+            : HelmTheme.mutedInk(theme)
+        label.toolTip = schedule.cadence.displayString
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.widthAnchor.constraint(equalToConstant: Self.timeColumnWidth).isActive = true
+        return label
+    }
+
+    /// §6.8's run ticks, and - exactly as slice 2 recorded for Health's - **a
+    /// schedule has no run history to draw**, so this does not invent one.
+    /// `AutomationSchedule` carries a single `lastRun` record, not a series,
+    /// and collecting a series would be new data collection this slice
+    /// forbids. So the string is one glyph for the one run on record: `\u{2713}`
+    /// for a clean run, `\u{2715}` for a failed one, `\u{2022}` for a run that
+    /// found something needing the captain. A schedule that has never run gets
+    /// no glyph at all rather than a fabricated one.
+    ///
+    /// Returned as a hidden-but-present label rather than omitted, so the
+    /// trailing cluster keeps the same arranged-subview count on every row and
+    /// the time column above it cannot shift - an `NSStackView` drops a hidden
+    /// arranged subview out of layout, which is why the *width* is held
+    /// explicitly here too.
+    private func tickLabel(_ schedule: AutomationSchedule, isRunning: Bool) -> NSTextField {
+        let label = NSTextField(labelWithString: "")
+        label.font = HelmType.code()
+        label.alignment = .center
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.widthAnchor.constraint(equalToConstant: Self.tickColumnWidth).isActive = true
+        guard !isRunning, let last = schedule.lastRun else { return label }
+        let glyph: String
+        switch last.verdict {
+        case .clean: glyph = "\u{2713}"
+        case .changed: glyph = "\u{2022}"
+        case .failed: glyph = "\u{2715}"
+        }
+        label.stringValue = glyph
+        // The shared contrast-corrected tinted text, never the raw hue as a
+        // label (`HelmContrast`'s own §5.7 rule).
+        label.textColor = HelmContrast.legibleTintedText(
+            tintHex: last.verdict.tint.hex(in: theme),
+            over: HelmTheme.nsColor(theme.chromeBackgroundHex),
+            theme: theme)
+        label.toolTip = "Last run: \(last.verdict.label) \u{00B7} \(last.summary)"
+        return label
+    }
+
+    /// One glyph wide, so an empty tick column still holds its place.
+    static let tickColumnWidth: CGFloat = 14
 
     /// The kicker carries the run verdict (the most glanceable signal, and the
     /// one that drives the row's hue) and the meta line carries the mockup's
@@ -301,7 +394,19 @@ final class SchedulesCardView: NSObject {
     // MARK: Probe / self-test surface
 
     #if FM_SELFTESTS
+    private var debugColumns: [UUID: (time: NSTextField, ticks: NSTextField)] = [:]
     var debugRowCount: Int { rowsStack.arrangedSubviews.count }
+    /// §7's time column and tick strings, as actually rendered - the frame so
+    /// a check can prove the column really is a column (one constant x down
+    /// the list), the strings so it can prove a never-run schedule gets no
+    /// fabricated tick. Recorded at build time rather than dug back out of the
+    /// view tree, which is both cheaper and impossible to mis-index.
+    func debugTrailingColumns(for id: UUID) -> (time: String, timeFrameInCard: NSRect, ticks: String)? {
+        guard let recorded = debugColumns[id] else { return nil }
+        return (recorded.time.stringValue,
+                recorded.time.convert(recorded.time.bounds, to: card),
+                recorded.ticks.stringValue)
+    }
     var debugShowsEmptyState: Bool { rowsStack.arrangedSubviews.contains { $0 is HelmEmptyState } }
     func debugMenu(for schedule: AutomationSchedule) -> NSMenu { buildOverflowMenu(for: schedule) }
     func debugMetaLine(for schedule: AutomationSchedule, now: Date) -> String {
