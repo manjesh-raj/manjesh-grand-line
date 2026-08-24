@@ -578,7 +578,33 @@ class HoverHighlightView: NSView {
     var normalColor: NSColor = .clear {
         didSet { if !isHovering { setBackground(normalColor, animated: false) } }
     }
-    var hoverColor: NSColor = .clear
+    /// `fm/grandline-topnav-clicked-state-visibility-fix`: this needs the
+    /// same live-repaint `didSet` `normalColor` already has, for the mirror-
+    /// image reason. A caller that reassigns colors in response to a state
+    /// change (a click flipping which pill is "selected", for instance) does
+    /// so while the cursor is very likely still resting on the view it just
+    /// clicked - `isHovering` is still `true` at that instant, since nothing
+    /// has fired `mouseExited` yet. Before this, only `normalColor`'s own
+    /// `didSet` could repaint anything, and it explicitly declines to while
+    /// hovering (correctly, so a hover repaint doesn't get raced by an
+    /// unrelated `normalColor` write) - so a `hoverColor` reassignment made
+    /// mid-hover was silently dropped: the layer kept showing whatever
+    /// `hoverColor` painted it with *before* the state change, while any
+    /// caller-owned label color computed *against the new intended
+    /// background* (as `DaylightBarController.applyTheme` does for a pill's
+    /// text) was applied immediately regardless. The result is a real,
+    /// reproducible "background and text disagree" bug that self-heals the
+    /// moment `mouseExited` finally fires and repaints from the *current*
+    /// (now-correct) `normalColor`/`hoverColor` - which is exactly why it
+    /// only ever showed up transiently, between a click and the next mouse
+    /// move, and cleared as soon as the mouse left. Confirmed live (see
+    /// `TopNavPillPressedStateSelfTest`) reproducing the captain's exact top
+    /// nav pill report this way, with no theme-mode dependency: the mechanism
+    /// never looks at any color's actual value, only at whether it changed
+    /// while `isHovering` was `true`.
+    var hoverColor: NSColor = .clear {
+        didSet { if isHovering { setBackground(hoverColor, animated: false) } }
+    }
 
     var cornerRadius: CGFloat = 0 {
         didSet { layer?.cornerRadius = cornerRadius }
