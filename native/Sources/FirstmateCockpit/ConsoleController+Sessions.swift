@@ -405,4 +405,49 @@ extension ConsoleController {
             }
         }
     }
+
+    /// Re-resolves a mirror tab's backend fresh - one atomic
+    /// `FirstmateBackend.resolveMirrorTarget()` call, exactly the same
+    /// contract `openFirstmateHost`'s own initial resolution uses - and
+    /// updates `tab.launch` before handing the freshly resolved kind/target
+    /// to `then`.
+    ///
+    /// `fm/grandline-mirror-herdr-boot-race`: right after a machine restart,
+    /// herdr's own background server/LaunchAgent can still be a few seconds
+    /// (sometimes longer) from coming up at the single moment
+    /// `openFirstmateHost` resolves the Mirror tab's backend - so that one
+    /// resolution can genuinely and correctly answer `.tmux` even though
+    /// herdr is what the fleet is really running on, and always will be
+    /// moments later. Before this, `TabLaunch.mirror`'s frozen pair meant
+    /// that wrong-at-the-time answer stuck for the tab's entire lifetime:
+    /// `reconnectActive` (⌘R) and the auto-reconnect timer both replayed the
+    /// same stale `(kind, target)` verbatim, so pressing ⌘R - literally what
+    /// the tmux failure's own on-screen hint tells the captain to do - could
+    /// never actually recover, because it never asked the question again.
+    ///
+    /// This does not reintroduce the race `fm/grandline-mirror-resolve-race-
+    /// fix` closed: that bug was two *different* resolve calls, at two
+    /// different moments, deciding the *kind* and the *target* independently
+    /// for what was meant to be **one** connection attempt. Every restart
+    /// here still makes exactly one atomic call to decide both together for
+    /// *that* attempt - it is simply now allowed to be a *different* call
+    /// than the one the tab was created with, so a later attempt can notice
+    /// a backend that came up (or went down) since. `openFirstmateHost`'s own
+    /// first-ever resolution is untouched and still the only one a tab gets
+    /// before its very first start.
+    func reresolveMirrorTab(_ tab: TabModel, then: @escaping () -> Void) {
+        tab.isAwaitingMirrorResolution = true
+        tab.terminal.feed(text: "\r\n  \u{1b}[2m[mirror]\u{1b}[0m Re-checking the fleet's backend\u{2026}\r\n")
+        FirstmateBackend.resolveMirrorTargetAsync { [weak self, weak tab] kind, target in
+            guard let self, let tab, self.tabs.contains(where: { $0 === tab }) else { return }
+            tab.launch = .mirror(kind: kind, target: target)
+            tab.isAwaitingMirrorResolution = false
+            if !tab.hasUserChosenName {
+                tab.name = tab.launch.defaultName
+                tab.chip?.setName(tab.name)
+                self.styleChips()
+            }
+            then()
+        }
+    }
 }

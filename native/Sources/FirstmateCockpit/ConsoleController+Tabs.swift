@@ -153,7 +153,23 @@ extension ConsoleController {
                 tab.terminal.feed(text: "\r\n  \u{1b}[2m[mirror]\u{1b}[0m Resolving the fleet's backend\u{2026}\r\n")
                 return
             }
-            connectMirror(tab, kind: kind, target: target)
+            // `tab.started` still reflects the *previous* call at this point
+            // (set `true` unconditionally below, after this switch) - `false`
+            // means this is the tab's very first start, whose one resolution
+            // already happened moments ago in `openFirstmateHost` and is
+            // reused verbatim; `true` means this is a restart (the auto-
+            // reconnect timer, calling this method directly), where
+            // `fm/grandline-mirror-herdr-boot-race` re-resolves fresh instead
+            // of replaying a possibly stale-by-now answer - see
+            // `reresolveMirrorTab`'s own doc comment for why that is safe.
+            if tab.started {
+                reresolveMirrorTab(tab) { [weak self] in
+                    guard let self, case .mirror(let k, let t) = tab.launch else { return }
+                    self.connectMirror(tab, kind: k, target: t)
+                }
+            } else {
+                connectMirror(tab, kind: kind, target: target)
+            }
         case .ssh(_, let exe, let hostArgs, let keyID, let startupSnippetID):
             connectSSH(tab, executable: exe, hostArgs: hostArgs, keyID: keyID, startupSnippetID: startupSnippetID)
         }
@@ -392,7 +408,7 @@ extension ConsoleController {
     @objc func reconnectActive() {
         guard let tab = currentTab else { return }
         switch tab.launch {
-        case .mirror(let kind, let target):
+        case .mirror:
             tab.mirror?.tearDown()
             tab.mirror = nil
             // Finding 9 (cockpit-audit-core): `tearDown()` kills the tmux/
@@ -405,12 +421,27 @@ extension ConsoleController {
             // process still surfaces a message instead of hanging forever)
             // before starting the new one.
             //
-            // `kind`/`target` are the pair already frozen into `tab.launch`
-            // at tab-creation time - reused verbatim, not re-resolved, so a
-            // manual reconnect can never introduce a fresh kind/target
-            // disagreement either (`fm/grandline-mirror-resolve-race-fix`).
+            // `fm/grandline-mirror-herdr-boot-race`: this used to reuse the
+            // pair already frozen into `tab.launch` at tab-creation time
+            // verbatim, on the reasoning that re-resolving here could
+            // reintroduce `fm/grandline-mirror-resolve-race-fix`'s two-calls-
+            // disagree race. It doesn't - that race was two *different*
+            // resolve calls deciding kind and target independently for one
+            // connection attempt, and `reresolveMirrorTab` still makes
+            // exactly one atomic call per attempt, just repeated on later
+            // attempts rather than only the tab's first one. Without this,
+            // ⌘R could never actually recover from the boot-race case its
+            // own on-screen failure text tells the captain to press it for:
+            // a tab that froze on `.tmux` because herdr's server was still
+            // coming up at the single moment the tab was created stayed
+            // frozen on `.tmux` forever, since replaying the same frozen pair
+            // asks the exact same (now stale) question again.
             waitForProcessExit(tab, thenRun: { [weak self] in
-                self?.connectMirror(tab, kind: kind, target: target)
+                guard let self else { return }
+                self.reresolveMirrorTab(tab) { [weak self] in
+                    guard let self, case .mirror(let k, let t) = tab.launch else { return }
+                    self.connectMirror(tab, kind: k, target: t)
+                }
             })
         case .shell(let exe, let args, let cwd):
             tab.terminal.startProcess(

@@ -1500,6 +1500,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_MIRROR_RESOLVE_RACE_TESTS"] == "1
     exit(MirrorResolveRaceSelfTest.run() ? 0 : 1)
 }
 
+// `fm/grandline-mirror-herdr-boot-race`: same convention, for a Mirror tab's
+// RESTART (⌘R or auto-reconnect) re-resolving its backend fresh instead of
+// replaying a stale answer forever - see
+// MirrorReconnectBootRaceSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_MIRROR_RECONNECT_BOOT_RACE_TESTS"] == "1" {
+    exit(MirrorReconnectBootRaceSelfTest.run() ? 0 : 1)
+}
+
 // `fm/grandline-dictation-mvp`: same convention, for `DictationHotkey`'s
 // hold/release detection over synthetic `.flagsChanged` events - see
 // DictationHotkeySelfTest.swift's header.
