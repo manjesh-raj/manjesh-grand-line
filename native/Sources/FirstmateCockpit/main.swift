@@ -275,6 +275,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         BackgroundSignalsPoller.shared.onNavigateToBootstrap = { [weak self] in self?.appShell.show(.bootstrap) }
         BackgroundSignalsPoller.shared.start()
 
+        // F11 follow-up: seed the "daily-github-sync" schedule once - a daily
+        // 11:10 AM fast-forward of every personal fork, exactly what Setup >
+        // GitHub Sync's "Sync All" button already does (`ScheduleActions.
+        // forkSync()`). See `ScheduleSeeding.swift`'s header for why this is
+        // safe to call on every launch (idempotent, guarded by a persisted
+        // one-time flag) rather than only the first.
+        ScheduleSeeding.seedDailyGitHubSyncIfNeeded(
+            store: scheduleStore,
+            alreadySeeded: { AppSettings.shared.didSeedDailyGitHubSyncSchedule },
+            markSeeded: { AppSettings.shared.didSeedDailyGitHubSyncSchedule = true }
+        )
+
         // F11: the schedule runner. Distinct from the poller above in the one
         // way that matters - the poller answers "is anything wrong right now"
         // on a cadence nobody chose, while this runs the specific actions the
@@ -1629,6 +1641,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_REVIEW_PR_ROW_BUTTON_LAYOUT_TESTS
 // happen, which looks exactly like a quiet night.
 if ProcessInfo.processInfo.environment["FM_RUN_SCHEDULE_RUNNER_TESTS"] == "1" {
     exit(ScheduleRunnerSelfTest.run() ? 0 : 1)
+}
+
+// F11 follow-up: the one-time seed of the "daily-github-sync" schedule -
+// seeds once using the pre-existing `.forkSync` action, never resurrects
+// itself after the captain edits or deletes it, and introduces no new
+// schedulable action. See `ScheduleSeeding.swift`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_SCHEDULE_SEEDING_TESTS"] == "1" {
+    exit(ScheduleSeedingSelfTest.run() ? 0 : 1)
 }
 
 // F12 (`fm/grandline-feature-f12-morning-briefing`): the morning briefing's
