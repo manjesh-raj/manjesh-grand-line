@@ -282,6 +282,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // this one has a captain-authored schedule behind it.
         // fm/grandline-schedules-sidebar-move: the Schedules card lives on
         // its own rail destination now, not `.automation`.
+        //
+        // grandline-schedule-daily-updates: seeds the captain-requested
+        // "daily-updates" schedule exactly once, ever, on a fresh
+        // schedules.json - see `ScheduleStore.seedDailyUpdatesScheduleIfNeeded`'s
+        // own doc comment for why this call site (real app launch only, never
+        // `ScheduleStore.init()`) is what keeps it out of every self-test that
+        // constructs a bare `ScheduleStore()`. Must run before `.start(...)`
+        // below, so the freshly-seeded schedule is in `store.schedules` by the
+        // time the runner's first tick can see it.
+        scheduleStore.seedDailyUpdatesScheduleIfNeeded()
         ScheduleRunner.shared.onNavigateToSchedules = { [weak self] in self?.appShell.show(.schedules) }
         ScheduleRunner.shared.start(store: scheduleStore,
                                     hostStore: hostStore,

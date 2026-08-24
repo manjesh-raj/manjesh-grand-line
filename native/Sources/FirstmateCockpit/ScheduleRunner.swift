@@ -7,11 +7,16 @@
 // check is `DotfilesSource` + the same `SetupStepChecks` predicates Bootstrap's
 // drift card and Automation's stepper use; the tool check is `UpdatesSource.
 // check`; fork sync is `GitHubSyncSource.check`/`.sync`; the recipe export is
-// `VaultRecipeGit.export`; the config backup is `GitHubBackupSource.export`.
-// Every one of those already routes through the shared `Subprocess` runner
-// (GL-02/GL-15), which is what F11 lists as its own dependency - "GL-02's
-// bounded runner so a scheduled job can never wedge". Nothing here needs its
-// own timeout because nothing here spawns its own process.
+// `VaultRecipeGit.export`; the config backup is `GitHubBackupSource.export`;
+// the tool update+install (`grandline-schedule-daily-updates`, a deliberate,
+// captain-approved exception to F11's original ceiling - see
+// `AutomationSchedule.swift`'s header) is `UpdatesSource.check` followed by
+// `UpdatesSource.update`, the exact calls the Updates page's own Check/Update
+// buttons make. Every one of those already routes through the shared
+// `Subprocess` runner (GL-02/GL-15), which is what F11 lists as its own
+// dependency - "GL-02's bounded runner so a scheduled job can never wedge".
+// Nothing here needs its own timeout because nothing here spawns its own
+// process.
 //
 // **Serial, never concurrent.** Two schedules due in the same minute run one
 // after the other on one queue. Same reasoning as `BootstrapController.
@@ -253,6 +258,7 @@ enum ScheduleActions {
         case .forkSync: return forkSync()
         case .vaultRecipeExport: return vaultRecipeExport()
         case .configBackupExport: return configBackupExport(stores: backupStores)
+        case .toolUpdateInstall: return toolUpdateInstall()
         }
     }
 
@@ -428,5 +434,87 @@ enum ScheduleActions {
         return ScheduleActionResult(
             verdict: .changed,
             summary: "Pushed \(hostCount) host\(hostCount == 1 ? "" : "s") and \(snippetCount) snippet\(snippetCount == 1 ? "" : "s") to manjesh-config.")
+    }
+
+    // MARK: Tool update check + install - captain-approved, no confirmation
+
+    /// The captain's explicit override of F11's original exclusion of
+    /// `UpdatesSource.update` - see `AutomationSchedule.swift`'s header and
+    /// `ScheduledActionKind.toolUpdateInstall`'s doc comment for the decision
+    /// record. Calls the exact same `UpdatesSource.check`/`.update` the
+    /// Updates page's own Check/Update buttons call, for every
+    /// `DependencyCatalog` item - never a reimplementation, and never
+    /// relaxing what those calls themselves do (every update remains
+    /// whatever `UpdatesSource.update` already does for that tool: `brew
+    /// upgrade`/`npm -g install`/herdr's own updater/no-mistakes' own
+    /// updater/firstmate's fetch-merge-push script).
+    ///
+    /// **The one distinction this keeps from before the override.** A
+    /// `.notInstalled` tool is never touched here, matching Updates' own
+    /// "Install in Bootstrap \u{2192}" routing for that exact status (see
+    /// `UpdatesController`'s history in AGENTS.md) - installing something
+    /// that was never there is a materially different action from updating
+    /// something already present, and this app already treats a fresh
+    /// install as needing a human everywhere else. A `.checkFailed` tool is
+    /// left alone too: its check never established there was an update to
+    /// install, so calling `update()` on it would be a guess, not a response
+    /// to something found. Only `.updateAvailable` is acted on.
+    private static func toolUpdateInstall() -> ScheduleActionResult {
+        var installed: [String] = []
+        var updateFailed: [String] = []
+        var needsManualInstall = 0
+        var checkFailed = 0
+
+        for item in DependencyCatalog.items {
+            let outcome = UpdatesSource.check(item)
+            switch outcome.status {
+            case .updateAvailable:
+                let update = UpdatesSource.update(item)
+                if update.ok {
+                    installed.append(item.name)
+                } else {
+                    updateFailed.append(item.name)
+                }
+            case .notInstalled:
+                needsManualInstall += 1
+            case .checkFailed:
+                checkFailed += 1
+            case .upToDate:
+                continue
+            case .checking, .updating, .unknown, .updateFailed:
+                // `UpdatesSource.check` never actually returns these - they
+                // are UI-only session states `UpdatesController` tracks on
+                // top of a `CheckOutcome` - but the switch stays exhaustive
+                // rather than a `default:` so a status this call *could*
+                // someday return has to be deliberately placed here too.
+                continue
+            }
+        }
+
+        if checkFailed == DependencyCatalog.items.count && !DependencyCatalog.items.isEmpty {
+            return ScheduleActionResult(verdict: .failed, summary: "Every tool check failed - is the network reachable?")
+        }
+
+        var parts: [String] = []
+        if !installed.isEmpty {
+            parts.append("\(installed.count) tool\(installed.count == 1 ? "" : "s") updated (\(installed.joined(separator: ", ")))")
+        }
+        if !updateFailed.isEmpty {
+            parts.append("\(updateFailed.count) update\(updateFailed.count == 1 ? "" : "s") failed (\(updateFailed.joined(separator: ", ")))")
+        }
+        if needsManualInstall > 0 {
+            parts.append("\(needsManualInstall) tool\(needsManualInstall == 1 ? "" : "s") not installed - see Bootstrap")
+        }
+        if checkFailed > 0 {
+            parts.append("\(checkFailed) could not be checked")
+        }
+
+        if !updateFailed.isEmpty {
+            return ScheduleActionResult(verdict: .failed, summary: parts.joined(separator: "; ") + ".")
+        }
+        if parts.isEmpty {
+            return ScheduleActionResult(verdict: .clean, summary: "All \(DependencyCatalog.items.count) tracked tools up to date.")
+        }
+        return ScheduleActionResult(verdict: .changed, summary: parts.joined(separator: "; ") + ".")
     }
 }

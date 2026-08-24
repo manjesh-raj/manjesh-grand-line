@@ -118,9 +118,17 @@ final class ScheduleStore {
     private let fileURL: URL
     private let calendar: Calendar
 
+    /// Whether `fileURL` already existed the moment this instance was
+    /// constructed, checked *before* `load()`/`persist()` ever touch it. This
+    /// is what `seedDailyUpdatesScheduleIfNeeded()` uses to seed exactly once
+    /// ever, rather than resurrecting a schedule the captain deliberately
+    /// deleted - see that method's own doc comment.
+    private let hadExistingFileBeforeInit: Bool
+
     init(calendar: Calendar = .current) {
         self.calendar = calendar
         fileURL = ScheduleStore.storeURL()
+        hadExistingFileBeforeInit = FileManager.default.fileExists(atPath: fileURL.path)
         load()
     }
 
@@ -177,6 +185,48 @@ final class ScheduleStore {
 
     func schedule(id: UUID) -> AutomationSchedule? {
         schedules.first { $0.id == id }
+    }
+
+    /// Seeds the captain-requested "daily-updates" schedule
+    /// (`grandline-schedule-daily-updates`) exactly once - the first time this
+    /// runs against a `schedules.json` that had never existed before this
+    /// instance was constructed. Uses `add(_:)`, the exact call the Schedule
+    /// Editor's Save button makes, so the seeded row is byte-for-byte
+    /// indistinguishable from one the captain created by hand: editable,
+    /// pausable, deletable, and never specially cased anywhere in the UI.
+    ///
+    /// **Gated on file existence at construction, not on "does this action
+    /// already exist" or "is the list empty".** `ScheduledActionKind.
+    /// toolUpdateInstall` auto-installs software with zero confirmation - if
+    /// the captain later edits, pauses, or (most importantly) deletes this
+    /// schedule, that decision must stick across every future launch, not
+    /// silently reappear the next time the app starts. A presence check
+    /// keyed on the action alone would resurrect it the instant the captain
+    /// deletes it (zero schedules would then have that action, which reads
+    /// exactly like "never seeded"); keying on the file's own prior existence
+    /// means "this schedule was already created here at least once" survives
+    /// a captain deleting every schedule down to zero.
+    ///
+    /// **Called only from `main.swift`'s real app-launch wiring - never from
+    /// `init()`, and never automatically.** Several existing self-tests
+    /// construct a bare `ScheduleStore()` with no `FM_SCHEDULES_FILE`
+    /// override (they only need the type to satisfy an initializer's
+    /// parameter list, not its seeding behaviour), which resolves to this
+    /// machine's *real* production file. Auto-seeding at construction time
+    /// would make running the test suite silently create a live,
+    /// auto-installing schedule on the captain's own machine the first time
+    /// any of those tests ran on a fresh profile. Keeping this a separate,
+    /// explicit, production-only call - `AppDelegate` (and therefore this
+    /// property) is never constructed while a self-test runs, see GL-05's
+    /// note in `main.swift` - closes that off entirely.
+    func seedDailyUpdatesScheduleIfNeeded(now: Date = Date()) {
+        guard !hadExistingFileBeforeInit else { return }
+        add(AutomationSchedule(
+            action: .toolUpdateInstall,
+            cadence: .daily(hour: 11, minute: 0),
+            notifyOn: .changeOnly,
+            isEnabled: true
+        ), now: now)
     }
 
     func setEnabled(_ enabled: Bool, id: UUID, now: Date = Date()) {

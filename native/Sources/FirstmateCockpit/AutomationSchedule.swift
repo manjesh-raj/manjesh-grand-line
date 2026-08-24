@@ -21,6 +21,22 @@
 //
 // What was considered and deliberately left out, each for a stated reason -
 // see `ScheduledActionKind`'s doc comment for the full list.
+//
+// **`grandline-schedule-daily-updates` is a deliberate, captain-approved
+// exception to that stated ceiling, not a widening nobody reviewed.** F11's
+// original bar excluded software install/upgrade (`UpdatesSource.update`)
+// outright, named by this file's own doc comment as "well past a push and an
+// export" - it mutates the machine's toolchain via `brew`/`npm`, unattended,
+// with no human present to notice a bad upgrade. The captain was shown that
+// exact tradeoff, including the two highest-blast-radius items it drags in
+// (firstmate's own self-update, a git merge+push of the crewmate control
+// plane itself; the Automic Vault security cask), and asked for it anyway
+// with zero exceptions - see `ScheduledActionKind.toolUpdateInstall`. The one
+// distinction that survives from before this exception: a tool this app
+// already treats as needing a human (`.notInstalled`, which Updates' own row
+// routes to Bootstrap rather than its own Update button - see
+// `UpdatesController`'s history) is still never auto-installed here. Only a
+// tool with a genuine update to something *already present* is touched.
 
 import Foundation
 
@@ -82,6 +98,17 @@ enum ScheduledActionKind: String, Codable, CaseIterable {
     /// non-secret key metadata, never private key bytes or a passphrase.
     case configBackupExport
 
+    /// The captain-approved exception to F11's original ceiling - see this
+    /// file's own header for the decision record. `UpdatesSource.check` per
+    /// `DependencyCatalog` item, exactly like `.toolUpdateCheck`, followed by
+    /// `UpdatesSource.update` for any tool reporting `.updateAvailable` - with
+    /// **no confirmation prompt**, including firstmate's own git self-update
+    /// and the Automic Vault security cask. A `.notInstalled` tool is left
+    /// alone (see `ScheduleActions.toolUpdateInstall`'s doc comment for why);
+    /// a `.checkFailed` tool is left alone too, since its check never
+    /// established there was anything safe to act on.
+    case toolUpdateInstall
+
     /// Card row title. Matches the captain-approved mockup's own wording for
     /// the three it shows.
     var title: String {
@@ -96,6 +123,8 @@ enum ScheduledActionKind: String, Codable, CaseIterable {
             return "Vault recipe export"
         case .configBackupExport:
             return "Grand Line config backup to GitHub"
+        case .toolUpdateInstall:
+            return "Tool update check + install \u{2014} \(DependencyCatalog.items.count) tools"
         }
     }
 
@@ -108,6 +137,7 @@ enum ScheduledActionKind: String, Codable, CaseIterable {
         case .forkSync: return "Fork sync (personal forks)"
         case .vaultRecipeExport: return "Vault recipe export"
         case .configBackupExport: return "Grand Line config backup to GitHub"
+        case .toolUpdateInstall: return "Tool update check + install (no confirmation)"
         }
     }
 
@@ -118,6 +148,7 @@ enum ScheduledActionKind: String, Codable, CaseIterable {
         case .forkSync: return "arrow.triangle.branch"
         case .vaultRecipeExport: return "doc.text"
         case .configBackupExport: return "shippingbox"
+        case .toolUpdateInstall: return "arrow.down.circle.fill"
         }
     }
 
@@ -128,17 +159,24 @@ enum ScheduledActionKind: String, Codable, CaseIterable {
     var tint: HelmTint {
         switch self {
         case .driftCheck, .toolUpdateCheck, .forkSync: return .info
-        case .vaultRecipeExport, .configBackupExport: return .violet
+        case .vaultRecipeExport, .configBackupExport, .toolUpdateInstall: return .violet
         }
     }
 
     /// Whether this action writes anywhere outside this machine. Surfaced in
     /// the editor so "unattended git push" is a stated, visible property of
     /// the choice rather than a footnote.
+    ///
+    /// `.toolUpdateInstall` is `true`: it writes to the machine's own
+    /// toolchain unattended regardless, and its firstmate arm can also push a
+    /// commit to GitHub (`UpdatesSource.update`'s `.firstmate` case runs
+    /// `fm-sync-upstream.sh`, a fetch/merge/push - never force-pushed, a
+    /// merge conflict or dirty tree is reported as a failed check rather than
+    /// forced through).
     var writesRemotely: Bool {
         switch self {
         case .driftCheck, .toolUpdateCheck: return false
-        case .forkSync, .vaultRecipeExport, .configBackupExport: return true
+        case .forkSync, .vaultRecipeExport, .configBackupExport, .toolUpdateInstall: return true
         }
     }
 
@@ -152,6 +190,7 @@ enum ScheduledActionKind: String, Codable, CaseIterable {
         case .forkSync: return "on forks synced only"
         case .vaultRecipeExport: return "on recipe change only"
         case .configBackupExport: return "on backup change only"
+        case .toolUpdateInstall: return "on updates installed only"
         }
     }
 
@@ -174,6 +213,11 @@ enum ScheduledActionKind: String, Codable, CaseIterable {
         case .configBackupExport:
             return "Pushes a .glbackup bundle of hosts, snippets and preferences to manjesh-config. "
                 + "Private key material and passphrases are never included."
+        case .toolUpdateInstall:
+            return "Checks every tracked tool exactly as the Updates page does, then installs any update it "
+                + "finds - with no confirmation prompt, including firstmate's own self-update and the Automic "
+                + "Vault security cask. A tool that isn't installed yet, or whose check itself fails, is left "
+                + "alone rather than force-installed."
         }
     }
 }
