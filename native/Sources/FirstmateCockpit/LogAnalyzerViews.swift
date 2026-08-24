@@ -93,8 +93,35 @@ final class LogRawPaneView: NSView {
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
-        scroll.backgroundColor = HelmTheme.nsColor(theme.backgroundHex)
+        scroll.backgroundColor = Self.surfaceColor(for: theme)
+        // Daylight §7 asks this pane to read as "a raw dark card, like §6.13's
+        // terminal card". Unlike Console's, that is fully buildable here:
+        // §6.13's own dark fill is blocked there because SwiftTerm paints the
+        // terminal's cells itself and repainting them is terminal rendering,
+        // which this migration must not touch - whereas every pixel of this
+        // pane is an `NSTableView` of this app's own labels, so the fill and
+        // the ink move together and nothing is left light inside a dark ring.
+        wantsLayer = true
+        layer?.masksToBounds = true
+        layer?.cornerRadius = theme.isDaylight ? HelmMetrics.dSurface : 0
+        layer?.backgroundColor = Self.surfaceColor(for: theme).cgColor
         tableView.reloadData()
+    }
+
+    /// What a line is drawn *on*, and therefore what every colour in
+    /// `LogRawLineCell` has to be contrast-checked against. One definition,
+    /// so the pane's fill and its cells' correction can never disagree.
+    static func surfaceColor(for theme: HelmTheme) -> NSColor {
+        theme.isDaylight
+            ? HelmTheme.nsColor(DaylightPalette.termBackground)
+            : HelmTheme.nsColor(theme.backgroundHex)
+    }
+
+    /// The pane's own default ink, for the same reason.
+    static func inkColor(for theme: HelmTheme) -> NSColor {
+        theme.isDaylight
+            ? HelmTheme.nsColor(DaylightPalette.termInk)
+            : HelmTheme.nsColor(theme.chromeInkHex)
     }
 
     /// Scrolls a specific 1-based input line into view - used when the
@@ -166,32 +193,71 @@ private final class LogRawLineCell: NSTableCellView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
+    #if FM_SELFTESTS
+    var debugTextLabel: NSTextField { textLabel }
+    #endif
+
     func configure(number: Int, text: String, severity: LogSeverity, theme: HelmTheme) {
+        // Every colour below is measured against the pane's *own* surface,
+        // which under Daylight is the dark card rather than the page. Reading
+        // `theme.backgroundHex` here (the pre-Daylight behaviour) would
+        // correct a severity hue against warm paper and then paint it on a
+        // near-black card, which is the §5.7 defect in reverse.
+        let surface = LogRawPaneView.surfaceColor(for: theme)
+        let ink = LogRawPaneView.inkColor(for: theme)
+        // `legibleTintedText` blends a hue toward `theme.chromeInkHex`, which
+        // is the right endpoint on every surface derived from the page - and
+        // exactly the wrong one on Daylight's dark pane, where the theme's own
+        // ink is nearly the fill. `legible` instead picks its endpoint from
+        // the *surface's* luminance, so it walks a hue toward white here and
+        // toward black on a light one, which is what this pane needs.
+        func severityInk(_ hex: String) -> NSColor {
+            theme.isDaylight
+                ? HelmContrast.legible(HelmTheme.nsColor(hex), over: surface)
+                : HelmContrast.legibleTintedText(tintHex: hex, over: surface, theme: theme)
+        }
         numberLabel.stringValue = "\(number)"
-        numberLabel.textColor = HelmTheme.mutedInk(theme).withAlphaComponent(0.55)
+        // The gutter number is deliberately the one colour that is NOT
+        // simply `ink` faded: off Daylight it stays the muted-ink value it has
+        // always been (so the twelve palettes render byte-identically), and on
+        // the dark pane it is the pane's own ink faded, since `mutedInk` is
+        // corrected against the *page*.
+        numberLabel.textColor = theme.isDaylight
+            ? ink.withAlphaComponent(0.45)
+            : HelmTheme.mutedInk(theme).withAlphaComponent(0.55)
         textLabel.stringValue = text.isEmpty ? " " : text
 
         switch severity {
         case .critical, .high:
             let hue = HelmTheme.nsColor(theme.ansiHex[1])
-            wash.layer?.backgroundColor = hue.withAlphaComponent(0.10).cgColor
-            textLabel.textColor = HelmContrast.legibleTintedText(
-                tintHex: theme.ansiHex[1],
-                over: HelmTheme.nsColor(theme.backgroundHex),
-                theme: theme)
+            wash.layer?.backgroundColor = hue.withAlphaComponent(theme.isDaylight ? 0.18 : 0.10).cgColor
+            textLabel.textColor = severityInk(theme.ansiHex[1])
         case .warning:
             let hue = HelmTheme.nsColor(theme.ansiHex[3])
-            wash.layer?.backgroundColor = hue.withAlphaComponent(0.08).cgColor
-            textLabel.textColor = HelmContrast.legibleTintedText(
-                tintHex: theme.ansiHex[3],
-                over: HelmTheme.nsColor(theme.backgroundHex),
-                theme: theme)
+            wash.layer?.backgroundColor = hue.withAlphaComponent(theme.isDaylight ? 0.16 : 0.08).cgColor
+            textLabel.textColor = severityInk(theme.ansiHex[3])
         case .informational, .normal:
             wash.layer?.backgroundColor = NSColor.clear.cgColor
-            textLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex).withAlphaComponent(0.85)
+            textLabel.textColor = ink.withAlphaComponent(0.85)
         }
     }
 }
+
+#if FM_SELFTESTS
+extension LogRawPaneView {
+    /// Configure a real `LogRawLineCell` and read back what it painted - the
+    /// only way to assert the severity correction without duplicating it.
+    static func debugLineColors(severity: LogSeverity, theme: HelmTheme) -> (text: NSColor?, surface: NSColor) {
+        let cell = LogRawLineCell()
+        cell.configure(number: 1, text: "error: probe", severity: severity, theme: theme)
+        return (cell.debugTextColor, surfaceColor(for: theme))
+    }
+}
+
+extension LogRawLineCell {
+    var debugTextColor: NSColor? { debugTextLabel.textColor }
+}
+#endif
 
 // MARK: - Error groups (spec §6, §7)
 

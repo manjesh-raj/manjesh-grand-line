@@ -1493,6 +1493,21 @@ final class HelmAccentRow: NSView {
         /// `HelmTint` one.
         var tintHex: String? = nil
 
+        /// Daylight §6.5's **signal row**: "something needing attention"
+        /// additionally gets a wash of its own semantic colour behind the row,
+        /// on top of the 3pt accent edge every row already carries.
+        ///
+        /// Opt-in per call site rather than derived from the tint, because a
+        /// `.warn` or `.critical` tint is not by itself a claim that the row
+        /// needs the captain *now* - plenty of rows use those hues to
+        /// categorise. Only the caller knows which of its rows is the signal.
+        ///
+        /// Daylight-only, like every other change in this phase: the twelve
+        /// pre-Daylight palettes already carry this distinction through the
+        /// accent bar alone, and washing a row there would restyle every list
+        /// that opted in on all thirteen themes at once.
+        var isSignal: Bool = false
+
         /// The hue actually painted: the literal override when set, else the
         /// semantic tint resolved against `theme`.
         func resolvedTintHex(in theme: HelmTheme) -> String { tintHex ?? tint.hex(in: theme) }
@@ -1524,6 +1539,12 @@ final class HelmAccentRow: NSView {
     /// 0.24 / 0.65 recipe, softened a touch because a card already has a fill
     /// and a border of its own to sit under - see `isRowSelected`.
     static let selectionWash: CGFloat = 0.20
+    /// §6.5's signal wash. Deliberately **not** a second number: it reads
+    /// `ToolRowLayout.signalWashAlpha`, which slice 3 pinned at the same 0.07
+    /// `HealthCardView` measured in slice 2. One idiom, one value - a row
+    /// needing attention must not look like a different kind of attention
+    /// depending on which of the two row components its page happens to use.
+    static var signalWash: CGFloat { ToolRowLayout.signalWashAlpha }
     static let selectionBorderAlpha: CGFloat = 0.85
 
     // MARK: Views
@@ -1897,16 +1918,41 @@ final class HelmAccentRow: NSView {
             card.layer?.borderWidth = 1
             card.layer?.borderColor = accent.withAlphaComponent(Self.selectionBorderAlpha).cgColor
         } else {
-            card.normalColor = baseFill
+            // §6.5's signal wash sits under the row rather than replacing its
+            // fill, so a signal row still reads as the same card with a state
+            // on it.
+            //
+            // Flattened with `HelmContrast.mix`, not `NSColor.blended` - that
+            // method converts both operands into a *calibrated* RGB space
+            // first, so its result drifts from the straight-sRGB composite
+            // alpha compositing actually performs, and from what
+            // `ToolRowLayout` produces for the identical wash one component
+            // over (the lesson Phase 4's segmented-tabs correction recorded).
+            func signalWash(_ fraction: CGFloat) -> NSColor {
+                HelmContrast.color(HelmContrast.mix(HelmContrast.components(tintColor),
+                                                    HelmContrast.components(baseFill),
+                                                    Double(fraction)))
+            }
+            let signalFill = (content.isSignal && theme.isDaylight)
+                ? signalWash(Self.signalWash)
+                : baseFill
+            card.normalColor = signalFill
             // Daylight §6.5 names its own row hover token (`rowHover`, a warm
             // near-white) rather than a tint wash: on warm paper a hue-blended
             // hover reads as the row changing *state*, which is what the
             // signal edge is for. The twelve palettes keep the tint blend,
-            // which is what every existing row renders today.
-            let hover = theme.isDaylight
-                ? HelmTheme.nsColor(DaylightPalette.rowHover)
-                : (baseFill.blended(withFraction: 0.08, of: tintColor) ?? baseFill)
-            card.hoverColor = hoverEnabled ? hover : baseFill
+            // which is what every existing row renders today. A signal row
+            // hovers to a slightly stronger wash of its own hue instead -
+            // `rowHover` there would read as the signal switching off.
+            let hover: NSColor
+            if content.isSignal && theme.isDaylight {
+                hover = signalWash(Self.signalWash * 1.6)
+            } else if theme.isDaylight {
+                hover = HelmTheme.nsColor(DaylightPalette.rowHover)
+            } else {
+                hover = baseFill.blended(withFraction: 0.08, of: tintColor) ?? baseFill
+            }
+            card.hoverColor = hoverEnabled ? hover : signalFill
             card.layer?.borderWidth = 1
             card.layer?.borderColor = tintColor.withAlphaComponent(Self.borderAlpha).cgColor
         }
@@ -1959,6 +2005,29 @@ final class HelmAccentRow: NSView {
             trailingAccessoryFrame: trailingAccessory.map { $0.convert($0.bounds, to: self) }
         )
     }
+
+    // MARK: Probe / self-test surface
+
+    #if FM_SELFTESTS
+    /// What the row is actually painted with, after `applyTheme` - the only
+    /// honest way to assert §6.5's signal wash, since the wash is a blend the
+    /// caller never sees.
+    struct RowPaint {
+        let fill: NSColor?
+        let hoverFill: NSColor?
+        let accentBar: NSColor?
+        let titleFont: NSFont?
+    }
+
+    func debugPaint() -> RowPaint {
+        RowPaint(fill: card.normalColor,
+                 hoverFill: card.hoverColor,
+                 accentBar: accentBar.layer?.backgroundColor.map { NSColor(cgColor: $0) ?? .clear },
+                 titleFont: titleLabel.font)
+    }
+
+    var debugTitle: String { titleLabel.stringValue }
+    #endif
 }
 
 // MARK: - HelmStatTile

@@ -32,7 +32,7 @@
 import AppKit
 import UniformTypeIdentifiers
 
-final class LogAnalyzerController: NSViewController {
+final class LogAnalyzerController: NSViewController, DaylightDrillActions {
 
     // MARK: Injected collaborators
 
@@ -101,14 +101,56 @@ final class LogAnalyzerController: NSViewController {
     /// evidence is added.
     private var neededEvidenceVisible = false
 
+    // MARK: - Drill header (Daylight §6.4)
+
+    /// Set by `AppShellController` - "re-read my subtitle". The header belongs
+    /// to the shell; this page only says when its numbers moved.
+    var onDrillSubtitleChanged: (() -> Void)?
+
+    /// §6.4's "`caption()` subtitle with live numbers", counted off the same
+    /// `investigation` the page below renders - so the header and the tabs can
+    /// never disagree about how much evidence is loaded or how many findings
+    /// came back. Honest about the two states before an analysis exists: an
+    /// empty page says what to do, and loaded-but-unanalysed says exactly
+    /// that rather than implying a result.
+    var drillHeaderSubtitle: String? {
+        let sources = investigation.evidence.count
+        guard sources > 0 else {
+            return "Paste raw logs or terminal output to get a structured read"
+        }
+        let sourceText = sources == 1 ? "1 source" : "\(sources) sources"
+        guard let analysis = investigation.analysis else {
+            return "\(sourceText) \u{00B7} not analyzed yet"
+        }
+        let lines = analysis.local.lineCount
+        let lineText = lines == 1 ? "1 line" : "\(lines) lines"
+        let findings = analysis.findings.count
+        let findingText = findings == 1 ? "1 finding" : "\(findings) findings"
+        return "\(sourceText) \u{00B7} \(lineText) \u{00B7} \(findingText)"
+    }
+
+    /// §6.4's right-aligned cluster: this page's two page-level actions, the
+    /// ones that were sharing a row with the deleted hero. Everything else on
+    /// this page acts on the *investigation* rather than the page, and stays
+    /// where the captain is looking at it (Analyze on the input card, the
+    /// artifact buttons on the action bar).
+    ///
+    /// Caller-owned, per `DaylightDrillActions`: this page keeps both button
+    /// instances and the state it already manages on them.
+    var drillHeaderActions: [NSView] {
+        guard let newInvestigationButton, let historyToggleButton else { return [] }
+        return [newInvestigationButton, historyToggleButton]
+    }
+
     // MARK: Chrome
 
     private let scroll = NSScrollView()
     private let contentStack = NSStackView()
-    private var headerRow: NSStackView!
-    private let heroLabel = NSTextField(labelWithString: "Log Analyzer")
-    private let subtitleLabel = NSTextField(labelWithString:
-        "Paste raw logs or terminal output and get a structured read on what happened.")
+    // Daylight §6.4 deleted this page's in-page hero ("Log Analyzer", right
+    // under a drill header already saying it) and its standing subtitle; the
+    // two buttons that shared that row are now the drill header's own action
+    // cluster (`drillHeaderActions`), and the subtitle line the header shows
+    // is live rather than static (`drillHeaderSubtitle`).
     private var historyToggleButton: HelmButton!
     private var newInvestigationButton: HelmButton!
 
@@ -146,6 +188,10 @@ final class LogAnalyzerController: NSViewController {
     // Analysis tab
     private let rawPane = LogRawPaneView()
     private var rawPaneCard: HelmCard!
+    /// The four edges of the raw pane inside its card, held so a theme change
+    /// can re-derive §6.13's padding without rebuilding the tab.
+    /// Order: leading, trailing, top, bottom.
+    private var rawPaneInsets: [NSLayoutConstraint] = []
     private let rawPaneCountLabel = NSTextField(labelWithString: "")
     private var findingsList: LogAccentRowListView!
     private var findingsCard: HelmCard!
@@ -288,7 +334,7 @@ final class LogAnalyzerController: NSViewController {
         contentStack.spacing = 18
         contentStack.translatesAutoresizingMaskIntoConstraints = false
 
-        let header = buildHeader()
+        buildHeaderActions()
         buildImportBadge()
         let input = buildInputCard()
         buildAnalyzingRow()
@@ -300,7 +346,7 @@ final class LogAnalyzerController: NSViewController {
         let storage = buildStorageCard()
         let actions = buildActionBar()
 
-        for view in [header, importBadge, input, analyzingRow, detectionStrip, redaction,
+        for view in [importBadge, input, analyzingRow, detectionStrip, redaction,
                      tabs as NSView, tabContainer, needed, storage, actions] {
             contentStack.addArrangedSubview(view)
         }
@@ -318,7 +364,7 @@ final class LogAnalyzerController: NSViewController {
         // sizes to its own pills on every other page that uses it (Shift,
         // Docs, Hosts, Setup) - stretching it across the full column would
         // make this one page's sub-nav look unlike all of them.
-        for view in [headerRow as NSView, importBadge, input, detectionStrip, redaction,
+        for view in [importBadge, input, detectionStrip, redaction,
                      tabContainer, needed, storage, actions] {
             constraints.append(view.widthAnchor.constraint(equalTo: contentStack.widthAnchor))
         }
@@ -334,48 +380,16 @@ final class LogAnalyzerController: NSViewController {
         ])
     }
 
-    private func buildHeader() -> NSView {
-        heroLabel.font = HelmType.pageTitle(.serif)
-        heroLabel.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.font = HelmType.body()
-        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        _ = mutedLabels.add(subtitleLabel)
-
-        let textStack = NSStackView(views: [heroLabel, subtitleLabel])
-        textStack.orientation = .vertical
-        textStack.alignment = .leading
-        textStack.spacing = 4
-        textStack.translatesAutoresizingMaskIntoConstraints = false
-        textStack.setHuggingPriority(.defaultLow, for: .horizontal)
-
+    /// §6.4's action cluster owns these two now - built here (rather than in
+    /// `loadView`) so their construction still sits with the rest of the
+    /// page's chrome, and handed to the shell by `drillHeaderActions`.
+    private func buildHeaderActions() {
         historyToggleButton = HelmButton(title: "History", variant: .quiet, symbol: "clock.arrow.circlepath",
                                          target: self, action: #selector(toggleHistory))
         historyToggleButton.toolTip = "Show past investigations"
         newInvestigationButton = HelmButton(title: "New", variant: .quiet, symbol: "plus",
                                             target: self, action: #selector(newInvestigation))
         newInvestigationButton.toolTip = "Start a fresh investigation"
-
-        // AGENTS.md gotcha (12): a spacer with no intrinsic size needs a real
-        // low-priority zero-width constraint, not a hugging priority, to be
-        // the thing that stretches.
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        for button in [historyToggleButton!, newInvestigationButton!] {
-            button.setContentHuggingPriority(.required, for: .horizontal)
-            button.setContentCompressionResistancePriority(.required, for: .horizontal)
-        }
-
-        let row = NSStackView(views: [textStack, spacer, newInvestigationButton, historyToggleButton])
-        row.orientation = .horizontal
-        row.alignment = .lastBaseline
-        row.distribution = .fill
-        row.spacing = 10
-        row.translatesAutoresizingMaskIntoConstraints = false
-        headerRow = row
-        return row
     }
 
     /// Spec §2's terminal bridge shows where the current input came from.
@@ -688,16 +702,23 @@ final class LogAnalyzerController: NSViewController {
         _ = rawPaneCard.setHeader(symbol: "doc.plaintext", tint: .neutral, title: "Provided output",
                                   subtitle: "Read-only · secrets already redacted",
                                   actions: [rawPaneCountLabel])
+        // §6.13's "padded 14/16" around the dark card. Off Daylight the pane
+        // is flush with its card exactly as before - the inset constants are
+        // theme-driven rather than the layout being rebuilt, so the twelve
+        // palettes keep the same geometry and the same 620pt height.
         let paneHost = NSView()
         paneHost.translatesAutoresizingMaskIntoConstraints = false
         paneHost.addSubview(rawPane)
-        NSLayoutConstraint.activate([
-            rawPane.leadingAnchor.constraint(equalTo: paneHost.leadingAnchor),
-            rawPane.trailingAnchor.constraint(equalTo: paneHost.trailingAnchor),
-            rawPane.topAnchor.constraint(equalTo: paneHost.topAnchor),
-            rawPane.bottomAnchor.constraint(equalTo: paneHost.bottomAnchor),
+        rawPaneInsets = [
+            rawPane.leadingAnchor.constraint(equalTo: paneHost.leadingAnchor, constant: 0),
+            rawPane.trailingAnchor.constraint(equalTo: paneHost.trailingAnchor, constant: 0),
+            rawPane.topAnchor.constraint(equalTo: paneHost.topAnchor, constant: 0),
+            rawPane.bottomAnchor.constraint(equalTo: paneHost.bottomAnchor, constant: 0),
+        ]
+        NSLayoutConstraint.activate(rawPaneInsets + [
             paneHost.heightAnchor.constraint(equalToConstant: 620),
         ])
+        applyRawPaneInsets()
         rawPaneCard.setBody(paneHost, insets: NSEdgeInsets())
         cards.append(rawPaneCard)
 
@@ -757,6 +778,19 @@ final class LogAnalyzerController: NSViewController {
         rawPaneCard.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         rightColumn.setHuggingPriority(.defaultLow, for: .horizontal)
         return split
+    }
+
+    /// §6.13's 16 horizontal / 14 vertical padding, applied only under
+    /// Daylight - the pane is a dark card floating inside a white one there,
+    /// and flush against its card everywhere else.
+    private func applyRawPaneInsets() {
+        guard rawPaneInsets.count == 4 else { return }
+        let h: CGFloat = theme.isDaylight ? 16 : 0
+        let v: CGFloat = theme.isDaylight ? 14 : 0
+        rawPaneInsets[0].constant = h
+        rawPaneInsets[1].constant = -h
+        rawPaneInsets[2].constant = v
+        rawPaneInsets[3].constant = -v
     }
 
     private func buildRootCauseCard() -> HelmCard {
@@ -1959,6 +1993,7 @@ extension LogAnalyzerController {
         renderComparePickers()
         renderAINotice()
         applyTheme()
+        onDrillSubtitleChanged?()
     }
 
     /// Spec §1's two states, in one place.
@@ -2461,7 +2496,6 @@ extension LogAnalyzerController {
     func applyTheme() {
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
 
-        heroLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         rootCauseSummaryLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         summaryLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         aiNoticeLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
@@ -2513,6 +2547,7 @@ extension LogAnalyzerController {
         }
 
         rawPane.applyTheme(theme)
+        applyRawPaneInsets()
         groupsList.applyTheme(theme)
         timelineList.applyTheme(theme)
         correlationList.applyTheme(theme)
@@ -2574,6 +2609,47 @@ extension LogAnalyzerController {
         clearTapped()
     }
 }
+
+// MARK: - Probe / self-test surface
+
+#if FM_SELFTESTS
+extension LogAnalyzerController {
+    /// Render a fixture investigation through the page's **real** render path,
+    /// with no `claude -p` call and nothing written to disk. The analysis,
+    /// redaction and artifact logic is `LogAnalyzerSelfTest`'s subject; this
+    /// hook exists so the *presentation* layer above it can be measured.
+    func debugRender(_ investigation: LogInvestigation) {
+        _ = view  // force `loadView` - this hook may be the first thing to touch the page
+        self.investigation = investigation
+        renderInvestigation()
+    }
+
+    /// What the raw pane is actually painted with, which is the whole of
+    /// §7's "raw dark card left".
+    struct RawPanePaint {
+        let fill: NSColor?
+        let cornerRadius: CGFloat
+        /// Leading / trailing / top / bottom, in that order.
+        let insets: [CGFloat]
+    }
+
+    func debugRawPanePaint() -> RawPanePaint {
+        view.layoutSubtreeIfNeeded()
+        return RawPanePaint(fill: rawPane.layer?.backgroundColor.map { NSColor(cgColor: $0) ?? .clear },
+                            cornerRadius: rawPane.layer?.cornerRadius ?? 0,
+                            insets: rawPaneInsets.map(\.constant))
+    }
+
+    /// The findings rows the Analysis tab is showing, as content.
+    var debugFindingsCount: Int { findingsList?.count ?? 0 }
+    var debugTabs: HelmSegmentedTabs { tabs }
+    /// A raw line cell, configured exactly as the table configures it - so a
+    /// contrast check measures the real colours rather than recomputing them.
+    func debugRawLineColors(severity: LogSeverity) -> (text: NSColor?, surface: NSColor) {
+        LogRawPaneView.debugLineColors(severity: severity, theme: theme)
+    }
+}
+#endif
 
 // MARK: - Drop zone (spec §2's drag & drop)
 
