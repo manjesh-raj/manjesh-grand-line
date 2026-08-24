@@ -41,9 +41,18 @@ final class DaylightBarController: NSViewController {
     static let height: CGFloat = 50
     static let topMargin: CGFloat = 14
     static let sideMargin: CGFloat = 22
-    /// The gap between the bar's bottom edge and the body area beneath it
-    /// (§2.7: "Drill page: ... top margin under the bar 20").
-    static let contentGap: CGFloat = 20
+    /// The gap between the bar's bottom edge and the body area beneath it -
+    /// §2.7's spec states 20 ("Drill page: ... top margin under the bar 20"),
+    /// but a captain screenshot flagged that as reading like leftover empty
+    /// space above the drill header's back button/icon/title row rather than
+    /// an intentional gap, so this is a deliberate, live-feedback-driven
+    /// override of that written value (`fm/grandline-drill-header-title-
+    /// truncation-fix`) - matching this codebase's own established
+    /// convention of a captain's visual correction outranking a written spec
+    /// number (see e.g. the rail's own several `AGENTS.md`-recorded
+    /// overrides). `HelmMetrics.s3` is this app's existing "generous but
+    /// tight" spacing token, reused here rather than a new literal.
+    static let contentGap: CGFloat = HelmMetrics.s3
 
     /// Everything the shell needs to reserve above the body container.
     static var reservedTopHeight: CGFloat { topMargin + height + contentGap }

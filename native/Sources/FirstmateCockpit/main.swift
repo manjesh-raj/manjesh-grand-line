@@ -1407,6 +1407,15 @@ if ProcessInfo.processInfo.environment["FM_RUN_APP_SHELL_BODY_WIDTH_TESTS"] == "
     exit(AppShellBodyWidthSelfTest.run() ? 0 : 1)
 }
 
+// A drill page header's title can render truncated to a few characters
+// after switching away from a destination whose action cluster (or a narrow
+// window) genuinely squeezed the row at some earlier point in the session -
+// see AppShellDrillHeaderTitleSelfTest.swift's header for the root cause
+// (an NSStackView's cross-axis width getting permanently stuck once squeezed).
+if ProcessInfo.processInfo.environment["FM_RUN_DRILL_HEADER_TITLE_TESTS"] == "1" {
+    exit(AppShellDrillHeaderTitleSelfTest.run() ? 0 : 1)
+}
+
 // Daylight Phase 2: the shell that replaced the icon rail and the top bar -
 // module anatomy, span-2 grid math, the locked space table, the canvas's
 // no-store rule, and the bar's window-safety. See

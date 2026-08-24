@@ -58,6 +58,17 @@ final class HelmDrillHeader: NSView {
     /// slice, and a destination that has not been migrated simply hands over
     /// nothing and renders exactly as it did before.
     private let actions = NSStackView()
+    /// The title/subtitle column - a plain `NSView`, deliberately **not** an
+    /// `NSStackView` (see `reassertTitleWidthTie()`'s doc comment for why).
+    /// Stored (not a local `init` variable) so a self-test can inspect its
+    /// own resolved frame - see `AppShellDrillHeaderTitleSelfTest.swift`.
+    private let textColumn = NSView()
+    /// The one non-fixed constraint in the row (`textColumn.trailingAnchor <=
+    /// actions.leadingAnchor - s3`) - stored so it can be deactivated and
+    /// reactivated on every `configure`/`setActions` call. See
+    /// `reassertTitleWidthTie()`'s own doc comment for why that is required,
+    /// not cosmetic.
+    private var titleWidthTie: NSLayoutConstraint!
     private var themeToken: ThemeObservation?
 
     override init(frame frameRect: NSRect) {
@@ -93,13 +104,9 @@ final class HelmDrillHeader: NSView {
             label.setContentHuggingPriority(.defaultLow, for: .horizontal)
         }
 
-        let textStack = NSStackView(views: [titleLabel, subtitleLabel])
-        textStack.orientation = .vertical
-        textStack.alignment = .leading
-        textStack.spacing = 0
-        textStack.translatesAutoresizingMaskIntoConstraints = false
-        textStack.setHuggingPriority(.defaultLow, for: .horizontal)
-        textStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        textColumn.translatesAutoresizingMaskIntoConstraints = false
+        textColumn.addSubview(titleLabel)
+        textColumn.addSubview(subtitleLabel)
 
         actions.orientation = .horizontal
         actions.alignment = .centerY
@@ -115,8 +122,12 @@ final class HelmDrillHeader: NSView {
 
         addSubview(backButton)
         addSubview(tile)
-        addSubview(textStack)
+        addSubview(textColumn)
         addSubview(actions)
+
+        // The title yields to the actions rather than running under them.
+        titleWidthTie = textColumn.trailingAnchor.constraint(lessThanOrEqualTo: actions.leadingAnchor,
+                                                              constant: -HelmMetrics.s3)
 
         NSLayoutConstraint.activate([
             backButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: HelmMetrics.pageGutter),
@@ -129,11 +140,24 @@ final class HelmDrillHeader: NSView {
             tile.leadingAnchor.constraint(equalTo: backButton.trailingAnchor, constant: HelmMetrics.s3),
             tile.centerYAnchor.constraint(equalTo: centerYAnchor),
 
-            textStack.leadingAnchor.constraint(equalTo: tile.trailingAnchor, constant: HelmMetrics.s3),
-            textStack.centerYAnchor.constraint(equalTo: centerYAnchor),
-            // The title yields to the actions rather than running under them.
-            textStack.trailingAnchor.constraint(lessThanOrEqualTo: actions.leadingAnchor,
-                                                constant: -HelmMetrics.s3),
+            textColumn.leadingAnchor.constraint(equalTo: tile.trailingAnchor, constant: HelmMetrics.s3),
+            textColumn.centerYAnchor.constraint(equalTo: centerYAnchor),
+            titleWidthTie,
+
+            // `titleLabel`/`subtitleLabel` are plain subviews of `textColumn`,
+            // not an `NSStackView`'s arranged subviews - see
+            // `reassertTitleWidthTie()`'s doc comment for why the stack view
+            // this replaced could not be trusted to re-derive its own width.
+            titleLabel.topAnchor.constraint(equalTo: textColumn.topAnchor),
+            titleLabel.leadingAnchor.constraint(equalTo: textColumn.leadingAnchor),
+            subtitleLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor),
+            subtitleLabel.leadingAnchor.constraint(equalTo: textColumn.leadingAnchor),
+            subtitleLabel.bottomAnchor.constraint(equalTo: textColumn.bottomAnchor),
+            // `textColumn`'s own width is exactly "as wide as its widest
+            // child" - a required `>=` from each child, never an `NSStackView`
+            // computing it internally.
+            textColumn.trailingAnchor.constraint(greaterThanOrEqualTo: titleLabel.trailingAnchor),
+            textColumn.trailingAnchor.constraint(greaterThanOrEqualTo: subtitleLabel.trailingAnchor),
 
             actions.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -HelmMetrics.pageGutter),
             actions.centerYAnchor.constraint(equalTo: centerYAnchor),
@@ -156,6 +180,7 @@ final class HelmDrillHeader: NSView {
         subtitleLabel.stringValue = subtitle
         subtitleLabel.isHidden = subtitle.isEmpty
         tile.configure(symbol: symbol, hue: hue)
+        reassertTitleWidthTie()
     }
 
     /// Hand the header this destination's own actions, or `[]` to clear them.
@@ -176,6 +201,57 @@ final class HelmDrillHeader: NSView {
             actions.addArrangedSubview(view)
         }
         actions.isHidden = views.isEmpty
+        reassertTitleWidthTie()
+    }
+
+    /// Deactivates and reactivates `titleWidthTie` (`textColumn.trailingAnchor
+    /// <= actions.leadingAnchor - s3`) - part of the fix for the intermittent
+    /// truncated-title bug (a screenshot showing "Con…" instead of "Console").
+    ///
+    /// **The root cause, found by reproduction.** Once this row's title has
+    /// genuinely been squeezed below its natural width - because an *earlier*
+    /// destination's own wide `actions` cluster (or a narrow window) forced
+    /// it down - Auto Layout's `<=` inequality does not revisit that resolved
+    /// value on a later pass just because the ceiling has since moved further
+    /// away: an inequality only forces a change when the *old* value becomes
+    /// infeasible (the ceiling tightens); loosening it creates no pressure to
+    /// grow back, so a stale, too-narrow frame can survive indefinitely -
+    /// confirmed live, with a real, disposable `HelmDrillHeader` instance, to
+    /// need `textColumn`'s own arranged-subview column to be a **plain
+    /// `NSView`**, never an `NSStackView`: an `NSStackView` used for this
+    /// column reproduced a squeeze that stayed frozen at its narrowest-ever
+    /// resolved width **permanently** - through repeated `layoutSubtreeIfNeeded()`
+    /// calls, `invalidateIntrinsicContentSize()` on both labels,
+    /// `needsLayout`/`needsUpdateConstraints`, removing and re-adding both
+    /// labels as arranged subviews, deactivating/reactivating (and replacing
+    /// outright) the external `<=` tie, and even round-trip *window* resizes
+    /// to a much larger size - none of it ever let the stack's own reported
+    /// cross-axis width grow back. Whatever internal state an `NSStackView`
+    /// keeps for a `.leading`-aligned arranged subview's width appears to be
+    /// a one-way ratchet once squeezed, not a value AppKit re-derives on
+    /// every layout pass. `textColumn` (a plain `NSView`, with `>= child`
+    /// constraints owning its own width - see `init`) does not have this
+    /// problem: a plain `NSView`'s geometry is nothing but its own active
+    /// constraints, re-solved fresh on every layout pass like everything else
+    /// in this header. `reassertTitleWidthTie()` remains as defence in depth
+    /// for the one non-fixed constraint in the row - deactivating and
+    /// replacing it on every `configure`/`setActions` call costs nothing and
+    /// removes any doubt that a *stale constraint object* (as opposed to
+    /// `NSStackView`'s own internals) could ever be the culprit again.
+    ///
+    /// This is why the bug was intermittent rather than permanent: a fresh
+    /// window (nothing has ever squeezed the row) never exhibited it, and the
+    /// exact "sometimes" trigger was switching to a destination whose title
+    /// should render in full *after* an earlier destination's own action
+    /// cluster (or a narrow window) genuinely squeezed the row at some point
+    /// in the session - the "Con…" screenshot's own title/action content had
+    /// nothing to do with the truncation; whatever was shown immediately
+    /// before it did.
+    private func reassertTitleWidthTie() {
+        titleWidthTie.isActive = false
+        titleWidthTie = textColumn.trailingAnchor.constraint(lessThanOrEqualTo: actions.leadingAnchor,
+                                                              constant: -HelmMetrics.s3)
+        titleWidthTie.isActive = true
     }
 
     @objc private func backClicked() { onBack?() }
@@ -215,11 +291,20 @@ final class HelmDrillHeader: NSView {
 
     // MARK: Probe / self-test surface
 
+    #if FM_SELFTESTS
     var titleForTests: String { titleLabel.stringValue }
     var actionsForTests: [NSView] { actions.arrangedSubviews }
     var subtitleForTests: String { subtitleLabel.stringValue }
+    /// The real title label, for a test that needs to compare its rendered
+    /// frame against its own freshly-computed intrinsic size (the shape of
+    /// check that catches a stale, too-narrow frame surviving a correct
+    /// `stringValue` - see `AppShellDrillHeaderTitleSelfTest.swift`).
+    var titleLabelForTests: NSTextField { titleLabel }
+    var textColumnForTests: NSView { textColumn }
+    var actionsStackForTests: NSStackView { actions }
 
     /// Fires the real back path a click or a VoiceOver press would.
     @discardableResult
     func debugActivateBack() -> Bool { backButton.performPrimaryAction() }
+    #endif
 }
