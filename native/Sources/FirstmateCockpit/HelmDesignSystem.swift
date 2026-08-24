@@ -1531,6 +1531,14 @@ final class HelmAccentRow: NSView {
     private let card = HoverHighlightView()
     private let accentBar = NSView()
     private let badge: IconTileView?
+    /// §6.5's "34pt gradient tile" in the badge's place, on Daylight only.
+    ///
+    /// Opt-in per call site (`init(gradientBadge:)`) rather than swapped in
+    /// for every row at once: a row's badge is part of how each already-
+    /// migrated page reads, and the slices restyle destinations one at a time
+    /// in §7's order. Exactly one of `badge`/`gradientBadge` is ever visible -
+    /// the same tile/glyph pair `HelmEmptyState` already uses.
+    private let gradientBadge: HelmGradientTile?
     private let leadingControl: NSView?
     private let kickerLabel = NSTextField(labelWithString: "")
     private let titleLabel = NSTextField(labelWithString: "")
@@ -1583,11 +1591,16 @@ final class HelmAccentRow: NSView {
     ///     three-button `.fillEqually` footer strip those lists used to pin to
     ///     the bottom of the page. Mirrors `leadingControl`: the row owns the
     ///     slot, the caller owns the control and its behaviour.
+    ///   - gradientBadge: opt in to §6.5's Daylight gradient tile in the
+    ///     badge's place. Both views are built and exactly one is shown, so a
+    ///     theme switch never needs a rebuild; off Daylight the row renders
+    ///     byte-identically to a row that did not opt in.
     init(chipPlacement: ChipPlacement = .trailing,
          leadingControl: NSView? = nil,
          contentView: NSView? = nil,
          trailingAccessory: NSView? = nil,
-         hover: Bool = true) {
+         hover: Bool = true,
+         gradientBadge: Bool = false) {
         self.chipPlacement = chipPlacement
         self.leadingControl = leadingControl
         self.customContent = contentView
@@ -1595,6 +1608,9 @@ final class HelmAccentRow: NSView {
         self.hoverEnabled = hover
         self.badge = leadingControl == nil
             ? IconTileView(size: HelmMetrics.tileSmall, cornerRadius: HelmMetrics.tileSmall / 2)
+            : nil
+        self.gradientBadge = (leadingControl == nil && gradientBadge)
+            ? HelmGradientTile(size: .drill)
             : nil
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
@@ -1686,7 +1702,7 @@ final class HelmAccentRow: NSView {
         textStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
 
         var rowViews: [NSView] = []
-        if let leading = leadingControl ?? badge {
+        for leading in [leadingControl, badge, gradientBadge].compactMap({ $0 }) {
             leading.setContentHuggingPriority(.required, for: .horizontal)
             leading.setContentCompressionResistancePriority(.required, for: .horizontal)
             rowViews.append(leading)
@@ -1807,6 +1823,16 @@ final class HelmAccentRow: NSView {
                 badge.configure(symbol: symbol, tint: content.tint, pointSize: 11)
             }
         }
+        if let gradientBadge, let symbol = content.badgeSymbol {
+            // A record carrying its own literal colour keeps it (a saved
+            // host's `accentHex`); everything else resolves its semantic tint
+            // to the matching §2.2 hue.
+            if let hex = content.tintHex {
+                gradientBadge.configure(symbol: symbol, literalHex: hex)
+            } else {
+                gradientBadge.configure(symbol: symbol, hue: HelmDomainHue(tint: content.tint))
+            }
+        }
 
         titleLabel.stringValue = content.title
         titleLabel.font = content.titleIsCode ? HelmType.code() : HelmType.rowTitle()
@@ -1835,7 +1861,13 @@ final class HelmAccentRow: NSView {
         guard let content else { return }
         let tintColor = HelmTheme.nsColor(content.resolvedTintHex(in: theme))
 
+        // Exactly one of the two is ever visible - a row that did not opt in
+        // has no gradient tile at all and this reduces to the original line.
+        let hasBadgeSymbol = content.badgeSymbol != nil
+        badge?.isHidden = !hasBadgeSymbol || (gradientBadge != nil && theme.isDaylight)
+        gradientBadge?.isHidden = !hasBadgeSymbol || !theme.isDaylight
         badge?.applyTheme(theme)
+        gradientBadge?.applyTheme(theme)
 
         kickerLabel.attributedStringValue = NSAttributedString(
             string: content.kicker.uppercased(),
@@ -1909,7 +1941,12 @@ final class HelmAccentRow: NSView {
         return Geometry(
             barFrame: accentBar.convert(accentBar.bounds, to: self),
             barColor: accentBar.layer?.backgroundColor.map { NSColor(cgColor: $0) ?? .clear },
-            badgeFrame: badge.map { $0.convert($0.bounds, to: self) },
+            // Whichever of the two is actually showing: a check that only
+            // ever read `badge` would report a hidden frame under Daylight on
+            // a gradient-badge row and read as a real rendering bug (the same
+            // correction `HelmEmptyState.debugGeometry` already carries).
+            badgeFrame: (gradientBadge?.isHidden == false ? gradientBadge : badge)
+                .map { $0.convert($0.bounds, to: self) },
             kickerFont: attrs[.font] as? NSFont,
             kickerKern: (attrs[.kern] as? NSNumber).map { CGFloat($0.doubleValue) },
             kickerColor: attrs[.foregroundColor] as? NSColor,
@@ -2437,6 +2474,24 @@ final class HelmSegmentedTabs: NSView {
         var pillRadius: CGFloat { self == .compact ? HelmMetrics.rChip : 7 }
         var capsuleRadius: CGFloat { self == .compact ? HelmMetrics.rControl : 9 }
         var spacing: CGFloat { self == .compact ? 2 : 3 }
+
+        /// §7's "space-pill-like capsules" (Hosts' row, but this is the app's
+        /// one segmented control so every page carrying one follows). The
+        /// container loses its own chrome under Daylight and each pill becomes
+        /// a real capsule, exactly the recipe `DaylightBarController` paints
+        /// for the five space pills - and derived from the pill's own resolved
+        /// height rather than `bounds`, which is 0 the first time a freshly
+        /// built control is styled (the reason `dCapsule` is a sentinel).
+        func daylightPillRadius(for pill: NSView) -> CGFloat {
+            // `fittingSize`, not the point size plus insets: the pill's height
+            // is its *label's rendered* height plus the insets, and a 12pt
+            // font is ~15pt tall - guessing from `labelSize` produced a
+            // radius 1.5pt short of a real capsule, caught by this slice's own
+            // self-test. `bounds` is preferred where it exists, but it is 0 on
+            // a freshly built control and stale during the containing view's
+            // own `layout()`, which is exactly when this is asked.
+            HelmMetrics.capsuleRadius(forHeight: max(pill.bounds.height, pill.fittingSize.height))
+        }
     }
 
     /// The capsule's own translucency - the value both implementations this
@@ -2544,6 +2599,18 @@ final class HelmSegmentedTabs: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
+    /// A capsule's radius is half its own height, and a freshly built control
+    /// has no height yet - so the Daylight branch re-derives it once real
+    /// geometry exists. A no-op off Daylight, where the radius is a constant.
+    override func layout() {
+        super.layout()
+        let theme = ThemeManager.shared.theme
+        guard theme.isDaylight else { return }
+        for pill in pills {
+            pill.container.cornerRadius = size.daylightPillRadius(for: pill.container)
+        }
+    }
+
     /// Left/right (and up/down, which read the same way in a horizontal
     /// strip) move the selection to the adjacent segment and take keyboard
     /// focus with it, matching how `NSSegmentedControl` itself behaves.
@@ -2595,6 +2662,7 @@ final class HelmSegmentedTabs: NSView {
     }
 
     func applyTheme(_ theme: HelmTheme) {
+        if theme.isDaylight { applyDaylightTheme(theme); return }
         let line = HelmTheme.nsColor(theme.chromeLineHex)
         let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
         let accent = HelmTheme.nsColor(theme.accentHex)
@@ -2643,6 +2711,40 @@ final class HelmSegmentedTabs: NSView {
             pill.container.hoverColor = isActive ? activeWash : line.withAlphaComponent(0.25)
             pill.label.textColor = isActive ? activeInk : muted
             pill.label.font = .systemFont(ofSize: size.labelSize, weight: isActive ? .semibold : .medium)
+            pill.container.cornerRadius = size.pillRadius
+        }
+    }
+
+    /// §7's Daylight resolution: the space-pill recipe, so the tab strip on a
+    /// drill page and the space strip on the floating bar read as the same
+    /// control one level apart.
+    ///
+    /// Deliberately **not** the twelve palettes' accent-wash treatment: on warm
+    /// paper an accent wash under a corrected accent label is a third surface
+    /// competing with the card below it, where a solid `ink` capsule with a
+    /// light label reads instantly. `ink` on `card` is also the one pairing
+    /// this palette guarantees, so there is no contrast correction to get
+    /// wrong - which is why the label is derived from the fill rather than
+    /// from the accent.
+    private func applyDaylightTheme(_ theme: HelmTheme) {
+        let ink = HelmTheme.nsColor(theme.chromeInkHex)
+        let muted = HelmTheme.mutedInk(theme)
+        let inset = HelmTheme.nsColor(DaylightPalette.inset)
+        // The container is the page's own surface, not a bordered capsule:
+        // §6.5's card already provides the boundary the twelve palettes'
+        // translucent capsule had to draw for itself.
+        capsule.layer?.backgroundColor = NSColor.clear.cgColor
+        capsule.layer?.borderWidth = 0
+        capsule.layer?.cornerRadius = size.capsuleRadius
+        let activeInk = HelmContrast.legible(HelmTheme.nsColor(theme.chromeBackgroundHex), over: ink)
+        for pill in pills {
+            let isActive = pill.id == selectedID
+            pill.container.accessibilityValueOverride = isActive ? "selected" : "not selected"
+            pill.container.cornerRadius = size.daylightPillRadius(for: pill.container)
+            pill.container.normalColor = isActive ? ink : .clear
+            pill.container.hoverColor = isActive ? ink : inset
+            pill.label.textColor = isActive ? activeInk : muted
+            pill.label.font = HelmType.rounded(size.labelSize, isActive ? .semibold : .medium)
         }
     }
 

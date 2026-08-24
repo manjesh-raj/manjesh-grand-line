@@ -260,6 +260,10 @@ extension ConsoleController {
         sreLeadGeneratePostmortemButton.contentTintColor = ink
         sreLeadEmptyStateView.layer?.backgroundColor = paneBg.cgColor
         cardChrome.applyTheme(theme)
+        // §6.13: whether the terminal card is drawn at all depends on the
+        // theme now, so a switch has to re-ask - see
+        // `refreshTerminalCardChrome()`.
+        refreshTerminalCardChrome()
         sreLeadEmptyStateLabel.textColor = HelmTheme.mutedInk(theme)
         // Every started tab's own chat, not just the current one - each is a
         // real, independent view that needs to stay in sync with the active
@@ -270,17 +274,61 @@ extension ConsoleController {
         updateSRELeadControls()
     }
 
+    // MARK: Drill header (Daylight §6.4)
+
+    /// Deliberately empty, and that is the §6.13 reading rather than an
+    /// omission.
+    ///
+    /// §6.4's action cluster is "that page's primary + quiet actions", and
+    /// §6.13 is explicit that Console's own actions stay in the page toolbar
+    /// ("tab chips, toolbar buttons, Compose popover, SRE Lead pane all take
+    /// the Daylight button/well/card recipes") - that bar sits directly under
+    /// the drill header and already carries every one of them. Hoisting a
+    /// copy of New Tab / Find / Compose up one row would put two of each on
+    /// screen 44pt apart, which is the duplication §6.4 exists to remove.
+    ///
+    /// The conformance is still worth having: `drillHeaderSubtitle` below is
+    /// what gives this destination - and every dedicated host page, which the
+    /// shell also routes through this controller - a live header line.
+    var drillHeaderActions: [NSView] { [] }
+
+    /// §6.4's "`caption()` subtitle with live numbers", from state this page
+    /// already has: how many tabs are open and which one is showing. No new
+    /// collection, and nothing here can disagree with the tab strip, because
+    /// both read the same `tabs`/`currentTab`.
+    var drillHeaderSubtitle: String? {
+        guard !tabs.isEmpty else {
+            return isFirstmateConsole ? "No tabs open" : "Not connected yet"
+        }
+        let count = tabs.count == 1 ? "1 tab" : "\(tabs.count) tabs"
+        guard let name = currentTab?.name, !name.isEmpty else { return count }
+        return "\(count) \u{00B7} \(name)"
+    }
+
     func styleChips() {
         let accent = HelmTheme.nsColor(theme.accentHex)
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
-        let muted = ink.withAlphaComponent(0.55)
+        // `mutedInk` under Daylight, where that token is contrast-corrected
+        // per theme against the surface a chip actually sits on; the twelve
+        // palettes keep the hand-rolled 0.55 they have always rendered.
+        let muted = theme.isDaylight ? HelmTheme.mutedInk(theme) : ink.withAlphaComponent(0.55)
         for tab in tabs {
             // Host tabs carry their own accent (A3); other tabs use the theme accent.
             let chipAccent = tab.accentHex.map(HelmTheme.nsColor) ?? accent
             let chipTint = chipAccent.withAlphaComponent(theme.mode == .dark ? 0.20 : 0.14)
             tab.chip.applyStyle(selected: tab === currentTab, accent: chipAccent, muted: muted, tint: chipTint)
         }
-        plusButton.contentTintColor = ink
+        // §6.4's live subtitle. This method is the one choke point every tab
+        // add / close / rename / selection already passes through, so hooking
+        // it here is what keeps the drill header's "3 tabs · Mirror" honest
+        // without a second notification path.
+        onDrillSubtitleChanged?()
+        // `plusButton` is a `HelmButton` and themes itself: `restyle()` owns
+        // `contentTintColor` and overwrites anything set here on the next
+        // theme change, so this line was a coin-flip that also defeated the
+        // button's own §6.6 Daylight recipe (Phase 2's own rule, and the same
+        // correction `updateComposeControls`/`updateUtilizationControls`
+        // already took).
     }
 
     // MARK: Font zoom

@@ -389,7 +389,12 @@ private final class HostsListRecordView: NSView {
         actions.addArrangedSubview(overflowButton)
         actions.addArrangedSubview(overflowSpacer)
 
-        row = HelmAccentRow(trailingAccessory: actions)
+        // Daylight §6.5's "34pt gradient tile" in the row's badge slot, which
+        // is what §7 asks Hosts for by name ("per-host gradient tiles from
+        // `Host.accentHex`"). Opt-in on this list only: the tile follows the
+        // record's own literal hue when it has one, and off Daylight the row
+        // renders byte-identically to before.
+        row = HelmAccentRow(trailingAccessory: actions, gradientBadge: true)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
 

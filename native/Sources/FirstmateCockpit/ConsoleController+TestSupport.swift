@@ -183,6 +183,16 @@ extension ConsoleController {
     /// already has its own dedicated debug surface below.
     func debugSRELeadPaneOpen() -> Bool { sreLeadPaneWidthConstraint.constant > 0 }
 
+    /// Daylight §6.13: whether the bordered terminal card is actually drawn.
+    func debugTerminalCardVisible() -> Bool { !cardChrome.isHidden }
+
+    /// The current tab's terminal frame in `content`'s own coordinates - the
+    /// one number §6.13's card must never move (the scrollback invariant).
+    func debugCurrentTerminalFrame() -> NSRect? {
+        guard let term = currentTab?.terminal else { return nil }
+        return term.convert(term.bounds, to: content)
+    }
+
     /// Whether the pane is currently showing the shared "not started yet"
     /// empty state (as opposed to some tab's real chat) - `nil` if there is
     /// no current tab at all.

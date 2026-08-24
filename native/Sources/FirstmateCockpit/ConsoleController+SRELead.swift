@@ -394,19 +394,36 @@ extension ConsoleController {
                            theme: theme)
     }
 
-    /// Turns the bordered-terminal-card look on exactly when the pane is up -
-    /// one condition, evaluated in one place, for the one thing it decides.
+    /// Turns the bordered-terminal-card look on - one condition, evaluated in
+    /// one place, for the one thing it decides.
+    ///
+    /// Two reasons the card shows. The pane being up is the original one
+    /// (`fm/grandline-sre-lead-app-feel`). Daylight §6.13 is the second: that
+    /// palette's page ground is warm `paper`, so a terminal with no card has
+    /// no boundary at all, and the spec asks for the card permanently there.
+    /// `terminalInset > 0` is what keeps the shared Firstmate console out of
+    /// it in every palette - it has no margin for a card to live in, by
+    /// design, so its Shell and Mirror tabs stay flush at full column count.
     ///
     /// This is deliberately **not** a frame change: `terminalInset` is already
     /// permanent, so all that happens here is that a decorative overlay
     /// becomes visible and repaints (`ConsoleCardChrome.swift`'s header). No
     /// `TerminalView` is touched, which is what keeps a captain's scrollback
     /// intact across a toggle - covered by `SRELeadPerTabSelfTest`'s
-    /// `scrollbackSurvivesSRELeadToggle` case.
+    /// `scrollbackSurvivesSRELeadToggle` case. That stays true of the theme
+    /// switch this now also reacts to, for exactly the same reason.
     func updateTerminalCardStyle(carded: Bool) {
+        sreLeadPaneIsOpen = carded
+        refreshTerminalCardChrome()
+    }
+
+    /// Re-evaluates the card's visibility and geometry from the state already
+    /// recorded, so a theme change can reach it without pretending to know
+    /// whether a pane is open.
+    func refreshTerminalCardChrome() {
         cardChrome.pad = cardMargin
-        cardChrome.paneStripWidth = carded ? sreLeadPaneWidth : nil
-        cardChrome.isHidden = !carded
+        cardChrome.paneStripWidth = sreLeadPaneIsOpen ? sreLeadPaneWidth : nil
+        cardChrome.isHidden = !(sreLeadPaneIsOpen || (theme.isDaylight && terminalInset > 0))
         cardChrome.needsDisplay = true
     }
 

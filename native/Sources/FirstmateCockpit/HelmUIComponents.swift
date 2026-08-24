@@ -829,6 +829,17 @@ final class HelmComposerCard: NSView {
         }
     }
 
+    /// §6.9: "the page's domain hue" is what a focused well lights with.
+    /// `nil` keeps the pre-Daylight behaviour (the theme's own accent), which
+    /// is what every composer rendered before Phase 4 - so a caller that has
+    /// not been given a hue is unchanged.
+    var domainHue: HelmDomainHue? {
+        didSet {
+            guard domainHue != oldValue, let lastTheme else { return }
+            applyTheme(lastTheme)
+        }
+    }
+
     init(cornerRadius: CGFloat = HelmMetrics.rRow) {
         self.cornerRadius = cornerRadius
         super.init(frame: .zero)
@@ -898,7 +909,7 @@ final class HelmComposerCard: NSView {
     func applyTheme(_ theme: HelmTheme) {
         lastTheme = theme
         HelmInputSurface.apply(chrome: contentContainer, shadowHost: self,
-                               theme: theme, focused: isFocused)
+                               theme: theme, focused: isFocused, hue: domainHue)
         if let focusTarget { HelmSelection.apply(to: focusTarget, theme: theme) }
     }
 }
