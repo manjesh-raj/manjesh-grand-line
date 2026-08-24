@@ -729,7 +729,7 @@ class HoverHighlightView: NSView {
 
     private func setBackground(_ color: NSColor, animated: Bool) {
         guard let layer else { return }
-        guard animated, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else {
+        guard animated, !HelmMotion.isReduced else {
             layer.backgroundColor = color.cgColor
             return
         }
@@ -1578,7 +1578,7 @@ enum ToolRowLayout {
                                                         Double(signalWashAlpha)))
                 }
                 views.rowContainer.normalColor = wash ?? cardFill
-                views.rowContainer.hoverColor = wash ?? HelmTheme.nsColor(DaylightPalette.rowHover)
+                views.rowContainer.hoverColor = wash ?? HelmTheme.nsColor(theme.daylightTokens.rowHover)
                 views.rowContainer.layer?.borderWidth = 1
                 views.rowContainer.layer?.borderColor = line.cgColor
             } else {
@@ -1591,7 +1591,7 @@ enum ToolRowLayout {
         } else {
             views.rowContainer.normalColor = .clear
             views.rowContainer.hoverColor = daylight
-                ? HelmTheme.nsColor(DaylightPalette.rowHover)
+                ? HelmTheme.nsColor(theme.daylightTokens.rowHover)
                 : line.withAlphaComponent(0.18)
             views.rowContainer.layer?.borderWidth = 0
         }

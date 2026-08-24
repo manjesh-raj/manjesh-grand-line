@@ -1386,6 +1386,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_MODULE_TESTS"] == "1" {
     exit(DaylightModuleSelfTest.run() ? 0 : 1)
 }
 
+// Daylight Phase 6 (the last phase): the accessibility sweep and the Reduce
+// Motion audit. Dusk's own colour derivation is measured by
+// FM_RUN_CONTRAST_TESTS, where the palette maths already lives. See
+// DaylightHardeningSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_HARDENING_TESTS"] == "1" {
+    exit(DaylightHardeningSelfTest.run() ? 0 : 1)
+}
+
 // Daylight Phase 4: one suite per slice of the per-destination restyle.
 // Slice 1 also covers the shared drill-page components (§6.4-6.14). See each
 // DaylightDrillPage*SelfTest.swift's own header.

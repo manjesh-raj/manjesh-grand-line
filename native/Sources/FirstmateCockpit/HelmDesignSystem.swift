@@ -536,7 +536,7 @@ final class HelmCard: NSView {
         // the card's own outline (the pre-Daylight themes get the same effect
         // by damping `chromeLineHex`).
         divider.layer?.backgroundColor = theme.isDaylight
-            ? HelmTheme.nsColor(DaylightPalette.hairRow).cgColor
+            ? HelmTheme.nsColor(theme.daylightTokens.hairRow).cgColor
             : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(Self.dividerAlpha).cgColor
         applyDaylightElevation(theme)
         headerTile?.applyTheme(theme)
@@ -667,7 +667,7 @@ final class HelmCard: NSView {
             // of each pair, which is what actually reads as depth. The colour
             // is `#2A2B33`-tinted rather than pure black - a black shadow over
             // warm paper reads grey-green.
-            let ink = HelmTheme.nsColor(DaylightPalette.shadowInk)
+            let ink = HelmTheme.nsColor(theme.daylightTokens.shadowInk)
             switch level {
             case .resting:
                 shadow.shadowColor = ink.withAlphaComponent(0.10)
@@ -1188,18 +1188,28 @@ final class HelmButton: NSButton {
     /// - `.destructive` - a `bad` wash with §2.4's corrected `badText` label.
     private static func daylightPalette(variant: Variant, tint: HelmTint?, theme: HelmTheme,
                                         domainHue: HelmDomainHue?) -> Palette {
-        let ink = HelmTheme.nsColor(DaylightPalette.ink)
-        let muted = HelmTheme.nsColor(DaylightPalette.muted)
-        let inset = HelmTheme.nsColor(DaylightPalette.inset)
-        let hair = HelmTheme.nsColor(DaylightPalette.hair)
+        let ink = HelmTheme.nsColor(theme.daylightTokens.ink)
+        let muted = HelmTheme.nsColor(theme.daylightTokens.muted)
+        let inset = HelmTheme.nsColor(theme.daylightTokens.inset)
+        let hair = HelmTheme.nsColor(theme.daylightTokens.hair)
 
         switch variant {
         case .primary:
             // §2.4's correction lives on the *fill*, not the label - see
             // `DaylightPalette.primaryButtonFill(for:theme:)` for why
             // correcting the label here would be a silent no-op.
-            let fill = domainHue.map { DaylightPalette.primaryButtonFill(for: $0, theme: theme) }
-                ?? HelmTheme.nsColor(theme.accentHex)
+            // The no-hue fallback (the theme's own accent) goes through the
+            // same white-label correction as a domain hue rather than being
+            // used raw. Phase 6 found this: Dusk's accent is a *light* blue
+            // (it has to be, since `accentHex` is also a label colour on a
+            // dark ground), and a white label on it measures 3.16:1 - so the
+            // one variant with no hue was the one illegible button in the dark
+            // register. `darkenedForWhiteLabel` is a no-op on any fill that
+            // already clears the floor, so Daylight's own primary buttons are
+            // byte-identical to before.
+            let fill = DaylightPalette.darkenedForWhiteLabel(
+                domainHue.map { DaylightPalette.primaryButtonFill(for: $0, theme: theme) }
+                    ?? HelmTheme.nsColor(theme.accentHex))
             return Palette(fill: fill,
                            hoverFill: fill.hoverShifted(by: 0.10, forMode: .light),
                            pressedFill: fill.hoverShifted(by: 0.10, forMode: .dark),
@@ -1228,17 +1238,17 @@ final class HelmButton: NSButton {
                            pressedFill: hair,
                            border: .clear,
                            label: Self.label(tint: tint,
-                                             over: HelmTheme.nsColor(DaylightPalette.card),
+                                             over: HelmTheme.nsColor(theme.daylightTokens.card),
                                              theme: theme) ?? muted)
 
         case .destructive:
             // §2.4's measured pair: the `bad` hue as a wash, with the
             // separately-corrected `badText` on top of it (the raw hue as its
             // own label measures 3.72 there).
-            let wash = HelmTheme.nsColor(DaylightPalette.card)
+            let wash = HelmTheme.nsColor(theme.daylightTokens.card)
                 .blended(withFraction: 0.12, of: HelmTheme.nsColor(DaylightPalette.bad))
                 ?? inset
-            let label = HelmContrast.legible(HelmTheme.nsColor(DaylightPalette.badText), over: wash)
+            let label = HelmContrast.legible(HelmTheme.nsColor(theme.daylightTokens.badText), over: wash)
             return Palette(fill: wash,
                            hoverFill: wash.hoverShifted(by: 0.08, forMode: .dark),
                            pressedFill: wash.hoverShifted(by: 0.14, forMode: .dark),
@@ -1291,9 +1301,11 @@ final class HelmButton: NSButton {
                 if self.isHovering { return { $0.hoverShifted(by: 0.10, forMode: .light) } }
                 return { $0 }
             }()
-            fillGradient.colors = [shift(pair.h1).cgColor, shift(pair.h2).cgColor]
-            fillGradient.frame = layer?.bounds ?? .zero
-            fillGradient.cornerRadius = layer?.cornerRadius ?? 0
+            HelmMotion.withoutImplicitAnimation {
+                fillGradient.colors = [shift(pair.h1).cgColor, shift(pair.h2).cgColor]
+                fillGradient.frame = layer?.bounds ?? .zero
+                fillGradient.cornerRadius = layer?.cornerRadius ?? 0
+            }
             fillGradient.isHidden = false
             layer?.backgroundColor = NSColor.clear.cgColor
         } else {
@@ -2013,7 +2025,7 @@ final class HelmAccentRow: NSView {
             if content.isSignal && theme.isDaylight {
                 hover = signalWash(Self.signalWash * 1.6)
             } else if theme.isDaylight {
-                hover = HelmTheme.nsColor(DaylightPalette.rowHover)
+                hover = HelmTheme.nsColor(theme.daylightTokens.rowHover)
             } else {
                 hover = baseFill.blended(withFraction: 0.08, of: tintColor) ?? baseFill
             }
@@ -2863,7 +2875,7 @@ final class HelmSegmentedTabs: NSView {
     private func applyDaylightTheme(_ theme: HelmTheme) {
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let muted = HelmTheme.mutedInk(theme)
-        let inset = HelmTheme.nsColor(DaylightPalette.inset)
+        let inset = HelmTheme.nsColor(theme.daylightTokens.inset)
         // The container is the page's own surface, not a bordered capsule:
         // §6.5's card already provides the boundary the twelve palettes'
         // translucent capsule had to draw for itself.

@@ -996,7 +996,98 @@ final class AppShellController: NSViewController {
                          hue: dest.domainHue,
                          isCanvas: slot.id == .homeCanvas,
                          slotController: slot.controller)
+
+        // §8 Phase 6: which destination is showing decides where the bar's
+        // chain hands off, so the loop is re-derived on every navigation.
+        updateKeyViewLoop()
     }
+
+    // MARK: Key view loop (Daylight section 8, Phase 6)
+
+    /// Wires Tab-key order to `bar -> canvas/content`.
+    ///
+    /// **Why this is wired rather than left to AppKit.** An `NSWindow`
+    /// recalculates its own loop from geometry, which happens to be right
+    /// today (the bar is above the body) but says nothing about the two halves
+    /// of the bar: `loadView` anchors the pills from the leading edge and the
+    /// trailing cluster from the trailing edge as two independent constraint
+    /// chains, so their relative order is a geometric accident rather than a
+    /// stated intent. It is also silent about the hand-off: with fifteen
+    /// destinations mounted and hidden, "the next focusable view after the
+    /// avatar" is whatever the geometry sweep happens to reach first.
+    ///
+    /// So: `recalculateKeyViewLoop()` still builds every destination's own
+    /// internal order (that is real work this should not duplicate - each page
+    /// knows its own reading order), and then the three boundaries this shell
+    /// owns are stated explicitly on top of it. `autorecalculatesKeyViewLoop`
+    /// is turned off because leaving it on lets AppKit re-derive the loop at
+    /// an arbitrary later point and silently drop those three links.
+    func updateKeyViewLoop() {
+        guard let window = view.window else { return }
+        window.autorecalculatesKeyViewLoop = false
+        window.recalculateKeyViewLoop()
+
+        let chain = bar.keyViewChain
+        for (from, to) in zip(chain, chain.dropFirst()) { from.nextKeyView = to }
+        chain.last?.nextKeyView = firstBodyKeyView()
+        if window.initialFirstResponder == nil { window.initialFirstResponder = chain.first }
+    }
+
+    /// The first thing below the bar the keyboard should reach: the drill
+    /// header's back button on a drill page (it is the affordance out of
+    /// there, and the topmost control), else the showing destination's own
+    /// first focusable view - which on the canvas is its first module card.
+    private func firstBodyKeyView() -> NSView? {
+        if !drillHeader.isHidden, let inHeader = Self.firstKeyView(in: drillHeader) {
+            return inHeader
+        }
+        guard let body = visibleDestinationView() else { return nil }
+        return Self.firstKeyView(in: body)
+    }
+
+    private func visibleDestinationView() -> NSView? {
+        for slot in mounter.mountedSlots where !slot.controller.view.isHidden {
+            return slot.controller.view
+        }
+        for controller in hostConsoles.values
+        where controller.isViewLoaded && !controller.view.isHidden {
+            return controller.view
+        }
+        return nil
+    }
+
+    /// Depth-first, in subview order, for the first view that can actually
+    /// take focus. `canBecomeKeyView` is the right question rather than
+    /// `acceptsFirstResponder`: it already accounts for a hidden ancestor,
+    /// which matters here because every unshown destination is still mounted.
+    private static func firstKeyView(in root: NSView) -> NSView? {
+        for sub in root.subviews {
+            if sub.canBecomeKeyView { return sub }
+            if let found = firstKeyView(in: sub) { return found }
+        }
+        return nil
+    }
+
+    #if FM_SELFTESTS
+    /// The resolved loop, followed through `nextKeyView` from the first pill -
+    /// the shape `DaylightAccessibilitySelfTest` asserts. Capped, and stops on
+    /// a cycle, so a mis-wiring is a failed assertion rather than a hang.
+    func keyViewLoopOrderForTests(limit: Int = 24) -> [NSView] {
+        guard var current = bar.keyViewChain.first else { return [] }
+        var out: [NSView] = [current]
+        var seen = Set<ObjectIdentifier>([ObjectIdentifier(current)])
+        while out.count < limit, let next = current.nextKeyView {
+            if seen.contains(ObjectIdentifier(next)) { break }
+            out.append(next)
+            seen.insert(ObjectIdentifier(next))
+            current = next
+        }
+        return out
+    }
+
+    var barKeyViewChainForTests: [NSView] { bar.keyViewChain }
+    var firstBodyKeyViewForTests: NSView? { firstBodyKeyView() }
+    #endif
 
     /// Daylight §6.4: point the shell's drill header at whatever is showing,
     /// or collapse it entirely on the canvas (the hub has no "back").

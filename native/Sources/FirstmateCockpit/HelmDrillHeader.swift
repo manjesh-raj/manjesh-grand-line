@@ -189,7 +189,7 @@ final class HelmDrillHeader: NSView {
         layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
         backButton.normalColor = surface
         backButton.hoverColor = theme.isDaylight
-            ? HelmTheme.nsColor(DaylightPalette.inset)
+            ? HelmTheme.nsColor(theme.daylightTokens.inset)
             : line.withAlphaComponent(0.5)
         backButton.layer?.borderColor = line.withAlphaComponent(theme.isDaylight ? 1.0 : 0.6).cgColor
         backGlyph.contentTintColor = ink

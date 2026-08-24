@@ -747,7 +747,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             : HelmTheme.nsColor(theme.chromeBackgroundHex)
         card.normalColor = base
         card.hoverColor = theme.isDaylight
-            ? HelmTheme.nsColor(DaylightPalette.rowHover)
+            ? HelmTheme.nsColor(theme.daylightTokens.rowHover)
             : base.hoverShifted(by: 0.08, forMode: theme.mode)
         card.layer?.borderColor = (isSelected
             ? HelmTheme.nsColor(theme.accentHex)
@@ -927,7 +927,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         let resting: NSColor = theme.isDaylight ? HelmField.fill(theme) : .clear
         card.normalColor = active ? HelmTheme.nsColor(t.accentHex).withAlphaComponent(0.08) : resting
         card.hoverColor = theme.isDaylight
-            ? HelmTheme.nsColor(DaylightPalette.rowHover)
+            ? HelmTheme.nsColor(theme.daylightTokens.rowHover)
             : base.hoverShifted(by: 0.06, forMode: theme.mode)
         card.addSubview(stack)
         NSLayoutConstraint.activate([
@@ -1299,7 +1299,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             // §6.5's `rowHover` - a warm near-white, not a wash of the outline
             // colour, which on paper reads as grey grime rather than a hover.
             row.hoverColor = theme.isDaylight
-                ? HelmTheme.nsColor(DaylightPalette.rowHover)
+                ? HelmTheme.nsColor(theme.daylightTokens.rowHover)
                 : line.withAlphaComponent(0.18)
         }
         for v in separatorViews {

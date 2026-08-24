@@ -720,7 +720,7 @@ final class HelmModuleCard: NSView {
         applyShadow(theme, raised: isHovering)
         // §6.1: the shadow swap always happens; the 3pt translate is skipped
         // under Reduce Motion, which that section explicitly allows.
-        let allowMotion = !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let allowMotion = !HelmMotion.isReduced
         // AppKit's y grows upward in an unflipped view, so lifting a card is a
         // *positive* translate.
         let lift: CGFloat = (isHovering && allowMotion) ? Self.hoverLift : 0
@@ -734,6 +734,22 @@ final class HelmModuleCard: NSView {
             card.layer?.transform = transform
         }
     }
+
+    #if FM_SELFTESTS
+    /// Drives the real hover path (`applyHoverState`) so a self-test can
+    /// measure the resulting transform in both Reduce Motion states.
+    func debugSetHovering(_ hovering: Bool, animated: Bool = false) {
+        isHovering = hovering
+        applyHoverState(animated: animated)
+    }
+
+    /// The hover transform actually applied to the card's own layer.
+    var debugCardTransform: CATransform3D { card.layer?.transform ?? CATransform3DIdentity }
+
+    /// The card's inner activatable view, so the accessibility suite can
+    /// assert the role/label/press contract on the thing that carries it.
+    var debugCardHitView: HoverHighlightView { card }
+    #endif
 
     // MARK: Layout and theme
 
@@ -751,8 +767,13 @@ final class HelmModuleCard: NSView {
         #if FM_SELFTESTS
         debugLayoutCallCount += 1
         #endif
-        ribbon.frame = CGRect(x: 0, y: card.bounds.height - Self.ribbonHeight,
-                              width: card.bounds.width, height: Self.ribbonHeight)
+        // A standalone sublayer's `frame` change animates implicitly, so a
+        // window resize would slide the ribbon into place behind the card's
+        // own instant relayout - see `HelmMotion`'s header, finding 2.
+        HelmMotion.withoutImplicitAnimation {
+            ribbon.frame = CGRect(x: 0, y: card.bounds.height - Self.ribbonHeight,
+                                  width: card.bounds.width, height: Self.ribbonHeight)
+        }
         for label in noteLabels { label.preferredMaxLayoutWidth = bodyContainer.bounds.width }
         applyShadow(ThemeManager.shared.theme, raised: isHovering)
     }
@@ -782,7 +803,9 @@ final class HelmModuleCard: NSView {
         card.layer?.borderColor = line.withAlphaComponent(theme.isDaylight ? 1.0 : 0.6).cgColor
 
         let pair = (content?.hue ?? .blue).pair(in: theme)
-        ribbon.colors = [pair.h1.cgColor, pair.h2.cgColor]
+        HelmMotion.withoutImplicitAnimation {
+            ribbon.colors = [pair.h1.cgColor, pair.h2.cgColor]
+        }
 
         titleLabel.font = HelmType.moduleTitle()
         titleLabel.textColor = ink
@@ -965,7 +988,7 @@ final class HelmRingGauge: NSView {
 
     func applyTheme(_ theme: HelmTheme, hue: HelmDomainHue) {
         let trackColor = theme.isDaylight
-            ? HelmTheme.nsColor(DaylightPalette.inset)
+            ? HelmTheme.nsColor(theme.daylightTokens.inset)
             : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6)
         track.strokeColor = trackColor.cgColor
         value.strokeColor = hue.baseColor(in: theme).cgColor
@@ -1015,10 +1038,12 @@ final class HelmProgressBar: NSView {
 
     func applyTheme(_ theme: HelmTheme, hue: HelmDomainHue) {
         layer?.backgroundColor = (theme.isDaylight
-            ? HelmTheme.nsColor(DaylightPalette.inset)
+            ? HelmTheme.nsColor(theme.daylightTokens.inset)
             : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6)).cgColor
         let pair = hue.pair(in: theme)
-        fill.colors = [pair.h1.cgColor, pair.h2.cgColor]
+        HelmMotion.withoutImplicitAnimation {
+            fill.colors = [pair.h1.cgColor, pair.h2.cgColor]
+        }
     }
 
     var fractionForTests: Double { fraction }

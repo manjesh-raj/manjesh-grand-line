@@ -141,7 +141,7 @@ struct HelmTheme {
         // `ink` at any alpha over warm paper lands on a *cool* grey of roughly
         // the same luminance - legible, but off-palette. Every other theme
         // keeps the bisected-alpha derivation below unchanged.
-        if theme.isDaylight { return nsColor(DaylightPalette.muted) }
+        if theme.isDaylight { return nsColor(theme.daylightTokens.muted) }
         return nsColor(theme.chromeInkHex).withAlphaComponent(mutedAlpha(for: theme))
     }
 
@@ -485,17 +485,21 @@ extension HelmTheme {
         ]
     )
 
-    /// All 13 palettes: `daylight` (the captain-approved design language's
-    /// own palette - see `HelmDaylight.swift`), then the two hand-pinned Helm
-    /// originals, then the 10 sourced-family themes grouped by family (dark
-    /// variant then its light pair).
+    /// All 14 palettes: the Daylight family (`daylight` and its Phase 6 dark
+    /// companion `dusk` - see `HelmDaylight.swift`), then the two hand-pinned
+    /// Helm originals, then the 10 sourced-family themes grouped by family
+    /// (dark variant then its light pair).
     ///
     /// Daylight leads the list but is **not** the default theme - Phase 1 of
     /// its migration is tokens only, and flipping the default is a visible
     /// change that belongs with the shell that makes Daylight mean something
     /// (Phase 2). `ThemeManager`'s own default is still `helm-dark`.
+    ///
+    /// Dusk sits immediately after Daylight because the picker groups by
+    /// family (`ThemeMenu` and Settings' Appearance grid both derive from this
+    /// array), so a family's two registers read as one pair.
     static let allThemes: [HelmTheme] = [
-        daylight,
+        daylight, dusk,
         dark, light,
         solarizedDark, solarizedLight,
         catppuccinMocha, catppuccinLatte,

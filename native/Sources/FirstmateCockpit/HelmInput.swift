@@ -352,7 +352,7 @@ enum HelmInputSurface {
         // Phase 4.
         let accent = hue.map { $0.baseColor(in: theme) } ?? HelmTheme.nsColor(theme.accentHex)
         if theme.isDaylight {
-            chrome.layer?.backgroundColor = HelmTheme.nsColor(DaylightPalette.card).cgColor
+            chrome.layer?.backgroundColor = HelmTheme.nsColor(theme.daylightTokens.card).cgColor
         }
         chrome.layer?.borderWidth = focusBorderWidth
         chrome.layer?.borderColor = accent.withAlphaComponent(focusBorderAlpha).cgColor

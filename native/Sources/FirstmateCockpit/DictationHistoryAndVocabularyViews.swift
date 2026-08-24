@@ -308,8 +308,8 @@ final class VocabularyChipView: NSView {
         // there reads as two competing surfaces. Every other palette keeps the
         // accent wash this chip has always rendered.
         if theme.isDaylight {
-            layer?.backgroundColor = HelmTheme.nsColor(DaylightPalette.card).cgColor
-            layer?.borderColor = HelmTheme.nsColor(DaylightPalette.hair).cgColor
+            layer?.backgroundColor = HelmTheme.nsColor(theme.daylightTokens.card).cgColor
+            layer?.borderColor = HelmTheme.nsColor(theme.daylightTokens.hair).cgColor
         } else {
             layer?.backgroundColor = HelmTheme.nsColor(theme.accentHex).withAlphaComponent(0.16).cgColor
             layer?.borderColor = HelmTheme.nsColor(theme.accentHex).withAlphaComponent(0.4).cgColor
