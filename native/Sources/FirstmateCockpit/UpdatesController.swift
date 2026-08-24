@@ -272,6 +272,14 @@ final class UpdatesController: NSViewController, SetupPageSummary {
     private let checkAllProgressLabel = NSTextField(labelWithString: "")
     private var isCheckingAll = false
 
+    #if FM_SELFTESTS
+    /// GL-16-style probe surface: exposes the exact view a self-test needs
+    /// to read to prove the Refresh pill's fill survives a hover cycle,
+    /// without loosening any of this file's own access levels for
+    /// production callers.
+    var checkAllPillForTests: HoverHighlightView { checkAllPill }
+    #endif
+
     /// The mockup's `.toolbar-row`: segmented "All / Needs attention" filter,
     /// the live search field, and the Refresh action (swapped for a progress
     /// bar+label while a check-all is running) pinned to the trailing edge.
@@ -826,7 +834,26 @@ final class UpdatesController: NSViewController, SetupPageSummary {
         subtitleLabel.textColor = HelmTheme.mutedInk(theme)
         let line = HelmTheme.nsColor(theme.chromeLineHex)
         let accent = HelmTheme.nsColor(theme.accentHex)
-        checkAllPill.layer?.backgroundColor = accent.cgColor
+        // A real, captain-reported bug lived on the line this replaced:
+        // `checkAllPill.layer?.backgroundColor = accent.cgColor` writes
+        // straight to the CALayer, bypassing `HoverHighlightView`'s own
+        // `normalColor`/`hoverColor` tracking entirely. Neither was ever
+        // assigned for this pill, so both stayed at their construction-time
+        // default of `.clear` - and the moment the cursor entered and left
+        // the pill even once (near-certain, since it's a clickable control
+        // the captain would naturally move toward), `mouseExited` called
+        // `setBackground(normalColor)`, permanently stranding the fill at
+        // `.clear` until the next theme change re-ran this method and wrote
+        // the accent color straight back in. On a light-mode page, a clear
+        // fill behind the near-white `onAccent` icon/label below reads as
+        // "washed out" - on a dark page the same missing fill is far less
+        // noticeable, since white text still reads against a dark
+        // background even with no purple pill under it. Setting
+        // `normalColor` (rather than the layer directly) is what makes a
+        // hover cycle restore the correct fill instead of erasing it -
+        // confirmed live via `UpdatesRefreshButtonThemeSelfTest`.
+        checkAllPill.normalColor = accent
+        checkAllPill.hoverColor = accent.hoverShifted(by: 0.10, forMode: theme.mode)
         // `selectionTextHex` is the text tone already contrast-verified
         // against an opaque `accentHex` fill (SwiftTerm's selected-text
         // color) - the same pairing this pill's fill/text need.

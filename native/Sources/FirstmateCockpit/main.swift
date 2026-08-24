@@ -1760,6 +1760,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_UNIFIED_SEARCH_LAYOUT_TESTS"] == 
     exit(UnifiedSearchLayoutSelfTest.run() ? 0 : 1)
 }
 
+// A real, captain-reported theming bug on Setup > Updates: the "Refresh"
+// pill rendered washed-out on a fresh light-mode load and only rendered
+// correctly after a dark -> light round trip. See
+// UpdatesRefreshButtonThemeSelfTest.swift's header for the root cause.
+if ProcessInfo.processInfo.environment["FM_RUN_UPDATES_REFRESH_BUTTON_THEME_TESTS"] == "1" {
+    exit(UpdatesRefreshButtonThemeSelfTest.run() ? 0 : 1)
+}
+
 #endif
 
 // GL-05: refuse to be a second instance. This sits *after* every
