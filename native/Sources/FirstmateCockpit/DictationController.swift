@@ -26,15 +26,23 @@
 
 import AppKit
 
-final class DictationController: NSViewController, NSTextFieldDelegate {
+final class DictationController: NSViewController, DaylightDrillActions {
 
     private let store: DictationStore
 
     private let scroll = NSScrollView()
     private let contentStack = NSStackView()
 
-    private let subtitleLabel = NSTextField(labelWithString: "")
+    /// §6.4's action cluster - this page's one page-level action. The in-page
+    /// header row that used to hold it (a subtitle line plus this button) is
+    /// gone: the drill header states the destination and its live numbers, so
+    /// a second copy a row below it was exactly the duplication §6.4 removes.
     private let refreshButton = HelmButton(symbol: "arrow.clockwise", variant: .quiet)
+
+    /// §7's "status/shortcut as two cards": the two low-content cards share
+    /// one row instead of each taking a full-width band, which is §3's
+    /// "low-density pages have no density plan" finding for this page.
+    private let statusShortcutRow = NSStackView()
 
     private let statusPanel = HelmCard()
     private let statusIconTile = IconTileView(size: 40, cornerRadius: 10)
@@ -85,9 +93,13 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
     private let vocabularyCountLabel = NSTextField(labelWithString: "")
     private let explainerLabel = NSTextField(wrappingLabelWithString: "")
     private var vocabularyColumn = NSStackView()
-    private let vocabularyChipFlow = ChipFlowView()
-    private let vocabularyInputField = HelmTextField(placeholder: "Add a word or phrase\u{2026}")
-    private let vocabularyAddButton = HelmButton(title: "", variant: .secondary)
+    /// §6.9's chips-in-a-well, and the headline instance of the audit's D2:
+    /// this was a raw-ish field with a separate chip flow and an "Add" button
+    /// beside it - three controls for one idea, and the pattern
+    /// `HelmChipInput`'s own doc comment names as the second thing it
+    /// replaces. Tokens now live *inside* the well, Return commits, and
+    /// Backspace on an empty editor pops the last one.
+    private let vocabularyInput = HelmChipInput(placeholder: "Add a word or phrase, then press Return")
 
     private let historyPanel = HelmCard()
     private let historyCountLabel = NSTextField(labelWithString: "")
@@ -126,7 +138,7 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
         let content = FlippedView()
         content.translatesAutoresizingMaskIntoConstraints = false
 
-        let header = buildHeader()
+        buildDrillActions()
         _ = buildStatusSection()
         _ = buildShortcutSection()
         _ = buildCleanupSection()
@@ -139,9 +151,19 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
         contentStack.alignment = .leading
         contentStack.spacing = 20
         contentStack.translatesAutoresizingMaskIntoConstraints = false
-        contentStack.addArrangedSubview(header)
-        contentStack.addArrangedSubview(statusPanel)
-        contentStack.addArrangedSubview(shortcutPanel)
+        // §7: status and shortcut share one row. `.fillEqually` so neither
+        // card can be pushed narrow by the other's content, and both cards'
+        // own text stacks already yield at stack level (see `viewDidLayout`),
+        // so the pair cannot become a window-width floor - AGENTS.md gotcha
+        // (13), asserted by this slice's own suite.
+        statusShortcutRow.orientation = .horizontal
+        statusShortcutRow.alignment = .top
+        statusShortcutRow.distribution = .fillEqually
+        statusShortcutRow.spacing = HelmMetrics.s4
+        statusShortcutRow.translatesAutoresizingMaskIntoConstraints = false
+        statusShortcutRow.setViews([statusPanel, shortcutPanel], in: .leading)
+
+        contentStack.addArrangedSubview(statusShortcutRow)
         contentStack.addArrangedSubview(cleanupPanel)
         contentStack.addArrangedSubview(localWhisperPanel)
         contentStack.addArrangedSubview(vocabularyPanel)
@@ -154,8 +176,7 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
             contentStack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
             contentStack.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
             contentStack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -28),
-            statusPanel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            shortcutPanel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            statusShortcutRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             cleanupPanel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             localWhisperPanel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             vocabularyPanel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
@@ -298,30 +319,40 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
     private func setStatus(_ status: DictationStatus) {
         self.status = status
         render()
+        // The status is the first clause of the drill header's live subtitle.
+        onDrillSubtitleChanged?()
     }
 
     // MARK: Building the static chrome
 
-    private func buildHeader() -> NSView {
-        subtitleLabel.font = .systemFont(ofSize: 12)
-        subtitleLabel.stringValue = "A first-party, in-process dictation pipeline - no third-party app required."
-        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-
+    /// Prepares the one view §6.4's action cluster shows for this page. There
+    /// is no in-page header row any more - see `refreshButton`'s own comment.
+    private func buildDrillActions() {
         refreshButton.target = self
         refreshButton.action = #selector(refreshTapped)
         refreshButton.toolTip = "Re-check Dictation permissions"
         refreshButton.translatesAutoresizingMaskIntoConstraints = false
+    }
 
-        // No in-page "Dictation" title - the top bar already shows the
-        // destination name, matching Tools/Vault/Updates/Bootstrap/Settings/
-        // Overview, which likewise show only a subtitle here rather than
-        // repeating the destination name.
-        let row = NSStackView(views: [subtitleLabel, refreshButton])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 12
-        row.translatesAutoresizingMaskIntoConstraints = false
-        return row
+    // MARK: Drill header (Daylight §6.4)
+
+    /// Set by `AppShellController`; called whenever this page's live numbers
+    /// change. Never writes to the header itself.
+    var onDrillSubtitleChanged: (() -> Void)?
+
+    var drillHeaderActions: [NSView] { [refreshButton] }
+
+    /// §6.4's live subtitle, built from what this page already knows - the
+    /// engine status it is handed and the two store counts it already renders
+    /// as card-header numbers. No new reads, and a permission still missing
+    /// says so rather than being rounded up to "Ready".
+    var drillHeaderSubtitle: String? {
+        let words = store.vocabulary.count
+        let dictations = store.history.count
+        var parts = [status.title]
+        parts.append(words == 1 ? "1 word" : "\(words) words")
+        parts.append(dictations == 1 ? "1 dictation" : "\(dictations) dictations")
+        return parts.joined(separator: " \u{00B7} ")
     }
 
     private func buildStatusSection() -> NSView {
@@ -330,10 +361,10 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
         sectionLabel.translatesAutoresizingMaskIntoConstraints = false
         statusPanel.setHeader(sectionLabel)
 
-        statusTitleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        statusTitleLabel.font = HelmType.cardTitle()
         statusTitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        statusDetailLabel.font = .systemFont(ofSize: 11.5)
+        statusDetailLabel.font = HelmType.caption()
         statusDetailLabel.preferredMaxLayoutWidth = 520
         statusDetailLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -396,7 +427,7 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
         shortcutResetButton.action = #selector(resetShortcutTapped)
         shortcutResetButton.translatesAutoresizingMaskIntoConstraints = false
 
-        shortcutDetailLabel.font = .systemFont(ofSize: 11.5)
+        shortcutDetailLabel.font = HelmType.caption()
         // Tightened to match the reviewed prototype's terser card-head
         // copy - the release-to-paste behavior is still covered by the
         // page's own footnote and the live status card's own detail text.
@@ -439,7 +470,7 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
         sparkleTile.configure(symbol: "sparkles", tint: .violet)
 
         cleanupTitleLabel.stringValue = "Clean up my sentences"
-        cleanupTitleLabel.font = .systemFont(ofSize: 12.5, weight: .medium)
+        cleanupTitleLabel.font = HelmType.rowTitle()
         cleanupTitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         // Tightened to the reviewed prototype's one-line phrasing - the
@@ -447,7 +478,7 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
         // ("only the optional \"Clean up my sentences\" rewrite above needs
         // network access").
         cleanupDetailLabel.stringValue = "Rewrites each dictation into a well-formed sentence before pasting."
-        cleanupDetailLabel.font = .systemFont(ofSize: 11)
+        cleanupDetailLabel.font = HelmType.caption()
         cleanupDetailLabel.preferredMaxLayoutWidth = 460
         cleanupDetailLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -493,14 +524,14 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
         waveTile.configure(symbol: "cpu", tint: .info)
 
         localWhisperTitleLabel.stringValue = "Use local Whisper engine"
-        localWhisperTitleLabel.font = .systemFont(ofSize: 12.5, weight: .medium)
+        localWhisperTitleLabel.font = HelmType.rowTitle()
         localWhisperTitleLabel.translatesAutoresizingMaskIntoConstraints = false
 
         // Tightened to the reviewed prototype's terser spec-line copy - the
         // Apple Speech fallback is still covered by `modelStatusLabel`'s own
         // dynamic states and the page's footnote.
         localWhisperDetailLabel.stringValue = "whisper.cpp large-v3-turbo, Metal-accelerated, fully offline once downloaded."
-        localWhisperDetailLabel.font = .systemFont(ofSize: 11)
+        localWhisperDetailLabel.font = HelmType.caption()
         localWhisperDetailLabel.preferredMaxLayoutWidth = 460
         localWhisperDetailLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -525,7 +556,7 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
         toggleRow.distribution = .fill
         toggleRow.translatesAutoresizingMaskIntoConstraints = false
 
-        modelStatusLabel.font = .systemFont(ofSize: 11.5)
+        modelStatusLabel.font = HelmType.caption()
         modelStatusLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         modelStatusLabel.translatesAutoresizingMaskIntoConstraints = false
 
@@ -585,7 +616,7 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
     private func buildVocabularySection() -> NSView {
         let sectionLabel = NSTextField(labelWithString: "Words I use often")
         sectionLabel.font = HelmType.sectionTitle()
-        vocabularyCountLabel.font = .monospacedSystemFont(ofSize: 10.5, weight: .medium)
+        vocabularyCountLabel.font = HelmType.code()
         let headerRow = NSStackView(views: [sectionLabel, vocabularyCountLabel])
         headerRow.orientation = .horizontal
         headerRow.spacing = 6
@@ -598,44 +629,42 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
         // label's own tooltip.
         explainerLabel.stringValue = "Biases recognition toward your own vocabulary - added here, it's used as a hint on your next recording."
         explainerLabel.toolTip = "This is a soft nudge, not a guarantee: Apple's on-device recognizer treats each phrase individually, while the local Whisper engine (if enabled) treats the whole list as a softer style hint."
-        explainerLabel.font = .systemFont(ofSize: 11)
+        explainerLabel.font = HelmType.caption()
         explainerLabel.preferredMaxLayoutWidth = 520
         explainerLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        vocabularyChipFlow.translatesAutoresizingMaskIntoConstraints = false
+        // One control instead of three. `onTokensChanged` hands back the whole
+        // list, so this diffs it against the store rather than being handed a
+        // delta - which is what keeps `addVocabularyWord`'s case-insensitive
+        // dedup and the GL-33 undo toast on removal exactly as they were.
+        vocabularyInput.domainHue = RailDestination.dictation.domainHue
+        vocabularyInput.onTokensChanged = { [weak self] tokens in
+            self?.applyVocabularyTokens(tokens)
+        }
+        vocabularyInput.translatesAutoresizingMaskIntoConstraints = false
 
-        vocabularyInputField.delegate = self
-
-        vocabularyAddButton.title = "Add"
-        vocabularyAddButton.controlSize = .small
-        vocabularyAddButton.target = self
-        vocabularyAddButton.action = #selector(addVocabularyWordTapped)
-        vocabularyAddButton.setContentHuggingPriority(.required, for: .horizontal)
-        vocabularyAddButton.translatesAutoresizingMaskIntoConstraints = false
-
-        let addRow = NSStackView(views: [vocabularyInputField, vocabularyAddButton])
-        addRow.orientation = .horizontal
-        addRow.spacing = 8
-        addRow.translatesAutoresizingMaskIntoConstraints = false
-
-        vocabularyColumn = NSStackView(views: [explainerLabel, vocabularyChipFlow, addRow])
+        vocabularyColumn = NSStackView(views: [explainerLabel, vocabularyInput])
         vocabularyColumn.orientation = .vertical
         vocabularyColumn.alignment = .leading
         vocabularyColumn.spacing = 10
         vocabularyColumn.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            vocabularyChipFlow.widthAnchor.constraint(equalTo: vocabularyColumn.widthAnchor),
-            addRow.widthAnchor.constraint(equalTo: vocabularyColumn.widthAnchor),
+            vocabularyInput.widthAnchor.constraint(equalTo: vocabularyColumn.widthAnchor),
         ])
 
         vocabularyPanel.setBody(vocabularyColumn, insets: HelmCard.contentInsets)
         return vocabularyPanel
     }
 
+    /// `NSTableView.intercellSpacing`'s vertical component, as set by
+    /// `DictationHistoryListView` - named here so the scroll height below and
+    /// that setting cannot drift apart.
+    private let tableRowGap: CGFloat = 2
+
     private func buildHistorySection() -> NSView {
         let sectionLabel = NSTextField(labelWithString: "Recent Dictations")
         sectionLabel.font = HelmType.sectionTitle()
-        historyCountLabel.font = .monospacedSystemFont(ofSize: 10.5, weight: .medium)
+        historyCountLabel.font = HelmType.code()
         let headerRow = NSStackView(views: [sectionLabel, historyCountLabel])
         headerRow.orientation = .horizontal
         headerRow.spacing = 6
@@ -661,7 +690,13 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
         historyListScroll.borderType = .noBorder
         historyListScroll.drawsBackground = false
         historyListScroll.translatesAutoresizingMaskIntoConstraints = false
-        historyListScroll.heightAnchor.constraint(equalToConstant: 220).isActive = true
+        // Sized so three §6.5 row cards are visible before scrolling. The 220
+        // this replaces showed ~4.8 of the 46pt label rows the cards replaced;
+        // keeping it would have shown 2.8 cards, i.e. a clipped third row that
+        // reads as a rendering bug rather than as "scroll for more".
+        historyListScroll.heightAnchor.constraint(
+            equalToConstant: DictationHistoryListView.rowHeight * 3
+                + tableRowGap * 3).isActive = true
 
         historyPanel.setBody(historyListScroll)
         return historyPanel
@@ -669,7 +704,7 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
 
     private func buildFootnote() {
         footnoteLabel.stringValue = "Recording, transcription, and pasting all happen on-device - only the optional \"Clean up my sentences\" rewrite above needs network access."
-        footnoteLabel.font = .systemFont(ofSize: 11)
+        footnoteLabel.font = HelmType.caption()
         footnoteLabel.preferredMaxLayoutWidth = 620
         footnoteLabel.translatesAutoresizingMaskIntoConstraints = false
     }
@@ -728,7 +763,6 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
         statusDetailLabel.textColor = HelmTheme.mutedInk(theme)
         ToolRowLayout.pill(text: "On device", colorHex: HelmTint.good.hex(in: theme),
                           into: statusChip, label: statusChipLabel, theme: theme)
-        subtitleLabel.textColor = HelmTheme.mutedInk(theme)
         shortcutRecorder.applyTheme(theme)
         shortcutDetailLabel.textColor = HelmTheme.mutedInk(theme)
         cleanupPanel.applyTheme(theme)
@@ -740,6 +774,10 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
         modelStatusLabel.textColor = HelmTheme.mutedInk(theme)
         ToolRowLayout.pill(text: "Model ready", colorHex: HelmTint.good.hex(in: theme),
                           into: modelReadyPill, label: modelReadyPillLabel, theme: theme)
+        // `HelmChipInput` carries its own `ThemeManager` observation (and its
+        // own focus registration) - this call only keeps it right if it was
+        // built between two theme changes.
+        vocabularyInput.applyTheme(theme)
         vocabularyCountLabel.textColor = HelmTheme.mutedInk(theme)
         historyCountLabel.textColor = HelmTheme.mutedInk(theme)
         historyListView.applyTheme(theme)
@@ -793,29 +831,44 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
         applyTheme()
     }
 
-    /// Re-reads `store.vocabulary` and rebuilds every chip - called on every
-    /// appear and on every `DictationStore.observe` notification, matching
-    /// the file header's "no stale list" guarantee.
+    /// Re-reads `store.vocabulary` and re-seeds the well's tokens - called on
+    /// every appear and on every `DictationStore.observe` notification,
+    /// matching the file header's "no stale list" guarantee.
+    ///
+    /// `setTokens` only rebuilds the chips; it never touches the editor, so a
+    /// word half-typed when a store notification lands is not lost. And it
+    /// does not fire `onTokensChanged`, so the store -> observe -> render ->
+    /// setTokens path cannot loop back into a write.
     private func renderVocabulary() {
         let words = store.vocabulary
         vocabularyCountLabel.stringValue = "\(words.count)"
-        let chips = words.map { word -> NSView in
-            let chip = VocabularyChipView(word: word)
-            chip.applyTheme(theme)
-            chip.onRemove = { [weak self] in
-                guard let self else { return }
-                self.store.removeVocabularyWord(word)
-                // GL-33: this delete had no confirmation and no way back - one
-                // of the two the review named specifically.
-                if let container = self.view.window?.contentView {
-                    Toast.showUndo(in: container, message: "Removed \u{201C}\(word)\u{201D}") { [weak self] in
-                        self?.store.addVocabularyWord(word)
-                    }
+        vocabularyInput.setTokens(words)
+        onDrillSubtitleChanged?()
+    }
+
+    /// Diffs the well's token list against the store and applies the
+    /// difference, rather than overwriting the store with the list.
+    ///
+    /// That is what preserves both behaviours this control inherited: an added
+    /// word still goes through `addVocabularyWord`'s own case-insensitive
+    /// dedup, and a removed one still offers the GL-33 undo the review named
+    /// specifically (this delete used to have no confirmation and no way
+    /// back). A wholesale overwrite would have silently dropped both.
+    private func applyVocabularyTokens(_ tokens: [String]) {
+        let existing = store.vocabulary
+        func same(_ a: String, _ b: String) -> Bool { a.caseInsensitiveCompare(b) == .orderedSame }
+
+        for word in tokens where !existing.contains(where: { same($0, word) }) {
+            store.addVocabularyWord(word)
+        }
+        for word in existing where !tokens.contains(where: { same($0, word) }) {
+            store.removeVocabularyWord(word)
+            if let container = view.window?.contentView {
+                Toast.showUndo(in: container, message: "Removed \u{201C}\(word)\u{201D}") { [weak self] in
+                    self?.store.addVocabularyWord(word)
                 }
             }
-            return chip
         }
-        vocabularyChipFlow.setChips(chips)
     }
 
     /// Re-reads `store.history` (already newest-first from `DictationStore`)
@@ -823,6 +876,7 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
     private func renderHistory() {
         historyCountLabel.stringValue = "\(store.history.count)"
         historyListView.setEntries(store.history)
+        onDrillSubtitleChanged?()
     }
 
     // MARK: Actions
@@ -883,24 +937,20 @@ final class DictationController: NSViewController, NSTextFieldDelegate {
         }
     }
 
-    @objc private func addVocabularyWordTapped() {
-        addVocabularyWordFromField()
-    }
+    // MARK: Probe / self-test surface
 
-    private func addVocabularyWordFromField() {
-        let text = vocabularyInputField.stringValue
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        store.addVocabularyWord(text)
-        vocabularyInputField.stringValue = ""
+    #if FM_SELFTESTS
+    /// D2's headline instance is a *page* behaviour, not a component one - the
+    /// suite drives the real well on the real page and checks the real store.
+    var debugVocabularyInput: HelmChipInput { vocabularyInput }
+    var debugHistoryList: DictationHistoryListView { historyListView }
+    var debugStatusShortcutRow: NSStackView { statusShortcutRow }
+    var debugCards: [HelmCard] {
+        [statusPanel, shortcutPanel, cleanupPanel, localWhisperPanel, vocabularyPanel, historyPanel]
     }
-
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        guard control === vocabularyInputField, commandSelector == #selector(NSResponder.insertNewline(_:)) else {
-            return false
-        }
-        addVocabularyWordFromField()
-        return true
-    }
+    func debugSetStatus(_ status: DictationStatus) { setStatus(status) }
+    func debugRenderVocabulary() { renderVocabulary() }
+    #endif
 
     /// Requests each permission directly via `DictationPermissions`' static
     /// system calls the first time it's genuinely needed - there's no

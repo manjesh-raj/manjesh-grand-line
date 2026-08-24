@@ -1389,6 +1389,9 @@ if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_MODULE_TESTS"] == "1" {
 // Daylight Phase 4: one suite per slice of the per-destination restyle.
 // Slice 1 also covers the shared drill-page components (§6.4-6.14). See each
 // DaylightDrillPage*SelfTest.swift's own header.
+if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_SLICE5_TESTS"] == "1" {
+    exit(DaylightDrillPageSlice5SelfTest.run() ? 0 : 1)
+}
 if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_SLICE4_TESTS"] == "1" {
     exit(DaylightDrillPageSlice4SelfTest.run() ? 0 : 1)
 }
