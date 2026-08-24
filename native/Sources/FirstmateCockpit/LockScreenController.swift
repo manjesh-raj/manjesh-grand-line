@@ -520,7 +520,7 @@ final class LockScreenController: NSViewController {
     /// overlay never lifts. Motion in the shared components (`HelmAccentRow`'s
     /// hover, etc.) already honours the setting.
     private static var prefersReducedMotion: Bool {
-        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        HelmMotion.isReduced
     }
 
     private func startAnimationsIfNeeded() {

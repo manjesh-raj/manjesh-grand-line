@@ -344,7 +344,7 @@ final class DictationHUDController {
     private func applyPulseAnimation() {
         stopPulsing()
         guard currentState == .listening,
-              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
+              !HelmMotion.isReduced else { return }
         startPulsing()
     }
 

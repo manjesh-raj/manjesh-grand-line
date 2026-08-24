@@ -779,7 +779,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
         // corrected value for it. The pre-Daylight themes keep the plain ink
         // they have always used, which is already a full-contrast tone here.
         attentionLabel.textColor = theme.isDaylight
-            ? HelmTheme.nsColor(DaylightPalette.warnText)
+            ? HelmTheme.nsColor(theme.daylightTokens.warnText)
             : ink
         attentionIcon.contentTintColor = warn
 

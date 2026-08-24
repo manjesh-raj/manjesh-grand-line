@@ -130,7 +130,7 @@ enum HelmField {
         // a well on a card (which is where every form in this app actually
         // lives) reads at 1.14:1. That check now proves the border carries the
         // boundary wherever the fill cannot, rather than exempting a theme.
-        if theme.isDaylight { return HelmTheme.nsColor(DaylightPalette.inset) }
+        if theme.isDaylight { return HelmTheme.nsColor(theme.daylightTokens.inset) }
         let chromeBackground = HelmTheme.nsColor(theme.chromeBackgroundHex)
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         return chromeBackground.blended(withFraction: 0.08, of: ink) ?? chromeBackground
@@ -2119,7 +2119,7 @@ final class HelmFormSheet: NSView {
         // an editor is a floating surface, not a page. Every other palette
         // keeps `backgroundHex`, which is what the six sheets render today.
         layer?.backgroundColor = theme.isDaylight
-            ? HelmTheme.nsColor(DaylightPalette.card).cgColor
+            ? HelmTheme.nsColor(theme.daylightTokens.card).cgColor
             : HelmTheme.nsColor(theme.backgroundHex).cgColor
         // The ribbon shows only under Daylight, and `isHidden` alone is not
         // enough - an ordinary hidden `NSView`'s constraints still hold its
@@ -2128,7 +2128,9 @@ final class HelmFormSheet: NSView {
         ribbon.isHidden = !theme.isDaylight
         ribbonHeightConstraint?.constant = theme.isDaylight ? Self.ribbonHeight : 0
         let pair = domainHue.pair(in: theme)
-        ribbonGradient.colors = [pair.h1.cgColor, pair.h2.cgColor]
+        HelmMotion.withoutImplicitAnimation {
+            ribbonGradient.colors = [pair.h1.cgColor, pair.h2.cgColor]
+        }
         // §6.10's heading is the rounded display face at 20 heavy; the twelve
         // palettes keep `sectionTitle()`.
         headingLabel.font = theme.isDaylight
@@ -2353,7 +2355,7 @@ final class HelmToggle: NSControl {
         // §6.9's "knob 18pt white with a small shadow". Drawn on the knob's own
         // layer rather than by `HelmCard.elevation`, which is the page-level
         // depth system - this is an 18pt dot, not a floating card.
-        knob.layer?.shadowColor = HelmTheme.nsColor(DaylightPalette.shadowInk).cgColor
+        knob.layer?.shadowColor = HelmTheme.nsColor(theme.daylightTokens.shadowInk).cgColor
         knob.layer?.shadowOpacity = 0.28
         knob.layer?.shadowRadius = 2
         knob.layer?.shadowOffset = CGSize(width: 0, height: -1)
@@ -2428,7 +2430,7 @@ final class HelmToggle: NSControl {
         // GL-16: a decorative slide is real motion, so it is skipped outright
         // under Reduce Motion - the colour and position still change, just
         // without the animation.
-        let animate = animated && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let animate = animated && !HelmMotion.isReduced
         if animate {
             // `constant` is set **synchronously** inside the group, with
             // `allowsImplicitAnimation` doing the animating - deliberately not

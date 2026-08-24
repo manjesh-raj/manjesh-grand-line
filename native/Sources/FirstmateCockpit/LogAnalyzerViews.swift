@@ -113,14 +113,14 @@ final class LogRawPaneView: NSView {
     /// so the pane's fill and its cells' correction can never disagree.
     static func surfaceColor(for theme: HelmTheme) -> NSColor {
         theme.isDaylight
-            ? HelmTheme.nsColor(DaylightPalette.termBackground)
+            ? HelmTheme.nsColor(theme.daylightTokens.termBackground)
             : HelmTheme.nsColor(theme.backgroundHex)
     }
 
     /// The pane's own default ink, for the same reason.
     static func inkColor(for theme: HelmTheme) -> NSColor {
         theme.isDaylight
-            ? HelmTheme.nsColor(DaylightPalette.termInk)
+            ? HelmTheme.nsColor(theme.daylightTokens.termInk)
             : HelmTheme.nsColor(theme.chromeInkHex)
     }
 

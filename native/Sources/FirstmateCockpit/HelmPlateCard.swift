@@ -306,7 +306,7 @@ final class HelmPlateCard: NSView {
         HelmCard.applyCardSurface(to: card, theme: theme, cornerRadius: HelmMetrics.rCard)
         card.normalColor = HelmTheme.nsColor(theme.chromeBackgroundHex)
         card.hoverColor = theme.isDaylight
-            ? HelmTheme.nsColor(DaylightPalette.rowHover)
+            ? HelmTheme.nsColor(theme.daylightTokens.rowHover)
             : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.18)
         titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         subtitleLabel.textColor = HelmTheme.mutedInk(theme)
@@ -317,7 +317,9 @@ final class HelmPlateCard: NSView {
 
     private func ribbonColors(for hue: HelmDomainHue, theme: HelmTheme) {
         let pair = hue.pair(in: theme)
-        ribbon.colors = [pair.h1.cgColor, pair.h2.cgColor]
+        HelmMotion.withoutImplicitAnimation {
+            ribbon.colors = [pair.h1.cgColor, pair.h2.cgColor]
+        }
     }
 
     // MARK: Probe / self-test surface

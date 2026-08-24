@@ -215,7 +215,9 @@ final class HelmGradientTile: NSView {
 
     func applyTheme(_ theme: HelmTheme) {
         let pair = resolvedPair(in: theme)
-        gradient.colors = [pair.h1.cgColor, pair.h2.cgColor]
+        HelmMotion.withoutImplicitAnimation {
+            gradient.colors = [pair.h1.cgColor, pair.h2.cgColor]
+        }
         // Scored against `h1`, the gradient's darker end, exactly as the
         // domain-hue path does - see `glyphColor`.
         imageView.contentTintColor = HelmContrast.legibleGlyph(over: pair.h1)

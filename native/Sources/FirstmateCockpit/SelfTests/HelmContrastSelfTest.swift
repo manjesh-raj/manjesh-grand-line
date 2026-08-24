@@ -89,6 +89,7 @@ enum HelmContrastSelfTest {
         checkSetupFlyoutTintsAreDistinct(&ok)
         checkConsoleCardChromeGeometry(&ok)
         checkDaylightPalette(&ok)
+        checkDuskPalette(&ok)
         checkDaylightDomainHues(&ok)
         checkDaylightRadiiScale(&ok)
         checkDaylightElevation(&ok)
@@ -413,11 +414,39 @@ enum HelmContrastSelfTest {
                 }
                 cells.append("\(variant.name) \(fmt(worst))")
             }
-            // The one hard identity: a primary action is the theme's accent.
+            // The one hard identity: a primary action is the theme's accent -
+            // unless a white label cannot live on that accent, in which case
+            // it is the *smallest* darkening of it that a white label can live
+            // on, and nothing else.
+            //
+            // Phase 6 is why this has two branches. Dusk's `accentHex` is a
+            // light blue (`6A8DED`), because on that theme the accent is also
+            // a label colour on a dark ground; a white button label on it
+            // measures 3.16:1. §2.4's own implementation rule for this case is
+            // that the **fill** darkens rather than the label changing, so
+            // that is what is asserted - including that the accent genuinely
+            // fails, so the exception can never quietly widen to a theme whose
+            // accent was fine all along.
             let primaryFill = HelmButton.palette(variant: .primary, tint: nil, theme: theme).fill
-            if HelmContrast.ratio(primaryFill, HelmTheme.nsColor(theme.accentHex)) > 1.01 {
-                print("  FAIL \(theme.id): .primary fill is not accentHex")
-                ok = false
+            let accent = HelmTheme.nsColor(theme.accentHex)
+            let whiteOnAccent = HelmContrast.ratio(.white, accent)
+            // Only the Daylight family hardcodes a **white** primary label
+            // (§6.6); the other 12 pair their accent with their own
+            // `selectionTextHex`, so a white-label measurement says nothing
+            // about them and their fill must be the accent, full stop.
+            if !theme.isDaylight || whiteOnAccent >= HelmContrast.textTarget - 0.01 {
+                if !sameColor(primaryFill, accent) {
+                    print("  FAIL \(theme.id): .primary fill is not accentHex")
+                    ok = false
+                }
+            } else {
+                let want = DaylightPalette.darkenedForWhiteLabel(accent)
+                if !sameColor(primaryFill, want) {
+                    print("  FAIL \(theme.id): .primary fill is neither accentHex nor its minimal white-label correction")
+                    ok = false
+                } else {
+                    print("  NOTE \(pad(theme.id, 18)) accent carries a white label at only \(fmt(whiteOnAccent)):1, so .primary darkens the fill to \(hexString(want)) (\(fmt(HelmContrast.ratio(.white, want))):1)")
+                }
             }
             print("  \(pad(theme.id, 20)) \(cells.joined(separator: "  "))")
         }
@@ -1677,6 +1706,229 @@ enum HelmContrastSelfTest {
         print("  OK   \(pad("all 16 ansi slots on paper", 44)) worst is ansi[\(worstAnsi.index)] at \(fmt(worstAnsi.ratio)):1")
     }
 
+    // MARK: Dusk - the dark register, measured the same way (Phase 6)
+
+    /// Every value `DaylightTokens.dusk` derives, re-measured against the
+    /// codebase's own WCAG formula.
+    ///
+    /// **The point of this check is that Dusk is not an inversion.** Two of
+    /// §2.4's three correction directions reverse in a dark register: a chip
+    /// label has to get *lighter* than its hue there, where in Daylight it got
+    /// darker. So this asserts both halves of every pair - the raw value
+    /// genuinely fails, and the derived value genuinely clears - which is what
+    /// makes each derived colour explained rather than merely tolerated. It
+    /// also asserts the *direction* of each correction explicitly, so a future
+    /// edit that "tidies" Dusk into a mirror of Daylight's own hexes fails
+    /// here with the reason rather than shipping illegible chips.
+    ///
+    /// The four surfaces every measurement runs against are the four real
+    /// grounds running text lands on in this design: the card, the page, an
+    /// input well, and a hovered row. Daylight's own check uses three; the
+    /// hover fill matters more here because in a dark register it is the
+    /// *lightest* of the four and therefore the worst case for light ink.
+    private static func checkDuskPalette(_ ok: inout Bool) {
+        print("\n-- dusk palette (phase 6: daylight's dark register, every derived value measured) --")
+        guard let dusk = HelmTheme.theme(id: "dusk") else {
+            print("  FAIL the dusk theme is not in HelmTheme.allThemes")
+            ok = false
+            return
+        }
+        guard let daylight = HelmTheme.theme(id: "daylight") else { return }
+        let t = DaylightTokens.dusk
+        let floor = HelmContrast.textTarget
+        let card = HelmTheme.nsColor(t.card)
+        let paper = HelmTheme.nsColor(t.paper)
+        let inset = HelmTheme.nsColor(t.inset)
+        let rowHover = HelmTheme.nsColor(t.rowHover)
+        let surfaces: [(String, NSColor)] = [("card", card), ("paper", paper),
+                                             ("inset", inset), ("rowHover", rowHover)]
+
+        func expectAllSurfaces(_ label: String, _ hex: String) {
+            let c = HelmTheme.nsColor(hex)
+            var worst = ("", Double.greatestFiniteMagnitude)
+            var cells: [String] = []
+            for (name, surface) in surfaces {
+                let r = HelmContrast.ratio(c, surface)
+                cells.append("\(name) \(fmt(r))")
+                if r < worst.1 { worst = (name, r) }
+            }
+            if worst.1 < floor - 0.01 {
+                print("  FAIL \(label) #\(hex): \(fmt(worst.1)):1 on \(worst.0)")
+                ok = false
+            } else {
+                print("  OK   \(pad(label, 34)) #\(hex)  \(cells.joined(separator: "  "))")
+            }
+        }
+        func expectBelowOnCard(_ label: String, _ hex: String) {
+            let r = HelmContrast.ratio(HelmTheme.nsColor(hex), card)
+            if r >= floor {
+                print("  FAIL \(label) #\(hex) measures \(fmt(r)):1 on the dusk card - it is supposed to FAIL, so the correction it justifies is now unexplained")
+                ok = false
+            } else {
+                print("  OK   \(pad(label, 34)) #\(hex)  \(fmt(r)):1 (correctly below \(fmt(floor)))")
+            }
+        }
+
+        // Registration and the family pairing.
+        if dusk.mode != .dark {
+            print("  FAIL dusk must be a dark-mode theme")
+            ok = false
+        }
+        if !dusk.isDaylight || !dusk.isDusk {
+            print("  FAIL dusk must answer true to both isDaylight (the design language) and isDusk (the register)")
+            ok = false
+        }
+        if daylight.isDusk {
+            print("  FAIL daylight must not answer true to isDusk")
+            ok = false
+        }
+        // A mutual pair, unlike the interim one-way pointer at helm-dark.
+        if dusk.pairId != "daylight" || daylight.pairId != "dusk" {
+            print("  FAIL daylight/dusk are not a mutual pair (daylight -> \(daylight.pairId), dusk -> \(dusk.pairId))")
+            ok = false
+        } else {
+            print("  OK   \(pad("daylight <-> dusk is a mutual pair", 34)) the quick flip reaches both registers")
+        }
+        // ...and re-pointing helm-dark's own pair would have changed the quick
+        // flip for a captain who has never selected either Daylight theme.
+        if HelmTheme.dark.pairId != "helm-light" || HelmTheme.light.pairId != "helm-dark" {
+            print("  FAIL helm-dark/helm-light no longer pair with each other")
+            ok = false
+        }
+        if dusk.daylightTokens.card != t.card {
+            print("  FAIL dusk.daylightTokens does not resolve to the dusk set")
+            ok = false
+        }
+        if daylight.daylightTokens.card != DaylightTokens.light.card {
+            print("  FAIL daylight.daylightTokens does not resolve to the light set")
+            ok = false
+        }
+        for (name, got, want) in [
+            ("chromeBackgroundHex = card", dusk.chromeBackgroundHex, t.card),
+            ("backgroundHex = paper", dusk.backgroundHex, t.paper),
+            ("chromeInkHex = ink", dusk.chromeInkHex, t.ink),
+            ("chromeLineHex = hair", dusk.chromeLineHex, t.hair),
+            ("accentHex = dusk link blue", dusk.accentHex, t.linkBlue),
+        ] where got.lowercased() != want.lowercased() {
+            print("  FAIL dusk.\(name): got \(got), want \(want)")
+            ok = false
+        }
+
+        // Surfaces: a card has to read as a card. Like Daylight (whose own
+        // white-on-paper is 1.08:1) the separation is deliberately small and
+        // the 1px `hair` border is what carries the boundary, so what is
+        // asserted is that the border does its job - not that the fills are
+        // far apart.
+        let cardVsPaper = HelmContrast.ratio(card, paper)
+        let hairVsCard = HelmContrast.ratio(HelmTheme.nsColor(t.hair), card)
+        let daylightHairVsCard = HelmContrast.ratio(HelmTheme.nsColor(DaylightTokens.light.hair),
+                                                    HelmTheme.nsColor(DaylightTokens.light.card))
+        if hairVsCard < daylightHairVsCard - 0.01 {
+            print("  FAIL dusk's hair on card (\(fmt(hairVsCard))) is fainter than daylight's (\(fmt(daylightHairVsCard))) - a dark register needs at least as firm an edge")
+            ok = false
+        } else {
+            print("  OK   \(pad("card floats on paper", 34)) \(fmt(cardVsPaper)):1, hair on card \(fmt(hairVsCard)):1 (daylight \(fmt(daylightHairVsCard)))")
+        }
+
+        // Ink and muted.
+        expectAllSurfaces("ink", t.ink)
+        expectAllSurfaces("muted", t.muted)
+        expectBelowOnCard("daylight's muted, on dusk", DaylightTokens.light.muted)
+        if HelmContrast.ratio(HelmTheme.mutedInk(dusk), HelmTheme.nsColor(t.muted)) > 1.01 {
+            print("  FAIL HelmTheme.mutedInk(dusk) is not the dusk muted token")
+            ok = false
+        }
+        // Muted has to be *muted*: dimmer than ink, and not so bright it is a
+        // second ink. Daylight's own worst-surface muted measures 4.53.
+        let mutedWorst = surfaces.map { HelmContrast.ratio(HelmTheme.nsColor(t.muted), $0.1) }.min() ?? 0
+        let inkWorst = surfaces.map { HelmContrast.ratio(HelmTheme.nsColor(t.ink), $0.1) }.min() ?? 0
+        if mutedWorst >= inkWorst {
+            print("  FAIL dusk muted is not dimmer than dusk ink")
+            ok = false
+        }
+        if mutedWorst > 6.0 {
+            print("  FAIL dusk muted measures \(fmt(mutedWorst)):1 at worst - that is an ink, not a muted (daylight's is 4.53)")
+            ok = false
+        }
+        expectBelowOnCard("faint (decorative only)", t.faint)
+
+        // The blue, and the reason it had to move at all.
+        expectBelowOnCard("raw domain blue", HelmDomainHue.blue.daylightH1ForTests)
+        expectBelowOnCard("daylight's corrected link blue", DaylightTokens.light.linkBlue)
+        expectAllSurfaces("dusk link blue", t.linkBlue)
+        expect(&ok, "selection text on selection fill",
+               HelmContrast.ratio(HelmTheme.nsColor(dusk.selectionTextHex),
+                                  HelmTheme.nsColor(dusk.selectionHex)), floor)
+
+        // Chip labels on their own wash, and the direction reversal that is
+        // the whole reason this palette could not be an inversion.
+        for (name, hue, duskText, lightText, wash) in [
+            ("ok", DaylightPalette.ok, t.okText, DaylightTokens.light.okText, 0.12),
+            ("warn", DaylightPalette.warn, t.warnText, DaylightTokens.light.warnText, 0.14),
+            ("bad", DaylightPalette.bad, t.badText, DaylightTokens.light.badText, 0.12),
+        ] {
+            let fill = HelmContrast.mix(HelmContrast.components(HelmTheme.nsColor(hue)),
+                                        HelmContrast.components(card), wash)
+            let rawR = HelmContrast.ratio(HelmContrast.components(HelmTheme.nsColor(hue)), fill)
+            let duskR = HelmContrast.ratio(HelmContrast.components(HelmTheme.nsColor(duskText)), fill)
+            if rawR >= floor {
+                print("  FAIL raw \(name) label on its dusk wash measures \(fmt(rawR)):1 - it is supposed to fail")
+                ok = false
+            }
+            expect(&ok, "corrected \(name) label on its dusk wash", duskR, floor)
+            let lum = { HelmContrast.relativeLuminance(HelmContrast.components(HelmTheme.nsColor($0))) }
+            if lum(duskText) <= lum(hue) {
+                print("  FAIL dusk's \(name) correction is not LIGHTER than the raw hue - a dark-register chip label has to lighten")
+                ok = false
+            }
+            if lum(lightText) >= lum(hue) {
+                print("  FAIL daylight's \(name) correction is not darker than the raw hue - the two registers should correct in opposite directions")
+                ok = false
+            }
+        }
+        print("  OK   \(pad("chip corrections reverse direction", 34)) dusk lightens where daylight darkens - not an inversion of hexes")
+
+        // ANSI. Slot 0 is exempt by nature, as it is in every dark palette:
+        // a terminal's black cannot separate from a dark background, and
+        // lightening it until it could would stop it being black.
+        let blackVsPaper = HelmContrast.ratio(HelmTheme.nsColor(dusk.ansiHex[0]), paper)
+        let helmDarkBlack = HelmContrast.ratio(HelmTheme.nsColor(HelmTheme.dark.ansiHex[0]),
+                                               HelmTheme.nsColor(HelmTheme.dark.backgroundHex))
+        var worstAnsi = (index: -1, ratio: Double.greatestFiniteMagnitude)
+        for (i, hex) in dusk.ansiHex.enumerated() where i > 0 {
+            let r = HelmContrast.ratio(HelmTheme.nsColor(hex), paper)
+            if r < worstAnsi.ratio { worstAnsi = (i, r) }
+            if r < floor - 0.01 {
+                print("  FAIL ansi[\(i)] \(hex) on paper: \(fmt(r)):1")
+                ok = false
+            }
+        }
+        print("  OK   \(pad("ansi[1...15] on paper", 34)) worst is ansi[\(worstAnsi.index)] at \(fmt(worstAnsi.ratio)):1")
+        print("  NOTE \(pad("ansi[0] (\"black\") is \(fmt(blackVsPaper)):1", 34)) exempt by nature - helm-dark's own is \(fmt(helmDarkBlack)):1")
+        // On a dark ground "brighter" has to mean lighter. This is the mirror
+        // of the call Daylight makes when it blends 15% *black* into each
+        // normal sibling, and getting it backwards is the single easiest way
+        // to ship an unreadable bright palette.
+        for i in 9...14 {
+            let normal = HelmContrast.relativeLuminance(HelmContrast.components(HelmTheme.nsColor(dusk.ansiHex[i - 8])))
+            let bright = HelmContrast.relativeLuminance(HelmContrast.components(HelmTheme.nsColor(dusk.ansiHex[i])))
+            if bright <= normal {
+                print("  FAIL ansi[\(i)] is not lighter than ansi[\(i - 8)] - on a dark ground bright must mean lighter")
+                ok = false
+            }
+        }
+        print("  OK   \(pad("bright slots are lighter", 34)) mirrors daylight, where they are darker")
+    }
+
+    private static func expect(_ ok: inout Bool, _ label: String, _ value: Double, _ target: Double) {
+        if value < target - 0.01 {
+            print("  FAIL \(label): \(fmt(value)):1, want >= \(fmt(target))")
+            ok = false
+        } else {
+            print("  OK   \(pad(label, 34)) \(fmt(value)):1")
+        }
+    }
+
     // MARK: Daylight - per-domain hues and the per-theme fallback
 
     /// Section 2.2's hue table plus 2.8's requirement that it resolve per
@@ -1980,6 +2232,16 @@ enum HelmContrastSelfTest {
         let straight = (Double(c.redComponent), Double(c.greenComponent), Double(c.blueComponent))
         let flattened = HelmContrast.mix(straight, surface, Double(c.alphaComponent))
         return HelmContrast.ratio(flattened, surface)
+    }
+
+    /// Component-wise colour equality.
+    ///
+    /// **Not** `HelmContrast.ratio(a, b) < 1.01` - that compares relative
+    /// *luminance*, so two entirely different hues of similar brightness pass
+    /// it (AGENTS.md records this trap costing real time twice already).
+    private static func sameColor(_ a: NSColor, _ b: NSColor) -> Bool {
+        let x = HelmContrast.components(a), y = HelmContrast.components(b)
+        return abs(x.0 - y.0) < 0.004 && abs(x.1 - y.1) < 0.004 && abs(x.2 - y.2) < 0.004
     }
 
     /// `#RRGGBB` for a colour, used only in this file's own printouts.

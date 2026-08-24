@@ -97,6 +97,9 @@ NEEDS_SESSION=(
   # `NSButton` clicks - window-backed, like its Daylight peers above.
   "FM_RUN_DAYLIGHT_CHROME_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_SLICE6_TESTS"
+  # Phase 6 mounts a real window to follow the real key view loop and drives
+  # real accessibility presses - window-backed for the same reason.
+  "FM_RUN_DAYLIGHT_HARDENING_TESTS"
   "FM_RUN_DESTINATION_MOUNTING_TESTS"
   "FM_RUN_BLOCK_VIEW_HIERARCHY_TESTS"
   "FM_RUN_BLOCK_VIEW_RESTART_TESTS"

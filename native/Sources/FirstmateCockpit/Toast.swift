@@ -117,7 +117,7 @@ enum Toast {
         let pill = NSView()
         pill.wantsLayer = true
         pill.layer?.backgroundColor = daylight
-            ? HelmTheme.nsColor(DaylightPalette.ink).cgColor
+            ? HelmTheme.nsColor(theme.daylightTokens.ink).cgColor
             : HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         pill.layer?.borderWidth = daylight ? 0 : 1
         pill.layer?.borderColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6).cgColor
@@ -161,12 +161,17 @@ enum Toast {
         activeUndo?.dismiss()
         activeUndo = nil
 
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.18
-            pill.animator().alphaValue = 1
-        }
+        // Phase 6's Reduce Motion audit: appear and disappear instantly rather
+        // than cross-fading when the captain has asked for less motion. The
+        // pill still shows for the same duration - what goes away is the fade,
+        // not the message.
+        HelmMotion.animate(duration: 0.18) { pill.animator().alphaValue = 1 }
 
         let dismiss = {
+            guard !HelmMotion.isReduced else {
+                pill.removeFromSuperview()
+                return
+            }
             NSAnimationContext.runAnimationGroup({ ctx in
                 ctx.duration = 0.25
                 pill.animator().alphaValue = 0

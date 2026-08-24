@@ -240,7 +240,36 @@ final class DaylightBarController: NSViewController {
         row.distribution = .fill
         row.translatesAutoresizingMaskIntoConstraints = false
         row.setHuggingPriority(.required, for: .horizontal)
+        // §8 Phase 6: the pills are individually `.radioButton`s (above), but
+        // VoiceOver only announces "1 of 5" and offers group navigation once
+        // something declares itself the *group* they belong to. Without this
+        // the five pills read as five unrelated buttons that happen to sit
+        // together, which is a materially different thing from a one-of-five
+        // choice. Set on the container rather than by giving each pill a
+        // `linkedUIElements` list, because the container is the thing that
+        // actually owns which of them is selected.
+        row.setAccessibilityRole(.radioGroup)
+        row.setAccessibilityLabel("Spaces")
+        row.setAccessibilityElement(true)
         return row
+    }
+
+    /// The bar's own focusable controls, in the order the keyboard should
+    /// reach them - the first half of §8 Phase 6's `bar -> canvas -> content`
+    /// key loop, which `AppShellController.updateKeyViewLoop()` chains into
+    /// whatever is showing below.
+    ///
+    /// Reading order, not view order: `loadView` anchors the pills from the
+    /// leading edge and the trailing cluster from the trailing edge, so the
+    /// two groups are separate constraint chains and nothing in the view
+    /// hierarchy states their relative order.
+    var keyViewChain: [NSView] {
+        var chain: [NSView] = pills.map { $0.container }
+        chain.append(searchPill)
+        chain.append(themeToggleButton)
+        chain.append(notificationCenter.bell)
+        chain.append(avatar)
+        return chain.filter { !$0.isHiddenOrHasHiddenAncestor }
     }
 
     private func buildAvatar() {
@@ -386,7 +415,7 @@ final class DaylightBarController: NSViewController {
         let selectedFill = ink
         let selectedInk = HelmContrast.legible(HelmTheme.nsColor(theme.chromeBackgroundHex), over: selectedFill)
         let hoverFill = theme.isDaylight
-            ? HelmTheme.nsColor(DaylightPalette.inset)
+            ? HelmTheme.nsColor(theme.daylightTokens.inset)
             : line.withAlphaComponent(0.35)
         for pill in pills {
             let isSelected = pill.space == selectedSpace
@@ -402,13 +431,15 @@ final class DaylightBarController: NSViewController {
 
         searchPill.applyTheme(theme)
         themeToggleButton.applyTheme(ink: muted, line: line, surface: theme.isDaylight
-            ? HelmTheme.nsColor(DaylightPalette.inset) : surface)
+            ? HelmTheme.nsColor(theme.daylightTokens.inset) : surface)
         notificationCenter.bell.applyTheme(ink: muted, line: line, surface: theme.isDaylight
-            ? HelmTheme.nsColor(DaylightPalette.inset) : surface)
+            ? HelmTheme.nsColor(theme.daylightTokens.inset) : surface)
 
         let avatarPair = (h1: HelmDomainHue.amber.pair(in: theme).h2,
                           h2: HelmDomainHue.rose.pair(in: theme).h2)
-        avatarGradient.colors = [avatarPair.h1.cgColor, avatarPair.h2.cgColor]
+        HelmMotion.withoutImplicitAnimation {
+            avatarGradient.colors = [avatarPair.h1.cgColor, avatarPair.h2.cgColor]
+        }
         avatar.attributedTitle = NSAttributedString(string: "M", attributes: [
             .font: HelmType.rounded(HelmType.scaled(11), .heavy),
             .foregroundColor: HelmContrast.legibleGlyph(over: avatarPair.h1, target: HelmContrast.textTarget),
@@ -567,7 +598,7 @@ final class DaylightSearchPill: HoverHighlightView {
         let muted = HelmTheme.mutedInk(theme)
         let line = HelmTheme.nsColor(theme.chromeLineHex)
         let fill = theme.isDaylight
-            ? HelmTheme.nsColor(DaylightPalette.inset)
+            ? HelmTheme.nsColor(theme.daylightTokens.inset)
             : HelmTheme.nsColor(theme.backgroundHex)
         normalColor = fill
         hoverColor = line.withAlphaComponent(theme.isDaylight ? 0.45 : 0.3)

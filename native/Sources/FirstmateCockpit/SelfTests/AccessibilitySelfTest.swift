@@ -389,7 +389,15 @@ enum AccessibilitySelfTest {
                 fail("could not read \(file) - has it moved? this check would silently pass", &ok)
                 continue
             }
-            if !text.contains("accessibilityDisplayShouldReduceMotion") {
+            // Daylight Phase 6 centralised the question into `HelmMotion`
+            // (its own suite fails on a direct `NSWorkspace` read anywhere
+            // else), so *asking the gate* is what this looks for rather than
+            // one particular spelling of it. The property is still the only
+            // legitimate answer - `HelmMotion.isReduced` is a one-line wrapper
+            // over exactly it - and accepting both is what keeps this check
+            // about the behaviour instead of about the token.
+            if !text.contains("accessibilityDisplayShouldReduceMotion"),
+               !text.contains("HelmMotion.isReduced") {
                 fail("\(file) has a looping/animated surface but never checks Reduce Motion", &ok)
             }
             // `HelmUIComponents`' hover fade is a one-shot on a real event, so

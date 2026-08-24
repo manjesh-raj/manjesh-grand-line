@@ -688,11 +688,11 @@ private final class UnifiedSearchRowView: NSView {
             // §6.11: selected row = `inset` fill plus a 3px `ink` inset left
             // edge. The twelve palettes keep the accent-line wash they have.
             background.cornerRadius = HelmMetrics.dTileSmall
-            let inset = HelmTheme.nsColor(DaylightPalette.inset)
+            let inset = HelmTheme.nsColor(theme.daylightTokens.inset)
             background.normalColor = isSelected ? inset : .clear
-            background.hoverColor = HelmTheme.nsColor(DaylightPalette.rowHover)
+            background.hoverColor = HelmTheme.nsColor(theme.daylightTokens.rowHover)
             selectionEdge.isHidden = !isSelected
-            selectionEdge.layer?.backgroundColor = HelmTheme.nsColor(DaylightPalette.ink).cgColor
+            selectionEdge.layer?.backgroundColor = HelmTheme.nsColor(theme.daylightTokens.ink).cgColor
         } else {
             background.cornerRadius = 6
             background.normalColor = isSelected ? line.withAlphaComponent(0.3) : .clear
