@@ -209,6 +209,14 @@ enum AppShellBodyWidthSelfTest {
     /// saved hosts/keys/snippets/tasks/dictation data - matching this app's
     /// established `FM_*_FILE`/`FM_*_DIR` scratch-override convention (see
     /// AGENTS.md).
+    ///
+    /// `FM_DOCS_RUNBOOKS_DIR` was added by `fm/grandline-docs-split-runbooks-
+    /// postmortems` - see `DestinationMountingSelfTest.withScratchEnv`'s own
+    /// doc comment for why `RunbooksController`/`PostmortemsController` (and
+    /// `.docs` before them) need it: with no override, `DocsRunbookStore()`
+    /// falls through to a real clone of the captain's `manjesh-config` repo.
+    /// `bodyContainerTracksWindowAcrossAllDestinations` below visits every
+    /// `RailDestination`, so this harness needs the same protection.
     private static func withScratchEnv<T>(_ body: () -> T) -> T {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("grandline-appshell-body-width-test-\(UUID().uuidString)")
@@ -221,6 +229,7 @@ enum AppShellBodyWidthSelfTest {
             "FM_SNIPPETS_FILE": dir.appendingPathComponent("snippets.json").path,
             "FM_SHIFT_DIR": dir.appendingPathComponent("shift").path,
             "FM_DICTATION_DIR": dir.appendingPathComponent("dictation").path,
+            "FM_DOCS_RUNBOOKS_DIR": dir.appendingPathComponent("docsRunbooks").path,
         ]
         var previous: [String: String?] = [:]
         for (key, value) in overrides {

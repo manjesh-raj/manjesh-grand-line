@@ -513,6 +513,8 @@ final class HomeCanvasController: NSViewController {
         case .logAnalyzer: fillLogAnalyzer(&content)
         case .vault: fillVault(&content)
         case .docs: fillDocs(&content)
+        case .runbooks: fillRunbooks(&content)
+        case .postmortems: fillPostmortems(&content)
         case .dictation: fillDictation(&content)
         case .tools: fillTools(&content)
         case .settings: fillSettings(&content)
@@ -867,17 +869,54 @@ final class HomeCanvasController: NSViewController {
                                note: "Hardened in Automic Vault's Keychain. Values never leave it.")
     }
 
+    /// `fm/grandline-docs-split-runbooks-postmortems` narrowed this card to
+    /// the Playbook alone - Runbooks and Postmortems are `fillRunbooks`/
+    /// `fillPostmortems` below now, each with its own module card. `DocsStore`
+    /// is a plain static enum (no store to inject), so this reads exactly
+    /// what `DocsController.drillHeaderSubtitle`'s own Playbook branch reads -
+    /// the real sync state, never a fabricated "offline copy" claim.
     private func fillDocs(_ content: inout HelmModuleCard.Content) {
+        content.subtitle = "DevOps Playbook"
+        if DocsStore.isSynced {
+            content.chip = .ok("Synced")
+            content.body = .note("Browsable offline - the captain's playbook, kept locally.")
+        } else {
+            content.chip = .warn("Not synced")
+            content.body = .note("Sync it once from the Docs page to browse it here, fully offline afterward.")
+        }
+    }
+
+    /// The runbook peek rows this card used to show under `.docs` before the
+    /// split above - moved verbatim, since Runbooks is now its own module
+    /// with its own destination.
+    private func fillRunbooks(_ content: inout HelmModuleCard.Content) {
         let runbooks = sources.docsRunbookStore.listRunbooks()
-        content.subtitle = "runbooks & postmortems"
+        content.subtitle = "step-by-step procedures"
         guard !runbooks.isEmpty else {
-            content.body = .note("No runbooks yet. Write one, or let SRE Lead generate a postmortem.")
+            content.body = .note("No runbooks yet. Write one, or let SRE Lead generate one from an investigation.")
             return
         }
         let rows = runbooks.prefix(2).map { runbook in
             HelmModulePeekRow(state: .idle,
                               text: runbook.title,
                               value: DocsRunbookMetadata.runbookSubtitle(runbook) ?? "")
+        }
+        content.body = .peekRows(Array(rows))
+    }
+
+    /// The Postmortems sibling of `fillRunbooks` above - same shape, reading
+    /// `listPostmortems()` instead.
+    private func fillPostmortems(_ content: inout HelmModuleCard.Content) {
+        let postmortems = sources.docsRunbookStore.listPostmortems()
+        content.subtitle = "incident write-ups"
+        guard !postmortems.isEmpty else {
+            content.body = .note("No postmortems yet. Generate one from an SRE Lead investigation.")
+            return
+        }
+        let rows = postmortems.prefix(2).map { postmortem in
+            HelmModulePeekRow(state: .idle,
+                              text: postmortem.title,
+                              value: DocsRunbookMetadata.postmortemSubtitle(postmortem) ?? "")
         }
         content.body = .peekRows(Array(rows))
     }

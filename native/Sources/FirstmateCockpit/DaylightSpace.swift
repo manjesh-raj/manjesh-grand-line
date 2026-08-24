@@ -118,6 +118,8 @@ enum DaylightModule: String, CaseIterable {
     case logAnalyzer
     case vault
     case docs
+    case runbooks
+    case postmortems
     case dictation
     case tools
     case settings
@@ -133,7 +135,12 @@ enum DaylightModule: String, CaseIterable {
         case .briefing, .fleet: return nil
         case .console, .tasks, .mergeQueue: return .command
         case .hosts, .logAnalyzer, .health, .schedules: return .operations
-        case .vault, .docs, .tools, .dictation: return .stores
+        // `fm/grandline-docs-split-runbooks-postmortems` added Runbooks and
+        // Postmortems here, promoted out of `DocsController`'s own tabs into
+        // their own destinations - see `DaylightModuleSelfTest.checkSpaceTable`,
+        // updated alongside this per this file's own "change it here and in
+        // that test together" rule.
+        case .vault, .docs, .runbooks, .postmortems, .tools, .dictation: return .stores
         case .updates, .bootstrap, .automation, .githubSync, .settings: return .engineering
         }
     }
@@ -160,7 +167,7 @@ enum DaylightModule: String, CaseIterable {
     var appearsOnOverview: Bool {
         switch self {
         case .tasks, .hosts, .updates, .bootstrap, .automation, .githubSync,
-             .logAnalyzer, .vault, .docs, .dictation, .tools, .settings:
+             .logAnalyzer, .vault, .docs, .runbooks, .postmortems, .dictation, .tools, .settings:
             return false
         default:
             return true
@@ -215,6 +222,8 @@ enum DaylightModule: String, CaseIterable {
         case .logAnalyzer: return .logAnalyzer
         case .vault: return .vault
         case .docs: return .docs
+        case .runbooks: return .runbooks
+        case .postmortems: return .postmortems
         case .dictation: return .dictation
         case .tools: return .tools
         case .settings: return .settings
@@ -242,6 +251,8 @@ enum DaylightModule: String, CaseIterable {
         case .logAnalyzer: return "text.magnifyingglass"
         case .vault: return "lock.fill"
         case .docs: return "book.fill"
+        case .runbooks: return "list.bullet.rectangle"
+        case .postmortems: return "doc.text.magnifyingglass"
         case .dictation: return "mic.fill"
         case .tools: return "wrench.and.screwdriver.fill"
         case .settings: return "slider.horizontal.3"
@@ -281,6 +292,8 @@ enum DaylightModule: String, CaseIterable {
         case .logAnalyzer: return "Log Analyzer"
         case .vault: return "Vault"
         case .docs: return "Docs"
+        case .runbooks: return "Runbooks"
+        case .postmortems: return "Postmortems"
         case .dictation: return "Dictation"
         case .tools: return "Tools"
         case .settings: return "Settings"

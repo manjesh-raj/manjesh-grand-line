@@ -118,6 +118,11 @@ final class AppShellController: NSViewController {
     /// `HealthController.swift`'s header.
     private let health = HealthController()
     private let docs = DocsController()
+    /// `fm/grandline-docs-split-runbooks-postmortems`: Runbooks and
+    /// Postmortems are their own top-level destinations now, split out of
+    /// `DocsController`'s former tabs - see that file's own header.
+    private let runbooks = RunbooksController()
+    private let postmortems = PostmortemsController()
     private let updates = UpdatesController()
     private let bootstrap: BootstrapController
     private let automation: AutomationController
@@ -377,6 +382,8 @@ final class AppShellController: NSViewController {
         mounter.register(DestinationSlot(id: .schedules, title: RailDestination.schedules.bodyTitle, mountsEagerly: false, controller: schedules))
         mounter.register(DestinationSlot(id: .health, title: RailDestination.health.bodyTitle, mountsEagerly: false, controller: health))
         mounter.register(DestinationSlot(id: .docs, title: RailDestination.docs.bodyTitle, mountsEagerly: false, controller: docs))
+        mounter.register(DestinationSlot(id: .runbooks, title: RailDestination.runbooks.bodyTitle, mountsEagerly: false, controller: runbooks))
+        mounter.register(DestinationSlot(id: .postmortems, title: RailDestination.postmortems.bodyTitle, mountsEagerly: false, controller: postmortems))
         mounter.register(DestinationSlot(id: .setup, title: RailDestination.updates.bodyTitle, mountsEagerly: false, controller: setup))
         mounter.register(DestinationSlot(id: .settings, title: RailDestination.settings.bodyTitle, mountsEagerly: false, controller: settings))
 
@@ -532,7 +539,13 @@ final class AppShellController: NSViewController {
         logAnalyzer.onSendCommandToTerminal = { [weak self] text in
             self?.console.sendCommandLibraryTextToActiveTab(text)
         }
-        logAnalyzer.onOpenRunbook = { [weak self] id in self?.openDocsRunbook(id: id) }
+        logAnalyzer.onOpenRunbook = { [weak self] id in self?.openRunbook(id: id) }
+        // `fm/grandline-docs-split-runbooks-postmortems`: `createIncident()`
+        // used to route its saved-postmortem confirmation through
+        // `onOpenRunbook` too, which opened it as a runbook - a postmortem id
+        // is never in `listRunbooks()`, so that silently no-opped. Fixed by
+        // giving it its own closure, wired to the postmortem destination.
+        logAnalyzer.onOpenPostmortem = { [weak self] id in self?.openPostmortem(id: id) }
         // F8 (incident mode): a saved investigation attaches as openable
         // evidence to the incident on whichever host page handed over the
         // capture this investigation was built from - which is the only
@@ -608,11 +621,17 @@ final class AppShellController: NSViewController {
         schedules.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         logAnalyzer.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         vault.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // Docs is the second page after Hosts whose *cluster* changes while it
-        // is on screen: the action is per-tab, and the runbook editor empties
-        // it entirely.
+        // Docs' subtitle still tracks the Playbook's own real sync state; its
+        // action cluster no longer changes while it's on screen now that the
+        // runbook editor (and the per-tab switch that used to empty the
+        // cluster for it) moved to `.runbooks`.
         docs.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        docs.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
+        // Runbooks inherited Docs' old per-editor-state cluster: "New
+        // Runbook" beside a form already creating one is a second, competing
+        // action, so its cluster empties while the editor is open.
+        runbooks.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        runbooks.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
+        postmortems.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         dictation.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Tools' subtitle counts open tool tabs, which the captain can change
         // without leaving the page. Like every line above it, this is safe
@@ -1546,17 +1565,20 @@ final class AppShellController: NSViewController {
     // MARK: Unified search navigation (phase 4, "Knowledge and speed")
 
     /// The `⌘K` unified search palette's own entry point for a Runbook/
-    /// Postmortem result - switches to `.docs` first, exactly like every
-    /// other `open*(id:)` wrapper above, so the item has somewhere to open
-    /// into.
-    func openDocsRunbook(id: String) {
-        show(.docs)
-        docs.openRunbook(id: id)
+    /// Postmortem result, and the Log Analyzer's "Create Runbook"/"Generate
+    /// Postmortem" actions - switches to the item's own destination first,
+    /// exactly like every other `open*(id:)` wrapper above, so it has
+    /// somewhere to open into. `fm/grandline-docs-split-runbooks-postmortems`
+    /// renamed these from `openDocsRunbook`/`openDocsPostmortem` once
+    /// Runbooks/Postmortems stopped being Docs tabs.
+    func openRunbook(id: String) {
+        show(.runbooks)
+        runbooks.openRunbook(id: id)
     }
 
-    func openDocsPostmortem(id: String) {
-        show(.docs)
-        docs.openPostmortem(id: id)
+    func openPostmortem(id: String) {
+        show(.postmortems)
+        postmortems.openPostmortem(id: id)
     }
 
     // MARK: Command palette navigation (F5)

@@ -3,17 +3,24 @@
 // Daylight **Phase 4, slice 5**'s own suite: the two destinations §7 puts
 // after Console/Hosts/Health in that half of the table - Docs and Dictation.
 //
+// `fm/grandline-docs-split-runbooks-postmortems` later promoted Docs' own
+// Runbooks and Postmortems tabs into their own top-level destinations
+// (`RunbooksController`/`PostmortemsController`) - the checks below were
+// updated in place to exercise those two controllers directly rather than
+// `DocsController`'s former `debugSelectTab(...)` API, which no longer
+// exists. Docs itself is Playbook-only now.
+//
 // What each case protects, and why it is worth a test rather than a
 // read-through:
 //
-//   1. **Both pages really reached the drill header** (§6.4). The seam is a
+//   1. **Every page really reached the drill header** (§6.4). The seam is a
 //      protocol conformance, and a missing one is invisible: the header just
 //      renders the static per-area line with an empty trailing slot, which
-//      looks like a design choice. Docs is the one worth pinning hardest -
-//      its cluster changes with the tab *and* with whether the runbook editor
-//      is open, so this asserts the same button instances move in and out
-//      rather than copies being built, and that the editor really does empty
-//      the cluster.
+//      looks like a design choice. Runbooks is the one worth pinning
+//      hardest - its cluster changes with whether the runbook editor is
+//      open, so this asserts the same button instance moves in and out
+//      rather than a copy being built, and that the editor really does empty
+//      the cluster. Postmortems has no page-level action at all.
 //   2. **Neither page renders an in-page hero any more** (§6.4). Walked over
 //      the real view tree, because the failure mode is a duplicate title one
 //      row apart - and Dictation additionally lost a whole header row whose
@@ -111,6 +118,14 @@ enum DaylightDrillPageSlice5SelfTest {
         return DocsRunbookStore()
     }
 
+    /// `fm/grandline-docs-split-runbooks-postmortems` split the Runbooks and
+    /// Postmortems tabs out of `DocsController` into their own destinations
+    /// (`RunbooksController`/`PostmortemsController`), each constructing its
+    /// own `DocsRunbookStore()` the same way `DocsController` used to -
+    /// `scratchDocsStore()` above must be called (setting `FM_DOCS_RUNBOOKS_DIR`)
+    /// before either is instantiated, exactly as it always had to be before
+    /// constructing the old combined `DocsController`.
+
     private static func scratchDictationStore() -> DictationStore {
         setenv("FM_DICTATION_DIR", scratchRoot("dictation").path, 1)
         return DictationStore()
@@ -160,79 +175,80 @@ enum DaylightDrillPageSlice5SelfTest {
     // MARK: 1. Both pages reached the drill header (§6.4)
 
     private static func checkDrillConformances(_ ok: inout Bool) {
-        print("\n-- §6.4: Docs / Dictation carry live drill headers --")
-
-        let docsStore = scratchDocsStore()
-        docsStore.createRunbook(title: "Rotate the bastion key", content: "# Rotate the bastion key\n")
-        docsStore.createRunbook(title: "Drain a node", content: "# Drain a node\n")
+        print("\n-- §6.4: Docs / Runbooks / Postmortems / Dictation carry live drill headers --")
 
         let docs = DocsController()
         let docsWindow = mount(docs)
         defer { _ = docsWindow }
 
-        // The Playbook tab's cluster is its page-level action, and its subtitle
-        // reports the real sync state rather than claiming an offline copy.
-        docs.debugSelectTab("playbook")
+        // Docs is Playbook-only now (`fm/grandline-docs-split-runbooks-
+        // postmortems`): one page-level action, and a subtitle reporting the
+        // real sync state rather than claiming an offline copy.
         guard docs.drillHeaderActions.count == 1 else {
-            print("  FAIL Docs' playbook tab hoists \(docs.drillHeaderActions.count) actions, want 1")
+            print("  FAIL Docs hoists \(docs.drillHeaderActions.count) actions, want 1")
             ok = false
             return
         }
-        let playbookAction = docs.drillHeaderActions[0]
         guard let playbookSubtitle = docs.drillHeaderSubtitle, !playbookSubtitle.isEmpty else {
-            print("  FAIL Docs' playbook tab reports no drill subtitle")
+            print("  FAIL Docs reports no drill subtitle")
             ok = false
             return
         }
         if DocsStore.isSynced != playbookSubtitle.contains("offline copy") {
-            print("  FAIL Docs' playbook subtitle disagrees with DocsStore.isSynced "
+            print("  FAIL Docs' subtitle disagrees with DocsStore.isSynced "
                   + "(synced=\(DocsStore.isSynced), subtitle=\"\(playbookSubtitle)\")")
             ok = false
         }
 
         // Runbooks: the count comes from the grid the page is actually
         // rendering, so the header cannot disagree with the list below it.
-        docs.debugSelectTab("runbooks")
-        guard let runbookSubtitle = docs.drillHeaderSubtitle, runbookSubtitle.contains("2 runbooks") else {
-            print("  FAIL Docs' runbooks subtitle does not report 2 runbooks (\(docs.drillHeaderSubtitle ?? "nil"))")
+        let docsStore = scratchDocsStore()
+        docsStore.createRunbook(title: "Rotate the bastion key", content: "# Rotate the bastion key\n")
+        docsStore.createRunbook(title: "Drain a node", content: "# Drain a node\n")
+
+        let runbooksPage = RunbooksController()
+        let runbooksWindow = mount(runbooksPage)
+        defer { _ = runbooksWindow }
+        runbooksPage.debugReloadRunbooks()
+
+        guard let runbookSubtitle = runbooksPage.drillHeaderSubtitle, runbookSubtitle.contains("2 runbooks") else {
+            print("  FAIL Runbooks subtitle does not report 2 runbooks (\(runbooksPage.drillHeaderSubtitle ?? "nil"))")
             ok = false
             return
         }
-        guard docs.drillHeaderActions.count == 1,
-              let newButton = docs.drillHeaderActions[0] as? NSButton, newButton.title == "New Runbook" else {
-            print("  FAIL Docs' runbooks tab does not hoist a titled New Runbook action")
+        guard runbooksPage.drillHeaderActions.count == 1,
+              let newButton = runbooksPage.drillHeaderActions[0] as? NSButton, newButton.title == "New Runbook" else {
+            print("  FAIL Runbooks does not hoist a titled New Runbook action")
             ok = false
             return
         }
         // Re-read, not rebuilt: a fresh instance per read would silently drop
         // the target and tooltip the page set on it.
-        docs.debugSelectTab("playbook")
-        docs.debugSelectTab("runbooks")
-        if docs.drillHeaderActions.first !== newButton {
-            print("  FAIL Docs rebuilds its New Runbook button on every read of drillHeaderActions")
-            ok = false
-        }
-        if docs.drillHeaderActions.first === playbookAction {
-            print("  FAIL Docs hoists the same action for two different tabs")
+        if runbooksPage.drillHeaderActions.first !== newButton {
+            print("  FAIL Runbooks rebuilds its New Runbook button on every read of drillHeaderActions")
             ok = false
         }
 
         // The editor empties the cluster: "New Runbook" beside a form already
         // creating one is a second, competing action.
-        docs.debugBeginNewRunbook()
-        if !docs.drillHeaderActions.isEmpty {
-            print("  FAIL Docs still hoists \(docs.drillHeaderActions.count) action(s) with the runbook editor open")
+        runbooksPage.debugBeginNewRunbook()
+        if !runbooksPage.drillHeaderActions.isEmpty {
+            print("  FAIL Runbooks still hoists \(runbooksPage.drillHeaderActions.count) action(s) with the runbook editor open")
             ok = false
         }
-        docs.debugCancelRunbookEditor()
-        if docs.drillHeaderActions.count != 1 {
-            print("  FAIL Docs does not restore its cluster after the runbook editor closes")
+        runbooksPage.debugCancelRunbookEditor()
+        if runbooksPage.drillHeaderActions.count != 1 {
+            print("  FAIL Runbooks does not restore its cluster after the runbook editor closes")
             ok = false
         }
 
-        docs.debugSelectTab("postmortems")
-        if !docs.drillHeaderActions.isEmpty {
-            print("  FAIL Docs' postmortems tab invented \(docs.drillHeaderActions.count) action(s)")
+        // Postmortems has no page-level action at all (generation happens in
+        // SRE Lead / the Log Analyzer).
+        let postmortemsPage = PostmortemsController()
+        let postmortemsWindow = mount(postmortemsPage)
+        defer { _ = postmortemsWindow }
+        if !postmortemsPage.drillHeaderActions.isEmpty {
+            print("  FAIL Postmortems invented \(postmortemsPage.drillHeaderActions.count) action(s)")
             ok = false
         }
 
@@ -276,7 +292,7 @@ enum DaylightDrillPageSlice5SelfTest {
     // MARK: 2. No in-page heroes left (§6.4)
 
     private static func checkHeroTitlesAreGone(_ ok: inout Bool) {
-        print("\n-- §6.4: no in-page hero titles on Docs / Dictation --")
+        print("\n-- §6.4: no in-page hero titles on Docs / Runbooks / Postmortems / Dictation --")
         // The drill header's own title is 26pt, so anything at or above 20pt
         // inside a page body is a second title competing with it.
         let heroFloor: CGFloat = 20
@@ -284,6 +300,8 @@ enum DaylightDrillPageSlice5SelfTest {
         let dictationStore = scratchDictationStore()
         let pages: [(String, NSViewController)] = [
             ("Docs", DocsController()),
+            ("Runbooks", RunbooksController()),
+            ("Postmortems", PostmortemsController()),
             ("Dictation", DictationController(store: dictationStore)),
         ]
         var clean = true
@@ -326,18 +344,18 @@ enum DaylightDrillPageSlice5SelfTest {
         let store = scratchDocsStore()
         store.createRunbook(title: "Identifying Unhealthy / NotReady Nodes",
                             content: "# Identifying Unhealthy / NotReady Nodes\n\n```\nkubectl get nodes\n```\n")
-        let docs = DocsController()
-        let window = mount(docs)
+        let runbooksPage = RunbooksController()
+        let window = mount(runbooksPage)
         defer { _ = window }
-        docs.debugSelectTab("runbooks")
-        docs.view.layoutSubtreeIfNeeded()
+        runbooksPage.debugReloadRunbooks()
+        runbooksPage.view.layoutSubtreeIfNeeded()
 
-        guard let plate = docs.debugRunbookPlates.first else {
-            print("  FAIL Docs' runbooks tab rendered no plates")
+        guard let plate = runbooksPage.debugRunbookPlates.first else {
+            print("  FAIL Runbooks rendered no plates")
             ok = false
             return
         }
-        docs.view.layoutSubtreeIfNeeded()
+        runbooksPage.view.layoutSubtreeIfNeeded()
         let anatomy = plate.anatomyForTests
 
         if !anatomy.hasRibbon || anatomy.ribbonStopCount != 2 {
@@ -628,11 +646,9 @@ enum DaylightDrillPageSlice5SelfTest {
 
     private static func checkPlaybookCard(_ ok: inout Bool) {
         print("\n-- §7: the playbook web view sits inside a radius-16 card --")
-        _ = scratchDocsStore()
         let docs = DocsController()
         let window = mount(docs)
         defer { _ = window }
-        docs.debugSelectTab("playbook")
         docs.view.layoutSubtreeIfNeeded()
 
         let card = docs.debugPlaybookCard
@@ -674,11 +690,15 @@ enum DaylightDrillPageSlice5SelfTest {
     // MARK: 8. No new window-width floor (AGENTS.md gotcha (13))
 
     private static func checkNoWindowWidthFloor(_ ok: inout Bool) {
-        print("\n-- gotcha (13): neither page caps the window --")
+        print("\n-- gotcha (13): none of these pages cap the window --")
         let docsStore = scratchDocsStore()
         for i in 1...6 {
             docsStore.createRunbook(title: "Runbook number \(i) with a deliberately long title",
                                     content: "# Runbook \(i)\n")
+        }
+        for i in 1...3 {
+            docsStore.createPostmortem(title: "Postmortem number \(i) with a deliberately long title",
+                                       content: "# Postmortem \(i)\n\n## Root Cause\nA long root cause line.\n")
         }
         let dictationStore = scratchDictationStore()
         for word in ["herdr", "kubectl", "bastion", "preprod", "automic-vault"] {
@@ -687,28 +707,30 @@ enum DaylightDrillPageSlice5SelfTest {
         dictationStore.recordHistory(text: String(repeating: "a long transcription ", count: 12),
                                      durationSeconds: 30, date: Date())
 
-        func floor(of controller: NSViewController, label: String, tabs: [String?]) {
+        func floor(of controller: NSViewController, label: String, reload: (() -> Void)? = nil) {
             let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 820),
                                   styleMask: [.titled, .resizable], backing: .buffered, defer: false)
             window.contentViewController = controller
-            for tab in tabs {
-                if let tab, let docs = controller as? DocsController { docs.debugSelectTab(tab) }
-                for width in [1400.0, 1100.0, 900.0] as [CGFloat] {
-                    window.setFrame(NSRect(x: 0, y: 0, width: width, height: 820), display: true)
-                    window.contentView?.layoutSubtreeIfNeeded()
-                    if window.frame.width > width + 0.5 {
-                        print("  FAIL \(label)\(tab.map { " (\($0))" } ?? "") capped the window at "
-                              + "\(fmt(window.frame.width)) when asked for \(fmt(width))")
-                        ok = false
-                    }
+            reload?()
+            for width in [1400.0, 1100.0, 900.0] as [CGFloat] {
+                window.setFrame(NSRect(x: 0, y: 0, width: width, height: 820), display: true)
+                window.contentView?.layoutSubtreeIfNeeded()
+                if window.frame.width > width + 0.5 {
+                    print("  FAIL \(label) capped the window at "
+                          + "\(fmt(window.frame.width)) when asked for \(fmt(width))")
+                    ok = false
                 }
             }
             window.contentViewController = nil
         }
 
-        floor(of: DocsController(), label: "Docs", tabs: ["playbook", "runbooks", "postmortems"])
-        floor(of: DictationController(store: dictationStore), label: "Dictation", tabs: [nil])
-        if ok { print("  OK - both pages track the window down to 900pt") }
+        floor(of: DocsController(), label: "Docs")
+        let runbooksPage = RunbooksController()
+        floor(of: runbooksPage, label: "Runbooks", reload: { runbooksPage.debugReloadRunbooks() })
+        let postmortemsPage = PostmortemsController()
+        floor(of: postmortemsPage, label: "Postmortems", reload: { postmortemsPage.debugReloadPostmortems() })
+        floor(of: DictationController(store: dictationStore), label: "Dictation")
+        if ok { print("  OK - every page tracks the window down to 900pt") }
     }
 }
 

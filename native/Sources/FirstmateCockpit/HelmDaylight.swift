@@ -511,6 +511,13 @@ extension RailDestination {
         case .vault: return .violet
         case .schedules: return .violet
         case .docs: return .blue
+        // `fm/grandline-docs-split-runbooks-postmortems`: the same two hues
+        // the runbook/postmortem plate cards already used before the split
+        // (`HelmDomainHue(tint:)` maps `.info` -> `.blue`, `.warn` -> `.amber`
+        // - the exact `HelmTint` each `DocGridItem` carried), so a card and
+        // the destination it opens can never disagree about a hue.
+        case .runbooks: return .blue
+        case .postmortems: return .amber
         case .updates, .bootstrap, .automation, .githubSync: return .amber  // Setup
         case .settings: return .slate
         case .tools: return .slate

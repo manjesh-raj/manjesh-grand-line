@@ -97,6 +97,12 @@ import AppKit
 /// reads Overview, Console, Hosts, Shift, Review - `loadView`'s `navStack`
 /// loop gets this for free just from case order (case order drives
 /// `navStack`'s iteration order, same as every other `navStack` member).
+/// `.runbooks`/`.postmortems` (`fm/grandline-docs-split-runbooks-postmortems`)
+/// are the Runbooks and Postmortems tabs `DocsController` used to hold,
+/// promoted into their own top-level destinations in the Stores space
+/// (`DaylightSpace.stores`) alongside `.docs`, `.vault` and `.tools` -
+/// `.docs` itself is now the Playbook viewer only. Both are utilities
+/// (`isDailyUse == false`), matching their Stores siblings.
 ///
 /// `isDailyUse` (fm/grandline-sidebar-labeled-nav) marks the 6
 /// `navStack` members (Overview, Console, Hosts, Shift, Review, Log
@@ -135,7 +141,7 @@ enum RailDestination: CaseIterable {
     /// reachable through `show(_:)`), so nothing about routing needed a
     /// second concept.
     case homeCanvas
-    case overview, console, hosts, shift, review, logAnalyzer, tools, vault, dictation, schedules, health, docs, updates, bootstrap, automation, githubSync, settings
+    case overview, console, hosts, shift, review, logAnalyzer, tools, vault, dictation, schedules, health, docs, runbooks, postmortems, updates, bootstrap, automation, githubSync, settings
 
     var symbol: String {
         switch self {
@@ -172,6 +178,12 @@ enum RailDestination: CaseIterable {
         // header icon, so the rail row and the card it opens onto agree.
         case .health: return "waveform.path.ecg"
         case .docs: return "book.closed"
+        // `fm/grandline-docs-split-runbooks-postmortems`: reused verbatim
+        // from the icons this exact file's own Runbooks/Postmortems empty
+        // states already carried before the split, so the destination and
+        // the empty state a captain saw there agree.
+        case .runbooks: return "list.bullet.rectangle"
+        case .postmortems: return "doc.text.magnifyingglass"
         case .updates: return "steeringwheel"
         case .bootstrap: return "hammer"
         case .automation: return "bolt.fill"
@@ -195,6 +207,8 @@ enum RailDestination: CaseIterable {
         case .schedules: return "Schedules"
         case .health: return "Health"
         case .docs: return "Docs"
+        case .runbooks: return "Runbooks"
+        case .postmortems: return "Postmortems"
         case .updates: return "Updates"
         case .bootstrap: return "Bootstrap"
         case .automation: return "Automation"
@@ -244,14 +258,15 @@ enum RailDestination: CaseIterable {
         case .automation: return .accent
         case .githubSync: return .violet
         case .homeCanvas, .overview, .console, .hosts, .shift, .review, .logAnalyzer,
-             .tools, .vault, .dictation, .schedules, .health, .docs, .settings: return .accent
+             .tools, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems, .settings: return .accent
         }
     }
 
     var isDailyUse: Bool {
         switch self {
         case .homeCanvas, .overview, .console, .hosts, .shift, .review, .logAnalyzer: return true
-        case .tools, .vault, .dictation, .schedules, .health, .docs, .updates, .bootstrap, .automation, .githubSync, .settings: return false
+        case .tools, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems,
+             .updates, .bootstrap, .automation, .githubSync, .settings: return false
         }
     }
 }

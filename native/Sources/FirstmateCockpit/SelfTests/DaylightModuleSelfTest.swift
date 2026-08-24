@@ -76,7 +76,11 @@ enum DaylightModuleSelfTest {
     private static let lockedMembership: [DaylightSpace: Set<DaylightModule>] = [
         .command: [.console, .tasks, .mergeQueue],
         .operations: [.hosts, .logAnalyzer, .health, .schedules],
-        .stores: [.vault, .docs, .tools, .dictation],
+        // `fm/grandline-docs-split-runbooks-postmortems` added Runbooks and
+        // Postmortems here, promoted out of `DocsController`'s former tabs
+        // into their own destinations - the deliberate table change this
+        // file's own doc comment says to make together with the test.
+        .stores: [.vault, .docs, .runbooks, .postmortems, .tools, .dictation],
         .engineering: [.updates, .bootstrap, .automation, .githubSync, .settings],
     ]
 
@@ -129,8 +133,11 @@ enum DaylightModuleSelfTest {
         // or its own canvas presence. A module that fell out of both would be
         // a real regression this suite has to catch, not just assume away.
         let trimmed = DaylightModule.allCases.filter { !overviewVisibleModules.contains($0) }
-        if trimmed.count != 12 {
-            fail("expected exactly 12 modules trimmed from Overview, got \(trimmed.count): "
+        // 12 from the original trim, plus Runbooks and Postmortems
+        // (`fm/grandline-docs-split-runbooks-postmortems`), both new modules
+        // with `appearsOnOverview == false` matching their Stores siblings.
+        if trimmed.count != 14 {
+            fail("expected exactly 14 modules trimmed from Overview, got \(trimmed.count): "
                  + "\(trimmed.map(\.rawValue).sorted())", &ok)
         }
         for module in trimmed {
@@ -1277,6 +1284,12 @@ enum DaylightModuleSelfTest {
         }
     }
 
+    /// `FM_DOCS_RUNBOOKS_DIR` was added by `fm/grandline-docs-split-runbooks-
+    /// postmortems` - see `DestinationMountingSelfTest.withScratchEnv`'s own
+    /// doc comment for why a store this checked directly can otherwise reach
+    /// a real clone of the captain's `manjesh-config` repo. `checkCanvasAndDrillHeader`
+    /// below visits every `RailDestination`, `.runbooks`/`.postmortems`
+    /// included, so this harness needs the same protection that one does.
     private static func withScratchEnv(_ body: () -> Void) {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("grandline-daylight-module-test-\(UUID().uuidString)")
@@ -1290,6 +1303,7 @@ enum DaylightModuleSelfTest {
             "FM_SHIFT_DIR": dir.appendingPathComponent("shift").path,
             "FM_DICTATION_DIR": dir.appendingPathComponent("dictation").path,
             "FM_SCHEDULES_FILE": dir.appendingPathComponent("schedules.json").path,
+            "FM_DOCS_RUNBOOKS_DIR": dir.appendingPathComponent("docsRunbooks").path,
         ]
         var saved: [String: String?] = [:]
         for (key, value) in overrides {
