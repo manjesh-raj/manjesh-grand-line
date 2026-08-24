@@ -1428,6 +1428,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_MODULE_TESTS"] == "1" {
     exit(DaylightModuleSelfTest.run() ? 0 : 1)
 }
 
+// The lock screen's Daylight Harbour restyle - the last pre-Daylight surface
+// (fm/grandline-home-login-redesign-plan). Window-backed: focus, rendering and
+// the off-screen render probe all need a real window, so it sits in
+// run-all-tests.sh's NEEDS_SESSION list. See LockScreenSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_LOCK_SCREEN_TESTS"] == "1" {
+    exit(LockScreenSelfTest.run() ? 0 : 1)
+}
+
 // Daylight Phase 6 (the last phase): the accessibility sweep and the Reduce
 // Motion audit. Dusk's own colour derivation is measured by
 // FM_RUN_CONTRAST_TESTS, where the palette maths already lives. See

@@ -211,6 +211,22 @@ enum HelmField {
 
     /// De-bezel an `NSTextField` (or an `NSSecureTextField`, which is one).
     static func makeSunkenTextField(_ field: NSTextField) {
+        // A plain `NSTextFieldCell` does NOT vertically centre its text inside
+        // a frame taller than the text's own line height - it stays flush with
+        // the top. A sunken well is `controlHeight` (32) tall around a ~15pt
+        // line, so every well in this app rendered its text and placeholder
+        // hard against the top edge with a band of empty fill underneath.
+        //
+        // Measured on a real render before this was fixed: in a well spanning
+        // rows 711-770 (centre 740.5), the placeholder glyphs occupied
+        // 715-732 (centre 723.5) - 8.5pt high, and the whole of the lower half
+        // empty. This file's own predecessor hit the same thing and worked
+        // around it by letting the field keep its natural height inside a
+        // taller pill; the well pins its own height, so it needs the real fix.
+        //
+        // `HelmFieldCentering` is that fix, and it is applied here rather than
+        // per component so every sunken field in the app gets it at once.
+        HelmFieldCentering.apply(to: field)
         field.isBordered = false
         field.isBezeled = false
         field.focusRingType = .none
@@ -224,6 +240,80 @@ enum HelmField {
         field.cell?.wraps = false
         field.cell?.isScrollable = true
         makeSunken(field)
+    }
+}
+
+/// Vertically centres a text cell's content in a well taller than its own line.
+///
+/// Two near-identical subclasses rather than one, because a secure field needs
+/// an `NSSecureTextFieldCell` - swapping in a plain `NSTextFieldCell` would
+/// silently stop the field masking what is typed into it, which on this app's
+/// lock screen would be a real disclosure rather than a layout nit. Swift has
+/// no multiple inheritance, so the shared arithmetic lives in `centred(_:in:)`
+/// and each subclass is three one-line overrides over it.
+enum HelmFieldCentering {
+    /// The centred drawing rect for `bounds`, or `bounds` unchanged when the
+    /// text already fills it (a multi-line or oversized field).
+    static func centred(_ bounds: NSRect, in cell: NSTextFieldCell) -> NSRect {
+        let natural = cell.cellSize(forBounds: bounds).height
+        guard natural > 0, natural < bounds.height else { return bounds }
+        var rect = bounds
+        rect.origin.y += ((bounds.height - natural) / 2).rounded()
+        rect.size.height = natural
+        return rect
+    }
+
+    /// Installs the right centring cell on `field`, preserving the properties
+    /// a freshly-built cell would otherwise drop.
+    static func apply(to field: NSTextField) {
+        guard let existing = field.cell as? NSTextFieldCell else { return }
+        // Already centring (a second `makeSunkenTextField` call on the same
+        // field) - nothing to do.
+        if existing is HelmCenteredTextFieldCell || existing is HelmCenteredSecureTextFieldCell { return }
+        let replacement: NSTextFieldCell = field is NSSecureTextField
+            ? HelmCenteredSecureTextFieldCell(textCell: existing.stringValue)
+            : HelmCenteredTextFieldCell(textCell: existing.stringValue)
+        replacement.isEditable = existing.isEditable
+        replacement.isSelectable = existing.isSelectable
+        replacement.isScrollable = existing.isScrollable
+        replacement.wraps = existing.wraps
+        replacement.alignment = existing.alignment
+        replacement.lineBreakMode = existing.lineBreakMode
+        replacement.font = existing.font
+        replacement.placeholderString = existing.placeholderString
+        field.cell = replacement
+    }
+}
+
+final class HelmCenteredTextFieldCell: NSTextFieldCell {
+    override func drawingRect(forBounds rect: NSRect) -> NSRect {
+        super.drawingRect(forBounds: HelmFieldCentering.centred(rect, in: self))
+    }
+    override func select(withFrame rect: NSRect, in controlView: NSView, editor: NSText,
+                         delegate: Any?, start: Int, length: Int) {
+        super.select(withFrame: HelmFieldCentering.centred(rect, in: self), in: controlView,
+                     editor: editor, delegate: delegate, start: start, length: length)
+    }
+    override func edit(withFrame rect: NSRect, in controlView: NSView, editor: NSText,
+                       delegate: Any?, event: NSEvent?) {
+        super.edit(withFrame: HelmFieldCentering.centred(rect, in: self), in: controlView,
+                   editor: editor, delegate: delegate, event: event)
+    }
+}
+
+final class HelmCenteredSecureTextFieldCell: NSSecureTextFieldCell {
+    override func drawingRect(forBounds rect: NSRect) -> NSRect {
+        super.drawingRect(forBounds: HelmFieldCentering.centred(rect, in: self))
+    }
+    override func select(withFrame rect: NSRect, in controlView: NSView, editor: NSText,
+                         delegate: Any?, start: Int, length: Int) {
+        super.select(withFrame: HelmFieldCentering.centred(rect, in: self), in: controlView,
+                     editor: editor, delegate: delegate, start: start, length: length)
+    }
+    override func edit(withFrame rect: NSRect, in controlView: NSView, editor: NSText,
+                       delegate: Any?, event: NSEvent?) {
+        super.edit(withFrame: HelmFieldCentering.centred(rect, in: self), in: controlView,
+                   editor: editor, delegate: delegate, event: event)
     }
 }
 
