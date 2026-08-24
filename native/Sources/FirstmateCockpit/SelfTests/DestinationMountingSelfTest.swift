@@ -61,6 +61,7 @@ enum DestinationMountingSelfTest {
             ("everySlotIsReachableAndMountsCleanly", test_everySlotMounts),
             ("schedulesHasItsOwnSlotAndAutomationNoLongerRendersIt", test_schedulesIsSeparateFromAutomation),
             ("healthHasItsOwnSlotAndSettingsNoLongerRendersIt", test_healthIsSeparateFromSettings),
+            ("runbooksAndPostmortemsHaveTheirOwnSlotsAndDocsNoLongerRendersThem", test_runbooksAndPostmortemsAreSeparateFromDocs),
             ("mounterIsLazyAndBuildsEachSlotOnce", test_mounterUnitBehaviour),
             ("everyDestinationRendersRealContentOnFirstLoad", test_everyDestinationRendersRealContentOnFirstLoad),
         ]
@@ -131,7 +132,7 @@ enum DestinationMountingSelfTest {
                 return "expected at most the launch destination beyond the eager set, also mounted: \(extra.map(\.rawValue).sorted())"
             }
             // The expensive ones must not be among them under any launch path.
-            let mustBeLazy: Set<DestinationSlotID> = [.docs, .tools, .logAnalyzer, .vault, .dictation, .schedules, .health, .hosts, .shift, .settings]
+            let mustBeLazy: Set<DestinationSlotID> = [.docs, .runbooks, .postmortems, .tools, .logAnalyzer, .vault, .dictation, .schedules, .health, .hosts, .shift, .settings]
             let eagerlyBuilt = mounted.intersection(mustBeLazy)
             guard eagerlyBuilt.isEmpty else {
                 return "these should not be built at launch: \(eagerlyBuilt.map(\.rawValue).sorted())"
@@ -260,6 +261,25 @@ enum DestinationMountingSelfTest {
     /// renders 0 non-empty labels in its own body view instead of 59.
     private static let minNonEmptyLabels = 4
 
+    /// Two genuinely, honestly minimal destinations that fall short of the
+    /// general floor above without inventing UI they don't have -
+    /// `fm/grandline-docs-split-runbooks-postmortems`. Neither page carries a
+    /// create/edit control of its own on a truly empty first load (Docs is
+    /// Playbook-only now - a title, a body sentence and its "Sync Now" button
+    /// is genuinely everything an unsynced first-ever visit has to say;
+    /// Postmortems has no creation UI at all - generation lives in SRE Lead
+    /// and the Log Analyzer - so an empty list is just its one empty-state
+    /// sentence). Both are still measured well above zero, the actual
+    /// bug-class signature this whole case exists to catch - a named,
+    /// documented exception rather than a global weakening of the floor for
+    /// every other, richer destination. (Runbooks needs no entry here: its
+    /// always-built, hidden editor's Save/Cancel/Delete buttons plus its
+    /// empty-state sentence clear the general floor on their own.)
+    private static let minNonEmptyLabelsOverride: [RailDestination: Int] = [
+        .docs: 3,
+        .postmortems: 1,
+    ]
+
     private static func test_everyDestinationRendersRealContentOnFirstLoad() -> String? {
         withScratchEnv {
             let (_, shell) = makeMountedShell()
@@ -269,11 +289,12 @@ enum DestinationMountingSelfTest {
                     return "show(\(dest)) left slot \(dest.slot.rawValue) unmounted"
                 }
                 let labels = collectTextFieldValues(in: view).filter { !$0.isEmpty }
-                guard labels.count >= Self.minNonEmptyLabels else {
+                let floor = Self.minNonEmptyLabelsOverride[dest] ?? Self.minNonEmptyLabels
+                guard labels.count >= floor else {
                     return "\(dest) (slot \(dest.slot.rawValue)) rendered only \(labels.count) " +
                         "non-empty text label(s) on its very first load - this is the exact " +
                         "\"mounted, visible, but the body is blank\" shape PR #278 fixed for " +
-                        "Settings; want at least \(Self.minNonEmptyLabels)"
+                        "Settings; want at least \(floor)"
                 }
             }
             return nil
@@ -388,6 +409,74 @@ enum DestinationMountingSelfTest {
         }
     }
 
+    /// `fm/grandline-docs-split-runbooks-postmortems`: Runbooks and
+    /// Postmortems used to be two tabs of `DocsController` - a "Runbooks"/
+    /// "Postmortems" segmented pill, "+ New Runbook" and a runbook editor all
+    /// lived inside the Docs body view. They are their own destinations now,
+    /// mirroring `test_schedulesIsSeparateFromAutomation`/
+    /// `test_healthIsSeparateFromSettings` exactly: each mounts to a slot of
+    /// its own (not `.docs`), and the real `DocsController` root no longer
+    /// renders either tab's chrome anywhere in its view tree.
+    ///
+    /// Confirmed to catch a real regression, not just to pass: temporarily
+    /// re-adding the old tab strip and "+ New Runbook" button to
+    /// `DocsController`'s own stack (the pre-split shape) makes this fail on
+    /// the label-scan assertion, naming the leftover "Runbooks"/"New Runbook"
+    /// text, while every other case in this file keeps passing.
+    private static func test_runbooksAndPostmortemsAreSeparateFromDocs() -> String? {
+        withScratchEnv {
+            let (_, shell) = makeMountedShell()
+
+            guard RailDestination.runbooks.slot != RailDestination.docs.slot else {
+                return "runbooks must not share a slot with docs"
+            }
+            guard RailDestination.postmortems.slot != RailDestination.docs.slot else {
+                return "postmortems must not share a slot with docs"
+            }
+            guard RailDestination.runbooks.slot != RailDestination.postmortems.slot else {
+                return "runbooks and postmortems must not share a slot with each other"
+            }
+
+            shell.show(.runbooks)
+            guard let runbooksView = shell.destinationViewIfMountedForTests(.runbooks) else {
+                return "show(.runbooks) did not mount the runbooks slot"
+            }
+            guard runbooksView.isHidden == false else {
+                return "the runbooks view should be visible right after show(.runbooks)"
+            }
+            guard shell.destinationViewIfMountedForTests(.docs) == nil else {
+                return "show(.runbooks) unexpectedly mounted the docs slot too"
+            }
+            guard shell.destinationViewIfMountedForTests(.postmortems) == nil else {
+                return "show(.runbooks) unexpectedly mounted the postmortems slot too"
+            }
+
+            shell.show(.postmortems)
+            guard let postmortemsView = shell.destinationViewIfMountedForTests(.postmortems) else {
+                return "show(.postmortems) did not mount the postmortems slot"
+            }
+            guard postmortemsView.isHidden == false else {
+                return "the postmortems view should be visible right after show(.postmortems)"
+            }
+
+            shell.show(.docs)
+            guard let docsView = shell.destinationViewIfMountedForTests(.docs) else {
+                return "show(.docs) did not mount the docs slot"
+            }
+            let labels = collectTextFieldValues(in: docsView)
+            guard !labels.contains("Runbooks") else {
+                return "the Docs page still renders a \"Runbooks\" tab pill - it should have moved to its own destination"
+            }
+            guard !labels.contains("Postmortems") else {
+                return "the Docs page still renders a \"Postmortems\" tab pill - it should have moved to its own destination"
+            }
+            guard !labels.contains(where: { $0.localizedCaseInsensitiveContains("new runbook") }) else {
+                return "the Docs page still renders a runbook-creation control"
+            }
+            return nil
+        }
+    }
+
     /// A plain recursive walk - this file's only need for one, so it stays
     /// local rather than becoming a shared utility.
     private static func collectTextFieldValues(in view: NSView) -> [String] {
@@ -449,6 +538,17 @@ enum DestinationMountingSelfTest {
     /// reads and writes disposable files - never the captain's real saved
     /// hosts/keys/snippets/tasks/dictation data. Same shape as
     /// `AppShellBodyWidthSelfTest.withScratchEnv`.
+    ///
+    /// `FM_DOCS_RUNBOOKS_DIR` was added by `fm/grandline-docs-split-runbooks-
+    /// postmortems`: `RunbooksController`/`PostmortemsController` each
+    /// construct their own `DocsRunbookStore()`, and with no override that
+    /// store falls through to `DocsRunbookGitSync.shared` - a real clone of
+    /// the captain's actual `manjesh-config` repo - the same hazard
+    /// `CommandLibraryStore`'s own `FM_SHIFT_DIR` fallback exists to avoid
+    /// (see AGENTS.md). `.docs` itself carried this same exposure before this
+    /// split (it built its own `DocsRunbookStore()` for its Runbooks/
+    /// Postmortems tabs), so this closes a pre-existing gap in this harness,
+    /// not just a new one.
     private static func withScratchEnv<T>(_ body: () -> T) -> T {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("grandline-destination-mounting-test-\(UUID().uuidString)")
@@ -462,6 +562,7 @@ enum DestinationMountingSelfTest {
             "FM_SHIFT_DIR": dir.appendingPathComponent("shift").path,
             "FM_DICTATION_DIR": dir.appendingPathComponent("dictation").path,
             "FM_DOCS_DIR": dir.appendingPathComponent("docs").path,
+            "FM_DOCS_RUNBOOKS_DIR": dir.appendingPathComponent("docsRunbooks").path,
             "FM_LOG_ANALYZER_DIR": dir.appendingPathComponent("loganalyzer").path,
         ]
         var previous: [String: String?] = [:]

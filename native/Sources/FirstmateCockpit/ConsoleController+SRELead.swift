@@ -441,8 +441,10 @@ extension ConsoleController {
     /// "Generate Postmortem": summarizes the *current* tab's own
     /// investigation transcript into a structured markdown document via one
     /// non-interactive `claude -p` call (`SRELeadPostmortem.generate`), then
-    /// saves it into the same Docs → Postmortems store phase 1 built
-    /// (`DocsRunbookStore.createPostmortem`). A failure here only ever
+    /// saves it into the same `DocsRunbookStore` postmortems store phase 1
+    /// built (`DocsRunbookStore.createPostmortem`) - browsable at the
+    /// standalone Postmortems destination (`fm/grandline-docs-split-
+    /// runbooks-postmortems`), not a Docs tab any more. A failure here only ever
     /// appends an error message to that tab's own chat feed - the
     /// investigation transcript itself is never touched, so the captain can
     /// retry with nothing lost.
@@ -462,7 +464,7 @@ extension ConsoleController {
             case .success(let markdown):
                 let title = DocsRunbookStore.titleFromContent(markdown, fallback: "Postmortem - \(hostLabel)")
                 let saved = self.docsRunbookStore.createPostmortem(title: title, content: markdown)
-                chat.append(SRELeadMessage(role: .status, text: "Postmortem saved: \u{201C}\(saved.title)\u{201D} - see Docs \u{2192} Postmortems."))
+                chat.append(SRELeadMessage(role: .status, text: "Postmortem saved: \u{201C}\(saved.title)\u{201D} - see Postmortems."))
             case .failure(let error):
                 chat.append(SRELeadMessage(role: .error, text: "Couldn't generate the postmortem: \(error.message). You can try again."))
             }

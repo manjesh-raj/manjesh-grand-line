@@ -782,10 +782,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ))
 
         // Runbooks + postmortems - the pre-F5 palette, unchanged behaviour.
+        // `fm/grandline-docs-split-runbooks-postmortems` renamed the two
+        // `AppShellController` methods below (they used to be
+        // `openDocsRunbook`/`openDocsPostmortem`) once Runbooks/Postmortems
+        // stopped being Docs tabs and became their own destinations.
         index.register(UnifiedSearchDocsProvider(
             store: docsRunbookStore,
-            onOpenRunbook: { [weak self] id in self?.appShell.openDocsRunbook(id: id) },
-            onOpenPostmortem: { [weak self] id in self?.appShell.openDocsPostmortem(id: id) }
+            onOpenRunbook: { [weak self] id in self?.appShell.openRunbook(id: id) },
+            onOpenPostmortem: { [weak self] id in self?.appShell.openPostmortem(id: id) }
         ))
 
         // App actions + destinations - every entry an existing menu action.

@@ -63,8 +63,15 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
     /// Command Library does (`ShiftController.onSendCommandToTerminal`),
     /// since this page knows nothing about the console.
     var onSendCommandToTerminal: ((String) -> Void)?
-    /// Spec §18 - after writing a runbook, offer to jump to it in Docs.
+    /// Spec §18 - after writing a runbook, offer to jump to it (the
+    /// standalone Runbooks destination, `fm/grandline-docs-split-runbooks-
+    /// postmortems`).
     var onOpenRunbook: ((String) -> Void)?
+    /// The postmortem sibling of `onOpenRunbook` above, for `createIncident()`'s
+    /// saved-postmortem confirmation - a separate closure because a postmortem
+    /// id is never in `listRunbooks()`, so routing it through `onOpenRunbook`
+    /// (as this used to do) silently no-opped.
+    var onOpenPostmortem: ((String) -> Void)?
     /// Spec §12's third "add more evidence" action, "Send Terminal Output":
     /// this page has no terminal of its own, so the honest affordance is to
     /// take the captain to the Console, where the "Analyze Logs" toolbar
@@ -1681,14 +1688,14 @@ extension LogAnalyzerController {
         let body = LogAnalyzerArtifacts.incidentMarkdown(investigation)
         presentArtifact(title: "Incident",
                         explanation: "This incident write-up was generated from the current investigation. "
-                            + "Copy it, or save it as a postmortem in Docs.",
+                            + "Copy it, or save it as a postmortem.",
                         body: body,
-                        saveTitle: "Save to Docs → Postmortems") { [weak self] in
+                        saveTitle: "Save to Postmortems") { [weak self] in
             guard let self else { return }
             let created = self.runbookStore.createPostmortem(
                 title: "Incident: \(self.investigation.title)", content: body)
-            Toast.show(in: self.view, message: "Saved to Docs → Postmortems")
-            self.onOpenRunbook?(created.id)
+            Toast.show(in: self.view, message: "Saved to Postmortems")
+            self.onOpenPostmortem?(created.id)
         }
     }
 
@@ -1703,11 +1710,11 @@ extension LogAnalyzerController {
                             + "steps are fenced in the shape SRE Lead's runbook runner already reads, so it "
                             + "can be run later from a host session.",
                         body: body,
-                        saveTitle: "Save to Docs → Runbooks") { [weak self] in
+                        saveTitle: "Save to Runbooks") { [weak self] in
             guard let self else { return }
             let title = self.investigation.analysis?.ai?.rootCause?.summary ?? self.investigation.title
             let created = self.runbookStore.createRunbook(title: title, content: body)
-            Toast.show(in: self.view, message: "Saved to Docs → Runbooks")
+            Toast.show(in: self.view, message: "Saved to Runbooks")
             self.onOpenRunbook?(created.id)
         }
     }

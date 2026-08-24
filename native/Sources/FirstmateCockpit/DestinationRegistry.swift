@@ -107,7 +107,7 @@ enum DestinationSlotID: String, CaseIterable {
     /// launch landing and the target of every drill page's back button.
     case homeCanvas
     case overview, console, hosts, shift, review, logAnalyzer
-    case tools, vault, dictation, schedules, health, docs, setup, settings
+    case tools, vault, dictation, schedules, health, docs, runbooks, postmortems, setup, settings
 }
 
 extension RailDestination {
@@ -127,6 +127,8 @@ extension RailDestination {
         case .schedules: return .schedules
         case .health: return .health
         case .docs: return .docs
+        case .runbooks: return .runbooks
+        case .postmortems: return .postmortems
         case .updates, .bootstrap, .automation, .githubSync: return .setup
         case .settings: return .settings
         }
@@ -159,7 +161,12 @@ extension RailDestination {
         case .dictation: return "Speech to text, on this machine"
         case .schedules: return "Unattended runs of actions this app already has"
         case .health: return "How this app's own background services are doing"
-        case .docs: return "Playbook, runbooks and postmortems"
+        // `fm/grandline-docs-split-runbooks-postmortems` narrowed this to
+        // just the Playbook, since Runbooks and Postmortems are their own
+        // destinations now.
+        case .docs: return "The DevOps Playbook, browsable offline"
+        case .runbooks: return "Step-by-step operational procedures"
+        case .postmortems: return "Incident write-ups and root causes"
         case .updates, .bootstrap, .automation, .githubSync: return "Toolchain, machine config and fork sync"
         case .settings: return "Connection, appearance, terminal, security and backup"
         }
