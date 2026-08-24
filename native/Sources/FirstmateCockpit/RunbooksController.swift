@@ -474,6 +474,7 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
     // MARK: Theme
 
     private func applyTheme() {
+        HelmSelection.apply(to: runbookBodyTextView, theme: theme)
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
 
         view.wantsLayer = true

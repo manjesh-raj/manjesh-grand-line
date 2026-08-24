@@ -138,6 +138,7 @@ final class BriefingParagraphView: NSView, NSTextViewDelegate {
     }
 
     private func rebuild() {
+        HelmSelection.apply(to: textView, theme: theme)
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let paragraph = NSMutableParagraphStyle()
         paragraph.lineHeightMultiple = 1.35

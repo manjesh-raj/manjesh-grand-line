@@ -95,8 +95,178 @@ enum HelmContrastSelfTest {
         checkDaylightElevation(&ok)
         checkDaylightTypeRoles(&ok)
         checkGradientTileRecipe(&ok)
+        checkTextSelectionContrast(&ok)
         print(ok ? "== contrast: PASS ==" : "== contrast: FAIL ==")
         return ok
+    }
+
+    // MARK: Text selection - normal *and* selected text, every theme
+
+    /// `fm/grandline-text-selection-contrast-audit`.
+    ///
+    /// The captain reported selected text in the Console rendering as a muted
+    /// dark red on a dark blue block in light mode - both dark, effectively
+    /// illegible. Two mechanisms draw selected text in this app and they are
+    /// genuinely separate, so both are swept here:
+    ///
+    /// 1. **The terminal.** SwiftTerm pairs `selectedTextBackgroundColor` with
+    ///    `selectedTextForegroundColor` and `HelmTheme.apply(to:)` fills both
+    ///    from `selectionHex`/`selectionTextHex`. That pairing is what makes
+    ///    the terminal's selection measurable, so the vendored override is
+    ///    guarded as source too - a SwiftTerm re-sync that dropped it would
+    ///    leave every selected run in its own ANSI colour on the selection
+    ///    fill, which is exactly the reported shape and which no colour value
+    ///    in this file could detect.
+    ///
+    /// 2. **`HelmSelection`** - every `NSTextView` this app owns, and (through
+    ///    the shared field editor) every *selectable* `NSTextField`. Its fill
+    ///    is opaque for the reason its own doc comment measures: a translucent
+    ///    wash's effective colour depends on the surface underneath, and on
+    ///    Daylight no single foreground clears the floor against both a light
+    ///    field and §6.13's dark terminal card.
+    ///
+    /// Normal (unselected) text is swept alongside, because "legible when
+    /// selected" is only half of what the captain asked for - and that half is
+    /// what caught `solarized-light`'s shipped `base00`/`base3` body pairing
+    /// at 4.13:1.
+    private static func checkTextSelectionContrast(_ ok: inout Bool) {
+        print("\n-- text selection (terminal + UI), normal and selected, every theme --")
+
+        for theme in HelmTheme.allThemes {
+            let fg = HelmTheme.nsColor(theme.foregroundHex)
+            let bg = HelmTheme.nsColor(theme.backgroundHex)
+            let selFill = HelmTheme.nsColor(theme.selectionHex)
+            let selInk = HelmTheme.nsColor(theme.selectionTextHex)
+
+            let normal = HelmContrast.ratio(fg, bg)
+            let selected = HelmContrast.ratio(selInk, selFill)
+            // A highlight nobody can see is not a highlight. Same floor the UI
+            // side uses, and deliberately not WCAG's 3:1 non-text bar - see
+            // `HelmSelection.minimumSurfaceSeparation`.
+            let visible = HelmContrast.ratio(selFill, bg)
+
+            if normal < HelmContrast.textTarget {
+                print(String(format: "  FAIL %@: normal terminal text %.2f on its background (floor %.2f)",
+                             theme.id, normal, HelmContrast.textTarget))
+                ok = false
+            }
+            if selected < HelmContrast.textTarget {
+                print(String(format: "  FAIL %@: selected terminal text %.2f on the selection fill (floor %.2f)",
+                             theme.id, selected, HelmContrast.textTarget))
+                ok = false
+            }
+            if visible < HelmSelection.minimumSurfaceSeparation {
+                print(String(format: "  FAIL %@: terminal selection fill %.2f from the terminal background (floor %.2f)",
+                             theme.id, visible, HelmSelection.minimumSurfaceSeparation))
+                ok = false
+            }
+            print(String(format: "  %-18@ terminal  normal %.2f  selected %.2f  fill-vs-bg %.2f",
+                         theme.id as NSString, normal, selected, visible))
+        }
+
+        for theme in HelmTheme.allThemes {
+            let resolved = HelmSelection.resolve(theme)
+            let fill = resolved.background
+            let ink = resolved.foreground
+
+            // Opaque by contract: the whole point of the fix is that the drawn
+            // colour - and therefore the measured pair - does not depend on
+            // whatever is underneath.
+            if (fill.usingColorSpace(.sRGB)?.alphaComponent ?? 0) < 0.999 {
+                print("  FAIL \(theme.id): UI selection fill is translucent - the pair is not measurable")
+                ok = false
+            }
+            if fill == NSColor.selectedTextBackgroundColor {
+                print("  FAIL \(theme.id): UI selection is the system colour, not the theme's")
+                ok = false
+            }
+
+            let selected = HelmContrast.ratio(ink, fill)
+            if selected < HelmContrast.textTarget {
+                print(String(format: "  FAIL %@: selected UI text %.2f on the selection fill (floor %.2f)",
+                             theme.id, selected, HelmContrast.textTarget))
+                ok = false
+            }
+            var worstSurface = Double.greatestFiniteMagnitude
+            for surface in HelmSelection.surfaces(theme) {
+                worstSurface = min(worstSurface, HelmContrast.ratio(fill, surface))
+            }
+            if worstSurface < HelmSelection.minimumSurfaceSeparation {
+                print(String(format: "  FAIL %@: UI selection fill %.2f from the surface under it (floor %.2f)",
+                             theme.id, worstSurface, HelmSelection.minimumSurfaceSeparation))
+                ok = false
+            }
+            print(String(format: "  %-18@ UI        selected %.2f  fill-vs-surface %.2f  wash %.2f",
+                         theme.id as NSString, selected, worstSurface, Double(resolved.washAlpha)))
+        }
+
+        checkEveryTextViewIsThemed(&ok)
+        checkVendoredTerminalPairsSelection(&ok)
+    }
+
+    /// Source guard: an app-owned `NSTextView` left on AppKit's own selection
+    /// paints `NSColor.selectedTextBackgroundColor` behind the run **and sets
+    /// no foreground at all**, so the text keeps whatever colour it already
+    /// had. That is unbounded by construction, and is how a maroon severity
+    /// run ends up on a dark blue block. Before this audit only 3 of the ~13
+    /// app-owned text views reached `HelmSelection`.
+    private static func checkEveryTextViewIsThemed(_ ok: inout Bool) {
+        guard let files = SelfTestSources.appSourceFiles() else {
+            print("  SKIP - sources not present next to this binary")
+            return
+        }
+        // `HelmForm.swift` and `HelmInput.swift` are where the mechanism
+        // lives; both already apply it (and `HelmInput` names the token in
+        // prose in order to define it).
+        let exempt: Set<String> = ["HelmInput.swift"]
+        var offenders: [String] = []
+        for file in files where !exempt.contains(file.lastPathComponent) {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            let makesTextView = text
+                .split(separator: "\n", omittingEmptySubsequences: false)
+                .contains { line in
+                    let t = line.trimmingCharacters(in: .whitespaces)
+                    return !t.hasPrefix("//") && t.contains("NSTextView(")
+                }
+            if makesTextView && !text.contains("HelmSelection") {
+                offenders.append(file.lastPathComponent)
+            }
+        }
+        if offenders.isEmpty {
+            print("  OK - every file creating an NSTextView applies HelmSelection")
+        } else {
+            for o in offenders { print("  FAIL \(o): creates an NSTextView but never calls HelmSelection.apply") }
+            ok = false
+        }
+    }
+
+    /// The terminal's measured pair is only real while SwiftTerm actually
+    /// overrides a selected run's foreground. This is vendored source, so a
+    /// re-sync is the realistic way it disappears - and it would disappear
+    /// silently, since every colour value in this file would keep passing.
+    private static func checkVendoredTerminalPairsSelection(_ ok: inout Bool) {
+        guard let root = SelfTestSources.appSourceDirectory() else {
+            print("  SKIP - sources not present next to this binary")
+            return
+        }
+        let file = root
+            .deletingLastPathComponent()   // Sources/
+            .deletingLastPathComponent()   // native/
+            .appendingPathComponent("Vendor/SwiftTerm/Sources/SwiftTerm/Apple/AppleTerminalView.swift")
+        guard let text = try? String(contentsOf: file, encoding: .utf8) else {
+            print("  SKIP - vendored AppleTerminalView.swift not found at \(file.path)")
+            return
+        }
+        let pairsBackground = text.contains("mutable[.selectionBackgroundColor] = selectedTextBackgroundColor")
+        let pairsForeground = text.contains("mutable[.foregroundColor] = selectedTextForegroundColor")
+        if pairsBackground && pairsForeground {
+            print("  OK - vendored SwiftTerm still pairs the selected run's foreground with selectedTextForegroundColor")
+        } else {
+            print("  FAIL - vendored SwiftTerm no longer overrides a selected run's colours "
+                  + "(background: \(pairsBackground), foreground: \(pairsForeground)); "
+                  + "selected terminal text would keep its own ANSI colour on the selection fill")
+            ok = false
+        }
     }
 
     // MARK: Setup flyout - one hue per destination

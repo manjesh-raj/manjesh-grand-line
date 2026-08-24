@@ -334,6 +334,7 @@ final class FleetMessageComposer: NSView, NSTextViewDelegate {
         card.applyTheme(theme)
         addressLabel.textColor = HelmTheme.mutedInk(theme)
         captionLabel.textColor = HelmTheme.mutedInk(theme)
+        HelmSelection.apply(to: textView, theme: theme)
         let ink = HelmField.ink(theme)
         textView.textColor = ink
         textView.insertionPointColor = ink

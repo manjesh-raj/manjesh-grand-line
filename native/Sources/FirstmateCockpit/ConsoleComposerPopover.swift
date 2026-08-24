@@ -515,6 +515,8 @@ private final class ConsoleComposerViewController: NSViewController, NSTextViewD
         composerCard.applyTheme(theme)
         shortcutHintLabel.textColor = muted
         statusLabel.textColor = statusIsError ? .systemRed : muted
+        HelmSelection.apply(to: intentTextView, theme: theme)
+        HelmSelection.apply(to: codeTextView, theme: theme)
         codeTextView.textColor = ink
         codeTextView.backgroundColor = fieldFill
         codeScroll.layer?.borderColor = line.withAlphaComponent(Self.fieldBorderAlpha).cgColor

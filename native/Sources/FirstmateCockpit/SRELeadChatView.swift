@@ -750,6 +750,7 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
+        HelmSelection.apply(to: textView, theme: theme)
         // **`chromeBackgroundHex`, not `backgroundHex`.** `backgroundHex` is
         // the *terminal's* own token; `chromeBackgroundHex` is this app's
         // surface. `fm/grandline-sre-lead-polish` moved `sreLeadPane` and
