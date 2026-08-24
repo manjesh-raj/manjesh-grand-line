@@ -614,6 +614,12 @@ final class AppShellController: NSViewController {
         docs.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         docs.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
         dictation.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        // Tools' subtitle counts open tool tabs, which the captain can change
+        // without leaving the page. Like every line above it, this is safe
+        // despite the page being lazily mounted (GL-37): assigning a closure
+        // never touches the controller's views, so it cannot force `loadView`
+        // to run early. Settings needs no callback - its subtitle is static.
+        tools.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Trigger both pages' own refresh once at launch so the badges have
         // a real count before the captain ever visits Overview or Review -
         // every later update comes from those pages' existing refresh

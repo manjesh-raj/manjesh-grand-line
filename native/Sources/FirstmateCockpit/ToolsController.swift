@@ -115,9 +115,43 @@ enum ToolKind: String, CaseIterable {
     }
 }
 
-final class ToolsController: NSViewController {
+final class ToolsController: NSViewController, DaylightDrillActions {
 
     private var theme: HelmTheme = ThemeManager.shared.theme
+
+    /// Set by `AppShellController` - "re-read my subtitle". The drill header
+    /// belongs to the shell; a page writing into it directly is how two owners
+    /// of one view start disagreeing.
+    var onDrillSubtitleChanged: (() -> Void)?
+
+    // MARK: Drill header (Daylight §6.4)
+
+    /// Deliberately empty, for the reason §6.13 gives Console: this page keeps
+    /// its actions in its own toolbar, one row below the header, and hoisting
+    /// a copy of New Tab up there would be the same control twice a few points
+    /// apart - which is the duplication §6.4 exists to remove. With no tab
+    /// open the toolbar is collapsed and the landing grid *is* the action, so
+    /// there is nothing to hoist then either.
+    var drillHeaderActions: [NSView] { [] }
+
+    /// §6.4's "`caption()` subtitle with live numbers", counted from the same
+    /// `tabs` array the strip below renders - so the header and the strip
+    /// cannot disagree.
+    ///
+    /// It also absorbs the page's own former caption. That label said
+    /// "Everyday DevOps utilities - everything runs locally, nothing leaves
+    /// this machine", one row under a header already reading "Tools / Nine
+    /// offline utilities" - §6.4's duplicate-title defect exactly. The claim
+    /// worth keeping from it ("offline") survives here; the label is gone.
+    var drillHeaderSubtitle: String? {
+        let utilities = "\(ToolKind.allCases.count) offline utilities"
+        guard !tabs.isEmpty else { return "\(utilities) \u{00B7} nothing open" }
+        let open = tabs.count == 1 ? "1 open" : "\(tabs.count) open"
+        if let current = currentTab, !pickerShowing {
+            return "\(utilities) \u{00B7} \(open) \u{00B7} \(current.name)"
+        }
+        return "\(utilities) \u{00B7} \(open)"
+    }
 
     // MARK: Tabs
 
@@ -138,7 +172,6 @@ final class ToolsController: NSViewController {
     private let tabsStack = NSStackView()
     private var plusButton: HelmButton!
 
-    private let subtitleLabel = NSTextField(labelWithString: "Everyday DevOps utilities - everything runs locally, nothing leaves this machine.")
     private let gridContainer = NSStackView()
     private var pageStack: NSStackView!
     private var scrollView: NSScrollView!
@@ -156,21 +189,17 @@ final class ToolsController: NSViewController {
 
         buildTabBar()
 
-        subtitleLabel.font = .systemFont(ofSize: 12)
-        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-
         gridContainer.orientation = .vertical
         gridContainer.alignment = .leading
         gridContainer.spacing = 10
         gridContainer.translatesAutoresizingMaskIntoConstraints = false
         rebuildGrid()
 
-        let stack = NSStackView(views: [subtitleLabel, gridContainer])
+        let stack = NSStackView(views: [gridContainer])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
-        subtitleLabel.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         gridContainer.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         pageStack = stack
 
@@ -365,6 +394,30 @@ final class ToolsController: NSViewController {
     private static let minCardWidth: CGFloat = 300
     private static let cardPadding: CGFloat = 16
 
+    /// §6.1's own grid minimum, used for the Daylight plate path. A module
+    /// plate carries less horizontal chrome than the pre-Daylight card (no
+    /// side-by-side tile and text column - the tile sits above), so it reads
+    /// well one step narrower and nine of them flow into fewer ragged rows.
+    private static let minPlateWidth: CGFloat = 255
+    private static let plateSpacing: CGFloat = 16
+
+    /// How many lines a plate's description may take.
+    ///
+    /// `HelmModuleCard`'s own default is 2, which suits a canvas widget
+    /// summarising something. A tool plate's note *is* the tool's one-sentence
+    /// description, and two lines truncated most of the nine at a real column
+    /// width. Four fits inside `HelmModuleCard.standardHeight`'s body area
+    /// with room to spare, which `DaylightDrillPageSlice6SelfTest` measures
+    /// rather than assumes.
+    private static let plateNoteLines = 4
+
+    /// Whether the grid currently on screen was built as Daylight plates.
+    ///
+    /// The two paths build genuinely different views, so a theme change that
+    /// crosses the Daylight boundary has to rebuild rather than re-theme -
+    /// `applyTheme` checks this. Within one palette family nothing rebuilds.
+    private var lastGridWasDaylight = ThemeManager.shared.theme.isDaylight
+
     private func rebuildGrid() {
         for v in gridContainer.arrangedSubviews {
             gridContainer.removeArrangedSubview(v)
@@ -374,10 +427,13 @@ final class ToolsController: NSViewController {
         cardBorderViews.removeAll()
         mutedLabels.removeAll()
 
+        let daylight = theme.isDaylight
+        lastGridWasDaylight = daylight
         let rows = HelmResponsiveGrid.rows(ToolKind.allCases,
                                            containerWidth: gridContainer.frame.width,
-                                           minItemWidth: Self.minCardWidth) { kind, width in
-            self.toolCard(kind, width: width)
+                                           minItemWidth: daylight ? Self.minPlateWidth : Self.minCardWidth,
+                                           spacing: daylight ? Self.plateSpacing : HelmResponsiveGrid.spacing) { kind, width in
+            daylight ? self.toolPlate(kind) : self.toolCard(kind, width: width)
         }
         for row in rows {
             gridContainer.addArrangedSubview(row)
@@ -408,6 +464,53 @@ final class ToolsController: NSViewController {
     @objc private func toolCardClicked(_ sender: NSClickGestureRecognizer) {
         guard let raw = sender.view?.identifier?.rawValue, let kind = ToolKind(rawValue: raw) else { return }
         openNewTab(kind: kind)
+    }
+
+    // MARK: Landing grid plate (Daylight §7 / §6.1)
+
+    /// §7's "landing grid uses module-style plates" - the canvas's own
+    /// `HelmModuleCard`, not a second card that merely resembles it.
+    ///
+    /// Reusing the real component is what buys the whole §6.1 anatomy for
+    /// free: the 6pt hue ribbon, the 30pt gradient tile, the resting-to-raised
+    /// shadow swap on hover (with §6.1's translate skipped under Reduce
+    /// Motion), one uniform card height across all nine plates, and the
+    /// accessibility treatment - the plate is a `.button` labelled
+    /// "<title>, <subtitle>, <chip>" because the recognizer sits on a
+    /// `HoverHighlightView`. A hand-rolled copy would have had to re-derive
+    /// every one of those and would drift from the hub a rail click away.
+    ///
+    /// The per-tool hue is this page's own existing `ToolKind.tint` mapped
+    /// through `HelmDomainHue(tint:)`, so the nine plates stay as
+    /// differentiated as the nine icon tiles they replace - the colour is not
+    /// re-invented here, only re-expressed as a gradient.
+    ///
+    /// No `width` parameter, unlike `toolCard`: `HelmModuleCard`'s note label
+    /// wraps against whatever width the row's `.fillEqually` distribution
+    /// gives it rather than needing a `preferredMaxLayoutWidth` guessed up
+    /// front, which is the one thing the pre-Daylight card needed it for.
+    ///
+    /// **Why `HelmModuleCard` and not `HelmPlateCard`**, the sibling slice 5
+    /// built for Docs' runbook grid and expected this page to share. Both of
+    /// the contracts that component drops are ones this grid needs. Clicking
+    /// anywhere on a tool card has opened that tool in a new tab since the page
+    /// shipped, so swapping whole-card activation for an Open button would be a
+    /// behaviour change rather than a restyle; a nine-item picker is precisely
+    /// the case `standardHeight` exists for; and `HelmPlateCard.Content` has no
+    /// body slot at all, while a tool plate's substance *is* its description -
+    /// 76 to 95 characters, which a one-line truncating subtitle would cut.
+    /// A runbook plate and a tool plate look alike and are not the same object.
+    private func toolPlate(_ kind: ToolKind) -> NSView {
+        let plate = HelmModuleCard()
+        plate.configure(HelmModuleCard.Content(
+            title: kind.title,
+            subtitle: kind.shortName,
+            symbol: kind.symbol,
+            hue: HelmDomainHue(tint: kind.tint),
+            chip: nil,
+            body: .note(kind.description, maxLines: Self.plateNoteLines)))
+        plate.onOpen = { [weak self] in self?.openNewTab(kind: kind) }
+        return plate
     }
 
     // MARK: Landing grid card
@@ -611,7 +714,16 @@ final class ToolsController: NSViewController {
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
         tabBar.applyTheme(theme)
 
-        subtitleLabel.textColor = muted
+        // Crossing the Daylight boundary changes which *kind* of view the grid
+        // is made of (module plates versus the pre-Daylight cards), so it is a
+        // rebuild rather than a re-theme. Guarded on the boundary itself, not
+        // on every theme change: switching between two of the twelve is a pure
+        // recolour and must not churn nine cards. `rebuildGrid` records the new
+        // value before calling back into here, so this cannot recurse.
+        if theme.isDaylight != lastGridWasDaylight {
+            rebuildGrid()
+            return
+        }
 
         for tile in cardIconTiles { tile.applyTheme(theme) }
         for label in mutedLabels { label.textColor = muted }
@@ -625,7 +737,25 @@ final class ToolsController: NSViewController {
         styleChips()
     }
 
+    #if FM_SELFTESTS
+    /// Probe surface for `DaylightDrillPageSlice6SelfTest` - the two numbers
+    /// its plate-fits case has to measure against rather than restate.
+    static var minPlateWidthForTests: CGFloat { minPlateWidth }
+    static var plateNoteLinesForTests: Int { plateNoteLines }
+    var debugTabCount: Int { tabs.count }
+    /// Forces the grid through a full rebuild at a given width - the churn a
+    /// live window resize causes, without needing a real drag.
+    func debugRelayoutGrid(containerWidth: CGFloat) {
+        gridContainer.frame.size.width = containerWidth
+        rebuildGrid()
+    }
+    #endif
+
     private func styleChips() {
+        // §6.4: the one choke point every tab add / close / rename / selection
+        // already passes through, so the drill header's own count line cannot
+        // drift from the strip it describes.
+        onDrillSubtitleChanged?()
         let accent = HelmTheme.nsColor(theme.accentHex)
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let muted = ink.withAlphaComponent(0.55)

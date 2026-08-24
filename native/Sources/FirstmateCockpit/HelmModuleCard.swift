@@ -117,7 +117,16 @@ final class HelmModuleCard: NSView {
         /// A big numeral over a capsule progress bar.
         case progress(value: Int, total: Int, note: String)
         /// One wrapping line of copy.
-        case note(String)
+        ///
+        /// `maxLines` is 2 for every canvas module - a hub widget summarises
+        /// rather than explains. Phase 4 slice 6's Tools landing grid is the
+        /// one caller that needs more: its plates carry each tool's real
+        /// one-sentence description, and two lines truncated most of them.
+        /// The card's own `standardHeight` still bounds it (§6.1's body area
+        /// is ~100pt, i.e. six caption lines), so this cannot silently
+        /// overflow - `DaylightDrillPageSlice6SelfTest` measures the real
+        /// need against the real area.
+        case note(String, maxLines: Int = 2)
         /// The briefing's linked paragraph. Each clause carries its own
         /// navigation target; a clause with `.none` renders as plain text
         /// rather than as a link that goes nowhere.
@@ -460,8 +469,8 @@ final class HelmModuleCard: NSView {
             content = buildRing(value: value, total: total, title: title, note: note)
         case let .progress(value, total, note):
             content = buildProgress(value: value, total: total, note: note)
-        case let .note(text):
-            content = buildNote(text)
+        case let .note(text, maxLines):
+            content = buildNote(text, maxLines: maxLines)
         case let .paragraph(clauses):
             content = buildParagraph(clauses)
         }
@@ -502,11 +511,11 @@ final class HelmModuleCard: NSView {
         return label
     }
 
-    private func noteLabel(_ text: String) -> NSTextField {
+    private func noteLabel(_ text: String, maxLines: Int = 2) -> NSTextField {
         let label = NSTextField(wrappingLabelWithString: text)
         label.font = HelmType.caption()
         label.isSelectable = false
-        label.maximumNumberOfLines = 2
+        label.maximumNumberOfLines = max(1, maxLines)
         label.lineBreakMode = .byTruncatingTail
         label.translatesAutoresizingMaskIntoConstraints = false
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -627,8 +636,8 @@ final class HelmModuleCard: NSView {
         return verticalStack([number, bar, noteLabel(note)], spacing: HelmMetrics.s2)
     }
 
-    private func buildNote(_ text: String) -> NSView {
-        verticalStack([noteLabel(text)], spacing: 0)
+    private func buildNote(_ text: String, maxLines: Int = 2) -> NSView {
+        verticalStack([noteLabel(text, maxLines: maxLines)], spacing: 0)
     }
 
     private func buildParagraph(_ clauses: [BriefingClause]) -> NSView {
