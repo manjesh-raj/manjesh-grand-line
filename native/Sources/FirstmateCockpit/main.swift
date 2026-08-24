@@ -1390,6 +1390,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_VAULT_DATA_TESTS"] == "1" {
     exit(VaultDataSelfTest.run() ? 0 : 1)
 }
 
+// `fm/grandline-vault-recipe-export-diverged-fix`: real disposable local
+// bare-repo coverage for `VaultRecipeGit.export`'s ahead/behind/diverged
+// classification - see VaultRecipeGitSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_VAULT_RECIPE_GIT_TESTS"] == "1" {
+    exit(VaultRecipeGitSelfTest.run() ? 0 : 1)
+}
+
 // `fm/grandline-live-gap-rootcause-scout`: real-view-hierarchy regression
 // coverage for the captain-reported black/blank right-side window gap -
 // asserts `AppShellController.bodyContainer`'s width tracks the window's
