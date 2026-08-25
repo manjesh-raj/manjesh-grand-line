@@ -1548,6 +1548,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_DISPLAY_GATING_TESTS"] =
     exit(TerminalDisplayGatingSelfTest.run() ? 0 : 1)
 }
 
+// `fm/grand-line-shell-selection-investigate-fix`: same convention, for the
+// Shell tab's own text selection measured from real rendered pixels - see
+// TerminalSelectionRenderSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_SELECTION_RENDER_TESTS"] == "1" {
+    exit(TerminalSelectionRenderSelfTest.run() ? 0 : 1)
+}
+
 // `fm/grandline-dictation-mvp`: same convention, for `DictationHotkey`'s
 // hold/release detection over synthetic `.flagsChanged` events - see
 // DictationHotkeySelfTest.swift's header.
