@@ -616,7 +616,14 @@ final class HelmModuleCard: NSView {
         titleField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         metricLabels.append(titleField)
 
-        let text = verticalStack([titleField, noteLabel(note)], spacing: 2)
+        // B9 (`data/grand-line-e2e-audit/report.md`): three lines, not the
+        // default two. A `.ring` body spends `HelmRingGauge.side` (66pt) of
+        // the card's width on the gauge, so its note column is much narrower
+        // than a plain `.note` body's - which is why Overview's Health module
+        // truncated mid-word ("Everything that has reported i...") while the
+        // card still had vertical room. Three caption lines are still shorter
+        // than the 66pt gauge beside them, so the row does not grow.
+        let text = verticalStack([titleField, noteLabel(note, maxLines: 3)], spacing: 2)
         text.alignment = .leading
 
         let row = compressibleStack(NSStackView(views: [ring, text]))
