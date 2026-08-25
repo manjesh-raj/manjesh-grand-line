@@ -1033,6 +1033,28 @@ final class AppShellController: NSViewController {
                          isCanvas: slot.id == .homeCanvas,
                          slotController: slot.controller)
 
+        // B5 (`data/grand-line-e2e-audit/report.md`): keep the bar's selected
+        // space honest on **every** navigation, not only a pill click.
+        //
+        // `selectSpace` was the one place that called `setSelectedSpace`, so
+        // reaching a page any other way - ⌘K, a notification's deep link, a
+        // canvas module card, a menu item - left the previously selected pill
+        // lit while showing a page that belongs to a different space. The
+        // audit's own walk caught it: every drill-page render showed
+        // "Engineering" highlighted, including Schedules and Health (which are
+        // `.operations`) and Tasks (`.command`). A highlight that asserts the
+        // wrong location is worse than none.
+        //
+        // Derived from the module table (`DaylightModule.space(forDestination:)`),
+        // never a second copy of that mapping. A destination no module opens,
+        // and the canvas itself, leave the pills alone - the canvas's space is
+        // whatever the captain last chose, which `selectSpace` still owns.
+
+
+        if let space = DaylightModule.space(forDestination: dest) {
+            bar.setSelectedSpace(space)
+        }
+
         // §8 Phase 6: which destination is showing decides where the bar's
         // chain hands off, so the loop is re-derived on every navigation.
         updateKeyViewLoop()
