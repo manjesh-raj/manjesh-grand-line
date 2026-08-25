@@ -1,8 +1,7 @@
 // Manjesh Grand Line - native macOS app.
 //
 // F7's composer: the small inline "type an answer and send it" card Overview
-// shows under a needs-decision row, and again (unaddressed) for the header's
-// "Message first mate" action.
+// shows under a needs-decision row.
 //
 // Built on `HelmComposerCard` (`HelmUIComponents.swift`) rather than a fourth
 // hand-rolled input surface - the spec is explicit about reusing it, and this
@@ -13,10 +12,12 @@
 // grow-with-content behaviour (hence the height constraint this view updates
 // by hand on every edit).
 //
-// It renders only; it never sends anything itself. `onSend` hands the text
-// back to whoever owns the channel - which is what lets the same view serve
-// both F7 channels (`fm-send.sh` for a task reply, the Herdr tab for a
-// general message) without knowing about either.
+// It renders only; it never sends anything itself - `onSend` hands the text
+// back to whoever owns the channel (`FleetActions.reply`, which shells out to
+// `fm-send.sh`). This view used to also serve a second, unaddressed channel
+// (the header's "Message first mate" action, typed into the herdr-attached
+// "Mirror" tab); `fm/grand-line-remove-firstmate-mirror` removed that channel
+// whole, along with the tab it sent into.
 
 import AppKit
 

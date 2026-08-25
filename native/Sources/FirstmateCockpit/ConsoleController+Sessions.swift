@@ -3,8 +3,11 @@
 // GL-36, part of `ConsoleController`'s decomposition: what a tab actually
 // *runs*. Three kinds, each with its own start-up story:
 //
-//   - the pinned Firstmate pair (a login shell plus a bare `herdr` client -
-//     see `HerdrSession`'s header for the "Mirror" abstraction E1 removed),
+//   - the pinned Firstmate host's login shell (`fm/grand-line-remove-
+//     firstmate-mirror` deleted the herdr-attached "Mirror" tab this console
+//     used to open alongside it - see that task's PR for the full removal.
+//     The captain: he watches/drives firstmate's own herdr session in his own
+//     terminal now, not embedded in this app),
 //   - a one-shot command tab (Bootstrap/Settings/Vault's interactive `sudo`
 //     actions, which need a real TTY and so cannot be background processes),
 //   - and an `ssh` tab for a saved host, including the off-main Keychain
@@ -22,33 +25,23 @@ extension ConsoleController {
 
     // MARK: The pinned "Firstmate" host (Fix 4)
 
-    /// Open the built-in tab pair - the connect action for the Hosts
-    /// sidebar's pinned, non-deletable "Firstmate" entry, and also what
-    /// `loadView` calls to land the app on this pair at startup. Like every
-    /// other host, connecting always opens a fresh tab pair rather than
-    /// reusing an existing one. Still exactly two tabs: "Herdr" (a bare
-    /// `herdr` client - see `HerdrSession`) + "Shell".
+    /// Open the built-in tab - the connect action for the Hosts sidebar's
+    /// pinned, non-deletable "Firstmate" entry, and also what `loadView`
+    /// calls to land the app on this tab at startup. Like every other host,
+    /// connecting always opens a fresh tab rather than reusing an existing
+    /// one.
+    ///
+    /// Before `fm/grand-line-remove-firstmate-mirror`, this opened a second
+    /// tab too - "Herdr", a bare `herdr` client attaching firstmate's own
+    /// live session, mirrored inside the app. The captain removed it
+    /// outright (not a fix - see that task's PR): a real backgrounded-idle
+    /// energy check showed the herdr-attached tab was still driving
+    /// meaningful CPU/GPU cost even with E1's display-gating fix in place, so
+    /// he decided he'll watch/drive firstmate's own session in his own
+    /// terminal (WezTerm/iTerm) instead of embedding it here. Do not
+    /// reinstate it without a fresh captain decision.
     @discardableResult
     func openFirstmateHost(focus: Bool = true) -> TabModel {
-        // The herdr tab first, Shell second (fixes3) - both the tab bar order
-        // and the ⌘1…⌘9 shortcut numbering follow `tabs`' append order, so
-        // this tab must be created before the shell tab.
-        //
-        // E1: no asynchronous backend resolution here anymore, and therefore
-        // no placeholder launch spec, no `isAwaitingMirrorResolution`, and no
-        // deferred rename. Resolving this tab is one `isExecutableFile` check
-        // (`HerdrSession.resolve`), which is what GL-12's async workaround
-        // existed to avoid doing three subprocess calls for.
-        let herdrExecutable: String
-        switch HerdrSession.resolve() {
-        case .success(let path): herdrExecutable = path
-        // The launch spec is still created with the name the captain would
-        // expect; `startTab` is what surfaces the failure, in the terminal,
-        // so ⌘R keeps working once herdr is installed.
-        case .failure: herdrExecutable = ""
-        }
-        let herdr = TabLaunch.herdr(executable: herdrExecutable, cwd: FirstmateHome.root.path)
-        addTab(launch: herdr, name: numberedName(for: herdr), select: false)
         let s = shellArgv()
         let shell = TabLaunch.shell(executable: s.executable, args: s.args, cwd: shellCwd())
         let shellTab = addTab(launch: shell, name: numberedName(for: shell), select: false)
@@ -275,53 +268,6 @@ extension ConsoleController {
         currentTab?.terminal.send(txt: text + "\n")
     }
 
-    // MARK: F7 - the general "message first mate" channel
-
-    /// What `sendToFirstmateMirror` actually did. Three cases rather than a
-    /// `Bool` for the same reason `FleetReplyOutcome` has three: the captain
-    /// must never be told a message landed when it did not, and "there is no
-    /// live firstmate session here yet" is a genuinely different thing to fix
-    /// than "there is no Herdr tab in this console".
-    enum FirstmateMirrorSendResult: Equatable {
-        case sent
-        /// This console has no herdr tab at all - only possible on a per-host
-        /// console, which never opens one.
-        case noMirrorTab
-        /// The tab exists but its backing session has not started yet (its
-        /// process is forked on first appearance). Nothing was typed.
-        case notStarted
-    }
-
-    /// F7's general-message channel: type `text` into the live firstmate
-    /// session's own tab - the bare `herdr` client.
-    ///
-    /// Deliberately **not** `currentTab`, unlike `runSnippetInActiveTab` and
-    /// `sendCommandLibraryTextToActiveTab` above: those two mean "whatever I
-    /// am looking at", while this one addresses one specific session by name.
-    /// Sending a message meant for the first mate into whatever shell happened
-    /// to be in front would be worse than not sending it.
-    ///
-    /// This is the same `TerminalView.send(txt:)` injection Snippets' Run
-    /// action and the SRE Lead bridge already use - no new mechanism, and no
-    /// task-addressed send path involvement (there is no task id here, so the
-    /// verified-submit script has nothing to target - see
-    /// `FleetActions.swift`'s header).
-    /// `text` is assumed non-empty - `AppShellController.sendToFirstmate` is
-    /// the only caller and refuses an empty message there, where it can give
-    /// the real reason rather than borrowing one of these three.
-    func sendToFirstmateMirror(_ text: String) -> FirstmateMirrorSendResult {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let tab = tabs.first(where: { if case .herdr = $0.launch { return true } else { return false } }) else {
-            return .noMirrorTab
-        }
-        // `startProcess` has not run yet, so there is no PTY to write into -
-        // typing here would silently vanish.
-        guard tab.started else { return .notStarted }
-        select(tabID: tab.id, focus: false)
-        tab.terminal.send(txt: trimmed + "\n")
-        return .sent
-    }
-
     /// Delete a tab's materialized key scratch dir, if it has one. Called
     /// before every (re)start, on close, and on quit - never left for a crash
     /// to clean up.
@@ -329,35 +275,5 @@ extension ConsoleController {
         guard let path = tab.sshKeyTempPath else { return }
         SSHKeyMaterializer.cleanup(privateKeyPath: path)
         tab.sshKeyTempPath = nil
-    }
-
-    /// Start this tab's bare `herdr` client (E1 - see `HerdrSession`'s
-    /// header). No session-existence pre-check, no grouped session to create,
-    /// no target to resolve: the one failure mode left is "herdr isn't
-    /// installed", which is written into the terminal so it is visible rather
-    /// than silent.
-    func connectHerdr(_ tab: TabModel, executable: String, cwd: String) {
-        let resolved: String
-        if !executable.isEmpty, FileManager.default.isExecutableFile(atPath: executable) {
-            resolved = executable
-        } else {
-            // The path baked into the launch spec is gone (uninstalled, or
-            // herdr wasn't installed when this tab was created) - look again,
-            // so ⌘R recovers without reopening the tab.
-            switch HerdrSession.resolve() {
-            case .success(let path): resolved = path
-            case .failure(let err):
-                tab.terminal.feed(text: "\r\n  \u{1b}[2m[herdr]\u{1b}[0m \(err.message)\r\n")
-                tab.terminal.feed(text: "  \u{1b}[2mInstall herdr, then press ⌘R to reconnect.\u{1b}[0m\r\n")
-                return
-            }
-        }
-        tab.terminal.startProcess(
-            executable: resolved,
-            args: HerdrSession.arguments,
-            environment: childEnvironment(),
-            execName: nil,
-            currentDirectory: cwd
-        )
     }
 }

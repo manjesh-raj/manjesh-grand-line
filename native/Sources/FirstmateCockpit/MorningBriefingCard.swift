@@ -250,9 +250,9 @@ final class MorningBriefingCard: NSView {
     var onActivate: ((BriefingTarget) -> Void)?
 
     /// Where the Claude-usage popover should anchor when a `.quota` clause is
-    /// clicked. Console's own toolbar button is not reachable from here (it
-    /// only exists on a Herdr-backed mirror tab), so the popover hangs off the
-    /// paragraph the captain just clicked.
+    /// clicked - it hangs off the paragraph the captain just clicked, since
+    /// this page has its own `QuotaUsageController` instance rather than
+    /// reaching for a toolbar button elsewhere.
     var quotaAnchor: NSView { paragraph }
 
     private let card = HelmCard()

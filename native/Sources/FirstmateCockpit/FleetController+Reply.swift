@@ -1,31 +1,27 @@
 // Manjesh Grand Line - native macOS app.
 //
-// F7's Overview surface: the "Needs your call" list, each row's inline reply
-// composer, and the header's unaddressed "Message first mate" composer.
+// F7's Overview surface: the "Needs your call" list and each row's inline
+// reply composer.
 //
 // Split out of `FleetController.swift` (already ~1000 lines) along the same
 // seam `ConsoleController`'s own six files use - a Swift extension cannot hold
 // stored properties, so this feature's few live views are declared in the main
 // file's "F7" block and everything that *does* something with them is here.
 //
-// Nothing in this file talks to a channel. A row's Send calls
-// `FleetActions.reply` (which shells out to `bin/fm-send.sh`); the general
-// composer's Send calls `onMessageFirstMate`, which `AppShellController`
-// answers through the Herdr tab. That separation is what makes "the general
-// message never touches fm-send.sh" a checkable property rather than a claim -
-// see `FleetActionsSelfTest`.
+// Nothing in this file talks to a channel: a row's Send calls
+// `FleetActions.reply`, which shells out to `bin/fm-send.sh`.
+//
+// This file used to also hold the header's unaddressed "Message first mate"
+// composer - a general (not task-addressed) message typed into the
+// herdr-attached "Mirror" tab, via `AppShellController.sendToFirstmate` ->
+// `ConsoleController.sendToFirstmateMirror`. `fm/grand-line-remove-firstmate-
+// mirror` removed it whole, along with that tab: with no embedded herdr
+// session to type into, the feature had nowhere left to send. The captain's
+// own words on why the tab is gone at all: he'll watch/drive firstmate's own
+// session in his own terminal, not embedded in this app. The per-task Reply
+// path below is untouched - it never went through the Mirror tab.
 
 import AppKit
-
-/// What the general "message first mate" channel did. `FleetController` never
-/// learns *how* it was sent, only whether it landed - so this page stays
-/// ignorant of `ConsoleController` and its tabs, matching how it already knows
-/// nothing about navigation beyond a `RailDestination`.
-enum FleetGeneralMessageOutcome: Equatable {
-    case sent
-    /// Nothing was typed anywhere. The string is the real reason, shown as-is.
-    case notSent(String)
-}
 
 extension FleetController {
 
@@ -79,13 +75,6 @@ extension FleetController {
             needsStack.widthAnchor.constraint(equalTo: section.widthAnchor),
         ])
         return section
-    }
-
-    func buildGeneralComposerHost() {
-        generalComposerHost.orientation = .vertical
-        generalComposerHost.alignment = .leading
-        generalComposerHost.spacing = 0
-        generalComposerHost.translatesAutoresizingMaskIntoConstraints = false
     }
 
     /// Rebuild the needs-decision/blocked rows. An already-open composer is
@@ -232,7 +221,7 @@ extension FleetController {
     /// The mockup's caption, plus - only when it is actually true - the fact
     /// that this answer also closes the captain-facing decision record.
     private func replyCaption(decisions: [FleetDecision]) -> String {
-        let base = "Sent as a reply into the firstmate session for this crew, same as answering in the Herdr tab."
+        let base = "Sent as a reply into the firstmate session for this crew, same as answering in a terminal."
         switch decisions.count {
         case 1:
             return base + " Closes the open \(decisions[0].verb) \u{201C}\(decisions[0].key)\u{201D}."
@@ -280,67 +269,6 @@ extension FleetController {
         }
     }
 
-    // MARK: The general "message first mate" composer
-
-    /// The header button toggles (press again to dismiss); ⌘K's action always
-    /// opens, since "open the thing I just asked for" is the only sensible
-    /// reading of a palette command.
-    @objc func messageFirstMateTapped() {
-        if generalComposer != nil {
-            closeGeneralComposer()
-            return
-        }
-        openMessageFirstMateComposer()
-    }
-
-    func openMessageFirstMateComposer() {
-        if let existing = generalComposer {
-            existing.focusInput()
-            return
-        }
-        let composer = FleetMessageComposer(
-            address: nil,
-            caption: "Sent into the live firstmate session in the Herdr tab, exactly as if you typed it there. Not addressed to any task.",
-            placeholder: "Message your first mate\u{2026}",
-            sendTitle: "Send")
-        composer.onSend = { [weak self] text in self?.sendGeneralMessage(text) }
-        composer.onCancel = { [weak self] in self?.closeGeneralComposer() }
-        composer.applyTheme(currentTheme)
-        generalComposer = composer
-        generalComposerHost.addArrangedSubview(composer)
-        composer.widthAnchor.constraint(equalTo: generalComposerHost.widthAnchor).isActive = true
-        generalComposerHost.isHidden = false
-        messageFirstMateButton.title = "Close message"
-        composer.focusInput()
-    }
-
-    func closeGeneralComposer() {
-        generalComposer?.removeFromSuperview()
-        generalComposer = nil
-        generalComposerHost.isHidden = true
-        messageFirstMateButton.title = "Message first mate"
-    }
-
-    private func sendGeneralMessage(_ text: String) {
-        guard let composer = generalComposer else { return }
-        guard let send = onMessageFirstMate else {
-            composer.setStatus("No console is available to send through.", tint: .critical)
-            return
-        }
-        composer.setBusy(true)
-        composer.setStatus("Sending\u{2026}", tint: nil)
-        send(text) { [weak self] outcome in
-            guard let self else { return }
-            composer.setBusy(false)
-            switch outcome {
-            case .sent:
-                Toast.show(in: self.view, message: "Message sent to your first mate.")
-                self.closeGeneralComposer()
-            case .notSent(let reason):
-                composer.setStatus("Message not sent: \(reason)", tint: .critical)
-            }
-        }
-    }
 }
 
 
@@ -364,7 +292,6 @@ extension FleetController {
     var debugNeedsSectionHidden: Bool { needsSectionView.isHidden }
     var debugNeedsRowCount: Int { needsAccentRows.count }
     var debugOpenReplyTaskID: String? { openReplyTaskID }
-    var debugGeneralComposerVisible: Bool { generalComposer != nil && !generalComposerHost.isHidden }
 
     /// The real Reply button for `taskID`, found the same way a click finds
     /// it - by walking the rendered stack, not by a cached reference.

@@ -39,10 +39,12 @@ final class FleetController: NSViewController {
     // of its feed from the same store's activity YAML.
     private let shiftStore: ShiftStore
     private let briefingCard = MorningBriefingCard()
-    /// The `.quota` clause opens the same Claude-usage popover Console's
-    /// toolbar shows, anchored on the briefing paragraph - Console's own
-    /// button only exists on a Herdr-backed mirror tab, so it is not something
-    /// this page can reach.
+    /// The `.quota` clause opens `QuotaUsageController`'s own popover,
+    /// anchored on the briefing paragraph - this page's own instance, not
+    /// shared with anything else (`QuotaUsagePopover.swift`'s header: this
+    /// used to also be reachable from a Console toolbar button on the
+    /// herdr-attached "Mirror" tab, removed in
+    /// `fm/grand-line-remove-firstmate-mirror`).
     private let quotaUsage = QuotaUsageController()
     private var isGeneratingBriefing = false
 
@@ -173,20 +175,6 @@ final class FleetController: NSViewController {
 
     // MARK: F7 - answering the crew (see `FleetController+Reply.swift`)
 
-    /// The header's "Message first mate" action. The composer it opens is
-    /// unaddressed - there is no task id - so it goes out through the Mirror
-    /// tab rather than `fm-send.sh`; see `FleetActions.swift`'s header on why
-    /// those are two channels and not one.
-    let messageFirstMateButton = HelmButton(title: "Message first mate", variant: .secondary,
-                                            symbol: "bubble.left.and.bubble.right")
-
-    /// Handed the captain's text and a completion the page calls back on the
-    /// main thread with the real outcome. `AppShellController` is the only
-    /// implementer (it owns `ConsoleController`, which owns the Herdr tab) -
-    /// this page knows nothing about terminals, matching how it already knows
-    /// nothing about navigation.
-    var onMessageFirstMate: ((String, @escaping (FleetGeneralMessageOutcome) -> Void) -> Void)?
-
     /// The "Needs your call" section: the needs-decision/blocked tasks the
     /// banner above only counts. Same plain-heading-over-`HelmAccentRow`-cards
     /// shape as "In flight" (see `buildSection`'s own note on why there is no
@@ -203,12 +191,8 @@ final class FleetController: NSViewController {
     /// away a half-typed answer.
     var openReplyTaskID: String?
     var openReplyComposer: FleetMessageComposer?
-    /// The unaddressed general-message composer, and the container it lives
-    /// in (an arranged subview, so hiding it leaves layout entirely).
-    let generalComposerHost = NSStackView()
-    var generalComposer: FleetMessageComposer?
     /// Live composers, so a theme change re-tints them.
-    var liveComposers: [FleetMessageComposer] { [openReplyComposer, generalComposer].compactMap { $0 } }
+    var liveComposers: [FleetMessageComposer] { [openReplyComposer].compactMap { $0 } }
 
     /// The needs-decision/blocked set the last `render` produced, so
     /// `FleetController+Reply` can re-lay its rows (open/close a composer)
@@ -252,7 +236,6 @@ final class FleetController: NSViewController {
         inFlightSectionView = inFlightSection
         let needsSection = buildNeedsSection()
         needsSectionView = needsSection
-        buildGeneralComposerHost()
 
         overviewContainer.orientation = .vertical
         overviewContainer.alignment = .leading
@@ -269,10 +252,9 @@ final class FleetController: NSViewController {
         overviewContainer.addArrangedSubview(briefingCard)
         overviewContainer.addArrangedSubview(loadingSection)
         overviewContainer.addArrangedSubview(bannerRow)
-        // F7: both composers and the "Needs your call" list sit directly under
-        // the banner that counts them - the mockup's own grouping - rather
-        // than below the stat tiles.
-        overviewContainer.addArrangedSubview(generalComposerHost)
+        // F7: the "Needs your call" list sits directly under the banner that
+        // counts them - the mockup's own grouping - rather than below the
+        // stat tiles.
         overviewContainer.addArrangedSubview(needsSection)
         overviewContainer.addArrangedSubview(statsRow)
         overviewContainer.addArrangedSubview(inFlightSection)
@@ -294,7 +276,6 @@ final class FleetController: NSViewController {
         statsRow.isHidden = true
         inFlightSection.isHidden = true
         needsSection.isHidden = true
-        generalComposerHost.isHidden = true
         briefingCard.isHidden = true
         logSection.isHidden = true
 
@@ -313,7 +294,6 @@ final class FleetController: NSViewController {
             statsRow.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
             inFlightSection.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
             needsSection.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
-            generalComposerHost.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
         ])
 
         tabs.onSelect = { [weak self] id in
@@ -414,14 +394,7 @@ final class FleetController: NSViewController {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        messageFirstMateButton.target = self
-        messageFirstMateButton.action = #selector(messageFirstMateTapped)
-        messageFirstMateButton.toolTip = "Send a message into the live firstmate session"
-        messageFirstMateButton.setContentHuggingPriority(.required, for: .horizontal)
-        messageFirstMateButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        messageFirstMateButton.translatesAutoresizingMaskIntoConstraints = false
-
-        let row = NSStackView(views: [textStack, spacer, messageFirstMateButton, refreshButton])
+        let row = NSStackView(views: [textStack, spacer, refreshButton])
         row.orientation = .horizontal
         row.alignment = .lastBaseline
         row.distribution = .fill

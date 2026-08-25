@@ -403,7 +403,7 @@ extension ConsoleController {
     /// no boundary at all, and the spec asks for the card permanently there.
     /// `terminalInset > 0` is what keeps the shared Firstmate console out of
     /// it in every palette - it has no margin for a card to live in, by
-    /// design, so its Shell and Herdr tabs stay flush at full column count.
+    /// design, so its own Shell tab stays flush at full column count.
     ///
     /// This is deliberately **not** a frame change: `terminalInset` is already
     /// permanent, so all that happens here is that a decorative overlay

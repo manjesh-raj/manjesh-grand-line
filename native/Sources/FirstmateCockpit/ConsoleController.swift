@@ -15,9 +15,12 @@
 //   - **Close** (⌘W / the "×"): with the last-tab edge case handled - closing the
 //     final tab opens a fresh shell so the window is never empty.
 //
-// The initial set is still Shell + Mirror, so nothing regresses. Every tab is a
-// paste-hardening `CockpitTerminalView`, so screenshot-paste into Claude works on
-// all of them, and every terminal gets Helm theming, font zoom, find, copy, a
+// The pinned Firstmate host opens with a single Shell tab
+// (`fm/grand-line-remove-firstmate-mirror` deleted the herdr-attached tab
+// this console used to open alongside it - see that file's PR for the full
+// removal and why). Every tab is a paste-hardening `CockpitTerminalView`, so
+// screenshot-paste into Claude works on all of them, and every terminal gets
+// Helm theming, font zoom, find, copy, a
 // generous scrollback, and smooth native scrolling.
 
 //
@@ -31,11 +34,11 @@
 //                                          close, reconnect, window title,
 //                                          `LocalProcessTerminalViewDelegate`
 //   - `ConsoleController+Sessions.swift`   what a tab runs: the Firstmate
-//                                          shell/mirror pair, one-shot
+//                                          host's own shell, one-shot
 //                                          command tabs, `ssh` + key unlock
-//   - `ConsoleController+Toolbar.swift`    the page toolbar, Compose and
-//                                          Claude-usage popovers, theme/font/
-//                                          find/copy actions
+//   - `ConsoleController+Toolbar.swift`    the page toolbar, the Compose
+//                                          popover, theme/font/find/copy
+//                                          actions
 //   - `ConsoleController+SRELead.swift`    the whole per-tab SRE Lead pane
 //   - `ConsoleController+LogCapture.swift` Block View + the Log Analyzer
 //                                          capture bridge
@@ -47,7 +50,7 @@
 // Nothing moved changed: the split was verified to be line-for-line verbatim
 // against the pre-split file (modulo the access change below), and every
 // console-touching suite - block view restart, SRE Lead per-tab, the SRE Lead
-// bridge, mirror resolution, notification-center SRE Lead - passes unchanged.
+// bridge, notification-center SRE Lead - passes unchanged.
 //
 // **The one real cost, stated plainly.** Swift's `private` is file-scoped, so
 // members this controller's own extensions reach across those file
@@ -80,7 +83,7 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// (`AppShellController.connectHost`'s `makeHostConsole` factory), which
     /// governs two related behaviours instead of one - both express "this is
     /// the one shared, general-purpose console, not a page dedicated to a
-    /// single host": (1) `loadView` only opens the Shell + Mirror pair on
+    /// single host": (1) `loadView` only opens the Shell tab on
     /// launch when this is `true`; (2) `closeTab`'s "never leave the window
     /// empty" fallback only applies when this is `true` - a dedicated host
     /// page is allowed to end up with zero tabs after its one ssh tab is
@@ -217,9 +220,8 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// **Zero on the shared Firstmate console.** SRE Lead is a dedicated-host-
     /// page-only affordance (`buildTabBar` only builds its button when
     /// `!isFirstmateConsole`), so that console can never show the card and has
-    /// no reason to pay for its margin. That keeps the Shell tab and - the one
-    /// that actually matters - the tmux/herdr Herdr tab byte-for-byte
-    /// flush and at their full column count, exactly as before this change.
+    /// no reason to pay for its margin. That keeps its Shell tab byte-for-byte
+    /// flush and at its full column count, exactly as before this change.
     var terminalInset: CGFloat { cardMargin + cardInnerPadding }
     /// Every toolbar glyph is a bordered icon square now
     /// (`HelmPageToolbar.iconButton`, i.e. `HelmButton(.secondary)`), not a
@@ -249,7 +251,7 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// current selection) and hands it to the Log Analyzer. A peer of SRE
     /// Lead and Compose in the same toolbar cluster, and - like SRE Lead -
     /// a dedicated-host-page affordance only (`!isFirstmateConsole`): the
-    /// shared Firstmate console's Herdr/Shell pair is this app's own
+    /// shared Firstmate console's own Shell tab is this app's own
     /// session, not infrastructure output an investigation would be built
     /// from. See `LogAnalyzerCapture.swift` for exactly what gets captured
     /// and what happens on a host without per-command block tracking.
@@ -302,12 +304,6 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
 
     var composeButton: HelmButton!
     let composer = ConsoleComposerController()
-    /// `fm/grandline-herdr-utilization-panel` - only ever shown for a
-    /// Herdr-backed `.mirror` tab, the opposite gating of `composeButton`
-    /// above (see `updateUtilizationControls`), so the two never fight for
-    /// the same toolbar slot on the same tab.
-    var utilizationButton: HelmButton!
-    let quotaUsage = QuotaUsageController()
 
     // MARK: SRE Lead (dedicated host pages only - see `SRELead.swift`)
 
@@ -459,10 +455,10 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
             sreLeadPaneWidthConstraint,
         ])
 
-        // The starting set: the pinned "Firstmate" host's Shell + Mirror pair,
+        // The starting set: the pinned "Firstmate" host's own Shell tab,
         // matching the previous fixed-tabs behaviour (Fix 4: this is now also
         // reachable from the Hosts sidebar's pinned entry, but the app still
-        // lands here automatically on launch). Their processes start in
+        // lands here automatically on launch). Its process starts in
         // `viewDidAppear` (once the view is on screen). A per-host console
         // (Fix 1) opts out - its one tab is added on demand by
         // `connectSSHIfNeeded` instead.

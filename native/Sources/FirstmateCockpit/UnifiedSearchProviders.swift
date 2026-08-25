@@ -477,14 +477,6 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
                    run: { [weak shell] in shell?.showLogAnalyzer() }),
             Action(title: "Analyze Clipboard", meta: "Log Analyzer", keywords: ["logs", "paste"],
                    run: { [weak shell] in shell?.analyzeClipboardInLogAnalyzer() }),
-            // F7: the general "message first mate" channel, reachable from
-            // the palette as well as Overview's header - the review names
-            // both entry points. It opens the same composer, and its Send
-            // goes through the Herdr tab, never `fm-send.sh` (there is no
-            // task id to address here).
-            Action(title: "Message First Mate", meta: "Fleet",
-                   keywords: ["reply", "answer", "crew", "firstmate", "chat", "send"],
-                   run: { [weak shell] in shell?.messageFirstMateFromMenu() }),
             Action(title: "Find in Terminal", meta: "Console", keywords: ["search", "grep"],
                    run: { [weak shell] in shell?.activateConsoleFind() }),
             Action(title: "Settings", meta: "App", keywords: ["preferences", "config"],

@@ -110,8 +110,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // `dictationHUD` is: it has to work when the app was launched *by* the tap,
     // before any window exists. See NotificationActions.swift's header.
     let notificationRouter = NotificationActionRouter()
-    // Fix 1: `makeHostConsole` builds a fresh, host-scoped console (no
-    // Herdr/Shell tabs) for `AppShellController.connectHost` - captured as
+    // Fix 1: `makeHostConsole` builds a fresh, host-scoped console (its own
+    // ssh tab(s) only, no Firstmate host's own Shell tab) for
+    // `AppShellController.connectHost` - captured as
     // local constants (not `self`) so this closure, which `appShell` holds
     // onto for its whole lifetime, can't form a retain cycle with `self`.
     lazy var appShell: AppShellController = {
@@ -146,7 +147,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.appShell.show(.console)
             }
         }
-        // The pinned "Firstmate" entry (Fix 4) - the same Shell + Mirror pair
+        // The pinned "Firstmate" entry (Fix 4) - the same Shell tab
         // the console has always opened at startup, now also reachable from
         // the Hosts list. Unaffected by Fix 1: it's the one destination that
         // deliberately stays on the shared `console`, never a dedicated page.
@@ -508,9 +509,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
-    /// Tear down the mirror's grouped tmux session so a `cockpit_*` session is
-    /// not left behind after the app quits - the shared Firstmate console and
-    /// (Fix 1) every host's own dedicated console.
+    /// Tear down every console's own materialized SSH keys and SRE Lead
+    /// sessions on quit - the shared Firstmate console and (Fix 1) every
+    /// host's own dedicated console.
     func applicationWillTerminate(_ notification: Notification) {
         console.shutdown()
         appShell.shutdownAllHostConsoles()
@@ -1445,14 +1446,6 @@ if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_MODULE_TESTS"] == "1" {
 // run-all-tests.sh's NEEDS_SESSION list. See LockScreenSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_LOCK_SCREEN_TESTS"] == "1" {
     exit(LockScreenSelfTest.run() ? 0 : 1)
-}
-
-// Console's terminal text selection, measured from real rendered pixels
-// (fm/grandline-console-selection-contrast-followup). Window-backed - a
-// SwiftTerm view only draws inside a real, ordered-front window - so it sits in
-// run-all-tests.sh's NEEDS_SESSION list. See the suite's own header.
-if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_SELECTION_RENDER_TESTS"] == "1" {
-    exit(TerminalSelectionRenderSelfTest.run() ? 0 : 1)
 }
 
 // Daylight Phase 6 (the last phase): the accessibility sweep and the Reduce

@@ -1,9 +1,13 @@
 // Manjesh Grand Line - native macOS app.
 //
-// Data side of the "Claude usage" toolbar popover for Herdr-backed console
-// tabs (`fm/grandline-herdr-utilization-panel`, following the captain-
-// approved design plan built from `data/grandline-herdr-utilization-panel-
-// research/report.md`). Follows this app's established "thin native window
+// Data side of the "Claude usage" popover (`fm/grandline-herdr-utilization-
+// panel`, following the captain-approved design plan built from
+// `data/grandline-herdr-utilization-panel-research/report.md`) - originally
+// reachable from a Console toolbar button gated to the herdr-attached
+// "Mirror" tab, which `fm/grand-line-remove-firstmate-mirror` removed along
+// with that tab; `FleetController`'s Morning Briefing card is the one
+// remaining live entry point (`QuotaUsagePopover.swift`'s header has the
+// full history). Follows this app's established "thin native window
 // onto another CLI tool" pattern (see `VaultData.swift`'s own header): every
 // read goes through the real `quota-axi` CLI via `Process`, never a
 // reimplementation of its quota math, and every field is parsed tolerantly

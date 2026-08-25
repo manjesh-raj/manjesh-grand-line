@@ -120,9 +120,6 @@ NEEDS_SESSION=(
   "FM_RUN_AUDIT_PERF_FIXES_TESTS"
   # Visibility/occlusion has no meaning without a real, ordered-front window.
   "FM_RUN_TERMINAL_DISPLAY_GATING_TESTS"
-  # Renders a real SwiftTerm view and synthesizes real mouse drags across it -
-  # and a SwiftTerm view only draws inside a real, ordered-front window.
-  "FM_RUN_TERMINAL_SELECTION_RENDER_TESTS"
   "FM_RUN_CONTRAST_TESTS"
   # Reads and writes the machine's real Keychain (and can prompt), which a
   # runner has no unlocked login keychain for.

@@ -6,26 +6,23 @@
 // the one place the app writes back into it, and the review names it exactly -
 // "one new `FleetActions` source next to `FleetData`".
 //
-// ## Two channels, and why they are not the same channel
+// ## Answering a specific task
 //
-// The channel was settled with the firstmate side before any of this was
-// written, and the split is not an implementation detail:
+// Goes through `bin/fm-send.sh <task-id> [--resolve-key <key>] "<text>"`,
+// firstmate's own *verified* submit: it types the line once, sends Enter,
+// retries only the Enter, and reads back whether the submit actually landed
+// (read that script's header before touching anything here - its exit-status
+// contract is not the usual zero/nonzero, see `FleetReplyOutcome`). It is
+// also what closes the captain-facing decision record, through
+// `--resolve-key`.
 //
-//  - **Answering a specific task** goes through `bin/fm-send.sh <task-id>
-//    [--resolve-key <key>] "<text>"`, firstmate's own *verified* submit: it
-//    types the line once, sends Enter, retries only the Enter, and reads back
-//    whether the submit actually landed (read that script's header before
-//    touching anything here - its exit-status contract is not the usual
-//    zero/nonzero, see `FleetReplyOutcome`). It is also what closes the
-//    captain-facing decision record, through `--resolve-key`.
-//  - **A general "message the first mate"** has no task id to address, so
-//    there is nothing for `fm-send.sh` to target. It goes through the proven
-//    terminal-injection path instead (`ConsoleController.sendToFirstmateMirror`
-//    -> `TerminalView.send(txt:)`), the same call Snippets' "Run" and the SRE
-//    Lead bridge already use. That path is deliberately not in this file: it
-//    is a terminal write owned by `ConsoleController`, and keeping the two
-//    apart is what makes "the general message never shells out to fm-send"
-//    checkable rather than a claim (`FleetActionsSelfTest`).
+// F7 originally also had a second, unaddressed "message the first mate"
+// channel, typed into the herdr-attached "Mirror" tab
+// (`ConsoleController.sendToFirstmateMirror` -> `TerminalView.send(txt:)`).
+// `fm/grand-line-remove-firstmate-mirror` removed it whole, along with that
+// tab - with no embedded herdr session left to type into, there was nowhere
+// for it to send. This file's own `fm-send.sh` path is unaffected: it never
+// went through the Mirror tab.
 //
 // ## No AI anywhere
 //
@@ -193,7 +190,7 @@ enum FleetReplyOutcome: Equatable {
         case .confirmed:
             return "Reply delivered to the crew."
         case .sentUnconfirmed:
-            return "Reply typed and sent, but the crew didn't confirm it - check the Herdr tab before resending."
+            return "Reply typed and sent, but the crew didn't confirm it - check the crew's own session before resending."
         case .failed(let reason):
             return "Reply not sent: \(reason)"
         }

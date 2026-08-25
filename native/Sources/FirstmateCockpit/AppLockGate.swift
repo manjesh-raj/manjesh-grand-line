@@ -58,17 +58,18 @@ enum AppLockedSurface {
     /// Snooze 1h / Show in app). Runs while the main window is not frontmost,
     /// and both navigates and writes - the rule in this file's header exactly.
     case notificationAction
-    /// F7: sending a reply into a crewmate's own session (`fm-send.sh`) or a
-    /// general message into the live firstmate Herdr tab.
+    /// F7: sending a reply into a crewmate's own session (`fm-send.sh`).
     ///
-    /// Both surfaces live inside the main window - the reply composer is on
-    /// Overview, under the lock overlay, and ⌘K's palette already refuses to
-    /// open while locked - so neither is reachable by a walk-up today. This
-    /// case exists anyway because of what these two do rather than where they
-    /// sit: they are the app's only writes *into the captain's running agent
-    /// session*, and the gate is the one place that coverage is single-sourced
-    /// and assertable. A future entry point (a notification action, a menu-bar
-    /// item) inherits the gate instead of having to remember it.
+    /// The reply composer lives inside the main window, on Overview, under
+    /// the lock overlay - so it isn't reachable by a walk-up today. This case
+    /// exists anyway because of what it does rather than where it sits: it is
+    /// the app's only remaining write *into the captain's running agent
+    /// session* (F7 used to also have a general, unaddressed message typed
+    /// into the herdr-attached "Mirror" tab - removed whole, along with that
+    /// tab, by `fm/grand-line-remove-firstmate-mirror`), and the gate is the
+    /// one place that coverage is single-sourced and assertable. A future
+    /// entry point (a notification action, a menu-bar item) inherits the gate
+    /// instead of having to remember it.
     case crewReply
 }
 
