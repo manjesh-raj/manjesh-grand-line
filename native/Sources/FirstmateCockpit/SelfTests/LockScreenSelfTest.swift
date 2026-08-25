@@ -59,7 +59,8 @@ enum LockScreenSelfTest {
                       checkTwoLayerShadow,
                       checkPasswordWellCentringAndMasking,
                       checkSharedComponentsAndNoLiterals,
-                      checkAuthFlowUntouched] {
+                      checkAuthFlowUntouched,
+                      checkLoopingAnimationsStopOnUnlock] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -454,6 +455,61 @@ enum LockScreenSelfTest {
     }
 
     // MARK: 6 - source guards
+
+    // MARK: E4 - the looping decoration must end when the overlay does
+
+    /// `startAnimationsIfNeeded()` latched `animationsStarted` true and only a
+    /// Reduce Motion toggle ever took the animations off again, while
+    /// `hideLock` did nothing but set `isHidden` - which does not stop a
+    /// `CAAnimation`. So after the first unlock, three infinite animations
+    /// stayed attached to hidden layers for the rest of the session.
+    ///
+    /// Driven through the controller's own `stopAnimations()` /
+    /// `restartAnimationsIfNeeded()` (what `AppShellController.hideLock` /
+    /// `showLock` call), plus a source guard that those calls are still there -
+    /// the animation state is invisible from a screenshot and the wiring is
+    /// the half most likely to be dropped.
+    private static func checkLoopingAnimationsStopOnUnlock(_ ok: inout Bool) {
+        print("LockScreenSelfTest: the looping animations stop when the lock screen is dismissed")
+        if HelmMotion.isReduced {
+            print("  SKIP: Reduce Motion is on, so there is no looping decoration to stop")
+        } else {
+            let controller = LockScreenController()
+            let window = mount(controller)
+            defer { window.contentView = nil }
+            controller.apply(.locked(subtitle: "Manjesh Grand Line is locked."))
+            controller.view.layoutSubtreeIfNeeded()
+            controller.viewDidLayout()
+
+            guard controller.debugLoopingAnimationsAttached else {
+                fail(&ok, "the scene never started its looping animations, so this check would pass vacuously")
+                return
+            }
+            controller.stopAnimations()
+            if controller.debugLoopingAnimationsAttached {
+                fail(&ok, "the looping animations survived the unlock - they would run on hidden layers for the rest of the session")
+            }
+            // And a re-lock must genuinely restart them, which is what
+            // clearing the latch buys.
+            controller.restartAnimationsIfNeeded()
+            if !controller.debugLoopingAnimationsAttached {
+                fail(&ok, "re-locking left a still scene - `animationsStarted` latched and never restarted")
+            }
+        }
+
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let shell = try? String(contentsOf: dir.appendingPathComponent("AppShellController.swift"), encoding: .utf8) else {
+            print("  SKIP: app sources not reachable for the wiring guard")
+            return
+        }
+        if !shell.contains("lockScreen.stopAnimations()") {
+            fail(&ok, "AppShellController.hideLock no longer stops the animations")
+        }
+        if !shell.contains("lockScreen.restartAnimationsIfNeeded()") {
+            fail(&ok, "AppShellController.showLock no longer restarts them, so a re-lock would show a frozen scene")
+        }
+        if ok { print("  attached while locked, detached on unlock, re-attached on re-lock, and both call sites present") }
+    }
 
     private static func checkSharedComponentsAndNoLiterals(_ ok: inout Bool) {
         print("LockScreenSelfTest: no colour literals, shared components in use")

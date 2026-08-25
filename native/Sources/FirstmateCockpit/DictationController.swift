@@ -119,6 +119,14 @@ final class DictationController: NSViewController, DaylightDrillActions {
     /// the live console it affects.
     var onShortcutChanged: ((DictationShortcut) -> Void)?
 
+    /// Fired when the "Use local Whisper engine" toggle changes, so whoever
+    /// owns the live `DictationEngine` can drop a resident engine the moment
+    /// the captain switches it off - see
+    /// `DictationEngine.whisperIdleUnloadInterval` (E2) for why a resident
+    /// engine is not free. Same forward-don't-own convention as
+    /// `onShortcutChanged` above.
+    var onLocalWhisperEnabledChanged: ((Bool) -> Void)?
+
     init(store: DictationStore) {
         self.store = store
         self.shortcutRecorder = DictationShortcutRecorderView(shortcut: AppSettings.shared.dictationShortcut)
@@ -901,7 +909,9 @@ final class DictationController: NSViewController, DaylightDrillActions {
     }
 
     @objc private func localWhisperToggled() {
-        AppSettings.shared.dictationLocalWhisperEnabled = localWhisperSwitch.state == .on
+        let enabled = localWhisperSwitch.state == .on
+        AppSettings.shared.dictationLocalWhisperEnabled = enabled
+        onLocalWhisperEnabledChanged?(enabled)
     }
 
     /// The one download/cancel/retry button for the model row - its exact

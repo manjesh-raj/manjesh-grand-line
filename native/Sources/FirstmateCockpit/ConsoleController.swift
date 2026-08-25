@@ -218,7 +218,7 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// page-only affordance (`buildTabBar` only builds its button when
     /// `!isFirstmateConsole`), so that console can never show the card and has
     /// no reason to pay for its margin. That keeps the Shell tab and - the one
-    /// that actually matters - the tmux/herdr Mirror tab byte-for-byte
+    /// that actually matters - the tmux/herdr Herdr tab byte-for-byte
     /// flush and at their full column count, exactly as before this change.
     var terminalInset: CGFloat { cardMargin + cardInnerPadding }
     /// Every toolbar glyph is a bordered icon square now
@@ -249,7 +249,7 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// current selection) and hands it to the Log Analyzer. A peer of SRE
     /// Lead and Compose in the same toolbar cluster, and - like SRE Lead -
     /// a dedicated-host-page affordance only (`!isFirstmateConsole`): the
-    /// shared Firstmate console's Mirror/Shell pair is this app's own
+    /// shared Firstmate console's Herdr/Shell pair is this app's own
     /// session, not infrastructure output an investigation would be built
     /// from. See `LogAnalyzerCapture.swift` for exactly what gets captured
     /// and what happens on a host without per-command block tracking.

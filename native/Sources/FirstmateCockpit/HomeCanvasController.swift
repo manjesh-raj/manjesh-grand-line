@@ -674,9 +674,12 @@ final class HomeCanvasController: NSViewController {
         if !failing.isEmpty { content.chip = .bad("\(failing.count) failing") }
         let note: String
         if services.isEmpty {
-            note = "No service has reported yet this session."
+            // B9: shorter copy as well as a third line - the note column
+            // beside a 66pt gauge is genuinely narrow, and a summary that
+            // needs three lines to say "fine" is not a summary.
+            note = "Nothing has reported yet."
         } else if failing.isEmpty {
-            note = "Everything that has reported is healthy."
+            note = "All reporting services healthy."
         } else {
             note = "\(failing.map { $0.title }.joined(separator: ", ")) needs a look."
         }

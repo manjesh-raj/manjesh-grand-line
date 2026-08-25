@@ -92,35 +92,19 @@ extension ConsoleController {
         reconnectActive()
     }
 
-    // MARK: Test support (`fm/grandline-mirror-resolve-race-fix`)
+    // MARK: Test support (tabs)
 
     /// Every open tab's id, in tab-bar order - so a test can find and select
-    /// a specific tab (e.g. `openFirstmateHost`'s Mirror/Herdr tab, created
-    /// first but not selected) without `tabs` itself needing to be internal.
+    /// a specific tab (e.g. `openFirstmateHost`'s Herdr tab, created first but
+    /// not selected) without `tabs` itself needing to be internal.
     func debugAllTabIDs() -> [UUID] { tabs.map { $0.id } }
 
     /// Selects a tab by id, exactly like clicking its chip.
     func debugSelectTab(_ id: UUID) { select(tabID: id, focus: false) }
 
-    /// GL-12: whether the named tab is still waiting on
-    /// `FirstmateBackend.resolveMirrorTargetAsync`. A test that asserts the
-    /// frozen pair has to wait for it, and this is what it waits on.
-    func debugIsAwaitingMirrorResolution(_ id: UUID) -> Bool {
-        tabs.first(where: { $0.id == id })?.isAwaitingMirrorResolution ?? false
-    }
-
-    /// The kind+target frozen into the current tab's `TabLaunch.mirror` (if
-    /// it is one) - lets a test confirm they were resolved atomically and
-    /// never re-derived independently, without duplicating `ConsoleController`'s
-    /// own switch-over-`tab.launch` logic.
-    func debugMirrorLaunch() -> (kind: FirstmateBackendKind, target: String)? {
-        guard case .mirror(let kind, let target) = currentTab?.launch else { return nil }
-        return (kind, target)
-    }
-
     /// The current tab's raw terminal output so far, so a test can check for
-    /// (or the absence of) the `[mirror]`/`[herdr]` failure text
-    /// `connectMirror` feeds in on a setup error.
+    /// (or the absence of) the `[herdr]` failure text `connectHerdr` feeds
+    /// in when herdr is not installed.
     func debugCurrentTerminalOutput() -> String? {
         guard let terminal = currentTab?.terminal.terminal else { return nil }
         return String(data: terminal.getBufferAsData(), encoding: .utf8)

@@ -129,7 +129,7 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
 
     override func viewWillAppear() {
         super.viewWillAppear()
-        refreshSchedules()
+        refreshSchedulesIfNeeded()
         scrollToTop()
     }
 
@@ -177,11 +177,65 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         return schedulesCard.card
     }
 
+    /// Rebuilds every row. P2/P3 (`data/grand-line-e2e-audit/report.md`):
+    /// **skipped while this page is not the one showing** - it would rebuild
+    /// again on its next appearance anyway, and with every destination mounted
+    /// for the session (GL-37) that waste is a real part of what made ⌘⌥T
+    /// stall the main thread for ~0.7-1.0s. What was missed is remembered
+    /// (`needsRefreshOnAppear`) rather than dropped.
     private func refreshSchedules() {
         guard isViewLoaded else { return }
+        // The very first render is never deferred. A page that is mounted but
+        // has never been populated renders as a blank body - the exact
+        // "mounted, visible, but empty" shape PR #278 fixed for Settings, and
+        // `DestinationMountingSelfTest` catches it. After that, deferring is
+        // safe: `refreshSchedulesIfNeeded` settles it on the next appearance.
+        guard hasRenderedOnce else {
+            needsRefreshOnAppear = false
+            lastRefreshedAt = Date()
+            hasRenderedOnce = true
+            schedulesCard.setSchedules(scheduleStore.schedules,
+                                       runningID: ScheduleRunner.shared.runningScheduleID,
+                                       theme: theme)
+            return
+        }
+        guard view.window != nil, !view.isHiddenOrHasHiddenAncestor else {
+            needsRefreshOnAppear = true
+            // The header's live line is a string, not a view tree - it stays
+            // current either way.
+            onDrillSubtitleChanged?()
+            return
+        }
+        needsRefreshOnAppear = false
+        lastRefreshedAt = Date()
+        hasRenderedOnce = true
         schedulesCard.setSchedules(scheduleStore.schedules,
                                    runningID: ScheduleRunner.shared.runningScheduleID,
                                    theme: theme)
+    }
+
+    /// Something changed (a store write, a run starting or finishing, a theme
+    /// switch) while this page was hidden.
+    private var needsRefreshOnAppear = true
+    private var lastRefreshedAt: Date?
+    /// Whether this page has ever rendered its rows. Until it has, the
+    /// visibility gate must not apply - see `refreshSchedules`.
+    private var hasRenderedOnce = false
+
+    /// How long before a row's relative wording ("in 3 hours", "not run yet")
+    /// is worth re-rendering for.
+    private static let relativeWordingStaleAfter: TimeInterval = 60
+
+    /// P3: rebuild on a visit only when it would change what is on screen -
+    /// something moved while this page was hidden, or the rows' own relative
+    /// wording has gone stale. Every real data change already reaches
+    /// `refreshSchedules` directly through `scheduleStore.onChange` /
+    /// `ScheduleRunner.onRunStateChanged`, so a visit that follows a visit
+    /// costs nothing.
+    private func refreshSchedulesIfNeeded() {
+        let stale = lastRefreshedAt.map { Date().timeIntervalSince($0) >= Self.relativeWordingStaleAfter } ?? true
+        guard needsRefreshOnAppear || stale else { return }
+        refreshSchedules()
     }
 
     private func presentScheduleEditor(editing: AutomationSchedule?) {

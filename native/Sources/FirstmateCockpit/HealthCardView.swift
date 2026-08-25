@@ -61,9 +61,17 @@ final class HealthCardView: NSObject {
         // Rebuilt on every report rather than mutated in place: the row count
         // grows as services register, and a row's trailing control differs by
         // verdict (a pill, or nothing).
+        //
+        // P4 (`data/grand-line-e2e-audit/report.md`): coalesced, and skipped
+        // entirely while this card is off screen. The registry notifies on
+        // *every* mutation including `markRunning`, and `FleetNotifier` marks
+        // running + records success every 30s, `ShiftNotificationScheduler`
+        // every 60s, a `BackgroundSignalsPoller` pass several - so once the
+        // Health page had been visited once (it stays mounted for the session,
+        // GL-37), the app performed 2-4 full card rebuilds per minute forever,
+        // on the main thread, whether or not anyone was looking at it.
         ServiceHealthRegistry.shared.observe { [weak self] _ in
-            self?.rebuild()
-            self?.onStateChanged?()
+            self?.setNeedsRebuild()
         }
     }
 
@@ -104,7 +112,72 @@ final class HealthCardView: NSObject {
     func refresh(theme: HelmTheme) {
         self.theme = theme
         card.applyTheme(theme)
+        pendingWhileHidden = false
+        lastRebuiltAt = Date()
         rebuild()
+        onStateChanged?()
+    }
+
+    /// P3: the same thing, but only when it would actually change what is on
+    /// screen.
+    ///
+    /// `viewWillAppear` used to rebuild every row on **every** visit - 123ms
+    /// measured for a steady-state revisit on a debug build, ~15 dropped
+    /// frames at 120Hz - whether or not anything had moved since the last
+    /// one. Three things can make it stale: a report arrived while this card
+    /// was hidden (`pendingWhileHidden`, P4's gate), the theme changed, or
+    /// enough time passed that the rows' own relative wording ("last ran 3m
+    /// ago") is out of date. Nothing else can.
+    func refreshIfNeeded(theme: HelmTheme) {
+        let themeChanged = theme.id != self.theme.id
+        let stale = lastRebuiltAt.map { Date().timeIntervalSince($0) >= Self.relativeWordingStaleAfter } ?? true
+        guard pendingWhileHidden || themeChanged || stale else { return }
+        refresh(theme: theme)
+    }
+
+    /// How long before a row's relative wording ("last ran 3m ago") is worth
+    /// re-rendering for. A minute: that is the resolution those strings are
+    /// written at below the hour mark.
+    private static let relativeWordingStaleAfter: TimeInterval = 60
+    private var lastRebuiltAt: Date?
+
+    // MARK: P4 - one rebuild per turn, and none while hidden
+
+    /// A rebuild has been asked for and the coalescing hop has not run yet.
+    private var rebuildScheduled = false
+    /// A report arrived while this card was off screen. The page's own
+    /// `viewWillAppear` -> `refresh(theme:)` is what settles it, exactly as it
+    /// already did before this gate - a hidden page rebuilding eagerly is pure
+    /// waste, since it rebuilds again on appearance anyway.
+    private var pendingWhileHidden = false
+
+    /// Whether a rebuild would be visible to anyone.
+    private var isOnScreen: Bool {
+        card.window != nil && !card.isHiddenOrHasHiddenAncestor
+    }
+
+    /// One rebuild per main-queue turn, the same latch shape
+    /// `HomeCanvasController.setNeedsRender` uses - a `BackgroundSignalsPoller`
+    /// pass emits several reports in quick succession and they are one visual
+    /// change.
+    private func setNeedsRebuild() {
+        guard isOnScreen else {
+            pendingWhileHidden = true
+            // The header line still follows the signal - it is a string, not
+            // a view tree, and a host page may be showing it elsewhere.
+            onStateChanged?()
+            return
+        }
+        guard !rebuildScheduled else { return }
+        rebuildScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.rebuildScheduled = false
+            guard self.isOnScreen else { self.pendingWhileHidden = true; return }
+            self.lastRebuiltAt = Date()
+            self.rebuild()
+            self.onStateChanged?()
+        }
     }
 
     // MARK: Rendering
@@ -204,6 +277,9 @@ final class HealthCardView: NSObject {
     }
 
     private func rebuild() {
+        #if FM_SELFTESTS
+        debugRebuildCount += 1
+        #endif
         refreshHeaderChips()
         descriptionLabels.removeAll()
         for v in healthStack.arrangedSubviews {
@@ -326,12 +402,12 @@ final class HealthCardView: NSObject {
     /// second copy of the same button a few rows apart is exactly the
     /// duplication §6.4's action cluster exists to remove.
     private func healthFooter() -> NSView {
-        let row = descRow(title: "Diagnostics",
-                          desc: "\"Copy diagnostics\" in the page header copies these rows as text. "
-                              + "Everything stays on this machine - detailed logs are in Console.app "
-                              + "under \"com.firstmate.cockpit.native\".",
-                          trailing: NSView())
-        return row
+        // B3: `nil`, not a bare spacer - see `descRow`'s own parameter note.
+        return descRow(title: "Diagnostics",
+                       desc: "\"Copy diagnostics\" in the page header copies these rows as text. "
+                           + "Everything stays on this machine - detailed logs are in Console.app "
+                           + "under \"com.firstmate.cockpit.native\".",
+                       trailing: nil)
     }
 
     @objc private func copyDiagnostics() {
@@ -391,7 +467,17 @@ final class HealthCardView: NSObject {
     /// - Parameter signalHex: §6.5's signal edge - a 3pt inset bar in this
     ///   hue plus a faint wash of it behind the row. `nil` for an ordinary
     ///   row, which renders exactly as it did before.
-    private func descRow(title: String, desc: String, trailing: NSView,
+    /// - Parameter trailing: this row's own control/chip, or `nil` for a row
+    ///   that has none. B3 (`data/grand-line-e2e-audit/report.md`): this used
+    ///   to take a non-optional `NSView`, and the footer passed a bare
+    ///   `NSView()` as a spacer - a view with no intrinsic size, whose
+    ///   `.required` **content** hugging is a no-op (AGENTS.md gotcha 12).
+    ///   With the text column deliberately yielding, `.fill` then handed
+    ///   nearly the whole row to that empty spacer: the footer's description
+    ///   label measured **78.5pt against a 931pt intrinsic width**, rendering
+    ///   as `Diagnostics` / `"Copy` - one clipped word of a two-sentence
+    ///   explanation, at every window width and in every theme.
+    private func descRow(title: String, desc: String, trailing: NSView?,
                          signalHex: String? = nil) -> NSView {
         // D6: `HelmType`, not raw `.systemFont(ofSize:)` sizes - which is
         // also what restores the captain's own chrome-text-scale setting
@@ -419,10 +505,15 @@ final class HealthCardView: NSObject {
         textStack.setHuggingPriority(.defaultLow, for: .horizontal)
         textStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
 
-        trailing.translatesAutoresizingMaskIntoConstraints = false
-        trailing.setContentHuggingPriority(.required, for: .horizontal)
+        trailing?.translatesAutoresizingMaskIntoConstraints = false
+        trailing?.setContentHuggingPriority(.required, for: .horizontal)
+        trailing?.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        let row = NSStackView(views: [textStack, trailing])
+        // B3: a row with no trailing control is a one-view row, so the text
+        // column has nothing to lose its width to. Deliberately not "pass a
+        // spacer with a `width == 0` constraint": there is simply nothing to
+        // put there, and an empty arranged subview is what caused this.
+        let row = NSStackView(views: [textStack, trailing].compactMap { $0 })
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 12
@@ -502,6 +593,10 @@ final class HealthCardView: NSObject {
 
     #if FM_SELFTESTS
     var debugRowCount: Int { healthStack.arrangedSubviews.count }
+    /// P4: how many full row rebuilds this card has actually performed, so a
+    /// test can count them rather than infer them.
+    private(set) var debugRebuildCount = 0
+    var debugPendingWhileHidden: Bool { pendingWhileHidden }
     /// §7's KPI chips - how many the header band is currently showing.
     var debugHeaderChipCount: Int { headerChips.isHidden ? 0 : headerChips.arrangedSubviews.count }
     #endif

@@ -30,7 +30,7 @@
 // Fix 1 (dedicated host pages) adds a sixth kind of destination that isn't
 // part of the fixed `RailDestination` enum: one independent `ConsoleController`
 // per connected host, holding only that host's own ssh tab(s) - never mixed
-// with the Firstmate console's Mirror/Shell tabs. These are built lazily via
+// with the Firstmate console's Herdr/Shell tabs. These are built lazily via
 // `makeHostConsole` the first time `connectHost` sees a given host id, then
 // kept around (and re-shown, not re-opened) for as long as that host stays
 // saved - see `connectHost`/`removeHostConsole` below.
@@ -226,6 +226,15 @@ final class AppShellController: NSViewController {
     var onDictationShortcutChanged: ((DictationShortcut) -> Void)? {
         get { dictation.onShortcutChanged }
         set { dictation.onShortcutChanged = newValue }
+    }
+
+    /// E2: the Dictation page's local-Whisper toggle, forwarded the same way -
+    /// switching it off must be able to release a resident engine (and with it
+    /// the ggml Metal residency thread), not just stop future dictations from
+    /// using one.
+    var onDictationLocalWhisperChanged: ((Bool) -> Void)? {
+        get { dictation.onLocalWhisperEnabledChanged }
+        set { dictation.onLocalWhisperEnabledChanged = newValue }
     }
 
     /// Phase 4 ("Knowledge and speed"): the topbar Search pill's click,
@@ -497,7 +506,7 @@ final class AppShellController: NSViewController {
         overview.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
         overview.onOpenShiftTask = { [weak self] id in self?.openShiftTask(id: id) }
         // F7: the general "message first mate" channel. Overview owns the
-        // composer, this shell owns the console that owns the Mirror tab -
+        // composer, this shell owns the console that owns the Herdr tab -
         // the same forward-don't-own split every other cross-page action here
         // uses. Deliberately *not* `fm-send.sh`: an unaddressed message has no
         // task id for that script to target (see `FleetActions.swift`).
@@ -748,6 +757,10 @@ final class AppShellController: NSViewController {
     /// next) before deciding which of the lock screen's two states to show.
     func showLock(reason: AppLockReason) {
         lockScreen.view.isHidden = false
+        // E4: re-add what `hideLock` removed. A re-lock does not necessarily
+        // re-lay-out an already-sized overlay, so this cannot be left to
+        // `viewDidLayout`'s own call.
+        lockScreen.restartAnimationsIfNeeded()
         // GL-09: the overlay only covers this window. Everything that lives
         // outside it - the menu-bar status item, ⌥Space quick capture, the
         // dictation hotkey, an already-open Host Editor - consults
@@ -841,6 +854,10 @@ final class AppShellController: NSViewController {
 
     private func hideLock() {
         lockScreen.view.isHidden = true
+        // E4: the scene's three infinite animations used to stay attached to
+        // hidden layers for the rest of the session. `isHidden` alone does not
+        // stop a `CAAnimation`.
+        lockScreen.stopAnimations()
         AppLockGate.shared.setLocked(false)
         onLockStateChanged?(false)
     }
@@ -1015,6 +1032,28 @@ final class AppShellController: NSViewController {
                          hue: dest.domainHue,
                          isCanvas: slot.id == .homeCanvas,
                          slotController: slot.controller)
+
+        // B5 (`data/grand-line-e2e-audit/report.md`): keep the bar's selected
+        // space honest on **every** navigation, not only a pill click.
+        //
+        // `selectSpace` was the one place that called `setSelectedSpace`, so
+        // reaching a page any other way - ⌘K, a notification's deep link, a
+        // canvas module card, a menu item - left the previously selected pill
+        // lit while showing a page that belongs to a different space. The
+        // audit's own walk caught it: every drill-page render showed
+        // "Engineering" highlighted, including Schedules and Health (which are
+        // `.operations`) and Tasks (`.command`). A highlight that asserts the
+        // wrong location is worse than none.
+        //
+        // Derived from the module table (`DaylightModule.space(forDestination:)`),
+        // never a second copy of that mapping. A destination no module opens,
+        // and the canvas itself, leave the pills alone - the canvas's space is
+        // whatever the captain last chose, which `selectSpace` still owns.
+
+
+        if let space = DaylightModule.space(forDestination: dest) {
+            bar.setSelectedSpace(space)
+        }
 
         // §8 Phase 6: which destination is showing decides where the bar's
         // chain hands off, so the loop is re-derived on every navigation.

@@ -230,6 +230,18 @@ enum DaylightModule: String, CaseIterable {
         }
     }
 
+    /// B5 (`data/grand-line-e2e-audit/report.md`): the space a given
+    /// destination belongs to, derived from the module table above rather than
+    /// restated - so there is one mapping, not two that can disagree.
+    ///
+    /// `nil` for a destination no module opens (nothing to highlight) and for
+    /// `.overview`/`.homeCanvas`, whose space is whichever one the captain
+    /// last picked, not a property of the destination.
+    static func space(forDestination dest: RailDestination) -> DaylightSpace? {
+        guard dest != .overview, dest != .homeCanvas else { return nil }
+        return allCases.first { $0.opens == dest }?.space
+    }
+
     /// §4's SF Symbol for this module's gradient tile. Every one of these is
     /// verified to resolve by `DaylightModuleSelfTest.checkSymbolsResolve` -
     /// `NSImage(systemSymbolName:)` returns nil silently, and this app has

@@ -62,6 +62,9 @@ enum DictationEngineSelfTest {
             ("systemDictationDisabledIsItsOwnStatus", test_systemDictationDisabledIsDistinct),
             ("hardCeilingScalesWithCapturedAudio", test_hardCeilingScalesWithCapturedAudio),
             ("doubleFinishDeliversOnce", test_doubleFinishDeliversOnce),
+            ("whisperEngineIsNotResidentUntilUsed", test_whisperNotResidentUntilUsed),
+            ("whisperEngineIsReleasedAfterIdle", test_whisperReleasedAfterIdle),
+            ("whisperEngineLifecycleIsNotIndefinite", test_whisperLifecycleSourceGuard),
         ]
 
         var failures = 0
@@ -208,6 +211,84 @@ enum DictationEngineSelfTest {
         }
         guard long >= short + 40 else {
             return "ceiling grew by only \(long - short)s for 47s more audio - not enough to cover a real long utterance"
+        }
+        return nil
+    }
+
+    // MARK: E2 - the local Whisper engine's lifetime
+    //
+    // The audit's second battery finding: creating a whisper context creates a
+    // ggml Metal device whose residency keeper is an infinite `usleep(5ms)`
+    // loop - 200 wake-ups a second for the life of the process, found in all
+    // 3259 samples of a 5-second `sample` of the captain's real instance, and
+    // matching Activity Monitor's 202 idle wake-ups exactly. It used to be
+    // cached for the whole session, so one dictation started it forever.
+    //
+    // Nothing here needs the 547MB model: what must be true is that the engine
+    // is absent until a dictation loads it and gone again once the ready key
+    // has been idle. The model-backed half runs only when a real model is
+    // pointed at via `FM_WHISPER_TEST_MODEL_PATH`, the same seam
+    // `WhisperEngineSelfTest` already uses.
+
+    private static func test_whisperNotResidentUntilUsed() -> String? {
+        let h = Harness()
+        guard !h.engine.isWhisperEngineResident else {
+            return "a freshly constructed engine already holds a Whisper context (something pre-warms it)"
+        }
+        // A dictation that never opted into local Whisper must not load it.
+        h.engine.debugBeginCaptureForTests()
+        h.engine.debugFinishForTests(text: "apple speech only")
+        guard !h.engine.isWhisperEngineResident else {
+            return "an Apple-Speech-only dictation loaded the local Whisper engine"
+        }
+        // Releasing when nothing is loaded is a no-op, not a crash.
+        h.engine.releaseWhisperEngine(reason: "self-test")
+        return nil
+    }
+
+    private static func test_whisperReleasedAfterIdle() -> String? {
+        guard DictationEngine.whisperIdleUnloadInterval > 0,
+              DictationEngine.whisperIdleUnloadInterval <= 600 else {
+            return "idle unload interval is \(DictationEngine.whisperIdleUnloadInterval)s - 0 defeats the cache, >600 is a background process by any reading"
+        }
+        guard let modelPath = ProcessInfo.processInfo.environment["FM_WHISPER_TEST_MODEL_PATH"],
+              !modelPath.isEmpty, FileManager.default.fileExists(atPath: modelPath) else {
+            print("  (skipping the model-backed half: FM_WHISPER_TEST_MODEL_PATH not set)")
+            return nil
+        }
+        let h = Harness()
+        guard h.engine.debugLoadWhisperEngineForTests(modelPath: modelPath) else {
+            return "the real model at \(modelPath) failed to load, so residency could not be observed"
+        }
+        guard h.engine.isWhisperEngineResident else {
+            return "a successful load did not report the engine as resident"
+        }
+        DictationEngine.whisperIdleUnloadIntervalOverrideForTests = 0.4
+        defer { DictationEngine.whisperIdleUnloadIntervalOverrideForTests = nil }
+        h.engine.debugScheduleWhisperIdleUnloadForTests()
+        RunLoop.current.run(until: Date().addingTimeInterval(1.2))
+        guard !h.engine.isWhisperEngineResident else {
+            return "the engine was still resident after the idle window elapsed - the ggml waker never stops"
+        }
+        return nil
+    }
+
+    /// Source guard: the release is only real if something arms it on the one
+    /// path that loads an engine. A behavioural check cannot see this without
+    /// the 547MB model, and the failure mode (an engine that loads and is
+    /// never scheduled for release) is exactly the shipped bug.
+    private static func test_whisperLifecycleSourceGuard() -> String? {
+        guard let dir = SelfTestSources.appSourceDirectory() else { return nil }
+        let path = dir.appendingPathComponent("DictationEngine.swift")
+        guard let text = try? String(contentsOf: path, encoding: .utf8) else { return nil }
+        guard text.contains("scheduleWhisperIdleUnload()") else {
+            return "DictationEngine.swift no longer arms the idle release anywhere"
+        }
+        guard text.contains("self?.scheduleWhisperIdleUnload()") else {
+            return "the local-Whisper completion path no longer arms the idle release - the engine would stay resident for the session again"
+        }
+        guard text.contains("cachedWhisperEngine = nil") else {
+            return "nothing releases the cached engine, so `whisper_free`/`ggml_metal_rsets_free` never runs"
         }
         return nil
     }

@@ -1,8 +1,8 @@
 // Manjesh Grand Line - native macOS app.
 //
-// Child-process launch details for the two terminals, mirroring the choices the
+// Child-process launch details for the terminals, mirroring the choices the
 // Python backend makes in `backend/shell.py` and `backend/terminal.py`. Kept as
-// free functions so both the Shell tab and the Mirror tab share exactly one
+// free functions so every tab kind (Shell, Herdr, ssh) shares exactly one
 // definition of "how a cockpit terminal child is spawned".
 
 import AppKit
@@ -49,20 +49,20 @@ func childEnvironment() -> [String] {
     childEnvironmentDict().map { "\($0.key)=\($0.value)" }
 }
 
-/// The same environment as a dictionary, for the `Process`-based tmux plumbing
-/// (see `TmuxMirror`), which needs a `[String: String]` rather than the
-/// `KEY=VALUE` array SwiftTerm's `startProcess` wants.
+/// The same environment as a dictionary, for `Process`-based plumbing that
+/// needs a `[String: String]` rather than the `KEY=VALUE` array SwiftTerm's
+/// `startProcess` wants.
 func childEnvironmentDict() -> [String: String] {
     var env = ProcessInfo.processInfo.environment
     env["TERM"] = "xterm-256color"
     env["LANG"] = "en_US.UTF-8"
     env["LC_ALL"] = "en_US.UTF-8"
     env.removeValue(forKey: "TMUX")
-    // The "Herdr" tab (`HerdrMirror`) runs a real `herdr session attach`
-    // client (fm/cockpit-mirror-herdr-real-attach); herdr refuses to launch
-    // when it sees its own `HERDR_ENV=1` marker in the environment ("nested
-    // herdr is disabled by default"), confirmed live while testing that
-    // task's concurrent-attach question. This app is normally a plain
+    // The "Herdr" tab runs a bare `herdr` client (`HerdrSession`); herdr
+    // refuses to launch when it sees its own `HERDR_ENV=1` marker in the
+    // environment ("nested herdr is disabled by default"), confirmed live
+    // while testing that task's concurrent-attach question. This app is
+    // normally a plain
     // Finder-launched GUI process that never inherits that marker anyway,
     // but stripping it here (same reasoning as `TMUX` above) means this tab
     // attaches cleanly even if that ever isn't true.
@@ -83,42 +83,4 @@ func childEnvironmentDict() -> [String: String] {
     env["PATH"] = existing.joined(separator: ":")
 
     return env
-}
-
-// MARK: - Mirror target
-
-/// The first mate's own target this tab attaches to - "Mirror" for a tmux
-/// fleet, "Herdr" for a herdr one (`TabLaunch.defaultName`). Configurable via
-/// `FM_MIRROR_TARGET`, then the Settings > General "Mirror target" field
-/// (name unchanged - it's shared plumbing behind both backends' tab, not a
-/// UI label); either override is honored verbatim regardless of backend,
-/// exactly as before this task. Absent an override, the default now follows
-/// firstmate's own resolved backend (`FirstmateBackend.resolve()`, cockpit-
-/// mirror-herdr-aware) instead of assuming tmux unconditionally:
-///
-/// - tmux (today's default, and every fleet before this task): the
-///   `firstmate` session, byte-identical to before.
-/// - herdr: the session firstmate's own ambient commands would target
-///   (`FirstmateBackend.herdrSessionName()`, `${HERDR_SESSION:-default}` -
-///   `default` on this captain's fleet, confirmed live). `HerdrMirror`
-///   attaches to that session as a whole (fm/cockpit-mirror-herdr-real-attach
-///   - a real `herdr session attach`, showing every space/agent in its own
-///   sidebar entry, not one pane's text) rather than reading a single pane
-///   within it, so there is no pane-level resolution step for herdr the way
-///   there used to be.
-///
-/// An explicit override can pin a specific window for tmux with
-/// `<session>:<window>` (see `TmuxMirror.splitTarget`) - unchanged. There is
-/// no equivalent pin syntax for herdr anymore, since attaching the whole
-/// session already shows everything.
-///
-/// `fm/grandline-mirror-resolve-race-fix`: this only returns the target
-/// half of the answer. A caller that also needs to know which backend is
-/// live (to decide `TmuxMirror` vs. `HerdrMirror`) must NOT pair this with
-/// a separate `FirstmateBackend.resolve()` call - that reintroduces the
-/// exact two-independent-calls race `FirstmateBackend.resolveMirrorTarget()`'s
-/// doc comment describes. Call that function directly instead, and use its
-/// `.target` in place of this one.
-func mirrorTarget() -> String {
-    FirstmateBackend.resolveMirrorTarget().target
 }

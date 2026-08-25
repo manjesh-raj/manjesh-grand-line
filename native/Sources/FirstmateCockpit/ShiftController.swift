@@ -356,8 +356,15 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         super.viewWillAppear()
         view.layoutSubtreeIfNeeded()
         scrollToTop()
-        store.reloadAll()
-        render()
+        // P3 (`data/grand-line-e2e-audit/report.md`): the four YAML files are
+        // parsed off the main thread now, so a tab switch is not four
+        // synchronous file parses before the page can draw (measured at 92ms
+        // for a steady-state revisit - ~11 dropped frames at 120Hz). The page
+        // keeps showing the data it already had until the new read lands,
+        // which is the same data in every case except a genuine external edit.
+        // Everything that mutates the store still happens on the main thread -
+        // see `ShiftStore.reloadAllAsync`.
+        store.reloadAllAsync { [weak self] in self?.render() }
     }
 
     private func scrollToTop() {

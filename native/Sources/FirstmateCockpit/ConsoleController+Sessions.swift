@@ -3,9 +3,8 @@
 // GL-36, part of `ConsoleController`'s decomposition: what a tab actually
 // *runs*. Three kinds, each with its own start-up story:
 //
-//   - the pinned Firstmate pair (a login shell plus the tmux/herdr mirror,
-//     whose backend is resolved once and frozen into the launch spec - see
-//     `FirstmateBackend.resolveMirrorTarget`),
+//   - the pinned Firstmate pair (a login shell plus a bare `herdr` client -
+//     see `HerdrSession`'s header for the "Mirror" abstraction E1 removed),
 //   - a one-shot command tab (Bootstrap/Settings/Vault's interactive `sudo`
 //     actions, which need a real TTY and so cannot be background processes),
 //   - and an `ssh` tab for a saved host, including the off-main Keychain
@@ -24,50 +23,32 @@ extension ConsoleController {
     // MARK: The pinned "Firstmate" host (Fix 4)
 
     /// Open the built-in tab pair - the connect action for the Hosts
-    /// sidebar's pinned, non-deletable "Firstmate" entry
-    /// (`HostsSidebarController`), and also what `loadView` calls to land the
-    /// app on this pair at startup so the initial state is unchanged from
-    /// before this pair lived in the Hosts list. Like every other host,
-    /// connecting always opens a fresh tab pair rather than reusing an
-    /// existing one - the same mental model as SSH hosts and ⌘T. Still
-    /// exactly two tabs: on a tmux fleet, "Mirror" (read-only,
-    /// `TmuxMirror`) + "Shell"; on a herdr fleet (fm/cockpit-mirror-herdr-
-    /// real-attach), "herdr" (a real `herdr session attach` client,
-    /// `HerdrMirror`) + "Shell", the latter completely unchanged either way.
+    /// sidebar's pinned, non-deletable "Firstmate" entry, and also what
+    /// `loadView` calls to land the app on this pair at startup. Like every
+    /// other host, connecting always opens a fresh tab pair rather than
+    /// reusing an existing one. Still exactly two tabs: "Herdr" (a bare
+    /// `herdr` client - see `HerdrSession`) + "Shell".
     @discardableResult
     func openFirstmateHost(focus: Bool = true) -> TabModel {
-        // The mirror/herdr tab first, Shell second (fixes3) - both the tab
-        // bar order and the ⌘1…⌘9 shortcut numbering follow `tabs`' append
-        // order, so this tab must be created before the shell tab.
+        // The herdr tab first, Shell second (fixes3) - both the tab bar order
+        // and the ⌘1…⌘9 shortcut numbering follow `tabs`' append order, so
+        // this tab must be created before the shell tab.
         //
-        // `fm/grandline-mirror-resolve-race-fix`: kind and target come from
-        // one atomic call, never a separate `mirrorTarget()`/`resolve()`
-        // pair - see `FirstmateBackend.resolveMirrorTarget()`'s doc comment.
-        // GL-12: resolution is asynchronous now. The tab is created immediately
-        // (so tab order and ⌘1…⌘9 numbering are unchanged - the mirror tab must
-        // be first), marked as awaiting resolution, and its real launch pair is
-        // written exactly once when the answer arrives - before its process has
-        // ever started. See `TabModel.launch`'s doc comment on why that one
-        // reassignment does not weaken the frozen-pair invariant.
-        let placeholder = TabLaunch.mirror(kind: .tmux, target: "")
-        let mirrorTab = addTab(launch: placeholder, name: numberedName(for: placeholder), select: false)
-        mirrorTab.isAwaitingMirrorResolution = true
-        FirstmateBackend.resolveMirrorTargetAsync { [weak self, weak mirrorTab] kind, target in
-            guard let self, let mirrorTab, self.tabs.contains(where: { $0 === mirrorTab }) else { return }
-            mirrorTab.launch = .mirror(kind: kind, target: target)
-            mirrorTab.isAwaitingMirrorResolution = false
-            if !mirrorTab.hasUserChosenName {
-                mirrorTab.name = mirrorTab.launch.defaultName
-                mirrorTab.chip?.setName(mirrorTab.name)
-                self.styleChips()
-            }
-            // Only start it if the view is already on screen and something was
-            // waiting for the answer; otherwise `viewDidAppear` starts it as
-            // usual.
-            if self.hasAppeared, !mirrorTab.started {
-                self.startTab(mirrorTab)
-            }
+        // E1: no asynchronous backend resolution here anymore, and therefore
+        // no placeholder launch spec, no `isAwaitingMirrorResolution`, and no
+        // deferred rename. Resolving this tab is one `isExecutableFile` check
+        // (`HerdrSession.resolve`), which is what GL-12's async workaround
+        // existed to avoid doing three subprocess calls for.
+        let herdrExecutable: String
+        switch HerdrSession.resolve() {
+        case .success(let path): herdrExecutable = path
+        // The launch spec is still created with the name the captain would
+        // expect; `startTab` is what surfaces the failure, in the terminal,
+        // so ⌘R keeps working once herdr is installed.
+        case .failure: herdrExecutable = ""
         }
+        let herdr = TabLaunch.herdr(executable: herdrExecutable, cwd: FirstmateHome.root.path)
+        addTab(launch: herdr, name: numberedName(for: herdr), select: false)
         let s = shellArgv()
         let shell = TabLaunch.shell(executable: s.executable, args: s.args, cwd: shellCwd())
         let shellTab = addTab(launch: shell, name: numberedName(for: shell), select: false)
@@ -300,11 +281,11 @@ extension ConsoleController {
     /// `Bool` for the same reason `FleetReplyOutcome` has three: the captain
     /// must never be told a message landed when it did not, and "there is no
     /// live firstmate session here yet" is a genuinely different thing to fix
-    /// than "there is no Mirror tab in this console".
+    /// than "there is no Herdr tab in this console".
     enum FirstmateMirrorSendResult: Equatable {
         case sent
-        /// This console has no mirror/herdr tab at all - only possible on a
-        /// per-host console, which never opens one.
+        /// This console has no herdr tab at all - only possible on a per-host
+        /// console, which never opens one.
         case noMirrorTab
         /// The tab exists but its backing session has not started yet (its
         /// process is forked on first appearance). Nothing was typed.
@@ -312,8 +293,7 @@ extension ConsoleController {
     }
 
     /// F7's general-message channel: type `text` into the live firstmate
-    /// session's own tab - the tmux mirror or the real `herdr session attach`
-    /// client, whichever this fleet resolved to.
+    /// session's own tab - the bare `herdr` client.
     ///
     /// Deliberately **not** `currentTab`, unlike `runSnippetInActiveTab` and
     /// `sendCommandLibraryTextToActiveTab` above: those two mean "whatever I
@@ -331,12 +311,12 @@ extension ConsoleController {
     /// the real reason rather than borrowing one of these three.
     func sendToFirstmateMirror(_ text: String) -> FirstmateMirrorSendResult {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let tab = tabs.first(where: { if case .mirror = $0.launch { return true } else { return false } }) else {
+        guard let tab = tabs.first(where: { if case .herdr = $0.launch { return true } else { return false } }) else {
             return .noMirrorTab
         }
         // `startProcess` has not run yet, so there is no PTY to write into -
         // typing here would silently vanish.
-        guard tab.started, !tab.isAwaitingMirrorResolution else { return .notStarted }
+        guard tab.started else { return .notStarted }
         select(tabID: tab.id, focus: false)
         tab.terminal.send(txt: trimmed + "\n")
         return .sent
@@ -351,103 +331,33 @@ extension ConsoleController {
         tab.sshKeyTempPath = nil
     }
 
-    /// Set up a live session for `target` and attach `tab`'s terminal to it,
-    /// on `kind` - tmux's read-only `TmuxMirror` (unchanged, tab named
-    /// "Mirror") or herdr's real-attach `HerdrMirror`
-    /// (fm/cockpit-mirror-herdr-real-attach, tab named "Herdr" - see
-    /// `TabLaunch.defaultName`). On failure the error is written into the
-    /// terminal so it is visible rather than silent.
-    ///
-    /// `kind` and `target` are always the pair frozen into `tab.launch` by
-    /// `FirstmateBackend.resolveMirrorTarget()` at tab-creation time - this
-    /// method deliberately does NOT call `FirstmateBackend.resolve()` again
-    /// itself (`fm/grandline-mirror-resolve-race-fix`; see that function's
-    /// doc comment for the two-independent-calls race this replaces).
-    func connectMirror(_ tab: TabModel, kind: FirstmateBackendKind, target: String) {
-        switch kind {
-        case .tmux:
-            switch TmuxMirror.setUp(target: target) {
-            case .success(let m):
-                tab.mirror = .tmux(m)
-                tab.terminal.startProcess(
-                    executable: m.tmuxPath,
-                    args: m.attachArgs,
-                    environment: childEnvironment(),
-                    execName: nil,
-                    currentDirectory: shellCwd()
-                )
+    /// Start this tab's bare `herdr` client (E1 - see `HerdrSession`'s
+    /// header). No session-existence pre-check, no grouped session to create,
+    /// no target to resolve: the one failure mode left is "herdr isn't
+    /// installed", which is written into the terminal so it is visible rather
+    /// than silent.
+    func connectHerdr(_ tab: TabModel, executable: String, cwd: String) {
+        let resolved: String
+        if !executable.isEmpty, FileManager.default.isExecutableFile(atPath: executable) {
+            resolved = executable
+        } else {
+            // The path baked into the launch spec is gone (uninstalled, or
+            // herdr wasn't installed when this tab was created) - look again,
+            // so ⌘R recovers without reopening the tab.
+            switch HerdrSession.resolve() {
+            case .success(let path): resolved = path
             case .failure(let err):
-                tab.mirror = nil
-                tab.terminal.feed(text: "\r\n  \u{1b}[2m[mirror]\u{1b}[0m \(err.message)\r\n")
-                tab.terminal.feed(text: "  \u{1b}[2mSet FM_MIRROR_TARGET to a live tmux target, then press ⌘R to reconnect.\u{1b}[0m\r\n")
-            }
-        case .herdr:
-            switch HerdrMirror.setUp(target: target) {
-            case .success(let m):
-                tab.mirror = .herdr(m)
-                // A real `herdr session attach` client is launched from the
-                // firstmate home (not `shellCwd()`, which follows the
-                // captain's own Settings/`FM_SHELL_CWD` preference for
-                // *shell* tabs) - captain's explicit call, since this tab is
-                // attaching to firstmate's own herdr session, not opening a
-                // general-purpose shell.
-                tab.terminal.startProcess(
-                    executable: m.attachExecutable,
-                    args: m.attachArgs,
-                    environment: childEnvironment(),
-                    execName: nil,
-                    currentDirectory: FirstmateHome.root.path
-                )
-            case .failure(let err):
-                tab.mirror = nil
                 tab.terminal.feed(text: "\r\n  \u{1b}[2m[herdr]\u{1b}[0m \(err.message)\r\n")
-                tab.terminal.feed(text: "  \u{1b}[2mSet FM_MIRROR_TARGET to a live herdr session, then press ⌘R to reconnect.\u{1b}[0m\r\n")
+                tab.terminal.feed(text: "  \u{1b}[2mInstall herdr, then press ⌘R to reconnect.\u{1b}[0m\r\n")
+                return
             }
         }
-    }
-
-    /// Re-resolves a mirror tab's backend fresh - one atomic
-    /// `FirstmateBackend.resolveMirrorTarget()` call, exactly the same
-    /// contract `openFirstmateHost`'s own initial resolution uses - and
-    /// updates `tab.launch` before handing the freshly resolved kind/target
-    /// to `then`.
-    ///
-    /// `fm/grandline-mirror-herdr-boot-race`: right after a machine restart,
-    /// herdr's own background server/LaunchAgent can still be a few seconds
-    /// (sometimes longer) from coming up at the single moment
-    /// `openFirstmateHost` resolves the Mirror tab's backend - so that one
-    /// resolution can genuinely and correctly answer `.tmux` even though
-    /// herdr is what the fleet is really running on, and always will be
-    /// moments later. Before this, `TabLaunch.mirror`'s frozen pair meant
-    /// that wrong-at-the-time answer stuck for the tab's entire lifetime:
-    /// `reconnectActive` (⌘R) and the auto-reconnect timer both replayed the
-    /// same stale `(kind, target)` verbatim, so pressing ⌘R - literally what
-    /// the tmux failure's own on-screen hint tells the captain to do - could
-    /// never actually recover, because it never asked the question again.
-    ///
-    /// This does not reintroduce the race `fm/grandline-mirror-resolve-race-
-    /// fix` closed: that bug was two *different* resolve calls, at two
-    /// different moments, deciding the *kind* and the *target* independently
-    /// for what was meant to be **one** connection attempt. Every restart
-    /// here still makes exactly one atomic call to decide both together for
-    /// *that* attempt - it is simply now allowed to be a *different* call
-    /// than the one the tab was created with, so a later attempt can notice
-    /// a backend that came up (or went down) since. `openFirstmateHost`'s own
-    /// first-ever resolution is untouched and still the only one a tab gets
-    /// before its very first start.
-    func reresolveMirrorTab(_ tab: TabModel, then: @escaping () -> Void) {
-        tab.isAwaitingMirrorResolution = true
-        tab.terminal.feed(text: "\r\n  \u{1b}[2m[mirror]\u{1b}[0m Re-checking the fleet's backend\u{2026}\r\n")
-        FirstmateBackend.resolveMirrorTargetAsync { [weak self, weak tab] kind, target in
-            guard let self, let tab, self.tabs.contains(where: { $0 === tab }) else { return }
-            tab.launch = .mirror(kind: kind, target: target)
-            tab.isAwaitingMirrorResolution = false
-            if !tab.hasUserChosenName {
-                tab.name = tab.launch.defaultName
-                tab.chip?.setName(tab.name)
-                self.styleChips()
-            }
-            then()
-        }
+        tab.terminal.startProcess(
+            executable: resolved,
+            args: HerdrSession.arguments,
+            environment: childEnvironment(),
+            execName: nil,
+            currentDirectory: cwd
+        )
     }
 }

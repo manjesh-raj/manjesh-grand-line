@@ -57,8 +57,27 @@ enum VaultAvailability: Equatable {
 
 struct VaultSnapshot {
     let availability: VaultAvailability
-    let secrets: [VaultSecret]
-    let tools: [VaultTool]
+
+    /// Every saved secret's name, or **`nil` when `av list` could not be
+    /// read at all** - B1 of `data/grand-line-e2e-audit/report.md`.
+    ///
+    /// This used to map a non-zero exit to `[]`, which made a wedged Automic
+    /// Vault approval helper (a real, documented state - the lock screen grew
+    /// `.serviceNotRunning`/`.transientFailure` handling for exactly it)
+    /// render as a confident "0 secrets" on a machine that genuinely has
+    /// several. That is the GL-14 class the production review spent a phase
+    /// eliminating ("an empty list and a failed fetch must not render the
+    /// same"), and on a security surface "0 secrets" is not merely unhelpful,
+    /// it is a materially false statement. `nil` is what lets the page say
+    /// "I could not read this" instead.
+    let secrets: [VaultSecret]?
+
+    /// Every registered launcher, or `nil` when `av doctor --json` failed or
+    /// returned something unparseable - same reasoning as `secrets`.
+    let tools: [VaultTool]?
+
+    /// Whether either read failed, for a caller that only needs the one bit.
+    var isDegraded: Bool { secrets == nil || tools == nil }
     /// Raw command output for whatever failed, if anything - shown in an
     /// expandable log exactly like `UpdatesController`'s rows do (Safety
     /// principle: show the real command output, not just a status word).
@@ -86,6 +105,8 @@ enum VaultSource {
     /// background queue; never touches the main thread.
     static func loadSnapshot() -> VaultSnapshot {
         guard let av = resolveExecutable("av") else {
+            // Not a failed read: `av` genuinely is not here, which the page
+            // states on its own. Empty rather than nil.
             return VaultSnapshot(availability: .notInstalled, secrets: [], tools: [], log: "")
         }
         let versionResult = run(av, ["--version"])
@@ -94,23 +115,43 @@ enum VaultSource {
             : .checkFailed("'av --version' failed")
 
         let listResult = run(av, ["list"])
-        let secrets: [VaultSecret] = listResult.status == 0
-            ? listResult.stdout.split(separator: "\n").map { VaultSecret(name: String($0).trimmingCharacters(in: .whitespaces)) }.filter { !$0.name.isEmpty }
-            : []
+        let secrets = parseSecretList(stdout: listResult.stdout, status: listResult.status)
 
         let doctorResult = run(av, ["doctor", "--json"])
+        // A non-zero exit is a failed read; so is output that does not parse.
+        // `av doctor` exits non-zero whenever it has issues to report, so the
+        // exit code alone cannot be the test - the parse is.
         let tools = parseDoctorTools(doctorResult.stdout)
 
         let log = [listResult.combinedLog, doctorResult.combinedLog].filter { !$0.isEmpty }.joined(separator: "\n")
         return VaultSnapshot(availability: availability, secrets: secrets, tools: tools, log: log)
     }
 
+    /// B1: the `av list` half of the same nil-vs-empty distinction, extracted
+    /// so both branches are directly testable - `loadSnapshot` shells out to a
+    /// real `av`, so a test cannot otherwise reach the failure branch, which is
+    /// exactly why the original bug was invisible. `nil` = the read failed;
+    /// `[]` = it succeeded and there are genuinely no secrets.
+    ///
     /// Not `private` - exercised directly by `VaultDataSelfTest`.
-    static func parseDoctorTools(_ json: String) -> [VaultTool] {
+    static func parseSecretList(stdout: String, status: Int32) -> [VaultSecret]? {
+        guard status == 0 else { return nil }
+        return stdout
+            .split(separator: "\n")
+            .map { VaultSecret(name: String($0).trimmingCharacters(in: .whitespaces)) }
+            .filter { !$0.name.isEmpty }
+    }
+
+    /// Not `private` - exercised directly by `VaultDataSelfTest`.
+    ///
+    /// B1: `nil` for output that is missing/garbled/not this shape at all,
+    /// which is a *failed read* - distinct from a well-formed report listing
+    /// no tools, which is `[]`.
+    static func parseDoctorTools(_ json: String) -> [VaultTool]? {
         guard let data = json.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let results = obj["results"] as? [[String: Any]]
-        else { return [] }
+        else { return nil }
         return results.compactMap { entry in
             guard let name = entry["name"] as? String else { return nil }
             let commands = (entry["commands"] as? [String]) ?? []

@@ -196,17 +196,50 @@ enum FleetDataSource {
             return []
         }
         let metaFiles = files.filter { $0.pathExtension == "meta" }.sorted { $0.lastPathComponent < $1.lastPathComponent }
-        return metaFiles.map { url in
-            let id = url.deletingPathExtension().lastPathComponent
-            let meta = parseMetaFile(url)
-            var task = FleetTask(id: id, repo: meta["repo"], kind: meta["kind"] ?? "ship", pr: meta["pr"])
-            let (state, source, detail) = crewState(taskID: id)
-            task.state = state
-            task.source = source
-            task.detail = detail
-            task.status = classify(state)
-            return task
+
+        // P6 (`data/grand-line-e2e-audit/report.md`): the `fm-crew-state.sh`
+        // shell-outs run concurrently, bounded, rather than strictly one after
+        // another.
+        //
+        // ~50ms each, measured - fine at today's 3 tasks, but linear and
+        // serial: a 12-task day cost ~600ms of subprocess churn per
+        // `FleetNotifier` poll, every 30s, ~2.9k spawns a day. It is a
+        // background queue, so this was never a UX problem; it is part of the
+        // app's energy floor, which is what E3 is about.
+        //
+        // The same bounded-concurrency shape `OpenPRsSource.fetchDetailed`
+        // already uses (a concurrent queue plus a semaphore), and the same
+        // cap - `crewState` is one subprocess per call, so this is a handful
+        // of short-lived children, not a fork bomb. Results are collected by
+        // index so the order is exactly the sorted-by-filename order this
+        // always returned.
+        var tasks = [FleetTask?](repeating: nil, count: metaFiles.count)
+        // The same cap `OpenPRsSource` uses for its own fan-out.
+        let concurrency = 6
+        let lock = NSLock()
+        let queue = DispatchQueue(label: "fm.fleet.parseTasks", attributes: .concurrent)
+        let sema = DispatchSemaphore(value: concurrency)
+        let group = DispatchGroup()
+        for (index, url) in metaFiles.enumerated() {
+            sema.wait()
+            group.enter()
+            queue.async {
+                defer { sema.signal(); group.leave() }
+                let id = url.deletingPathExtension().lastPathComponent
+                let meta = parseMetaFile(url)
+                var task = FleetTask(id: id, repo: meta["repo"], kind: meta["kind"] ?? "ship", pr: meta["pr"])
+                let (state, source, detail) = crewState(taskID: id)
+                task.state = state
+                task.source = source
+                task.detail = detail
+                task.status = classify(state)
+                lock.lock()
+                tasks[index] = task
+                lock.unlock()
+            }
         }
+        group.wait()
+        return tasks.compactMap { $0 }
     }
 
     // MARK: Watcher health (state/.watch.lock + state/.last-watcher-beat)

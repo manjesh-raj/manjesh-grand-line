@@ -40,7 +40,7 @@
 // escape hatch; each of the three uses is a real invariant:
 //
 //   - `.console` owns live PTYs. The shared Firstmate console opens its
-//     Shell/Mirror pair at launch (`opensFirstmateOnLaunch`), and a running
+//     Shell/Herdr pair at launch (`opensFirstmateOnLaunch`), and a running
 //     child process must never be waiting on a view that does not exist yet.
 //   - `.overview` and `.review` seed the "needs you" counts at launch
 //     (`refreshIfNeeded()`), and both controllers render that count *through

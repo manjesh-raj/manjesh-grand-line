@@ -193,7 +193,7 @@ enum FleetReplyOutcome: Equatable {
         case .confirmed:
             return "Reply delivered to the crew."
         case .sentUnconfirmed:
-            return "Reply typed and sent, but the crew didn't confirm it - check the Mirror tab before resending."
+            return "Reply typed and sent, but the crew didn't confirm it - check the Herdr tab before resending."
         case .failed(let reason):
             return "Reply not sent: \(reason)"
         }

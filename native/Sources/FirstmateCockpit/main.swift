@@ -111,7 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // before any window exists. See NotificationActions.swift's header.
     let notificationRouter = NotificationActionRouter()
     // Fix 1: `makeHostConsole` builds a fresh, host-scoped console (no
-    // Mirror/Shell tabs) for `AppShellController.connectHost` - captured as
+    // Herdr/Shell tabs) for `AppShellController.connectHost` - captured as
     // local constants (not `self`) so this closure, which `appShell` holds
     // onto for its whole lifetime, can't form a retain cycle with `self`.
     lazy var appShell: AppShellController = {
@@ -244,6 +244,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // not the captain wants OS banners too.
         FleetNotifier.shared.setEnabled(AppSettings.shared.notifyOnNeedsDecision)
         FleetNotifier.shared.onNavigateToOverview = { [weak self] in self?.appShell.show(.overview) }
+        // E3: the shared "has the captain actually been away for a while?"
+        // answer the gated pollers below consult. Registered before any of
+        // them start.
+        AppActivityState.shared.start()
         FleetNotifier.shared.start()
 
         // F4: notification action buttons. Every closure here points at the
@@ -389,6 +393,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // installed (see `DictationHotkey.updateShortcut`'s own header).
         appShell.onDictationShortcutChanged = { [weak self] shortcut in
             self?.dictationHotkey.updateShortcut(shortcut)
+        }
+        // E2: turning the toggle off releases any engine that is still
+        // resident, so the captain's "off" takes effect now rather than at the
+        // next idle expiry.
+        appShell.onDictationLocalWhisperChanged = { [weak self] enabled in
+            guard !enabled else { return }
+            self?.dictationEngine.releaseWhisperEngine(reason: "local Whisper turned off")
         }
         dictationHotkey.start()
 
@@ -1513,19 +1524,35 @@ if ProcessInfo.processInfo.environment["FM_RUN_LOG_ANALYZER_TESTS"] == "1" {
     exit(LogAnalyzerSelfTest.run() ? 0 : 1)
 }
 
-// `fm/grandline-mirror-resolve-race-fix`: same convention, for the Mirror
-// tab's backend-kind/target atomicity - see MirrorResolveRaceSelfTest.swift's
-// header.
-if ProcessInfo.processInfo.environment["FM_RUN_MIRROR_RESOLVE_RACE_TESTS"] == "1" {
-    exit(MirrorResolveRaceSelfTest.run() ? 0 : 1)
+// P2-P6 (`data/grand-line-e2e-audit/report.md`): the performance findings that
+// are testable as behaviour - see AuditPerfFixesSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT_PERF_FIXES_TESTS"] == "1" {
+    exit(AuditPerfFixesSelfTest.run() ? 0 : 1)
 }
 
-// `fm/grandline-mirror-herdr-boot-race`: same convention, for a Mirror tab's
-// RESTART (⌘R or auto-reconnect) re-resolving its backend fresh instead of
-// replaying a stale answer forever - see
-// MirrorReconnectBootRaceSelfTest.swift's header.
-if ProcessInfo.processInfo.environment["FM_RUN_MIRROR_RECONNECT_BOOT_RACE_TESTS"] == "1" {
-    exit(MirrorReconnectBootRaceSelfTest.run() ? 0 : 1)
+// B3-B9 (`data/grand-line-e2e-audit/report.md`): the Section 2 UI bugs, one
+// case per finding id - see AuditUIFixesSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT_UI_FIXES_TESTS"] == "1" {
+    exit(AuditUIFixesSelfTest.run() ? 0 : 1)
+}
+
+// B1 (`data/grand-line-e2e-audit/report.md`): same convention, for the Vault
+// page's failed/pending read states - see VaultLoadingStateSelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_VAULT_LOADING_STATE_TESTS"] == "1" {
+    exit(VaultLoadingStateSelfTest.run() ? 0 : 1)
+}
+
+// E3 (`data/grand-line-e2e-audit/report.md`): same convention, for the
+// backgrounded poll tier - see AppActivityStateSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_APP_ACTIVITY_STATE_TESTS"] == "1" {
+    exit(AppActivityStateSelfTest.run() ? 0 : 1)
+}
+
+// E1 (`data/grand-line-e2e-audit/report.md`): same convention, for the
+// terminal display gating that closed the app's dominant battery drain - see
+// TerminalDisplayGatingSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_DISPLAY_GATING_TESTS"] == "1" {
+    exit(TerminalDisplayGatingSelfTest.run() ? 0 : 1)
 }
 
 // `fm/grandline-dictation-mvp`: same convention, for `DictationHotkey`'s

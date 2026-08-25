@@ -242,8 +242,21 @@ final class ShiftGitSync {
         DispatchQueue.main.async { [weak self] in
             guard let self, self.pullTimer == nil else { return }
             self.pullTimer = Timer.scheduledTimer(withTimeInterval: self.periodicPullInterval, repeats: true) { [weak self] _ in
-                self?.queue.async {
-                    guard let self else { return }
+                guard let self else { return }
+                // E3: paused while the app has been backgrounded for >5
+                // minutes. This is the one poller in that table that reaches
+                // the *network* on a fixed cadence - a real `git fetch` every
+                // 300s, which on a laptop means waking the radio - and it is
+                // pure prefetch: nothing is lost by not doing it while nobody
+                // is looking, because `start()` pulls on launch and any local
+                // edit still pushes immediately through `markDirty()`.
+                //
+                // Checked on the tick rather than by cancelling the timer, so
+                // this cannot get stuck paused (see `BackgroundedPollGate`'s
+                // own note on that failure mode) - the next tick after the
+                // captain comes back pulls as usual.
+                guard !AppActivityState.shared.isBackgrounded else { return }
+                self.queue.async {
                     if self.pullNow() == .diverged { _ = self.detectAndResolveConflicts() }
                 }
             }

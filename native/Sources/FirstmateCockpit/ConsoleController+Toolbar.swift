@@ -57,7 +57,7 @@ extension ConsoleController {
         // SRE Lead (design brief Part C) and block view (`fm/cockpit-block-
         // view-stage0`) are both dedicated-host-page-only affordances - the
         // shared Firstmate console has no single host cluster to
-        // investigate, and its Shell/Mirror tabs never get a block tracker
+        // investigate, and its Shell/Herdr tabs never get a block tracker
         // at all (see `TabModel.blockViewOptIn`) - a bug there took down the
         // whole app on every launch in the original PR #79/#80 attempt.
         var toolViews: [NSView] = []
@@ -141,7 +141,7 @@ extension ConsoleController {
 
     /// Shown for a plain `.shell` tab or an `.ssh` tab (a dedicated host
     /// page's own SSH session), as long as it isn't a one-shot provisioning
-    /// command (`isOneShotCommand`) - never a Mirror/Herdr tab (not a
+    /// command (`isOneShotCommand`) - never a Herdr tab (not a
     /// captain-typed shell at all - there's nothing to type a generated
     /// command into), or a one-shot command tab (already has a fixed,
     /// tracked purpose). `.ssh` is included so Compose is available on a
@@ -159,7 +159,7 @@ extension ConsoleController {
             switch tab.launch {
             case .shell, .ssh:
                 available = true
-            case .mirror:
+            case .herdr:
                 available = false
             }
         } else {
@@ -180,15 +180,15 @@ extension ConsoleController {
 
     // MARK: Claude usage (`fm/grandline-herdr-utilization-panel`)
 
-    /// Only ever shown for a Herdr-backed `.mirror` tab - the opposite gating
-    /// of `updateComposeControls` above, mirrored from the same two call
-    /// sites (`select(tabID:)`, `applyTheme()`). Hidden, not merely disabled,
-    /// on every other tab kind (`.shell`, `.ssh`, a tmux `.mirror`), and
-    /// closes the popover outright when the current tab stops qualifying -
-    /// same reasoning as Compose's own doc comment.
+    /// Only ever shown for the `.herdr` tab - the opposite gating of
+    /// `updateComposeControls` above, mirrored from the same two call sites
+    /// (`select(tabID:)`, `applyTheme()`). Hidden, not merely disabled, on
+    /// every other tab kind (`.shell`, `.ssh`), and closes the popover
+    /// outright when the current tab stops qualifying - same reasoning as
+    /// Compose's own doc comment.
     func updateUtilizationControls() {
         let available: Bool
-        if let tab = currentTab, case .mirror(let kind, _) = tab.launch, kind == .herdr {
+        if let tab = currentTab, case .herdr = tab.launch {
             available = true
         } else {
             available = false
@@ -320,7 +320,7 @@ extension ConsoleController {
         }
         // §6.4's live subtitle. This method is the one choke point every tab
         // add / close / rename / selection already passes through, so hooking
-        // it here is what keeps the drill header's "3 tabs · Mirror" honest
+        // it here is what keeps the drill header's "3 tabs · Herdr" honest
         // without a second notification path.
         onDrillSubtitleChanged?()
         // `plusButton` is a `HelmButton` and themes itself: `restyle()` owns

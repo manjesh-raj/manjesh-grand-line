@@ -11,7 +11,7 @@
 // Nothing in this file talks to a channel. A row's Send calls
 // `FleetActions.reply` (which shells out to `bin/fm-send.sh`); the general
 // composer's Send calls `onMessageFirstMate`, which `AppShellController`
-// answers through the Mirror tab. That separation is what makes "the general
+// answers through the Herdr tab. That separation is what makes "the general
 // message never touches fm-send.sh" a checkable property rather than a claim -
 // see `FleetActionsSelfTest`.
 
@@ -232,7 +232,7 @@ extension FleetController {
     /// The mockup's caption, plus - only when it is actually true - the fact
     /// that this answer also closes the captain-facing decision record.
     private func replyCaption(decisions: [FleetDecision]) -> String {
-        let base = "Sent as a reply into the firstmate session for this crew, same as answering in the Mirror tab."
+        let base = "Sent as a reply into the firstmate session for this crew, same as answering in the Herdr tab."
         switch decisions.count {
         case 1:
             return base + " Closes the open \(decisions[0].verb) \u{201C}\(decisions[0].key)\u{201D}."
@@ -300,7 +300,7 @@ extension FleetController {
         }
         let composer = FleetMessageComposer(
             address: nil,
-            caption: "Sent into the live firstmate session in the Mirror tab, exactly as if you typed it there. Not addressed to any task.",
+            caption: "Sent into the live firstmate session in the Herdr tab, exactly as if you typed it there. Not addressed to any task.",
             placeholder: "Message your first mate\u{2026}",
             sendTitle: "Send")
         composer.onSend = { [weak self] text in self?.sendGeneralMessage(text) }

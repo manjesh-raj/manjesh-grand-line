@@ -6,12 +6,10 @@
 // flat list of rows. Three sections (Sign-in is skipped - native has no
 // login):
 //
-//   - Connection: the mirror-target field, upgraded with a live "Detect"
-//     session picker (`TmuxMirror.listSessions()`) showing every discovered
-//     tmux pane as a selectable card (target, command/cwd, a "home" badge
-//     when its cwd is inside the firstmate home) - clicking one sets it as
-//     the mirror target. The working-directory chooser (previously under
-//     "General") lives here too.
+//   - Connection: the working-directory chooser. E1 removed the mirror-target
+//     field and its `TmuxMirror.listSessions()` "Detect" tmux-pane picker
+//     along with the whole Mirror abstraction - see `HerdrSession`'s header
+//     for what else went and why.
 //   - Appearance: the theme picker (12 as of cockpit-theme-overhaul) as a
 //     wrapping grid of preview cards (colour-bar swatch + name + checkmark),
 //     reusing `HelmTheme.allThemes` - the same source of truth the topbar's
@@ -99,9 +97,6 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     private var isHardeningSudo = false
 
     // Connection
-    private let mirrorTargetField = HelmTextField(placeholder: "firstmate")
-    private let sessionsStatusLabel = NSTextField(wrappingLabelWithString: "")
-    private let sessionsStack = NSStackView()
     private let shellCwdField = HelmTextField(placeholder: "~ (Home)")
 
     // Appearance
@@ -173,7 +168,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             self?.repaintForTheme()
         }
 
-        let connection = card(icon: "network", tint: .info, title: "Connection", subtitle: "Mirror target and working directory", content: buildConnectionSection())
+        let connection = card(icon: "network", tint: .info, title: "Connection", subtitle: "Where new terminal tabs open", content: buildConnectionSection())
         let appearance = card(icon: "paintpalette", tint: .violet, title: "Appearance", subtitle: "\(HelmTheme.allThemes.count) Helm themes, light and dark", content: buildAppearanceSection())
         let terminal = card(icon: "terminal", tint: .warn, title: "Terminal", subtitle: "Font size and behavior", content: buildTerminalSection())
         // F12. Its own card rather than a fourth row inside Terminal: this is
@@ -303,7 +298,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// The split is a plain round robin over `cardsInOrder` rather than any
     /// attempt to balance heights. Heights here are genuinely data-dependent
     /// (the Appearance card grows with the theme grid's row count, Security
-    /// with its status, Connection with however many tmux panes Detect found),
+    /// with its status),
     /// so a balancing pass would reshuffle the cards under the captain as that
     /// data changed - which is worse than a slightly uneven pair of columns
     /// that always holds the same card in the same place.
@@ -532,8 +527,8 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// tints it for the current theme right away.
     ///
     /// Both halves matter. Registering alone is not enough: sections that
-    /// rebuild rather than re-theme (`rebuildSecuritySection`,
-    /// `refreshSessions`) create fresh labels without necessarily re-running
+    /// rebuild rather than re-theme (`rebuildSecuritySection`) create fresh
+    /// labels without necessarily re-running
     /// `applyTheme()`, so a label that was only registered would render in
     /// the default `.labelColor` until the next theme change. Tinting alone
     /// is not enough either, since it would then go stale on that change.
@@ -622,37 +617,6 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     // MARK: Connection
 
     private func buildConnectionSection() -> NSView {
-        let label = NSTextField(labelWithString: "Mirror target")
-        label.font = .systemFont(ofSize: 12.5, weight: .medium)
-
-        let desc = NSTextField(wrappingLabelWithString: "The tmux target the console's Mirror tab attaches to. Detect lists every discovered session below - click one to select it.")
-        desc.font = .systemFont(ofSize: 11)
-        mutedLabel(desc)
-        wrapping(desc)
-
-        configure(mirrorTargetField)
-        let detectButton = HelmButton(title: "Detect", variant: .secondary, symbol: "arrow.triangle.2.circlepath", target: self, action: #selector(detectClicked))
-
-        let fieldRow = NSStackView(views: [mirrorTargetField, detectButton])
-        fieldRow.orientation = .horizontal
-        fieldRow.spacing = 8
-        mirrorTargetField.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        sessionsStatusLabel.font = .systemFont(ofSize: 11)
-        mutedLabel(sessionsStatusLabel)
-
-        sessionsStack.orientation = .vertical
-        sessionsStack.alignment = .leading
-        sessionsStack.spacing = 4
-        sessionsStack.translatesAutoresizingMaskIntoConstraints = false
-
-        let mirrorGroup = NSStackView(views: [label, desc, fieldRow, sessionsStatusLabel, sessionsStack])
-        mirrorGroup.orientation = .vertical
-        mirrorGroup.alignment = .leading
-        mirrorGroup.spacing = 6
-        fieldRow.widthAnchor.constraint(equalTo: mirrorGroup.widthAnchor).isActive = true
-        sessionsStack.widthAnchor.constraint(equalTo: mirrorGroup.widthAnchor).isActive = true
-
         let chooseCwd = HelmButton(title: "Choose\u{2026}", variant: .secondary, target: self, action: #selector(chooseShellCwd))
         configure(shellCwdField)
         shellCwdField.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -663,11 +627,10 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         let cwdGroup = descRow(title: "Working directory", desc: "Where new Shell/Firstmate tabs open.", trailing: cwdRow)
         cwdRow.widthAnchor.constraint(lessThanOrEqualToConstant: 300).isActive = true
 
-        let section = NSStackView(views: [mirrorGroup, separator(), cwdGroup])
+        let section = NSStackView(views: [cwdGroup])
         section.orientation = .vertical
         section.alignment = .leading
         section.spacing = 12
-        mirrorGroup.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
         cwdGroup.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
         return section
     }
@@ -681,125 +644,6 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     }
 
     private var separatorViews: [NSView] = []
-
-    @objc private func detectClicked() {
-        refreshSessions()
-    }
-
-    /// GL-04: this used to run `TmuxMirror.listSessions()` synchronously - and
-    /// it was reached from `loadView`, which runs inside `AppShellController`'s
-    /// eager embed loop at launch, *before* `makeKeyAndOrderFront`. A wedged
-    /// tmux server therefore meant the app never showed a window at all. The
-    /// listing is bounded now (`TmuxMirror.commandTimeout`) and runs off the
-    /// main thread; the rows appear when it answers.
-    private func refreshSessions() {
-        sessionsStatusLabel.stringValue = "Looking for tmux panes\u{2026}"
-        sessionsStatusLabel.isHidden = false
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let sessions = TmuxMirror.listSessions()
-            DispatchQueue.main.async { self?.renderSessions(sessions) }
-        }
-    }
-
-    private func renderSessions(_ sessions: [TmuxMirror.SessionInfo]?) {
-        for v in sessionsStack.arrangedSubviews {
-            sessionsStack.removeArrangedSubview(v)
-            v.removeFromSuperview()
-        }
-        guard let sessions else {
-            sessionsStatusLabel.stringValue = "No tmux server running - start your first mate in tmux, then Detect."
-            sessionsStatusLabel.isHidden = false
-            return
-        }
-        if sessions.isEmpty {
-            sessionsStatusLabel.stringValue = "No tmux panes found."
-            sessionsStatusLabel.isHidden = false
-            return
-        }
-        sessionsStatusLabel.isHidden = true
-        let current = AppSettings.shared.mirrorTarget ?? ""
-        for s in sessions {
-            let card = sessionCard(s, isSelected: s.target == current)
-            sessionsStack.addArrangedSubview(card)
-            card.widthAnchor.constraint(equalTo: sessionsStack.widthAnchor).isActive = true
-        }
-    }
-
-    private func sessionCard(_ s: TmuxMirror.SessionInfo, isSelected: Bool) -> NSView {
-        let targetLabel = NSTextField(labelWithString: s.target)
-        targetLabel.font = .monospacedSystemFont(ofSize: 11.5, weight: .semibold)
-
-        var titleViews: [NSView] = [targetLabel]
-        if s.isHome { titleViews.append(pillView(text: "home", colorHex: theme.accentHex)) }
-        let titleRow = NSStackView(views: titleViews)
-        titleRow.orientation = .horizontal
-        titleRow.spacing = 6
-        titleRow.alignment = .firstBaseline
-
-        var subBits = [s.command]
-        if !s.path.isEmpty { subBits.append(s.path) }
-        let subLabel = NSTextField(labelWithString: subBits.joined(separator: " \u{00B7} "))
-        subLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
-        mutedLabel(subLabel)
-        subLabel.lineBreakMode = .byTruncatingMiddle
-
-        let textStack = NSStackView(views: [titleRow, subLabel])
-        textStack.orientation = .vertical
-        textStack.alignment = .leading
-        textStack.spacing = 1
-        textStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        let check = NSImageView()
-        check.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 11, weight: .regular))
-        check.contentTintColor = HelmTheme.nsColor(theme.accentHex)
-        check.isHidden = !isSelected
-        check.translatesAutoresizingMaskIntoConstraints = false
-        check.setContentHuggingPriority(.required, for: .horizontal)
-
-        let row = NSStackView(views: [textStack, check])
-        row.orientation = .horizontal
-        row.spacing = 8
-        row.alignment = .centerY
-        row.translatesAutoresizingMaskIntoConstraints = false
-
-        let card = HoverHighlightView()
-        // A session card is a row *inside* the Connection card, so under
-        // Daylight it takes the well treatment (§6.5/§6.9) rather than the card
-        // treatment: `chromeBackgroundHex` there is the same white the card
-        // behind it already is, and a white row on a white card is invisible.
-        card.cornerRadius = theme.isDaylight ? HelmField.rowCornerRadius(for: theme) : 8
-        card.layer?.borderWidth = isSelected ? 1.5 : HelmField.hairlineBorderWidth
-        card.addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: card.leadingAnchor, constant: 10),
-            row.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -10),
-            row.topAnchor.constraint(equalTo: card.topAnchor, constant: 6),
-            row.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -6),
-        ])
-        let base = theme.isDaylight
-            ? HelmField.fill(theme)
-            : HelmTheme.nsColor(theme.chromeBackgroundHex)
-        card.normalColor = base
-        card.hoverColor = theme.isDaylight
-            ? HelmTheme.nsColor(theme.daylightTokens.rowHover)
-            : base.hoverShifted(by: 0.08, forMode: theme.mode)
-        card.layer?.borderColor = (isSelected
-            ? HelmTheme.nsColor(theme.accentHex)
-            : HelmField.border(theme)).cgColor
-
-        let click = NSClickGestureRecognizer(target: self, action: #selector(sessionCardClicked(_:)))
-        card.addGestureRecognizer(click)
-        card.identifier = NSUserInterfaceItemIdentifier(s.target)
-        return card
-    }
-
-    @objc private func sessionCardClicked(_ sender: NSClickGestureRecognizer) {
-        guard let id = sender.view?.identifier?.rawValue else { return }
-        mirrorTargetField.stringValue = id
-        AppSettings.shared.mirrorTarget = id
-        refreshSessions()
-    }
 
     @objc private func chooseShellCwd() {
         let panel = NSOpenPanel()
@@ -1258,9 +1102,6 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         switch sender {
         case shellCwdField:
             AppSettings.shared.defaultShellCwd = value.isEmpty ? nil : value
-        case mirrorTargetField:
-            AppSettings.shared.mirrorTarget = value.isEmpty ? nil : value
-            refreshSessions()
         default:
             break
         }
@@ -1270,7 +1111,6 @@ final class SettingsController: NSViewController, DaylightDrillActions {
 
     private func refreshFromSettings() {
         guard isViewLoaded else { return }
-        mirrorTargetField.stringValue = AppSettings.shared.mirrorTarget ?? ""
         shellCwdField.stringValue = AppSettings.shared.defaultShellCwd ?? ""
         for (index, step) in ChromeTextScale.steps.enumerated() {
             uiScaleButtons[index]?.variant =
@@ -1287,7 +1127,6 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         morningBriefingSwitch.isOn = AppSettings.shared.morningBriefingEnabled
 
         rebuildAppearanceGrid()
-        refreshSessions()
         refreshBackupStatus()
         applyTheme()
     }

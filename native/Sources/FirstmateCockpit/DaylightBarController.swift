@@ -212,6 +212,15 @@ final class DaylightBarController: NSViewController {
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
     }
 
+    /// B4: the narrowest a space pill's label may be squeezed. Enough for a
+    /// truncated word plus its ellipsis - the point is that every pill stays
+    /// readable *as a pill*, not that any one of them keeps its full title.
+    static let pillLabelMinWidth: CGFloat = 28
+
+    /// B4: see the call site. Between `DaylightSearchPill.preferredWidthPriority`
+    /// (400) and `NSLayoutPriorityWindowSizeStayPut` (500).
+    static let pillLabelCompressionPriority = NSLayoutConstraint.Priority(450)
+
     private func buildPillRow() -> NSStackView {
         var views: [NSView] = []
         for space in DaylightSpace.allCases {
@@ -223,8 +232,32 @@ final class DaylightBarController: NSViewController {
             label.font = HelmType.rounded(HelmType.scaled(12.5), .semibold)
             label.translatesAutoresizingMaskIntoConstraints = false
             label.lineBreakMode = .byTruncatingTail
-            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            // B4: above `DaylightSearchPill.preferredWidthPriority` (400) so
+            // the search pill gives up its preferred 230pt *before* any
+            // navigation label starts truncating, and below
+            // `NSLayoutPriorityWindowSizeStayPut` (500) so none of this can
+            // ever widen the window (AGENTS.md gotcha (13)). It was
+            // `.defaultLow` (250), which is what let the search pill keep its
+            // full width while a pill label collapsed to 4pt.
+            label.setContentCompressionResistancePriority(Self.pillLabelCompressionPriority, for: .horizontal)
             container.addSubview(label)
+            // B4 (`data/grand-line-e2e-audit/report.md`): a floor, so a narrow
+            // window truncates every pill a little instead of erasing one.
+            //
+            // All five labels sat at `.defaultLow` with no minimum and no
+            // fairness, so when the bar ran out of room Auto Layout's own
+            // tie-breaking dumped almost the whole deficit on one of them:
+            // measured at a 900pt window, `engineering`'s label was **4.0pt
+            // wide** while the other three kept 60-70pt, and the *selected*
+            // pill rendered as a wide ink capsule with no legible text at all.
+            // Reproduced at 1100pt too - a perfectly ordinary width for this
+            // app, whose own default launch frame used to be 1220.
+            //
+            // 499, never higher: `NSLayoutPriorityWindowSizeStayPut` is 500,
+            // and this bar spans the full window (AGENTS.md gotcha (13)).
+            let floor = label.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.pillLabelMinWidth)
+            floor.priority = HelmDaylightPriority.contentTie
+            floor.isActive = true
             NSLayoutConstraint.activate([
                 label.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 15),
                 label.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -15),
@@ -499,6 +532,12 @@ final class DaylightBarController: NSViewController {
     /// same recognizer a captain's mouse would.
     func debugPills() -> [HoverHighlightView] { pills.map { $0.container } }
 
+    /// B4: every pill's label frame, in bar coordinates, so a test can measure
+    /// what a narrow window actually did to them.
+    func debugPillLabelWidths() -> [(space: DaylightSpace, width: CGFloat)] {
+        pills.map { ($0.space, $0.label.frame.width) }
+    }
+
     /// The highest constraint priority anywhere in the bar's own subtree that
     /// could act on width. `checkBarDoesNotCapWindow` asserts nothing here
     /// exceeds `NSLayoutPriorityWindowSizeStayPut`.
@@ -547,6 +586,12 @@ final class DaylightBarController: NSViewController {
 /// role, label, focus ring and Return/Space activation all come from that one
 /// component rather than four overrides here.
 final class DaylightSearchPill: HoverHighlightView {
+    /// B4: below `HelmDaylightPriority.contentTie` (499), which is where the
+    /// space pills' own label floor sits - so this control gives up its
+    /// preferred width first. Still well under
+    /// `NSLayoutPriorityWindowSizeStayPut` (500).
+    static let preferredWidthPriority = NSLayoutConstraint.Priority(400)
+
     var onClick: (() -> Void)?
 
     private let iconView = NSImageView()
@@ -590,8 +635,16 @@ final class DaylightSearchPill: HoverHighlightView {
 
         // 499, never required: this is the one bar control designed to shrink,
         // so its own preferred width must never be able to widen the window.
+        //
+        // B4: and it now sits *below* the space pills' own label floor (499),
+        // so a narrow window takes width off this pill - the one element with
+        // real slack, 230pt down to 92 - before it starts truncating the
+        // navigation. Before this, both were 499 and the tie-break gave the
+        // search pill its full ~350pt while a pill label collapsed to 4pt.
         let preferred = widthAnchor.constraint(equalToConstant: 230)
-        preferred.priority = HelmDaylightPriority.contentTie
+        preferred.priority = Self.preferredWidthPriority
+        // The floor stays at 499 - a search pill compressed past this stops
+        // being a control at all.
         let floor = widthAnchor.constraint(greaterThanOrEqualToConstant: 92)
         floor.priority = HelmDaylightPriority.contentTie
 

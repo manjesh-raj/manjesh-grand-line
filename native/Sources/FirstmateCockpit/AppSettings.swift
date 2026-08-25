@@ -18,7 +18,6 @@ final class AppSettings {
         static let fontSize = "fm.fontSize"
         static let uiTextScale = "fm.uiTextScale"
         static let defaultShellCwd = "fm.defaultShellCwd"
-        static let mirrorTarget = "fm.mirrorTarget"
         static let autoReconnect = "fm.autoReconnect"
         static let notifyOnNeedsDecision = "fm.notifyOnNeedsDecision"
         static let fmHome = "fm.fmHome"
@@ -67,13 +66,6 @@ final class AppSettings {
     var defaultShellCwd: String? {
         get { defaults.string(forKey: Keys.defaultShellCwd) }
         set { defaults.set(newValue, forKey: Keys.defaultShellCwd) }
-    }
-
-    /// Settings > General's "Mirror target" - checked by `mirrorTarget()`
-    /// after `FM_MIRROR_TARGET`.
-    var mirrorTarget: String? {
-        get { defaults.string(forKey: Keys.mirrorTarget) }
-        set { defaults.set(newValue, forKey: Keys.mirrorTarget) }
     }
 
     /// Settings > Terminal's "Reconnect automatically" toggle (Fix 3) -

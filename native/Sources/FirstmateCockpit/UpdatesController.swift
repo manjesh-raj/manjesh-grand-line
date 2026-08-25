@@ -463,9 +463,22 @@ final class UpdatesController: NSViewController, SetupPageSummary {
         let upToDate = rows.filter { $0.status == .upToDate }.count
         let needsUpdate = rows.filter { $0.status == .updateAvailable || $0.status == .notInstalled }.count
         guard statTiles.count == 4 else { return }
+        // B9 (`data/grand-line-e2e-audit/report.md`): "0 Updates Available"
+        // while 13 checks are still running is a confident claim about an
+        // answer this page does not have yet - the same GL-14 shape as B1,
+        // just quieter (the adjacent "Checking… (1/13)" mitigates it, which is
+        // why this is the audit's lowest-severity item rather than a
+        // non-issue). `setupSummaryLine` right above already applies exactly
+        // this rule to the header; the tiles never followed.
+        //
+        // Only the two *derived* counts go unknown. "Tools Installed" is the
+        // catalog's own size and is true before any check runs.
+        let pending = rows.contains { $0.status == .checking || $0.status == .updating }
+        let neverChecked = !rows.isEmpty && rows.allSatisfy { $0.status == .unknown }
+        let unknown = "\u{2014}"
         statTiles[0].value = "\(total)"
-        statTiles[1].value = "\(upToDate)"
-        statTiles[2].value = "\(needsUpdate)"
+        statTiles[1].value = (pending || neverChecked) ? unknown : "\(upToDate)"
+        statTiles[2].value = (pending || neverChecked) ? unknown : "\(needsUpdate)"
         statTiles[3].value = relativeLastChecked()
     }
 

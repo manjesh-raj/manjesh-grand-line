@@ -144,3 +144,41 @@ new version's tree, then re-apply all three patches - `dimmedColor` and
 and the `getAttributes` call site in `Apple/AppleTerminalView.swift`) and the
 `invalidationRegion` wrap-redraw-boundary fix in `updateDisplay`
 (`Apple/AppleTerminalView.swift`).
+
+## Fourth patch: display gating (`displaySuspended` / `displayIntervalNanos`)
+
+`Mac/MacTerminalView.swift` declares two new public properties on
+`TerminalView` and `Apple/AppleTerminalView.swift`'s `queuePendingDisplay()`
+honours them. Nothing else changed.
+
+**Why it has to be a patch.** A terminal attached to a busy live session (this
+app's Herdr tab attaches firstmate's own session, which prints almost
+continuously) parses every byte on the main thread and repaints at 60 Hz for as
+long as the app is open. Measured on the captain's real instance: **~6-16% CPU
+and 2.9% GPU sustained while the app was merely backgrounded**, top CPU
+consumer machine-wide, and a 5-second `sample` put nearly all of the main
+thread's busy time in `CA::Transaction commit -> NSViewBackingLayer display ->
+TerminalView.draw(_:)`. That is not a SwiftTerm bug - it repaints when its
+buffer changes, which is correct - but there is no way to say "stop painting
+for now" from outside the module: `updateDisplay`, `queuePendingDisplay` and
+`draw(_:)` are none of them `open`, and `TerminalView` cannot be subclassed
+into that behaviour.
+
+**What the patch does.** `queuePendingDisplay()` gains one early return
+(`displaySuspended` -> remember the wanted pass in `suspendedDisplayPending`
+and schedule nothing) and reads its throttle delay from
+`displayIntervalNanos` instead of a hardcoded `fps60`. Clearing
+`displaySuspended` flushes the deferred pass. The iOS path keeps the literal
+60 Hz value verbatim (`#if os(macOS)`), so only the platform this app ships on
+is affected.
+
+**What it deliberately does not touch: the terminal model.** Every byte still
+reaches the buffer through the ordinary feed path, so scrollback stays exact
+and a resumed view is correct immediately - it never needs a reconnect or a
+redraw request from the child. Only the *scheduling of painting* moves.
+
+The policy (when to suspend, when to throttle) lives entirely in the app, on
+`CockpitTerminalView.refreshDisplayGating()` - see its own doc comment. If
+SwiftTerm is ever re-synced from upstream, re-applying this patch is two
+hunks: the property block after `pendingDisplay` in `MacTerminalView.swift`,
+and the early return plus `fpsDelay` source in `queuePendingDisplay()`.

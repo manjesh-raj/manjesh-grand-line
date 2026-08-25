@@ -198,8 +198,20 @@ final class LockScreenController: NSViewController {
     /// The clipped content layer - this is the view that carries the fill,
     /// border and corner radius.
     private let card = NSView()
-    private let ribbonView = NSView()
-    private let ribbonLayer = CAGradientLayer()
+    /// B6 (`data/grand-line-e2e-audit/report.md`): the ribbon syncs its own
+    /// layer's frame from its own `layout()`, rather than depending on
+    /// `viewDidLayout` -> `applyLayerGeometry` having run at a moment when
+    /// this view already had bounds.
+    ///
+    /// It did not, on first presentation: the audit's probe read
+    /// `ribbonLayer.frame = (0,0,0,0)` on a fully laid-out 1220x720 first
+    /// presentation and `(0,0,420,6)` only after a resize, so the lock screen
+    /// - the first thing seen on every launch - opened with its domain ribbon
+    /// simply missing. `layout()` is called whenever a view's own bounds
+    /// resolve, which is exactly the condition this needs and is not
+    /// something a caller has to remember to re-trigger.
+    private let ribbonView = GradientHostView()
+    private var ribbonLayer: CAGradientLayer { ribbonView.gradient }
     private let markTile = HelmGradientTile(size: .hero)
 
     // MARK: Content
@@ -388,8 +400,6 @@ final class LockScreenController: NSViewController {
         card.translatesAutoresizingMaskIntoConstraints = false
         cardShadowHost.addSubview(card)
 
-        ribbonView.wantsLayer = true
-        ribbonView.layer?.addSublayer(ribbonLayer)
         ribbonView.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(ribbonView)
 
@@ -826,6 +836,36 @@ final class LockScreenController: NSViewController {
         HelmMotion.isReduced
     }
 
+    /// E4 (`data/grand-line-e2e-audit/report.md`): stop the looping
+    /// decoration, called from `AppShellController.hideLock` on unlock.
+    ///
+    /// The three infinite animations used to be added exactly once and never
+    /// removed - `animationsStarted` latched true and only a Reduce Motion
+    /// toggle could take them off - so after the first unlock they stayed
+    /// attached to hidden layers for the rest of the session, costing
+    /// render-server bookkeeping forever for something nobody can see. And
+    /// while the app *is* locked with the display awake (a Mac left locked
+    /// overnight), the scene composites continuously by design; that half is
+    /// the lock screen's job, but it must end the moment the overlay does.
+    ///
+    /// Clearing the latch is what makes `startAnimationsIfNeeded()` honest:
+    /// the next `showLock` genuinely restarts them, rather than relying on
+    /// animations that happened to still be attached.
+    func stopAnimations() {
+        guard animationsStarted else { return }
+        animationsStarted = false
+        boatImageView.layer?.removeAnimation(forKey: "bob")
+        waveLayer.removeAnimation(forKey: "drift")
+        backWaveLayer.removeAnimation(forKey: "drift")
+    }
+
+    /// E4: re-add them when the scene comes back up. `viewDidLayout` also
+    /// calls `startAnimationsIfNeeded()`, but a re-lock does not necessarily
+    /// re-lay-out an already-sized overlay, so `showLock` says so explicitly.
+    func restartAnimationsIfNeeded() {
+        startAnimationsIfNeeded()
+    }
+
     private func startAnimationsIfNeeded() {
         guard !animationsStarted, waveWidth > 0 else { return }
         animationsStarted = true
@@ -1099,7 +1139,16 @@ extension LockScreenController {
     var debugCard: NSView { card }
     var debugCardShadowHost: NSView { cardShadowHost }
     var debugRibbonLayer: CAGradientLayer { ribbonLayer }
+    var debugRibbonViewFrame: NSRect { ribbonView.frame }
     var debugSkyLayer: CAGradientLayer { skyLayer }
+    /// E4: whether the looping decoration is currently attached, so a suite
+    /// can prove `hideLock` genuinely detaches it instead of only hiding the
+    /// view it lives on.
+    var debugLoopingAnimationsAttached: Bool {
+        boatImageView.layer?.animation(forKey: "bob") != nil
+            || waveLayer.animation(forKey: "drift") != nil
+            || backWaveLayer.animation(forKey: "drift") != nil
+    }
     var debugMarkTile: HelmGradientTile { markTile }
     var debugTitle: NSTextField { titleLabel }
     var debugSubtitle: NSTextField { subtitleLabel }
@@ -1127,3 +1176,32 @@ extension LockScreenController {
     }
 }
 #endif
+
+/// B6: a view whose only job is to keep a gradient sublayer the size of its
+/// own bounds.
+///
+/// A `CAGradientLayer` added as a *sublayer* has no autoresizing relationship
+/// to its host view - somebody has to set its frame, and doing that from an
+/// ancestor's `viewDidLayout` is a bet that the ancestor lays out at a moment
+/// when this view's own bounds are already resolved. On the lock screen's
+/// first presentation that bet lost. Owning the sync here makes it structural.
+private final class GradientHostView: NSView {
+    let gradient = CAGradientLayer()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.addSublayer(gradient)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func layout() {
+        super.layout()
+        // Never animated: a standalone sublayer's frame change carries Core
+        // Animation's default ~0.25s implicit animation, which on a resize
+        // slides the ribbon behind the card's own instant relayout (the
+        // finding `HelmMotion.withoutImplicitAnimation` exists for).
+        HelmMotion.withoutImplicitAnimation { gradient.frame = bounds }
+    }
+}

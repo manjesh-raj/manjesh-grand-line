@@ -71,22 +71,36 @@ enum VaultDataSelfTest {
 
         // MARK: parseDoctorTools
 
-        let hardenedOnly = VaultSource.parseDoctorTools(#"{"results":[{"commands":["claude"],"issues":[],"name":"claude"}]}"#)
+        let hardenedOnly = VaultSource.parseDoctorTools(#"{"results":[{"commands":["claude"],"issues":[],"name":"claude"}]}"#) ?? []
         check("one hardened tool parsed", hardenedOnly.count == 1)
         check("hardened tool name/commands", hardenedOnly.first?.name == "claude" && hardenedOnly.first?.commands == ["claude"])
         check("hardened tool status", hardenedOnly.first?.status == .hardened)
 
         let withIssues = VaultSource.parseDoctorTools(
             #"{"results":[{"commands":["gh"],"issues":[{"explanation":"x"},{"explanation":"y"}],"name":"gh"}]}"#
-        )
+        ) ?? []
         check("tool with issues parsed", withIssues.count == 1)
         check("tool with issues status", withIssues.first?.status == .needsAttention(issueCount: 2))
 
-        let malformed = VaultSource.parseDoctorTools("not json")
-        check("malformed JSON yields no tools, not a crash", malformed.isEmpty)
+        // MARK: parseSecretList (B1)
 
-        let empty = VaultSource.parseDoctorTools(#"{"results":[]}"#)
-        check("empty results yields no tools", empty.isEmpty)
+        check("a failed `av list` is a failed read (nil), not an empty vault",
+              VaultSource.parseSecretList(stdout: "", status: 1) == nil)
+        check("a failed `av list` that still printed something is still nil",
+              VaultSource.parseSecretList(stdout: "GH_TOKEN", status: 1) == nil)
+        check("a successful `av list` with no secrets is an empty list, not nil",
+              VaultSource.parseSecretList(stdout: "\n  \n", status: 0) == [])
+        check("a successful `av list` parses and trims its names",
+              VaultSource.parseSecretList(stdout: "GH_TOKEN\n  AWS_SECRET  \n", status: 0)?.map(\.name) == ["GH_TOKEN", "AWS_SECRET"])
+
+        // B1: a failed read and a genuinely empty report must not look the
+        // same - this is the whole finding, one level down from the UI.
+        check("malformed JSON is a failed read (nil), not an empty list",
+              VaultSource.parseDoctorTools("not json") == nil)
+        check("output of the wrong shape is a failed read too",
+              VaultSource.parseDoctorTools(#"{"unexpected":true}"#) == nil)
+        check("a well-formed report with no tools is an empty list, not nil",
+              VaultSource.parseDoctorTools(#"{"results":[]}"#) == [])
 
         // MARK: VaultRecipe.build / VaultRecipeChecklist (fm/grandline-vault-recipe-backup)
 
