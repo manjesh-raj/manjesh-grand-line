@@ -372,7 +372,10 @@ final class AutomationController: NSViewController, SetupPageSummary {
     /// Re-runs whichever background check a step's `stepIsDone` decision
     /// depends on, right before deciding skip-vs-run - mirrors
     /// `BootstrapController.runSetupStepDotfiles`'s own "never trust a stale
-    /// in-memory result" comment.
+    /// in-memory result" comment. For software that now also means bypassing
+    /// `DependencyCheckCache` (`forceRefresh: true`) - the whole point of this
+    /// call is to see the live truth right before deciding, not whatever
+    /// Updates/Bootstrap happened to cache a few minutes ago.
     private func refreshCheckData(for kind: SetupStepKind, completion: @escaping () -> Void) {
         switch kind {
         case .firstmateHome, .restoreConfig:
@@ -380,7 +383,7 @@ final class AutomationController: NSViewController, SetupPageSummary {
         case .dotfiles, .agentInstructions:
             refreshDotfiles(completion: completion)
         case .software:
-            checkAllSoftware(completion: completion)
+            checkAllSoftware(forceRefresh: true, completion: completion)
         }
     }
 
@@ -504,14 +507,25 @@ final class AutomationController: NSViewController, SetupPageSummary {
         }
     }
 
-    /// Checks every catalog item via the exact `UpdatesSource.check` the
-    /// Updates page and Bootstrap's own Software checklist card use.
-    private func checkAllSoftware(completion: (() -> Void)? = nil) {
+    /// Checks every catalog item through the shared `DependencyCheckCache`
+    /// (`UpdatesController`, `BootstrapController`, and this page all read
+    /// the same 13-item cache now instead of each independently re-running
+    /// the whole sweep - see that file's header).
+    ///
+    /// `forceRefresh` bypasses the cache and re-runs every real check - the
+    /// "Run Automation" sequencer's own `refreshCheckData(for: .software)`
+    /// passes `true` (see that method's "never trust a stale in-memory
+    /// result" comment: this is the moment the page decides skip-vs-run, so
+    /// it must see the current truth, not a cache entry another page wrote a
+    /// few minutes ago); the automatic first-visit call on `viewWillAppear`
+    /// passes `false` (the default), which is what lets this sweep come back
+    /// from Updates' or Bootstrap's own earlier check at no subprocess cost.
+    private func checkAllSoftware(forceRefresh: Bool = false, completion: (() -> Void)? = nil) {
         isLoadingSoftware = true
         rebuildStepper()
         let items = toolRows.map { $0.item }
         DispatchQueue.global(qos: .userInitiated).async {
-            let outcomes = items.map { ($0.id, UpdatesSource.check($0)) }
+            let outcomes = items.map { ($0.id, DependencyCheckCache.shared.check($0, forceRefresh: forceRefresh)) }
             DispatchQueue.main.async { [weak self] in
                 guard let self else { completion?(); return }
                 for (id, outcome) in outcomes {
@@ -541,7 +555,10 @@ final class AutomationController: NSViewController, SetupPageSummary {
             rebuildStepper()
             DispatchQueue.global(qos: .userInitiated).async { [weak self] in
                 let outcome = UpdatesSource.update(row.item)
-                let recheck = UpdatesSource.check(row.item)
+                // `forceRefresh: true` - this item just changed underneath
+                // its own cache entry, and forcing it here also refreshes
+                // the shared cache so Updates/Bootstrap see the truth too.
+                let recheck = DependencyCheckCache.shared.check(row.item, forceRefresh: true)
                 DispatchQueue.main.async {
                     guard let self else { completion(false); return }
                     row.isCurrent = false
