@@ -40,6 +40,16 @@ final class BackgroundSignalsPoller {
     /// 15 minutes - see the file header for the reasoning.
     private let pollInterval: TimeInterval = 15 * 60
 
+    /// E3: the heaviest pass in the report's table by a wide margin - tool
+    /// checks (`npm`/`brew` per catalog item), fork drift (`gh api`/git x8),
+    /// vault (`av`), setup drift (a `git fetch` on the dotfiles clone), i.e.
+    /// ~60 subprocesses and real network. While the app has been backgrounded
+    /// for >5 minutes, every other tick is skipped (an effective 30 minutes).
+    /// Its consumers are the Notification Center's FYI signals and the two
+    /// canvas modules that render `lastCounts` - "your tools are 25 minutes
+    /// out of date rather than 15" is not a cost anyone can perceive.
+    private var backgroundedGate = BackgroundedPollGate(skipsPerRun: 1)
+
     private var timer: Timer?
     private var isChecking = false
 
@@ -219,7 +229,15 @@ final class BackgroundSignalsPoller {
         // "Not run yet" rather than omitting a service that exists.
         ServiceHealthRegistry.shared.register(.backgroundSignals)
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in self?.checkNow() }
-        let t = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in self?.checkNow() }
+        let t = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            // E3. Deliberately gated on the *timer* rather than inside
+            // `checkNow()`: that method is also the manual/deep-link entry
+            // point ("Check now"), and a captain asking for a check must
+            // always get one.
+            guard self.backgroundedGate.shouldRun(backgrounded: AppActivityState.shared.isBackgrounded) else { return }
+            self.checkNow()
+        }
         t.tolerance = 30
         timer = t
     }

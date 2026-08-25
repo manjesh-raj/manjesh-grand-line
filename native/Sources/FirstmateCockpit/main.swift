@@ -244,6 +244,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // not the captain wants OS banners too.
         FleetNotifier.shared.setEnabled(AppSettings.shared.notifyOnNeedsDecision)
         FleetNotifier.shared.onNavigateToOverview = { [weak self] in self?.appShell.show(.overview) }
+        // E3: the shared "has the captain actually been away for a while?"
+        // answer the gated pollers below consult. Registered before any of
+        // them start.
+        AppActivityState.shared.start()
         FleetNotifier.shared.start()
 
         // F4: notification action buttons. Every closure here points at the
@@ -1518,6 +1522,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_APP_LOCK_TESTS"] == "1" {
 // scope rule - see LogAnalyzerSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_LOG_ANALYZER_TESTS"] == "1" {
     exit(LogAnalyzerSelfTest.run() ? 0 : 1)
+}
+
+// E3 (`data/grand-line-e2e-audit/report.md`): same convention, for the
+// backgrounded poll tier - see AppActivityStateSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_APP_ACTIVITY_STATE_TESTS"] == "1" {
+    exit(AppActivityStateSelfTest.run() ? 0 : 1)
 }
 
 // E1 (`data/grand-line-e2e-audit/report.md`): same convention, for the

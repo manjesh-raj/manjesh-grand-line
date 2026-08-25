@@ -50,6 +50,17 @@ final class FleetNotifier {
     private var osBannersEnabled = false
     private let pollInterval: TimeInterval = 30
 
+    /// E3: while the app has been backgrounded for >5 minutes, only every 4th
+    /// tick does work - an effective 120s cadence, the report's own suggested
+    /// number. This poller is the expensive one in that table: each pass
+    /// spawns `fm-crew-state.sh` **serially per task** and marks Health
+    /// running/success (two registry notifications, which - before P4 - meant
+    /// two full Health-card rebuilds). Nothing is skipped permanently: a
+    /// decision parked while the captain is away still surfaces, at worst two
+    /// minutes later than before, which is well inside "notice it when you
+    /// come back".
+    private var backgroundedGate = BackgroundedPollGate(skipsPerRun: 3)
+
     /// Forwarded navigation for the in-app "N tasks finished" entry -
     /// mirrors `ConsoleComposerController.onRunInTerminal`'s own forward-
     /// don't-own convention. Set once at launch in `main.swift`.
@@ -105,6 +116,7 @@ final class FleetNotifier {
     }
 
     private func poll() {
+        guard backgroundedGate.shouldRun(backgrounded: AppActivityState.shared.isBackgrounded) else { return }
         ServiceHealthRegistry.shared.markRunning(.fleetTasks)
         DispatchQueue.global(qos: .utility).async { [weak self] in
             let tasks = FleetDataSource.parseTasks()
