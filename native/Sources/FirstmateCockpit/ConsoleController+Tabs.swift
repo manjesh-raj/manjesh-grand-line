@@ -341,6 +341,7 @@ extension ConsoleController {
         updateWindowTitle(from: tab)
         updateBlockViewControls()
         updateComposeControls()
+        updateQuotaUsageControls()
         updateSRELeadControls()
         // fm/grandline-notification-center (#7): selecting a tab is exactly
         // "the captain is now looking at this tab" - clears its own SRE
@@ -428,6 +429,7 @@ extension ConsoleController {
             self.fontSizeObservation = nil
         }
         composer.shutdown()
+        quotaUsage.shutdown()
     }
 
     // MARK: Window title

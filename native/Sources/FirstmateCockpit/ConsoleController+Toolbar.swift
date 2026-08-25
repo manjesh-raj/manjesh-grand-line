@@ -52,6 +52,8 @@ extension ConsoleController {
         blockViewToggleButton = makeLabeledButton(symbol: "rectangle.grid.1x2", title: "Blocks", tooltip: "Show Parsed Blocks (Stage 0)", action: #selector(toggleBlockView))
         blockViewRefreshButton = makeIconButton(symbol: "arrow.clockwise", tooltip: "Refresh Blocks", action: #selector(refreshBlockView))
         composeButton = makeLabeledButton(symbol: "sparkles", title: "Compose", tooltip: "Compose a command…", action: #selector(toggleComposer))
+        quotaUsageButton = makeLabeledButton(symbol: quotaUsageGaugeSymbol, title: "Claude usage",
+                                             tooltip: "Check Claude usage", action: #selector(toggleQuotaUsage))
 
         // SRE Lead (design brief Part C) and block view (`fm/cockpit-block-
         // view-stage0`) are both dedicated-host-page-only affordances - the
@@ -77,6 +79,10 @@ extension ConsoleController {
         // on the shared console, which has no SRE Lead button to sit next to)
         // per captain request.
         toolViews.append(composeButton)
+        // "Claude usage" sits immediately beside Compose, per captain
+        // request - the toolbar prototype's own original pairing
+        // (this file's header).
+        toolViews.append(quotaUsageButton)
         // Analyze Logs sits immediately after Compose, so the three
         // investigation-shaped features (SRE Lead, Compose, Analyze Logs)
         // read as one cluster - the placement the captain asked for.
@@ -160,6 +166,25 @@ extension ConsoleController {
         composer.toggle(relativeTo: composeButton)
     }
 
+    // MARK: Claude usage (`fm/grandline-herdr-utilization-panel`,
+    // restored beside Compose - see `quotaUsageButton`'s doc comment)
+
+    /// Byte-for-byte `updateComposeControls()`'s own availability rule -
+    /// "Claude usage" is the same shape of feature as Compose, sitting right
+    /// beside it. Closes the popover outright when the current tab stops
+    /// qualifying, so it never sits open pointed at a tab it no longer
+    /// applies to (matching Compose's own reasoning).
+    func updateQuotaUsageControls() {
+        let available = currentTab.map { !$0.isOneShotCommand } ?? false
+        quotaUsageButton.isHidden = !available
+        if !available { quotaUsage.close() }
+    }
+
+    @objc func toggleQuotaUsage() {
+        guard !quotaUsageButton.isHidden else { return }
+        quotaUsage.toggle(relativeTo: quotaUsageButton)
+    }
+
     // MARK: Theme
 
     func applyTheme() {
@@ -181,6 +206,7 @@ extension ConsoleController {
         styleChips()
         updateBlockViewControls()
         updateComposeControls()
+        updateQuotaUsageControls()
         updateIncidentControls()
         incidentCard.applyTheme(theme)
         if incidentPopover.isShown { renderIncidentCard() }
