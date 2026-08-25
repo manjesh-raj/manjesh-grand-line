@@ -159,12 +159,16 @@ final class LockScreenController: NSViewController {
 
     // MARK: Geometry
 
-    /// The gate card's fixed content width. Narrower than the old 360pt loose
-    /// column because the card now carries its own padding either side.
-    static let cardWidth: CGFloat = 352
+    /// The gate card's fixed content width. Widened from the original 352pt
+    /// (captain feedback: the card read as cramped) - still narrower than
+    /// `HelmFormSheet.width` (520), since this card's content is a title, one
+    /// field and one button, not a multi-section form.
+    static let cardWidth: CGFloat = 420
     /// §6.10's ribbon weight, shared with `HelmFormSheet`.
     private static let ribbonHeight: CGFloat = 6
-    private static let cardPadding: CGFloat = 20
+    /// Grown alongside `cardWidth` so the wider card doesn't read as flat -
+    /// `HelmMetrics.s5`, one step up the spacing scale from the original 20pt.
+    private static let cardPadding: CGFloat = HelmMetrics.s5
 
     // MARK: Scene
 
@@ -202,7 +206,12 @@ final class LockScreenController: NSViewController {
 
     private let titleLabel = NSTextField(labelWithString: "Welcome back, Manjesh")
     private let subtitleLabel = NSTextField(wrappingLabelWithString: "")
-    private let passwordField = HelmSecureTextField(placeholder: "Password")
+    /// The empty-state placeholder reads as masked dots rather than the word
+    /// "Password" - it's rendered by `SunkenFieldTheming.applyPlaceholder` as a
+    /// plain string in `HelmField.mutedInk`, so a literal bullet run is all
+    /// that's needed; it's still only shown while empty and still replaced the
+    /// instant typing starts, same as any other placeholder in this app.
+    private let passwordField = HelmSecureTextField(placeholder: "•••••••••")
     private let unlockButton = HelmButton(title: "Unlock", variant: .primary)
     private let formStack = NSStackView()
     /// Shown only after a rejected password. Previously the failure was
@@ -514,9 +523,9 @@ final class LockScreenController: NSViewController {
         ])
         body.orientation = .vertical
         body.alignment = .centerX
-        body.spacing = HelmMetrics.s3
+        body.spacing = HelmMetrics.s4
         body.setCustomSpacing(HelmMetrics.s2, after: titleLabel)
-        body.setCustomSpacing(HelmMetrics.s4, after: subtitleLabel)
+        body.setCustomSpacing(HelmMetrics.s5, after: subtitleLabel)
         body.translatesAutoresizingMaskIntoConstraints = false
         card.addSubview(body)
 
