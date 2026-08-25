@@ -412,7 +412,12 @@ final class HealthCardView: NSObject {
         textStack.orientation = .vertical
         textStack.alignment = .leading
         textStack.spacing = 2
-        textStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        // AGENTS.md gotcha (12): `setContentHuggingPriority` is a no-op on an
+        // `NSStackView` (it has no intrinsic content size) - the *stack*-level
+        // API (`ToolRowLayout.columnHugging`'s own convention) is what
+        // actually lets this column absorb the row's slack.
+        textStack.setHuggingPriority(.defaultLow, for: .horizontal)
+        textStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
 
         trailing.translatesAutoresizingMaskIntoConstraints = false
         trailing.setContentHuggingPriority(.required, for: .horizontal)
@@ -421,6 +426,14 @@ final class HealthCardView: NSObject {
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 12
+        // AGENTS.md gotcha (10): left at the default `.gravityAreas`
+        // distribution, neither view's hugging priority is honoured at all -
+        // both land in the center gravity area at their natural size, so
+        // `trailing` (the status chip) crams in immediately after the title/
+        // description text instead of sitting at the row's trailing edge, the
+        // way `HelmCard.setHeader`'s own row already gets right. `.fill` is
+        // what makes the hugging/clipping-resistance priorities above matter.
+        row.distribution = .fill
         row.translatesAutoresizingMaskIntoConstraints = false
 
         let container = HoverHighlightView()
