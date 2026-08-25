@@ -32,8 +32,21 @@
 //      that matters is repainting Daylight's `paper` instead: a code area would
 //      then be the same colour as the page and have no boundary against the
 //      card it sits in.
-//   6. **Settings is two columns under Daylight, one everywhere else** (§7),
-//      and all six cards survive the reparent. Measured from real frames.
+//   6. **Settings' two-column threshold is width-driven, and now a fixed
+//      case below documents `fm/grandline-settings-layout-theme-dependent-
+//      fix`'s own correction**: this used to also require `theme.isDaylight`,
+//      so a captain switching between a Daylight theme and a legacy one at
+//      the same window size saw the page itself restructure - one column
+//      became two, and the Appearance card's own theme-grid density changed
+//      with it, since that grid's column count is derived from
+//      `appearanceContainer`'s real width, which differs between one- and
+//      two-column mode. Selecting a theme must only ever change colours, so
+//      the gate is gone: every theme now crosses to two columns at the same
+//      width, and all six cards survive the reparent either way. Measured
+//      from real frames. `SettingsThemeLayoutParitySelfTest` is the dedicated
+//      suite proving a Daylight theme and a legacy theme resolve to a
+//      byte-identical layout fingerprint at a shared width; this case is
+//      what is left of the original Daylight-specific coverage.
 //   7. **`HelmToggle` shows the pill on Daylight and a real `NSSwitch`
 //      elsewhere**, moves its knob, and writes through to `AppSettings` - the
 //      whole point of replacing the control is that it still is one.
@@ -479,10 +492,11 @@ enum DaylightDrillPageSlice6SelfTest {
         }
     }
 
-    // MARK: 6. Settings' two-column layout (§7)
+    // MARK: 6. Settings' two-column layout (§7, corrected by
+    // `fm/grandline-settings-layout-theme-dependent-fix`)
 
     private static func checkSettingsTwoColumnLayout(_ ok: inout Bool) {
-        print("\n-- §7: Settings is two columns under Daylight --")
+        print("\n-- §7: Settings' two-column threshold is width-driven, not theme-driven --")
         let restore = ThemeManager.shared.theme
         defer { ThemeManager.shared.setTheme(restore) }
 
@@ -528,17 +542,35 @@ enum DaylightDrillPageSlice6SelfTest {
             ok = false
         }
 
-        // And the other twelve never see two columns at any width.
+        // `fm/grandline-settings-layout-theme-dependent-fix`: the twelve
+        // legacy palettes now cross to two columns at the SAME width a
+        // Daylight theme does - the opposite of what this case asserted
+        // before that fix, which encoded the very bug being fixed
+        // ("the twelve must be untouched") as expected behaviour. A captain
+        // comparing "Daylight" against a legacy theme at the same window
+        // size must see identical structure, not a page that reflows.
         ThemeManager.shared.setTheme(otherTheme)
         let legacy = makeSettings()
         let legacyWindow = mount(legacy, width: 1800)
         defer { _ = legacyWindow }
         legacy.view.layoutSubtreeIfNeeded()
-        if legacy.debugIsTwoColumn {
-            print("  FAIL \(otherTheme.id) got two columns; the twelve must be untouched")
+        if !legacy.debugIsTwoColumn {
+            print("  FAIL \(otherTheme.id) stayed one column at 1800pt; the layout must be width-driven, not theme-driven")
             ok = false
         }
-        if ok { print("  ok   two columns on Daylight at 1500, one at 820, one on \(otherTheme.id) at 1800") }
+
+        // And below the same threshold, the legacy theme falls back to one
+        // column too - the threshold applies, not just "two columns forever
+        // now regardless of width".
+        let legacyNarrow = makeSettings()
+        let legacyNarrowWindow = mount(legacyNarrow, width: 820)
+        defer { _ = legacyNarrowWindow }
+        legacyNarrow.view.layoutSubtreeIfNeeded()
+        if legacyNarrow.debugIsTwoColumn {
+            print("  FAIL \(otherTheme.id) kept two columns at 820pt, below its own minimum")
+            ok = false
+        }
+        if ok { print("  ok   two columns on Daylight at 1500 and on \(otherTheme.id) at 1800, one column at 820 on both") }
     }
 
     // MARK: 7. `HelmToggle` (§6.9)
