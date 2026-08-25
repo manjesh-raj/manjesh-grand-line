@@ -58,6 +58,19 @@ if [ -f "Scripts/sre_kubectl_mcp.py" ]; then
   cp "Scripts/sre_kubectl_mcp.py" "$APP_DIR/Contents/Resources/sre_kubectl_mcp.py"
 fi
 
+# The Whiteboard destination's vendored Excalidraw bundle (WhiteboardAssets.swift
+# looks for it under Contents/Resources first, falling back to the source tree
+# for the swift run/swift build dev flow - the same three-step resolution
+# sre_kubectl_mcp.py already uses). Copied wholesale: the page loads index.html
+# with read access scoped to this directory, and its fonts/ subtree is fetched
+# from it at runtime.
+if [ -d "Vendor/Excalidraw/web" ]; then
+  cp -R "Vendor/Excalidraw/web" "$APP_DIR/Contents/Resources/ExcalidrawWeb"
+else
+  echo "⚠️  No Vendor/Excalidraw/web - the Whiteboard destination will show its"
+  echo "    \"no bundle\" empty state. Run Scripts/build-excalidraw-web.sh to build it."
+fi
+
 cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

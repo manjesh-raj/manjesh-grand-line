@@ -122,6 +122,7 @@ enum DaylightModule: String, CaseIterable {
     case postmortems
     case dictation
     case tools
+    case whiteboard
     case settings
 
     /// Which space this module belongs to, or `nil` for the two that appear
@@ -140,7 +141,7 @@ enum DaylightModule: String, CaseIterable {
         // their own destinations - see `DaylightModuleSelfTest.checkSpaceTable`,
         // updated alongside this per this file's own "change it here and in
         // that test together" rule.
-        case .vault, .docs, .runbooks, .postmortems, .tools, .dictation: return .stores
+        case .vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard: return .stores
         case .updates, .bootstrap, .automation, .githubSync, .settings: return .engineering
         }
     }
@@ -167,7 +168,7 @@ enum DaylightModule: String, CaseIterable {
     var appearsOnOverview: Bool {
         switch self {
         case .tasks, .hosts, .updates, .bootstrap, .automation, .githubSync,
-             .logAnalyzer, .vault, .docs, .runbooks, .postmortems, .dictation, .tools, .settings:
+             .logAnalyzer, .vault, .docs, .runbooks, .postmortems, .dictation, .tools, .whiteboard, .settings:
             return false
         default:
             return true
@@ -226,6 +227,7 @@ enum DaylightModule: String, CaseIterable {
         case .postmortems: return .postmortems
         case .dictation: return .dictation
         case .tools: return .tools
+        case .whiteboard: return .whiteboard
         case .settings: return .settings
         }
     }
@@ -267,6 +269,7 @@ enum DaylightModule: String, CaseIterable {
         case .postmortems: return "doc.text.magnifyingglass"
         case .dictation: return "mic.fill"
         case .tools: return "wrench.and.screwdriver.fill"
+        case .whiteboard: return "scribble.variable"
         case .settings: return "slider.horizontal.3"
         }
     }
@@ -308,6 +311,7 @@ enum DaylightModule: String, CaseIterable {
         case .postmortems: return "Postmortems"
         case .dictation: return "Dictation"
         case .tools: return "Tools"
+        case .whiteboard: return "Whiteboard"
         case .settings: return "Settings"
         }
     }

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Grand Line Whiteboard</title>
+    <!-- Offline by construction, not by convention. This app's whole posture is
+         "everything stays on this machine", and a whiteboard that could quietly
+         fetch a font or a script from a CDN would be a regression from that.
+         `default-src 'self'` plus the explicit data:/blob: allowances covers
+         everything the bundle genuinely needs (inline styles Excalidraw sets on
+         its own elements, data: SVG cursors and icons, blob: workers and image
+         exports) and nothing that leaves the machine - so the library's own
+         baked-in CDN font fallback cannot fire even if a local woff2 were
+         missing. `connect-src 'self'` is what makes that a hard guarantee.
+         `frame-src` is deliberately absent (falls back to `default-src`), which
+         is what keeps Excalidraw's embeddable-link feature from loading a
+         YouTube/Figma iframe. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: data:; worker-src 'self' blob:; media-src 'self' blob:; object-src 'none'; base-uri 'none'"
+    />
+    <link rel="stylesheet" href="./whiteboard.css" />
+    <style>
+      html,
+      body,
+      #app {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        width: 100%;
+        overflow: hidden;
+        background: transparent;
+      }
+      /* Set by the bridge's `suspend()` while the destination is hidden. The
+         canvas itself is already not being composited by then (WebKit stops
+         painting a hidden WKWebView); this covers the part it cannot know
+         about - Excalidraw's own CSS transitions and animations. */
+      html.gl-suspended *,
+      html.gl-suspended *::before,
+      html.gl-suspended *::after {
+        animation-play-state: paused !important;
+        transition: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <!-- A classic script, not `type="module"`: a module graph loaded from a
+         file:// origin is a needless portability question (opaque origins,
+         per-engine behaviour), and the bundle is a single self-contained IIFE
+         precisely so there is no graph to load. -->
+    <script src="./whiteboard.js"></script>
+  </body>
+</html>

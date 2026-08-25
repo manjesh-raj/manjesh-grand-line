@@ -1,0 +1,13 @@
+{
+  "name": "grandline-excalidraw-web",
+  "private": true,
+  "description": "Pinned manifest for native/Scripts/build-excalidraw-web.sh. Not installed by the app - see ../README.md.",
+  "dependencies": {
+    "@excalidraw/excalidraw": "0.18.1",
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.9"
+  }
+}
