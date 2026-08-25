@@ -210,7 +210,39 @@ enum SettingsThemeLayoutParitySelfTest {
         ThemeManager.shared.setTheme(theme)
         let settings = makeSettings()
         let window = mount(settings, width: width)
-        return (fingerprint(for: settings), window)
+        return (settledFingerprint(for: settings), window)
+    }
+
+    /// The fingerprint once the page has stopped changing height on its own.
+    ///
+    /// Several Settings cards finish filling themselves in *asynchronously* -
+    /// the Security card's sudo status shells out, the Backup card reads its
+    /// last-export state off disk - and each of those changes a card's height
+    /// when it lands. Measuring immediately after `mount` therefore captures
+    /// whichever of those had happened to complete by then, which depends on
+    /// how much run-loop time this process happened to have taken since, not
+    /// on the theme.
+    ///
+    /// That made this suite genuinely timing-dependent, and it showed: on a CI
+    /// runner (where those subprocess-backed checks are slower) the first
+    /// controller built in a case measured ~170pt taller than the next four,
+    /// and then agreed again with the rest - a transient, not a layout
+    /// difference. Settling first is what makes the comparison about the
+    /// theme, which is the only thing this suite is meant to be about.
+    private static func settledFingerprint(for settings: SettingsController) -> LayoutFingerprint {
+        var previous = fingerprint(for: settings)
+        for _ in 0..<25 {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+            settings.view.layoutSubtreeIfNeeded()
+            let current = fingerprint(for: settings)
+            if current.cardYPositions == previous.cardYPositions,
+               current.cardWidths == previous.cardWidths,
+               current.cardXPositions == previous.cardXPositions {
+                return current
+            }
+            previous = current
+        }
+        return previous
     }
 
     private static func describe(_ fp: LayoutFingerprint) -> String {
