@@ -307,9 +307,6 @@ final class HealthCardView: NSObject {
             }
         }
 
-        rows.append(separator())
-        rows.append(healthFooter())
-
         for row in rows {
             healthStack.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: healthStack.widthAnchor).isActive = true
@@ -391,25 +388,15 @@ final class HealthCardView: NSObject {
         return combined
     }
 
-    /// "Copy diagnostics" - the F1 spec's own affordance. Assembles the same
-    /// text the rows show plus the recent persistence failures, so a captain can
-    /// paste it somewhere without hand-transcribing timestamps. Deliberately not
-    /// a log dump: reading the unified log needs a separate tool, and this
-    /// button must not be the thing that surprises anyone by exporting more than
-    /// what is on screen.
-    /// The footer explains what "Copy diagnostics" does; the button itself has
-    /// moved into the drill header (§7), so this row carries no control - a
-    /// second copy of the same button a few rows apart is exactly the
-    /// duplication §6.4's action cluster exists to remove.
-    private func healthFooter() -> NSView {
-        // B3: `nil`, not a bare spacer - see `descRow`'s own parameter note.
-        return descRow(title: "Diagnostics",
-                       desc: "\"Copy diagnostics\" in the page header copies these rows as text. "
-                           + "Everything stays on this machine - detailed logs are in Console.app "
-                           + "under \"com.firstmate.cockpit.native\".",
-                       trailing: nil)
-    }
-
+    /// "Copy diagnostics" - the F1 spec's own affordance, wired to
+    /// `diagnosticsButton` and positioned by whoever hosts the card (see that
+    /// property's own doc comment). Assembles the same text the rows show plus
+    /// the recent persistence failures, so a captain can paste it somewhere
+    /// without hand-transcribing timestamps. Deliberately not a log dump:
+    /// reading the unified log needs a separate tool, and this button must not
+    /// be the thing that surprises anyone by exporting more than what is on
+    /// screen. Everything stays on this machine - detailed logs are in
+    /// Console.app under "com.firstmate.cockpit.native".
     @objc private func copyDiagnostics() {
         var lines: [String] = ["Manjesh Grand Line - service health"]
         for service in ServiceHealthRegistry.shared.knownServices() {

@@ -6,7 +6,6 @@
 //
 //   swift build && FM_RUN_AUDIT_UI_FIXES_TESTS=1 .build/debug/FirstmateCockpit; echo $?
 //
-//   B3  the Health card's footer renders its whole explanation, not `"Copy`
 //   B4  a narrow window truncates every nav pill a little, not one entirely
 //   B5  the selected space pill follows every navigation, not only a click
 //   B6  the lock screen's ribbon is painted on first layout
@@ -14,6 +13,12 @@
 //   B8  the Run History sheet re-colours its heading on a theme change
 //   B9  Overview's Health note fits; Updates' tiles do not claim a count
 //       they do not have yet
+//
+// B3's own case (the Health card's footer explanation was clipped to `"Copy`)
+// was retired rather than repointed: the captain later marked that whole
+// footer row as unwanted and it was removed outright
+// (`fm/grand-line-health-remove-diagnostics-footer`) - there is no longer a
+// footer on the card for a fix to guard.
 //
 // Window-backed (every one of these is a real measurement on a real view), so
 // this sits in `Scripts/run-all-tests.sh`'s `NEEDS_SESSION` list.
@@ -26,7 +31,6 @@ enum AuditUIFixesSelfTest {
 
     static func run() -> Bool {
         let cases: [(String, () -> String?)] = [
-            ("B3_healthFooterIsNotClippedByAnEmptySpacer", test_b3),
             ("B4_narrowWindowTruncatesEveryPillFairly", test_b4),
             ("B5_selectedSpaceFollowsEveryNavigation", test_b5),
             ("B6_lockRibbonIsPaintedOnFirstLayout", test_b6),
@@ -70,48 +74,6 @@ enum AuditUIFixesSelfTest {
         }
         walk(root)
         return found
-    }
-
-    // MARK: B3
-
-    /// The footer read `Diagnostics` / `"Copy` - one clipped word of a
-    /// two-sentence explanation - at every window width and in every theme,
-    /// because `descRow` was handed a bare `NSView()` as its trailing view.
-    /// That spacer has no intrinsic size, so its `.required` **content**
-    /// hugging is a no-op (AGENTS.md gotcha 12), and with the text column
-    /// deliberately yielding, `.fill` gave it nearly the whole row: measured
-    /// at a 78.5pt label against a 931pt intrinsic width.
-    private static func test_b3() -> String? {
-        // The real page, not a bare card: the footer's own wrap width is
-        // re-derived from the card's real width in `layoutDidChange()`, so a
-        // detached card measures a column the shipped page never has.
-        let controller = HealthController()
-        let window = mount(controller.view, width: 900, height: 700)
-        defer { window.contentView = nil }
-        controller.viewWillAppear()
-        controller.view.layoutSubtreeIfNeeded()
-        controller.viewDidLayout()
-        controller.view.layoutSubtreeIfNeeded()
-
-        // The footer's description is the long one - find it by its own text.
-        guard let footer = labels(in: controller.view).first(where: {
-            $0.stringValue.contains("copies these rows as text")
-        }) else {
-            return "the Health footer's explanation is no longer on the card at all"
-        }
-        let width = footer.frame.width
-        let intrinsic = footer.intrinsicContentSize.width
-        // It wraps, so it will not be as wide as its one-line intrinsic size -
-        // but it must have a real column, not a sliver. The shipped bug was
-        // 78.5pt against 931pt.
-        guard width > 200 else {
-            return "footer label is \(Int(width))pt wide (one-line intrinsic \(Int(intrinsic))pt) - still squeezed by an empty trailing view"
-        }
-        // And it must actually fit its text somewhere in that column.
-        guard footer.frame.height > footer.font.map({ $0.pointSize * 1.5 }) ?? 20 else {
-            return "footer label is \(Int(footer.frame.height))pt tall - it is not wrapping to its two sentences"
-        }
-        return nil
     }
 
     // MARK: B4
