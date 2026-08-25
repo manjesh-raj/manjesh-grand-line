@@ -745,6 +745,66 @@ enum HelmContrastSelfTest {
             }
         }
         print("  OK - bar 3pt, badge \(Int(HelmMetrics.tileSmall))pt, radius \(Int(HelmMetrics.rRow)), kicker in mutedInk, tinted border, in all \(HelmTheme.allThemes.count) themes")
+        checkAccentRowTruncation(&ok)
+    }
+
+    /// B2 (`data/grand-line-e2e-audit/report.md`): a long title or meta line
+    /// must **truncate**, not overflow its column and get sliced mid-glyph by
+    /// the card's `masksToBounds`.
+    ///
+    /// `.byTruncatingTail` was always set on both labels and never fired,
+    /// because `textStack` yielded at stack-level `.defaultLow` clipping
+    /// resistance while the labels kept `NSTextField`'s default 750 *content*
+    /// compression resistance and had no `label.width <= textStack.width` tie
+    /// - so nothing ever made their frames narrower than their text. Measured
+    /// in the Schedule Run History sheet: a real failure summary laid out
+    /// 469pt wide inside a 353pt stack, at x = -2, rendering as a sentence cut
+    /// mid-character with no ellipsis. `ToolRowLayout` fixed exactly this for
+    /// itself; it was never ported here.
+    private static func checkAccentRowTruncation(_ ok: inout Bool) {
+        print("\n-- accent rows (a long line truncates instead of clipping) --")
+        let long = String(repeating: "gh api: 502 from GitHub while checking fork drift, will retry on the next pass. ", count: 3)
+        let width: CGFloat = 460
+        for placement in [HelmAccentRow.ChipPlacement.trailing, .belowBody] {
+            let row = HelmAccentRow(chipPlacement: placement)
+            row.configure(HelmAccentRow.Content(tint: .warn,
+                                                kicker: "Failed",
+                                                title: long,
+                                                meta: long,
+                                                badgeSymbol: "bell.fill",
+                                                chipText: "Chip"),
+                          theme: HelmTheme.allThemes[0])
+            row.widthAnchor.constraint(equalToConstant: width).isActive = true
+            let g = row.debugGeometry()
+            var problems: [String] = []
+            // The measurement that matters: the label must fit the column it
+            // sits in, and must start inside the row (the shipped bug put it
+            // at x = -2).
+            // Compare alignment rects, not frames - see
+            // `labelAlignmentInsetWidth`.
+            let slack = g.labelAlignmentInsetWidth + 0.5
+            if g.titleFrame.width > g.textColumnFrame.width + slack {
+                problems.append("title \(Int(g.titleFrame.width))pt in a \(Int(g.textColumnFrame.width))pt column")
+            }
+            if g.metaFrame.width > g.textColumnFrame.width + slack {
+                problems.append("meta \(Int(g.metaFrame.width))pt in a \(Int(g.textColumnFrame.width))pt column")
+            }
+            if g.titleFrame.minX < -slack || g.metaFrame.minX < -slack {
+                problems.append("a label starts at x=\(min(g.titleFrame.minX, g.metaFrame.minX))")
+            }
+            if g.titleFrame.maxX > width + slack || g.metaFrame.maxX > width + slack {
+                problems.append("a label runs past the row's own \(Int(width))pt width")
+            }
+            // The truncated string has to stay readable somehow.
+            if g.titleToolTip != long || g.metaToolTip != long {
+                problems.append("no tooltip carrying the full string")
+            }
+            if !problems.isEmpty {
+                print("  FAIL \(placement): \(problems.joined(separator: ", "))")
+                ok = false
+            }
+        }
+        if ok { print("  OK - both labels stay inside their column at 460pt, with the full string on hover") }
     }
 
     /// A kicker built by hand is how the app ended up with three kern values

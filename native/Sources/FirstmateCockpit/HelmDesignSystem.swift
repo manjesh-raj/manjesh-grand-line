@@ -1551,6 +1551,14 @@ final class HelmAccentRow: NSView {
         var chipTint: HelmTint? = nil
         /// A wide row truncates its title to one line; a narrow one wraps.
         var titleWraps: Bool = false
+        /// Let the meta line wrap instead of truncating - B2 of
+        /// `data/grand-line-e2e-audit/report.md`. For a read-only browsing
+        /// surface with vertical room and genuinely long meta text (the
+        /// Schedule Run History sheet's failure summaries, which is where the
+        /// clipping was measured), reading the whole sentence beats a tidy
+        /// ellipsis. Off by default: a list row's height has to stay
+        /// predictable, and most callers sit in a fixed-`rowHeight` table.
+        var metaWraps: Bool = false
         /// Render `meta` in `HelmType.code()` rather than `caption()` - for a
         /// meta line that is literally a command or a fingerprint, where
         /// proportional spacing costs real readability.
@@ -1642,6 +1650,10 @@ final class HelmAccentRow: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
     private let titleAccessory = NSImageView()
     private let metaLabel = NSTextField(labelWithString: "")
+    /// The body column both labels are capped against (B2) - kept so
+    /// `debugGeometry` can report the column a test has to measure them
+    /// against.
+    private weak var textColumn: NSStackView?
     private let customContent: NSView?
     private let chip = NSView()
     private let chipLabel = NSTextField(labelWithString: "")
@@ -1790,6 +1802,7 @@ final class HelmAccentRow: NSView {
         if chipPlacement == .belowBody { bodyViews.append(chip) }
 
         let textStack = NSStackView(views: bodyViews)
+        textColumn = textStack
         textStack.orientation = .vertical
         textStack.alignment = .leading
         textStack.spacing = Self.bodySpacing
@@ -1861,6 +1874,32 @@ final class HelmAccentRow: NSView {
             // line - `ShiftEmptyStateView`'s documented trap.
             customContent.widthAnchor.constraint(equalTo: textStack.widthAnchor).isActive = true
         }
+
+        // B2: cap the two labels at their own column, and drop their
+        // compression resistance to match.
+        //
+        // The exact fix `ToolRowLayout` already carries, never ported here
+        // (its own doc comment names this as the thing to copy). `textStack`
+        // yields at stack-level `.defaultLow` clipping resistance, but
+        // `titleLabel`/`metaLabel` kept `NSTextField`'s default 750
+        // *content* compression resistance and had no `label.width <=
+        // textStack.width` tie - so a long string kept its intrinsic width,
+        // stuck out past the stack, and the card's `masksToBounds` sliced it
+        // **mid-glyph with no ellipsis**. `.byTruncatingTail` never fired
+        // because nothing had ever made the label's *frame* narrower than its
+        // text. Measured in the Schedule Run History sheet: a real failure
+        // summary's meta label laid out 469pt wide inside a 353pt stack, at
+        // x = -2.
+        //
+        // Both ties can only ever shrink a label, never widen the row, and
+        // 750 -> `.defaultLow` also keeps a long string from becoming a
+        // *window*-width floor (it is above `NSLayoutPriorityWindowSizeStayPut`
+        // - AGENTS.md gotcha (13), which this app has hit five times).
+        for label in [titleLabel, metaLabel] {
+            label.widthAnchor.constraint(lessThanOrEqualTo: textStack.widthAnchor).isActive = true
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
+
     }
 
     @objc private func rowClicked() { onClick?() }
@@ -1947,6 +1986,16 @@ final class HelmAccentRow: NSView {
         metaLabel.stringValue = content.meta ?? ""
         metaLabel.isHidden = (content.meta?.isEmpty ?? true)
         metaLabel.font = content.metaIsCode ? HelmType.code() : HelmType.caption()
+        metaLabel.maximumNumberOfLines = content.metaWraps ? 0 : 1
+        metaLabel.lineBreakMode = content.metaWraps ? .byWordWrapping : .byTruncatingTail
+
+        // B2: the truncated string stays readable on hover. Set on the *card*
+        // as well as the labels, because the labels do not fill the row and a
+        // captain aiming at the row is more likely to be over the card.
+        let full = [content.title, content.meta].compactMap { $0 }.filter { !$0.isEmpty }
+        titleLabel.toolTip = content.title.isEmpty ? nil : content.title
+        metaLabel.toolTip = content.meta?.isEmpty == false ? content.meta : nil
+        card.toolTip = full.isEmpty ? nil : full.joined(separator: " - ")
 
         chip.isHidden = content.chipText == nil
         applyTheme(theme)
@@ -2054,6 +2103,20 @@ final class HelmAccentRow: NSView {
         let cardFill: NSColor?
         let isRowSelected: Bool
         let trailingAccessoryFrame: NSRect?
+        /// B2: the two label frames and the column they must stay inside, so
+        /// a test can measure the clipping rather than describe it.
+        let titleFrame: NSRect
+        let metaFrame: NSRect
+        let textColumnFrame: NSRect
+        let titleToolTip: String?
+        let metaToolTip: String?
+        /// Auto Layout constrains a view's *alignment rect*, and
+        /// `NSTextField`'s is inset from its frame - so a label capped at its
+        /// column still measures a few points wider by `frame` (the same
+        /// mechanism `HelmPageToolbar.iconButton` compensates for). Reported
+        /// so a test can compare like with like instead of inventing a
+        /// tolerance.
+        let labelAlignmentInsetWidth: CGFloat
     }
 
     func debugGeometry() -> Geometry {
@@ -2079,7 +2142,13 @@ final class HelmAccentRow: NSView {
             cardBorderColor: card.layer?.borderColor.map { NSColor(cgColor: $0) ?? .clear },
             cardFill: card.normalColor,
             isRowSelected: isRowSelected,
-            trailingAccessoryFrame: trailingAccessory.map { $0.convert($0.bounds, to: self) }
+            trailingAccessoryFrame: trailingAccessory.map { $0.convert($0.bounds, to: self) },
+            titleFrame: titleLabel.convert(titleLabel.bounds, to: self),
+            metaFrame: metaLabel.convert(metaLabel.bounds, to: self),
+            textColumnFrame: textColumn.map { $0.convert($0.bounds, to: self) } ?? .zero,
+            titleToolTip: titleLabel.toolTip,
+            metaToolTip: metaLabel.toolTip,
+            labelAlignmentInsetWidth: titleLabel.alignmentRectInsets.left + titleLabel.alignmentRectInsets.right
         )
     }
 

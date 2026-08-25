@@ -147,7 +147,14 @@ final class ScheduleHistoryController: NSViewController {
             kicker: entry.verdict.label,
             title: Self.timestampFormatter.string(from: entry.at),
             meta: entry.summary,
-            badgeSymbol: entry.verdict.symbol
+            badgeSymbol: entry.verdict.symbol,
+            // B2: a real failure summary ("gh api: 502 from GitHub while
+            // checking fork drift, will retry...") is long, this sheet is
+            // 460pt wide, and it is a read-only browsing surface with
+            // vertical room - so the whole sentence beats an ellipsis here.
+            // The width ties in `HelmAccentRow` are what stop it clipping
+            // mid-glyph either way.
+            metaWraps: true
         ), theme: theme)
         return row
     }
