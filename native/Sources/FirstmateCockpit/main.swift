@@ -1828,6 +1828,15 @@ if ProcessInfo.processInfo.environment["FM_RUN_SETTINGS_THEME_LAYOUT_PARITY_TEST
     exit(SettingsThemeLayoutParitySelfTest.run() ? 0 : 1)
 }
 
+// `fm/grand-line-console-claude-usage-button`: the "Claude usage" toolbar
+// button restored beside Compose - its availability must mirror Compose's
+// own byte-for-byte across tab-selection transitions, on both the shared
+// Firstmate console and a dedicated host page. See
+// ConsoleClaudeUsageSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_CONSOLE_CLAUDE_USAGE_TESTS"] == "1" {
+    exit(ConsoleClaudeUsageSelfTest.run() ? 0 : 1)
+}
+
 #endif
 
 // GL-05: refuse to be a second instance. This sits *after* every

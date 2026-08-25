@@ -305,6 +305,19 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     var composeButton: HelmButton!
     let composer = ConsoleComposerController()
 
+    /// The "Claude usage" popover trigger, restored per captain request
+    /// beside Compose - the toolbar prototype's own original pairing (see
+    /// this file's own comment above `sreLeadButton`, and
+    /// `ConsoleController+Toolbar.swift`'s header). Removed along with the
+    /// herdr-attached "Mirror" tab it used to live on
+    /// (`fm/grand-line-remove-firstmate-mirror`); `QuotaUsagePopover.swift`'s
+    /// header has the full history. Availability mirrors `composeButton`
+    /// byte-for-byte (`updateQuotaUsageControls`) - it's the same shape of
+    /// feature (a plain `.shell`/`.ssh` tab, never a one-shot command), on
+    /// both the shared Firstmate console and every dedicated host page.
+    var quotaUsageButton: HelmButton!
+    let quotaUsage = QuotaUsageController()
+
     // MARK: SRE Lead (dedicated host pages only - see `SRELead.swift`)
 
     /// `fm/grandline-sre-lead-per-tab`: SRE Lead's own state (session,
