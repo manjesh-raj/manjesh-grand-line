@@ -328,8 +328,29 @@ enum SettingsThemeLayoutParitySelfTest {
         for theme in HelmTheme.allThemes.dropFirst() {
             let (fp, window) = fingerprint(theme: theme, width: 1400)
             windows.append(window)
-            if !structurallyEqual(reference, fp) {
-                mismatches.append("\(theme.id): \(describe(fp))")
+            guard !structurallyEqual(reference, fp) else { continue }
+            // Re-measure once, fresh, before calling it a mismatch.
+            //
+            // What this suite asserts is a pure function of theme and width,
+            // so a real difference reproduces every time. Several Settings
+            // cards, though, finish filling themselves in asynchronously (the
+            // Security card's sudo status shells out; the Backup card reads
+            // its last-export state off disk), and each changes a card's
+            // height when it lands - so a page measured mid-settle reports a
+            // height that has nothing to do with its theme. That was already
+            // true before this pass; CI saw it as four consecutive themes
+            // disagreeing by ~170pt in Y while every width, X and column count
+            // matched exactly, and then agreeing again for the rest - a
+            // transient, and not a shape any real layout difference takes.
+            //
+            // A second measurement costs one extra mount on the failing path
+            // only, and turns "flaky" into "reproducible or not a finding".
+            let (retry, retryWindow) = fingerprint(theme: theme, width: 1400)
+            windows.append(retryWindow)
+            let (referenceRetry, referenceRetryWindow) = fingerprint(theme: first, width: 1400)
+            windows.append(referenceRetryWindow)
+            if !structurallyEqual(referenceRetry, retry) {
+                mismatches.append("\(theme.id): \(describe(retry)) [reference on re-measure: \(describe(referenceRetry))]")
             }
         }
         defer { _ = windows }
