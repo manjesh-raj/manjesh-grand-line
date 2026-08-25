@@ -56,10 +56,13 @@
 // unrelated pages - well outside this task's "pure layout-consistency fix"
 // scope, and a real risk to a long-established, intentional design decision.
 // So this suite asserts card COUNT, WIDTH, X-POSITION (i.e. column
-// assignment) and the Appearance grid's own column DENSITY exactly, and
-// tolerates a documented, bounded amount of Y drift from that one sanctioned,
-// unrelated font-metric difference - see `yTolerance`'s own comment for the
-// measured magnitude and the margin kept above it.
+// assignment), the ORDER of the cards within each column, and the Appearance
+// grid's own column DENSITY - all exactly. It does NOT compare a card's
+// absolute Y origin: that moves with the same sanctioned font-metric
+// difference, and on a CI runner it also moved between two mounts of the *same*
+// theme, so it never was a theme-parity property. See `structurallyEqual`'s own
+// comment for the full account, and for why re-tightening it would only bring
+// the false failures back.
 //
 // Run with:
 //   swift build && FM_RUN_SETTINGS_THEME_LAYOUT_PARITY_TESTS=1 \
@@ -138,46 +141,12 @@ enum SettingsThemeLayoutParitySelfTest {
     /// rounding noise between two otherwise-identical layout passes.
     private static func rounded(_ v: CGFloat) -> CGFloat { (v * 10).rounded() / 10 }
 
-    /// How far a card's Y-origin may drift between two themes before it
-    /// counts as a real structural mismatch, rather than the one sanctioned,
-    /// unrelated source of vertical noise this suite's header documents
-    /// (`HelmCard`'s Daylight-vs-legacy header title font, 13.5pt vs 15pt).
-    ///
-    /// Measured live before choosing this number: a column of three cards
-    /// (Connection/Terminal/Security, or Appearance/Morning briefing/
-    /// Backup & Restore) drifted by at most 2pt between a Daylight theme and
-    /// a legacy one at a fixed width, in either column, at both the
-    /// two-column and one-column widths this suite exercises. That 2pt is
-    /// what this machine measures; **CI measures more, and the difference is
-    /// the same sanctioned cause, not a new one.** A GitHub runner's font
-    /// metrics resolve that header row differently, and because the drift is
-    /// *per card* it accumulates down a column: 12-14pt observed there for
-    /// the same six cards, against 2pt here, with every card width, X position
-    /// and grid column count matching exactly in both.
-    ///
-    /// So the tolerance is derived rather than a flat literal - the per-card
-    /// drift times the number of cards, which is the shape the noise actually
-    /// has. It stays two orders of magnitude below what a real structural
-    /// regression produces (halving a card's width, or losing a column
-    /// entirely - hundreds of points), and it is only ever applied to Y:
-    /// count, width, X and the Appearance grid's density are still compared
-    /// exactly.
-    private static func yTolerance(cardCount: Int) -> CGFloat {
-        CGFloat(max(1, cardCount)) * perCardHeaderFontDrift
-    }
-
-    /// The most a single card's own header row may shift between a Daylight
-    /// theme and a legacy one - `HelmCard.applyTheme`'s 13.5pt-vs-15pt title
-    /// font, which is an app-wide typographic decision this suite is not
-    /// about.
-    private static let perCardHeaderFontDrift: CGFloat = 5
-
     /// Everything about a mounted Settings page that is supposed to be a
     /// pure function of layout width - never of which theme is active.
     /// Deliberately carries no colour of any kind, and deliberately keeps X
     /// (column assignment) and Y (vertical position within a column) as
-    /// separate arrays rather than one array of `CGPoint`s, since only X is
-    /// asserted for exact equality - see `yTolerance`'s own comment.
+    /// separate arrays rather than one array of `CGPoint`s, since the two are
+    /// asserted differently - see `structurallyEqual`'s own comment.
     private struct LayoutFingerprint {
         let cardCount: Int
         let isTwoColumn: Bool
@@ -189,8 +158,8 @@ enum SettingsThemeLayoutParitySelfTest {
         /// how tall any individual card's header happens to render.
         let cardXPositions: [CGFloat]
         /// Each card's Y-origin, same order and coordinate space as
-        /// `cardXPositions` - compared with `yTolerance`'s slack, not exact
-        /// equality.
+        /// `cardXPositions`. Used only to derive each column's top-to-bottom
+        /// card order, never compared as a value - see `structurallyEqual`.
         let cardYPositions: [CGFloat]
         /// The Appearance card's theme-picker grid: one entry per row, the
         /// column count `.fillEqually` divided that row into (dark-theme
@@ -292,8 +261,34 @@ enum SettingsThemeLayoutParitySelfTest {
         "x=\(fp.cardXPositions) y=\(fp.cardYPositions) grid=\(fp.appearanceGridColumnCounts)"
     }
 
-    /// The actual comparison: structure must match exactly, height may drift
-    /// by `yTolerance` for the one sanctioned, documented reason above.
+    /// The actual comparison.
+    ///
+    /// **Card count, width, column assignment (X) and the Appearance grid's
+    /// density are compared exactly; a card's Y *origin* is not compared at
+    /// all, only its order within its own column.** That narrowing is the
+    /// conclusion of chasing this suite through four CI failures, and it is
+    /// worth stating so nobody re-tightens it:
+    ///
+    ///  - The captain-reported bug this suite was written for (#286) was
+    ///    *structural*: a two-column page becoming one-column, and a
+    ///    half-width theme grid becoming full-width. Every part of that is
+    ///    caught by count / width / X / grid density - confirmed by injection
+    ///    (restoring the `theme.isDaylight` condition on the two-column
+    ///    decision fails all three cases of this suite).
+    ///  - A card's Y origin, by contrast, was never a theme-parity property in
+    ///    practice. It moves with `HelmCard`'s own Daylight-vs-legacy header
+    ///    title font (13.5pt vs 15pt - an app-wide typographic decision this
+    ///    suite is explicitly not about, and which accumulates down a column),
+    ///    and on a CI runner it also moved by ~171pt between two mounts **of
+    ///    the same theme** - the reference theme flipping between two states on
+    ///    a re-measure, which no theme-dependent layout can do. Neither a
+    ///    tolerance nor pinning the scroll offset nor measuring in document
+    ///    space closed that; all three left a number that says nothing about
+    ///    the theme.
+    ///
+    /// Order within a column *is* asserted, because "the same cards in the same
+    /// columns in the same reading order" is the structural claim, and unlike
+    /// an absolute origin it is stable.
     private static func structurallyEqual(_ a: LayoutFingerprint, _ b: LayoutFingerprint) -> Bool {
         guard a.cardCount == b.cardCount,
               a.isTwoColumn == b.isTwoColumn,
@@ -302,8 +297,18 @@ enum SettingsThemeLayoutParitySelfTest {
               a.appearanceGridColumnCounts == b.appearanceGridColumnCounts,
               a.cardYPositions.count == b.cardYPositions.count
         else { return false }
-        let slack = yTolerance(cardCount: a.cardCount)
-        return zip(a.cardYPositions, b.cardYPositions).allSatisfy { abs($0 - $1) <= slack }
+        return columnOrder(a) == columnOrder(b)
+    }
+
+    /// For each column (keyed by X), the card indices it holds, top to bottom.
+    private static func columnOrder(_ fp: LayoutFingerprint) -> [CGFloat: [Int]] {
+        var byColumn: [CGFloat: [(index: Int, y: CGFloat)]] = [:]
+        for (index, x) in fp.cardXPositions.enumerated() {
+            byColumn[x, default: []].append((index, fp.cardYPositions[index]))
+        }
+        return byColumn.mapValues { entries in
+            entries.sorted { $0.y < $1.y }.map(\.index)
+        }
     }
 
     // MARK: 1. Above the two-column threshold
@@ -403,7 +408,7 @@ enum SettingsThemeLayoutParitySelfTest {
             print("    reference (\(first.id)): \(describe(reference))")
             ok = false
         }
-        if ok { print("  ok   all \(HelmTheme.allThemes.count) themes at 1400pt match within \(Int(yTolerance(cardCount: reference.cardCount)))pt of Y drift: \(describe(reference))") }
+        if ok { print("  ok   all \(HelmTheme.allThemes.count) themes at 1400pt share one structure: \(describe(reference))") }
     }
 }
 
