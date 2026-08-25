@@ -30,7 +30,7 @@
 // Fix 1 (dedicated host pages) adds a sixth kind of destination that isn't
 // part of the fixed `RailDestination` enum: one independent `ConsoleController`
 // per connected host, holding only that host's own ssh tab(s) - never mixed
-// with the Firstmate console's Herdr/Shell tabs. These are built lazily via
+// with the Firstmate console's own Shell tab. These are built lazily via
 // `makeHostConsole` the first time `connectHost` sees a given host id, then
 // kept around (and re-shown, not re-opened) for as long as that host stays
 // saved - see `connectHost`/`removeHostConsole` below.
@@ -135,9 +135,10 @@ final class AppShellController: NSViewController {
     /// which one is visible. See `SetupContainerController`.
     private var setup: SetupContainerController!
 
-    /// Fix 1: builds a fresh, host-scoped `ConsoleController` (no Mirror/
-    /// Shell tabs - see `ConsoleController.init(opensFirstmateOnLaunch:)`).
-    /// Injected so this controller doesn't need to know about
+    /// Fix 1: builds a fresh, host-scoped `ConsoleController` (its own ssh
+    /// tab(s) only, no Firstmate host's own Shell tab - see
+    /// `ConsoleController.init(isFirstmateConsole:)`). Injected so this
+    /// controller doesn't need to know about
     /// `SSHKeyStore`/`SnippetStore`, matching how it already knows nothing
     /// about host persistence (see `onPresentHostEditor` below).
     private let makeHostConsole: () -> ConsoleController
@@ -505,14 +506,6 @@ final class AppShellController: NSViewController {
         // than new behaviour.
         overview.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
         overview.onOpenShiftTask = { [weak self] id in self?.openShiftTask(id: id) }
-        // F7: the general "message first mate" channel. Overview owns the
-        // composer, this shell owns the console that owns the Herdr tab -
-        // the same forward-don't-own split every other cross-page action here
-        // uses. Deliberately *not* `fm-send.sh`: an unaddressed message has no
-        // task id for that script to target (see `FleetActions.swift`).
-        overview.onMessageFirstMate = { [weak self] text, completion in
-            completion(self?.sendToFirstmate(text) ?? .notSent("the app shell is gone"))
-        }
         // cockpit-settings-sudo-touchid: Settings' "Touch ID for sudo" row
         // runs `sudo av harden sudo`, which needs a real interactive `sudo`
         // prompt exactly like Bootstrap's provisioning actions - same
@@ -1456,46 +1449,6 @@ final class AppShellController: NSViewController {
         show(.settings)
     }
 
-    // MARK: F7 - answering the crew
-
-    /// F7's general-message channel, performed. Injects `text` into the live
-    /// firstmate session's own tab (the tmux mirror or the real herdr attach
-    /// client), through the same `TerminalView.send(txt:)` path Snippets' Run
-    /// and the SRE Lead bridge already use.
-    ///
-    /// GL-09: gated like every other write into the captain's agent session.
-    /// This one is reachable from the ⌘K palette as well as Overview, and the
-    /// palette is its own `.floating` panel - it already refuses to open while
-    /// locked, but the write itself is what the gate is actually about.
-    func sendToFirstmate(_ text: String) -> FleetGeneralMessageOutcome {
-        guard AppLockGate.shared.allows(.crewReply) else {
-            return .notSent("the app is locked")
-        }
-        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return .notSent("nothing to send")
-        }
-        switch console.sendToFirstmateMirror(text) {
-        case .sent:
-            return .sent
-        case .noMirrorTab:
-            return .notSent("this console has no firstmate session tab")
-        case .notStarted:
-            // Honest, and actionable: bring the console up so the session
-            // starts, and say plainly that nothing was typed. Deliberately no
-            // timed retry - a delay-based "probably up by now" resend is
-            // exactly how a message gets reported as sent when it was not.
-            show(.console)
-            return .notSent("the firstmate session tab isn't running yet - it's starting now, try again in a moment")
-        }
-    }
-
-    /// ⌘K's "Message First Mate" action, and the same thing the Overview
-    /// header button does - one composer, reached two ways.
-    @objc func messageFirstMateFromMenu() {
-        show(.overview)
-        overview.openMessageFirstMateComposer()
-    }
-
     /// The Hosts menu's "Show Hosts": select the Hosts rail destination.
     @objc func selectHosts() {
         show(.hosts)
@@ -1709,9 +1662,9 @@ final class AppShellController: NSViewController {
         homeCanvas.applyDictationStatus(status)
     }
 
-    /// Fix 1: mirrors what `AppDelegate.applicationWillTerminate` already
-    /// does for the shared Firstmate `console` - tear down every host
-    /// page's mirrors and materialized keys on quit, not just the
+    /// Fix 1: does for every host page what `AppDelegate.applicationWillTerminate`
+    /// already does for the shared Firstmate `console` - tear down its
+    /// materialized SSH keys and SRE Lead sessions on quit, not just the
     /// destination that happened to be visible.
     func shutdownAllHostConsoles() {
         for controller in hostConsoles.values { controller.shutdown() }

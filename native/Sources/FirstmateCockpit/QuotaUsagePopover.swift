@@ -1,12 +1,19 @@
 // Manjesh Grand Line - native macOS app.
 //
-// The "Claude usage" popover a Herdr-backed tab's toolbar opens
-// (`fm/grandline-herdr-utilization-panel`). Structurally mirrors
-// `ConsoleComposerPopover.swift` (the "✨ Compose" popover) byte-for-byte -
-// transient `NSPopover`, `IconTileView` header, live `ThemeManager`
-// observation, a `wantsLayer` root with an explicit theme background rather
-// than relying on `NSPopover`'s own system vibrancy (AGENTS.md gotcha #8;
-// Compose's own file header documents getting this wrong the first time).
+// The "Claude usage" popover (`fm/grandline-herdr-utilization-panel`).
+// Structurally mirrors `ConsoleComposerPopover.swift` (the "✨ Compose"
+// popover) byte-for-byte - transient `NSPopover`, `IconTileView` header, live
+// `ThemeManager` observation, a `wantsLayer` root with an explicit theme
+// background rather than relying on `NSPopover`'s own system vibrancy
+// (AGENTS.md gotcha #8; Compose's own file header documents getting this
+// wrong the first time).
+//
+// Originally reachable from a toolbar button on Console's herdr-attached
+// "Mirror" tab - `fm/grand-line-remove-firstmate-mirror` deleted that tab and
+// the toolbar button along with it (the captain: he'll check Claude usage in
+// his own terminal now, same as everything else that tab used to embed).
+// `FleetController`'s own `QuotaUsageController` instance (the Morning
+// Briefing card's `.quota` deep link) is the one remaining live entry point.
 //
 // Unlike Compose, this popover shows read-only live status, not a
 // generate-review-run flow - the closest existing precedent for that shape
@@ -32,16 +39,14 @@
 import AppKit
 
 /// `gauge.with.dots.needle.33percent` (SF Symbols 4, macOS 13+ - this
-/// project's minimum target per `Package.swift`) - a gauge-family glyph for
-/// the toolbar icon and the popover's own header tile, deliberately not a
-/// circle/dot shape: this toolbar used to sit right next to the light/dark
-/// toggle (a half-filled circle), and a similar-looking icon would have been
-/// confusable (flagged directly in visual review of the design mock). The
-/// toggle has since moved to `DaylightBarController`
-/// (`fm/grandline-daylight-theme-toggle-relocate`), but the gauge shape
-/// stays - it is still the right glyph for this icon regardless of what's
-/// beside it. Top-level so `ConsoleController`'s toolbar-button construction
-/// can share it with the popover's own header tile.
+/// project's minimum target per `Package.swift`) - a gauge-family glyph,
+/// deliberately not a circle/dot shape: this popover's toolbar trigger used
+/// to sit right next to the light/dark toggle (a half-filled circle) on
+/// Console, and a similar-looking icon would have been confusable (flagged
+/// directly in visual review of the design mock). That trigger is gone with
+/// the toolbar button it lived on (`fm/grand-line-remove-firstmate-mirror`),
+/// but the gauge shape stays - it is still the right glyph for the popover's
+/// own header tile below.
 let quotaUsageGaugeSymbol = "gauge.with.dots.needle.33percent"
 
 final class QuotaUsageController: NSObject, NSPopoverDelegate {
@@ -107,10 +112,13 @@ final class QuotaUsageController: NSObject, NSPopoverDelegate {
         refreshTimer = nil
     }
 
-    /// Called from `ConsoleController.shutdown()`, mirroring
-    /// `ConsoleComposerController.shutdown()`'s own theme-observer teardown -
-    /// a per-console (not strictly app-lifetime) property that can be
-    /// deallocated mid-session on a deleted host's dedicated page.
+    /// Mirrors `ConsoleComposerController.shutdown()`'s theme-observer
+    /// teardown shape - a defensive counterpart to `init`'s `observe` call
+    /// for any owner that isn't strictly app-lifetime. `FleetController`'s
+    /// own instance is a permanently-mounted destination (GL-37) that is
+    /// never deallocated mid-session, so nothing calls this today; kept for
+    /// symmetry and for a future caller that owns one under different
+    /// lifetime rules.
     func shutdown() {
         stopAutoRefresh()
         if let themeObservation {

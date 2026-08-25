@@ -1,7 +1,7 @@
 // Manjesh Grand Line - native macOS app.
 //
 // F7's permanent coverage: the reply-routing logic behind Overview's "Reply"
-// affordance and the header's "Message first mate" action.
+// affordance.
 //
 // What is covered, and why each part is here rather than assumed:
 //
@@ -21,8 +21,12 @@
 //     usual zero-or-broken shape: 0 is confirmed, **3 is "typed and Enter
 //     sent, but unconfirmed"**, anything else failed. Collapsing 3 into either
 //     neighbour is a lie in one direction or the other.
-//   - **That the general-message path never touches `fm-send.sh`.** It has no
-//     task id to address, so it goes through the Herdr tab instead.
+//   - **That `fm-send.sh` is only ever invoked from `FleetActions.swift`.**
+//     F7 used to also have a general, unaddressed "message first mate"
+//     channel typed into the herdr-attached "Mirror" tab - that whole tab is
+//     gone now (`fm/grand-line-remove-firstmate-mirror`), and the source
+//     guard below still stands as the one remaining invariant worth pinning:
+//     no other file may shell out to `fm-send.sh`.
 //
 // ## What is faked, and what is real
 //
@@ -54,7 +58,7 @@ enum FleetActionsSelfTest {
         checkOutcomeMapping(&ok)
         checkRealSubprocessRoundTrip(&ok)
         checkLockGate(&ok)
-        checkGeneralMessageNeverUsesSendScript(&ok)
+        checkFmSendCalledFromExactlyOnePlace(&ok)
         print(ok ? "FleetActionsSelfTest: all checks passed" : "FleetActionsSelfTest: FAILED")
         return ok
     }
@@ -342,31 +346,15 @@ enum FleetActionsSelfTest {
         check(AppLockGate.shared.allows(.crewReply), "an unlocked app allows it again", &ok)
     }
 
-    // MARK: The general-message channel
+    // MARK: The fm-send.sh source guard
 
-    /// A source guard, because the property worth protecting is structural:
-    /// the unaddressed "message first mate" path has no task id, so it must
-    /// never reach `fm-send.sh`. The two files that implement it are named
-    /// here; if that path ever grows a `FleetActions.reply` call, this fails
-    /// by file name.
-    private static func checkGeneralMessageNeverUsesSendScript(_ ok: inout Bool) {
-        guard let dir = SelfTestSources.appSourceDirectory() else {
-            fail("could not locate the app's sources for the general-message source guard", &ok)
-            return
-        }
-        // The general-message chain, end to end.
-        let generalPathFiles = ["ConsoleController+Sessions.swift"]
-        for name in generalPathFiles {
-            guard let text = try? String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8) else {
-                fail("could not read \(name)", &ok)
-                continue
-            }
-            check(!text.contains("FleetActions.reply"),
-                  "\(name) must not send a general message through fm-send.sh", &ok)
-        }
-
-        // `fm-send.sh` is named in exactly one place - the reply path - so a
-        // second caller cannot appear without this failing.
+    /// `fm-send.sh` must have exactly one caller in this app - a second
+    /// caller means a second, unaudited path into the crew's session.
+    /// `fm/grand-line-remove-firstmate-mirror` deleted the one other feature
+    /// (the general "message first mate" channel) that used to sit right
+    /// next to this invariant without itself calling `fm-send.sh` - this
+    /// guard is what remains, standing on its own.
+    private static func checkFmSendCalledFromExactlyOnePlace(_ ok: inout Bool) {
         guard let files = SelfTestSources.appSourceFiles() else {
             fail("could not enumerate the app's sources", &ok)
             return

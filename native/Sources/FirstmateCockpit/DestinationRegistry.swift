@@ -39,9 +39,10 @@
 // **What stays eager, and why.** `mountsEagerly` is not a performance
 // escape hatch; each of the three uses is a real invariant:
 //
-//   - `.console` owns live PTYs. The shared Firstmate console opens its
-//     Shell/Herdr pair at launch (`opensFirstmateOnLaunch`), and a running
-//     child process must never be waiting on a view that does not exist yet.
+//   - `.console` owns live PTYs. The shared Firstmate console opens its own
+//     Shell tab at launch (`ConsoleController.openFirstmateHost`), and a
+//     running child process must never be waiting on a view that does not
+//     exist yet.
 //   - `.overview` and `.review` seed the "needs you" counts at launch
 //     (`refreshIfNeeded()`), and both controllers render that count *through
 //     their own views* - their view properties are implicitly-unwrapped

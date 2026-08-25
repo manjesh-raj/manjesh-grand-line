@@ -95,16 +95,15 @@ extension ConsoleController {
     // MARK: Test support (tabs)
 
     /// Every open tab's id, in tab-bar order - so a test can find and select
-    /// a specific tab (e.g. `openFirstmateHost`'s Herdr tab, created first but
-    /// not selected) without `tabs` itself needing to be internal.
+    /// a specific tab without `tabs` itself needing to be internal.
     func debugAllTabIDs() -> [UUID] { tabs.map { $0.id } }
 
     /// Selects a tab by id, exactly like clicking its chip.
     func debugSelectTab(_ id: UUID) { select(tabID: id, focus: false) }
 
-    /// The current tab's raw terminal output so far, so a test can check for
-    /// (or the absence of) the `[herdr]` failure text `connectHerdr` feeds
-    /// in when herdr is not installed.
+    /// The current tab's raw terminal output so far - `SRELeadPerTabSelfTest`
+    /// uses it to prove a tab's scrollback survives the SRE Lead pane
+    /// opening/closing.
     func debugCurrentTerminalOutput() -> String? {
         guard let terminal = currentTab?.terminal.terminal else { return nil }
         return String(data: terminal.getBufferAsData(), encoding: .utf8)

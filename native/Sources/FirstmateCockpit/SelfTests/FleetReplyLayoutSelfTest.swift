@@ -1,8 +1,7 @@
 // Manjesh Grand Line - native macOS app.
 //
-// F7's rendering half: the "Needs your call" rows, their Reply affordance, the
-// composer expanding in place under the row it answers, and the header's
-// general-message composer.
+// F7's rendering half: the "Needs your call" rows, their Reply affordance,
+// and the composer expanding in place under the row it answers.
 //
 // Separate from `FleetActionsSelfTest` on purpose. That one is pure logic and
 // runs in CI; this one mounts a real `FleetController` in a real `NSWindow`
@@ -56,7 +55,7 @@ enum FleetReplyLayoutSelfTest {
     /// which is not an SF Symbol at all). Every glyph F7 introduces is
     /// checked rather than assumed.
     private static func checkSymbolsResolve(_ ok: inout Bool) {
-        for name in ["arrowshape.turn.up.left", "bubble.left.and.bubble.right",
+        for name in ["arrowshape.turn.up.left",
                      "exclamationmark.bubble.fill", "paperplane.fill", "xmark"] {
             check(NSImage(systemSymbolName: name, accessibilityDescription: nil) != nil,
                   "SF Symbol \"\(name)\" resolves", &ok)
@@ -154,20 +153,6 @@ enum FleetReplyLayoutSelfTest {
         check(controller.debugOpenReplyTaskID == "task-142", "reopened", &ok)
         controller.debugReplyButton(taskID: "task-142")?.performClick(nil)
         check(controller.debugOpenReplyTaskID == nil, "pressing it again collapses the composer", &ok)
-
-        // The header's general-message composer, through its real button.
-        check(!controller.debugGeneralComposerVisible, "the general composer starts closed", &ok)
-        controller.messageFirstMateButton.performClick(nil)
-        controller.view.layoutSubtreeIfNeeded()
-        check(controller.debugGeneralComposerVisible, "the header button opens it", &ok)
-        controller.messageFirstMateButton.performClick(nil)
-        check(!controller.debugGeneralComposerVisible, "and closes it again", &ok)
-
-        // ⌘K's entry point always opens rather than toggling.
-        controller.openMessageFirstMateComposer()
-        controller.openMessageFirstMateComposer()
-        check(controller.debugGeneralComposerVisible,
-              "the palette action opens the composer and never toggles it shut", &ok)
 
         window.contentViewController = nil
     }

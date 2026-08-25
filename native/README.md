@@ -9,7 +9,6 @@ This is the growing native macOS cockpit: a Swift + SwiftTerm app that replaces 
 **The tabbed console** turns a single terminal into a proper tabbed console with both terminal modes and terminal-level polish:
 
 - **Shell** tab - the Phase 1 terminal (`$SHELL -l`), unchanged in behaviour.
-- **Mirror** tab - a live view of the first mate's tmux session, attached through a grouped session.
 - **Helm** dark/light terminal theming, with a one-key toggle.
 - In-terminal **find**, **font zoom**, and **copy**.
 
@@ -27,11 +26,11 @@ The console's tabs are now a **flexible collection** (`[TabModel]`), not the old
 
 Each tab owns its own `CockpitTerminalView` (so screenshot-paste works on every tab) and a `TabLaunch` recipe describing how to (re)start its process. That recipe is what makes duplicate and reconnect one-liners, and adding a `.ssh(...)` case later is how hosts plug in.
 
-The initial set is still **Shell + Mirror**, so nothing from the tabbed console above regresses.
+The pinned Firstmate host opens with a single Shell tab (an earlier "Mirror" tab that embedded the first mate's own herdr session was removed outright - see this repo's root `AGENTS.md` for why).
 
 ### Scrolling and scrollback
 
-Shell tabs scroll **smoothly and content-wise** (line by line, to the exact line) on trackpad and mouse wheel - the WezTerm feel. That comes from the pinned SwiftTerm 1.15's `scrollWheel`, which accumulates precise trackpad deltas and converts them to whole lines 1:1 with no page-jumps (`scrollSensitivity` defaults to a native `1.0`). Every terminal is given a **10,000-line scrollback** (SwiftTerm defaults to only 500) so history that scrolls off the top stays reachable. The **Mirror** tab runs tmux on the alternate screen, so it pages rather than smooth-scrolls - that is inherent to full-screen apps, not something to force.
+Shell tabs scroll **smoothly and content-wise** (line by line, to the exact line) on trackpad and mouse wheel - the WezTerm feel. That comes from the pinned SwiftTerm 1.15's `scrollWheel`, which accumulates precise trackpad deltas and converts them to whole lines 1:1 with no page-jumps (`scrollSensitivity` defaults to a native `1.0`). Every terminal is given a **10,000-line scrollback** (SwiftTerm defaults to only 500) so history that scrolls off the top stays reachable.
 
 The design and the exact API shapes used here come from the native design scout report at `data/cockpit-native-design-scout/report.md` (Phase 2 is section 7, terminal attach is 4.3, feature mapping is section 6, the Helm visual language is section 9).
 
@@ -91,8 +90,7 @@ One AppKit window whose content is a `ConsoleController`. All terminal behaviour
 | `TabModel.swift` | One tab: its terminal, display name, and `TabLaunch` (re)start recipe. |
 | `TabChipView.swift` | A tab-bar chip: click to select, double-click / right-click to rename, `×` to close. |
 | `CockpitTerminalView.swift` | The Phase 1 paste-hardening `LocalProcessTerminalView` subclass, verbatim. Every tab uses it. |
-| `TerminalEnvironment.swift` | How a terminal child is spawned (`$SHELL -l`, cwd, UTF-8 env), and the mirror target. |
-| `TmuxMirror.swift` | The grouped-session setup/teardown ported from `backend/terminal.py`. |
+| `TerminalEnvironment.swift` | How a terminal child is spawned (`$SHELL -l`, cwd, UTF-8 env). |
 | `HelmTheme.swift` | The Helm dark/light palettes as SwiftTerm colours (OKLCH tokens pre-converted to sRGB). |
 | `Host.swift` | The saved-SSH-host value type (`keyID` reference, no path/secret), the icon/colour catalogue, and the `ssh` argv builder + quick-connect parser (Phase 1). |
 | `HostStore.swift` | Host persistence: a JSON file of profiles under Application Support. Secrets are never written. |
@@ -113,20 +111,14 @@ One AppKit window whose content is a `ConsoleController`. All terminal behaviour
 
 ### How the terminals attach
 
-Both tabs fork their child **in-process** via SwiftTerm's `LocalProcessTerminalView.startProcess`, so keystrokes never make a localhost round trip (the web app did, on every character).
+Every tab forks its child **in-process** via SwiftTerm's `LocalProcessTerminalView.startProcess`, so keystrokes never make a localhost round trip (the web app did, on every character).
 
 - **Shell:** `startProcess($SHELL, ["-l"])`. A real login shell with native scrollback.
-- **Mirror:** first `TmuxMirror.setUp` creates a *grouped* session mirroring the first mate's target (`tmux new-session -d -s <group> -t <session>`, `select-window`, `set-option window-size latest`, `status off`), then `startProcess(tmux, ["attach-session", "-t", <group>])`. A grouped session shares the real session's windows but keeps its own size and active window, so the cockpit view never resizes the captain's real terminal. The group is torn down on reconnect and on quit.
-
-### Mirror target
-
-The Mirror tab attaches to the tmux target in `FM_MIRROR_TARGET` (e.g. `firstmate` or `firstmate:1`), defaulting to the **`firstmate`** session. If that session does not exist, the Mirror tab shows a clear message instead of failing - set `FM_MIRROR_TARGET` and press `⌘R` to reconnect. Full target-detection UI is Phase 3.
 
 ## Requirements
 
 - macOS 13 or newer, Apple Silicon.
 - Swift 6.x toolchain. **Command Line Tools only is enough** - this uses `swift build` / `swift run`, not Xcode or `xcodebuild`. Verified on Swift 6.3.3.
-- `tmux` on `PATH` (or in a standard Homebrew/usr location) for the Mirror tab.
 
 ## Build
 
@@ -149,12 +141,6 @@ or launch the built binary directly:
 
 ```bash
 .build/debug/FirstmateCockpit
-```
-
-To mirror a different tmux session:
-
-```bash
-FM_MIRROR_TARGET=firstmate:1 swift run
 ```
 
 A window titled **"Manjesh Grand Line"** opens on the **Shell** tab.
@@ -230,7 +216,7 @@ Verify with `security find-identity -v -p codesigning | grep "Firstmate Cockpit 
 | `⌘F` | Find in the active terminal |
 | `⌘+` / `⌘−` / `⌘0` | Zoom in / out / reset |
 | `⌘⌥T` | Toggle Helm light/dark |
-| `⌘R` | Reconnect the active tab (re-attach the mirror, or restart the shell) |
+| `⌘R` | Reconnect the active tab (restart the shell, or restart the ssh session) |
 | `⌘V` | Paste (drives screenshot-paste into Claude) |
 | `⌘C` | Copy selection |
 | `⌘N` | New host (opens the host editor) |
@@ -247,41 +233,32 @@ The tab operations are on the **Tab** menu, zoom + theme are on the **View** men
 
 This app **cannot be validated headlessly** - the whole point is runtime behaviour and feel on your machine. The build being green (it is: `swift build` compiles and links a `Mach-O arm64` executable, and the app survives launch with no crash) does **not** prove any of the following. These are yours to run.
 
-**(a) Both tabs work**
+**(a) The Shell tab works**
 - [ ] The **Shell** tab opens on a live login shell; typing and running commands works.
-- [ ] `⌘2` switches to the **Mirror** tab.
+- [ ] There is no way left to open a "Mirror"/herdr-attached tab - no toolbar button, no menu item, no keyboard shortcut, and the Firstmate host's own connect action opens only the one Shell tab.
 
-**(b) The Mirror tab shows the live first mate**
-- [ ] With a `firstmate` tmux session running, the Mirror tab shows the first mate's live pane (its output updates in real time, no status bar).
-- [ ] Confirm your **real** terminal did not get resized by the cockpit attaching (that is what the grouped session prevents).
-- [ ] If you mirror a different session, launch with `FM_MIRROR_TARGET=<target>`.
-
-**(c) Tab switching is clean**
-- [ ] Switching Shell ↔ Mirror by clicking the tab chips (or `⌘1` / `⌘2`) is instant, keeps each tab's state, and focus lands in the shown terminal.
-
-**(c2) Dynamic tabs - the foundation work**
+**(b) Dynamic tabs - the foundation work**
 - [ ] `⌘T` (or the `+` button) opens a new Shell tab; run commands in it to confirm it is a live, independent shell.
 - [ ] `⌘D` duplicates the current tab - e.g. from a shell, you get a second shell running the same `$SHELL -l`. Both tabs work at the same time (type in one, switch, type in the other).
 - [ ] Double-click a tab (or `⌘⇧R`, or right-click -> Rename) and type a new name; `↵` commits, `Esc` cancels. The name changes but the process keeps running (its scrollback/history is intact).
 - [ ] `⌘W` closes the current tab. Close down to one tab, then `⌘W` again - the window is **not** left empty; a fresh Shell tab takes its place.
 - [ ] Open several tabs and jump between them with `⌘1`…`⌘9`.
 
-**(c3) Smooth, content-wise scrolling (the captain's ask)**
+**(c) Smooth, content-wise scrolling (the captain's ask)**
 - [ ] In a **Shell** tab, print a lot of output (e.g. `seq 1 500` or `ls -R /usr`), then scroll up with the trackpad/mouse wheel. Scrolling is **smooth and line-by-line to the exact line** (WezTerm feel), not page-at-a-time.
 - [ ] Scroll all the way back up - history well past one screen is retained (10,000-line scrollback).
-- [ ] Note: the **Mirror** tab (tmux, alt-screen) pages instead of smooth-scrolling. That is expected for a full-screen app.
 
 **(d) Search / zoom / copy work**
 - [ ] `⌘F` opens the find bar in the active terminal; typing highlights matches; `↵` / `⇧↵` step through them.
-- [ ] `⌘+` / `⌘−` change the terminal font size live on both tabs; `⌘0` resets.
+- [ ] `⌘+` / `⌘−` change the terminal font size live on all open tabs; `⌘0` resets.
 - [ ] Select text and `⌘C`; it lands on the system clipboard (paste it elsewhere to confirm).
 
 **(e) Theming (dark/light) looks right**
 - [ ] `⌘⌥T` toggles the terminal (and the top bar) between Helm dark and Helm light. Both should read as the same instrument panel as the web cockpit, with legible text in either mode.
 
-**(f) Paste still works on both tabs**
+**(f) Paste still works**
 - [ ] In a tab, run `claude` (Claude Code). Take a screenshot to the clipboard (`⌘⌃⇧4`, then select a region). With the window focused, `⌘V`. Confirm Claude Code registers a pasted image.
-- [ ] Repeat on the other tab - both share the same paste wiring.
+- [ ] Repeat on another tab - every tab shares the same paste wiring.
 
 **(g) Hosts - the SSH connection manager (Phase 1)**
 - [ ] The **Hosts** sidebar shows on the left. `⌘N` (or the `+` in the sidebar header) opens the host editor.

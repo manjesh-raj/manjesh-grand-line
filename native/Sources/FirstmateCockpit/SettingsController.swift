@@ -8,8 +8,10 @@
 //
 //   - Connection: the working-directory chooser. E1 removed the mirror-target
 //     field and its `TmuxMirror.listSessions()` "Detect" tmux-pane picker
-//     along with the whole Mirror abstraction - see `HerdrSession`'s header
-//     for what else went and why.
+//     along with the whole Mirror abstraction; `fm/grand-line-remove-
+//     firstmate-mirror` later removed the herdr-attached tab that
+//     abstraction had been simplified down to, outright - see that task's
+//     PR for what went and why.
 //   - Appearance: the theme picker (12 as of cockpit-theme-overhaul) as a
 //     wrapping grid of preview cards (colour-bar swatch + name + checkmark),
 //     reusing `HelmTheme.allThemes` - the same source of truth the topbar's

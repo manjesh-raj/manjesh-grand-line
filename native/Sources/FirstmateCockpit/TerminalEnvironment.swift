@@ -2,7 +2,7 @@
 //
 // Child-process launch details for the terminals, mirroring the choices the
 // Python backend makes in `backend/shell.py` and `backend/terminal.py`. Kept as
-// free functions so every tab kind (Shell, Herdr, ssh) shares exactly one
+// free functions so every tab kind (Shell, ssh) shares exactly one
 // definition of "how a cockpit terminal child is spawned".
 
 import AppKit
@@ -58,14 +58,17 @@ func childEnvironmentDict() -> [String: String] {
     env["LANG"] = "en_US.UTF-8"
     env["LC_ALL"] = "en_US.UTF-8"
     env.removeValue(forKey: "TMUX")
-    // The "Herdr" tab runs a bare `herdr` client (`HerdrSession`); herdr
-    // refuses to launch when it sees its own `HERDR_ENV=1` marker in the
-    // environment ("nested herdr is disabled by default"), confirmed live
-    // while testing that task's concurrent-attach question. This app is
-    // normally a plain
-    // Finder-launched GUI process that never inherits that marker anyway,
-    // but stripping it here (same reasoning as `TMUX` above) means this tab
-    // attaches cleanly even if that ever isn't true.
+    // `herdr` (a real CLI the captain runs in his own terminal, and which
+    // this app's Updates page can check/update - see `UpdatesData.swift` -
+    // but no longer launches or embeds itself, since
+    // `fm/grand-line-remove-firstmate-mirror` removed the console's own
+    // herdr-attached tab) refuses to launch when it sees its own
+    // `HERDR_ENV=1` marker in the environment ("nested herdr is disabled by
+    // default"). This app is normally a plain Finder-launched GUI process
+    // that never inherits that marker anyway, but stripping it from every
+    // child process this app forks (same reasoning as `TMUX` above) is cheap
+    // insurance against a captain running `herdr` inside a Shell/ssh tab
+    // while that marker happens to be set.
     for key in ["HERDR_ENV", "HERDR_SOCKET_PATH", "HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID"] {
         env.removeValue(forKey: key)
     }

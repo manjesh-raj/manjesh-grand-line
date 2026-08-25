@@ -18,13 +18,6 @@ import AppKit
 enum TabLaunch {
     /// A login shell (`$SHELL -l`), the Phase 1 terminal.
     case shell(executable: String, args: [String], cwd: String)
-    /// The first mate's own herdr session - a bare `herdr` client (see
-    /// `HerdrSession`'s header for the whole "Mirror" abstraction this
-    /// replaced and why). Just another interactive PTY child, so
-    /// duplicating or reconnecting this tab is the same "launch this again"
-    /// as any other kind: there is no session name, backend kind, or target
-    /// to resolve, freeze, or re-resolve.
-    case herdr(executable: String, cwd: String)
     /// An SSH session to a saved (or ad-hoc) host - Phase 1 of the connection
     /// manager. `ssh` is just another interactive PTY child (design report C1),
     /// so this reuses the same `startProcess` path as `shell`. `hostArgs` is
@@ -43,7 +36,6 @@ enum TabLaunch {
     var defaultName: String {
         switch self {
         case .shell: return "Shell"
-        case .herdr: return "Herdr"
         case .ssh(let label, _, _, _, _): return label
         }
     }
@@ -55,7 +47,6 @@ enum TabLaunch {
     var kindIdentity: String {
         switch self {
         case .shell: return "shell"
-        case .herdr: return "herdr"
         case .ssh(let label, _, _, _, _): return "ssh:\(label)"
         }
     }
@@ -72,9 +63,7 @@ final class TabModel {
     var name: String
 
     /// How to (re)start this tab. Duplicate copies it verbatim; reconnect
-    /// re-runs it. A `let` again since E1: the one thing that ever reassigned
-    /// it was the mirror tab's asynchronous backend resolution, and there is
-    /// no backend to resolve anymore (see `HerdrSession`'s header).
+    /// re-runs it. A `let`, never reassigned.
     let launch: TabLaunch
 
     /// Set once the captain renames a tab, so a name this app derived never
@@ -134,7 +123,7 @@ final class TabModel {
     /// threaded down from `AppShellController.connectHost` through
     /// `ConsoleController.connectSSHIfNeeded`/`openSSH`). `false` for every
     /// other tab, including every other SSH host's tab, the Firstmate
-    /// console's Shell/Herdr tabs, and any ad-hoc quick-connect (which has
+    /// console's own Shell tab, and any ad-hoc quick-connect (which has
     /// no `Host` behind it at all) - deliberately narrower than PR #79's
     /// original "every `.shell`/`.ssh` tab" scope and PR #83's "every `.ssh`
     /// tab" scope, per the scout report's recommendation to shrink Stage 0's

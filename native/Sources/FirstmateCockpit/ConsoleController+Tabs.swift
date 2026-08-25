@@ -6,10 +6,10 @@
 // `LocalProcessTerminalViewDelegate` callbacks a tab's child process fires.
 //
 // This is the concern the whole controller is built around, which is exactly
-// why it is worth having on its own: everything else here (SSH, the herdr
-// backends, SRE Lead, block view, the log-capture bridge) is a *kind of tab*
-// or a *pane beside a tab*, and reads much more clearly once the tab
-// machinery itself is not interleaved with them.
+// why it is worth having on its own: everything else here (SSH, SRE Lead,
+// block view, the log-capture bridge) is a *kind of tab* or a *pane beside a
+// tab*, and reads much more clearly once the tab machinery itself is not
+// interleaved with them.
 //
 // Split out verbatim along this controller's own existing `// MARK:` seams;
 // no statement here changed in the move. See `ConsoleController.swift`'s
@@ -36,7 +36,6 @@ extension ConsoleController {
         // converts them to whole lines 1:1 (no page-jumps), and its
         // `scrollSensitivity` defaults to a native 1.0. So the WezTerm feel the
         // captain wants is the shell tab's default here; we just give it history.
-        // (The Herdr tab runs on the alternate screen and pages inherently.)
         term.terminal?.changeScrollback(scrollbackLines)
         // `terminalInset` on all four sides, fixed for this controller's whole
         // lifetime - see its own doc comment. Nothing here ever changes when
@@ -73,25 +72,14 @@ extension ConsoleController {
     /// `fm/cockpit-block-view-stage0`'s single-host gate - `true` only for
     /// the one saved host whose `Host.blockViewOptIn` is set, threaded down
     /// from `AppShellController.connectHost` through `connectSSHIfNeeded`/
-    /// `openSSH`; every other caller (⌘T, ⌘D, the Firstmate console's
-    /// Shell/Herdr pair, an ad-hoc quick-connect with no saved `Host`)
+    /// `openSSH`; every other caller (⌘T, ⌘D, the Firstmate console's own
+    /// Shell tab, an ad-hoc quick-connect with no saved `Host`)
     /// leaves it at the default `false`.
     @discardableResult
     func addTab(launch: TabLaunch, name: String, select: Bool, accentHex: String? = nil, isOneShotCommand: Bool = false, blockViewOptIn: Bool = false) -> TabModel {
         let term = makeTerminal()
         let tab = TabModel(name: name, launch: launch, terminal: term, accentHex: accentHex)
         tab.isOneShotCommand = isOneShotCommand
-
-        // `fm/grandline-console-selection-contrast-followup`: the herdr tab
-        // is an attached multiplexer client and those enable mouse capture,
-        // which makes SwiftTerm forward every drag to the child and never
-        // build a selection of its own - so the theme's `selectionHex` /
-        // `selectionTextHex` pair is never consulted there and the captain
-        // sees the multiplexer's own fixed dark highlight instead. Only this
-        // tab kind opts in: an `.ssh` tab may be running vim or the captain's
-        // own tmux, where a plain drag reaching the remote program is the
-        // expected behaviour. See `CockpitTerminalView.prefersLocalSelection`.
-        if case .herdr = launch { term.prefersLocalSelection = true }
 
         // `fm/cockpit-block-view-stage0`: only ever true for an `.ssh` tab on
         // the one opted-in host, and only when the whole feature is enabled
@@ -156,8 +144,6 @@ extension ConsoleController {
                 execName: nil,
                 currentDirectory: cwd
             )
-        case .herdr(let exe, let cwd):
-            connectHerdr(tab, executable: exe, cwd: cwd)
         case .ssh(_, let exe, let hostArgs, let keyID, let startupSnippetID):
             connectSSH(tab, executable: exe, hostArgs: hostArgs, keyID: keyID, startupSnippetID: startupSnippetID)
         }
@@ -355,7 +341,6 @@ extension ConsoleController {
         updateWindowTitle(from: tab)
         updateBlockViewControls()
         updateComposeControls()
-        updateUtilizationControls()
         updateSRELeadControls()
         // fm/grandline-notification-center (#7): selecting a tab is exactly
         // "the captain is now looking at this tab" - clears its own SRE
@@ -386,23 +371,11 @@ extension ConsoleController {
 
     // MARK: Reconnect / restart
 
-    /// ⌘R: restart whichever tab is in front from its launch spec. For the
-    /// herdr tab this re-runs `herdr`; for a shell it forks a new login shell.
+    /// ⌘R: restart whichever tab is in front from its launch spec. For a
+    /// shell this forks a new login shell.
     @objc func reconnectActive() {
         guard let tab = currentTab else { return }
         switch tab.launch {
-        case .herdr(let exe, let cwd):
-            // Finding 9 (cockpit-audit-core): the still-attached client
-            // notices the restart and exits on its own, asynchronous timing -
-            // if SwiftTerm's `LocalProcess` hasn't yet reaped that exit,
-            // `startProcess`'s own `if running { return }` guard silently
-            // drops this reconnect attempt with no error shown. Wait for the
-            // old process to actually finish (bounded, so a truly stuck
-            // process still surfaces a message instead of hanging forever)
-            // before starting the new one.
-            waitForProcessExit(tab, thenRun: { [weak self] in
-                self?.connectHerdr(tab, executable: exe, cwd: cwd)
-            })
         case .shell(let exe, let args, let cwd):
             tab.terminal.startProcess(
                 executable: exe,
@@ -419,29 +392,6 @@ extension ConsoleController {
         // method are the only two callers, and why that matters.
         restartTabBookkeeping(tab)
         view.window?.makeFirstResponder(tab.terminal)
-    }
-
-    /// Polls `tab.terminal.process.running` (bridged from SwiftTerm's
-    /// `LocalProcess`) every 50ms, up to `maxAttempts` times, then runs
-    /// `thenRun` - immediately if the process has already exited, otherwise
-    /// once it does. If it's still running after the bound, `thenRun` still
-    /// runs (matching this app's other "degrade gracefully, don't hang
-    /// forever" races) but a visible message explains why the reconnect may
-    /// not have taken effect, rather than silently doing nothing.
-    func waitForProcessExit(_ tab: TabModel, maxAttempts: Int = 40, thenRun: @escaping () -> Void) {
-        guard tab.terminal.process.running else {
-            thenRun()
-            return
-        }
-        guard maxAttempts > 0 else {
-            tab.terminal.feed(text: "\r\n  \u{1b}[2m[reconnect]\u{1b}[0m previous session hadn't exited yet - retrying anyway\u{1b}[0m\r\n")
-            thenRun()
-            return
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self, weak tab] in
-            guard let self, let tab else { return }
-            self.waitForProcessExit(tab, maxAttempts: maxAttempts - 1, thenRun: thenRun)
-        }
     }
 
     /// Tear down every materialized ssh key temp file and the theme observer registered in `loadView` - so
@@ -478,7 +428,6 @@ extension ConsoleController {
             self.fontSizeObservation = nil
         }
         composer.shutdown()
-        quotaUsage.shutdown()
     }
 
     // MARK: Window title

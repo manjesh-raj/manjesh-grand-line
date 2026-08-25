@@ -52,12 +52,11 @@ extension ConsoleController {
         blockViewToggleButton = makeLabeledButton(symbol: "rectangle.grid.1x2", title: "Blocks", tooltip: "Show Parsed Blocks (Stage 0)", action: #selector(toggleBlockView))
         blockViewRefreshButton = makeIconButton(symbol: "arrow.clockwise", tooltip: "Refresh Blocks", action: #selector(refreshBlockView))
         composeButton = makeLabeledButton(symbol: "sparkles", title: "Compose", tooltip: "Compose a command…", action: #selector(toggleComposer))
-        utilizationButton = makeLabeledButton(symbol: quotaUsageGaugeSymbol, title: "Claude usage", tooltip: "Claude usage", action: #selector(toggleUtilization))
 
         // SRE Lead (design brief Part C) and block view (`fm/cockpit-block-
         // view-stage0`) are both dedicated-host-page-only affordances - the
         // shared Firstmate console has no single host cluster to
-        // investigate, and its Shell/Herdr tabs never get a block tracker
+        // investigate, and its Shell tab never gets a block tracker
         // at all (see `TabModel.blockViewOptIn`) - a bug there took down the
         // whole app on every launch in the original PR #79/#80 attempt.
         var toolViews: [NSView] = []
@@ -76,10 +75,7 @@ extension ConsoleController {
         // is per-tab (`updateComposeControls`), not per-console like SRE
         // Lead/block view above. Placed immediately after SRE Lead (or first,
         // on the shared console, which has no SRE Lead button to sit next to)
-        // per captain request - `utilizationButton` (`fm/grandline-herdr-
-        // utilization-panel`), which shares this slot the opposite way
-        // (`updateUtilizationControls` - the two are never both visible on
-        // the same tab), stays in its original trailing position.
+        // per captain request.
         toolViews.append(composeButton)
         // Analyze Logs sits immediately after Compose, so the three
         // investigation-shaped features (SRE Lead, Compose, Analyze Logs)
@@ -109,7 +105,6 @@ extension ConsoleController {
         if !isFirstmateConsole {
             toolViews += [blockViewToggleButton, blockViewRefreshButton]
         }
-        toolViews.append(utilizationButton)
         // `setTrailing` also installs the clearance inequality that keeps a
         // long tab strip truncating rather than running under the actions -
         // the constraint this method used to activate by hand.
@@ -141,30 +136,17 @@ extension ConsoleController {
 
     /// Shown for a plain `.shell` tab or an `.ssh` tab (a dedicated host
     /// page's own SSH session), as long as it isn't a one-shot provisioning
-    /// command (`isOneShotCommand`) - never a Herdr tab (not a
-    /// captain-typed shell at all - there's nothing to type a generated
-    /// command into), or a one-shot command tab (already has a fixed,
-    /// tracked purpose). `.ssh` is included so Compose is available on a
-    /// host page exactly like it already is on the shared Firstmate
-    /// console's Shell tab - the generated command still just gets sent as
-    /// text into that tab's own real terminal (`TerminalView.send(txt:)`),
-    /// so it lands in whatever shell the remote host itself is running, the
-    /// same as anything else typed into that tab. Closes the popover
-    /// outright when the current tab stops qualifying (e.g. switching away
-    /// mid-review), so it never sits open pointed at a tab it no longer
-    /// applies to.
+    /// command (`isOneShotCommand`, which already has a fixed, tracked
+    /// purpose). `.ssh` is included so Compose is available on a host page
+    /// exactly like it already is on the shared Firstmate console's Shell
+    /// tab - the generated command still just gets sent as text into that
+    /// tab's own real terminal (`TerminalView.send(txt:)`), so it lands in
+    /// whatever shell the remote host itself is running, the same as
+    /// anything else typed into that tab. Closes the popover outright when
+    /// the current tab stops qualifying (e.g. switching away mid-review), so
+    /// it never sits open pointed at a tab it no longer applies to.
     func updateComposeControls() {
-        let available: Bool
-        if let tab = currentTab, !tab.isOneShotCommand {
-            switch tab.launch {
-            case .shell, .ssh:
-                available = true
-            case .herdr:
-                available = false
-            }
-        } else {
-            available = false
-        }
+        let available = currentTab.map { !$0.isOneShotCommand } ?? false
         composeButton.isHidden = !available
         if !available { composer.close() }
         // No `contentTintColor` here - `HelmButton.restyle()` owns that
@@ -176,31 +158,6 @@ extension ConsoleController {
     @objc func toggleComposer() {
         guard !composeButton.isHidden else { return }
         composer.toggle(relativeTo: composeButton)
-    }
-
-    // MARK: Claude usage (`fm/grandline-herdr-utilization-panel`)
-
-    /// Only ever shown for the `.herdr` tab - the opposite gating of
-    /// `updateComposeControls` above, mirrored from the same two call sites
-    /// (`select(tabID:)`, `applyTheme()`). Hidden, not merely disabled, on
-    /// every other tab kind (`.shell`, `.ssh`), and closes the popover
-    /// outright when the current tab stops qualifying - same reasoning as
-    /// Compose's own doc comment.
-    func updateUtilizationControls() {
-        let available: Bool
-        if let tab = currentTab, case .herdr = tab.launch {
-            available = true
-        } else {
-            available = false
-        }
-        utilizationButton.isHidden = !available
-        if !available { quotaUsage.close() }
-        // See `updateComposeControls` - `HelmButton` owns its own tinting.
-    }
-
-    @objc func toggleUtilization() {
-        guard !utilizationButton.isHidden else { return }
-        quotaUsage.toggle(relativeTo: utilizationButton)
     }
 
     // MARK: Theme
@@ -224,7 +181,6 @@ extension ConsoleController {
         styleChips()
         updateBlockViewControls()
         updateComposeControls()
-        updateUtilizationControls()
         updateIncidentControls()
         incidentCard.applyTheme(theme)
         if incidentPopover.isShown { renderIncidentCard() }
@@ -320,15 +276,14 @@ extension ConsoleController {
         }
         // §6.4's live subtitle. This method is the one choke point every tab
         // add / close / rename / selection already passes through, so hooking
-        // it here is what keeps the drill header's "3 tabs · Herdr" honest
+        // it here is what keeps the drill header's "3 tabs · Shell" honest
         // without a second notification path.
         onDrillSubtitleChanged?()
         // `plusButton` is a `HelmButton` and themes itself: `restyle()` owns
         // `contentTintColor` and overwrites anything set here on the next
         // theme change, so this line was a coin-flip that also defeated the
         // button's own §6.6 Daylight recipe (Phase 2's own rule, and the same
-        // correction `updateComposeControls`/`updateUtilizationControls`
-        // already took).
+        // correction `updateComposeControls` already took).
     }
 
     // MARK: Font zoom

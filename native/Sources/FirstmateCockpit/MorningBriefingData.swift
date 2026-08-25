@@ -91,8 +91,10 @@ enum BriefingTarget: String, Codable {
     /// The Bootstrap page - setup drift.
     case setup
     /// The Claude usage popover (`QuotaUsageController`), anchored on the
-    /// briefing paragraph rather than on Console's toolbar button, which is
-    /// only present on a Herdr-backed mirror tab.
+    /// briefing paragraph - this page's own instance, not shared with
+    /// anything else (Console's own toolbar trigger for it was removed
+    /// along with the herdr-attached tab it lived on, by
+    /// `fm/grand-line-remove-firstmate-mirror`).
     case quota
     /// Overview's own "In flight" section - scrolled into view, since the
     /// fleet tasks a clause is talking about are rows on this very page.

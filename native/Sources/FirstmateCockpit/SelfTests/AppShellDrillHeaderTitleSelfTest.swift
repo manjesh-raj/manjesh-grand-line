@@ -237,7 +237,7 @@ enum AppShellDrillHeaderTitleSelfTest {
 
         // The real production sequence: a brand-new destination's title and
         // (now-empty) actions, both changed together.
-        header.configure(title: "Console", subtitle: "2 tabs \u{00B7} Herdr",
+        header.configure(title: "Console", subtitle: "2 tabs \u{00B7} Shell 2",
                          symbol: "terminal", hue: .teal)
         header.setActions([])
         window.displayIfNeeded()
