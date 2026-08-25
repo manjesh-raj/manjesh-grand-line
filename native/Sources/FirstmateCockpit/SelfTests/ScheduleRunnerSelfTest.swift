@@ -46,6 +46,8 @@ enum ScheduleRunnerSelfTest {
         checkActionSafetyBar(&ok)
         checkPersistenceRoundTrip(&ok)
         checkDailyUpdatesSeeding(&ok)
+        checkRunHistoryPersistsAndFilters(&ok)
+        checkHealthSeedingFromHistory(&ok)
         print(ok ? "ScheduleRunnerSelfTest: all checks passed" : "ScheduleRunnerSelfTest: FAILED")
         return ok
     }
@@ -555,6 +557,181 @@ enum ScheduleRunnerSelfTest {
         let nextDay = ScheduleDueCalculator.verdict(for: firedToday, now: at(2026, 3, 11, 11, 5), calendar: utc)
         if !nextDay.isDue {
             fail("an 11:00 daily schedule should be due again the next day at 11:05", &ok)
+        }
+    }
+
+    // MARK: Run history (browsable last-7-days log + Health-seed source)
+    //
+    // `ScheduleRunHistoryStore` is a real, isolated JSONL store pointed at a
+    // scratch directory (`init(directory:)`), never `.shared` - the same
+    // convention `FleetLogStore`'s own suite uses, and the reason this can
+    // exercise real-disk persistence with no risk to the captain's real
+    // history.
+
+    private static func historyEntry(scheduleID: UUID, at date: Date, verdict: ScheduleRunVerdict,
+                                      summary: String, actionTitle: String = "Drift check") -> ScheduleRunHistoryEntry {
+        ScheduleRunHistoryEntry(scheduleID: scheduleID, at: date, verdict: verdict,
+                                summary: summary, actionTitle: actionTitle)
+    }
+
+    private static func checkRunHistoryPersistsAndFilters(_ ok: inout Bool) {
+        print("\n-- run history: persists, filters per schedule, prunes past 7 days --")
+        guard let dir = scratchDir() else {
+            fail("could not create a scratch directory", &ok)
+            return
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let scheduleA = UUID()
+        let scheduleB = UUID()
+        // "now" for this whole case, so "older than 7 days" is unambiguous
+        // regardless of when the suite actually runs.
+        let now = at(2026, 3, 10, 12, 0)
+        let eightDaysAgo = now.addingTimeInterval(-8 * 24 * 3600)
+        let twoDaysAgo = now.addingTimeInterval(-2 * 24 * 3600)
+        let oneHourAgo = now.addingTimeInterval(-3600)
+
+        let first = ScheduleRunHistoryStore(directory: dir)
+        // A's entries: one past the retention window, two within it.
+        first.append(historyEntry(scheduleID: scheduleA, at: eightDaysAgo, verdict: .clean,
+                                  summary: "too old to keep", actionTitle: "Drift check"))
+        first.append(historyEntry(scheduleID: scheduleA, at: twoDaysAgo, verdict: .failed,
+                                  summary: "network unreachable", actionTitle: "Drift check"))
+        first.append(historyEntry(scheduleID: scheduleA, at: oneHourAgo, verdict: .clean,
+                                  summary: "Dotfiles clean, agent instructions linked.", actionTitle: "Drift check"))
+        // B's own single entry - must never leak into A's filtered view.
+        first.append(historyEntry(scheduleID: scheduleB, at: oneHourAgo, verdict: .changed,
+                                  summary: "4 forks fast-forwarded.", actionTitle: "Fork sync"))
+
+        let aEntries = first.entries(for: scheduleA, now: now)
+        if aEntries.count != 2 {
+            fail("schedule A should show 2 entries within the last 7 days, got \(aEntries.count)", &ok)
+        }
+        if aEntries.contains(where: { $0.summary == "too old to keep" }) {
+            fail("an entry older than 7 days must be pruned from a filtered read", &ok)
+        }
+        if aEntries.first?.summary != "Dotfiles clean, agent instructions linked." {
+            fail("entries(for:) should be newest first, got \(aEntries.map { $0.summary })", &ok)
+        }
+        if aEntries.contains(where: { $0.scheduleID != scheduleA }) {
+            fail("schedule A's filtered history leaked another schedule's entry", &ok)
+        }
+
+        let bEntries = first.entries(for: scheduleB, now: now)
+        if bEntries.count != 1 || bEntries.first?.actionTitle != "Fork sync" {
+            fail("schedule B's own entry did not come back correctly, got \(bEntries)", &ok)
+        }
+
+        let allEntries = first.allEntries(now: now)
+        if allEntries.count != 3 {
+            fail("allEntries() should have pruned the 8-day-old entry, leaving 3, got \(allEntries.count)", &ok)
+        }
+
+        // A real disk round trip: a fresh instance over the same directory -
+        // the same shape as an app rebuild/relaunch - must see the same data,
+        // and the too-old entry must genuinely be gone from the file (the
+        // append-time prune), not merely filtered on read.
+        let second = ScheduleRunHistoryStore(directory: dir)
+        if second.allEntries(now: now).count != 3 {
+            fail("a fresh store instance over the same directory did not see the persisted entries", &ok)
+        }
+        guard let raw = try? String(contentsOf: second.debugFileURL, encoding: .utf8) else {
+            fail("expected a real runs.jsonl file on disk", &ok)
+            return
+        }
+        if raw.contains("too old to keep") {
+            fail("an entry past the retention window should have been rewritten out of the file, not just hidden on read", &ok)
+        }
+        let lineCount = raw.split(separator: "\n", omittingEmptySubsequences: true).count
+        if lineCount != 3 {
+            fail("runs.jsonl should hold exactly one line per surviving entry, got \(lineCount)", &ok)
+        }
+
+        // Forgetting the in-memory cache and reading again proves the *file*
+        // carries the history, not just this process's own cache - which is
+        // the property that actually matters for surviving a rebuild.
+        second.debugForgetCache()
+        if second.entries(for: scheduleA, now: now).count != 2 {
+            fail("re-reading from disk after forgetting the cache lost schedule A's history", &ok)
+        }
+    }
+
+    // MARK: Health-seeding from history (pure logic, no registry, no store)
+
+    private static func checkHealthSeedingFromHistory(_ ok: inout Bool) {
+        print("\n-- ServiceHealthRegistry seeds correctly from persisted run history --")
+        let scheduleID = UUID()
+
+        // Nothing recorded at all: no seed, leaving the registry's own honest
+        // "not run yet" alone rather than fabricating anything.
+        if !ScheduleHealthSeeding.seeds(from: []).isEmpty {
+            fail("an empty history should produce no seed instructions", &ok)
+        }
+
+        // A clean latest run seeds one success at its own timestamp - this is
+        // the exact case that used to read as "Not run yet" after a rebuild
+        // even though a real run had completed hours earlier the same day.
+        let cleanAt = at(2026, 3, 10, 11, 0)
+        let cleanSeeds = ScheduleHealthSeeding.seeds(from: [
+            historyEntry(scheduleID: scheduleID, at: cleanAt, verdict: .clean, summary: "All good."),
+        ])
+        if cleanSeeds != [.success(at: cleanAt)] {
+            fail("a clean latest run should seed exactly one success at its own time, got \(cleanSeeds)", &ok)
+        }
+
+        // `.changed` is still a *successful* run (it found something, it did
+        // not fail) - `ScheduleRunner.execute()` itself calls `recordSuccess`
+        // for it, and the seed must match that, not be mistaken for a failure.
+        let changedAt = at(2026, 3, 10, 11, 0)
+        let changedSeeds = ScheduleHealthSeeding.seeds(from: [
+            historyEntry(scheduleID: scheduleID, at: changedAt, verdict: .changed, summary: "3 tools have an update available."),
+        ])
+        if changedSeeds != [.success(at: changedAt)] {
+            fail("a 'needs you' (.changed) latest run should still seed a success, got \(changedSeeds)", &ok)
+        }
+
+        // Newest-first input (what every real read from the store returns): a
+        // trailing streak of 3 failures ending at the latest entry, then an
+        // older success that must NOT be replayed - the streak stops there,
+        // exactly like `ServiceHealthRegistry`'s own `consecutiveFailures`
+        // would reset to 0 at that success if this had happened live.
+        let oldSuccessAt = at(2026, 3, 6, 11, 0)
+        let fail1At = at(2026, 3, 7, 11, 0)
+        let fail2At = at(2026, 3, 8, 11, 0)
+        let fail3At = at(2026, 3, 9, 11, 0)
+        let entriesNewestFirst: [ScheduleRunHistoryEntry] = [
+            historyEntry(scheduleID: scheduleID, at: fail3At, verdict: .failed,
+                        summary: "gh not authenticated.", actionTitle: "Grand Line config backup to GitHub"),
+            historyEntry(scheduleID: scheduleID, at: fail2At, verdict: .failed,
+                        summary: "network unreachable.", actionTitle: "Grand Line config backup to GitHub"),
+            historyEntry(scheduleID: scheduleID, at: fail1At, verdict: .failed,
+                        summary: "no local manjesh-config clone.", actionTitle: "Grand Line config backup to GitHub"),
+            historyEntry(scheduleID: scheduleID, at: oldSuccessAt, verdict: .clean, summary: "Pushed."),
+        ]
+        let streakSeeds = ScheduleHealthSeeding.seeds(from: entriesNewestFirst)
+        let expectedStreak: [ScheduleHealthSeed] = [
+            .failure(detail: "Grand Line config backup to GitHub: no local manjesh-config clone.", at: fail1At),
+            .failure(detail: "Grand Line config backup to GitHub: network unreachable.", at: fail2At),
+            .failure(detail: "Grand Line config backup to GitHub: gh not authenticated.", at: fail3At),
+        ]
+        if streakSeeds != expectedStreak {
+            fail("a trailing failure streak should replay oldest-first, stopping before the older success, got \(streakSeeds)", &ok)
+        }
+
+        // Every entry in the window failed (no success anywhere to stop at):
+        // the whole history replays, oldest first.
+        let allFailedSeeds = ScheduleHealthSeeding.seeds(from: [
+            historyEntry(scheduleID: scheduleID, at: fail3At, verdict: .failed, summary: "third", actionTitle: "X"),
+            historyEntry(scheduleID: scheduleID, at: fail2At, verdict: .failed, summary: "second", actionTitle: "X"),
+            historyEntry(scheduleID: scheduleID, at: fail1At, verdict: .failed, summary: "first", actionTitle: "X"),
+        ])
+        let expectedAllFailed: [ScheduleHealthSeed] = [
+            .failure(detail: "X: first", at: fail1At),
+            .failure(detail: "X: second", at: fail2At),
+            .failure(detail: "X: third", at: fail3At),
+        ]
+        if allFailedSeeds != expectedAllFailed {
+            fail("a history with no success at all should replay every entry, oldest first, got \(allFailedSeeds)", &ok)
         }
     }
 

@@ -43,6 +43,9 @@ final class SchedulesCardView: NSObject {
     var onDeleteSchedule: ((AutomationSchedule) -> Void)?
     var onRunNow: ((AutomationSchedule) -> Void)?
     var onToggleEnabled: ((AutomationSchedule, Bool) -> Void)?
+    /// "View History...", the browsable last-7-days list behind the "..."
+    /// menu - see `ScheduleHistoryController`.
+    var onViewHistory: ((AutomationSchedule) -> Void)?
 
     // MARK: State
 
@@ -357,6 +360,11 @@ final class SchedulesCardView: NSObject {
         edit.representedObject = schedule.id.uuidString
         menu.addItem(edit)
 
+        let history = NSMenuItem(title: "View History\u{2026}", action: #selector(viewHistoryPicked(_:)), keyEquivalent: "")
+        history.target = self
+        history.representedObject = schedule.id.uuidString
+        menu.addItem(history)
+
         menu.addItem(.separator())
 
         let delete = NSMenuItem(title: "Delete", action: #selector(deletePicked(_:)), keyEquivalent: "")
@@ -374,6 +382,11 @@ final class SchedulesCardView: NSObject {
     @objc private func editPicked(_ sender: NSMenuItem) {
         guard let schedule = schedule(fromID: sender.representedObject as? String) else { return }
         onEditSchedule?(schedule)
+    }
+
+    @objc private func viewHistoryPicked(_ sender: NSMenuItem) {
+        guard let schedule = schedule(fromID: sender.representedObject as? String) else { return }
+        onViewHistory?(schedule)
     }
 
     @objc private func deletePicked(_ sender: NSMenuItem) {
