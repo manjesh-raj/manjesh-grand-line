@@ -15,6 +15,20 @@
 // Rows are `HelmAccentRow`, matching `SchedulesCardView`'s own row component
 // for the same reason that file gives - a run is a record with its own state,
 // not a dense checklist item.
+//
+// P5 (`data/grand-line-e2e-audit/report.md`): they live in a **table view**,
+// not a plain `NSStackView` of one permanent row per entry. 7-day retention
+// with a frequent schedule (or heavy "Run Now" use) reaches hundreds of rows,
+// and this codebase has documented the `NSStackView`-of-permanent-rows
+// pathology blowing up non-linearly past ~300 rows at least three times
+// (`DiffResultView.swift` - 13.6s; `BlockView.swift` - 102s;
+// `ReviewPRListView.swift`). Measured here before the change: 200 seeded
+// entries -> 681ms to build the sheet. A table only builds row views for
+// what is visible.
+//
+// Automatic row heights, unlike `ShiftListViews`' fixed `rowHeight`: B2 lets
+// this sheet's meta line *wrap* (a real failure summary is long and this
+// sheet is narrow), so a row's height genuinely varies with its content.
 
 import AppKit
 
@@ -31,7 +45,14 @@ final class ScheduleHistoryController: NSViewController {
     private var themeObservation: ThemeObservation?
     private var theme: HelmTheme = ThemeManager.shared.theme
 
-    private let rowsStack = NSStackView()
+    private let table = HelmTableView()
+    private var entries: [ScheduleRunHistoryEntry] = []
+    private let titleLabel = NSTextField(labelWithString: "Run History")
+    private let subtitleLabel = NSTextField(labelWithString: "")
+
+    private static let columnID = NSUserInterfaceItemIdentifier("scheduleHistoryCol")
+    private static let rowViewID = NSUserInterfaceItemIdentifier("scheduleHistoryRow")
+    private static let emptyViewID = NSUserInterfaceItemIdentifier("scheduleHistoryEmpty")
 
     init(schedule: AutomationSchedule, historyStore: ScheduleRunHistoryStore = .shared) {
         self.schedule = schedule
@@ -47,46 +68,40 @@ final class ScheduleHistoryController: NSViewController {
         themeObservation = ThemeManager.shared.observe { [weak self, weak root] theme in
             root?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
             self?.theme = theme
-            self?.rebuild()
+            self?.applyChromeTheme()
+            // B8: re-colour the sheet's own chrome, not only its rows. The
+            // subtitle used to be coloured once from whatever theme was
+            // current at build time and never again, so a theme switch while
+            // the sheet was open left the heading in the old theme's ink.
+            self?.table.reloadData()
         }
 
-        let title = NSTextField(labelWithString: "Run History")
-        title.font = HelmType.sectionTitle()
+        titleLabel.font = HelmType.sectionTitle()
 
-        let subtitle = NSTextField(labelWithString: schedule.action.title)
-        subtitle.font = HelmType.caption()
-        subtitle.textColor = HelmTheme.mutedInk(theme)
-        subtitle.lineBreakMode = .byTruncatingTail
-        subtitle.maximumNumberOfLines = 1
+        subtitleLabel.stringValue = schedule.action.title
+        subtitleLabel.font = HelmType.caption()
+        subtitleLabel.lineBreakMode = .byTruncatingTail
+        subtitleLabel.maximumNumberOfLines = 1
 
-        rowsStack.orientation = .vertical
-        rowsStack.alignment = .leading
-        rowsStack.spacing = 10
-        rowsStack.translatesAutoresizingMaskIntoConstraints = false
-
-        // AGENTS.md gotcha #9: a plain `NSView` document view is not flipped,
-        // so a short list rests against the *bottom* of the clip view instead
-        // of starting under the header.
-        let content = FlippedView()
-        content.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(rowsStack)
-        NSLayoutConstraint.activate([
-            rowsStack.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            rowsStack.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            rowsStack.topAnchor.constraint(equalTo: content.topAnchor),
-            rowsStack.bottomAnchor.constraint(equalTo: content.bottomAnchor),
-        ])
+        let column = NSTableColumn(identifier: Self.columnID)
+        column.resizingMask = .autoresizingMask
+        table.addTableColumn(column)
+        table.headerView = nil
+        table.backgroundColor = .clear
+        table.selectionHighlightStyle = .none
+        table.gridStyleMask = []
+        table.intercellSpacing = NSSize(width: 0, height: 6)
+        table.autoresizingMask = [.width]
+        // A wrapping meta line means a row's height is content-dependent.
+        table.usesAutomaticRowHeights = true
+        table.dataSource = self
+        table.delegate = self
 
         let scroll = NSScrollView()
-        scroll.documentView = content
+        scroll.documentView = table
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            // AGENTS.md gotcha #4: pin the document view to the *clip* view,
-            // never the outer scroll view.
-            content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-        ])
 
         let close = HelmButton(title: "Close", variant: .primary, target: self, action: #selector(closeClicked))
         close.keyEquivalent = "\r"
@@ -97,7 +112,7 @@ final class ScheduleHistoryController: NSViewController {
         footer.spacing = 10
         footer.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [title, subtitle, scroll, footer])
+        let stack = NSStackView(views: [titleLabel, subtitleLabel, scroll, footer])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
@@ -113,50 +128,20 @@ final class ScheduleHistoryController: NSViewController {
             footer.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
 
+        applyChromeTheme()
         rebuild()
     }
 
-    private func rebuild() {
-        for v in rowsStack.arrangedSubviews {
-            rowsStack.removeArrangedSubview(v)
-            v.removeFromSuperview()
-        }
-
-        let entries = historyStore.entries(for: schedule.id)
-        guard !entries.isEmpty else {
-            let empty = HelmEmptyState(
-                symbol: "clock.badge.questionmark",
-                body: "No runs recorded in the last 7 days."
-            )
-            rowsStack.addArrangedSubview(empty)
-            empty.widthAnchor.constraint(equalTo: rowsStack.widthAnchor).isActive = true
-            return
-        }
-
-        for entry in entries {
-            let row = buildRow(entry)
-            rowsStack.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: rowsStack.widthAnchor).isActive = true
-        }
+    /// B8: everything on this sheet that carries a theme-derived colour and is
+    /// not rebuilt by `reloadData()`.
+    private func applyChromeTheme() {
+        titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+        subtitleLabel.textColor = HelmTheme.mutedInk(theme)
     }
 
-    private func buildRow(_ entry: ScheduleRunHistoryEntry) -> NSView {
-        let row = HelmAccentRow(hover: false)
-        row.configure(HelmAccentRow.Content(
-            tint: entry.verdict.tint,
-            kicker: entry.verdict.label,
-            title: Self.timestampFormatter.string(from: entry.at),
-            meta: entry.summary,
-            badgeSymbol: entry.verdict.symbol,
-            // B2: a real failure summary ("gh api: 502 from GitHub while
-            // checking fork drift, will retry...") is long, this sheet is
-            // 460pt wide, and it is a read-only browsing surface with
-            // vertical room - so the whole sentence beats an ellipsis here.
-            // The width ties in `HelmAccentRow` are what stop it clipping
-            // mid-glyph either way.
-            metaWraps: true
-        ), theme: theme)
-        return row
+    private func rebuild() {
+        entries = historyStore.entries(for: schedule.id)
+        table.reloadData()
     }
 
     private static let timestampFormatter: DateFormatter = {
@@ -177,7 +162,56 @@ final class ScheduleHistoryController: NSViewController {
     // MARK: Probe / self-test surface
 
     #if FM_SELFTESTS
-    var debugRowCount: Int { rowsStack.arrangedSubviews.count }
-    var debugShowsEmptyState: Bool { rowsStack.arrangedSubviews.contains { $0 is HelmEmptyState } }
+    var debugRowCount: Int { entries.count }
+    var debugShowsEmptyState: Bool { entries.isEmpty }
+    var debugTitleColor: NSColor? { titleLabel.textColor }
+    var debugSubtitleColor: NSColor? { subtitleLabel.textColor }
+    /// The real row view the table produces for `row`, so a test measures what
+    /// the captain sees rather than a fixture.
+    func debugRowView(at row: Int) -> NSView? {
+        self.tableView(table, viewFor: table.tableColumns.first, row: row)
+    }
     #endif
+}
+
+// MARK: - Table data
+
+extension ScheduleHistoryController: NSTableViewDataSource, NSTableViewDelegate {
+    func numberOfRows(in tableView: NSTableView) -> Int { max(entries.count, 1) }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        guard !entries.isEmpty else {
+            let empty = (tableView.makeView(withIdentifier: Self.emptyViewID, owner: nil) as? HelmEmptyState)
+                ?? {
+                    let v = HelmEmptyState(symbol: "clock.badge.questionmark",
+                                           body: "No runs recorded in the last 7 days.")
+                    v.identifier = Self.emptyViewID
+                    return v
+                }()
+            empty.applyTheme(theme)
+            return empty
+        }
+        let rowView = (tableView.makeView(withIdentifier: Self.rowViewID, owner: nil) as? HelmAccentRow)
+            ?? {
+                let v = HelmAccentRow(hover: false)
+                v.identifier = Self.rowViewID
+                return v
+            }()
+        let entry = entries[row]
+        rowView.configure(HelmAccentRow.Content(
+            tint: entry.verdict.tint,
+            kicker: entry.verdict.label,
+            title: Self.timestampFormatter.string(from: entry.at),
+            meta: entry.summary,
+            badgeSymbol: entry.verdict.symbol,
+            // B2: a real failure summary ("gh api: 502 from GitHub while
+            // checking fork drift, will retry...") is long, this sheet is
+            // 460pt wide, and it is a read-only browsing surface with vertical
+            // room - so the whole sentence beats an ellipsis here. The width
+            // ties in `HelmAccentRow` are what stop it clipping mid-glyph
+            // either way.
+            metaWraps: true
+        ), theme: theme)
+        return rowView
+    }
 }
