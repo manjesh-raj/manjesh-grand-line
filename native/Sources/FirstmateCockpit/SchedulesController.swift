@@ -149,6 +149,7 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         schedulesCard.onNewSchedule = { [weak self] in self?.presentScheduleEditor(editing: nil) }
         schedulesCard.onEditSchedule = { [weak self] schedule in self?.presentScheduleEditor(editing: schedule) }
         schedulesCard.onDeleteSchedule = { [weak self] schedule in self?.confirmDeleteSchedule(schedule) }
+        schedulesCard.onViewHistory = { [weak self] schedule in self?.presentScheduleHistory(schedule) }
         schedulesCard.onRunNow = { [weak self] schedule in
             ScheduleRunner.shared.runNow(schedule)
             self?.refreshSchedules()
@@ -203,6 +204,12 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
             self.refreshSchedules()
         }
         presentAsSheet(editor)
+    }
+
+    /// "View History..." - the last 7 days of runs for one schedule
+    /// (`ScheduleRunHistoryStore`), read-only.
+    private func presentScheduleHistory(_ schedule: AutomationSchedule) {
+        presentAsSheet(ScheduleHistoryController(schedule: schedule))
     }
 
     /// A schedule is cheap to recreate, but deleting one silently on a menu

@@ -35,6 +35,15 @@
 // for the two things that already have one (a task needing a decision, a due
 // item) behind an explicit opt-in.
 //
+// **History.** Every run is also appended to `ScheduleRunHistoryStore`
+// (`ScheduleRunHistory.swift`), a durable last-7-days log on disk - the
+// browsable history behind the Schedules card's "View History..." action, and
+// what `start()` replays into `ServiceHealthRegistry` at launch so a
+// rebuild/relaunch does not read as "Not run yet" when a real run happened
+// earlier the same session. See that file's header for why this exists at
+// all (`ServiceHealthRegistry` itself has no persistence, deliberately, for
+// every service except this one).
+//
 // **While the app is locked.** Runs continue, matching `FleetNotifier` and
 // `BackgroundSignalsPoller`, which also keep running behind the lock screen.
 // The point of a schedule is that it is unattended, and nothing a run produces
@@ -100,6 +109,10 @@ final class ScheduleRunner {
     /// constructed here: a second `HostStore` would be a second writer to the
     /// same JSON file, which is exactly what GL-05 exists to prevent.
     private var backupStores: (hosts: HostStore, keys: SSHKeyStore, snippets: SnippetStore, dictation: DictationStore)?
+    /// The run-history sink (`ScheduleRunHistory.swift`) - injected the same
+    /// way, defaulting to the real on-disk log so existing `start(...)`
+    /// callers need no change.
+    private var historyStore: ScheduleRunHistoryStore?
 
     private var calendar: Calendar = .current
 
@@ -112,13 +125,31 @@ final class ScheduleRunner {
                hostStore: HostStore,
                keyStore: SSHKeyStore,
                snippetStore: SnippetStore,
-               dictationStore: DictationStore) {
+               dictationStore: DictationStore,
+               historyStore: ScheduleRunHistoryStore = .shared) {
         self.store = store
         self.backupStores = (hostStore, keyStore, snippetStore, dictationStore)
+        self.historyStore = historyStore
         guard timer == nil else { return }
         // F1: declare the row so the Health card says "not run yet" rather than
         // omitting a service that exists.
         ServiceHealthRegistry.shared.register(.scheduledAutomations)
+        // Then immediately correct that default from the persisted run
+        // history (`ScheduleRunHistory.swift`): a schedule that already ran
+        // earlier today has nothing to make it report again until its *next*
+        // occurrence, which can be nearly 24h away - so without this, a
+        // rebuild/relaunch shortly after a real run left the Health card
+        // reading "Not run yet" for the rest of that day even though a real
+        // run had completed. `seeds(from:)` is pure and reads no clock of its
+        // own, so this is a one-time replay of history, not a poll.
+        for seed in ScheduleHealthSeeding.seeds(from: historyStore.allEntries()) {
+            switch seed {
+            case .success(let at):
+                ServiceHealthRegistry.shared.recordSuccess(.scheduledAutomations, at: at)
+            case .failure(let detail, let at):
+                ServiceHealthRegistry.shared.recordFailure(.scheduledAutomations, detail, at: at)
+            }
+        }
         DispatchQueue.main.asyncAfter(deadline: .now() + launchDelay) { [weak self] in self?.tick() }
         let t = Timer.scheduledTimer(withTimeInterval: tickInterval, repeats: true) { [weak self] _ in self?.tick() }
         // A schedule with a stated minute should not drift by much, but it does
@@ -216,6 +247,17 @@ final class ScheduleRunner {
 
                 let record = ScheduleRunRecord(verdict: result.verdict, summary: result.summary, at: Date())
                 self.store?.recordRun(id: schedule.id, occurrence: occurrence, record: record)
+                // F11's run history: kept separately from `record` above
+                // (which `ScheduleStore` only ever remembers the latest one
+                // of) so a schedule's last 7 days are browsable and so a
+                // fresh launch can reconstruct `.scheduledAutomations`'s true
+                // state - see `ScheduleRunHistory.swift`'s header.
+                self.historyStore?.append(ScheduleRunHistoryEntry(
+                    scheduleID: schedule.id,
+                    at: record.at,
+                    verdict: result.verdict,
+                    summary: result.summary,
+                    actionTitle: action.title))
 
                 switch result.verdict {
                 case .failed:

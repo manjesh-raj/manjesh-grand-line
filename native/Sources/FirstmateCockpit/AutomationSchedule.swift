@@ -357,6 +357,17 @@ enum ScheduleRunVerdict: String, Codable {
         case .failed: return .critical
         }
     }
+
+    /// The glyph a run-history row (`ScheduleHistoryController`) draws for
+    /// this verdict - the badge equivalent of `SchedulesCardView.tickLabel`'s
+    /// own glyph choices for the same three verdicts.
+    var symbol: String {
+        switch self {
+        case .clean: return "checkmark.circle.fill"
+        case .changed: return "exclamationmark.circle.fill"
+        case .failed: return "xmark.octagon.fill"
+        }
+    }
 }
 
 struct ScheduleRunRecord: Codable, Equatable {
