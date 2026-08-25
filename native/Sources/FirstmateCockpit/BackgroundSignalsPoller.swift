@@ -359,11 +359,19 @@ final class BackgroundSignalsPoller {
 
     private func checkVault() {
         let snapshot = VaultSource.loadSnapshot()
-        let count = snapshot.tools.filter {
+        // B1: an `av` read that failed is not "nothing needs attention" and
+        // not "no secrets". Leave both counts as they were - `SignalCounts`'
+        // own `Int?` fields already mean "not established", which is what the
+        // Vault canvas card renders honestly.
+        guard let tools = snapshot.tools, let secrets = snapshot.secrets else {
+            AppLog.poller.info("vault check skipped: av read failed, leaving counts unchanged")
+            return
+        }
+        let count = tools.filter {
             if case .needsAttention = $0.status { return true }
             return false
         }.count
-        let secretCount = snapshot.secrets.count
+        let secretCount = secrets.count
         DispatchQueue.main.async { [weak self] in
             // One assignment, not two: `lastCounts`'s `didSet` fires per
             // write, and two writes would rebuild the canvas twice for one

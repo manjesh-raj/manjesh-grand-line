@@ -60,10 +60,15 @@ struct VaultRecipe: Codable, Equatable {
         return VaultRecipe(
             generatedAt: generatedAt,
             avVersion: versionLabel,
-            secrets: snapshot.secrets
+            // B1: a failed read is `nil`, and recording it as "no secrets"
+            // would bake a lie into the backup. `VaultController` refuses to
+            // export a degraded snapshot at all (see `exportRecipeTapped`),
+            // so this only ever sees a complete one - `?? []` is the
+            // belt-and-braces half, not the decision.
+            secrets: (snapshot.secrets ?? [])
                 .map { VaultRecipeSecret(name: $0.name) }
                 .sorted { $0.name < $1.name },
-            tools: snapshot.tools
+            tools: (snapshot.tools ?? [])
                 .map { tool in
                     let hardened: Bool
                     if case .hardened = tool.status { hardened = true } else { hardened = false }
@@ -111,7 +116,11 @@ enum VaultRecipeChecklist {
         var items: [VaultRecipeChecklistItem] = []
 
         let backupSecretNames = Set(recipe.secrets.map(\.name))
-        let currentSecretNames = Set(currentSnapshot.secrets.map(\.name))
+        // B1: `?? []` only ever sees a complete snapshot - `VaultController`
+        // refuses to run a checklist against a failed read, because every
+        // secret would then report as "missing locally", which is the same
+        // lie as "0 secrets" in a different shape.
+        let currentSecretNames = Set((currentSnapshot.secrets ?? []).map(\.name))
         for name in backupSecretNames.union(currentSecretNames).sorted() {
             let inBackup = backupSecretNames.contains(name)
             let inCurrent = currentSecretNames.contains(name)
@@ -121,7 +130,7 @@ enum VaultRecipeChecklist {
 
         let backupHardenedTools: [String: VaultRecipeTool] = Dictionary(uniqueKeysWithValues: recipe.tools.filter(\.hardened).map { ($0.name, $0) })
         var currentHardenedTools: [String: VaultTool] = [:]
-        for tool in currentSnapshot.tools {
+        for tool in currentSnapshot.tools ?? [] {
             if case .hardened = tool.status { currentHardenedTools[tool.name] = tool }
         }
         let allToolNames = Set(backupHardenedTools.keys).union(currentHardenedTools.keys)
