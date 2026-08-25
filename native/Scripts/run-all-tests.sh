@@ -115,6 +115,8 @@ NEEDS_SESSION=(
   "FM_RUN_NOTIFICATION_CENTER_SRE_LEAD_TESTS"
   "FM_RUN_SHIFT_ATTACHMENT_WELL_TESTS"
   "FM_RUN_TERMINAL_WRAP_REDRAW_TESTS"
+  # Visibility/occlusion has no meaning without a real, ordered-front window.
+  "FM_RUN_TERMINAL_DISPLAY_GATING_TESTS"
   # Renders a real SwiftTerm view and synthesizes real mouse drags across it -
   # and a SwiftTerm view only draws inside a real, ordered-front window.
   "FM_RUN_TERMINAL_SELECTION_RENDER_TESTS"

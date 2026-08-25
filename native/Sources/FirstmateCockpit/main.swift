@@ -1513,6 +1513,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_LOG_ANALYZER_TESTS"] == "1" {
     exit(LogAnalyzerSelfTest.run() ? 0 : 1)
 }
 
+// E1 (`data/grand-line-e2e-audit/report.md`): same convention, for the
+// terminal display gating that closed the app's dominant battery drain - see
+// TerminalDisplayGatingSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_DISPLAY_GATING_TESTS"] == "1" {
+    exit(TerminalDisplayGatingSelfTest.run() ? 0 : 1)
+}
+
 // `fm/grandline-dictation-mvp`: same convention, for `DictationHotkey`'s
 // hold/release detection over synthetic `.flagsChanged` events - see
 // DictationHotkeySelfTest.swift's header.
