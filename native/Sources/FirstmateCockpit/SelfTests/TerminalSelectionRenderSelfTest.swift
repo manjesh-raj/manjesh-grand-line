@@ -17,17 +17,25 @@
 //
 // `fm/grand-line-remove-firstmate-mirror` (PR #293) then removed the Mirror tab
 // outright, so that routing mechanism, its opt-in and its
-// `sentToChildForTests` hook are all gone - and this whole file went with them
-// as "dead code". **That deleted more than it needed to**: the suite's first
-// case never had anything to do with herdr. It is the plain Shell tab's own
+// `sentToChildForTests` hook went with it - and this whole file was deleted as
+// "dead code". **That deleted more than it needed to**: the suite's first case
+// never had anything to do with herdr. It is the plain Shell tab's own
 // selection, rendered for real, in every theme - the only pixel-level guard in
 // this codebase that the theme's selection pair actually reaches the screen
 // rather than merely existing in the palette. `fm/grand-line-shell-selection-investigate-fix`
-// restored exactly that half; the three herdr-specific cases stay deleted.
+// restored exactly that half.
 //
-// So both cases here drive a **real `CockpitTerminalView` in a real window**,
-// feed it real bytes, synthesize a **real click-drag**, render with
-// `cacheDisplay` and read the pixels back. What is asserted is what a
+// That investigation also measured what the removal had left unmitigated, and
+// the captain's decision on it is what cases 3-5 now guard:
+// `fm/grand-line-shell-tab-local-selection` re-scoped the same *routing* to
+// `.shell` tabs. A local shell's tab keeps an unmodified drag for its own
+// theme-coloured selection even when the program inside it has enabled mouse
+// capture; Shift+drag forwards the gesture to that program. `.ssh` tabs are
+// deliberately untouched - see `CockpitTerminalView.prefersLocalSelection`.
+//
+// So every rendering case here drives a **real `CockpitTerminalView` in a real
+// window**, feeds it real bytes, synthesizes a **real click-drag**, renders
+// with `cacheDisplay` and reads the pixels back. What is asserted is what a
 // screenshot would show, not what a constant says.
 //
 //   1. A Shell tab's drag paints `selectionHex` behind `selectionTextHex`,
@@ -35,6 +43,14 @@
 //   2. That pair clears 4.5:1 in every theme - measured from the palette, not
 //      from the captured pixels, and case 2's own comment records why that is
 //      the honest way round here.
+//   3. With a **mouse-reporting child**, an opted-in tab renders byte-identically
+//      to case 1; with the opt-in off - i.e. the pre-fix behaviour - the same
+//      drag paints **no selection at all**. That second half is what makes this
+//      a real regression guard rather than a case that merely passes.
+//   4. Nothing the child can do with the mouse is lost: a plain *click* is still
+//      reported to it, a *Shift*-drag is still reported to it, and only an
+//      unmodified drag is kept locally.
+//   5. Source guard: `.shell` is what opts in, and `.ssh` does not.
 //
 // Run with:
 //   swift build && FM_RUN_TERMINAL_SELECTION_RENDER_TESTS=1 .build/debug/FirstmateCockpit; echo $?
@@ -51,7 +67,10 @@ enum TerminalSelectionRenderSelfTest {
     static func run() -> Bool {
         var allOK = true
         for check in [checkShellTabPaintsTheThemeSelection,
-                      checkPaintedPairClearsTheTextFloor] {
+                      checkPaintedPairClearsTheTextFloor,
+                      checkMouseReportingChildStillSelectsLocally,
+                      checkChildKeepsItsMouse,
+                      checkShellTabsOptIn] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -62,6 +81,11 @@ enum TerminalSelectionRenderSelfTest {
     }
 
     // MARK: Fixtures
+
+    /// The DECSET pair a real mouse-capturing TUI sends - vim, Claude Code,
+    /// tmux and `herdr` all enable this pair (`?1002` button-event tracking,
+    /// `?1006` SGR extended coordinates).
+    private static let mouseCaptureOn = "\u{1b}[?1002h\u{1b}[?1006h"
 
     /// Twelve full rows of ordinary text, so every sampled row has glyphs on it
     /// and the "which colour is the ink" question has an answer.
@@ -104,10 +128,17 @@ enum TerminalSelectionRenderSelfTest {
 
     /// Build a real window + terminal, feed it, drag across it, and read the
     /// pixels back.
-    private static func renderDrag(theme: HelmTheme) -> Render? {
+    private static func renderDrag(theme: HelmTheme,
+                                   mouseCapture: Bool = false,
+                                   localSelection: Bool = true,
+                                   shiftHeld: Bool = false,
+                                   clickOnly: Bool = false,
+                                   sentBytes: inout [UInt8]) -> Render? {
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
                               styleMask: [.titled], backing: .buffered, defer: false)
         let view = CockpitTerminalView(frame: NSRect(origin: .zero, size: size))
+        view.sentToChildForTests = []
+        view.prefersLocalSelection = localSelection
         // A deliberately large glyph: text is drawn antialiased, so at a normal
         // UI size almost no pixel reaches the nominal ink colour and a
         // pixel-measured contrast would systematically under-report. Big
@@ -122,26 +153,33 @@ enum TerminalSelectionRenderSelfTest {
         window.orderFront(nil)
         RunLoop.main.run(until: Date().addingTimeInterval(0.2))
 
+        if mouseCapture { view.feed(text: mouseCaptureOn) }
         view.feed(text: content)
         RunLoop.main.run(until: Date().addingTimeInterval(0.25))
+        view.sentToChildForTests = []
 
         func ev(_ type: NSEvent.EventType, _ p: NSPoint) -> NSEvent? {
-            NSEvent.mouseEvent(with: type, location: p, modifierFlags: [], timestamp: 0,
+            NSEvent.mouseEvent(with: type, location: p, modifierFlags: shiftHeld ? [.shift] : [], timestamp: 0,
                                windowNumber: window.windowNumber, context: nil,
                                eventNumber: 0, clickCount: 1, pressure: 1)
         }
         let from = NSPoint(x: 10, y: size.height * 0.95)
         let to = NSPoint(x: size.width - 10, y: size.height * 0.55)
         if let e = ev(.leftMouseDown, from) { view.mouseDown(with: e) }
-        // A real drag emits motion from the press point onwards, and SwiftTerm
-        // seeds its selection anchor from the first motion event it is given -
-        // so the first one has to be at the press point.
-        for p in [from, NSPoint(x: size.width / 2, y: (from.y + to.y) / 2), to] {
-            if let e = ev(.leftMouseDragged, p) { view.mouseDragged(with: e) }
+        if !clickOnly {
+            // A real drag emits motion from the press point onwards, and
+            // SwiftTerm seeds its selection anchor from the first motion event
+            // it is given - so the first one has to be at the press point, or
+            // the two paths under test would anchor differently.
+            for p in [from, NSPoint(x: size.width / 2, y: (from.y + to.y) / 2), to] {
+                if let e = ev(.leftMouseDragged, p) { view.mouseDragged(with: e) }
+            }
         }
-        if let e = ev(.leftMouseUp, to) { view.mouseUp(with: e) }
+        if let e = ev(.leftMouseUp, clickOnly ? from : to) { view.mouseUp(with: e) }
         view.needsDisplay = true
         RunLoop.main.run(until: Date().addingTimeInterval(0.25))
+
+        sentBytes = view.sentToChildForTests ?? []
 
         guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
         view.cacheDisplay(in: view.bounds, to: rep)
@@ -253,7 +291,8 @@ enum TerminalSelectionRenderSelfTest {
     private static func checkShellTabPaintsTheThemeSelection(_ ok: inout Bool) {
         print("TerminalSelectionRenderSelfTest: a Shell tab's drag paints the theme's selection pair")
         for theme in HelmTheme.allThemes {
-            guard let r = renderDrag(theme: theme) else {
+            var sent: [UInt8] = []
+            guard let r = renderDrag(theme: theme, sentBytes: &sent) else {
                 fail(&ok, "\(theme.id): nothing rendered")
                 continue
             }
@@ -298,6 +337,101 @@ enum TerminalSelectionRenderSelfTest {
             }
         }
         if ok { print("  every theme's painted selection pair clears the text floor") }
+    }
+
+    // MARK: 3 - a mouse-reporting child, and the regression this replaces
+
+    private static func checkMouseReportingChildStillSelectsLocally(_ ok: inout Bool) {
+        print("TerminalSelectionRenderSelfTest: a drag over a mouse-reporting child renders identically to a plain one")
+        // Both registers, because the reported symptom was light-mode-specific
+        // and a dark theme can hide a wrong fill.
+        for id in ["helm-light", "helm-dark", "daylight", "dusk"] {
+            guard let theme = HelmTheme.allThemes.first(where: { $0.id == id }) else {
+                fail(&ok, "\(id) not found"); continue
+            }
+            var sent: [UInt8] = []
+            guard let plain = renderDrag(theme: theme, sentBytes: &sent) else {
+                fail(&ok, "\(id): plain-child reference did not render"); continue
+            }
+            // The shipped configuration for a `.shell` tab.
+            guard let captured = renderDrag(theme: theme, mouseCapture: true, sentBytes: &sent) else {
+                fail(&ok, "\(id): mouse-reporting render failed"); continue
+            }
+            if hex(captured.fill) != hex(plain.fill) || abs(captured.inkBlend - plain.inkBlend) > 0.02 {
+                fail(&ok, "\(id): mouse-reporting drew \(hex(captured.fill)) ink-blend \(fmt(captured.inkBlend)), plain drew \(hex(plain.fill)) ink-blend \(fmt(plain.inkBlend))")
+            }
+            if captured.filledRows < 3 {
+                fail(&ok, "\(id): mouse-reporting painted only \(captured.filledRows) selected row(s)")
+            }
+            // The pre-fix behaviour, asserted rather than described: with the
+            // opt-in off, mouse capture swallows the drag and nothing is
+            // selected. If this ever stops being true the fix has become a
+            // no-op and this case's pass above means nothing.
+            var ignored: [UInt8] = []
+            guard let unfixed = renderDrag(theme: theme, mouseCapture: true, localSelection: false,
+                                           sentBytes: &ignored) else {
+                fail(&ok, "\(id): unfixed render failed"); continue
+            }
+            if unfixed.filledRows != 0 || matches(unfixed.fill, theme.selectionHex, in: unfixed.repSpace) {
+                fail(&ok, "\(id): mouse capture no longer swallows the drag - this suite can no longer tell the fix from its absence")
+            }
+        }
+        if ok { print("  mouse-reporting == plain with the opt-in on; nothing selected with it off") }
+    }
+
+    // MARK: 4 - the child keeps its mouse
+
+    private static func checkChildKeepsItsMouse(_ ok: inout Bool) {
+        print("TerminalSelectionRenderSelfTest: an opted-in tab still reports clicks and Shift-drags to the child")
+        guard let theme = HelmTheme.allThemes.first(where: { $0.id == "helm-light" }) else {
+            fail(&ok, "helm-light not found"); return
+        }
+
+        var clickBytes: [UInt8] = []
+        _ = renderDrag(theme: theme, mouseCapture: true, clickOnly: true, sentBytes: &clickBytes)
+        if clickBytes.isEmpty {
+            fail(&ok, "a plain click reported nothing to the child - a TUI's own click targets would stop working")
+        }
+
+        var shiftBytes: [UInt8] = []
+        let shiftDrag = renderDrag(theme: theme, mouseCapture: true, shiftHeld: true, sentBytes: &shiftBytes)
+        if shiftBytes.isEmpty {
+            fail(&ok, "a Shift-drag reported nothing to the child - a TUI's own drag gestures would be unreachable")
+        }
+        if let shiftDrag, shiftDrag.filledRows != 0 {
+            fail(&ok, "a Shift-drag also painted a local selection - it is meant to be forwarded instead")
+        }
+
+        var dragBytes: [UInt8] = []
+        _ = renderDrag(theme: theme, mouseCapture: true, sentBytes: &dragBytes)
+        if !dragBytes.isEmpty {
+            fail(&ok, "an unmodified drag reported \(dragBytes.count) byte(s) to the child - it should be kept locally, so the child never draws a second selection under ours")
+        }
+        if ok { print("  click reported, Shift-drag reported, plain drag kept local") }
+    }
+
+    // MARK: 5 - source guard: which tab kind opts in
+
+    /// The scope *is* the captain's decision here, and it is invisible in a
+    /// render: an `.ssh` tab opted in by mistake would paint exactly the same
+    /// pixels as the `.shell` tab this suite drives, while silently changing
+    /// what a plain drag does inside a remote vim or tmux.
+    private static func checkShellTabsOptIn(_ ok: inout Bool) {
+        print("TerminalSelectionRenderSelfTest: `.shell` is what opts into local selection, and `.ssh` does not")
+        let path = SelfTestSources.appSourceDirectory()?
+            .appendingPathComponent("ConsoleController+Tabs.swift")
+        guard let path, let text = try? String(contentsOf: path, encoding: .utf8) else {
+            print("  SKIP: app sources not reachable from here")
+            return
+        }
+        if !text.contains("if case .shell = launch { term.prefersLocalSelection = true }") {
+            fail(&ok, "ConsoleController+Tabs.swift no longer opts the `.shell` tab into local selection")
+        }
+        let optIns = text.components(separatedBy: "prefersLocalSelection = true").count - 1
+        if optIns != 1 {
+            fail(&ok, "expected exactly one `prefersLocalSelection = true` opt-in in addTab, found \(optIns)")
+        }
+        if ok { print("  addTab opts `.shell` in, and nothing else") }
     }
 }
 

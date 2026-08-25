@@ -207,6 +207,176 @@ final class CockpitTerminalView: LocalProcessTerminalView {
             : Self.backgroundIntervalNanos
     }
 
+    // MARK: Local, theme-coloured selection in a mouse-reporting tab
+    //       (`fm/grand-line-shell-tab-local-selection`)
+
+    /// When `true`, an *unmodified* left-button **drag** builds this app's own
+    /// SwiftTerm selection - the one `HelmTheme.apply(to:)` colours with the
+    /// active theme's `selectionHex` / `selectionTextHex` pair - even while the
+    /// child process has mouse reporting enabled. Holding **Shift** forwards
+    /// the whole gesture to the child instead, and a plain *click* is still
+    /// forwarded either way.
+    ///
+    /// **Only a `.shell` tab opts in** (`ConsoleController.addTab`), and that
+    /// scope is the decision, not an implementation detail - see below.
+    ///
+    /// Why this exists, and why it is a *routing* fix rather than a colour one:
+    ///
+    /// `MacTerminalView.mouseDragged` returns early whenever
+    /// `allowMouseReporting && !shiftBypassesMouseReporting(event) &&
+    /// terminal.mouseMode != .off`, and never builds a selection of its own -
+    /// so for any child that enables mouse capture (Claude Code, vim, `less`,
+    /// tmux, `herdr` run by hand) `selectedTextBackgroundColor` /
+    /// `selectedTextForegroundColor` are simply never consulted. What the
+    /// captain sees highlighted in that state is the *child program's* own
+    /// selection, painted from that program's own fixed palette with no idea
+    /// which of this app's 14 themes is active - herdr's documented default is
+    /// `selection_bg = "#313244"`, a dark navy, which is exactly the reported
+    /// "dark navy block with dark, illegible text in light mode".
+    ///
+    /// That was measured rather than reasoned about, twice: with mouse
+    /// reporting off the identical synthesized drag paints `selectionHex`
+    /// behind `selectionTextHex` in all 14 themes, and with it on the same drag
+    /// paints **nothing at all** (`fm/grand-line-shell-selection-investigate-fix`,
+    /// whose report has the transcripts). No colour value in this app could
+    /// have fixed that, because none of them were being read.
+    ///
+    /// **Scope, and why it is `.shell` only.** A `.shell` tab is a local login
+    /// shell on the captain's own machine: whatever mouse-reporting program he
+    /// starts *inside* it is something he can also reach through its own
+    /// keyboard interface, and reading its output is the tab's main job - so an
+    /// unmodified drag is worth more as a selection than as a mouse report.
+    /// An `.ssh` tab is the opposite case and is deliberately left alone: it
+    /// may be running vim or the captain's own tmux on a remote host, where a
+    /// plain drag reaching the remote program is the expected behaviour and the
+    /// keyboard alternative is someone else's machine away. This mechanism
+    /// previously existed scoped to the (since-deleted) herdr tab; the captain's
+    /// decision here re-scopes the same routing to `.shell`, and it is not a
+    /// reinstatement of that tab.
+    ///
+    /// Nothing the child can do with the mouse is lost: a click (press and
+    /// release with no drag in between) is still delivered, the scroll wheel is
+    /// untouched, and Shift+drag forwards the drag as before.
+    var prefersLocalSelection = false
+
+    /// The left-button press we deliberately did not deliver yet, held until
+    /// the gesture reveals itself as a click (forward it) or a drag (keep it).
+    /// Deferring - rather than forwarding the press and then stealing the
+    /// motion - is what keeps the child's own button state consistent: it never
+    /// sees a press whose release it will not also see.
+    private var deferredPress: NSEvent?
+    /// True once a deferred press turned into a local selection drag.
+    private var localSelectionDragActive = false
+
+    /// Should this event start a local selection instead of being reported?
+    private func divertsToLocalSelection(_ event: NSEvent) -> Bool {
+        guard prefersLocalSelection, allowMouseReporting else { return false }
+        guard getTerminal().mouseMode != .off else { return false }
+        return !event.modifierFlags.contains(.shift)
+    }
+
+    /// Run `body` with mouse reporting suppressed, so SwiftTerm's own
+    /// selection code runs instead of `sharedMouseEvent`.
+    private func withoutMouseReporting(_ body: () -> Void) {
+        let saved = allowMouseReporting
+        allowMouseReporting = false
+        body()
+        allowMouseReporting = saved
+    }
+
+    /// Deliver `event` to the child even though Shift is held. SwiftTerm's
+    /// `shiftBypassesMouseReporting` would otherwise route a Shift-modified
+    /// event to its own selection - the default this tab inverts - so the copy
+    /// handed to `super` carries no Shift flag.
+    private func withoutShift(_ event: NSEvent) -> NSEvent {
+        guard event.modifierFlags.contains(.shift) else { return event }
+        return NSEvent.mouseEvent(with: event.type,
+                                  location: event.locationInWindow,
+                                  modifierFlags: event.modifierFlags.subtracting(.shift),
+                                  timestamp: event.timestamp,
+                                  windowNumber: event.windowNumber,
+                                  context: nil,
+                                  eventNumber: event.eventNumber,
+                                  clickCount: event.clickCount,
+                                  pressure: event.pressure) ?? event
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard prefersLocalSelection, allowMouseReporting, getTerminal().mouseMode != .off else {
+            super.mouseDown(with: event)
+            return
+        }
+        if divertsToLocalSelection(event) {
+            // Hold it: a click still has to reach the child, and we only know
+            // this is a drag once motion arrives.
+            deferredPress = event
+            localSelectionDragActive = false
+            return
+        }
+        super.mouseDown(with: withoutShift(event))
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let press = deferredPress else {
+            if prefersLocalSelection, allowMouseReporting, getTerminal().mouseMode != .off,
+               event.modifierFlags.contains(.shift) {
+                super.mouseDragged(with: withoutShift(event))
+                return
+            }
+            super.mouseDragged(with: event)
+            return
+        }
+        withoutMouseReporting {
+            if !localSelectionDragActive {
+                // Anchor the selection at the press point, not at wherever the
+                // first motion event happened to land: SwiftTerm's own
+                // `mouseDragged` seeds `setSoftStart` from the event it is
+                // given, so the press has to go through it first.
+                super.mouseDragged(with: press)
+                localSelectionDragActive = true
+            }
+            super.mouseDragged(with: event)
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard let press = deferredPress else {
+            if prefersLocalSelection, allowMouseReporting, getTerminal().mouseMode != .off,
+               event.modifierFlags.contains(.shift) {
+                super.mouseUp(with: withoutShift(event))
+                return
+            }
+            super.mouseUp(with: event)
+            return
+        }
+        deferredPress = nil
+        if localSelectionDragActive {
+            localSelectionDragActive = false
+            withoutMouseReporting { super.mouseUp(with: event) }
+            return
+        }
+        // No motion arrived: it was a click, so replay the press and release
+        // for the child exactly as it would have received them.
+        super.mouseDown(with: press)
+        super.mouseUp(with: event)
+    }
+
+    // MARK: Probe / self-test surface
+
+    #if FM_SELFTESTS
+    /// Non-nil while a self-test wants to know which mouse gestures were
+    /// actually reported to the child process. `TerminalSelectionRenderSelfTest`
+    /// uses it to prove a `.shell` tab still forwards clicks and Shift-drags to
+    /// a mouse-reporting child while keeping an unmodified drag for its own
+    /// selection - the half of the fix a pixel check cannot see.
+    var sentToChildForTests: [UInt8]?
+
+    override func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        if sentToChildForTests != nil { sentToChildForTests?.append(contentsOf: data) }
+        super.send(source: source, data: data)
+    }
+    #endif
+
     deinit {
         if let keyActivityMonitor {
             NSEvent.removeMonitor(keyActivityMonitor)

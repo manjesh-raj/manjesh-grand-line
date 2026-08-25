@@ -81,6 +81,22 @@ extension ConsoleController {
         let tab = TabModel(name: name, launch: launch, terminal: term, accentHex: accentHex)
         tab.isOneShotCommand = isOneShotCommand
 
+        // `fm/grand-line-shell-tab-local-selection`: a local shell's tab keeps
+        // an unmodified drag for its own theme-coloured selection even when the
+        // program running inside it has enabled mouse capture (Claude Code,
+        // vim, `less`, tmux, `herdr` run by hand); Shift+drag forwards the
+        // gesture to that program instead. Without this, SwiftTerm hands every
+        // drag to the child and the theme's `selectionHex`/`selectionTextHex`
+        // pair is never consulted at all - what gets highlighted is the child
+        // program's own fixed palette (measured: plain drag selects *nothing*
+        // of ours). Only this tab kind opts in: an `.ssh` tab may be running
+        // vim or the captain's own tmux on a remote host, where a plain drag
+        // reaching that program is the expected behaviour. See
+        // `CockpitTerminalView.prefersLocalSelection` for the full reasoning
+        // and for why this is a re-scoping of pre-existing routing rather than
+        // a reinstatement of the removed Mirror tab.
+        if case .shell = launch { term.prefersLocalSelection = true }
+
         // `fm/cockpit-block-view-stage0`: only ever true for an `.ssh` tab on
         // the one opted-in host, and only when the whole feature is enabled
         // (`BlockViewFeature.isEnabled`) - see `TabModel.blockViewOptIn`'s
