@@ -1895,9 +1895,18 @@ final class HelmAccentRow: NSView {
         // 750 -> `.defaultLow` also keeps a long string from becoming a
         // *window*-width floor (it is above `NSLayoutPriorityWindowSizeStayPut`
         // - AGENTS.md gotcha (13), which this app has hit five times).
-        for label in [titleLabel, metaLabel] {
-            label.widthAnchor.constraint(lessThanOrEqualTo: textStack.widthAnchor).isActive = true
-            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        //
+        // Only when the labels are genuinely in the tree: a row built with a
+        // caller-owned `contentView` (SRE Lead's rendered-markdown body) never
+        // adds them, and activating a constraint between two views with no
+        // common ancestor throws a real exception - this app's own recurring
+        // AppKit trap, and it took down `FM_RUN_SRE_LEAD_PER_TAB_TESTS` the
+        // first time this fix was written without the guard.
+        if customContent == nil {
+            for label in [titleLabel, metaLabel] {
+                label.widthAnchor.constraint(lessThanOrEqualTo: textStack.widthAnchor).isActive = true
+                label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            }
         }
 
     }

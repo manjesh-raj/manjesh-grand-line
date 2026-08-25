@@ -185,6 +185,20 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
     /// (`needsRefreshOnAppear`) rather than dropped.
     private func refreshSchedules() {
         guard isViewLoaded else { return }
+        // The very first render is never deferred. A page that is mounted but
+        // has never been populated renders as a blank body - the exact
+        // "mounted, visible, but empty" shape PR #278 fixed for Settings, and
+        // `DestinationMountingSelfTest` catches it. After that, deferring is
+        // safe: `refreshSchedulesIfNeeded` settles it on the next appearance.
+        guard hasRenderedOnce else {
+            needsRefreshOnAppear = false
+            lastRefreshedAt = Date()
+            hasRenderedOnce = true
+            schedulesCard.setSchedules(scheduleStore.schedules,
+                                       runningID: ScheduleRunner.shared.runningScheduleID,
+                                       theme: theme)
+            return
+        }
         guard view.window != nil, !view.isHiddenOrHasHiddenAncestor else {
             needsRefreshOnAppear = true
             // The header's live line is a string, not a view tree - it stays
@@ -194,6 +208,7 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         }
         needsRefreshOnAppear = false
         lastRefreshedAt = Date()
+        hasRenderedOnce = true
         schedulesCard.setSchedules(scheduleStore.schedules,
                                    runningID: ScheduleRunner.shared.runningScheduleID,
                                    theme: theme)
@@ -203,6 +218,9 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
     /// switch) while this page was hidden.
     private var needsRefreshOnAppear = true
     private var lastRefreshedAt: Date?
+    /// Whether this page has ever rendered its rows. Until it has, the
+    /// visibility gate must not apply - see `refreshSchedules`.
+    private var hasRenderedOnce = false
 
     /// How long before a row's relative wording ("in 3 hours", "not run yet")
     /// is worth re-rendering for.
