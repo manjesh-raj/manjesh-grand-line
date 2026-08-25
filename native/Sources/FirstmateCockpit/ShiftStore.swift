@@ -228,11 +228,85 @@ final class ShiftStore {
     /// confirm the change survived" a real persistence check rather than
     /// trusting the in-memory array a write call already mutated.
     func reloadAll() {
+        apply(Self.parseAll(root: root))
+    }
+
+    /// P3 (`data/grand-line-e2e-audit/report.md`): the same reload, with the
+    /// **parse** off the main thread.
+    ///
+    /// `ShiftController.viewWillAppear` calls `reloadAll()` on every visit, and
+    /// that is four YAML files parsed synchronously on the main thread before
+    /// the page can draw - measured at 92ms for a steady-state revisit on a
+    /// debug build, which is ~11 dropped frames at 120Hz for a tab switch.
+    /// Reading and parsing is pure (`parseAll` touches no store state and no
+    /// UI); everything that mutates this store - including the first-run
+    /// settings scaffold write - stays on the main thread in `apply`, so this
+    /// is not a threading change to the store itself.
+    ///
+    /// `completion` runs on the main thread, after the results are applied.
+    func reloadAllAsync(completion: @escaping () -> Void) {
+        let root = self.root
+        DispatchQueue.global(qos: .userInitiated).async {
+            let parsed = Self.parseAll(root: root)
+            DispatchQueue.main.async { [weak self] in
+                self?.apply(parsed)
+                completion()
+            }
+        }
+    }
+
+    /// What a reload read off disk, before any of it has been applied.
+    ///
+    /// A value type on purpose: this is what crosses the queue boundary, and
+    /// it carries no reference to the store. It keeps each file's **outcome**,
+    /// not just its items, because GL-01's failure tracking (which is what
+    /// stops this store writing an empty list over a file it could not read)
+    /// has to distinguish "parsed, empty" from "could not parse" - and that
+    /// bookkeeping mutates store state, so it cannot happen off the main
+    /// thread.
+    struct LoadedState {
+        let activeTasks: Loaded<ShiftTask>
+        let followUps: Loaded<ShiftFollowUp>
+        let projects: Loaded<ShiftProject>
+        let settings: ShiftYaml.MappingRead
+    }
+
+    /// One file's parsed models plus whether reading it succeeded.
+    struct Loaded<T> {
+        let items: [T]
+        let failed: Bool
+    }
+
+    /// Pure: reads and parses, decides nothing, touches no store state. Safe
+    /// on any queue.
+    private static func parseAll(root: URL) -> LoadedState {
+        func read<T>(_ suffix: String, key: String, map: (Yaml) -> T?) -> Loaded<T> {
+            switch ShiftYaml.readListChecked(path: root.appendingPathComponent(suffix).path, key: key) {
+            case .ok(let items): return Loaded(items: items.compactMap(map), failed: false)
+            case .missing: return Loaded(items: [], failed: false)
+            case .parseFailed: return Loaded(items: [], failed: true)
+            }
+        }
+        return LoadedState(
+            activeTasks: read("tasks/active.yaml", key: "tasks", map: ShiftYaml.task(from:)),
+            followUps: read("follow-ups/follow-ups.yaml", key: "follow_ups", map: ShiftYaml.followUp(from:)),
+            projects: read("projects/projects.yaml", key: "projects", map: ShiftYaml.project(from:)),
+            settings: ShiftYaml.readMappingChecked(path: root.appendingPathComponent("settings.yaml").path)
+        )
+    }
+
+    /// Main-thread only: everything with a side effect - the failure tracking
+    /// GL-01 depends on, the first-run scaffold write, and the in-memory state
+    /// itself. Byte-for-byte the decisions `reloadAll` always made.
+    private func apply(_ loaded: LoadedState) {
         invalidateCompletedTasksCache()
-        activeTasks = readListGuarded(path: activeTasksPath, key: "tasks").compactMap(ShiftYaml.task(from:))
-        followUps = readListGuarded(path: followUpsPath, key: "follow_ups").compactMap(ShiftYaml.followUp(from:))
-        projects = readListGuarded(path: projectsPath, key: "projects").compactMap(ShiftYaml.project(from:))
-        switch ShiftYaml.readMappingChecked(path: settingsPath) {
+        note(loaded.activeTasks.failed, path: activeTasksPath)
+        note(loaded.followUps.failed, path: followUpsPath)
+        note(loaded.projects.failed, path: projectsPath)
+        activeTasks = loaded.activeTasks.items
+        followUps = loaded.followUps.items
+        projects = loaded.projects.items
+        switch loaded.settings {
         case .ok(let doc):
             noteLoadOK(settingsPath)
             settings = ShiftYaml.settings(from: doc)
@@ -246,6 +320,10 @@ final class ShiftStore {
             noteLoadFailure(settingsPath)
             settings = ShiftSettings()
         }
+    }
+
+    private func note(_ failed: Bool, path: String) {
+        if failed { noteLoadFailure(path) } else { noteLoadOK(path) }
     }
 
     /// Every completed task across every month file this root currently
