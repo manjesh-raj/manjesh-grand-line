@@ -1790,6 +1790,16 @@ if ProcessInfo.processInfo.environment["FM_RUN_TOPNAV_PILL_PRESSED_STATE_TESTS"]
     exit(TopNavPillPressedStateSelfTest.run() ? 0 : 1)
 }
 
+// A real, captain-reported structural bug: Settings' whole page LAYOUT (card
+// columns, and the Appearance grid's own swatch density) changed depending
+// on which of the 14 themes was selected, not just its colours - see
+// SettingsThemeLayoutParitySelfTest.swift's header for the root cause
+// (`rebuildCardLayout()`'s two-column decision was gated on `theme.
+// isDaylight` as well as on width).
+if ProcessInfo.processInfo.environment["FM_RUN_SETTINGS_THEME_LAYOUT_PARITY_TESTS"] == "1" {
+    exit(SettingsThemeLayoutParitySelfTest.run() ? 0 : 1)
+}
+
 #endif
 
 // GL-05: refuse to be a second instance. This sits *after* every

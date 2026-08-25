@@ -278,13 +278,27 @@ final class SettingsController: NSViewController, DaylightDrillActions {
 
     // MARK: Card layout (Daylight §7's "two-column cards")
 
-    /// One column or two, decided from the container's real width.
+    /// One column or two, decided from the container's real width - and from
+    /// **width alone**.
     ///
-    /// **Daylight only.** Two columns is this design's own arrangement for
-    /// this page; the twelve pre-Daylight palettes keep the single column they
-    /// have always had, which is the same rule slices 1 and 2 held to - a
-    /// half-migrated look is worse for a captain on another palette than no
-    /// migration at all.
+    /// `fm/grandline-settings-layout-theme-dependent-fix`: this used to also
+    /// require `theme.isDaylight`, on the reasoning that two columns was
+    /// Daylight's own arrangement and the twelve pre-Daylight palettes should
+    /// keep the single column they always had. That reasoning was itself the
+    /// bug: selecting a theme is supposed to change colors, never which cards
+    /// exist, how many columns they sit in, or how dense the Appearance
+    /// card's own theme grid renders - and gating the column count on
+    /// `theme.isDaylight` violated all three at once, since
+    /// `rebuildAppearanceGrid()` derives its own grid density from
+    /// `appearanceContainer`'s real width, which is half the page in two
+    /// columns and the whole page in one. A captain switching from a Daylight
+    /// theme to a legacy one (or back) therefore saw the *page itself*
+    /// restructure - a captain screenshot comparing "Daylight" against "Helm
+    /// Light" at the same window size showed a materially different layout,
+    /// not just different colors. The fix is to drop the theme condition
+    /// entirely: the same two-column-above-`twoColumnMinWidth` rule now
+    /// applies to every theme, so the layout is a pure function of the
+    /// window's width and never of which of the 14 themes is selected.
     ///
     /// The split is a plain round robin over `cardsInOrder` rather than any
     /// attempt to balance heights. Heights here are genuinely data-dependent
@@ -326,7 +340,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         // rebuild is a real hazard on its own terms, not because it is what
         // closed the bug.
         guard !isRebuildingCardLayout else { return }
-        let twoColumn = theme.isDaylight && contentColumnWidth() >= Self.twoColumnMinWidth
+        let twoColumn = contentColumnWidth() >= Self.twoColumnMinWidth
         guard lastLayoutWasTwoColumn != twoColumn else { return }
         isRebuildingCardLayout = true
         defer { isRebuildingCardLayout = false }
@@ -1284,9 +1298,12 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// own cards, which show every palette's swatches).
     private func repaintForTheme() {
         guard isViewLoaded else { return }
-        // Crossing the Daylight boundary changes the *arrangement*, not just
-        // the colours - one column becomes two. `rebuildCardLayout` no-ops
-        // unless that boundary actually moved.
+        // The column arrangement no longer depends on which theme is active
+        // (see `rebuildCardLayout`'s own header) - only on the container's
+        // width, which a theme change never touches. This call is therefore
+        // always a no-op here in practice; it stays so a window resize that
+        // happens to coincide with a theme change is still covered by the
+        // same guard `rebuildCardLayout` already has.
         rebuildCardLayout()
         rebuildAppearanceGrid()
         applyTheme()
@@ -1305,6 +1322,18 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// the exact "all six cards exist but none of them are on screen"
     /// regression this file's `rebuildCardLayout()` fix closed.
     var debugCardsInTree: Int { cardsInOrder.filter { $0.isDescendant(of: cardsContainer) }.count }
+    /// The Appearance card's own theme-picker grid, one entry per row
+    /// (`HelmResponsiveGrid.rows`'s dark-theme rows first, then the light
+    /// ones), giving the column count `.fillEqually` actually divided that
+    /// row into. Used by `SettingsThemeLayoutParitySelfTest` to assert the
+    /// grid's own density is a pure function of layout width and never of
+    /// which theme happens to be selected - the second half of the bug
+    /// `rebuildCardLayout`'s `twoColumn` fix closes, since this grid's own
+    /// column count is derived from `appearanceContainer`'s real width, which
+    /// used to differ between one-column and two-column mode.
+    var debugAppearanceGridColumnCounts: [Int] {
+        appearanceContainer.arrangedSubviews.compactMap { ($0 as? NSStackView)?.arrangedSubviews.count }
+    }
     #endif
 
     private func applyTheme() {
