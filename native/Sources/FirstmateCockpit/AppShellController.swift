@@ -757,6 +757,10 @@ final class AppShellController: NSViewController {
     /// next) before deciding which of the lock screen's two states to show.
     func showLock(reason: AppLockReason) {
         lockScreen.view.isHidden = false
+        // E4: re-add what `hideLock` removed. A re-lock does not necessarily
+        // re-lay-out an already-sized overlay, so this cannot be left to
+        // `viewDidLayout`'s own call.
+        lockScreen.restartAnimationsIfNeeded()
         // GL-09: the overlay only covers this window. Everything that lives
         // outside it - the menu-bar status item, ⌥Space quick capture, the
         // dictation hotkey, an already-open Host Editor - consults
@@ -850,6 +854,10 @@ final class AppShellController: NSViewController {
 
     private func hideLock() {
         lockScreen.view.isHidden = true
+        // E4: the scene's three infinite animations used to stay attached to
+        // hidden layers for the rest of the session. `isHidden` alone does not
+        // stop a `CAAnimation`.
+        lockScreen.stopAnimations()
         AppLockGate.shared.setLocked(false)
         onLockStateChanged?(false)
     }

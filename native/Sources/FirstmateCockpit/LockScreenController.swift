@@ -826,6 +826,36 @@ final class LockScreenController: NSViewController {
         HelmMotion.isReduced
     }
 
+    /// E4 (`data/grand-line-e2e-audit/report.md`): stop the looping
+    /// decoration, called from `AppShellController.hideLock` on unlock.
+    ///
+    /// The three infinite animations used to be added exactly once and never
+    /// removed - `animationsStarted` latched true and only a Reduce Motion
+    /// toggle could take them off - so after the first unlock they stayed
+    /// attached to hidden layers for the rest of the session, costing
+    /// render-server bookkeeping forever for something nobody can see. And
+    /// while the app *is* locked with the display awake (a Mac left locked
+    /// overnight), the scene composites continuously by design; that half is
+    /// the lock screen's job, but it must end the moment the overlay does.
+    ///
+    /// Clearing the latch is what makes `startAnimationsIfNeeded()` honest:
+    /// the next `showLock` genuinely restarts them, rather than relying on
+    /// animations that happened to still be attached.
+    func stopAnimations() {
+        guard animationsStarted else { return }
+        animationsStarted = false
+        boatImageView.layer?.removeAnimation(forKey: "bob")
+        waveLayer.removeAnimation(forKey: "drift")
+        backWaveLayer.removeAnimation(forKey: "drift")
+    }
+
+    /// E4: re-add them when the scene comes back up. `viewDidLayout` also
+    /// calls `startAnimationsIfNeeded()`, but a re-lock does not necessarily
+    /// re-lay-out an already-sized overlay, so `showLock` says so explicitly.
+    func restartAnimationsIfNeeded() {
+        startAnimationsIfNeeded()
+    }
+
     private func startAnimationsIfNeeded() {
         guard !animationsStarted, waveWidth > 0 else { return }
         animationsStarted = true
@@ -1100,6 +1130,14 @@ extension LockScreenController {
     var debugCardShadowHost: NSView { cardShadowHost }
     var debugRibbonLayer: CAGradientLayer { ribbonLayer }
     var debugSkyLayer: CAGradientLayer { skyLayer }
+    /// E4: whether the looping decoration is currently attached, so a suite
+    /// can prove `hideLock` genuinely detaches it instead of only hiding the
+    /// view it lives on.
+    var debugLoopingAnimationsAttached: Bool {
+        boatImageView.layer?.animation(forKey: "bob") != nil
+            || waveLayer.animation(forKey: "drift") != nil
+            || backWaveLayer.animation(forKey: "drift") != nil
+    }
     var debugMarkTile: HelmGradientTile { markTile }
     var debugTitle: NSTextField { titleLabel }
     var debugSubtitle: NSTextField { subtitleLabel }
