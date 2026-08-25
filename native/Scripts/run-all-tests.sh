@@ -116,6 +116,7 @@ NEEDS_SESSION=(
   "FM_RUN_SHIFT_ATTACHMENT_WELL_TESTS"
   "FM_RUN_TERMINAL_WRAP_REDRAW_TESTS"
   "FM_RUN_VAULT_LOADING_STATE_TESTS"
+  "FM_RUN_AUDIT_UI_FIXES_TESTS"
   # Visibility/occlusion has no meaning without a real, ordered-front window.
   "FM_RUN_TERMINAL_DISPLAY_GATING_TESTS"
   # Renders a real SwiftTerm view and synthesizes real mouse drags across it -

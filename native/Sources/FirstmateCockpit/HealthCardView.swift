@@ -326,12 +326,12 @@ final class HealthCardView: NSObject {
     /// second copy of the same button a few rows apart is exactly the
     /// duplication §6.4's action cluster exists to remove.
     private func healthFooter() -> NSView {
-        let row = descRow(title: "Diagnostics",
-                          desc: "\"Copy diagnostics\" in the page header copies these rows as text. "
-                              + "Everything stays on this machine - detailed logs are in Console.app "
-                              + "under \"com.firstmate.cockpit.native\".",
-                          trailing: NSView())
-        return row
+        // B3: `nil`, not a bare spacer - see `descRow`'s own parameter note.
+        return descRow(title: "Diagnostics",
+                       desc: "\"Copy diagnostics\" in the page header copies these rows as text. "
+                           + "Everything stays on this machine - detailed logs are in Console.app "
+                           + "under \"com.firstmate.cockpit.native\".",
+                       trailing: nil)
     }
 
     @objc private func copyDiagnostics() {
@@ -391,7 +391,17 @@ final class HealthCardView: NSObject {
     /// - Parameter signalHex: §6.5's signal edge - a 3pt inset bar in this
     ///   hue plus a faint wash of it behind the row. `nil` for an ordinary
     ///   row, which renders exactly as it did before.
-    private func descRow(title: String, desc: String, trailing: NSView,
+    /// - Parameter trailing: this row's own control/chip, or `nil` for a row
+    ///   that has none. B3 (`data/grand-line-e2e-audit/report.md`): this used
+    ///   to take a non-optional `NSView`, and the footer passed a bare
+    ///   `NSView()` as a spacer - a view with no intrinsic size, whose
+    ///   `.required` **content** hugging is a no-op (AGENTS.md gotcha 12).
+    ///   With the text column deliberately yielding, `.fill` then handed
+    ///   nearly the whole row to that empty spacer: the footer's description
+    ///   label measured **78.5pt against a 931pt intrinsic width**, rendering
+    ///   as `Diagnostics` / `"Copy` - one clipped word of a two-sentence
+    ///   explanation, at every window width and in every theme.
+    private func descRow(title: String, desc: String, trailing: NSView?,
                          signalHex: String? = nil) -> NSView {
         // D6: `HelmType`, not raw `.systemFont(ofSize:)` sizes - which is
         // also what restores the captain's own chrome-text-scale setting
@@ -419,10 +429,15 @@ final class HealthCardView: NSObject {
         textStack.setHuggingPriority(.defaultLow, for: .horizontal)
         textStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
 
-        trailing.translatesAutoresizingMaskIntoConstraints = false
-        trailing.setContentHuggingPriority(.required, for: .horizontal)
+        trailing?.translatesAutoresizingMaskIntoConstraints = false
+        trailing?.setContentHuggingPriority(.required, for: .horizontal)
+        trailing?.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        let row = NSStackView(views: [textStack, trailing])
+        // B3: a row with no trailing control is a one-view row, so the text
+        // column has nothing to lose its width to. Deliberately not "pass a
+        // spacer with a `width == 0` constraint": there is simply nothing to
+        // put there, and an empty arranged subview is what caused this.
+        let row = NSStackView(views: [textStack, trailing].compactMap { $0 })
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 12
