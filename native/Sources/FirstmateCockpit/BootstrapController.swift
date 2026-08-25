@@ -1341,10 +1341,13 @@ final class BootstrapController: NSViewController, SetupPageSummary {
         // sections already use - no new detection logic. firstmateHome and
         // restoreConfig are read live and synchronously inside `stepIsDone`,
         // so only dotfiles/agentInstructions (`refreshDotfiles`) and software
-        // need an explicit re-fetch first.
+        // need an explicit re-fetch first. `forceRefresh: true` - a drift
+        // check exists to catch something that changed since setup, so it
+        // must never settle for a stale `DependencyCheckCache` hit from
+        // whenever this page (or Updates/Automation) last checked.
         refreshDotfiles { [weak self] in
             guard let self else { return }
-            self.checkAllSoftware {
+            self.checkAllSoftware(forceRefresh: true) {
                 self.isDriftChecking = false
                 self.captureDriftSnapshot()
                 self.rebuildDriftSection()
@@ -1783,19 +1786,28 @@ final class BootstrapController: NSViewController, SetupPageSummary {
 
     // MARK: Software checklist (Part C)
 
-    /// Checks every catalog item off the main thread via `UpdatesSource.check`
-    /// - the exact same function the Updates page's own automatic check-on-
-    /// load uses - then re-renders once. Runs once per page visit (mirrors
+    /// Checks every catalog item off the main thread through the shared
+    /// `DependencyCheckCache` (`UpdatesController`, `AutomationController`,
+    /// and this page all read the same 13-item cache now, rather than each
+    /// independently re-running the whole sweep - see that file's header)
+    /// then re-renders once. Runs once per page visit (mirrors
     /// `UpdatesController.hasCheckedOnce`), not on every navigation back to
     /// this page, so re-opening Bootstrap doesn't re-shell out to npm/brew/
     /// herdr repeatedly; the card's `Toast`-free rows re-check themselves
     /// individually after a successful Install anyway.
-    private func checkAllSoftware(completion: (() -> Void)? = nil) {
+    ///
+    /// `forceRefresh` bypasses the shared cache and re-runs every real
+    /// check - the drift card's "Re-check now" button passes `true`, since
+    /// the entire point of a drift check is to catch something that changed
+    /// since setup; the automatic first-visit call on `viewWillAppear` passes
+    /// `false` (the default), which is what lets this sweep come back from
+    /// Updates' or Automation's own earlier check at no subprocess cost.
+    private func checkAllSoftware(forceRefresh: Bool = false, completion: (() -> Void)? = nil) {
         isLoadingSoftware = true
         rebuildSoftwareSection()
         let items = softwareRows.map { $0.item }
         DispatchQueue.global(qos: .userInitiated).async {
-            let outcomes = items.map { ($0.id, UpdatesSource.check($0)) }
+            let outcomes = items.map { ($0.id, DependencyCheckCache.shared.check($0, forceRefresh: forceRefresh)) }
             DispatchQueue.main.async { [weak self] in
                 guard let self else { completion?(); return }
                 for (id, outcome) in outcomes {
@@ -1976,7 +1988,11 @@ final class BootstrapController: NSViewController, SetupPageSummary {
         let item = row.item
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             let outcome = UpdatesSource.update(item)
-            let recheck = UpdatesSource.check(item)
+            // `forceRefresh: true` - this item's own cache entry is stale by
+            // definition (the tool just changed underneath it), and forcing
+            // it here also refreshes the shared `DependencyCheckCache` so
+            // Updates/Automation see the true post-install state too.
+            let recheck = DependencyCheckCache.shared.check(item, forceRefresh: true)
             DispatchQueue.main.async {
                 guard let self, let row = self.softwareRows.first(where: { $0.item.id == item.id }) else {
                     completion(false)

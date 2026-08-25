@@ -1837,6 +1837,18 @@ if ProcessInfo.processInfo.environment["FM_RUN_CONSOLE_CLAUDE_USAGE_TESTS"] == "
     exit(ConsoleClaudeUsageSelfTest.run() ? 0 : 1)
 }
 
+// A scout investigation (`data/grand-line-energy-regression-scout/report.md`,
+// section 2) traced "clicking through several pages in one session feels
+// disproportionately expensive" to Updates/Bootstrap/Automation each
+// independently re-running the same 13-item `DependencyCatalog` sweep on
+// first mount. `DependencyCheckCache` is the shared, TTL'd cache they now all
+// read from - see `DependencyCheckCacheSelfTest.swift`'s header for what this
+// proves (caching, coalescing concurrent callers, and forceRefresh always
+// bypassing both).
+if ProcessInfo.processInfo.environment["FM_RUN_DEPENDENCY_CHECK_CACHE_TESTS"] == "1" {
+    exit(DependencyCheckCacheSelfTest.run() ? 0 : 1)
+}
+
 #endif
 
 // GL-05: refuse to be a second instance. This sits *after* every

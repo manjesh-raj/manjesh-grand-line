@@ -359,9 +359,15 @@ final class UpdatesController: NSViewController, SetupPageSummary {
         return row
     }
 
-    @objc private func checkAllTapped() { checkAll() }
+    // The Refresh pill is this page's explicit re-check affordance - it must
+    // always bypass `DependencyCheckCache` and run the real 13-item sweep,
+    // never serve a hit that another page happened to cache moments ago.
+    // `viewWillAppear`'s automatic first-visit call is the one place that
+    // benefits from a cache hit (see `check(_:forceRefresh:completion:)`
+    // below) - it passes `forceRefresh: false` (the default).
+    @objc private func checkAllTapped() { checkAll(forceRefresh: true) }
 
-    private func checkAll() {
+    private func checkAll(forceRefresh: Bool = false) {
         guard !isCheckingAll else { return }
         isCheckingAll = true
         checkAllPill.isHidden = true
@@ -380,7 +386,7 @@ final class UpdatesController: NSViewController, SetupPageSummary {
 
         var completed = 0
         for row in rows {
-            check(row) { [weak self] in
+            check(row, forceRefresh: forceRefresh) { [weak self] in
                 guard let self else { return }
                 completed += 1
                 self.checkAllProgressBar.doubleValue = Double(completed)
@@ -646,15 +652,25 @@ final class UpdatesController: NSViewController, SetupPageSummary {
 
     // MARK: Check
 
+    // The row's own "Check" button is this row's explicit re-check
+    // affordance, so it always forces a real check rather than serving
+    // whatever another page's sweep happened to cache.
     @objc private func checkTapped(_ sender: NSButton) {
         guard let row = row(for: sender) else { return }
-        check(row)
+        check(row, forceRefresh: true)
     }
 
     /// `completion` fires on the main queue once this row's check settles -
     /// `checkAll` uses it to drive the header's "Checking… (N/M)" progress
     /// and the completion toast without polling row state.
-    private func check(_ row: UpdateRow, completion: (() -> Void)? = nil) {
+    ///
+    /// Reads/writes the shared `DependencyCheckCache` instead of calling
+    /// `UpdatesSource.check(row.item)` directly, so this row's first-visit
+    /// check can come back from Bootstrap's or Automation's own earlier
+    /// sweep of the same tool at no subprocess cost - `forceRefresh` is what
+    /// every explicit "Check"/"Refresh" caller sets to `true` to bypass that
+    /// and get the real, live answer.
+    private func check(_ row: UpdateRow, forceRefresh: Bool = false, completion: (() -> Void)? = nil) {
         guard !row.isBusy else {
             completion?()
             return
@@ -664,7 +680,7 @@ final class UpdatesController: NSViewController, SetupPageSummary {
         row.checkButton.isEnabled = false
         render(row)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let outcome = UpdatesSource.check(row.item)
+            let outcome = DependencyCheckCache.shared.check(row.item, forceRefresh: forceRefresh)
             DispatchQueue.main.async {
                 guard self != nil else {
                     completion?()
@@ -741,7 +757,12 @@ final class UpdatesController: NSViewController, SetupPageSummary {
                 // reflect the machine's true state rather than the update
                 // command's own self-report - matches every other row's
                 // "Check is the source of truth for status" contract.
-                if outcome.ok { self.check(row) }
+                // `forceRefresh: true`: this row's own cache entry is now
+                // stale by definition (the tool just changed underneath it),
+                // so this must never read it back - and forcing it here also
+                // refreshes the shared cache with the truth for the other
+                // two pages.
+                if outcome.ok { self.check(row, forceRefresh: true) }
             }
         }
     }
