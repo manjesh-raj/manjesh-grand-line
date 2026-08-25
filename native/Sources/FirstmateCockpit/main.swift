@@ -1524,6 +1524,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_LOG_ANALYZER_TESTS"] == "1" {
     exit(LogAnalyzerSelfTest.run() ? 0 : 1)
 }
 
+// P2-P6 (`data/grand-line-e2e-audit/report.md`): the performance findings that
+// are testable as behaviour - see AuditPerfFixesSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT_PERF_FIXES_TESTS"] == "1" {
+    exit(AuditPerfFixesSelfTest.run() ? 0 : 1)
+}
+
 // B3-B9 (`data/grand-line-e2e-audit/report.md`): the Section 2 UI bugs, one
 // case per finding id - see AuditUIFixesSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_AUDIT_UI_FIXES_TESTS"] == "1" {

@@ -68,7 +68,12 @@ final class HealthController: NSViewController, DaylightDrillActions {
             root?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
             root?.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
             self?.theme = theme
-            self?.healthCard.refresh(theme: theme)
+            // P2: a hidden page repainting eagerly is pure waste - it would
+            // rebuild again on its next appearance anyway - and with every
+            // destination mounted for the session (GL-37) that waste is what
+            // made ⌘⌥T stall the main thread for ~0.7-1.0s. Deferred to
+            // `viewWillAppear` when this page is not the one showing.
+            self?.refreshCardIfVisible()
         }
 
         // D5: the page used to carry its own subtitle restating what the top
@@ -117,8 +122,19 @@ final class HealthController: NSViewController, DaylightDrillActions {
 
     override func viewWillAppear() {
         super.viewWillAppear()
-        healthCard.refresh(theme: theme)
+        // P3: only when it would change what is on screen - see
+        // `HealthCardView.refreshIfNeeded(theme:)`.
+        healthCard.refreshIfNeeded(theme: theme)
         scrollToTop()
+    }
+
+    /// P2: the theme observer's rebuild, skipped while this page is not the
+    /// one showing. `refreshIfNeeded` on the next appearance catches it,
+    /// because the theme it renders against will differ from the one the card
+    /// last rendered.
+    private func refreshCardIfVisible() {
+        guard isViewLoaded, view.window != nil, !view.isHiddenOrHasHiddenAncestor else { return }
+        healthCard.refresh(theme: theme)
     }
 
     /// The card's wrapping description labels wrap at a width derived from the
