@@ -1436,6 +1436,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_LOCK_SCREEN_TESTS"] == "1" {
     exit(LockScreenSelfTest.run() ? 0 : 1)
 }
 
+// Console's terminal text selection, measured from real rendered pixels
+// (fm/grandline-console-selection-contrast-followup). Window-backed - a
+// SwiftTerm view only draws inside a real, ordered-front window - so it sits in
+// run-all-tests.sh's NEEDS_SESSION list. See the suite's own header.
+if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_SELECTION_RENDER_TESTS"] == "1" {
+    exit(TerminalSelectionRenderSelfTest.run() ? 0 : 1)
+}
+
 // Daylight Phase 6 (the last phase): the accessibility sweep and the Reduce
 // Motion audit. Dusk's own colour derivation is measured by
 // FM_RUN_CONTRAST_TESTS, where the palette maths already lives. See

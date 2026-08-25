@@ -82,6 +82,18 @@ extension ConsoleController {
         let tab = TabModel(name: name, launch: launch, terminal: term, accentHex: accentHex)
         tab.isOneShotCommand = isOneShotCommand
 
+        // `fm/grandline-console-selection-contrast-followup`: a mirror tab is
+        // an attached multiplexer client (herdr's own `session attach`, or
+        // tmux) and those enable mouse capture, which makes SwiftTerm forward
+        // every drag to the child and never build a selection of its own - so
+        // the theme's `selectionHex` / `selectionTextHex` pair is never
+        // consulted there and the captain sees the multiplexer's own fixed
+        // dark highlight instead. Only this tab kind opts in: an `.ssh` tab
+        // may be running vim or the captain's own tmux, where a plain drag
+        // reaching the remote program is the expected behaviour. See
+        // `CockpitTerminalView.prefersLocalSelection`.
+        if case .mirror = launch { term.prefersLocalSelection = true }
+
         // `fm/cockpit-block-view-stage0`: only ever true for an `.ssh` tab on
         // the one opted-in host, and only when the whole feature is enabled
         // (`BlockViewFeature.isEnabled`) - see `TabModel.blockViewOptIn`'s
