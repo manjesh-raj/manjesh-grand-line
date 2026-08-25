@@ -80,7 +80,11 @@ enum DaylightModuleSelfTest {
         // Postmortems here, promoted out of `DocsController`'s former tabs
         // into their own destinations - the deliberate table change this
         // file's own doc comment says to make together with the test.
-        .stores: [.vault, .docs, .runbooks, .postmortems, .tools, .dictation],
+        // `fm/grand-line-whiteboard-excalidraw` added `.whiteboard` here for
+        // the same reason and by the same rule: a whiteboard is a thinking
+        // surface, which belongs on the same shelf as the reference material
+        // it gets used next to.
+        .stores: [.vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard],
         .engineering: [.updates, .bootstrap, .automation, .githubSync, .settings],
     ]
 
@@ -134,10 +138,11 @@ enum DaylightModuleSelfTest {
         // a real regression this suite has to catch, not just assume away.
         let trimmed = DaylightModule.allCases.filter { !overviewVisibleModules.contains($0) }
         // 12 from the original trim, plus Runbooks and Postmortems
-        // (`fm/grandline-docs-split-runbooks-postmortems`), both new modules
-        // with `appearsOnOverview == false` matching their Stores siblings.
-        if trimmed.count != 14 {
-            fail("expected exactly 14 modules trimmed from Overview, got \(trimmed.count): "
+        // (`fm/grandline-docs-split-runbooks-postmortems`) and Whiteboard
+        // (`fm/grand-line-whiteboard-excalidraw`) - all three new modules with
+        // `appearsOnOverview == false`, matching their Stores siblings.
+        if trimmed.count != 15 {
+            fail("expected exactly 15 modules trimmed from Overview, got \(trimmed.count): "
                  + "\(trimmed.map(\.rawValue).sorted())", &ok)
         }
         for module in trimmed {

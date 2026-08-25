@@ -123,6 +123,11 @@ NEEDS_SESSION=(
   # Renders a real terminal and reads its pixels back: a SwiftTerm view never
   # draws in a window that was never ordered front.
   "FM_RUN_TERMINAL_SELECTION_RENDER_TESTS"
+  # Mounts a real WKWebView loading the vendored Excalidraw bundle and measures
+  # whether WebKit stops animating it while hidden - needs a window server and a
+  # live web content process. FM_RUN_WHITEBOARD_TESTS covers the logic half and
+  # does run in CI.
+  "FM_RUN_WHITEBOARD_VIEW_TESTS"
   "FM_RUN_CONTRAST_TESTS"
   # Reads and writes the machine's real Keychain (and can prompt), which a
   # runner has no unlocked login keychain for.

@@ -1663,6 +1663,20 @@ if ProcessInfo.processInfo.environment["FM_RUN_CONSOLE_COMMAND_COMPOSER_TESTS"] 
     exit(ConsoleCommandComposerSelfTest.run() ? 0 : 1)
 }
 
+// `fm/grand-line-whiteboard-excalidraw`: the Whiteboard destination. Two
+// suites, split by what they need - `WhiteboardSelfTest` is pure logic (asset
+// resolution, the page's offline CSP, the AI prompt and parse, the destination
+// tables) and runs in CI; `WhiteboardViewSelfTest` mounts a real `WKWebView`
+// in a real window, loads the real vendored Excalidraw bundle and measures the
+// hidden-view gating, so it is window-backed and lives in
+// `run-all-tests.sh`'s NEEDS_SESSION list.
+if ProcessInfo.processInfo.environment["FM_RUN_WHITEBOARD_TESTS"] == "1" {
+    exit(WhiteboardSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_WHITEBOARD_VIEW_TESTS"] == "1" {
+    exit(WhiteboardViewSelfTest.run() ? 0 : 1)
+}
+
 // `fm/grandline-quota-percent-fix`: same convention, for `QuotaSource.parse`
 // against `quota-axi`'s real `percentRemaining`-keyed output - see
 // QuotaDataSelfTest.swift's header.

@@ -129,6 +129,8 @@ swift build
 
 First build takes ~90s because it compiles SwiftTerm from source. SwiftTerm is vendored at `Vendor/SwiftTerm/` (pinned to upstream `1.15.0`, with a small local patch - see `Vendor/SwiftTerm/README.md`), not fetched over SPM, so there's no `Package.resolved` and no network access needed to build. The product is a `Mach-O arm64` executable at `.build/debug/FirstmateCockpit`.
 
+The Whiteboard destination's Excalidraw bundle is vendored the same way, at `Vendor/Excalidraw/web/` - a committed, self-contained build, loaded from disk with no CDN and no runtime download. `swift build` never touches it; regenerate it with `Scripts/build-excalidraw-web.sh` (the only step in this repo that needs node/npm, and only at build time). See `Vendor/Excalidraw/README.md`.
+
 ## Run
 
 From the package directory:

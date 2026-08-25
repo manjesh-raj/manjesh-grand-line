@@ -517,6 +517,7 @@ final class HomeCanvasController: NSViewController {
         case .postmortems: fillPostmortems(&content)
         case .dictation: fillDictation(&content)
         case .tools: fillTools(&content)
+        case .whiteboard: fillWhiteboard(&content)
         case .settings: fillSettings(&content)
         }
         return content
@@ -939,6 +940,16 @@ final class HomeCanvasController: NSViewController {
     private func fillTools(_ content: inout HelmModuleCard.Content) {
         content.subtitle = "\(ToolKind.allCases.count) utilities"
         content.body = .note(ToolKind.allCases.prefix(5).map { $0.shortName }.joined(separator: " \u{00B7} ") + " and more")
+    }
+
+    /// Static, like Tools' and Settings' cards (§6.1's table says "static" for
+    /// both, and this is the same kind of card): a whiteboard has no count the
+    /// canvas could read without reaching into a live web view, and this card
+    /// must never do that - the whole point of the destination being lazy is
+    /// that the canvas can be on screen with no canvas process running.
+    private func fillWhiteboard(_ content: inout HelmModuleCard.Content) {
+        content.subtitle = "Excalidraw, offline"
+        content.body = .note("Sketch by hand, or describe a diagram and have Claude draw it.")
     }
 
     private func fillSettings(_ content: inout HelmModuleCard.Content) {

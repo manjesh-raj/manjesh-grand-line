@@ -97,6 +97,12 @@ import AppKit
 /// reads Overview, Console, Hosts, Shift, Review - `loadView`'s `navStack`
 /// loop gets this for free just from case order (case order drives
 /// `navStack`'s iteration order, same as every other `navStack` member).
+/// `.whiteboard` (`fm/grand-line-whiteboard-excalidraw`) is a utility in the
+/// same sense as `.tools` (`isDailyUse == false`): a surface a captain opens
+/// when they need it, not one they check in on. It sits in the Stores space
+/// alongside Docs, Tools, Vault and Dictation - a whiteboard is a thinking
+/// surface, which is the same shelf as the reference material it gets used
+/// next to.
 /// `.runbooks`/`.postmortems` (`fm/grandline-docs-split-runbooks-postmortems`)
 /// are the Runbooks and Postmortems tabs `DocsController` used to hold,
 /// promoted into their own top-level destinations in the Stores space
@@ -141,7 +147,7 @@ enum RailDestination: CaseIterable {
     /// reachable through `show(_:)`), so nothing about routing needed a
     /// second concept.
     case homeCanvas
-    case overview, console, hosts, shift, review, logAnalyzer, tools, vault, dictation, schedules, health, docs, runbooks, postmortems, updates, bootstrap, automation, githubSync, settings
+    case overview, console, hosts, shift, review, logAnalyzer, tools, whiteboard, vault, dictation, schedules, health, docs, runbooks, postmortems, updates, bootstrap, automation, githubSync, settings
 
     var symbol: String {
         switch self {
@@ -168,6 +174,12 @@ enum RailDestination: CaseIterable {
         // and from Console's bare terminal.
         case .logAnalyzer: return "text.magnifyingglass"
         case .tools: return "wrench.and.screwdriver"
+        // `fm/grand-line-whiteboard-excalidraw`: a hand-drawn scribble - the
+        // one glyph in this family that reads as "sketch on a surface" rather
+        // than as a document or a tool, which is what an infinite hand-drawn
+        // canvas is. Verified to resolve (`NSImage(systemSymbolName:)` returns
+        // nil silently, and this app has shipped an invisible icon that way).
+        case .whiteboard: return "scribble.variable"
         case .vault: return "lock.shield"
         case .dictation: return "waveform"
         // `fm/grandline-schedules-sidebar-move`: a calendar - matches
@@ -202,6 +214,7 @@ enum RailDestination: CaseIterable {
         case .review: return "Review"
         case .logAnalyzer: return "Log Analyzer"
         case .tools: return "Tools"
+        case .whiteboard: return "Whiteboard"
         case .vault: return "Vault"
         case .dictation: return "Dictation"
         case .schedules: return "Schedules"
@@ -258,14 +271,14 @@ enum RailDestination: CaseIterable {
         case .automation: return .accent
         case .githubSync: return .violet
         case .homeCanvas, .overview, .console, .hosts, .shift, .review, .logAnalyzer,
-             .tools, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems, .settings: return .accent
+             .tools, .whiteboard, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems, .settings: return .accent
         }
     }
 
     var isDailyUse: Bool {
         switch self {
         case .homeCanvas, .overview, .console, .hosts, .shift, .review, .logAnalyzer: return true
-        case .tools, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems,
+        case .tools, .whiteboard, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems,
              .updates, .bootstrap, .automation, .githubSync, .settings: return false
         }
     }

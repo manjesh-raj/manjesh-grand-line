@@ -107,6 +107,11 @@ final class AppShellController: NSViewController {
     /// by this.
     private weak var logAnalyzerCaptureSource: ConsoleController?
     private let tools = ToolsController()
+    /// `fm/grand-line-whiteboard-excalidraw`: the embedded Excalidraw canvas.
+    /// Lazy like every other utility destination, and deliberately so - see
+    /// `WhiteboardWebView`'s gating note: a session that never opens it never
+    /// starts a web content process.
+    private let whiteboard = WhiteboardController()
     private let vault = VaultController()
     private let dictation: DictationController
     /// `fm/grandline-schedules-sidebar-move`: F11's Schedules card, promoted
@@ -387,6 +392,7 @@ final class AppShellController: NSViewController {
         mounter.register(DestinationSlot(id: .review, title: RailDestination.review.bodyTitle, mountsEagerly: true, controller: review))
         mounter.register(DestinationSlot(id: .logAnalyzer, title: RailDestination.logAnalyzer.bodyTitle, mountsEagerly: false, controller: logAnalyzer))
         mounter.register(DestinationSlot(id: .tools, title: RailDestination.tools.bodyTitle, mountsEagerly: false, controller: tools))
+        mounter.register(DestinationSlot(id: .whiteboard, title: RailDestination.whiteboard.bodyTitle, mountsEagerly: false, controller: whiteboard))
         mounter.register(DestinationSlot(id: .vault, title: RailDestination.vault.bodyTitle, mountsEagerly: false, controller: vault))
         mounter.register(DestinationSlot(id: .dictation, title: RailDestination.dictation.bodyTitle, mountsEagerly: false, controller: dictation))
         mounter.register(DestinationSlot(id: .schedules, title: RailDestination.schedules.bodyTitle, mountsEagerly: false, controller: schedules))
@@ -628,6 +634,7 @@ final class AppShellController: NSViewController {
         // runbook editor (and the per-tab switch that used to empty the
         // cluster for it) moved to `.runbooks`.
         docs.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        whiteboard.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Runbooks inherited Docs' old per-editor-state cluster: "New
         // Runbook" beside a form already creating one is a second, competing
         // action, so its cluster empties while the editor is open.

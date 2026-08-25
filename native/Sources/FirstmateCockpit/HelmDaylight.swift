@@ -521,6 +521,11 @@ extension RailDestination {
         case .updates, .bootstrap, .automation, .githubSync: return .amber  // Setup
         case .settings: return .slate
         case .tools: return .slate
+        // `fm/grand-line-whiteboard-excalidraw`: violet is this app's own "AI
+        // feature" hue (the composer popovers' tinted tile, Dictation's
+        // clean-up card), and the Whiteboard's headline capability is the
+        // Claude-generated diagram.
+        case .whiteboard: return .violet
         }
     }
 }

@@ -128,6 +128,7 @@ Behaviour overrides. Everything here is optional; the app has working defaults f
 | `FM_INCIDENTS_DIR` | Incident records (F8 incident mode). Falls back to `FM_SHIFT_DIR`, then the synced clone |
 | `FM_WHISPER_MODEL_DIR` | Where the local Whisper model is downloaded |
 | `FM_INSTANCE_LOCK_FILE` | The single-instance lock file |
+| `FM_WHITEBOARD_WEB_DIR` | The vendored Excalidraw bundle the Whiteboard destination loads (checked after `Contents/Resources`, before the source-tree walk-up) |
 
 ### Behaviour
 

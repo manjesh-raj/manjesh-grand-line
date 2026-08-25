@@ -1,0 +1,253 @@
+// Manjesh Grand Line - the Whiteboard destination's web side.
+//
+// Hand-written entry point for the bundle `native/Scripts/build-excalidraw-web.sh`
+// produces (see ../README.md). It mounts the real `@excalidraw/excalidraw`
+// React component full-page and exposes exactly one global,
+// `window.GrandLineWhiteboard`, as the bridge the native side drives with
+// `evaluateJavaScript`. Nothing here reaches the network: every asset it needs
+// (the bundle, its CSS, the woff2 fonts) is a sibling file on disk, and
+// index.html carries a Content-Security-Policy that makes that structural
+// rather than a claim.
+//
+// Two conventions worth keeping if this file is edited:
+//
+//   1. **Every entry point answers.** Each bridge call posts exactly one
+//      `{ type: "reply", callID, ok, ... }` message back to Swift, so the
+//      native side never has to guess whether an `evaluateJavaScript` that
+//      returned `undefined` actually did anything. A throw inside a bridge
+//      call is caught and answered as `ok: false` with a real message.
+//   2. **No always-on animation or polling.** The one rAF loop in this file
+//      is the gating probe, which stays dormant unless the native side turns
+//      it on for a measurement (see `startGatingProbe`). Adding a permanent
+//      ticker here is the exact battery mistake `CockpitTerminalView`'s
+//      display gating exists to undo.
+import React, { useCallback, useState } from "react";
+import { createRoot } from "react-dom/client";
+import {
+  Excalidraw,
+  convertToExcalidrawElements,
+} from "@excalidraw/excalidraw";
+import "@excalidraw/excalidraw/index.css";
+
+// Excalidraw resolves its lazily-loaded woff2 subsets against this base. The
+// bundle and its `fonts/` directory are siblings, so "./" is the whole answer -
+// and it is what keeps the CDN fallback baked into the library
+// (`ASSETS_FALLBACK_URL`) from ever being reached for a font we ship.
+window.EXCALIDRAW_ASSET_PATH = "./";
+
+const post = (payload) => {
+  try {
+    window.webkit.messageHandlers.grandlineWhiteboard.postMessage(payload);
+  } catch (err) {
+    // No native host (e.g. the page opened in a plain browser for debugging).
+    // Never throw from a bridge call just because nobody is listening.
+    if (window.console) console.warn("whiteboard: no native host", err);
+  }
+};
+
+const reply = (callID, body) => {
+  if (callID === undefined || callID === null) return;
+  post({ type: "reply", callID, ...body });
+};
+
+let api = null;
+let suspended = false;
+
+function Whiteboard({ onReady }) {
+  const [theme, setTheme] = useState(
+    document.documentElement.dataset.theme === "dark" ? "dark" : "light"
+  );
+
+  // The native side owns the theme, so it is pushed in rather than read from
+  // the OS: the app's own Helm light/dark mode is what decides, exactly like
+  // every other surface in this app.
+  window.__setWhiteboardTheme = setTheme;
+
+  const excalidrawAPICallback = useCallback(
+    (instance) => {
+      api = instance;
+      onReady();
+    },
+    [onReady]
+  );
+
+  return React.createElement(Excalidraw, {
+    excalidrawAPI: excalidrawAPICallback,
+    theme,
+    langCode: "en",
+    // The whiteboard is a local scratch surface: the two features that reach
+    // for the network (live collaboration, the shared-link/library browser)
+    // have nothing to talk to here, so they are off rather than present and
+    // broken.
+    UIOptions: {
+      canvasActions: {
+        loadScene: true,
+        saveToActiveFile: false,
+        export: { saveFileToDisk: true },
+        toggleTheme: false,
+      },
+    },
+    onChange: () => {
+      // Deliberately not a per-keystroke bridge message: the native side only
+      // wants a coarse "is there anything on this board" signal for its drill
+      // header, and posting on every pointer move would be its own battery
+      // problem. `elementCount` is read on demand instead (see `stats`).
+    },
+  });
+}
+
+const root = createRoot(document.getElementById("app"));
+root.render(
+  React.createElement(Whiteboard, {
+    onReady: () => post({ type: "ready" }),
+  })
+);
+
+// --- The bridge -----------------------------------------------------------
+
+const liveElements = () =>
+  (api ? api.getSceneElements() : []).filter((el) => !el.isDeleted);
+
+const bridge = {
+  /// Loads AI-generated (or pasted) elements onto the canvas.
+  ///
+  /// `skeleton` is Excalidraw's own documented *element skeleton* format, not
+  /// its full internal element shape - `convertToExcalidrawElements` is the
+  /// library's own function for filling in every derived field (id, seed,
+  /// version nonces, bindings, container/label wiring). That is why the native
+  /// prompt asks a model for the skeleton: it is a small, documented surface,
+  /// and anything the model gets wrong about the internals is not ours to
+  /// guess at.
+  loadScene(callID, payload) {
+    try {
+      if (!api) throw new Error("the canvas is still starting up");
+      const skeleton = payload && payload.elements;
+      if (!Array.isArray(skeleton) || skeleton.length === 0) {
+        throw new Error("no elements to load");
+      }
+      const converted = convertToExcalidrawElements(skeleton);
+      if (!converted.length) throw new Error("no elements survived conversion");
+      const existing = payload.mode === "append" ? liveElements() : [];
+      api.updateScene({ elements: [...existing, ...converted] });
+      api.scrollToContent(converted, { fitToContent: true, animate: false });
+      reply(callID, { ok: true, count: converted.length });
+    } catch (err) {
+      reply(callID, { ok: false, message: String((err && err.message) || err) });
+    }
+  },
+
+  clear(callID) {
+    try {
+      if (!api) throw new Error("the canvas is still starting up");
+      api.resetScene();
+      reply(callID, { ok: true, count: 0 });
+    } catch (err) {
+      reply(callID, { ok: false, message: String((err && err.message) || err) });
+    }
+  },
+
+  fitToContent(callID) {
+    try {
+      if (!api) throw new Error("the canvas is still starting up");
+      const elements = liveElements();
+      if (elements.length) {
+        api.scrollToContent(elements, { fitToContent: true, animate: false });
+      }
+      reply(callID, { ok: true, count: elements.length });
+    } catch (err) {
+      reply(callID, { ok: false, message: String((err && err.message) || err) });
+    }
+  },
+
+  setTheme(callID, payload) {
+    try {
+      const mode = payload && payload.theme === "dark" ? "dark" : "light";
+      document.documentElement.dataset.theme = mode;
+      if (window.__setWhiteboardTheme) window.__setWhiteboardTheme(mode);
+      reply(callID, { ok: true });
+    } catch (err) {
+      reply(callID, { ok: false, message: String((err && err.message) || err) });
+    }
+  },
+
+  stats(callID) {
+    reply(callID, { ok: true, count: liveElements().length, suspended });
+  },
+
+  /// Called when the destination is hidden (and again when it is shown).
+  ///
+  /// WebKit already stops painting and throttles rAF for a `WKWebView` whose
+  /// NSView is hidden - `document.visibilityState` goes `hidden` - so this is
+  /// not the thing keeping idle cost at zero. What it does add is the part
+  /// WebKit cannot know about: CSS transitions/animations inside Excalidraw's
+  /// own chrome are paused outright, the canvas loses focus so no caret blinks,
+  /// and the gating probe (if running) is stopped.
+  suspend(callID) {
+    suspended = true;
+    document.documentElement.classList.add("gl-suspended");
+    if (document.activeElement && document.activeElement.blur) {
+      document.activeElement.blur();
+    }
+    stopGatingProbe();
+    reply(callID, { ok: true, visibility: document.visibilityState });
+  },
+
+  resume(callID) {
+    suspended = false;
+    document.documentElement.classList.remove("gl-suspended");
+    reply(callID, { ok: true, visibility: document.visibilityState });
+  },
+
+  // --- Gating probe -------------------------------------------------------
+  //
+  // Dormant by default and only ever started by an explicit native call, so
+  // this file has no always-on loop. It exists because "the hidden tab costs
+  // nothing" deserves evidence stronger than an Activity Monitor eyeball: a
+  // rAF counter that stops advancing while the view is hidden is WebKit
+  // telling us it stopped compositing this page.
+  startGatingProbe(callID) {
+    startGatingProbe();
+    reply(callID, { ok: true });
+  },
+
+  readGatingProbe(callID) {
+    reply(callID, {
+      ok: true,
+      frames: probeFrames,
+      visibility: document.visibilityState,
+      suspended,
+    });
+  },
+};
+
+let probeFrames = 0;
+let probeHandle = null;
+
+function startGatingProbe() {
+  probeFrames = 0;
+  if (probeHandle !== null) return;
+  const tick = () => {
+    probeFrames += 1;
+    probeHandle = window.requestAnimationFrame(tick);
+  };
+  probeHandle = window.requestAnimationFrame(tick);
+}
+
+function stopGatingProbe() {
+  if (probeHandle !== null) {
+    window.cancelAnimationFrame(probeHandle);
+    probeHandle = null;
+  }
+}
+
+window.GrandLineWhiteboard = bridge;
+
+window.addEventListener("error", (event) => {
+  post({ type: "error", message: String(event.message || "script error") });
+});
+window.addEventListener("unhandledrejection", (event) => {
+  post({
+    type: "error",
+    message: String((event.reason && event.reason.message) || event.reason || "promise rejection"),
+  });
+});

@@ -132,7 +132,11 @@ enum DestinationMountingSelfTest {
                 return "expected at most the launch destination beyond the eager set, also mounted: \(extra.map(\.rawValue).sorted())"
             }
             // The expensive ones must not be among them under any launch path.
-            let mustBeLazy: Set<DestinationSlotID> = [.docs, .runbooks, .postmortems, .tools, .logAnalyzer, .vault, .dictation, .schedules, .health, .hosts, .shift, .settings]
+            // `.whiteboard` belongs here for a stronger reason than the rest:
+            // mounting it eagerly would start a WebKit content process at
+            // launch for a page the captain may never open
+            // (`fm/grand-line-whiteboard-excalidraw`).
+            let mustBeLazy: Set<DestinationSlotID> = [.docs, .runbooks, .postmortems, .tools, .whiteboard, .logAnalyzer, .vault, .dictation, .schedules, .health, .hosts, .shift, .settings]
             let eagerlyBuilt = mounted.intersection(mustBeLazy)
             guard eagerlyBuilt.isEmpty else {
                 return "these should not be built at launch: \(eagerlyBuilt.map(\.rawValue).sorted())"
@@ -275,9 +279,20 @@ enum DestinationMountingSelfTest {
     /// every other, richer destination. (Runbooks needs no entry here: its
     /// always-built, hidden editor's Save/Cancel/Delete buttons plus its
     /// empty-state sentence clear the general floor on their own.)
+    ///
+    /// `.whiteboard` (`fm/grand-line-whiteboard-excalidraw`) is a third, for a
+    /// different and equally honest reason: its body is one `WKWebView`
+    /// holding the Excalidraw canvas, and its page-level actions live in the
+    /// shell's drill header rather than in the body (§6.4). The only native
+    /// labels it can have are its overlay's - a title and a sentence, whether
+    /// that overlay is "starting the canvas" or "no bundle on this machine" -
+    /// so 2 is the real floor in *both* states, and still well above the zero
+    /// this case exists to catch. Adding body chrome purely to clear a floor
+    /// would be worse than a documented exception.
     private static let minNonEmptyLabelsOverride: [RailDestination: Int] = [
         .docs: 3,
         .postmortems: 1,
+        .whiteboard: 2,
     ]
 
     private static func test_everyDestinationRendersRealContentOnFirstLoad() -> String? {
