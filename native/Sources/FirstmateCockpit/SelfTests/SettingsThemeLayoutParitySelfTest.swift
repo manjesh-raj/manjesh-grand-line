@@ -204,8 +204,23 @@ enum SettingsThemeLayoutParitySelfTest {
     }
 
     private static func fingerprint(for settings: SettingsController) -> LayoutFingerprint {
+        // Measured against the scroll view's **document**, not the page.
+        //
+        // Scroll position is not layout, and this suite compares layout. The
+        // page pins its own offset in `viewWillAppear` -> `scrollToTop`; a
+        // harness that mounts a controller without an appearance cycle does
+        // not, so converting into the page's coordinate space folded whatever
+        // offset happened to be current into every Y. That is what CI kept
+        // reporting as a theme mismatch: mounts landing in one of two states
+        // 171pt apart, with the **reference** theme itself flipping between
+        // them on a re-measure - which no theme-dependent layout can do -
+        // while every width, X position and grid column count matched exactly,
+        // because only the offset moved. Trying to pin the offset instead was
+        // not enough: a document that grows after the pin (several cards fill
+        // themselves in asynchronously) leaves it stale again.
+        let reference: NSView = documentView(for: settings) ?? settings.view
         let origins: [CGPoint] = settings.debugCards.map { card in
-            guard let origin = card.superview?.convert(card.frame.origin, to: settings.view) else {
+            guard let origin = card.superview?.convert(card.frame.origin, to: reference) else {
                 return CGPoint(x: -1, y: -1)
             }
             return origin
@@ -248,12 +263,10 @@ enum SettingsThemeLayoutParitySelfTest {
     /// difference. Settling first is what makes the comparison about the
     /// theme, which is the only thing this suite is meant to be about.
     private static func settledFingerprint(for settings: SettingsController) -> LayoutFingerprint {
-        pinScrollToTop(settings)
         var previous = fingerprint(for: settings)
         for _ in 0..<25 {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
             settings.view.layoutSubtreeIfNeeded()
-            pinScrollToTop(settings)
             let current = fingerprint(for: settings)
             if current.cardYPositions == previous.cardYPositions,
                current.cardWidths == previous.cardWidths,
@@ -265,26 +278,13 @@ enum SettingsThemeLayoutParitySelfTest {
         return previous
     }
 
-    /// Scroll position is not layout, and this suite compares layout.
-    ///
-    /// The fingerprint converts each card's origin into the page's own
-    /// coordinate space, which includes however far its scroll view happens to
-    /// be scrolled. The real page pins that in `viewWillAppear` ->
-    /// `scrollToTop`; a harness that mounts a controller without an appearance
-    /// cycle does not, and a plain `NSView` document rests against the
-    /// *bottom* of its clip view (AGENTS.md gotcha 9). That is what CI kept
-    /// reporting as a theme mismatch: an identical page, mounted twice,
-    /// measured 171pt apart - the same **reference** theme flipping between
-    /// the two on a re-measure, which no theme-dependent layout could ever do.
-    /// Every card's width, X position and the grid's column counts matched
-    /// exactly throughout, because only the offset moved.
-    private static func pinScrollToTop(_ settings: SettingsController) {
+    /// The scrolled document the cards actually live in, or `nil` if this
+    /// page ever stops being scroll-backed (in which case the fingerprint
+    /// falls back to the page itself, exactly as it used to).
+    private static func documentView(for settings: SettingsController) -> NSView? {
         var view: NSView? = settings.debugCards.first
         while let current = view, !(current is NSScrollView) { view = current.superview }
-        guard let scroll = view as? NSScrollView else { return }
-        scroll.contentView.scroll(to: .zero)
-        scroll.reflectScrolledClipView(scroll.contentView)
-        settings.view.layoutSubtreeIfNeeded()
+        return (view as? NSScrollView)?.documentView
     }
 
     private static func describe(_ fp: LayoutFingerprint) -> String {
