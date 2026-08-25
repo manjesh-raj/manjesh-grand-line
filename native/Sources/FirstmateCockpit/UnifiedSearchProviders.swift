@@ -480,7 +480,7 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
             // F7: the general "message first mate" channel, reachable from
             // the palette as well as Overview's header - the review names
             // both entry points. It opens the same composer, and its Send
-            // goes through the Mirror tab, never `fm-send.sh` (there is no
+            // goes through the Herdr tab, never `fm-send.sh` (there is no
             // task id to address here).
             Action(title: "Message First Mate", meta: "Fleet",
                    keywords: ["reply", "answer", "crew", "firstmate", "chat", "send"],

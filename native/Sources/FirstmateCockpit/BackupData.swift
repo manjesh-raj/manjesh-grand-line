@@ -82,7 +82,6 @@ struct GrandLineBackup: Codable {
 /// header for which fields were included and why. Every field is optional so
 /// a partially-populated or future-trimmed bundle still decodes.
 struct BackupSettings: Codable {
-    var mirrorTarget: String?
     var defaultShellCwd: String?
     var themeID: String?
     var fontSize: Double?
@@ -92,7 +91,6 @@ struct BackupSettings: Codable {
     static func fromCurrent() -> BackupSettings {
         let s = AppSettings.shared
         return BackupSettings(
-            mirrorTarget: s.mirrorTarget,
             defaultShellCwd: s.defaultShellCwd,
             themeID: ThemeManager.shared.theme.id,
             fontSize: Double(s.fontSize),
@@ -105,7 +103,6 @@ struct BackupSettings: Codable {
     /// showed the captain what this bundle carries before they confirmed.
     func apply() {
         let s = AppSettings.shared
-        if let mirrorTarget { s.mirrorTarget = mirrorTarget }
         if let defaultShellCwd { s.defaultShellCwd = defaultShellCwd }
         if let themeID, let theme = HelmTheme.theme(id: themeID) { ThemeManager.shared.setTheme(theme) }
         if let fontSize { s.fontSize = CGFloat(fontSize) }
@@ -118,7 +115,6 @@ struct BackupSettings: Codable {
     /// type could hold.
     var summary: String {
         var bits: [String] = []
-        if mirrorTarget != nil { bits.append("mirror target") }
         if defaultShellCwd != nil { bits.append("working directory") }
         if themeID != nil { bits.append("theme") }
         if fontSize != nil { bits.append("font size") }

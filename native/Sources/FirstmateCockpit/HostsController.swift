@@ -516,7 +516,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
         var item = HostsListSection.Item(content: .init(tint: .accent,
                                                         kicker: "Built-in",
                                                         title: "Firstmate",
-                                                        meta: "Shell + Mirror",
+                                                        meta: "Shell + Herdr",
                                                         badgeSymbol: "sailboat"))
         item.primary = .init(title: "Connect", symbol: "bolt.fill") { [weak self] in self?.onConnectPinned?() }
         item.activate = { [weak self] in self?.onConnectPinned?() }

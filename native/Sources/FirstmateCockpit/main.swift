@@ -111,7 +111,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // before any window exists. See NotificationActions.swift's header.
     let notificationRouter = NotificationActionRouter()
     // Fix 1: `makeHostConsole` builds a fresh, host-scoped console (no
-    // Mirror/Shell tabs) for `AppShellController.connectHost` - captured as
+    // Herdr/Shell tabs) for `AppShellController.connectHost` - captured as
     // local constants (not `self`) so this closure, which `appShell` holds
     // onto for its whole lifetime, can't form a retain cycle with `self`.
     lazy var appShell: AppShellController = {
@@ -1511,21 +1511,6 @@ if ProcessInfo.processInfo.environment["FM_RUN_APP_LOCK_TESTS"] == "1" {
 // scope rule - see LogAnalyzerSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_LOG_ANALYZER_TESTS"] == "1" {
     exit(LogAnalyzerSelfTest.run() ? 0 : 1)
-}
-
-// `fm/grandline-mirror-resolve-race-fix`: same convention, for the Mirror
-// tab's backend-kind/target atomicity - see MirrorResolveRaceSelfTest.swift's
-// header.
-if ProcessInfo.processInfo.environment["FM_RUN_MIRROR_RESOLVE_RACE_TESTS"] == "1" {
-    exit(MirrorResolveRaceSelfTest.run() ? 0 : 1)
-}
-
-// `fm/grandline-mirror-herdr-boot-race`: same convention, for a Mirror tab's
-// RESTART (⌘R or auto-reconnect) re-resolving its backend fresh instead of
-// replaying a stale answer forever - see
-// MirrorReconnectBootRaceSelfTest.swift's header.
-if ProcessInfo.processInfo.environment["FM_RUN_MIRROR_RECONNECT_BOOT_RACE_TESTS"] == "1" {
-    exit(MirrorReconnectBootRaceSelfTest.run() ? 0 : 1)
 }
 
 // `fm/grandline-dictation-mvp`: same convention, for `DictationHotkey`'s

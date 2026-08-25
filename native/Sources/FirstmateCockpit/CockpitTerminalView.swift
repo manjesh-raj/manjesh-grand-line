@@ -80,7 +80,7 @@ final class CockpitTerminalView: LocalProcessTerminalView {
     ///
     /// Why this exists, and why it is a *routing* fix rather than a colour one:
     ///
-    /// Console's Herdr/Mirror tab runs a real `herdr session attach` client,
+    /// Console's Herdr/Herdr tab runs a real `herdr session attach` client,
     /// and that client enables mouse capture (`?1002h` / `?1006h`, both present
     /// in the herdr binary; herdr also exposes `mouse_capture` and
     /// `copy_on_select` as config keys). SwiftTerm's `mouseDown`/`mouseDragged`

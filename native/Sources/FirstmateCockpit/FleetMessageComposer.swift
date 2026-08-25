@@ -15,7 +15,7 @@
 //
 // It renders only; it never sends anything itself. `onSend` hands the text
 // back to whoever owns the channel - which is what lets the same view serve
-// both F7 channels (`fm-send.sh` for a task reply, the Mirror tab for a
+// both F7 channels (`fm-send.sh` for a task reply, the Herdr tab for a
 // general message) without knowing about either.
 
 import AppKit

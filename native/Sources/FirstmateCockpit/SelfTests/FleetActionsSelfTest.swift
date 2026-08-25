@@ -22,7 +22,7 @@
 //     sent, but unconfirmed"**, anything else failed. Collapsing 3 into either
 //     neighbour is a lie in one direction or the other.
 //   - **That the general-message path never touches `fm-send.sh`.** It has no
-//     task id to address, so it goes through the Mirror tab instead.
+//     task id to address, so it goes through the Herdr tab instead.
 //
 // ## What is faked, and what is real
 //

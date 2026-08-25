@@ -182,7 +182,7 @@ final class FleetController: NSViewController {
 
     /// Handed the captain's text and a completion the page calls back on the
     /// main thread with the real outcome. `AppShellController` is the only
-    /// implementer (it owns `ConsoleController`, which owns the Mirror tab) -
+    /// implementer (it owns `ConsoleController`, which owns the Herdr tab) -
     /// this page knows nothing about terminals, matching how it already knows
     /// nothing about navigation.
     var onMessageFirstMate: ((String, @escaping (FleetGeneralMessageOutcome) -> Void) -> Void)?

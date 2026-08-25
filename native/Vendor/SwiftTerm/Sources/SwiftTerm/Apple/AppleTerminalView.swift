@@ -1960,11 +1960,24 @@ extension TerminalView {
         if terminal.synchronizedOutputActive {
             return
         }
+        // Grand Line patch 4 (E1): do not schedule anything while suspended -
+        // remember that a pass was wanted and flush it on resume. See
+        // `displaySuspended`'s declaration in MacTerminalView.swift.
+        #if os(macOS)
+        if displaySuspended {
+            suspendedDisplayPending = true
+            return
+        }
+        #endif
         // throttle
         if !pendingDisplay {
+            #if os(macOS)
+            let fpsDelay = Int(displayIntervalNanos)
+            #else
             let fps60 = 16670000
             // let fps30 = 16670000*2
             let fpsDelay = fps60
+            #endif
             pendingDisplay = true
             DispatchQueue.main.asyncAfter(
                 deadline: DispatchTime (uptimeNanoseconds: DispatchTime.now().uptimeNanoseconds + UInt64 (fpsDelay)),

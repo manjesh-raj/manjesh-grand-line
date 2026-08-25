@@ -409,17 +409,17 @@ enum TerminalSelectionRenderSelfTest {
     // MARK: 5 - source guard
 
     private static func checkMirrorTabsOptIn(_ ok: inout Bool) {
-        print("TerminalSelectionRenderSelfTest: a mirror tab is what opts into local selection")
+        print("TerminalSelectionRenderSelfTest: the herdr tab is what opts into local selection")
         let path = SelfTestSources.appSourceDirectory()?
             .appendingPathComponent("ConsoleController+Tabs.swift")
         guard let path, let text = try? String(contentsOf: path, encoding: .utf8) else {
             print("  SKIP: app sources not reachable from here")
             return
         }
-        if !text.contains("if case .mirror = launch { term.prefersLocalSelection = true }") {
-            fail(&ok, "ConsoleController+Tabs.swift no longer opts a mirror tab into local selection")
+        if !text.contains("if case .herdr = launch { term.prefersLocalSelection = true }") {
+            fail(&ok, "ConsoleController+Tabs.swift no longer opts the herdr tab into local selection")
         }
-        if ok { print("  addTab opts .mirror in") }
+        if ok { print("  addTab opts .herdr in") }
     }
 }
 

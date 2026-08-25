@@ -59,7 +59,7 @@ enum AppLockedSurface {
     /// and both navigates and writes - the rule in this file's header exactly.
     case notificationAction
     /// F7: sending a reply into a crewmate's own session (`fm-send.sh`) or a
-    /// general message into the live firstmate Mirror tab.
+    /// general message into the live firstmate Herdr tab.
     ///
     /// Both surfaces live inside the main window - the reply composer is on
     /// Overview, under the lock overlay, and ⌘K's palette already refuses to

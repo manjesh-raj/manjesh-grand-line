@@ -233,6 +233,9 @@ enum BackupSelfTest {
            var json = (try? JSONSerialization.jsonObject(with: realData)) as? [String: Any] {
             var settings = (json["settings"] as? [String: Any]) ?? [:]
             settings["sessionLoggingDefault"] = true
+            // E1 removed `mirrorTarget` the same way: another optional field
+            // dropped from this bundle without a `formatVersion` bump, so an
+            // older export carrying it must still decode.
             settings["mirrorTarget"] = "legacy-session"
             json["settings"] = settings
             if let legacyData = try? JSONSerialization.data(withJSONObject: json) {
@@ -243,8 +246,8 @@ enum BackupSelfTest {
                 do {
                     let legacy = try GrandLineBackupFile.decode(legacyData)
                     check(true, "a legacy bundle carrying the removed sessionLoggingDefault key still decodes")
-                    check(legacy.settings.mirrorTarget == "legacy-session",
-                          "the legacy bundle's other settings still decode alongside the removed key")
+                    check(legacy.settings.themeID == bundle.settings.themeID,
+                          "the legacy bundle's other settings still decode alongside the removed keys")
                     check(legacy.hosts.count == bundle.hosts.count,
                           "the legacy bundle's hosts still decode alongside the removed key")
                 } catch {

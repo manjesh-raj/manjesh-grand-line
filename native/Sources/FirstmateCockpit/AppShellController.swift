@@ -30,7 +30,7 @@
 // Fix 1 (dedicated host pages) adds a sixth kind of destination that isn't
 // part of the fixed `RailDestination` enum: one independent `ConsoleController`
 // per connected host, holding only that host's own ssh tab(s) - never mixed
-// with the Firstmate console's Mirror/Shell tabs. These are built lazily via
+// with the Firstmate console's Herdr/Shell tabs. These are built lazily via
 // `makeHostConsole` the first time `connectHost` sees a given host id, then
 // kept around (and re-shown, not re-opened) for as long as that host stays
 // saved - see `connectHost`/`removeHostConsole` below.
@@ -497,7 +497,7 @@ final class AppShellController: NSViewController {
         overview.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
         overview.onOpenShiftTask = { [weak self] id in self?.openShiftTask(id: id) }
         // F7: the general "message first mate" channel. Overview owns the
-        // composer, this shell owns the console that owns the Mirror tab -
+        // composer, this shell owns the console that owns the Herdr tab -
         // the same forward-don't-own split every other cross-page action here
         // uses. Deliberately *not* `fm-send.sh`: an unaddressed message has no
         // task id for that script to target (see `FleetActions.swift`).

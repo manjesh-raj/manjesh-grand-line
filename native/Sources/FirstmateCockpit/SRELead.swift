@@ -25,7 +25,7 @@
 // `fm/cockpit-sre-lead-ux-fixes` then replaced *this file's* own execution
 // model: it used to spawn a persistent, detached tmux session running the
 // interactive `claude` TUI, mirrored into the pane via `TmuxMirror` exactly
-// like the Firstmate Mirror tab - which meant the pane showed the raw
+// like the Firstmate Herdr tab - which meant the pane showed the raw
 // interactive CLI (permission-mode banner, box-drawing borders, ANSI chrome)
 // instead of anything native to this app. `setUp()` now only prepares the
 // MCP config + a scratch/working directory; there is no tmux session, no

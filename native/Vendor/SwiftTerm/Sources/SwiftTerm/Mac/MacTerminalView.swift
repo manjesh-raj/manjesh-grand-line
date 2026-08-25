@@ -204,6 +204,46 @@ open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, 
     private var findBarOptions: SearchOptions = SearchOptions()
     var debug: TerminalDebugView?
     var pendingDisplay: Bool = false
+
+    // MARK: Grand Line patch 4 - display gating (E1)
+    //
+    // See `Vendor/SwiftTerm/README.md`'s "Fourth patch" section. A terminal
+    // attached to a busy live session (this app's Herdr tab mirrors a fleet
+    // that prints almost continuously) parses every byte on the main thread
+    // and repaints at 60fps forever - measured as the app's single dominant
+    // CPU+GPU cost, sustained even while the app was merely backgrounded,
+    // because AppKit keeps drawing a window that is only behind other
+    // windows. There is no upstream hook for "stop painting for a while":
+    // `updateDisplay`, `queuePendingDisplay` and `draw(_:)` are none of them
+    // `open`, so this cannot be gated from outside the module.
+    //
+    // The terminal MODEL is never gated - every byte still reaches the
+    // buffer, so scrollback stays exact and a resumed view is correct
+    // immediately. Only the *painting* is deferred/slowed.
+
+    /// When `true`, no display pass is scheduled at all; the fact that one was
+    /// wanted is remembered and flushed on resume. Set by the host app when
+    /// this view is genuinely not on screen (its page is hidden, or the window
+    /// is occluded).
+    public var displaySuspended: Bool = false {
+        didSet {
+            guard oldValue != displaySuspended, !displaySuspended else { return }
+            if suspendedDisplayPending {
+                suspendedDisplayPending = false
+                queuePendingDisplay()
+            }
+        }
+    }
+
+    /// A display pass was wanted while `displaySuspended` was true.
+    var suspendedDisplayPending: Bool = false
+
+    /// The minimum gap between scheduled display passes, in nanoseconds.
+    /// Defaults to 60fps (upstream's own hardcoded value). The host app raises
+    /// it while the app is inactive but still visible - a window nobody is
+    /// looking at does not need 60 repaints a second, and it cannot simply be
+    /// suspended either, since it may be partly visible behind another app.
+    public var displayIntervalNanos: UInt64 = 16_670_000
     /// Output received shortly after local input is likely echo or prompt redraw;
     /// render it without the 16.67ms frame-rate throttle so typing feels responsive.
     var lastUserInputUptimeNs: UInt64 = 0

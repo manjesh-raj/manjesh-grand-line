@@ -13,49 +13,18 @@
 
 import AppKit
 
-/// Which live mirror a `.mirror` tab is holding - `TmuxMirror` for a
-/// tmux-resolved fleet, `HerdrMirror` for a herdr-resolved one
-/// (cockpit-mirror-herdr-aware). `ConsoleController.connectMirror` picks the
-/// case from the `kind` already frozen into the tab's `TabLaunch.mirror`
-/// (see that case's doc comment for why it is never re-resolved here);
-/// nothing else in the console needs to know which backend is active,
-/// since both cases expose `tearDown()`.
-enum MirrorSession {
-    case tmux(TmuxMirror)
-    case herdr(HerdrMirror)
-
-    func tearDown() {
-        switch self {
-        case .tmux(let m): m.tearDown()
-        case .herdr(let m): m.tearDown()
-        }
-    }
-}
-
 /// How a tab's child process is (re)started. Kept as a value so duplicating a
 /// tab and reconnecting one both reduce to "launch this again".
 enum TabLaunch {
     /// A login shell (`$SHELL -l`), the Phase 1 terminal.
     case shell(executable: String, args: [String], cwd: String)
-    /// A live attach to the first mate's own session, on whichever backend
-    /// firstmate itself resolves to - a read-only tmux mirror (`TmuxMirror`,
-    /// still named "Mirror" in the tab bar) or, since
-    /// fm/cockpit-mirror-herdr-real-attach, a real interactive `herdr
-    /// session attach` client (`HerdrMirror`, named "Herdr" in the tab bar -
-    /// it isn't a mirror of anything, it's the genuine herdr TUI), see
-    /// `TabModel.mirror`/`TabLaunch.defaultName`. Each sets up its own
-    /// backend-appropriate session/process on launch, so duplicating this
-    /// tab is safe either way.
-    ///
-    /// `kind` and `target` are always resolved together, by one call to
-    /// `FirstmateBackend.resolveMirrorTarget()`, and then frozen here for
-    /// this launch spec's whole lifetime (`fm/grandline-mirror-resolve-race-
-    /// fix` - see that function's doc comment for the race this fixes).
-    /// Every restart of this tab (first start, `⌘R`, auto-reconnect) reuses
-    /// this same stored pair rather than re-resolving - so the backend-kind
-    /// decision and the target name it uses can never disagree with each
-    /// other, by construction.
-    case mirror(kind: FirstmateBackendKind, target: String)
+    /// The first mate's own herdr session - a bare `herdr` client (see
+    /// `HerdrSession`'s header for the whole "Mirror" abstraction this
+    /// replaced and why). Just another interactive PTY child, so
+    /// duplicating or reconnecting this tab is the same "launch this again"
+    /// as any other kind: there is no session name, backend kind, or target
+    /// to resolve, freeze, or re-resolve.
+    case herdr(executable: String, cwd: String)
     /// An SSH session to a saved (or ad-hoc) host - Phase 1 of the connection
     /// manager. `ssh` is just another interactive PTY child (design report C1),
     /// so this reuses the same `startProcess` path as `shell`. `hostArgs` is
@@ -70,19 +39,11 @@ enum TabLaunch {
     /// the session looks ready.
     case ssh(label: String, executable: String, hostArgs: [String], keyID: UUID?, startupSnippetID: UUID?)
 
-    /// The default display name for a freshly created tab of this kind. For
-    /// `.mirror`, this reads the `kind` already frozen into this launch spec
-    /// (see `TabLaunch.mirror`'s doc comment) rather than calling
-    /// `FirstmateBackend.resolve()` again: a tmux fleet still gets "Mirror" -
-    /// untouched by fm/cockpit-mirror-herdr-real-attach, since that's still
-    /// genuinely a read-only mirror of the captain's tmux session - but a
-    /// herdr fleet's tab is a real `herdr session attach` client, not a
-    /// mirror of anything, so it's named "Herdr" instead (per the captain's
-    /// explicit call in that task).
+    /// The default display name for a freshly created tab of this kind.
     var defaultName: String {
         switch self {
         case .shell: return "Shell"
-        case .mirror(let kind, _): return kind == .herdr ? "Herdr" : "Mirror"
+        case .herdr: return "Herdr"
         case .ssh(let label, _, _, _, _): return label
         }
     }
@@ -90,21 +51,18 @@ enum TabLaunch {
     /// Groups tabs for the numbered-disambiguation naming convention
     /// (Finding 6, cockpit-audit-core - Console adopting the Tools page's
     /// established "bare kind name for the first instance, N appended for
-    /// subsequent concurrent ones" scheme). Unlike `defaultName`, this never
-    /// changes with which mirror backend happens to be live right now - two
-    /// concurrently open Mirror/Herdr tabs are still the same "kind" for
-    /// counting purposes.
+    /// subsequent concurrent ones" scheme). 
     var kindIdentity: String {
         switch self {
         case .shell: return "shell"
-        case .mirror: return "mirror"
+        case .herdr: return "herdr"
         case .ssh(let label, _, _, _, _): return "ssh:\(label)"
         }
     }
 }
 
 /// One console tab. A reference type because it owns a live terminal view, a
-/// mutable name, and (for mirror tabs) a live grouped tmux session. The console
+/// mutable name, and a launch recipe. The console
 /// keeps these in an ordered array and renders one chip per tab.
 final class TabModel {
     let id = UUID()
@@ -113,37 +71,19 @@ final class TabModel {
     /// underlying process (design report A5).
     var name: String
 
-    /// How to (re)start this tab. Duplicate copies it verbatim; reconnect re-runs it.
-    ///
-    /// GL-12 made this `var` for exactly one narrow purpose: the Firstmate
-    /// mirror tab is created before its backend has been resolved (resolving it
-    /// is three subprocess calls, and doing them synchronously put up to ~9s of
-    /// beachball in front of the launch path), so its launch spec is written
-    /// once when `FirstmateBackend.resolveMirrorTargetAsync` answers - *before*
-    /// the tab's process has ever started. After that it is frozen exactly as
-    /// `TabLaunch.mirror`'s doc comment requires: every restart replays this
-    /// stored pair and never re-resolves. Nothing else reassigns it.
-    var launch: TabLaunch
+    /// How to (re)start this tab. Duplicate copies it verbatim; reconnect
+    /// re-runs it. A `let` again since E1: the one thing that ever reassigned
+    /// it was the mirror tab's asynchronous backend resolution, and there is
+    /// no backend to resolve anymore (see `HerdrSession`'s header).
+    let launch: TabLaunch
 
-    /// GL-12: true between "the mirror tab exists" and "its backend has been
-    /// resolved". `startTab` refuses to start a tab in this state (there is no
-    /// real target to attach to yet) and shows a placeholder line instead; the
-    /// resolution's completion starts it.
-    var isAwaitingMirrorResolution = false
-
-    /// Set once the captain renames a tab, so a name this app derived (the
-    /// mirror tab's "Mirror"/"Herdr", which is only known after resolution)
-    /// never overwrites one they chose.
+    /// Set once the captain renames a tab, so a name this app derived never
+    /// overwrites one they chose.
     var hasUserChosenName = false
 
     /// This tab's terminal. Always a paste-hardening `CockpitTerminalView` so the
     /// screenshot-paste-into-Claude flow works on every tab.
     let terminal: CockpitTerminalView
-
-    /// The live session for a mirror tab (tmux or herdr - see
-    /// `MirrorSession`); `nil` for shells or a mirror that failed to attach.
-    /// Torn down on reconnect, close, and quit.
-    var mirror: MirrorSession?
 
     /// Whether the child process has been started yet. Tabs created before the
     /// view is on screen defer their launch to `viewDidAppear`.
@@ -194,7 +134,7 @@ final class TabModel {
     /// threaded down from `AppShellController.connectHost` through
     /// `ConsoleController.connectSSHIfNeeded`/`openSSH`). `false` for every
     /// other tab, including every other SSH host's tab, the Firstmate
-    /// console's Shell/Mirror tabs, and any ad-hoc quick-connect (which has
+    /// console's Shell/Herdr tabs, and any ad-hoc quick-connect (which has
     /// no `Host` behind it at all) - deliberately narrower than PR #79's
     /// original "every `.shell`/`.ssh` tab" scope and PR #83's "every `.ssh`
     /// tab" scope, per the scout report's recommendation to shrink Stage 0's

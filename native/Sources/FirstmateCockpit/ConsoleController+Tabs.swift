@@ -6,7 +6,7 @@
 // `LocalProcessTerminalViewDelegate` callbacks a tab's child process fires.
 //
 // This is the concern the whole controller is built around, which is exactly
-// why it is worth having on its own: everything else here (SSH, the mirror
+// why it is worth having on its own: everything else here (SSH, the herdr
 // backends, SRE Lead, block view, the log-capture bridge) is a *kind of tab*
 // or a *pane beside a tab*, and reads much more clearly once the tab
 // machinery itself is not interleaved with them.
@@ -36,7 +36,7 @@ extension ConsoleController {
         // converts them to whole lines 1:1 (no page-jumps), and its
         // `scrollSensitivity` defaults to a native 1.0. So the WezTerm feel the
         // captain wants is the shell tab's default here; we just give it history.
-        // (The Mirror tab runs tmux on the alternate screen and pages inherently.)
+        // (The Herdr tab runs on the alternate screen and pages inherently.)
         term.terminal?.changeScrollback(scrollbackLines)
         // `terminalInset` on all four sides, fixed for this controller's whole
         // lifetime - see its own doc comment. Nothing here ever changes when
@@ -74,7 +74,7 @@ extension ConsoleController {
     /// the one saved host whose `Host.blockViewOptIn` is set, threaded down
     /// from `AppShellController.connectHost` through `connectSSHIfNeeded`/
     /// `openSSH`; every other caller (⌘T, ⌘D, the Firstmate console's
-    /// Shell/Mirror pair, an ad-hoc quick-connect with no saved `Host`)
+    /// Shell/Herdr pair, an ad-hoc quick-connect with no saved `Host`)
     /// leaves it at the default `false`.
     @discardableResult
     func addTab(launch: TabLaunch, name: String, select: Bool, accentHex: String? = nil, isOneShotCommand: Bool = false, blockViewOptIn: Bool = false) -> TabModel {
@@ -82,17 +82,16 @@ extension ConsoleController {
         let tab = TabModel(name: name, launch: launch, terminal: term, accentHex: accentHex)
         tab.isOneShotCommand = isOneShotCommand
 
-        // `fm/grandline-console-selection-contrast-followup`: a mirror tab is
-        // an attached multiplexer client (herdr's own `session attach`, or
-        // tmux) and those enable mouse capture, which makes SwiftTerm forward
-        // every drag to the child and never build a selection of its own - so
-        // the theme's `selectionHex` / `selectionTextHex` pair is never
-        // consulted there and the captain sees the multiplexer's own fixed
-        // dark highlight instead. Only this tab kind opts in: an `.ssh` tab
-        // may be running vim or the captain's own tmux, where a plain drag
-        // reaching the remote program is the expected behaviour. See
-        // `CockpitTerminalView.prefersLocalSelection`.
-        if case .mirror = launch { term.prefersLocalSelection = true }
+        // `fm/grandline-console-selection-contrast-followup`: the herdr tab
+        // is an attached multiplexer client and those enable mouse capture,
+        // which makes SwiftTerm forward every drag to the child and never
+        // build a selection of its own - so the theme's `selectionHex` /
+        // `selectionTextHex` pair is never consulted there and the captain
+        // sees the multiplexer's own fixed dark highlight instead. Only this
+        // tab kind opts in: an `.ssh` tab may be running vim or the captain's
+        // own tmux, where a plain drag reaching the remote program is the
+        // expected behaviour. See `CockpitTerminalView.prefersLocalSelection`.
+        if case .herdr = launch { term.prefersLocalSelection = true }
 
         // `fm/cockpit-block-view-stage0`: only ever true for an `.ssh` tab on
         // the one opted-in host, and only when the whole feature is enabled
@@ -157,31 +156,8 @@ extension ConsoleController {
                 execName: nil,
                 currentDirectory: cwd
             )
-        case .mirror(let kind, let target):
-            // GL-12: nothing to attach to until the backend has been resolved.
-            // The placeholder line is what the review asks for in place of a
-            // pre-window beachball; the resolution's completion starts this tab.
-            guard !tab.isAwaitingMirrorResolution else {
-                tab.terminal.feed(text: "\r\n  \u{1b}[2m[mirror]\u{1b}[0m Resolving the fleet's backend\u{2026}\r\n")
-                return
-            }
-            // `tab.started` still reflects the *previous* call at this point
-            // (set `true` unconditionally below, after this switch) - `false`
-            // means this is the tab's very first start, whose one resolution
-            // already happened moments ago in `openFirstmateHost` and is
-            // reused verbatim; `true` means this is a restart (the auto-
-            // reconnect timer, calling this method directly), where
-            // `fm/grandline-mirror-herdr-boot-race` re-resolves fresh instead
-            // of replaying a possibly stale-by-now answer - see
-            // `reresolveMirrorTab`'s own doc comment for why that is safe.
-            if tab.started {
-                reresolveMirrorTab(tab) { [weak self] in
-                    guard let self, case .mirror(let k, let t) = tab.launch else { return }
-                    self.connectMirror(tab, kind: k, target: t)
-                }
-            } else {
-                connectMirror(tab, kind: kind, target: target)
-            }
+        case .herdr(let exe, let cwd):
+            connectHerdr(tab, executable: exe, cwd: cwd)
         case .ssh(_, let exe, let hostArgs, let keyID, let startupSnippetID):
             connectSSH(tab, executable: exe, hostArgs: hostArgs, keyID: keyID, startupSnippetID: startupSnippetID)
         }
@@ -306,8 +282,6 @@ extension ConsoleController {
         NotificationSources.clearSRELeadReply(tabID: tab.id)
 
         tab.isClosing = true
-        tab.mirror?.tearDown()
-        tab.mirror = nil
         cleanupSSHKeyTempFile(tab)
         tab.terminal.terminate()
         tab.terminal.removeFromSuperview()
@@ -356,8 +330,6 @@ extension ConsoleController {
         guard let tab = tabs.first(where: { $0.id == id }) else { return }
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         tab.name = trimmed.isEmpty ? tab.launch.defaultName : trimmed
-        // GL-12: a name the captain chose must survive the mirror tab's
-        // post-resolution rename.
         tab.hasUserChosenName = !trimmed.isEmpty
         tab.chip.setName(tab.name)
         styleChips()
@@ -414,46 +386,22 @@ extension ConsoleController {
 
     // MARK: Reconnect / restart
 
-    /// ⌘R: restart whichever tab is in front from its launch spec. For a mirror
-    /// this re-runs the grouped-session setup (a fresh attach); for a shell it
-    /// forks a new login shell.
+    /// ⌘R: restart whichever tab is in front from its launch spec. For the
+    /// herdr tab this re-runs `herdr`; for a shell it forks a new login shell.
     @objc func reconnectActive() {
         guard let tab = currentTab else { return }
         switch tab.launch {
-        case .mirror:
-            tab.mirror?.tearDown()
-            tab.mirror = nil
-            // Finding 9 (cockpit-audit-core): `tearDown()` kills the tmux/
-            // herdr session synchronously, but the still-attached client
-            // notices and exits on its own, asynchronous timing - if
-            // SwiftTerm's `LocalProcess` hasn't yet reaped that exit,
+        case .herdr(let exe, let cwd):
+            // Finding 9 (cockpit-audit-core): the still-attached client
+            // notices the restart and exits on its own, asynchronous timing -
+            // if SwiftTerm's `LocalProcess` hasn't yet reaped that exit,
             // `startProcess`'s own `if running { return }` guard silently
             // drops this reconnect attempt with no error shown. Wait for the
             // old process to actually finish (bounded, so a truly stuck
             // process still surfaces a message instead of hanging forever)
             // before starting the new one.
-            //
-            // `fm/grandline-mirror-herdr-boot-race`: this used to reuse the
-            // pair already frozen into `tab.launch` at tab-creation time
-            // verbatim, on the reasoning that re-resolving here could
-            // reintroduce `fm/grandline-mirror-resolve-race-fix`'s two-calls-
-            // disagree race. It doesn't - that race was two *different*
-            // resolve calls deciding kind and target independently for one
-            // connection attempt, and `reresolveMirrorTab` still makes
-            // exactly one atomic call per attempt, just repeated on later
-            // attempts rather than only the tab's first one. Without this,
-            // ⌘R could never actually recover from the boot-race case its
-            // own on-screen failure text tells the captain to press it for:
-            // a tab that froze on `.tmux` because herdr's server was still
-            // coming up at the single moment the tab was created stayed
-            // frozen on `.tmux` forever, since replaying the same frozen pair
-            // asks the exact same (now stale) question again.
             waitForProcessExit(tab, thenRun: { [weak self] in
-                guard let self else { return }
-                self.reresolveMirrorTab(tab) { [weak self] in
-                    guard let self, case .mirror(let k, let t) = tab.launch else { return }
-                    self.connectMirror(tab, kind: k, target: t)
-                }
+                self?.connectHerdr(tab, executable: exe, cwd: cwd)
             })
         case .shell(let exe, let args, let cwd):
             tab.terminal.startProcess(
@@ -496,8 +444,7 @@ extension ConsoleController {
         }
     }
 
-    /// Tear down every mirror's grouped session, every materialized ssh key
-    /// temp file, and the theme observer registered in `loadView` - so
+    /// Tear down every materialized ssh key temp file and the theme observer registered in `loadView` - so
     /// nothing is left dangling. Called from the app
     /// delegate on quit for the shared Firstmate console, and (Fix 1) from
     /// `AppShellController.removeHostConsole` when a host's dedicated page
@@ -505,8 +452,6 @@ extension ConsoleController {
     /// observer here (not just at quit) matters.
     func shutdown() {
         for tab in tabs {
-            tab.mirror?.tearDown()
-            tab.mirror = nil
             cleanupSSHKeyTempFile(tab)
         }
         // Host-page disconnect (design brief Part B) - tear down every
@@ -559,8 +504,7 @@ extension ConsoleController {
     func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
 
     /// A tab's process ended. The console keeps running (other tabs may be live)
-    /// and shows a dim "reconnect" hint in the tab that exited. A mirror tears
-    /// down its grouped session here so nothing is left dangling. A tab that is
+    /// and shows a dim "reconnect" hint in the tab that exited. A tab that is
     /// being closed is skipped - its view is on its way out.
     ///
     /// Settings > Terminal's "Reconnect automatically" (Fix 3): when on, this
@@ -583,8 +527,6 @@ extension ConsoleController {
         // delegate callback observes.
         guard let tab = tabs.first(where: { $0.terminal === source }) else { return }
         if tab.isClosing { return }
-        tab.mirror?.tearDown()
-        tab.mirror = nil
         cleanupSSHKeyTempFile(tab)
         let code = exitCode.map { " (exit \($0))" } ?? ""
 
