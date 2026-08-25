@@ -147,14 +147,22 @@ final class SchedulesCardView: NSObject {
     private func buildRow(_ schedule: AutomationSchedule, now: Date) -> NSView {
         let isRunning = schedule.id == runningScheduleID
 
-        // The toggle. `NSSwitch` is the one control in this app that genuinely
-        // cannot be themed (measured in Phase 2 of the UI audit: it answers
-        // `false` to every tint setter it was tried with), so it renders in
-        // system chrome here exactly as the six switches in Settings do.
-        let toggle = NSSwitch()
-        toggle.state = schedule.isEnabled ? .on : .off
-        toggle.target = self
-        toggle.action = #selector(toggleChanged(_:))
+        // The toggle. B7 (`data/grand-line-e2e-audit/report.md`): `HelmToggle`,
+        // the app's own toggle, not a raw `NSSwitch`.
+        //
+        // The comment this replaces was true when it was written and stopped
+        // being true: a bare `NSSwitch` genuinely cannot be tinted (Phase 2
+        // measured it answering `false` to every tint setter tried), which is
+        // why `HelmToggle` exists - it renders §6.9's pill under Daylight/Dusk
+        // and keeps a real `NSSwitch` on the other twelve palettes, so this
+        // row stops showing system-accent chrome next to otherwise fully
+        // themed rows while changing nothing on the palettes that never had a
+        // pill. Settings' three toggles have been `HelmToggle` since Phase 4
+        // slice 6; this page was the one that never followed.
+        let toggle = HelmToggle()
+        toggle.isOn = schedule.isEnabled
+        toggle.applyTheme(theme)
+        toggle.onToggle = { [weak self] in self?.toggleChanged(toggle) }
         toggle.identifier = NSUserInterfaceItemIdentifier("schedule-toggle:\(schedule.id.uuidString)")
         toggle.toolTip = schedule.isEnabled ? "Pause this schedule" : "Resume this schedule"
         toggle.setAccessibilityLabel("\(schedule.action.title): \(schedule.isEnabled ? "enabled" : "paused")")
@@ -325,9 +333,12 @@ final class SchedulesCardView: NSObject {
         onNewSchedule?()
     }
 
-    @objc private func toggleChanged(_ sender: NSSwitch) {
+    /// B7: takes a `HelmToggle` now. `onToggle` fires only for a real user
+    /// interaction (its own `isOn` setter deliberately does not re-enter the
+    /// handler), which is the same contract `NSSwitch`'s target/action had.
+    private func toggleChanged(_ sender: HelmToggle) {
         guard let schedule = schedule(from: sender.identifier?.rawValue, prefix: "schedule-toggle:") else { return }
-        onToggleEnabled?(schedule, sender.state == .on)
+        onToggleEnabled?(schedule, sender.isOn)
     }
 
     @objc private func overflowClicked(_ sender: NSButton) {
