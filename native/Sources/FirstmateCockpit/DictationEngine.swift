@@ -408,16 +408,58 @@ final class DictationEngine {
     /// the one `providerProviders?() ?? false` check.
     private let whisperResampler = DictationAudioResampler()
 
-    /// Lazily loaded and cached for the app's whole lifetime once a load
-    /// succeeds - `WhisperCppEngine.init?` re-reading and re-parsing a
-    /// ~547MB model file on every single recording would be a real,
-    /// noticeable delay before the local engine could ever start
-    /// transcribing. `nil` after a failed load attempt means "don't retry
-    /// every load automatically" as of a recording; whether the model exists
-    /// at all is still re-checked from `beginCapture` since a captain could
-    /// delete/redownload it between recordings.
+    /// Lazily loaded and cached **only across a burst of dictations**, then
+    /// released - see `whisperIdleUnloadInterval` for why the "cached for the
+    /// app's whole lifetime" this used to say was an energy bug, not an
+    /// optimisation. Loading is not free (`WhisperCppEngine.init?` reads and
+    /// parses a ~547MB model), which is why a short warm window survives;
+    /// whether the model exists at all is still re-checked from
+    /// `beginCapture`, since a captain could delete/redownload it between
+    /// recordings.
+    ///
+    /// Guarded by `whisperEngineLock`: loaded on a background queue in
+    /// `finish(text:)` and released from the main thread by the idle timer,
+    /// which without a lock is a real data race on a reference (GL-28's rule).
     private var cachedWhisperEngine: WhisperCppEngine?
     private var cachedWhisperEngineModelPath: String?
+    private let whisperEngineLock = NSLock()
+    private var whisperIdleUnload: DispatchWorkItem?
+
+    /// How long a loaded local Whisper engine stays resident after the last
+    /// dictation finishes with it.
+    ///
+    /// **E2 of `data/grand-line-e2e-audit/report.md`, and the captain's own
+    /// framing of it: "The Dictation has an ready key which we have configured
+    /// and should be active only when this key is selected, we don't need any
+    /// background process."** Creating a whisper context creates a ggml Metal
+    /// device whose residency-set keeper is an infinite `usleep(5ms)` loop -
+    /// **200 wake-ups per second for the life of the process**, which the
+    /// audit's 5-second `sample` of the captain's real instance found in
+    /// *all 3259 samples*, matching Activity Monitor's "202 idle wake-ups"
+    /// exactly. Sustained wake-up rate is weighted heavily in the Energy
+    /// Impact score on Apple Silicon, and the same context pins ~600MB of
+    /// model memory and holds GPU residency sets. One dictation this session
+    /// was enough to start it, forever.
+    ///
+    /// `whisper_free` (this engine's `deinit`) runs `ggml_metal_rsets_free`,
+    /// which is what actually stops that thread - so releasing the engine is
+    /// the fix, and nothing short of releasing it is.
+    ///
+    /// 2 minutes rather than the report's suggested 5-10: the captain's
+    /// instruction is that this must not be a background process, and a
+    /// waker running ten minutes after the ready key was last touched is one.
+    /// Two minutes still covers a burst of dictations (the case the cache
+    /// exists for) while making "idle" mean idle. The reload it costs is a
+    /// one-time Metal-accelerated model load, against a permanent 200Hz
+    /// waker - which is not a close trade.
+    static let whisperIdleUnloadInterval: TimeInterval = 120
+
+    #if FM_SELFTESTS
+    /// Shortens the idle window so `DictationEngineSelfTest` can prove the
+    /// release actually fires rather than only that it was scheduled. Never
+    /// set in the shipping app (GL-27 keeps this whole seam out of release).
+    static var whisperIdleUnloadIntervalOverrideForTests: TimeInterval?
+    #endif
 
     /// Whether *this specific recording* is using the local Whisper engine -
     /// decided once at `beginCapture` time (toggle + model ready + engine
@@ -676,6 +718,9 @@ final class DictationEngine {
                 // computed in parallel above - a broken local engine must
                 // never mean dictation stops working entirely.
                 self?.finishWithFinalText(whisperText ?? appleText, duration: duration)
+                // E2: the engine is resident from here until the ready key is
+                // used again or this fires.
+                self?.scheduleWhisperIdleUnload()
             }
         }
     }
@@ -688,13 +733,60 @@ final class DictationEngine {
     /// every single dictation, which would otherwise be a real, noticeable
     /// delay before the local engine could start transcribing at all.
     private func loadWhisperEngine(modelPath: String) -> WhisperCppEngine? {
+        whisperEngineLock.lock()
         if let cachedWhisperEngine, cachedWhisperEngineModelPath == modelPath {
+            whisperEngineLock.unlock()
             return cachedWhisperEngine
         }
+        whisperEngineLock.unlock()
+        // Deliberately not holding the lock across the load: it reads and
+        // parses ~547MB, and the only other toucher is the idle timer, whose
+        // job is to release a *stale* engine - releasing one while this load
+        // is in flight is harmless (the new one is assigned below and the
+        // timer is rearmed after every dictation anyway).
         guard let engine = WhisperCppEngine(modelPath: modelPath) else { return nil }
+        whisperEngineLock.lock()
         cachedWhisperEngine = engine
         cachedWhisperEngineModelPath = modelPath
+        whisperEngineLock.unlock()
         return engine
+    }
+
+    /// E2: arm (or re-arm) the idle release. Called on the main thread after
+    /// every dictation that used the local engine, so a burst of dictations
+    /// keeps pushing the release out and a genuinely idle app stops waking.
+    private func scheduleWhisperIdleUnload() {
+        whisperIdleUnload?.cancel()
+        let item = DispatchWorkItem { [weak self] in self?.releaseWhisperEngine(reason: "idle") }
+        whisperIdleUnload = item
+        var interval = Self.whisperIdleUnloadInterval
+        #if FM_SELFTESTS
+        if let override = Self.whisperIdleUnloadIntervalOverrideForTests { interval = override }
+        #endif
+        DispatchQueue.main.asyncAfter(deadline: .now() + interval, execute: item)
+    }
+
+    /// Drop the cached engine, which runs `whisper_free` -> the ggml Metal
+    /// residency thread stops. Safe to call when nothing is loaded.
+    func releaseWhisperEngine(reason: String) {
+        whisperEngineLock.lock()
+        let had = cachedWhisperEngine != nil
+        cachedWhisperEngine = nil
+        cachedWhisperEngineModelPath = nil
+        whisperEngineLock.unlock()
+        whisperIdleUnload?.cancel()
+        whisperIdleUnload = nil
+        if had {
+            AppLog.lifecycle.info("released the local Whisper engine (\(reason, privacy: .public))")
+        }
+    }
+
+    /// True while a local Whisper engine is loaded - i.e. while the ggml Metal
+    /// residency thread this app is responsible for is running.
+    var isWhisperEngineResident: Bool {
+        whisperEngineLock.lock()
+        defer { whisperEngineLock.unlock() }
+        return cachedWhisperEngine != nil
     }
 
     /// The one place both the Apple-only path and the local-Whisper path
@@ -822,6 +914,18 @@ final class DictationEngine {
     var debugIsRecordingForTests: Bool { isRecording }
     var debugIsFinishingForTests: Bool { isFinishing }
     var debugBestTranscriptForTests: String { bestTranscriptSeen }
+
+    /// E2: load the real local engine for `modelPath` through the *real*
+    /// `loadWhisperEngine`, so a test that has a model on disk can prove the
+    /// residency flag and the release both mean what they say.
+    @discardableResult
+    func debugLoadWhisperEngineForTests(modelPath: String) -> Bool {
+        loadWhisperEngine(modelPath: modelPath) != nil
+    }
+
+    /// E2: arm the idle release exactly as a finished local-Whisper dictation
+    /// does.
+    func debugScheduleWhisperIdleUnloadForTests() { scheduleWhisperIdleUnload() }
 
     static func debugHardCeilingDurationForTests(capturedAudioSeconds: TimeInterval) -> TimeInterval {
         hardCeilingDuration(forCapturedAudioSeconds: capturedAudioSeconds)

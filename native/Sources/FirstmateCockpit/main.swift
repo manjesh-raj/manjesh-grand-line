@@ -390,6 +390,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appShell.onDictationShortcutChanged = { [weak self] shortcut in
             self?.dictationHotkey.updateShortcut(shortcut)
         }
+        // E2: turning the toggle off releases any engine that is still
+        // resident, so the captain's "off" takes effect now rather than at the
+        // next idle expiry.
+        appShell.onDictationLocalWhisperChanged = { [weak self] enabled in
+            guard !enabled else { return }
+            self?.dictationEngine.releaseWhisperEngine(reason: "local Whisper turned off")
+        }
         dictationHotkey.start()
 
         // `shiftMenuBar` is `lazy` - force it into existence now so its

@@ -228,6 +228,15 @@ final class AppShellController: NSViewController {
         set { dictation.onShortcutChanged = newValue }
     }
 
+    /// E2: the Dictation page's local-Whisper toggle, forwarded the same way -
+    /// switching it off must be able to release a resident engine (and with it
+    /// the ggml Metal residency thread), not just stop future dictations from
+    /// using one.
+    var onDictationLocalWhisperChanged: ((Bool) -> Void)? {
+        get { dictation.onLocalWhisperEnabledChanged }
+        set { dictation.onLocalWhisperEnabledChanged = newValue }
+    }
+
     /// Phase 4 ("Knowledge and speed"): the topbar Search pill's click,
     /// forwarded to whoever owns the unified `⌘K` search palette (the app
     /// delegate, mirroring `onPresentHostEditor`'s own forward-don't-own
