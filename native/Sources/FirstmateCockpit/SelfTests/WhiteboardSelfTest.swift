@@ -39,6 +39,9 @@ enum WhiteboardSelfTest {
         checkParsing(check)
         checkFieldAllowlist(check)
         checkGeneration(check)
+        checkRefinePrompt(check)
+        checkIterativeRefinement(check)
+        checkClearEndsTheSession(check)
         checkDestinationWiring(check)
 
         print(ok ? "WhiteboardSelfTest: OK" : "WhiteboardSelfTest: FAILURES")
@@ -398,6 +401,297 @@ enum WhiteboardSelfTest {
         check(generateSync(description: "   ").elements == nil, "an empty description must fail without spawning anything")
     }
 
+    // MARK: Iterative refinement
+
+    /// The refine prompt has to carry three things or a follow-up silently
+    /// stops being a follow-up: the board, the change, and - the one that
+    /// destroys work if it is missing - the instruction to reply with the
+    /// *whole* diagram rather than a patch, since the reply replaces the board.
+    private static func checkRefinePrompt(_ check: (Bool, String) -> Void) {
+        let board: [[String: Any]] = [
+            ["type": "rectangle", "id": "db", "x": 0, "y": 0, "width": 120, "height": 60,
+             "label": ["text": "Postgres"]],
+            ["type": "rectangle", "id": "api", "x": 200, "y": 0, "width": 120, "height": 60],
+            ["type": "arrow", "id": "edge", "start": ["id": "api"], "end": ["id": "db"]],
+        ]
+        let prompt = WhiteboardDiagram.refinePrompt(instruction: "make the database box bigger", board: board)
+
+        check(prompt.contains("make the database box bigger"),
+              "the refine prompt must carry the captain's instruction")
+        check(prompt.contains("\"id\":\"db\"") || prompt.contains("\"db\""),
+              "the refine prompt must carry the board's own element ids")
+        check(prompt.contains("Postgres"),
+              "the refine prompt must carry the board's own labels")
+        check(prompt.contains("COMPLETE revised diagram"),
+              "the refine prompt must ask for the whole diagram, not a patch - a reply that omits an element deletes it")
+        check(prompt.contains("REPLACES the board"),
+              "the refine prompt must say what happens to anything left out")
+        check(prompt.lowercased().contains("keep each element's existing \"id\"".lowercased()),
+              "the refine prompt must ask the model to keep the ids it was given")
+        check(prompt.contains("THIS is") && prompt.contains("not your memory"),
+              "the refine prompt must say the board outranks the model's own recollection")
+
+        // The format half is shared, not duplicated - a rule that drifts
+        // between the two prompts is a diagram that renders on turn one and
+        // fails on turn two.
+        check(prompt.contains(WhiteboardDiagram.formatRules),
+              "the refine prompt must reuse the same format rules as a first generation")
+        check(WhiteboardDiagram.prompt(for: "anything").contains(WhiteboardDiagram.formatRules),
+              "the first-generation prompt must reuse the same format rules")
+
+        check(WhiteboardDiagram.encode(board)?.contains("Postgres") == true,
+              "the board encoder must produce real JSON")
+        // Sorted keys: the same board has to serialize identically twice, or a
+        // resumed conversation sees it arrive looking different every turn.
+        check(WhiteboardDiagram.encode(board) == WhiteboardDiagram.encode(board),
+              "encoding the same board twice must produce the same bytes")
+
+        check(WhiteboardDiagram.Turn.fresh(description: "a").instruction == "a",
+              "a fresh turn's instruction is its description")
+        check(WhiteboardDiagram.Turn.refine(instruction: "b", board: []).instruction == "b",
+              "a refine turn's instruction is the change asked for")
+    }
+
+    /// A real multi-turn exchange through the actual `Process`/parse path,
+    /// against a fake `claude` that records the argv it was handed.
+    ///
+    /// Two things are worth asserting and neither is visible from the reply
+    /// alone: that turn two was genuinely *resumed* (the session id from turn
+    /// one came back as `--resume`), and that turn two's prompt genuinely
+    /// carried the board rather than being a fresh, context-free ask wearing a
+    /// follow-up's words.
+    private static func checkIterativeRefinement(_ check: (Bool, String) -> Void) {
+        defer { WhiteboardDiagram.claudePathOverrideForTests = nil }
+
+        do {
+            let fake = ScriptedClaude()
+            defer { fake.cleanUp() }
+            fake.setReply(turn: 1, elements: "[{\"type\":\"rectangle\",\"id\":\"db\",\"x\":0,\"y\":0,\"width\":100,\"height\":50}]",
+                          sessionID: "sess-abc")
+            fake.setReply(turn: 2,
+                          elements: "[{\"type\":\"rectangle\",\"id\":\"db\",\"x\":0,\"y\":0,\"width\":300,\"height\":150},{\"type\":\"rectangle\",\"id\":\"api\",\"x\":400,\"y\":0,\"width\":100,\"height\":50}]",
+                          sessionID: "sess-abc")
+            WhiteboardDiagram.claudePathOverrideForTests = fake.path
+
+            let first = runSync(turn: .fresh(description: "a database"), resume: nil)
+            check(first.elements?.count == 1, "turn 1 should draw the first diagram, got \(first)")
+            check(first.sessionID == "sess-abc",
+                  "turn 1 must hand back claude's own session id, got \(first.sessionID ?? "nil")")
+            check(fake.argv(turn: 1)?.contains("--resume") == false,
+                  "a first generation must not resume anything")
+
+            // The board handed to turn two is what the *canvas* says, which is
+            // the whole point - so it is spelled out here rather than reused
+            // from turn one's reply.
+            let board: [[String: Any]] = [
+                ["type": "rectangle", "id": "db", "x": 0, "y": 0, "width": 100, "height": 50,
+                 "label": ["text": "Postgres"]],
+            ]
+            let second = runSync(turn: .refine(instruction: "make it bigger and add an API box", board: board),
+                                 resume: first.sessionID)
+            check(second.elements?.count == 2, "turn 2 should return the revised diagram, got \(second)")
+
+            guard let argv2 = fake.argv(turn: 2) else {
+                check(false, "the fake claude should have recorded turn 2's argv")
+                return
+            }
+            check(argv2.contains("--resume"), "turn 2 must resume the conversation turn 1 started")
+            check(argv2.contains("sess-abc"), "turn 2 must resume the session id turn 1 reported")
+            let prompt2 = fake.prompt(turn: 2) ?? ""
+            check(prompt2.contains("Postgres"),
+                  "turn 2's prompt must carry the live board, not just the instruction")
+            check(prompt2.contains("make it bigger and add an API box"),
+                  "turn 2's prompt must carry the follow-up instruction")
+            check(!prompt2.contains("Diagram to draw:"),
+                  "turn 2 must be a refinement prompt, not a fresh generation wearing a follow-up's words")
+        }
+
+        // A resume that fails is recovered from rather than losing the turn:
+        // the board travels in the prompt, so a retry without `--resume` is a
+        // genuine equivalent.
+        do {
+            let fake = ScriptedClaude()
+            defer { fake.cleanUp() }
+            fake.failWhenResuming(message: "No conversation found with session ID: sess-stale")
+            fake.setReply(turn: 0, elements: "[{\"type\":\"rectangle\",\"x\":0,\"y\":0,\"width\":10,\"height\":10}]",
+                          sessionID: "sess-new")
+            WhiteboardDiagram.claudePathOverrideForTests = fake.path
+
+            let outcome = runSync(turn: .refine(instruction: "tweak it", board: [["type": "rectangle", "id": "a"]]),
+                                  resume: "sess-stale")
+            check(outcome.elements?.count == 1,
+                  "a stale session must be recovered from, not lost - got \(outcome)")
+            check(fake.invocationCount == 2,
+                  "recovery is exactly one retry, got \(fake.invocationCount) invocations")
+            check(fake.argv(turn: 1)?.contains("--resume") == true, "the first attempt should have resumed")
+            check(fake.argv(turn: 2)?.contains("--resume") == false,
+                  "the retry must drop --resume rather than repeating the same failing call")
+            check(outcome.sessionID == "sess-new",
+                  "the retry's own session id is what the next turn continues from")
+        }
+
+        // A *fresh* turn that fails is not retried - there is no session to
+        // blame, so a second identical call would only double the wait.
+        do {
+            let fake = ScriptedClaude()
+            defer { fake.cleanUp() }
+            fake.setReply(turn: 0, rawResult: "I can't draw that.", sessionID: nil)
+            WhiteboardDiagram.claudePathOverrideForTests = fake.path
+            check(runSync(turn: .fresh(description: "something"), resume: nil).elements == nil,
+                  "a prose reply must still fail")
+            check(fake.invocationCount == 1, "a failure with no session to blame must not be retried")
+        }
+
+        WhiteboardDiagram.claudePathOverrideForTests = "/nonexistent/should-not-be-invoked"
+        let empty = runSync(turn: .refine(instruction: "   ", board: [["type": "rectangle"]]), resume: nil)
+        check(empty.elements == nil, "an empty refinement must fail without spawning anything")
+        check(empty.message?.contains("change") == true,
+              "an empty refinement should ask for a change, not a description - got \(empty.message ?? "nil")")
+    }
+
+    /// Clearing the board has to end the diagram conversation with it.
+    ///
+    /// A source guard rather than a behavioural one, and deliberately: the
+    /// Clear action runs a modal `NSAlert` before it does anything, so a
+    /// headless suite cannot drive it without either skipping the confirmation
+    /// (testing a path the captain never takes) or answering a modal from the
+    /// same thread that is blocked by it. What the guard *can* prove is the
+    /// thing that would silently rot - the wiring being deleted - and the
+    /// failure it prevents is a real one: a session left pointing at a board
+    /// that no longer exists offers to refine a diagram that is gone.
+    private static func checkClearEndsTheSession(_ check: (Bool, String) -> Void) {
+        guard let dir = SelfTestSources.appSourceDirectory() else {
+            print("  NOTE: app sources not found - skipping the clear/session source guard")
+            return
+        }
+        guard let source = try? String(contentsOf: dir.appendingPathComponent("WhiteboardController.swift"),
+                                       encoding: .utf8) else {
+            check(false, "WhiteboardController.swift should be readable")
+            return
+        }
+        guard let clearRange = source.range(of: "webView.call(\"clear\")") else {
+            check(false, "the clear action should still call the canvas's clear bridge entry")
+            return
+        }
+        let afterClear = String(source[clearRange.lowerBound...].prefix(900))
+        check(afterClear.contains("composer.endSession"),
+              "clearing the board must end the diagram conversation - a session pointing at a board that is gone offers to refine nothing")
+        check(source.contains("composer.onBoardSnapshot"),
+              "the composer needs the canvas wired up as its board source, or a refinement has no context to work from")
+        check(source.contains("func snapshotBoard"),
+              "the destination should own the board snapshot the composer asks it for")
+    }
+
+    /// A fake `claude` that records every invocation's argv and prompt, and can
+    /// answer differently per turn. Everything the multi-turn assertions above
+    /// need is invisible from the reply alone.
+    private final class ScriptedClaude {
+        let dir: URL
+        let path: String
+
+        init() {
+            dir = FileManager.default.temporaryDirectory
+                .appendingPathComponent("fake-claude-whiteboard-\(UUID().uuidString)")
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            path = dir.appendingPathComponent("claude").path
+            // `reply-<n>` if present, else `reply-0` as the default. Every
+            // argument is written to its own file so a prompt containing
+            // newlines survives the round trip intact.
+            let script = """
+            #!/bin/sh
+            DIR="\(dir.path)"
+            N=$(cat "$DIR/count" 2>/dev/null || echo 0)
+            N=$((N+1))
+            echo "$N" > "$DIR/count"
+            : > "$DIR/argv-$N"
+            for a in "$@"; do printf '%s\\n' "$a" >> "$DIR/argv-$N"; done
+            for a in "$@"; do
+              if [ "$a" = "--resume" ] && [ -f "$DIR/fail-on-resume" ]; then
+                cat "$DIR/fail-on-resume"
+                exit 1
+              fi
+            done
+            if [ -f "$DIR/reply-$N" ]; then cat "$DIR/reply-$N"; else cat "$DIR/reply-0"; fi
+            """
+            try? script.write(to: URL(fileURLWithPath: path), atomically: true, encoding: .utf8)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path)
+        }
+
+        /// `turn: 0` is the fallback used for any turn with no reply of its own.
+        func setReply(turn: Int, elements: String, sessionID: String?) {
+            setReply(turn: turn, rawResult: elements, sessionID: sessionID)
+        }
+
+        func setReply(turn: Int, rawResult: String, sessionID: String?) {
+            var obj: [String: Any] = ["result": rawResult, "is_error": false]
+            if let sessionID { obj["session_id"] = sessionID }
+            let data = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data()
+            let json = (String(data: data, encoding: .utf8) ?? "{}") + "\n"
+            try? json.write(to: dir.appendingPathComponent("reply-\(turn)"), atomically: true, encoding: .utf8)
+            // Anything without an explicit reply falls back to `reply-0`, so a
+            // scripted turn 1 and 2 still need something to land on for a third.
+            if turn != 0, !FileManager.default.fileExists(atPath: dir.appendingPathComponent("reply-0").path) {
+                try? json.write(to: dir.appendingPathComponent("reply-0"), atomically: true, encoding: .utf8)
+            }
+        }
+
+        func failWhenResuming(message: String) {
+            let obj: [String: Any] = ["result": message, "is_error": true]
+            let data = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data()
+            let json = (String(data: data, encoding: .utf8) ?? "{}") + "\n"
+            try? json.write(to: dir.appendingPathComponent("fail-on-resume"), atomically: true, encoding: .utf8)
+        }
+
+        var invocationCount: Int {
+            let raw = (try? String(contentsOf: dir.appendingPathComponent("count"), encoding: .utf8)) ?? "0"
+            return Int(raw.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 0
+        }
+
+        func argv(turn: Int) -> [String]? {
+            guard let raw = try? String(contentsOf: dir.appendingPathComponent("argv-\(turn)"), encoding: .utf8)
+            else { return nil }
+            return raw.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        }
+
+        /// The `-p` prompt as handed over, reassembled from the argv record.
+        /// A prompt is multi-line, so it is the argument *after* `-p` in the
+        /// per-argument file rather than a line of it.
+        func prompt(turn: Int) -> String? {
+            guard let raw = try? String(contentsOf: dir.appendingPathComponent("argv-\(turn)"), encoding: .utf8)
+            else { return nil }
+            return raw
+        }
+
+        func cleanUp() { try? FileManager.default.removeItem(at: dir) }
+    }
+
+    private struct TurnOutcome: CustomStringConvertible {
+        let elements: [[String: Any]]?
+        let sessionID: String?
+        let message: String?
+        var description: String {
+            elements.map { "success(\($0.count) elements, session \(sessionID ?? "nil"))" }
+                ?? "failure(\(message ?? "?"))"
+        }
+    }
+
+    private static func runSync(turn: WhiteboardDiagram.Turn, resume: String?) -> TurnOutcome {
+        var outcome: TurnOutcome?
+        WhiteboardDiagram.run(turn: turn, resumeSessionID: resume) { result in
+            switch result {
+            case .success(let reply):
+                outcome = TurnOutcome(elements: reply.elements, sessionID: reply.sessionID, message: nil)
+            case .failure(let error):
+                outcome = TurnOutcome(elements: nil, sessionID: nil, message: error.message)
+            }
+        }
+        let deadline = Date().addingTimeInterval(20)
+        while outcome == nil && Date() < deadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
+        return outcome ?? TurnOutcome(elements: nil, sessionID: nil, message: "timed out")
+    }
+
     // MARK: Wiring
 
     /// The destination has to be reachable and it has to be *lazy*: the whole
@@ -474,9 +768,9 @@ enum WhiteboardSelfTest {
     /// would deadlock against the block it is waiting for.
     private static func generateSync(description: String) -> GenerateOutcome {
         var outcome: GenerateOutcome?
-        WhiteboardDiagram.generate(description: description) { result in
+        WhiteboardDiagram.run(turn: .fresh(description: description)) { result in
             switch result {
-            case .success(let elements): outcome = GenerateOutcome(elements: elements, message: nil)
+            case .success(let reply): outcome = GenerateOutcome(elements: reply.elements, message: nil)
             case .failure(let error): outcome = GenerateOutcome(elements: nil, message: error.message)
             }
         }

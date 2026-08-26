@@ -95,6 +95,8 @@ enum WhiteboardViewSelfTest {
         checkSceneLoading(controller, check)
         checkFrameChildrenSafetyNet(controller, check)
         checkComposerDrawsOntoTheCanvas(controller, check)
+        checkBoardSnapshotRoundTrip(controller, check)
+        checkIterativeRefinement(controller, check)
         checkKubernetesRequestPathRepro(controller, check)
         checkGating(controller, webView, check)
         checkNoLeakedBridgeCalls(webView, check)
@@ -245,8 +247,9 @@ enum WhiteboardViewSelfTest {
         WhiteboardDiagram.claudePathOverrideForTests = script.path
 
         composer.debugPrepare(prompt: "one box", appends: true)
+        composer.debugClearStatus()
         composer.debugClickGenerate()
-        _ = waitFor(timeout: 20, until: { composer.debugStatus.contains("Drew") || composer.debugStatus.contains("couldn't") })
+        _ = waitFor(timeout: 30, until: { settled(composer) })
         check(composer.debugStatus.contains("Drew"),
               "the composer should report what it drew, got \"\(composer.debugStatus)\"")
         let after = statsCount(controller.debugWebView) ?? 0
@@ -258,6 +261,7 @@ enum WhiteboardViewSelfTest {
         defer { try? FileManager.default.removeItem(at: bad) }
         WhiteboardDiagram.claudePathOverrideForTests = bad.path
         composer.debugPrepare(prompt: "something impossible", appends: true)
+        composer.debugClearStatus()
         composer.debugClickGenerate()
         // The synchronous interim status ("Asking Claude for a diagram…") set
         // the instant the click fires already satisfies "not empty and not
@@ -267,7 +271,7 @@ enum WhiteboardViewSelfTest {
         // be reading at that moment. Wait for the interim status to be gone
         // instead, matching the positive-outcome wait every other scenario in
         // this file uses.
-        _ = waitFor(timeout: 20, until: { !composer.debugStatus.isEmpty && !composer.debugStatus.contains("Asking") })
+        _ = waitFor(timeout: 30, until: { settled(composer) })
         check(!composer.debugStatus.isEmpty && !composer.debugStatus.contains("Drew"),
               "a prose reply should surface as an error in the popover, got \"\(composer.debugStatus)\"")
         check((statsCount(controller.debugWebView) ?? 0) == after,
@@ -312,6 +316,7 @@ enum WhiteboardViewSelfTest {
         WhiteboardDiagram.claudePathOverrideForTests = malformedScript.path
 
         composer.debugPrepare(prompt: "Kubernetes request path", appends: true)
+        composer.debugClearStatus()
         composer.debugClickGenerate()
         _ = waitFor(timeout: 20, until: { !composer.debugStatus.isEmpty && !composer.debugStatus.contains("Asking") })
         let malformedStatus = composer.debugStatus
@@ -343,6 +348,7 @@ enum WhiteboardViewSelfTest {
         WhiteboardDiagram.claudePathOverrideForTests = wellFormedScript.path
 
         composer.debugPrepare(prompt: "Kubernetes request path", appends: true)
+        composer.debugClearStatus()
         composer.debugClickGenerate()
         _ = waitFor(timeout: 20, until: { composer.debugStatus.contains("Drew") || composer.debugStatus.contains("couldn't") })
         check(composer.debugStatus.contains("Drew"),
@@ -426,6 +432,250 @@ enum WhiteboardViewSelfTest {
               "\(webView.debugPendingCallCount) bridge call(s) never got a reply - a caller would hang forever")
     }
 
+    // MARK: Snapshot (board -> skeleton)
+
+    /// The refine turn's whole correctness rests on this: what the model is
+    /// told the board contains has to be what the board actually contains.
+    /// Excalidraw publishes no inverse of `convertToExcalidrawElements`, so
+    /// `snapshot` reconstructs the skeleton by hand - and the parts most worth
+    /// asserting are exactly the ones that are *not* a straight field copy: a
+    /// shape's caption lives as a separate `text` element pointing back at it,
+    /// an arrow's bindings live as `startBinding`/`endBinding`, and a frame's
+    /// membership lives on each *child* rather than on the frame.
+    private static func checkBoardSnapshotRoundTrip(_ controller: WhiteboardController,
+                                                    _ check: (Bool, String) -> Void) {
+        let skeleton: [[String: Any]] = [
+            ["type": "rectangle", "id": "db", "x": 0, "y": 0, "width": 160, "height": 80,
+             "label": ["text": "Postgres"], "backgroundColor": "#b2f2bb"],
+            ["type": "rectangle", "id": "api", "x": 320, "y": 0, "width": 160, "height": 80,
+             "label": ["text": "API"]],
+            ["type": "arrow", "id": "edge", "x": 170, "y": 40, "width": 140, "height": 0,
+             "start": ["id": "api"], "end": ["id": "db"]],
+            ["type": "frame", "id": "cluster", "name": "Cluster", "children": ["db", "api"]],
+        ]
+        var loadFailure: String?
+        var loaded = false
+        controller.debugLoad(elements: skeleton, append: false) { failure in
+            loadFailure = failure
+            loaded = true
+        }
+        _ = waitFor(timeout: 20, until: { loaded })
+        guard loadFailure == nil else {
+            check(false, "the snapshot fixture failed to load: \(loadFailure!)")
+            return
+        }
+
+        var snapshot: [[String: Any]]?
+        var message: String?
+        var answered = false
+        controller.debugSnapshotBoard { result in
+            switch result {
+            case .success(let elements): snapshot = elements
+            case .failure(let error): message = error.message
+            }
+            answered = true
+        }
+        _ = waitFor(timeout: 20, until: { answered })
+        guard let board = snapshot else {
+            check(false, "the board snapshot failed: \(message ?? "no answer")")
+            return
+        }
+
+        let types = board.compactMap { $0["type"] as? String }
+        check(types.contains("rectangle") && types.contains("arrow") && types.contains("frame"),
+              "the snapshot should carry every shape kind on the board, got \(types)")
+        // A caption is its own element in Excalidraw; if it came back standalone
+        // the model would be handed a diagram whose boxes look empty and whose
+        // text floats.
+        let standaloneText = board.filter { ($0["type"] as? String) == "text" }
+        check(standaloneText.isEmpty,
+              "a bound caption must fold back into its shape's label, not come back as a loose text element")
+        // Elements are found by their caption, not by the id the fixture used:
+        // `convertToExcalidrawElements` mints its own ids, and a skeleton's
+        // "id" is a *reference key* for bindings rather than the id the drawn
+        // element ends up carrying. A snapshot has to report the real ids, or
+        // a refinement's bindings would name elements that do not exist.
+        func labelled(_ text: String) -> [String: Any]? {
+            board.first { (($0["label"] as? [String: Any])?["text"] as? String) == text }
+        }
+        let db = labelled("Postgres")
+        let api = labelled("API")
+        check(db != nil, "the snapshot must recover a shape's caption as its label")
+        check((db?["backgroundColor"] as? String) != nil,
+              "the snapshot must carry the styling fields the prompt itself offers")
+        check((db?["id"] as? String)?.isEmpty == false && (api?["id"] as? String)?.isEmpty == false,
+              "every snapshot element needs a real id for a refinement to reference")
+
+        let arrow = board.first { ($0["type"] as? String) == "arrow" }
+        let startID = (arrow?["start"] as? [String: Any])?["id"] as? String
+        let endID = (arrow?["end"] as? [String: Any])?["id"] as? String
+        check(startID == (api?["id"] as? String) && endID == (db?["id"] as? String),
+              "the snapshot must recover an arrow's bindings as the real start/end ids")
+
+        let frame = board.first { ($0["type"] as? String) == "frame" }
+        let children = (frame?["children"] as? [String]) ?? []
+        let boardIDs = Set(board.compactMap { $0["id"] as? String })
+        // Membership is Excalidraw's own call - it assigns `frameId` by
+        // containment, so an arrow drawn between two framed shapes is a member
+        // too. What has to hold is not a count but the invariant the validator
+        // enforces: every named child is genuinely in the snapshot.
+        check(children.allSatisfy { boardIDs.contains($0) },
+              "a frame's children must all be elements that are actually in the snapshot - a bound caption inherits its container's frameId and is folded away, so naming it here produces a skeleton nothing will accept (got \(children))")
+        check(Set([db?["id"] as? String, api?["id"] as? String].compactMap { $0 }).isSubset(of: Set(children)),
+              "the shapes inside the frame must be listed as its children")
+
+        // The strongest single property: whatever comes out must be something
+        // the app's own validator accepts and the canvas can draw. A snapshot
+        // that round-trips is what makes "refine" safe to apply as a replace.
+        switch WhiteboardDiagram.parse(WhiteboardDiagram.encode(board) ?? "[]") {
+        case .success(let parsed):
+            check(parsed.count == board.count,
+                  "a snapshot must survive the app's own parse unchanged (\(board.count) -> \(parsed.count))")
+        case .failure(let error):
+            check(false, "a board snapshot must be a skeleton this app would accept, got: \(error.message)")
+        }
+    }
+
+    // MARK: Iterative refinement (the real UI path, real Process, fake claude)
+
+    /// A genuine multi-turn exchange driven through the popover's own controls.
+    ///
+    /// This is the acceptance case for the feature: turn one draws, turn two is
+    /// read as a *change to that diagram* rather than a fresh unrelated
+    /// request, and the popover says which mode it is in at each point. It
+    /// drives the real button target/action and the real `claude -p` path
+    /// (against a scripted fake), so a break in the wiring fails here rather
+    /// than passing.
+    private static func checkIterativeRefinement(_ controller: WhiteboardController,
+                                                 _ check: (Bool, String) -> Void) {
+        let composer = controller.debugComposer
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("fake-claude-wbview-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let claude = dir.appendingPathComponent("claude")
+        defer {
+            try? FileManager.default.removeItem(at: dir)
+            WhiteboardDiagram.claudePathOverrideForTests = nil
+            composer.endSession()
+        }
+
+        func write(reply turn: Int, elements: String, session: String) {
+            let obj: [String: Any] = ["result": elements, "is_error": false, "session_id": session]
+            let data = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data()
+            let json = (String(data: data, encoding: .utf8) ?? "{}") + "\n"
+            try? json.write(to: dir.appendingPathComponent("reply-\(turn)"), atomically: true, encoding: .utf8)
+        }
+        write(reply: 1, elements: "[{\"type\":\"rectangle\",\"id\":\"one\",\"x\":0,\"y\":0,\"width\":120,\"height\":60,\"label\":{\"text\":\"Only box\"}}]",
+              session: "wb-session-1")
+        write(reply: 2, elements: "[{\"type\":\"rectangle\",\"id\":\"one\",\"x\":0,\"y\":0,\"width\":400,\"height\":200,\"label\":{\"text\":\"Only box\"}},{\"type\":\"rectangle\",\"id\":\"two\",\"x\":500,\"y\":0,\"width\":120,\"height\":60,\"label\":{\"text\":\"Second box\"}}]",
+              session: "wb-session-1")
+        let script = """
+        #!/bin/sh
+        DIR="\(dir.path)"
+        N=$(cat "$DIR/count" 2>/dev/null || echo 0)
+        N=$((N+1))
+        echo "$N" > "$DIR/count"
+        : > "$DIR/argv-$N"
+        for a in "$@"; do printf '%s\\n' "$a" >> "$DIR/argv-$N"; done
+        if [ -f "$DIR/reply-$N" ]; then cat "$DIR/reply-$N"; else cat "$DIR/reply-1"; fi
+        """
+        try? script.write(to: claude, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: claude.path)
+        WhiteboardDiagram.claudePathOverrideForTests = claude.path
+
+        func argv(_ turn: Int) -> String {
+            (try? String(contentsOf: dir.appendingPathComponent("argv-\(turn)"), encoding: .utf8)) ?? ""
+        }
+        /// Clears the status, fires the button, and waits for a genuinely new
+        /// terminal status. Clearing first is what makes this a wait for a
+        /// *transition*: the interim status a click sets synchronously is
+        /// otherwise indistinguishable from one left over from an earlier
+        /// step, and the wait returns instantly against stale state.
+        func clickAndSettle() {
+            composer.debugClearStatus()
+            composer.debugClickGenerate()
+            _ = waitFor(timeout: 30, until: { settled(composer) })
+        }
+
+        // --- Turn 1: a fresh generation, from the fresh-mode popover ---------
+        composer.endSession()
+        check(!composer.debugIsRefining, "a popover with no session is in fresh mode")
+        check(composer.debugTitle == "Generate a diagram",
+              "fresh mode should say Generate, got \"\(composer.debugTitle)\"")
+        check(composer.debugGenerateButtonTitle == "Generate",
+              "fresh mode's button should say Generate, got \"\(composer.debugGenerateButtonTitle)\"")
+        check(composer.debugAppendToggleVisible,
+              "the add-to-board checkbox belongs to a first generation and must still be offered")
+        check(!composer.debugStartOverVisible, "there is nothing to start over from yet")
+        check(composer.debugHistoryLines.isEmpty, "a fresh popover has no turns to list")
+
+        // `appends: false` so the fixture from the snapshot case is replaced
+        // and the counts below are about this exchange only.
+        composer.debugPrepare(prompt: "one box", appends: false)
+        clickAndSettle()
+        check(composer.debugStatus.contains("Drew"),
+              "turn 1 should report what it drew, got \"\(composer.debugStatus)\"")
+        check(skeletonCount(controller) == 1,
+              "turn 1 should leave exactly its own diagram on the board, got \(skeletonCount(controller) ?? -1)")
+        check(composer.debugTurns == ["one box"], "turn 1 should be recorded, got \(composer.debugTurns)")
+        check(composer.debugSessionID == "wb-session-1",
+              "the session id from turn 1 must be kept, got \(composer.debugSessionID ?? "nil")")
+
+        // --- The popover has visibly become a conversation -------------------
+        check(composer.debugIsRefining, "after one turn the popover is refining")
+        check(composer.debugTitle == "Refine the diagram",
+              "refining mode should say Refine, got \"\(composer.debugTitle)\"")
+        check(composer.debugGenerateButtonTitle == "Refine",
+              "refining mode's button should say Refine, got \"\(composer.debugGenerateButtonTitle)\"")
+        check(!composer.debugAppendToggleVisible,
+              "a refinement replaces the board with its revision, so the add-or-replace question is gone")
+        check(composer.debugStartOverVisible, "a session must offer a deliberate way out")
+        check(composer.debugHistoryLines.contains(where: { $0.contains("one box") }),
+              "the popover must show what was already asked for, got \(composer.debugHistoryLines)")
+
+        // --- Turn 2: a follow-up, refining THAT diagram ----------------------
+        composer.debugPrepare(prompt: "make it bigger and add a second box", appends: false)
+        clickAndSettle()
+        check(composer.debugStatus.contains("Refined"),
+              "turn 2 should report a refinement, not a fresh draw - got \"\(composer.debugStatus)\"")
+        check(skeletonCount(controller) == 2,
+              "turn 2's revision should be what is on the board, got \(skeletonCount(controller) ?? -1)")
+        check(composer.debugTurns.count == 2, "both turns should be recorded, got \(composer.debugTurns)")
+
+        // The two properties that make it a genuine refinement rather than an
+        // unrelated regeneration: the conversation was resumed, and the prompt
+        // carried the board that was actually on the canvas.
+        let second = argv(2)
+        check(second.contains("--resume") && second.contains("wb-session-1"),
+              "turn 2 must resume turn 1's conversation")
+        check(second.contains("Only box"),
+              "turn 2's prompt must carry the live board - the model has to be told what \"it\" is")
+        check(second.contains("make it bigger and add a second box"),
+              "turn 2's prompt must carry the follow-up instruction")
+        check(!argv(1).contains("--resume"), "turn 1 must not have resumed anything")
+
+        // --- Start over: a deliberate way back to a brand-new generation -----
+        composer.debugClickStartOver()
+        check(!composer.debugIsRefining, "Start over must end the session")
+        check(composer.debugTurns.isEmpty, "Start over must forget the turns, got \(composer.debugTurns)")
+        check(composer.debugSessionID == nil, "Start over must forget the claude session id")
+        check(composer.debugTitle == "Generate a diagram", "Start over returns the popover to fresh mode")
+        check(composer.debugAppendToggleVisible, "the add-to-board checkbox comes back with fresh mode")
+        check(composer.debugHistoryLines.isEmpty, "Start over clears the listed turns")
+        check(skeletonCount(controller) == 2,
+              "Start over must not touch the board - clearing it is the destination's own action")
+        check(composer.debugStatus.contains("untouched"),
+              "Start over should say the board was left alone, got \"\(composer.debugStatus)\"")
+
+        // --- And the next generation really is fresh -------------------------
+        composer.debugPrepare(prompt: "one box", appends: false)
+        clickAndSettle()
+        check(!argv(3).contains("--resume"),
+              "the generation after Start over must not resume the discarded conversation")
+        check(!argv(3).contains("Only box"),
+              "the generation after Start over must not carry the old board as context")
+    }
+
     // MARK: Helpers
 
     private static func startProbe(_ webView: WhiteboardWebView) {
@@ -459,6 +709,33 @@ enum WhiteboardViewSelfTest {
         let value = reading ?? ProbeReading(frames: -1, visibility: "?", suspended: false)
         print("  probe: frames=\(value.frames) visibility=\(value.visibility) suspended=\(value.suspended)")
         return value
+    }
+
+    /// Has the composer finished the turn it was given?
+    ///
+    /// Both interim statuses are excluded, not just the first: a wait that
+    /// only rules out "Asking Claude…" returns the instant a click sets
+    /// "Reading the board…" - and a completion landing after a case returns
+    /// rewrites the popover's state in the *middle of the next one*, which is
+    /// exactly how this suite produced a run of unrelated-looking failures.
+    private static func settled(_ composer: WhiteboardComposerController) -> Bool {
+        !composer.debugStatus.isEmpty
+            && !composer.debugStatus.contains("Asking")
+            && !composer.debugStatus.contains("Reading the board")
+    }
+
+    /// How many *skeleton* elements the board holds - which is not the raw
+    /// scene element count, because a captioned shape is two scene elements
+    /// (the shape and its bound text) and one skeleton element.
+    private static func skeletonCount(_ controller: WhiteboardController) -> Int? {
+        var count: Int?
+        var answered = false
+        controller.debugSnapshotBoard { result in
+            if case .success(let elements) = result { count = elements.count }
+            answered = true
+        }
+        _ = waitFor(timeout: 10, until: { answered })
+        return count
     }
 
     private static func statsCount(_ webView: WhiteboardWebView) -> Int? {
