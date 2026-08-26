@@ -557,6 +557,14 @@ final class DictationEngine {
         usingLocalWhisperThisRecording = localWhisperEnabledProvider?() ?? false
         if usingLocalWhisperThisRecording {
             whisperResampler.reset()
+            // E2 (tech debt): a dictation started just before the idle deadline
+            // and held through it used to have the engine released mid-recording
+            // and re-parse the 547MB model at finish. Correctness was never at
+            // risk (the background transcribe holds its own strong reference),
+            // but the latency was real and avoidable. Re-armed by
+            // `scheduleWhisperIdleUnload()` at the end of that transcription.
+            whisperIdleUnload?.cancel()
+            whisperIdleUnload = nil
         }
 
         let inputNode = audioEngine.inputNode
@@ -778,8 +786,11 @@ final class DictationEngine {
         // Deliberately not holding the lock across the load: it reads and
         // parses ~547MB, and the only other toucher is the idle timer, whose
         // job is to release a *stale* engine - releasing one while this load
-        // is in flight is harmless (the new one is assigned below and the
-        // timer is rearmed after every dictation anyway).
+        // is in flight is harmless (the new one is assigned below). Note the
+        // timer is armed at the *end* of a transcription and cancelled at the
+        // start of the next `beginCapture`, so it cannot fire mid-recording;
+        // the comment here used to say it was "rearmed after every dictation",
+        // which described neither end of that.
         guard let engine = WhisperCppEngine(modelPath: modelPath) else { return nil }
         whisperEngineLock.lock()
         cachedWhisperEngine = engine

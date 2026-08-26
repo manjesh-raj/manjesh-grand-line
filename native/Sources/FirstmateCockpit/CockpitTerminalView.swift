@@ -303,6 +303,13 @@ final class CockpitTerminalView: LocalProcessTerminalView {
 
     override func mouseDown(with event: NSEvent) {
         guard prefersLocalSelection, allowMouseReporting, getTerminal().mouseMode != .off else {
+            // Defensive: AppKit normally guarantees a `mouseUp` for every
+            // `mouseDown`, but a popover or modal opening mid-gesture can
+            // interrupt one. A press left held from a previous gesture would
+            // otherwise be consumed by this one - anchoring a selection at a
+            // stale point, or (in this branch) leaving a child that received a
+            // real press never seeing its release.
+            deferredPress = nil
             super.mouseDown(with: event)
             return
         }
@@ -313,6 +320,7 @@ final class CockpitTerminalView: LocalProcessTerminalView {
             localSelectionDragActive = false
             return
         }
+        deferredPress = nil
         super.mouseDown(with: withoutShift(event))
     }
 

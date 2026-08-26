@@ -97,6 +97,11 @@ final class WhiteboardWebView: WKWebView {
         // (macOS 12+); the older `setValue(false, forKey: "drawsBackground")`
         // trick is private and can throw on an unknown key.
         underPageBackgroundColor = .clear
+        // Recovery: with no navigation delegate, a content process WebKit
+        // jettisons under memory pressure left `hasLoaded`/`isReady` stuck
+        // `true`, so `activate()` could never reload and the canvas was a dead
+        // white surface until the app was relaunched.
+        navigationDelegate = self
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -172,6 +177,36 @@ final class WhiteboardWebView: WKWebView {
                 pending(.failure(WhiteboardBridgeError(message: error.localizedDescription)))
             }
         }
+        // A page-side path that throws before it replies leaves the caller's
+        // spinner up forever - `evaluateJavaScript`'s own completion fires
+        // successfully in that case, since the *call* worked. Nothing here can
+        // know the page will never answer, so the wait is bounded instead.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.callTimeout) { [weak self] in
+            guard let self, let pending = self.pendingCalls.removeValue(forKey: callID) else { return }
+            pending(.failure(WhiteboardBridgeError(
+                message: "the whiteboard did not answer in time - try again, or reopen the destination")))
+        }
+    }
+
+    /// How long a bridge call waits for the page's reply before giving up.
+    /// Generous: `loadScene` on a large diagram is real work.
+    static let callTimeout: TimeInterval = 20
+
+    /// Puts this view back in its pre-`activate()` state, so the next
+    /// `activate()` genuinely reloads. Every in-flight bridge call is failed
+    /// rather than abandoned - a caller waiting on one would otherwise spin
+    /// forever.
+    private func resetAfterPageLoss(_ reason: String) {
+        AppLog.lifecycle.error("whiteboard: \(reason, privacy: .public) - reloading the canvas")
+        isReady = false
+        hasLoaded = false
+        let pending = pendingCalls
+        pendingCalls = [:]
+        for completion in pending.values {
+            completion(.failure(WhiteboardBridgeError(message: "the whiteboard reloaded - try that again")))
+        }
+        onPageError?("The whiteboard had to reload, so the board was cleared.")
+        activate()
     }
 
     fileprivate func handle(message body: [String: Any]) {
@@ -286,5 +321,17 @@ private final class WhiteboardMessageProxy: NSObject, WKScriptMessageHandler {
                                didReceive message: WKScriptMessage) {
         guard let body = message.body as? [String: Any] else { return }
         target?.handle(message: body)
+    }
+}
+
+// MARK: - Page-loss recovery
+
+extension WhiteboardWebView: WKNavigationDelegate {
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        resetAfterPageLoss("the web content process was terminated")
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        resetAfterPageLoss("the page failed to load (\(error.localizedDescription))")
     }
 }
