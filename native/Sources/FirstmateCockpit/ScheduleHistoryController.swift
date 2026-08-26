@@ -29,6 +29,27 @@
 // Automatic row heights, unlike `ShiftListViews`' fixed `rowHeight`: B2 lets
 // this sheet's meta line *wrap* (a real failure summary is long and this
 // sheet is narrow), so a row's height genuinely varies with its content.
+//
+// **Status clarity + a log viewer**, added on top of the shape above: each
+// row's kicker/tint/badge already came from `entry.verdict` (Clean/good,
+// Needs you/warn, Failed/critical), but that is the exact vocabulary
+// `SchedulesCardView`'s own row already uses on the main Schedules list, and
+// this file must not change it - see `ScheduleRunVerdict.label`'s own
+// callers. What was missing was a second, blunter signal that answers "did
+// this run succeed?" without having to know that "Needs you" is itself a
+// success, plus any way to see the run's own output. Both are additive, both
+// reuse this app's existing shared components rather than a bespoke look:
+//
+//  - A trailing **chip** (`HelmAccentRow.Content.chipText`, the same
+//    `ToolRowLayout.pill`-rendered status-badge convention every dense
+//    checklist page in this app already uses) carrying
+//    `ScheduleRunVerdict.outcomeChipText` - literally "Succeeded" / "Needs
+//    Attention" / "Failed".
+//  - A "View Log" `HelmButton` in the row's own `trailingAccessory` slot
+//    (the same caller-owned-control slot the Hosts/Keys/Snippets lists use
+//    for their own row actions), opening `ScheduleRunLogController` as a
+//    nested sheet - `HostEditorController.editPortForwarding`'s own
+//    "sheet-on-sheet, which AppKit supports" precedent.
 
 import AppKit
 
@@ -52,6 +73,12 @@ final class ScheduleHistoryController: NSViewController {
     private var entries: [ScheduleRunHistoryEntry] = []
     private let titleLabel = NSTextField(labelWithString: "Run History")
     private let subtitleLabel = NSTextField(labelWithString: "")
+    /// Each row instance's own "View Log" button, keyed by the row's identity
+    /// - `HelmAccentRow.trailingAccessory` is a `private let` with no public
+    /// getter, so this is what lets `tableView(_:viewFor:row:)` re-point an
+    /// already-built button at whichever entry a *reused* row is now showing.
+    /// See this file's own header for why the button exists at all.
+    private var viewLogButtons: [ObjectIdentifier: HelmButton] = [:]
 
     private static let columnID = NSUserInterfaceItemIdentifier("scheduleHistoryCol")
     private static let rowViewID = NSUserInterfaceItemIdentifier("scheduleHistoryRow")
@@ -223,6 +250,9 @@ final class ScheduleHistoryController: NSViewController {
     func debugRowView(at row: Int) -> NSView? {
         self.tableView(table, viewFor: table.tableColumns.first, row: row)
     }
+    /// Set by a test that wants to observe which entry a "View Log" click
+    /// resolved to - see `viewLogClicked`'s own use of it.
+    var debugOnPresentLog: ((ScheduleRunHistoryEntry) -> Void)?
     #endif
 }
 
@@ -245,17 +275,32 @@ extension ScheduleHistoryController: NSTableViewDataSource, NSTableViewDelegate 
         }
         let rowView = (tableView.makeView(withIdentifier: Self.rowViewID, owner: nil) as? HelmAccentRow)
             ?? {
-                let v = HelmAccentRow(hover: false)
+                // `trailingAccessory` is fixed at `HelmAccentRow.init`, so the
+                // "View Log" button is built once per *row instance*, not per
+                // entry - `viewLogButtons` (keyed by the row's own identity)
+                // is what lets `viewLogClicked` find the right button back out
+                // once this instance is later reused for a different entry.
+                let button = HelmButton(symbol: "doc.text.magnifyingglass", variant: .quiet, size: .small,
+                                        target: self, action: #selector(viewLogClicked(_:)))
+                button.toolTip = "View this run's log"
+                let v = HelmAccentRow(trailingAccessory: button, hover: false)
                 v.identifier = Self.rowViewID
+                viewLogButtons[ObjectIdentifier(v)] = button
                 return v
             }()
         let entry = entries[row]
+        viewLogButtons[ObjectIdentifier(rowView)]?.identifier = Self.viewLogIdentifier(for: entry)
         rowView.configure(HelmAccentRow.Content(
             tint: entry.verdict.tint,
             kicker: entry.verdict.label,
             title: Self.timestampFormatter.string(from: entry.at),
             meta: entry.summary,
             badgeSymbol: entry.verdict.symbol,
+            // A second, blunter signal than the kicker - see this file's own
+            // header. Same `tint`, so bar/badge/chip never disagree on
+            // colour; only the chip's own words state the plain
+            // succeeded/failed/needs-attention answer.
+            chipText: entry.verdict.outcomeChipText,
             // B2: a real failure summary ("gh api: 502 from GitHub while
             // checking fork drift, will retry...") is long, this sheet is
             // 460pt wide, and it is a read-only browsing surface with vertical
@@ -265,5 +310,31 @@ extension ScheduleHistoryController: NSTableViewDataSource, NSTableViewDelegate 
             metaWraps: true
         ), theme: theme)
         return rowView
+    }
+}
+
+// MARK: - View Log
+
+extension ScheduleHistoryController {
+    private static let viewLogPrefix = "history-viewlog:"
+
+    private static func viewLogIdentifier(for entry: ScheduleRunHistoryEntry) -> NSUserInterfaceItemIdentifier {
+        NSUserInterfaceItemIdentifier("\(viewLogPrefix)\(entry.id)")
+    }
+
+    @objc private func viewLogClicked(_ sender: NSButton) {
+        guard let raw = sender.identifier?.rawValue, raw.hasPrefix(Self.viewLogPrefix) else { return }
+        let entryID = String(raw.dropFirst(Self.viewLogPrefix.count))
+        guard let entry = entries.first(where: { $0.id == entryID }) else { return }
+        #if FM_SELFTESTS
+        // A headless suite has no window to animate a real `NSSheet`
+        // presentation onto, and nothing else in this codebase drives
+        // `presentAsSheet` from a self-test - so a test observes the click
+        // through this seam instead, the same "hand a test a hook rather
+        // than a real presentation" convention `SRELead.claudePathOverrideFor
+        // Tests` and friends already use.
+        if let debugOnPresentLog { debugOnPresentLog(entry); return }
+        #endif
+        presentAsSheet(ScheduleRunLogController(entry: entry))
     }
 }

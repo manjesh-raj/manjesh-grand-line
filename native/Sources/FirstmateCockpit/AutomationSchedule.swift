@@ -368,6 +368,25 @@ enum ScheduleRunVerdict: String, Codable {
         case .failed: return "xmark.octagon.fill"
         }
     }
+
+    /// A blunt, unambiguous outcome word - literally "succeeded" / "failed" /
+    /// "needs attention" - for a context that has to answer "did this run
+    /// succeed?" at a glance across many runs at once (the Run History
+    /// sheet). Deliberately **not** `.label`: that string
+    /// ("Clean"/"Needs you"/"Failed") is the vocabulary `SchedulesCardView`'s
+    /// row already renders on the main Schedules list and must not change -
+    /// this is additive, rendered only where a second, plainer signal earns
+    /// its place. `.changed` still reads as a success (see `.changed`'s own
+    /// doc comment: "ran successfully and ... found something"), so this
+    /// says so - it is the "attention" half that separates it from `.clean`,
+    /// not a claim that anything went wrong.
+    var outcomeChipText: String {
+        switch self {
+        case .clean: return "Succeeded"
+        case .changed: return "Needs Attention"
+        case .failed: return "Failed"
+        }
+    }
 }
 
 struct ScheduleRunRecord: Codable, Equatable {

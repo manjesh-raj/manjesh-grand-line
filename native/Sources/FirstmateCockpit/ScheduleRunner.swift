@@ -60,6 +60,23 @@ struct ScheduleActionResult {
     let verdict: ScheduleRunVerdict
     /// Composed by the action itself. Never re-derived generically here.
     let summary: String
+    /// The run's real output, for the Run History sheet's "View Log" action -
+    /// composed from whichever real command output the action already had at
+    /// hand (`CheckOutcome.log`/`GitHubSyncCheckOutcome.log`/
+    /// `GitHubSyncSyncOutcome.log`, all of which already carry a subprocess's
+    /// raw stdout/stderr for the Updates/GitHub-Sync pages' own expandable
+    /// logs - see those types' own doc comments). Never fabricated: an action
+    /// with nothing deeper to say (the git-plumbing actions, whose real
+    /// evidence already lives in `summary`) falls back to `summary` itself
+    /// rather than inventing a transcript, via the memberwise initializer
+    /// below.
+    let log: String
+
+    init(verdict: ScheduleRunVerdict, summary: String, log: String? = nil) {
+        self.verdict = verdict
+        self.summary = summary
+        self.log = log ?? summary
+    }
 }
 
 final class ScheduleRunner {
@@ -257,7 +274,8 @@ final class ScheduleRunner {
                     at: record.at,
                     verdict: result.verdict,
                     summary: result.summary,
-                    actionTitle: action.title))
+                    actionTitle: action.title,
+                    log: result.log))
 
                 switch result.verdict {
                 case .failed:
@@ -324,14 +342,16 @@ enum ScheduleActions {
         }
         let dotfilesDone = SetupStepChecks.dotfilesDone(isLoading: false, repoPath: repoPath, state: state) ?? false
         let agentDone = SetupStepChecks.agentInstructionsDone(isLoading: false, items: agentItems) ?? false
+        let log = driftCheckLog(repoPath: repoPath, state: state, agentItems: agentItems)
 
         guard repoPath != nil else {
             return ScheduleActionResult(
                 verdict: .changed,
-                summary: "~/.dotfiles was not found on this machine.")
+                summary: "~/.dotfiles was not found on this machine.",
+                log: log)
         }
         if dotfilesDone && agentDone {
-            return ScheduleActionResult(verdict: .clean, summary: "Dotfiles clean, agent instructions linked.")
+            return ScheduleActionResult(verdict: .clean, summary: "Dotfiles clean, agent instructions linked.", log: log)
         }
 
         var reasons: [String] = []
@@ -348,24 +368,81 @@ enum ScheduleActions {
             reasons.append("\(unlinked) agent instruction link\(unlinked == 1 ? "" : "s") not resolving")
         }
         if reasons.isEmpty { reasons.append("drift detected") }
-        return ScheduleActionResult(verdict: .changed, summary: reasons.joined(separator: ", ") + ".")
+        return ScheduleActionResult(verdict: .changed, summary: reasons.joined(separator: ", ") + ".", log: log)
+    }
+
+    /// A readable transcript of exactly what the drift check looked at, for
+    /// the Run History sheet's "View Log" action. Not raw `git` stdout - this
+    /// check is composed from `DotfilesSource`'s own already-structured
+    /// state, the same real repo/agent-item data the Bootstrap drift card
+    /// renders, rather than a subprocess this file calls directly.
+    private static func driftCheckLog(repoPath: String?, state: DotfilesRepoState?,
+                                       agentItems: [AgentInstructionsItem]) -> String {
+        var lines: [String] = ["Dotfiles repo: \(repoPath ?? "not found on this machine")"]
+        if let state {
+            lines.append("Remote: \(state.remoteURL ?? "unknown")")
+            lines.append("Branch: \(state.branch ?? "unknown")")
+            if state.dirtyFiles.isEmpty {
+                lines.append("Working tree: clean")
+            } else {
+                lines.append("Uncommitted files (\(state.dirtyFiles.count)):")
+                lines.append(contentsOf: state.dirtyFiles.map { "  \($0)" })
+            }
+            if let behind = state.commitsBehindOrigin {
+                lines.append("Commits behind origin: \(behind)")
+                if let commits = state.commitsBehindOriginList {
+                    lines.append(contentsOf: commits.map { "  \($0.shortHash) \($0.subject)" })
+                }
+            } else {
+                lines.append("Commits behind origin: unknown (no network, no remote, or the fetch failed)")
+            }
+        }
+        lines.append("")
+        lines.append("Agent instruction links:")
+        for item in agentItems {
+            let status: String
+            switch item.status {
+            case .linked: status = "linked"
+            case .notLinked: status = "not linked"
+            case .wrongTarget(let target): status = "wrong target (\(target))"
+            }
+            lines.append("  \(item.label) (\(item.path)): \(status)")
+        }
+        return lines.joined(separator: "\n")
     }
 
     // MARK: Tool update check - read-only
 
     private static func toolUpdateCheck() -> ScheduleActionResult {
-        let statuses = DependencyCatalog.items.map { UpdatesSource.check($0).status }
+        let outcomes = DependencyCatalog.items.map { (item: $0, outcome: UpdatesSource.check($0)) }
+        let statuses = outcomes.map { $0.outcome.status }
         let failed = statuses.filter { $0 == .checkFailed }.count
         let available = statuses.filter { $0.showsUpdateButton }.count
+        let log = perToolLog(outcomes)
         if failed == statuses.count && !statuses.isEmpty {
-            return ScheduleActionResult(verdict: .failed, summary: "Every tool check failed - is the network reachable?")
+            return ScheduleActionResult(verdict: .failed, summary: "Every tool check failed - is the network reachable?", log: log)
         }
         if available == 0 {
-            return ScheduleActionResult(verdict: .clean, summary: "All \(statuses.count) tracked tools up to date.")
+            return ScheduleActionResult(verdict: .clean, summary: "All \(statuses.count) tracked tools up to date.", log: log)
         }
         return ScheduleActionResult(
             verdict: .changed,
-            summary: "\(available) of \(statuses.count) tools have an update available.")
+            summary: "\(available) of \(statuses.count) tools have an update available.",
+            log: log)
+    }
+
+    /// One block per tool - name, the same one-line detail the Updates page's
+    /// own row subtitle shows, and `CheckOutcome.log`'s real command output
+    /// (npm/brew/herdr/etc. stdout+stderr) when there is any. This is the
+    /// exact evidence `CheckOutcome.log`'s own doc comment says every action
+    /// should surface, just persisted here instead of shown only in a
+    /// session-only expandable row.
+    private static func perToolLog(_ outcomes: [(item: DependencyItem, outcome: CheckOutcome)]) -> String {
+        outcomes.map { entry in
+            var block = "\(entry.item.name): \(entry.outcome.detail)"
+            if !entry.outcome.log.isEmpty { block += "\n\(entry.outcome.log)" }
+            return block
+        }.joined(separator: "\n\n")
     }
 
     // MARK: Fork sync - a fast-forward push, F11's stated ceiling
@@ -380,25 +457,37 @@ enum ScheduleActions {
         var failed: [String] = []
         var diverged: [String] = []
         var checkFailed = 0
+        var logBlocks: [String] = []
 
         for repo in GitHubSyncCatalog.repos {
             let outcome = GitHubSyncSource.check(repo)
+            // One block per repo, appended once below regardless of which
+            // branch runs - the check's own detail/log, plus the sync's when
+            // one was attempted, so a captain reading "View Log" sees exactly
+            // what `gh api`/`gh repo sync` reported for every repo, not only
+            // the ones that ended up in `failed`/`diverged`.
+            var block = "\(repo.name): \(outcome.detail)"
+            if !outcome.log.isEmpty { block += "\n\(outcome.log)" }
             switch outcome.status {
             case .checkFailed:
                 checkFailed += 1
             case .diverged:
                 diverged.append(repo.name)
             default:
-                guard outcome.status.showsSyncButton else { continue }
-                let sync = GitHubSyncSource.sync(repo)
-                if sync.ok {
-                    synced += 1
-                } else if sync.refusedDiverged {
-                    diverged.append(repo.name)
-                } else {
-                    failed.append(repo.name)
+                if outcome.status.showsSyncButton {
+                    let sync = GitHubSyncSource.sync(repo)
+                    block += "\n\u{2192} sync: \(sync.detail)"
+                    if !sync.log.isEmpty { block += "\n\(sync.log)" }
+                    if sync.ok {
+                        synced += 1
+                    } else if sync.refusedDiverged {
+                        diverged.append(repo.name)
+                    } else {
+                        failed.append(repo.name)
+                    }
                 }
             }
+            logBlocks.append(block)
         }
 
         var parts: [String] = []
@@ -406,14 +495,15 @@ enum ScheduleActions {
         if !diverged.isEmpty { parts.append("\(diverged.count) diverged, left alone (\(diverged.joined(separator: ", ")))") }
         if !failed.isEmpty { parts.append("\(failed.count) failed (\(failed.joined(separator: ", ")))") }
         if checkFailed > 0 { parts.append("\(checkFailed) could not be checked") }
+        let log = logBlocks.joined(separator: "\n\n")
 
         if !failed.isEmpty || (checkFailed == GitHubSyncCatalog.repos.count && checkFailed > 0) {
-            return ScheduleActionResult(verdict: .failed, summary: parts.joined(separator: "; ") + ".")
+            return ScheduleActionResult(verdict: .failed, summary: parts.joined(separator: "; ") + ".", log: log)
         }
         if parts.isEmpty {
-            return ScheduleActionResult(verdict: .clean, summary: "All \(GitHubSyncCatalog.repos.count) forks already in sync.")
+            return ScheduleActionResult(verdict: .clean, summary: "All \(GitHubSyncCatalog.repos.count) forks already in sync.", log: log)
         }
-        return ScheduleActionResult(verdict: .changed, summary: parts.joined(separator: "; ") + ".")
+        return ScheduleActionResult(verdict: .changed, summary: parts.joined(separator: "; ") + ".", log: log)
     }
 
     // MARK: Vault recipe export - a commit + push, secret names only
@@ -440,14 +530,19 @@ enum ScheduleActions {
         }
         let recipe = VaultRecipe.build(from: snapshot, generatedAt: ISO8601DateFormatter().string(from: Date()))
         let result = VaultRecipeGit.export(recipe: recipe, repoPath: repoPath)
+        // `VaultRecipeExportResult` has no deeper per-command log of its own
+        // (unlike the Updates/GitHub-Sync outcomes) - `message` already *is*
+        // the real evidence here, just with the repo/file path it was
+        // evaluated against alongside it.
+        let log = "Repo: \(repoPath)\nRecipe file: \(result.filePath ?? "n/a")\n\n\(result.message)"
         guard result.ok else {
-            return ScheduleActionResult(verdict: .failed, summary: result.message)
+            return ScheduleActionResult(verdict: .failed, summary: result.message, log: log)
         }
         // `export` short-circuits with its own "nothing to push" message when
         // the recipe on disk already matches, which is the ordinary clean case
         // for a weekly schedule - not something worth notifying about.
         let unchanged = result.message.localizedCaseInsensitiveContains("nothing to push")
-        return ScheduleActionResult(verdict: unchanged ? .clean : .changed, summary: result.message)
+        return ScheduleActionResult(verdict: unchanged ? .clean : .changed, summary: result.message, log: log)
     }
 
     // MARK: Config backup export - a push of a .glbackup bundle
@@ -486,9 +581,14 @@ enum ScheduleActions {
         }
         let hostCount = bundle.hosts.count
         let snippetCount = bundle.snippets.count
-        return ScheduleActionResult(
-            verdict: .changed,
-            summary: "Pushed \(hostCount) host\(hostCount == 1 ? "" : "s") and \(snippetCount) snippet\(snippetCount == 1 ? "" : "s") to manjesh-config.")
+        let summary = "Pushed \(hostCount) host\(hostCount == 1 ? "" : "s") and \(snippetCount) snippet\(snippetCount == 1 ? "" : "s") to manjesh-config."
+        // Labels only - never a command body or a credential (`GitHubBackupSource
+        // .export` already redacts private key bytes/passphrases from the
+        // bundle itself; this log just names what was in it).
+        let log = summary
+            + "\nHosts: \(bundle.hosts.map { $0.label }.joined(separator: ", "))"
+            + "\nSnippets: \(bundle.snippets.map { $0.label }.joined(separator: ", "))"
+        return ScheduleActionResult(verdict: .changed, summary: summary, log: log)
     }
 
     // MARK: Tool update check + install - captain-approved, no confirmation
@@ -519,12 +619,17 @@ enum ScheduleActions {
         var updateFailed: [String] = []
         var needsManualInstall = 0
         var checkFailed = 0
+        var logBlocks: [String] = []
 
         for item in DependencyCatalog.items {
             let outcome = UpdatesSource.check(item)
+            var block = "\(item.name): \(outcome.detail)"
+            if !outcome.log.isEmpty { block += "\n\(outcome.log)" }
             switch outcome.status {
             case .updateAvailable:
                 let update = UpdatesSource.update(item)
+                block += "\n\u{2192} update: \(update.detail)"
+                if !update.log.isEmpty { block += "\n\(update.log)" }
                 if update.ok {
                     installed.append(item.name)
                 } else {
@@ -535,19 +640,21 @@ enum ScheduleActions {
             case .checkFailed:
                 checkFailed += 1
             case .upToDate:
-                continue
+                break
             case .checking, .updating, .unknown, .updateFailed:
                 // `UpdatesSource.check` never actually returns these - they
                 // are UI-only session states `UpdatesController` tracks on
                 // top of a `CheckOutcome` - but the switch stays exhaustive
                 // rather than a `default:` so a status this call *could*
                 // someday return has to be deliberately placed here too.
-                continue
+                break
             }
+            logBlocks.append(block)
         }
+        let log = logBlocks.joined(separator: "\n\n")
 
         if checkFailed == DependencyCatalog.items.count && !DependencyCatalog.items.isEmpty {
-            return ScheduleActionResult(verdict: .failed, summary: "Every tool check failed - is the network reachable?")
+            return ScheduleActionResult(verdict: .failed, summary: "Every tool check failed - is the network reachable?", log: log)
         }
 
         var parts: [String] = []
@@ -565,11 +672,11 @@ enum ScheduleActions {
         }
 
         if !updateFailed.isEmpty {
-            return ScheduleActionResult(verdict: .failed, summary: parts.joined(separator: "; ") + ".")
+            return ScheduleActionResult(verdict: .failed, summary: parts.joined(separator: "; ") + ".", log: log)
         }
         if parts.isEmpty {
-            return ScheduleActionResult(verdict: .clean, summary: "All \(DependencyCatalog.items.count) tracked tools up to date.")
+            return ScheduleActionResult(verdict: .clean, summary: "All \(DependencyCatalog.items.count) tracked tools up to date.", log: log)
         }
-        return ScheduleActionResult(verdict: .changed, summary: parts.joined(separator: "; ") + ".")
+        return ScheduleActionResult(verdict: .changed, summary: parts.joined(separator: "; ") + ".", log: log)
     }
 }
