@@ -32,6 +32,7 @@ enum AppKitAuditSelfTest {
             ("S1_S2_aiCommandsReachTheTerminalOnlyThroughTheGate", test_s1_s2),
             ("S3_multiLineAiCommandsAreRefused", test_s3),
             ("Pr1_scheduleStoresRedirectToScratchInASelfTestProcess", test_pr1),
+            ("T5_audioTapReadsSnapshotsNotSharedMutableState", test_t5),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -46,6 +47,53 @@ enum AppKitAuditSelfTest {
               ? "AppKitAuditSelfTest: all \(cases.count) cases passed"
               : "AppKitAuditSelfTest: \(failures)/\(cases.count) cases FAILED")
         return failures == 0
+    }
+
+    // MARK: T5 - the dictation audio-tap race
+
+    /// T5: the `installTap` closure runs on `AVAudioEngine`'s real-time render
+    /// thread and used to read `self.recognitionRequest` (an Optional class
+    /// reference) and `self.usingLocalWhisperThisRecording`, both written on
+    /// main - a formal data race, since `finish()` nils that reference while a
+    /// tap callback may be in flight.
+    ///
+    /// A source guard: the audio path needs a real input device, which a
+    /// headless suite does not have (and reaching for `audioEngine.inputNode`
+    /// in one *blocks*, which is why the teardown is guarded at all). What can
+    /// regress is the closure going back to reading `self.`, and that is what
+    /// this reads.
+    private static func test_t5() -> String? {
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let raw = try? String(contentsOf: dir.appendingPathComponent("DictationEngine.swift"), encoding: .utf8) else {
+            return nil
+        }
+        let code = raw.split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+        guard let tapStart = code.range(of: "inputNode.installTap(") else {
+            return "DictationEngine no longer installs a tap - re-check what reads shared state on the audio thread"
+        }
+        let closure = String(code[tapStart.lowerBound...].prefix(400))
+        for banned in ["self.recognitionRequest", "self.usingLocalWhisperThisRecording"] {
+            if closure.contains(banned) {
+                return "the audio tap reads \(banned) off the main thread again - snapshot it at install time instead"
+            }
+        }
+        if !code.contains("let capturedRequest = request") {
+            return "the tap no longer snapshots the recognition request at install time"
+        }
+        // And the teardown ordering: the tap holds the request, so it comes off
+        // before anything drops the reference.
+        guard let finishStart = code.range(of: "private func finish(text: String?"),
+              let removeIndex = code.range(of: "removeTapIfInstalled()", range: finishStart.upperBound..<code.endIndex),
+              let nilIndex = code.range(of: "recognitionRequest = nil", range: finishStart.upperBound..<code.endIndex) else {
+            return "could not find finish()'s teardown - re-check the ordering T5 depends on"
+        }
+        if removeIndex.lowerBound > nilIndex.lowerBound {
+            return "finish() drops the recognition request before removing the tap - the race is back"
+        }
+        return nil
     }
 
     // MARK: Pr1 - schedule-store scratch redirects
