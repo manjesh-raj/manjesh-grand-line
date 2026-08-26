@@ -86,7 +86,7 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
 
     override func viewWillAppear() {
         super.viewWillAppear()
-        reloadPostmortemsList()
+        reloadPostmortemsListAsync()
     }
 
     override func viewDidAppear() {
@@ -172,8 +172,31 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
 
     // MARK: Data
 
+    /// M4: the per-visit reload, off the main thread - see
+    /// `RunbooksController.reloadRunbooksListAsync` for the full reasoning
+    /// (`listPostmortems()` reads the whole content of every markdown file,
+    /// and this ran synchronously on main on every navigation).
+    private var reloadGeneration = 0
+
+    private func reloadPostmortemsListAsync() {
+        reloadGeneration &+= 1
+        let generation = reloadGeneration
+        let store = runbookStore
+        DispatchQueue.global(qos: .userInitiated).async {
+            let postmortems = store.listPostmortems()
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.reloadGeneration == generation else { return }
+                self.applyPostmortems(postmortems)
+            }
+        }
+    }
+
     private func reloadPostmortemsList() {
-        let postmortems = runbookStore.listPostmortems()
+        reloadGeneration &+= 1
+        applyPostmortems(runbookStore.listPostmortems())
+    }
+
+    private func applyPostmortems(_ postmortems: [DocsRunbook]) {
         postmortemEmptyState.isHidden = !postmortems.isEmpty
         postmortemListScroll.isHidden = postmortems.isEmpty
         postmortemGridItems = postmortems.map { postmortem in

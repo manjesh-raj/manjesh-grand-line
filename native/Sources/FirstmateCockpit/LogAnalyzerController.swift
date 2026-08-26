@@ -1893,16 +1893,22 @@ extension LogAnalyzerController {
         historyRail.isHidden = !historyVisible
         historyRailWidth.constant = historyVisible ? Self.historyRailWidthWhenVisible : 0
         historyToggleButton.title = historyVisible ? "Hide history" : "History"
-        if historyVisible { reloadHistory() }
+        if historyVisible { reloadHistory(forcingDiskRescan: true) }
     }
 
-    func reloadHistory() {
-        // GL-35: `history()` is memoised now, and this is the page's own
-        // "show me what is actually on disk" path (the history rail being
-        // revealed, or a save/delete completing) - so it is the one place that
-        // should look past the cache. Everything else in a single interaction
-        // reads the same snapshot.
-        store.invalidateHistoryCache()
+    /// M3: `forcingDiskRescan` is what makes GL-35's memoisation real.
+    ///
+    /// This used to invalidate the cache unconditionally, and `viewWillAppear`
+    /// called it - so every single tab switch to Log Analyzer paid the full
+    /// uncached walk (enumerate every year dir, every investigation dir, parse
+    /// every `investigation.yaml`) synchronously on the main thread, which is
+    /// exactly the work the cache exists to avoid. The store already
+    /// invalidates its own cache on `save` and `delete`, so an in-app change
+    /// is picked up without forcing anything; only a genuine "show me what is
+    /// on disk right now" moment (revealing the rail, or opening an
+    /// investigation handed over from outside this page) needs the rescan.
+    func reloadHistory(forcingDiskRescan force: Bool = false) {
+        if force { store.invalidateHistoryCache() }
         historyEntries = store.history()
         let contents = historyEntries.map { entry -> HelmAccentRow.Content in
             var content = HelmAccentRow.Content(tint: entry.severity.tint,
@@ -1924,7 +1930,7 @@ extension LogAnalyzerController {
     /// investigation is reopened exactly the same way regardless of where the
     /// captain clicked.
     func openSavedInvestigation(id: String) {
-        reloadHistory()
+        reloadHistory(forcingDiskRescan: true)
         guard let index = historyEntries.firstIndex(where: { $0.id == id }) else {
             Toast.show(in: view, message: "That investigation is no longer saved")
             return
