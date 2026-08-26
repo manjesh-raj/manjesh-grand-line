@@ -51,6 +51,18 @@
 //      reported to it, a *Shift*-drag is still reported to it, and only an
 //      unmodified drag is kept locally.
 //   5. Source guard: `.shell` is what opts in, and `.ssh` does not.
+//   6. `fm/grandline-console-selection-overlay-sidebar`: a click's own
+//      sub-pixel hand-tremor jitter must still be reported to the child, and
+//      must not paint a local selection of its own -
+//      `CockpitTerminalView.localSelectionDragThreshold`'s doc comment has
+//      the mechanism. AppKit calls `mouseDragged` for essentially any
+//      movement while the button is held, with no built-in click-vs-drag
+//      hysteresis; with none added here, the smallest jitter during an
+//      ordinary click over a mouse-reporting child (herdr's own row-switcher
+//      is the reported case) silently ate the click - needing a second,
+//      steadier click to reach the child - and could paint the app's own
+//      themed selection colour over part of the child's own on-screen UI,
+//      which read as a highlight "bleeding" past where it should stop.
 //
 // Run with:
 //   swift build && FM_RUN_TERMINAL_SELECTION_RENDER_TESTS=1 .build/debug/FirstmateCockpit; echo $?
@@ -70,7 +82,8 @@ enum TerminalSelectionRenderSelfTest {
                       checkPaintedPairClearsTheTextFloor,
                       checkMouseReportingChildStillSelectsLocally,
                       checkChildKeepsItsMouse,
-                      checkShellTabsOptIn] {
+                      checkShellTabsOptIn,
+                      checkClickJitterDoesNotEatTheClickOrBleedTheSelection] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -133,6 +146,7 @@ enum TerminalSelectionRenderSelfTest {
                                    localSelection: Bool = true,
                                    shiftHeld: Bool = false,
                                    clickOnly: Bool = false,
+                                   jitter: Bool = false,
                                    sentBytes: inout [UInt8]) -> Render? {
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
                               styleMask: [.titled], backing: .buffered, defer: false)
@@ -165,8 +179,15 @@ enum TerminalSelectionRenderSelfTest {
         }
         let from = NSPoint(x: 10, y: size.height * 0.95)
         let to = NSPoint(x: size.width - 10, y: size.height * 0.55)
+        // A couple of points in either direction - the shape of ordinary
+        // hand/trackpad tremor during a stationary click, not a deliberate
+        // drag-to-select. Well under `CockpitTerminalView`'s default
+        // threshold, so `jitter` proves the *fixed* gesture is still a click.
+        let jitterPoint = NSPoint(x: from.x + 1.5, y: from.y - 1.0)
         if let e = ev(.leftMouseDown, from) { view.mouseDown(with: e) }
-        if !clickOnly {
+        if jitter {
+            if let e = ev(.leftMouseDragged, jitterPoint) { view.mouseDragged(with: e) }
+        } else if !clickOnly {
             // A real drag emits motion from the press point onwards, and
             // SwiftTerm seeds its selection anchor from the first motion event
             // it is given - so the first one has to be at the press point, or
@@ -175,7 +196,8 @@ enum TerminalSelectionRenderSelfTest {
                 if let e = ev(.leftMouseDragged, p) { view.mouseDragged(with: e) }
             }
         }
-        if let e = ev(.leftMouseUp, clickOnly ? from : to) { view.mouseUp(with: e) }
+        let upPoint = jitter ? jitterPoint : (clickOnly ? from : to)
+        if let e = ev(.leftMouseUp, upPoint) { view.mouseUp(with: e) }
         view.needsDisplay = true
         RunLoop.main.run(until: Date().addingTimeInterval(0.25))
 
@@ -432,6 +454,40 @@ enum TerminalSelectionRenderSelfTest {
             fail(&ok, "expected exactly one `prefersLocalSelection = true` opt-in in addTab, found \(optIns)")
         }
         if ok { print("  addTab opts `.shell` in, and nothing else") }
+    }
+
+    // MARK: 6 - a click's own hand-tremor jitter is still a click
+
+    private static func checkClickJitterDoesNotEatTheClickOrBleedTheSelection(_ ok: inout Bool) {
+        print("TerminalSelectionRenderSelfTest: sub-threshold jitter during a click is still a click, not a drag")
+        guard let theme = HelmTheme.allThemes.first(where: { $0.id == "helm-light" }) else {
+            fail(&ok, "helm-light not found"); return
+        }
+
+        var jitterBytes: [UInt8] = []
+        guard let jittered = renderDrag(theme: theme, mouseCapture: true, jitter: true, sentBytes: &jitterBytes) else {
+            fail(&ok, "a jittered click did not render"); return
+        }
+        if jitterBytes.isEmpty {
+            fail(&ok, "a click with sub-threshold jitter reported nothing to the child - the click was swallowed, exactly the 'have to click twice' symptom")
+        }
+        if jittered.filledRows != 0 {
+            fail(&ok, "a click with sub-threshold jitter painted \(jittered.filledRows) selected row(s) - a highlight appeared where nothing was deliberately dragged")
+        }
+
+        // Prove this case can actually tell the fix from its absence: force
+        // the pre-fix (zero-threshold) behaviour on the identical gesture and
+        // confirm it reproduces at least one of the two symptoms.
+        CockpitTerminalView.localSelectionDragThresholdOverrideForTests = 0
+        defer { CockpitTerminalView.localSelectionDragThresholdOverrideForTests = nil }
+        var unfixedBytes: [UInt8] = []
+        guard let unfixed = renderDrag(theme: theme, mouseCapture: true, jitter: true, sentBytes: &unfixedBytes) else {
+            fail(&ok, "the unfixed jittered click did not render"); return
+        }
+        if !unfixedBytes.isEmpty, unfixed.filledRows == 0 {
+            fail(&ok, "forcing the pre-fix threshold reproduced neither symptom - this case can no longer tell the fix from its absence")
+        }
+        if ok { print("  jitter still reaches the child and paints nothing locally; the pre-fix (zero) threshold reproduces the regression") }
     }
 }
 

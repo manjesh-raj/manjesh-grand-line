@@ -268,6 +268,64 @@ final class CockpitTerminalView: LocalProcessTerminalView {
     /// True once a deferred press turned into a local selection drag.
     private var localSelectionDragActive = false
 
+    /// Minimum on-screen movement (points, `locationInWindow` units - already
+    /// scale-independent) between the held press and a `mouseDragged` event
+    /// before the gesture is treated as a genuine drag rather than hand/
+    /// trackpad jitter during an ordinary click.
+    ///
+    /// AppKit calls `mouseDragged` for essentially any movement while the
+    /// button is held - there is no built-in click-vs-drag hysteresis, and
+    /// without one here a single stray sub-pixel `mouseDragged` event (which
+    /// a real click's hold time can easily produce, and which trackpad event
+    /// coalescing under CPU load - e.g. a `.shell` tab actively repainting -
+    /// can deliver already several points from the press) immediately:
+    ///
+    ///  1. Flipped `localSelectionDragActive` to `true` with no distance
+    ///     check, which - since `mouseUp` only replays the press+release to
+    ///     the child when no drag happened - silently ate the click instead
+    ///     of forwarding it. The captain sees this as "I have to click twice"
+    ///     on a mouse-reporting child's own row/item.
+    ///  2. Seeded SwiftTerm's own selection at the press point and then
+    ///     immediately extended it to wherever that one jittered event
+    ///     landed (`MacTerminalView.mouseDragged`'s `selection.dragExtend`).
+    ///     Extending a selection across even one row boundary highlights the
+    ///     *entire width* of every row in between (ordinary stream-selection
+    ///     semantics) - which is what a captain sees as the app's own themed
+    ///     selection colour "bleeding" across a mouse-reporting TUI's own
+    ///     panes (e.g. herdr's sidebar/main-content columns), since SwiftTerm
+    ///     has no notion of the child program's own column layout.
+    ///
+    /// A small threshold absorbs both: it is well below what any deliberate
+    /// drag-to-select gesture produces within one or two events, so real
+    /// selection is unaffected, while an accidental sub-threshold wiggle
+    /// during a click keeps the press held until either real movement
+    /// arrives or the button comes back up. AppKit exposes no public
+    /// click-vs-drag distance constant, so this is a deliberately small,
+    /// documented choice rather than a system value.
+    private static let localSelectionDragThreshold: CGFloat = 4
+
+    #if FM_SELFTESTS
+    /// Test-only override so `TerminalSelectionRenderSelfTest` can force the
+    /// pre-fix (zero-threshold) behaviour with the exact same synthesized
+    /// gesture and prove it reproduces both symptoms - the codebase's own
+    /// standing bar for a regression guard being one that can tell the fix
+    /// from its absence, not just one that passes.
+    static var localSelectionDragThresholdOverrideForTests: CGFloat?
+    #endif
+
+    private var effectiveLocalSelectionDragThreshold: CGFloat {
+        #if FM_SELFTESTS
+        if let override = Self.localSelectionDragThresholdOverrideForTests { return override }
+        #endif
+        return Self.localSelectionDragThreshold
+    }
+
+    private func distance(_ a: NSEvent, _ b: NSEvent) -> CGFloat {
+        let dx = a.locationInWindow.x - b.locationInWindow.x
+        let dy = a.locationInWindow.y - b.locationInWindow.y
+        return (dx * dx + dy * dy).squareRoot()
+    }
+
     /// Should this event start a local selection instead of being reported?
     private func divertsToLocalSelection(_ event: NSEvent) -> Bool {
         guard prefersLocalSelection, allowMouseReporting else { return false }
@@ -332,6 +390,13 @@ final class CockpitTerminalView: LocalProcessTerminalView {
                 return
             }
             super.mouseDragged(with: event)
+            return
+        }
+        if !localSelectionDragActive, distance(press, event) < effectiveLocalSelectionDragThreshold {
+            // Not yet real movement - keep the press held. Neither building a
+            // local selection nor forwarding to the child would be correct
+            // here, since the gesture might still resolve to a plain click on
+            // `mouseUp`; see `localSelectionDragThreshold`'s doc comment.
             return
         }
         withoutMouseReporting {
