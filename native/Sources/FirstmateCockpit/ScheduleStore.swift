@@ -211,8 +211,11 @@ final class ScheduleStore {
     /// `init()`, and never automatically.** Several existing self-tests
     /// construct a bare `ScheduleStore()` with no `FM_SCHEDULES_FILE`
     /// override (they only need the type to satisfy an initializer's
-    /// parameter list, not its seeding behaviour), which resolves to this
-    /// machine's *real* production file. Auto-seeding at construction time
+    /// parameter list, not its seeding behaviour). Pr1 now points that
+    /// variable at a scratch path for the whole of any `FM_RUN_*` process
+    /// (see `main.swift`'s process-entry redirect), so such a store no longer
+    /// resolves to this machine's real production file at all - but the rule
+    /// below still holds, and is the belt to that braces. Auto-seeding at construction time
     /// would make running the test suite silently create a live,
     /// auto-installing schedule on the captain's own machine the first time
     /// any of those tests ran on a fresh profile. Keeping this a separate,

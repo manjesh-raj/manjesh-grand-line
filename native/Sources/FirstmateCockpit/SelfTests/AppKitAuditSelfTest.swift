@@ -11,6 +11,7 @@
 //   M5  the Run History sheet's footer pins Close to the trailing edge
 //   M6  ... and can be dismissed with Escape
 //   S3  a command carrying an embedded newline never reaches a terminal
+//   Pr1 a self-test process never reads or writes the real schedule stores
 //   T5  the dictation audio tap reads a snapshot, not shared mutable state
 //
 // Window-backed (M5 is a real measurement on a real view), so this sits in
@@ -30,6 +31,7 @@ enum AppKitAuditSelfTest {
             ("M6_runHistorySheetDismissesOnEscape", test_m6),
             ("S1_S2_aiCommandsReachTheTerminalOnlyThroughTheGate", test_s1_s2),
             ("S3_multiLineAiCommandsAreRefused", test_s3),
+            ("Pr1_scheduleStoresRedirectToScratchInASelfTestProcess", test_pr1),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -44,6 +46,34 @@ enum AppKitAuditSelfTest {
               ? "AppKitAuditSelfTest: all \(cases.count) cases passed"
               : "AppKitAuditSelfTest: \(failures)/\(cases.count) cases FAILED")
         return failures == 0
+    }
+
+    // MARK: Pr1 - schedule-store scratch redirects
+
+    /// Pr1: several suites construct a bare `ScheduleStore()` just to satisfy
+    /// an initializer's parameter list, and their `withScratchEnv` blocks omit
+    /// `FM_SCHEDULES_FILE` - so each of those read the captain's real
+    /// `schedules.json` on every full test run. `ScheduleRunHistoryStore.shared`
+    /// is a second indirectly-reachable singleton with the same gap. Both are
+    /// redirected at process entry now, which is the only fix that also covers
+    /// the next suite nobody has written yet.
+    private static func test_pr1() -> String? {
+        // Both resolvers read the environment every time, so this measures
+        // exactly what a bare `ScheduleStore()` in this process would open.
+        let schedules = ScheduleStore.storeURL().path
+        if !schedules.contains("selftest-process-") {
+            return "a bare ScheduleStore() in a self-test process resolves to \(schedules) - the captain's real schedules.json is being read on every test run"
+        }
+        let history = ScheduleRunHistoryStore.defaultDirectory().path
+        if !history.contains("selftest-process-") {
+            return "ScheduleRunHistoryStore.shared resolves to \(history) - the real run history is reachable from a self-test process"
+        }
+        // The real locations must genuinely be somewhere else, or a scratch
+        // path that happens to look right would pass vacuously.
+        if schedules.contains("Application Support/FirstmateCockpit/schedules.json") {
+            return "the scratch redirect still lands inside the real Application Support store"
+        }
+        return nil
     }
 
     // MARK: S1 / S2 / S3 - the AI-authored command gate
