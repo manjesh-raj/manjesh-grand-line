@@ -20,22 +20,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // key through it at connect time; the Keys window (below) is where the
     // captain generates/imports/browses them.
     let keyStore = SSHKeyStore()
-    // Phase 3: the saved-command library (B2/B5). The console resolves a
-    // host's startup snippet through it at connect time, and the Snippets
-    // window's "Run" sends a snippet straight to the active tab.
-    let snippetStore = SnippetStore()
     // Phase 5 (cockpit-shift-power-features): one `ShiftStore` shared by the
     // main window's Shift page, the menu bar item, the search palette, and
     // quick capture - all read/write the same tasks/follow-ups, never
     // separate store instances that could drift out of sync with each other.
     let shiftStore = ShiftStore()
-    lazy var console = ConsoleController(keyStore: keyStore, snippetStore: snippetStore)
+    lazy var console = ConsoleController(keyStore: keyStore)
     // Phase 5 of the full-app UI audit merged the Hosts destination and the
-    // two floating SSH Keys / Snippets windows into one destination with
-    // three segmented tabs, so this is now the only controller for all three
-    // stores' browsing/editing surfaces.
-    lazy var hostsPanel = HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore)
-    lazy var settingsController = SettingsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore)
+    // floating SSH Keys window into one destination with segmented tabs
+    // (the Snippets tab was removed along with the feature itself, per
+    // `fm/grandline-menubar-remove-items`), so this is now the only
+    // controller for both stores' browsing/editing surfaces.
+    lazy var hostsPanel = HostsController(hostStore: hostStore, keyStore: keyStore)
+    lazy var settingsController = SettingsController(hostStore: hostStore, keyStore: keyStore, dictationStore: dictationStore)
     lazy var shiftMenuBar = ShiftMenuBarController(store: shiftStore)
     // F5 (`fm/grandline-feature-f5-command-palette-expansion`): the `⌘K`
     // command palette, now the app's one search/verb surface - it absorbed
@@ -117,13 +114,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // onto for its whole lifetime, can't form a retain cycle with `self`.
     lazy var appShell: AppShellController = {
         let keyStore = self.keyStore
-        let snippetStore = self.snippetStore
         return AppShellController(
             hostsPanel: hostsPanel, console: console, settings: settingsController,
-            hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, shiftStore: shiftStore,
+            hostStore: hostStore, keyStore: keyStore, shiftStore: shiftStore,
             dictationStore: dictationStore, commandLibraryStore: commandLibraryStore,
             scheduleStore: scheduleStore,
-            makeHostConsole: { ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false) }
+            makeHostConsole: { ConsoleController(keyStore: keyStore, isFirstmateConsole: false) }
         )
     }()
     var hostEditorWindow: NSWindow?
@@ -138,12 +134,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // `connectToHost` below; an ad-hoc quick-connect (no saved identity to
         // pin a page to) still opens as a plain tab in the shared Firstmate
         // console, same as before Fix 1.
-        hostsPanel.onConnect = { [weak self] hostID, label, args, accentHex, keyID, startupSnippetID in
+        hostsPanel.onConnect = { [weak self] hostID, label, args, accentHex, keyID in
             guard let self else { return }
             if let hostID, let host = self.hostStore.host(id: hostID) {
                 self.connectToHost(host)
             } else {
-                self.console.openSSH(label: label, args: args, accentHex: accentHex, keyID: keyID, startupSnippetID: startupSnippetID)
+                self.console.openSSH(label: label, args: args, accentHex: accentHex, keyID: keyID)
                 self.appShell.show(.console)
             }
         }
@@ -194,9 +190,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             storeFailureNotices.append("Couldn't read saved SSH keys - backed up to \((backupPath as NSString).lastPathComponent). "
                 + "Keychain entries for those keys are still there.")
         }
-        if let backupPath = snippetStore.loadFailureBackupPath {
-            storeFailureNotices.append("Couldn't read saved snippets - backed up to \((backupPath as NSString).lastPathComponent)")
-        }
         for backupPath in dictationStore.loadFailureBackupPaths {
             storeFailureNotices.append("Couldn't read a dictation file - backed up to \((backupPath as NSString).lastPathComponent)")
         }
@@ -223,11 +216,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.appShell.removeHostConsole(id: removedID)
             }
             self.knownHostIDs = currentIDs
-        }
-        // The Snippets tab's "Run" (Phase 3, B2) sends straight to the
-        // console's active tab.
-        appShell.onRunSnippet = { [weak self] snippet in
-            self?.console.runSnippetInActiveTab(snippet)
         }
         // Settings > Terminal's font-size stepper (Fix 3) talks straight to
         // the live console; Appearance goes through `ThemeManager` directly
@@ -313,7 +301,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ScheduleRunner.shared.start(store: scheduleStore,
                                     hostStore: hostStore,
                                     keyStore: keyStore,
-                                    snippetStore: snippetStore,
                                     dictationStore: dictationStore)
 
         // Phase 5 (cockpit-shift-power-features): menu bar popover + global
@@ -635,7 +622,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// window) are unchanged from PR #14.
     func presentHostEditor(for host: Host?) {
         let existingLabels = Set(hostStore.hosts.filter { $0.id != host?.id }.map { $0.label } + ["Firstmate"])
-        let editor = HostEditorController(host: host, keyStore: keyStore, snippets: snippetStore.snippets, existingLabels: existingLabels)
+        let editor = HostEditorController(host: host, keyStore: keyStore, existingLabels: existingLabels)
         editor.onSave = { [weak self] saved in
             guard let self else { return }
             if self.hostStore.host(id: saved.id) != nil {
@@ -663,11 +650,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Reuse one window across repeated Add/Edit calls (matching the Keys/
-        // Snippets windows below) rather than piling up a new one on every
-        // "+" click - only `contentViewController` needs to change since a
-        // fresh `HostEditorController` is built above for whichever host is
-        // being edited this time.
+        // Reuse one window across repeated Add/Edit calls rather than piling
+        // up a new one on every "+" click - only `contentViewController`
+        // needs to change since a fresh `HostEditorController` is built
+        // above for whichever host is being edited this time.
         let win: NSWindow
         if let existing = hostEditorWindow {
             win = existing
@@ -1082,21 +1068,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .keyEquivalentModifierMask = [.command, .shift]
         for item in keysMenu.items { item.target = appShell }
 
-        // Snippets menu - the Phase 3 saved-command library (B2/B5). Same
-        // shape as the Keys menu above, and folded into the same destination
-        // by the same phase.
-        let snippetsMenuItem = NSMenuItem()
-        mainMenu.addItem(snippetsMenuItem)
-        let snippetsMenu = NSMenu(title: "Snippets")
-        snippetsMenuItem.submenu = snippetsMenu
-        snippetsMenu.addItem(withTitle: "New Snippet…", action: #selector(AppShellController.newSnippetFromMenu), keyEquivalent: "n")
-            .keyEquivalentModifierMask = [.command, .option]
-        snippetsMenu.addItem(withTitle: "Manage Snippets…", action: #selector(AppShellController.selectSnippets), keyEquivalent: "p")
-            .keyEquivalentModifierMask = [.command, .option]
-        for item in snippetsMenu.items { item.target = appShell }
-
-        // Tab menu - the dynamic tab collection: new / duplicate / rename / close,
-        // reconnect, and ⌘1…⌘9 to jump to a tab. All resolve to ConsoleController.
+        // Tab menu - the dynamic tab collection: new / duplicate / rename /
+        // close / reconnect. All resolve to ConsoleController.
+        //
+        // `fm/grandline-menubar-remove-items`: the numbered "Select Tab
+        // 1"..."Select Tab 9" (⌘1…⌘9) items were removed per captain
+        // feedback ("this is not required in Tab") - a tab is still
+        // selectable by clicking its chip in the tab bar. `selectTabByShortcut`
+        // on both `ConsoleController` and `ToolsController` had no other
+        // caller (it existed purely to serve these menu items - see either
+        // method's own doc comment), so both were deleted rather than left
+        // as dead code.
         let tabMenuItem = NSMenuItem()
         mainMenu.addItem(tabMenuItem)
         let tabMenu = NSMenu(title: "Tab")
@@ -1109,13 +1091,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         tabMenu.addItem(withTitle: "Close Tab", action: #selector(ConsoleController.closeCurrentTab), keyEquivalent: "w")
         tabMenu.addItem(NSMenuItem.separator())
         tabMenu.addItem(withTitle: "Reconnect Tab", action: #selector(ConsoleController.reconnectActive), keyEquivalent: "r")
-        tabMenu.addItem(NSMenuItem.separator())
-        // ⌘1…⌘9 select the Nth tab; the tag carries the 1-based index.
-        for n in 1...9 {
-            let item = NSMenuItem(title: "Select Tab \(n)", action: #selector(ConsoleController.selectTabByShortcut(_:)), keyEquivalent: "\(n)")
-            item.tag = n
-            tabMenu.addItem(item)
-        }
 
         // `fm/grandline-menubar-remove-items`: the View, Window and Help
         // top-level menus are gone outright, not hidden/disabled - per
@@ -1894,7 +1869,7 @@ if ProcessInfo.processInfo.environment["FM_RUN_DEPENDENCY_CHECK_CACHE_TESTS"] ==
 // `FM_RUN_*_TESTS` block above (each of which `exit()`s, so a headless
 // self-test never contends for the lock and never blocks a real running
 // instance) and *before* `AppDelegate()` is constructed - which is the line
-// that builds `HostStore`/`SSHKeyStore`/`SnippetStore`/`DictationStore`/
+// that builds `HostStore`/`SSHKeyStore`/`DictationStore`/
 // `ShiftStore` and therefore the first thing that touches the shared files
 // two instances corrupt. See `SingleInstanceGuard`'s header for what each of
 // the three layers (Info.plist, NSRunningApplication, flock) actually covers.

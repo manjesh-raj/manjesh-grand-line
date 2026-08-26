@@ -1,7 +1,7 @@
 // Manjesh Grand Line - native macOS app.
 //
 // Portable local state (fm/cockpit-local-state-portable): this app's own
-// on-disk state - saved hosts, snippets, and a deliberate subset of
+// on-disk state - saved hosts and a deliberate subset of
 // `AppSettings` - has no equivalent of the dotfiles card's "sync this machine
 // from a real repo" story. This file is the model half: a single JSON bundle
 // format (`GrandLineBackup`), the diff used to preview an import before
@@ -10,8 +10,8 @@
 // Bootstrap).
 //
 // What's in the bundle and why:
-//   - The full contents of `hosts.json` / `snippets.json` - nothing filtered,
-//     since neither model carries a secret (`Host.password` is already
+//   - The full contents of `hosts.json` - nothing filtered,
+//     since it carries no secret (`Host.password` is already
 //     excluded from `Codable`, see `Host.swift`).
 //   - Non-secret metadata only for every `SSHKey` a bundled host's `keyID`
 //     references - never the Keychain-held private key bytes or passphrase,
@@ -60,7 +60,6 @@ struct GrandLineBackup: Codable {
 
     var formatVersion: Int
     var hosts: [Host]
-    var snippets: [Snippet]
     /// Metadata only for keys referenced by `hosts` - see this file's header.
     var keys: [SSHKey]
     var settings: BackupSettings
@@ -68,10 +67,9 @@ struct GrandLineBackup: Codable {
     /// see this file's header on why that needs no format-version bump.
     var dictation: BackupDictation?
 
-    init(hosts: [Host], snippets: [Snippet], keys: [SSHKey], settings: BackupSettings, dictation: BackupDictation? = nil) {
+    init(hosts: [Host], keys: [SSHKey], settings: BackupSettings, dictation: BackupDictation? = nil) {
         self.formatVersion = Self.currentFormatVersion
         self.hosts = hosts
-        self.snippets = snippets
         self.keys = keys
         self.settings = settings
         self.dictation = dictation
@@ -163,10 +161,10 @@ struct BackupDictation: Codable {
 enum GrandLineBackupBuilder {
     /// Builds a bundle from the live stores - only the `SSHKey` metadata
     /// referenced by at least one host is included, never the whole key list.
-    static func build(hosts: [Host], snippets: [Snippet], allKeys: [SSHKey], dictationStore: DictationStore) -> GrandLineBackup {
+    static func build(hosts: [Host], allKeys: [SSHKey], dictationStore: DictationStore) -> GrandLineBackup {
         let referencedKeyIDs = Set(hosts.compactMap { $0.keyID })
         let keys = allKeys.filter { referencedKeyIDs.contains($0.id) }
-        return GrandLineBackup(hosts: hosts, snippets: snippets, keys: keys, settings: .fromCurrent(), dictation: .fromCurrent(store: dictationStore))
+        return GrandLineBackup(hosts: hosts, keys: keys, settings: .fromCurrent(), dictation: .fromCurrent(store: dictationStore))
     }
 }
 
@@ -220,22 +218,8 @@ struct BackupHostDiffRow {
     var matchedLocalID: UUID?
 }
 
-struct BackupSnippetDiffRow {
-    var label: String
-    var status: BackupDiffStatus
-    var bundleSnippet: Snippet
-    var matchedLocalID: UUID?
-    /// S4: true when some host in the same bundle names this snippet as its
-    /// `startupSnippetID`, i.e. importing it means this command text runs by
-    /// itself ~1.5s after the next connect to that host, with no further
-    /// confirmation. That is the one thing about a bundled snippet a captain
-    /// most needs to see before approving an import, and the preview used to
-    /// show neither it nor the command text - only the label.
-    var autoRunsOnConnect: Bool = false
-}
-
 /// A single bundled vocabulary word - `.changed` is never produced here (a
-/// word has no fields of its own to differ on, unlike a host/snippet), only
+/// word has no fields of its own to differ on, unlike a host), only
 /// `.new`/`.unchanged`.
 struct BackupVocabularyDiffRow {
     var word: String
@@ -245,7 +229,6 @@ struct BackupVocabularyDiffRow {
 enum BackupImport {
     struct Preview {
         var hostRows: [BackupHostDiffRow]
-        var snippetRows: [BackupSnippetDiffRow]
         /// One line per bundled host whose `keyID` isn't a key this machine
         /// already has - see this file's header on why the bundle's key
         /// metadata is never written back into `SSHKeyStore` itself.
@@ -267,9 +250,6 @@ enum BackupImport {
         var newHostsCount: Int { hostRows.filter { $0.status == .new }.count }
         var changedHostsCount: Int { hostRows.filter { $0.status == .changed }.count }
         var unchangedHostsCount: Int { hostRows.filter { $0.status == .unchanged }.count }
-        var newSnippetsCount: Int { snippetRows.filter { $0.status == .new }.count }
-        var changedSnippetsCount: Int { snippetRows.filter { $0.status == .changed }.count }
-        var unchangedSnippetsCount: Int { snippetRows.filter { $0.status == .unchanged }.count }
         var newVocabularyCount: Int { vocabularyRows.filter { $0.status == .new }.count }
         var unchangedVocabularyCount: Int { vocabularyRows.filter { $0.status == .unchanged }.count }
     }
@@ -278,9 +258,9 @@ enum BackupImport {
     /// hardcoded description. Matches a bundled item to an existing one by
     /// id first (the common case: re-importing a bundle exported from this
     /// same host set), then falls back to a case-insensitive label match (a
-    /// host/snippet recreated with a new id since the export still counts as
+    /// host recreated with a new id since the export still counts as
     /// "the same thing, possibly changed" rather than a duplicate).
-    static func diff(bundle: GrandLineBackup, existingHosts: [Host], existingSnippets: [Snippet], existingKeys: [SSHKey], existingVocabulary: [String] = [], existingShortcut: DictationShortcut? = nil) -> Preview {
+    static func diff(bundle: GrandLineBackup, existingHosts: [Host], existingKeys: [SSHKey], existingVocabulary: [String] = [], existingShortcut: DictationShortcut? = nil) -> Preview {
         var hostRows: [BackupHostDiffRow] = []
         var rejectedHostWarnings: [String] = []
         for bundleHost in bundle.hosts {
@@ -313,19 +293,6 @@ enum BackupImport {
             }
         }
 
-        // S4: which bundled snippets a bundled host will auto-run on connect.
-        let autoRunIDs = Set(bundle.hosts.compactMap { $0.startupSnippetID })
-        var snippetRows: [BackupSnippetDiffRow] = []
-        for bundleSnippet in bundle.snippets {
-            if let match = existingSnippets.first(where: { $0.id == bundleSnippet.id })
-                ?? existingSnippets.first(where: { $0.label.caseInsensitiveCompare(bundleSnippet.label) == .orderedSame }) {
-                let same = match.label == bundleSnippet.label && match.command == bundleSnippet.command
-                snippetRows.append(BackupSnippetDiffRow(label: bundleSnippet.label, status: same ? .unchanged : .changed, bundleSnippet: bundleSnippet, matchedLocalID: match.id, autoRunsOnConnect: autoRunIDs.contains(bundleSnippet.id)))
-            } else {
-                snippetRows.append(BackupSnippetDiffRow(label: bundleSnippet.label, status: .new, bundleSnippet: bundleSnippet, matchedLocalID: nil, autoRunsOnConnect: autoRunIDs.contains(bundleSnippet.id)))
-            }
-        }
-
         let localKeyIDs = Set(existingKeys.map { $0.id })
         var keyWarnings: [String] = []
         for bundleHost in bundle.hosts {
@@ -350,7 +317,7 @@ enum BackupImport {
         }
 
         return Preview(
-            hostRows: hostRows, snippetRows: snippetRows, keyWarnings: keyWarnings,
+            hostRows: hostRows, keyWarnings: keyWarnings,
             rejectedHostWarnings: rejectedHostWarnings, settingsSummary: bundle.settings.summary,
             vocabularyRows: vocabularyRows, shortcutStatus: shortcutStatus, shortcutDisplay: shortcutDisplay
         )
@@ -364,17 +331,16 @@ enum BackupImport {
         a.label == b.label && a.address == b.address && a.port == b.port && a.username == b.username
             && a.keyID == b.keyID && a.iconSymbol == b.iconSymbol && a.accentHex == b.accentHex
             && a.group == b.group && a.tags == b.tags && a.agentForward == b.agentForward
-            && a.jumpVia == b.jumpVia && a.portForwards == b.portForwards && a.startupSnippetID == b.startupSnippetID
+            && a.jumpVia == b.jumpVia && a.portForwards == b.portForwards
     }
 
     /// Applies a previously computed diff. New items are added as-is;
     /// matched-but-changed items are written under the LOCAL id (never the
-    /// bundle's), so anything already pointing at that host/snippet - a jump
-    /// chain resolved by label, a startup-snippet reference by id - stays
-    /// valid. Unchanged items are left untouched. The bundle's settings
-    /// subset is always applied, since the diff preview already showed it
-    /// before this was called.
-    static func apply(_ preview: Preview, bundle: GrandLineBackup, hostStore: HostStore, snippetStore: SnippetStore, dictationStore: DictationStore? = nil) {
+    /// bundle's), so anything already pointing at that host - a jump
+    /// chain resolved by label - stays valid. Unchanged items are left
+    /// untouched. The bundle's settings subset is always applied, since the
+    /// diff preview already showed it before this was called.
+    static func apply(_ preview: Preview, bundle: GrandLineBackup, hostStore: HostStore, dictationStore: DictationStore? = nil) {
         for row in preview.hostRows {
             var host = row.bundleHost
             switch row.status {
@@ -383,18 +349,6 @@ enum BackupImport {
             case .changed:
                 if let localID = row.matchedLocalID { host.id = localID }
                 hostStore.update(host)
-            case .unchanged:
-                continue
-            }
-        }
-        for row in preview.snippetRows {
-            var snippet = row.bundleSnippet
-            switch row.status {
-            case .new:
-                snippetStore.add(snippet)
-            case .changed:
-                if let localID = row.matchedLocalID { snippet.id = localID }
-                snippetStore.update(snippet)
             case .unchanged:
                 continue
             }

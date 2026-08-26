@@ -717,7 +717,7 @@ enum DaylightModuleSelfTest {
 
         // A constructor call, not a mention: `Store()` / `Source()`.
         let banned = ["ShiftStore(", "HostStore(", "ScheduleStore(", "LogAnalyzerStore(",
-                      "DocsRunbookStore(", "CommandLibraryStore(", "SnippetStore(",
+                      "DocsRunbookStore(", "CommandLibraryStore(",
                       "SSHKeyStore(", "DictationStore(", "IncidentStore(", "FleetLogStore("]
         for name in banned where code.contains(name) {
             fail("HomeCanvasController constructs a \(name.dropLast()) - it must be injected "
@@ -838,16 +838,15 @@ enum DaylightModuleSelfTest {
                                   styleMask: [.titled, .resizable], backing: .buffered, defer: false)
             let hostStore = HostStore()
             let keyStore = SSHKeyStore()
-            let snippetStore = SnippetStore()
             let shell = AppShellController(
-                hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
-                console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
+                hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore),
+                console: ConsoleController(keyStore: keyStore, isFirstmateConsole: false),
                 settings: SettingsController(hostStore: hostStore, keyStore: keyStore,
-                                             snippetStore: snippetStore, dictationStore: DictationStore()),
-                hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore,
+                                             dictationStore: DictationStore()),
+                hostStore: hostStore, keyStore: keyStore,
                 shiftStore: ShiftStore(), dictationStore: DictationStore(),
                 commandLibraryStore: CommandLibraryStore(), scheduleStore: ScheduleStore(),
-                makeHostConsole: { ConsoleController(keyStore: keyStore, snippetStore: snippetStore,
+                makeHostConsole: { ConsoleController(keyStore: keyStore,
                                                      isFirstmateConsole: false) }
             )
             window.contentViewController = shell
@@ -1033,16 +1032,15 @@ enum DaylightModuleSelfTest {
                                   styleMask: [.titled, .resizable], backing: .buffered, defer: false)
             let hostStore = HostStore()
             let keyStore = SSHKeyStore()
-            let snippetStore = SnippetStore()
             let shell = AppShellController(
-                hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
-                console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
+                hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore),
+                console: ConsoleController(keyStore: keyStore, isFirstmateConsole: false),
                 settings: SettingsController(hostStore: hostStore, keyStore: keyStore,
-                                             snippetStore: snippetStore, dictationStore: DictationStore()),
-                hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore,
+                                             dictationStore: DictationStore()),
+                hostStore: hostStore, keyStore: keyStore,
                 shiftStore: ShiftStore(), dictationStore: DictationStore(),
                 commandLibraryStore: CommandLibraryStore(), scheduleStore: ScheduleStore(),
-                makeHostConsole: { ConsoleController(keyStore: keyStore, snippetStore: snippetStore,
+                makeHostConsole: { ConsoleController(keyStore: keyStore,
                                                      isFirstmateConsole: false) }
             )
             window.contentViewController = shell

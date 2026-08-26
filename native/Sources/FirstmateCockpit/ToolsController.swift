@@ -691,13 +691,6 @@ final class ToolsController: NSViewController, DaylightDrillActions {
         styleChips()
     }
 
-    /// ⌘1…⌘9: select the Nth open tab (menu items carry a 1-based tag).
-    @objc func selectTabByShortcut(_ sender: NSMenuItem) {
-        let idx = sender.tag - 1
-        guard idx >= 0, idx < tabs.count else { return }
-        selectTab(id: tabs[idx].id)
-    }
-
     private func selectTab(id: UUID) {
         guard let tab = tabs.first(where: { $0.id == id }) else { return }
         currentTab = tab

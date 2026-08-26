@@ -96,7 +96,7 @@ enum BlockViewRestartIntegrationSelfTest {
     /// real `openSSH`/`viewDidAppear` path - exactly production's own
     /// sequence for a freshly-connected, opted-in host.
     private static func makeStartedTestConsole() -> (window: NSWindow, controller: ConsoleController) {
-        let controller = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(), isFirstmateConsole: false)
+        let controller = ConsoleController(keyStore: SSHKeyStore(), isFirstmateConsole: false)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
             styleMask: [.titled],

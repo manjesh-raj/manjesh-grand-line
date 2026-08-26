@@ -138,9 +138,9 @@ enum Phase1HardeningSelfTest {
         print("- BackupImport: a tampered bundle's unsafe host never reaches the store")
         let good = Host(label: "Good", address: "bastion.example.com", username: "manjesh")
         let evil = Host(label: "Evil", address: "-oProxyCommand=/usr/bin/touch /tmp/pwned")
-        let bundle = GrandLineBackup(hosts: [good, evil], snippets: [], keys: [], settings: BackupSettings())
+        let bundle = GrandLineBackup(hosts: [good, evil], keys: [], settings: BackupSettings())
 
-        let preview = BackupImport.diff(bundle: bundle, existingHosts: [], existingSnippets: [], existingKeys: [])
+        let preview = BackupImport.diff(bundle: bundle, existingHosts: [], existingKeys: [])
         check(preview.hostRows.count == 1, "only the safe host produced a diff row")
         check(preview.hostRows.first?.label == "Good", "and it is the safe one")
         check(preview.rejectedHostWarnings.count == 1, "the refusal is reported to the captain")

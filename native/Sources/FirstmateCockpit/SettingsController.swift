@@ -58,19 +58,17 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         "\(HelmTheme.allThemes.count) themes \u{00B7} everything here is stored locally on this machine"
     }
 
-    /// The four stores the "Backup & Restore" card exports from / imports
+    /// The stores the "Backup & Restore" card exports from / imports
     /// into (`BackupUI.swift`) - injected so this controller doesn't need any
     /// persistence logic of its own, matching how `onPresentHostEditor`
     /// keeps `AppShellController` ignorant of `HostStore`.
     private let hostStore: HostStore
     private let keyStore: SSHKeyStore
-    private let snippetStore: SnippetStore
     private let dictationStore: DictationStore
 
-    init(hostStore: HostStore, keyStore: SSHKeyStore, snippetStore: SnippetStore, dictationStore: DictationStore) {
+    init(hostStore: HostStore, keyStore: SSHKeyStore, dictationStore: DictationStore) {
         self.hostStore = hostStore
         self.keyStore = keyStore
-        self.snippetStore = snippetStore
         self.dictationStore = dictationStore
         super.init(nibName: nil, bundle: nil)
     }
@@ -185,7 +183,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         // rail destination (`fm/grandline-health-sidebar-move`,
         // `HealthController.swift`) - the same correction F11's Schedules
         // card already got. Backup & Restore is the last card here now.
-        let backup = card(icon: "tray.and.arrow.up.fill", tint: .info, title: "Backup & Restore", subtitle: "Move saved hosts, snippets, and preferences between machines", content: buildBackupSection())
+        let backup = card(icon: "tray.and.arrow.up.fill", tint: .info, title: "Backup & Restore", subtitle: "Move saved hosts and preferences between machines", content: buildBackupSection())
 
         // §7's "two-column cards" is a *layout* decision taken per pass rather
         // than a fixed stack, so `cardsInOrder` is the content and
@@ -1029,7 +1027,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// Bootstrap page's "Restore Grand Line config" step - this card is just
     /// the two buttons plus a live counts line, never its own logic.
     private func buildBackupSection() -> NSView {
-        let desc = NSTextField(wrappingLabelWithString: "Write everything this app knows locally - saved hosts, snippets, and the preferences above - to a single file, or bring one in from another machine. SSH private keys never leave the Keychain; a restored host referencing a key not on this machine needs that key re-added from the Keys screen.")
+        let desc = NSTextField(wrappingLabelWithString: "Write everything this app knows locally - saved hosts, and the preferences above - to a single file, or bring one in from another machine. SSH private keys never leave the Keychain; a restored host referencing a key not on this machine needs that key re-added from the Keys screen.")
         desc.font = .systemFont(ofSize: 11)
         mutedLabel(desc)
         wrapping(desc)
@@ -1053,16 +1051,15 @@ final class SettingsController: NSViewController, DaylightDrillActions {
 
     private func refreshBackupStatus() {
         let hostCount = hostStore.hosts.count
-        let snippetCount = snippetStore.snippets.count
-        backupStatusLabel.stringValue = "Currently saved: \(hostCount) host\(hostCount == 1 ? "" : "s"), \(snippetCount) snippet\(snippetCount == 1 ? "" : "s")."
+        backupStatusLabel.stringValue = "Currently saved: \(hostCount) host\(hostCount == 1 ? "" : "s")."
     }
 
     @objc private func exportBackupClicked() {
-        BackupUI.exportFlow(from: self, hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore)
+        BackupUI.exportFlow(from: self, hostStore: hostStore, keyStore: keyStore, dictationStore: dictationStore)
     }
 
     @objc private func importBackupClicked() {
-        BackupUI.importFlow(from: self, hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore) { [weak self] in
+        BackupUI.importFlow(from: self, hostStore: hostStore, keyStore: keyStore, dictationStore: dictationStore) { [weak self] in
             self?.refreshFromSettings()
         }
     }

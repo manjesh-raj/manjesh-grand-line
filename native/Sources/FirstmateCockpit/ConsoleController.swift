@@ -74,11 +74,6 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// `SSHKeyMaterializer`.
     let keyStore: SSHKeyStore
 
-    /// The snippet library (Phase 3, B2/B5) - consulted to resolve a host's
-    /// startup-snippet id, and by `runSnippetInActiveTab` for the Snippets
-    /// panel's "Run" action.
-    let snippetStore: SnippetStore
-
     /// Fix 1 (dedicated host pages): `false` for a per-host console
     /// (`AppShellController.connectHost`'s `makeHostConsole` factory), which
     /// governs two related behaviours instead of one - both express "this is
@@ -94,9 +89,8 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// reconnecting that host.
     let isFirstmateConsole: Bool
 
-    init(keyStore: SSHKeyStore, snippetStore: SnippetStore, isFirstmateConsole: Bool = true) {
+    init(keyStore: SSHKeyStore, isFirstmateConsole: Bool = true) {
         self.keyStore = keyStore
-        self.snippetStore = snippetStore
         self.isFirstmateConsole = isFirstmateConsole
         super.init(nibName: nil, bundle: nil)
     }

@@ -128,14 +128,12 @@ final class AutomationController: NSViewController, SetupPageSummary {
 
     private let hostStore: HostStore
     private let keyStore: SSHKeyStore
-    private let snippetStore: SnippetStore
     private let dictationStore: DictationStore
 
-    init(hostStore: HostStore, keyStore: SSHKeyStore, snippetStore: SnippetStore,
+    init(hostStore: HostStore, keyStore: SSHKeyStore,
          dictationStore: DictationStore) {
         self.hostStore = hostStore
         self.keyStore = keyStore
-        self.snippetStore = snippetStore
         self.dictationStore = dictationStore
         super.init(nibName: nil, bundle: nil)
     }
@@ -479,7 +477,7 @@ final class AutomationController: NSViewController, SetupPageSummary {
 
     @objc private func restoreConfigChooseFileClicked() {
         guard steps.first(where: { $0.kind == .restoreConfig })?.status == .waitingForCaptain else { return }
-        BackupUI.importFlow(from: self, hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore) { [weak self] in
+        BackupUI.importFlow(from: self, hostStore: hostStore, keyStore: keyStore, dictationStore: dictationStore) { [weak self] in
             self?.continueRestoreConfigStep(skipped: false)
         }
     }
@@ -502,7 +500,7 @@ final class AutomationController: NSViewController, SetupPageSummary {
         case .software:
             return SetupStepChecks.softwareDone(isLoading: isLoadingSoftware, statuses: toolRows.map { $0.status })
         case .restoreConfig:
-            return SetupStepChecks.restoreConfigDone(hostCount: hostStore.hosts.count, snippetCount: snippetStore.snippets.count)
+            return SetupStepChecks.restoreConfigDone(hostCount: hostStore.hosts.count)
         }
     }
 
@@ -937,7 +935,7 @@ final class AutomationController: NSViewController, SetupPageSummary {
             let missing = toolRows.filter { $0.status == .notInstalled }.count
             return missing == 0 ? "All \(toolRows.count) tracked tools installed." : "\(missing) of \(toolRows.count) tracked tools not installed."
         case .restoreConfig:
-            return "Import a .glbackup file exported from another machine to bring in its saved hosts, snippets, and preferences here."
+            return "Import a .glbackup file exported from another machine to bring in its saved hosts and preferences here."
         }
     }
 

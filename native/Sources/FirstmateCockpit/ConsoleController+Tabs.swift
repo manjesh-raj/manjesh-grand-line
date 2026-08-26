@@ -160,8 +160,8 @@ extension ConsoleController {
                 execName: nil,
                 currentDirectory: cwd
             )
-        case .ssh(_, let exe, let hostArgs, let keyID, let startupSnippetID):
-            connectSSH(tab, executable: exe, hostArgs: hostArgs, keyID: keyID, startupSnippetID: startupSnippetID)
+        case .ssh(_, let exe, let hostArgs, let keyID):
+            connectSSH(tab, executable: exe, hostArgs: hostArgs, keyID: keyID)
         }
         tab.started = true
         restartTabBookkeeping(tab)
@@ -346,13 +346,6 @@ extension ConsoleController {
         if let current = currentTab { view.window?.makeFirstResponder(current.terminal) }
     }
 
-    /// ⌘1…⌘9: select the Nth tab (menu items carry a 1-based tag).
-    @objc func selectTabByShortcut(_ sender: NSMenuItem) {
-        let idx = sender.tag - 1
-        guard idx >= 0, idx < tabs.count else { return }
-        select(tabID: tabs[idx].id)
-    }
-
     // MARK: Selection
 
     func activeTerminal() -> CockpitTerminalView? { currentTab?.terminal }
@@ -409,8 +402,8 @@ extension ConsoleController {
                 execName: nil,
                 currentDirectory: cwd
             )
-        case .ssh(_, let exe, let hostArgs, let keyID, let startupSnippetID):
-            connectSSH(tab, executable: exe, hostArgs: hostArgs, keyID: keyID, startupSnippetID: startupSnippetID)
+        case .ssh(_, let exe, let hostArgs, let keyID):
+            connectSSH(tab, executable: exe, hostArgs: hostArgs, keyID: keyID)
         }
         // The manual-reconnect path's own restart bookkeeping - see
         // `restartTabBookkeeping`'s doc comment for why `startTab` and this

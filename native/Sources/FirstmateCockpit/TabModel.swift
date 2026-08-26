@@ -27,27 +27,25 @@ enum TabLaunch {
     /// resolves through the Keychain into a temporary `-i <path>` on every
     /// start/reconnect - never baked into `hostArgs` itself, so duplicating or
     /// reconnecting this tab always re-resolves the key rather than reusing a
-    /// stale temp file. `startupSnippetID` (Phase 3, B2/B5) is a saved
-    /// snippet `ConsoleController` sends into the shell, best-effort, once
-    /// the session looks ready.
-    case ssh(label: String, executable: String, hostArgs: [String], keyID: UUID?, startupSnippetID: UUID?)
+    /// stale temp file.
+    case ssh(label: String, executable: String, hostArgs: [String], keyID: UUID?)
 
     /// The default display name for a freshly created tab of this kind.
     var defaultName: String {
         switch self {
         case .shell: return "Shell"
-        case .ssh(let label, _, _, _, _): return label
+        case .ssh(let label, _, _, _): return label
         }
     }
 
     /// Groups tabs for the numbered-disambiguation naming convention
     /// (Finding 6, cockpit-audit-core - Console adopting the Tools page's
     /// established "bare kind name for the first instance, N appended for
-    /// subsequent concurrent ones" scheme). 
+    /// subsequent concurrent ones" scheme).
     var kindIdentity: String {
         switch self {
         case .shell: return "shell"
-        case .ssh(let label, _, _, _, _): return "ssh:\(label)"
+        case .ssh(let label, _, _, _): return "ssh:\(label)"
         }
     }
 }

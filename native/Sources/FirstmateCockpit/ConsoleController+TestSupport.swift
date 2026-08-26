@@ -57,7 +57,7 @@ extension ConsoleController {
         openSSH(
             label: label,
             args: ["-o", "ConnectTimeout=1", "-o", "BatchMode=yes", "127.0.0.1"],
-            accentHex: nil, keyID: nil, startupSnippetID: nil, blockViewOptIn: true
+            accentHex: nil, keyID: nil, blockViewOptIn: true
         )
     }
 

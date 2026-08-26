@@ -15,8 +15,8 @@
 // The generated command is never run automatically. `ConsoleComposerController`
 // (`ConsoleComposerPopover.swift`) is the one UI surface that calls `generate`,
 // and it only ever shows the result for review - `ConsoleController`'s "Run in
-// terminal" action is the sole path that sends it to a real tab, via the exact
-// same `TerminalView.send(txt:)` a Snippet's own "Run" action already uses.
+// terminal" action is the sole path that sends it to a real tab, via
+// `TerminalView.send(txt:)`.
 //
 // A `claude -p` failure (bad path, no auth, timeout, garbled response) is
 // always reported as a clean `.failure`, never a crash - the popover shows it

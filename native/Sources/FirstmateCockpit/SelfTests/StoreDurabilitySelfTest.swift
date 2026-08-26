@@ -62,7 +62,6 @@ enum StoreDurabilitySelfTest {
         defer { try? FileManager.default.removeItem(at: scratch) }
 
         sshKeyStoreBacksUpAndDoesNotOverwrite(scratch: scratch)
-        snippetStoreBacksUpAndDoesNotOverwrite(scratch: scratch)
         dictationStoreBacksUpAndDoesNotOverwrite(scratch: scratch)
         shiftDistinguishesMissingFromCorrupt(scratch: scratch)
         shiftRefusesWritesWhileLoadFailed(scratch: scratch)
@@ -119,24 +118,6 @@ enum StoreDurabilitySelfTest {
             check(backups.count == 1, "exactly one .corrupt- backup exists")
             let recovered = backups.first.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
             check(recovered == realBytes, "the backup holds the original bytes byte-for-byte")
-        }
-    }
-
-    private static func snippetStoreBacksUpAndDoesNotOverwrite(scratch: URL) {
-        print("- SnippetStore: an undecodable snippets.json is preserved, not overwritten")
-        let file = scratch.appendingPathComponent("snippets.json")
-        let realBytes = #"[{"id":"not-a-uuid","label":"attach tmux","command":"tmux a"}]"#
-        try? realBytes.write(to: file, atomically: true, encoding: .utf8)
-
-        withEnv(["FM_SNIPPETS_FILE": file.path]) {
-            let store = SnippetStore()
-            check(store.snippets.isEmpty, "load() yields an empty list")
-            check(store.loadFailureBackupPath != nil, "the failure is reported")
-            store.add(Snippet(label: "fresh", command: "echo hi"))
-            let backups = corruptBackupPaths(besides: file)
-            check(backups.count == 1, "exactly one .corrupt- backup exists")
-            let recovered = backups.first.flatMap { try? String(contentsOf: $0, encoding: .utf8) }
-            check(recovered == realBytes, "the backup holds the original bytes")
         }
     }
 

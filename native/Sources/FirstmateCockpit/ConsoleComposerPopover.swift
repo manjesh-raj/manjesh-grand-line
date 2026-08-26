@@ -81,8 +81,7 @@
 // posture, the captain's explicit "look before you run" expectation). The
 // generated command is only ever shown for review; `onRunInTerminal` is the
 // one explicit action that sends anything to a real terminal, wired by
-// `ConsoleController` to `currentTab?.terminal.send(txt:)` - the same call a
-// Snippet's own "Run" action already uses.
+// `ConsoleController` to `currentTab?.terminal.send(txt:)`.
 //
 // `fm/grandline-composer-input-styling` fixed a real captain-reported bug:
 // the intent field read as plain, undifferentiated text with no visible

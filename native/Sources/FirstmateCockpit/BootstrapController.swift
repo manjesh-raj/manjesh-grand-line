@@ -187,19 +187,17 @@ extension SetupStepKind {
 
 final class BootstrapController: NSViewController, SetupPageSummary {
 
-    /// The three stores the "Restore Grand Line config" step reads/writes
+    /// The stores the "Restore Grand Line config" step reads/writes
     /// through the shared `BackupUI.importFlow` (fm/cockpit-local-state-
     /// portable) - injected the same way `AppShellController` stays ignorant
     /// of `HostStore` via `onPresentHostEditor`.
     private let hostStore: HostStore
     private let keyStore: SSHKeyStore
-    private let snippetStore: SnippetStore
     private let dictationStore: DictationStore
 
-    init(hostStore: HostStore, keyStore: SSHKeyStore, snippetStore: SnippetStore, dictationStore: DictationStore) {
+    init(hostStore: HostStore, keyStore: SSHKeyStore, dictationStore: DictationStore) {
         self.hostStore = hostStore
         self.keyStore = keyStore
-        self.snippetStore = snippetStore
         self.dictationStore = dictationStore
         super.init(nibName: nil, bundle: nil)
     }
@@ -993,7 +991,7 @@ final class BootstrapController: NSViewController, SetupPageSummary {
         case .software:
             return SetupStepChecks.softwareDone(isLoading: isLoadingSoftware, statuses: softwareRows.map { $0.status })
         case .restoreConfig:
-            return SetupStepChecks.restoreConfigDone(hostCount: hostStore.hosts.count, snippetCount: snippetStore.snippets.count)
+            return SetupStepChecks.restoreConfigDone(hostCount: hostStore.hosts.count)
         }
     }
 
@@ -1032,9 +1030,8 @@ final class BootstrapController: NSViewController, SetupPageSummary {
             return missing == 0 ? ("All installed", theme.ansiHex[2]) : ("\(missing) missing", theme.ansiHex[3])
         case .restoreConfig:
             let hostCount = hostStore.hosts.count
-            let snippetCount = snippetStore.snippets.count
-            guard hostCount > 0 || snippetCount > 0 else { return ("Nothing to show yet", theme.chromeInkHex) }
-            return ("\(hostCount) host\(hostCount == 1 ? "" : "s"), \(snippetCount) snippet\(snippetCount == 1 ? "" : "s")", theme.ansiHex[2])
+            guard hostCount > 0 else { return ("Nothing to show yet", theme.chromeInkHex) }
+            return ("\(hostCount) host\(hostCount == 1 ? "" : "s")", theme.ansiHex[2])
         }
     }
 
@@ -1050,7 +1047,7 @@ final class BootstrapController: NSViewController, SetupPageSummary {
         case .software:
             return "\(softwareRows.count) tracked dependencies across \(DependencyCatalog.categoryOrder.count) categories."
         case .restoreConfig:
-            return "Import a .glbackup file exported from another machine to bring in its saved hosts, snippets, and preferences here."
+            return "Import a .glbackup file exported from another machine to bring in its saved hosts and preferences here."
         }
     }
 
@@ -1298,15 +1295,14 @@ final class BootstrapController: NSViewController, SetupPageSummary {
     private func rebuildRestoreSection() {
         clearStack(restoreStack)
 
-        let desc = NSTextField(wrappingLabelWithString: "Bring in saved hosts, snippets, and preferences exported from another machine. SSH private keys never leave the Keychain - a restored host referencing a key not on this machine needs that key re-added from the Keys screen.")
+        let desc = NSTextField(wrappingLabelWithString: "Bring in saved hosts and preferences exported from another machine. SSH private keys never leave the Keychain - a restored host referencing a key not on this machine needs that key re-added from the Keys screen.")
         desc.font = .systemFont(ofSize: 11)
         desc.textColor = HelmTheme.mutedInk(theme)
         desc.preferredMaxLayoutWidth = 520
         dynamicLabels.append(desc)
 
         let hostCount = hostStore.hosts.count
-        let snippetCount = snippetStore.snippets.count
-        restoreStatusLabel.stringValue = "Currently saved here: \(hostCount) host\(hostCount == 1 ? "" : "s"), \(snippetCount) snippet\(snippetCount == 1 ? "" : "s")."
+        restoreStatusLabel.stringValue = "Currently saved here: \(hostCount) host\(hostCount == 1 ? "" : "s")."
         restoreStatusLabel.font = .systemFont(ofSize: 11)
         restoreStatusLabel.textColor = HelmTheme.mutedInk(theme)
         dynamicLabels.append(restoreStatusLabel)
@@ -1322,7 +1318,7 @@ final class BootstrapController: NSViewController, SetupPageSummary {
     }
 
     @objc private func importRestoreConfigClicked() {
-        BackupUI.importFlow(from: self, hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore) { [weak self] in
+        BackupUI.importFlow(from: self, hostStore: hostStore, keyStore: keyStore, dictationStore: dictationStore) { [weak self] in
             self?.rebuildDynamicSections()
         }
     }

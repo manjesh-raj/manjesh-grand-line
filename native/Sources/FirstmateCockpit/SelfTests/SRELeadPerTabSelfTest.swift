@@ -72,7 +72,7 @@ enum SRELeadPerTabSelfTest {
     /// and started via the real `openSSH`/`viewDidAppear` path - mirrors
     /// `BlockViewRestartIntegrationSelfTest.makeStartedTestConsole()`.
     private static func makeStartedTestConsole(tabCount: Int) -> (window: NSWindow, controller: ConsoleController, tabIDs: [UUID]) {
-        let controller = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(), isFirstmateConsole: false)
+        let controller = ConsoleController(keyStore: SSHKeyStore(), isFirstmateConsole: false)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
             styleMask: [.titled],
@@ -86,7 +86,7 @@ enum SRELeadPerTabSelfTest {
             controller.openSSH(
                 label: "Per-Tab Test Host \(i + 1)",
                 args: ["-o", "ConnectTimeout=1", "-o", "BatchMode=yes", "127.0.0.1"],
-                accentHex: nil, keyID: nil, startupSnippetID: nil
+                accentHex: nil, keyID: nil
             )
         }
         controller.viewDidAppear()

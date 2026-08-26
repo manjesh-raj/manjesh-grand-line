@@ -85,16 +85,15 @@ extension ConsoleController {
     /// resolved key. The tab's name defaults to the host label (rename still
     /// works), and `accentHex` tints its chip with the host colour (A3).
     /// Duplicating this tab (Phase 0) re-runs the same connection, re-resolving
-    /// `keyID` independently for the new tab. `startupSnippetID` (B2/B5), when
-    /// set, is sent into the shell once the session looks ready. `blockViewOptIn`
+    /// `keyID` independently for the new tab. `blockViewOptIn`
     /// (`fm/cockpit-block-view-stage0`) defaults `false` - only
     /// `connectSSHIfNeeded` (a saved host's dedicated page) ever passes
     /// `true`, and only for the one host whose `Host.blockViewOptIn` is set;
     /// an ad-hoc quick-connect has no `Host` to read that flag from at all.
-    func openSSH(label: String, args: [String], accentHex: String?, keyID: UUID?, startupSnippetID: UUID? = nil, blockViewOptIn: Bool = false) {
+    func openSSH(label: String, args: [String], accentHex: String?, keyID: UUID?, blockViewOptIn: Bool = false) {
         let launch = TabLaunch.ssh(
             label: label, executable: HostCatalog.sshExecutable, hostArgs: args,
-            keyID: keyID, startupSnippetID: startupSnippetID
+            keyID: keyID
         )
         addTab(launch: launch, name: numberedName(for: launch), select: true, accentHex: accentHex, blockViewOptIn: blockViewOptIn)
         // Bring the console forward if the user was in the sidebar.
@@ -111,9 +110,9 @@ extension ConsoleController {
     /// part) instead of implicitly stacking a second tab. A deliberate
     /// second session to the same host still works via the tab chip's own
     /// Duplicate affordance (⌘D / `duplicateTab`).
-    func connectSSHIfNeeded(label: String, args: [String], accentHex: String?, keyID: UUID?, startupSnippetID: UUID?, blockViewOptIn: Bool = false) {
+    func connectSSHIfNeeded(label: String, args: [String], accentHex: String?, keyID: UUID?, blockViewOptIn: Bool = false) {
         guard tabs.isEmpty else { return }
-        openSSH(label: label, args: args, accentHex: accentHex, keyID: keyID, startupSnippetID: startupSnippetID, blockViewOptIn: blockViewOptIn)
+        openSSH(label: label, args: args, accentHex: accentHex, keyID: keyID, blockViewOptIn: blockViewOptIn)
         // `fm/grandline-sre-lead-per-tab`: no `primarySSHTab` to set anymore -
         // SRE Lead is per-tab now (`TabModel.sreLead`), started explicitly by
         // the captain for whichever tab they're looking at, never pinned to
@@ -143,10 +142,10 @@ extension ConsoleController {
     /// all. A genuine *error* (a deleted key, a Keychain fault) still falls
     /// through to agent auth as before - that is an accident, not a decision,
     /// and refusing to connect over it would be a regression.
-    func connectSSH(_ tab: TabModel, executable: String, hostArgs: [String], keyID: UUID?, startupSnippetID: UUID? = nil) {
+    func connectSSH(_ tab: TabModel, executable: String, hostArgs: [String], keyID: UUID?) {
         cleanupSSHKeyTempFile(tab)
         guard let keyID, let key = keyStore.key(id: keyID) else {
-            startSSHProcess(tab, executable: executable, args: hostArgs, startupSnippetID: startupSnippetID)
+            startSSHProcess(tab, executable: executable, args: hostArgs)
             return
         }
         // GL-25: the Keychain read inside `materialize` is what presents the
@@ -198,14 +197,14 @@ extension ConsoleController {
                     tab.terminal.feed(text: "\r\n  \u{1b}[2m[ssh key]\u{1b}[0m \(error.localizedDescription)\r\n")
                     tab.terminal.feed(text: "  \u{1b}[2mConnecting without the saved key. Press ⌘R to retry.\u{1b}[0m\r\n")
                 }
-                self.startSSHProcess(tab, executable: executable, args: args, startupSnippetID: startupSnippetID)
+                self.startSSHProcess(tab, executable: executable, args: args)
             }
         }
     }
 
     /// The half of `connectSSH` that has to run on the main thread: forking
-    /// the PTY and (optionally) firing the host's startup snippet.
-    func startSSHProcess(_ tab: TabModel, executable: String, args: [String], startupSnippetID: UUID?) {
+    /// the PTY.
+    func startSSHProcess(_ tab: TabModel, executable: String, args: [String]) {
         // No output filtering happens on this path: `startProcess` forks a
         // genuine PTY and every byte the host sends reaches the terminal
         // untouched (design report B1 "known hosts" - the interactive
@@ -221,24 +220,6 @@ extension ConsoleController {
             execName: nil,
             currentDirectory: shellCwd()
         )
-        if let startupSnippetID {
-            runStartupSnippet(startupSnippetID, in: tab)
-        }
-    }
-
-    /// Best-effort startup snippet (B2/B5): "attach tmux, cd to the
-    /// project" style commands a host wants run once its shell prompt is up.
-    /// There is no reliable, protocol-level "the remote shell is now ready"
-    /// signal to hook - the report is explicit that best-effort timing is
-    /// fine for v1 - so this sends the snippet text after a fixed delay from
-    /// process start, long enough for `ssh` to authenticate and the remote
-    /// shell to print its prompt on a typical connection.
-    func runStartupSnippet(_ id: UUID, in tab: TabModel) {
-        guard let snippet = snippetStore.snippet(id: id) else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + ConsoleController.remoteShellReadyDelay) { [weak tab] in
-            guard let tab, !tab.isClosing else { return }
-            tab.terminal.send(txt: snippet.command + "\n")
-        }
     }
 
     /// How long to wait after starting an ssh tab before typing into it.
@@ -247,23 +228,13 @@ extension ConsoleController {
     /// travels with it: there is no protocol-level "the remote shell is now
     /// ready" signal to hook, so this is best-effort timing - long enough for
     /// `ssh` to authenticate and the remote shell to print its prompt on a
-    /// typical connection. Two callers: a host's startup snippet
-    /// (`runStartupSnippet`) and F9's multi-host send
-    /// (`AppShellController.sendCommandToHost`), which are the same problem.
+    /// typical connection. Caller: F9's multi-host send
+    /// (`AppShellController.sendCommandToHost`).
     static let remoteShellReadyDelay: TimeInterval = 1.5
 
-    /// The Snippets panel's "Run" action (B2): send a snippet to whichever
-    /// tab is currently in front. A no-op with no tabs, which cannot happen
-    /// in practice (closing the last tab always opens a fresh one).
-    func runSnippetInActiveTab(_ snippet: Snippet) {
-        currentTab?.terminal.send(txt: snippet.command + "\n")
-    }
-
     /// The DevOps Command Library's "Send to Terminal" action (fm/grandline-
-    /// devops-command-library-phase2) - same shape as `runSnippetInActiveTab`
-    /// above, since it's the identical "type this into whichever tab is
-    /// currently in front" behavior, just for an already-substituted command
-    /// string instead of a saved `Snippet`.
+    /// devops-command-library-phase2): type an already-substituted command
+    /// string into whichever tab is currently in front.
     func sendCommandLibraryTextToActiveTab(_ text: String) {
         currentTab?.terminal.send(txt: text + "\n")
     }

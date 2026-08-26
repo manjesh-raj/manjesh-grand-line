@@ -16,8 +16,8 @@
 //   - .hosts shows `HostsController` (Fix 2) as its own full destination -
 //     no longer nested inside Console, so it's reachable exactly like
 //     Settings is. As of Phase 5 of the full-app UI audit that destination
-//     also owns SSH Keys and Snippets as segmented tabs, so the two floating
-//     windows those used to live in no longer exist.
+//     also owns SSH Keys as a segmented tab, so the floating window that
+//     used to live in no longer exists.
 //   - .console shows `ConsoleController` alone: just the terminal/tabs area,
 //     with no Hosts panel required to be visible alongside it.
 //   - .review shows `ReviewController` (Fix 3, theme-audit task): the real,
@@ -144,7 +144,7 @@ final class AppShellController: NSViewController {
     /// tab(s) only, no Firstmate host's own Shell tab - see
     /// `ConsoleController.init(isFirstmateConsole:)`). Injected so this
     /// controller doesn't need to know about
-    /// `SSHKeyStore`/`SnippetStore`, matching how it already knows nothing
+    /// `SSHKeyStore`, matching how it already knows nothing
     /// about host persistence (see `onPresentHostEditor` below).
     private let makeHostConsole: () -> ConsoleController
 
@@ -272,7 +272,7 @@ final class AppShellController: NSViewController {
 
     init(
         hostsPanel: HostsController, console: ConsoleController, settings: SettingsController,
-        hostStore: HostStore, keyStore: SSHKeyStore, snippetStore: SnippetStore, shiftStore: ShiftStore,
+        hostStore: HostStore, keyStore: SSHKeyStore, shiftStore: ShiftStore,
         dictationStore: DictationStore, commandLibraryStore: CommandLibraryStore,
         scheduleStore: ScheduleStore,
         makeHostConsole: @escaping () -> ConsoleController
@@ -295,8 +295,8 @@ final class AppShellController: NSViewController {
         self.shift = ShiftController(store: shiftStore, commandLibraryStore: commandLibraryStore)
         // GL-23: the same instance the Tasks page uses.
         self.logAnalyzer = LogAnalyzerController(commandLibrary: commandLibraryStore)
-        self.bootstrap = BootstrapController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore)
-        self.automation = AutomationController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore,
+        self.bootstrap = BootstrapController(hostStore: hostStore, keyStore: keyStore, dictationStore: dictationStore)
+        self.automation = AutomationController(hostStore: hostStore, keyStore: keyStore,
                                                dictationStore: dictationStore)
         // `fm/grandline-schedules-sidebar-move`: the schedules card's own
         // destination, not a section of `.automation` anymore.
@@ -576,8 +576,7 @@ final class AppShellController: NSViewController {
         // fm/grandline-devops-command-library-phase2: the Command Library's
         // "Send to Terminal" types straight into whichever console tab is
         // currently in front - not a new one-shot command tab (`runInConsole`
-        // above), the exact same "type this into the active tab" behavior
-        // Snippets' own "Run" already uses.
+        // above).
         shift.onSendCommandToTerminal = { [weak self] text in self?.console.sendCommandLibraryTextToActiveTab(text) }
         // F9 (v1): straight up to the app delegate - see `onSendCommandToHosts`.
         shift.onSendCommandToHosts = { [weak self] command, values, generated in
@@ -1345,7 +1344,7 @@ final class AppShellController: NSViewController {
         }
         controller.connectSSHIfNeeded(
             label: host.label, args: args, accentHex: host.accentHex,
-            keyID: host.keyID, startupSnippetID: host.startupSnippetID,
+            keyID: host.keyID,
             blockViewOptIn: host.blockViewOptIn
         )
 
@@ -1448,10 +1447,9 @@ final class AppShellController: NSViewController {
     /// just on that host's console rather than the shared one.
     ///
     /// A host that was already open receives the text immediately. A host that
-    /// had to be connected first gets it after a short delay, for the same
-    /// reason - and with the same honest "best-effort, there is no protocol
-    /// signal for *the remote shell is ready now*" caveat - as
-    /// `ConsoleController.runStartupSnippet`, whose delay this matches.
+    /// had to be connected first gets it after a short delay - there is no
+    /// protocol signal for *the remote shell is ready now*, so this is
+    /// best-effort timing, matching `ConsoleController.remoteShellReadyDelay`.
     func sendCommandToHost(_ host: Host, args: [String], text: String) {
         let wasConnected = isHostConnected(host)
         connectHost(host, args: args, navigate: false)
@@ -1622,14 +1620,6 @@ final class AppShellController: NSViewController {
         hostsPanel.focusQuickConnect()
     }
 
-    /// Wired by the app delegate: the Snippets tab's "Run" sends a snippet to
-    /// the console's active tab. Forwarded rather than owned, matching
-    /// `onPresentHostEditor` - this controller knows nothing about snippets.
-    var onRunSnippet: ((Snippet) -> Void)? {
-        get { hostsPanel.onRunSnippet }
-        set { hostsPanel.onRunSnippet = newValue }
-    }
-
     /// The Edit menu's "Find in Terminal" (no longer ⌘K as of phase 4 - see
     /// main.swift's Edit menu comment; ⌘K now opens the unified search
     /// palette instead): invoke the exact same find action the console
@@ -1684,24 +1674,11 @@ final class AppShellController: NSViewController {
         hostsPanel.select(tab: .keys)
     }
 
-    /// The Snippets menu's "Manage Snippets…" (⌘⌥P) - same shape as
-    /// `selectKeys`.
-    @objc func selectSnippets() {
-        show(.hosts)
-        hostsPanel.select(tab: .snippets)
-    }
-
     /// The Keys menu's "New Key…" (⌘⇧N): reveal the Keys tab and open the key
     /// editor sheet on it, regardless of which destination was showing.
     @objc func newKeyFromMenu() {
         show(.hosts)
         hostsPanel.newKey()
-    }
-
-    /// The Snippets menu's "New Snippet…" (⌘⌥N) - same shape.
-    @objc func newSnippetFromMenu() {
-        show(.hosts)
-        hostsPanel.newSnippet()
     }
 
     /// The Shift menu's "New Task…" (⌘N) - selects the Shift destination

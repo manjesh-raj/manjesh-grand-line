@@ -75,7 +75,7 @@ enum ConsoleClaudeUsageSelfTest {
     /// (matching the task's own "the plain Shell tab" framing) or a
     /// dedicated-host-page shape.
     private static func makeTestConsole(isFirstmateConsole: Bool) -> (window: NSWindow, controller: ConsoleController) {
-        let controller = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(), isFirstmateConsole: isFirstmateConsole)
+        let controller = ConsoleController(keyStore: SSHKeyStore(), isFirstmateConsole: isFirstmateConsole)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
             styleMask: [.titled],

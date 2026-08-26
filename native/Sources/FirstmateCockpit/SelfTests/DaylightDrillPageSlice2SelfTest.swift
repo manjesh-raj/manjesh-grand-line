@@ -75,14 +75,13 @@ enum DaylightDrillPageSlice2SelfTest {
 
     /// Scratch store files, so nothing here can reach the captain's real data
     /// (the convention every store-backed suite in this repo follows).
-    private static func scratchStores() -> (HostStore, SSHKeyStore, SnippetStore) {
+    private static func scratchStores() -> (HostStore, SSHKeyStore) {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("daylight-slice2-\(ProcessInfo.processInfo.processIdentifier)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         setenv("FM_HOSTS_FILE", dir.appendingPathComponent("hosts.json").path, 1)
         setenv("FM_KEYS_FILE", dir.appendingPathComponent("keys.json").path, 1)
-        setenv("FM_SNIPPETS_FILE", dir.appendingPathComponent("snippets.json").path, 1)
-        return (HostStore(), SSHKeyStore(), SnippetStore())
+        return (HostStore(), SSHKeyStore())
     }
 
     private static func mount(_ controller: NSViewController, width: CGFloat = 1200) -> NSWindow {
@@ -133,11 +132,11 @@ enum DaylightDrillPageSlice2SelfTest {
 
     private static func checkDrillConformances(_ ok: inout Bool) {
         print("\n-- §6.4: Console / Hosts / Health carry live drill headers --")
-        let (hostStore, keyStore, snippetStore) = scratchStores()
+        let (hostStore, keyStore) = scratchStores()
 
         // Console: a live subtitle from its own tab set, and a deliberately
         // empty action cluster (§6.13 keeps its actions in the page toolbar).
-        let console = ConsoleController(keyStore: keyStore, snippetStore: snippetStore,
+        let console = ConsoleController(keyStore: keyStore,
                                         isFirstmateConsole: false)
         let consoleWindow = mount(console)
         defer { _ = consoleWindow }
@@ -161,7 +160,7 @@ enum DaylightDrillPageSlice2SelfTest {
         // instance each time - a fresh button per read would silently drop the
         // tooltip and target the page set on it.
         hostStore.add(Host(label: "Prod Bastion", address: "prod.example.com"))
-        let hosts = HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore)
+        let hosts = HostsController(hostStore: hostStore, keyStore: keyStore)
         let hostsWindow = mount(hosts)
         defer { _ = hostsWindow }
         var seen: [HostsTab: NSView] = [:]
@@ -232,11 +231,11 @@ enum DaylightDrillPageSlice2SelfTest {
         // The drill header's own title is 26pt, so anything at or above 20pt
         // inside a page body is a second title competing with it.
         let heroFloor: CGFloat = 20
-        let (hostStore, keyStore, snippetStore) = scratchStores()
+        let (hostStore, keyStore) = scratchStores()
         let pages: [(String, NSViewController)] = [
-            ("Console", ConsoleController(keyStore: keyStore, snippetStore: snippetStore,
+            ("Console", ConsoleController(keyStore: keyStore,
                                           isFirstmateConsole: false)),
-            ("Hosts", HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore)),
+            ("Hosts", HostsController(hostStore: hostStore, keyStore: keyStore)),
             ("Health", HealthController()),
         ]
         var clean = true
@@ -259,7 +258,7 @@ enum DaylightDrillPageSlice2SelfTest {
 
     private static func checkTerminalCardIsPermanentOnDaylight(_ ok: inout Bool) {
         print("\n-- §6.13: the terminal card is permanent under Daylight, and never resizes the terminal --")
-        let (_, keyStore, snippetStore) = scratchStores()
+        let (_, keyStore) = scratchStores()
         let restore = ThemeManager.shared.theme
         defer { ThemeManager.shared.setTheme(restore) }
 
@@ -270,7 +269,7 @@ enum DaylightDrillPageSlice2SelfTest {
         // `SRELeadPerTabSelfTest.makeStartedTestConsole` - assigning
         // `contentView` alone leaves the terminal at a zero frame, which would
         // make the "did not move" comparison below vacuous.
-        let host = ConsoleController(keyStore: keyStore, snippetStore: snippetStore,
+        let host = ConsoleController(keyStore: keyStore,
                                      isFirstmateConsole: false)
         let hostWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 820),
                                   styleMask: [.titled], backing: .buffered, defer: false)
@@ -328,7 +327,7 @@ enum DaylightDrillPageSlice2SelfTest {
 
         // The shared Firstmate console has no margin by design, so it must
         // never show the card in any palette.
-        let shared = ConsoleController(keyStore: keyStore, snippetStore: snippetStore,
+        let shared = ConsoleController(keyStore: keyStore,
                                        isFirstmateConsole: true)
         let sharedWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 820),
                                     styleMask: [.titled], backing: .buffered, defer: false)
@@ -547,7 +546,7 @@ enum DaylightDrillPageSlice2SelfTest {
 
     private static func checkNoWindowWidthFloor(_ ok: inout Bool) {
         print("\n-- gotcha (13): the three restyled pages hold a narrow window --")
-        let (hostStore, keyStore, snippetStore) = scratchStores()
+        let (hostStore, keyStore) = scratchStores()
         hostStore.add(Host(label: "Prod Bastion", address: "prod.example.com"))
         ServiceHealthRegistry.shared.recordSuccess(.scheduledAutomations)
 
@@ -568,10 +567,10 @@ enum DaylightDrillPageSlice2SelfTest {
         }
         // Console and Health carry nothing wide; Hosts' own list rows are the
         // only real candidate for a floor on these three.
-        floor(of: ConsoleController(keyStore: keyStore, snippetStore: snippetStore,
+        floor(of: ConsoleController(keyStore: keyStore,
                                     isFirstmateConsole: false),
               label: "Console", widths: [1400, 1100, 900])
-        floor(of: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
+        floor(of: HostsController(hostStore: hostStore, keyStore: keyStore),
               label: "Hosts", widths: [1400, 1100, 900])
         floor(of: HealthController(), label: "Health", widths: [1400, 1100, 900])
         print("  OK - Console / Hosts / Health all hold 900pt")

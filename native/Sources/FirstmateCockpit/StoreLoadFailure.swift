@@ -4,7 +4,7 @@
 // of the production-readiness review). `HostStore.load()` already had the
 // correct shape - back the undecodable file up to `<name>.corrupt-<ts>`
 // *before* anything can atomically overwrite it, expose the backup path, and
-// log - while `SSHKeyStore`, `SnippetStore`, `DictationStore` and Shift's
+// log - while `SSHKeyStore`, `DictationStore` and Shift's
 // YAML loading all did `(try? decode(...)) ?? []` and then persisted over the
 // file on the very next mutation, permanently destroying data that was only
 // transiently unreadable. This file lifts that block out of `HostStore` so
