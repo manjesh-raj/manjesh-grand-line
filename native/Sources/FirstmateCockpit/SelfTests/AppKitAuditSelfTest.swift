@@ -13,6 +13,8 @@
 //   S3  a command carrying an embedded newline never reaches a terminal
 //   Pr1 a self-test process never reads or writes the real schedule stores
 //   T5  the dictation audio tap reads a snapshot, not shared mutable state
+//   A1  the notification bell's badge count reaches VoiceOver
+//   A2  every dictation HUD state change is announced
 //
 // Window-backed (M5 is a real measurement on a real view), so this sits in
 // `Scripts/run-all-tests.sh`'s `NEEDS_SESSION` list.
@@ -33,6 +35,8 @@ enum AppKitAuditSelfTest {
             ("S3_multiLineAiCommandsAreRefused", test_s3),
             ("Pr1_scheduleStoresRedirectToScratchInASelfTestProcess", test_pr1),
             ("T5_audioTapReadsSnapshotsNotSharedMutableState", test_t5),
+            ("A1_notificationBellSpeaksItsBadgeCount", test_a1),
+            ("A2_dictationHUDAnnouncesEveryStateChange", test_a2),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -47,6 +51,63 @@ enum AppKitAuditSelfTest {
               ? "AppKitAuditSelfTest: all \(cases.count) cases passed"
               : "AppKitAuditSelfTest: \(failures)/\(cases.count) cases FAILED")
         return failures == 0
+    }
+
+    // MARK: A1 / A2 - the two non-visual gaps
+
+    /// A1: the bell's accessibility label was set once at construction, so a
+    /// VoiceOver user heard "Notifications, button" whether nothing or 99+
+    /// items were waiting - the whole "quiet until it matters" signal was
+    /// sighted-only.
+    private static func test_a1() -> String? {
+        let bell = NotificationBellButton()
+        var seen: [String] = []
+        for count in [0, 1, 5, 250] {
+            bell.setBadgeCount(count)
+            guard let label = bell.accessibilityLabel() else {
+                return "the bell has no accessibility label at count \(count)"
+            }
+            seen.append(label)
+            if count > 0, !label.contains("\(count)") {
+                return "the bell says \(label.debugDescription) at count \(count) - the count is invisible to VoiceOver"
+            }
+            if count > 0, bell.accessibilityValue() as? Int != count {
+                return "the bell's accessibility value does not carry the count at \(count)"
+            }
+        }
+        if Set(seen).count != seen.count {
+            return "the bell says the same thing at different counts: \(seen)"
+        }
+        // The badge label must not surface as its own stray element.
+        bell.setBadgeCount(5)
+        for sub in bell.subviews where sub.isAccessibilityElement() {
+            if (sub.accessibilityValue() as? String) == "5" {
+                return "the badge label surfaces as its own \"5, text\" element beside the button"
+            }
+        }
+        return nil
+    }
+
+    /// A2: `DictationHUD` had zero accessibility API usage, so a VoiceOver user
+    /// got no "Listening…" / "Pasted" / "Didn't catch that" at all. A source
+    /// guard: an announcement is posted to the system, not stored anywhere a
+    /// test can read back.
+    private static func test_a2() -> String? {
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let raw = try? String(contentsOf: dir.appendingPathComponent("DictationHUD.swift"), encoding: .utf8) else {
+            return nil
+        }
+        let code = raw.split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+        if !code.contains("NSAccessibility.post(") || !code.contains(".announcementRequested") {
+            return "the dictation HUD no longer announces its state changes - it is the one status surface with no non-visual channel"
+        }
+        if !code.contains("if isNewState {") {
+            return "the HUD announces unconditionally - a re-presented identical state would repeat itself in the captain's ear"
+        }
+        return nil
     }
 
     // MARK: T5 - the dictation audio-tap race

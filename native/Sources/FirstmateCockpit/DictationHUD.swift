@@ -206,8 +206,26 @@ final class DictationHUDController {
             .withSymbolConfiguration(.init(pointSize: 15, weight: .semibold))
         iconView.contentTintColor = HelmTheme.nsColor(state.tintHex)
         titleLabel.stringValue = state.text
+        let isNewState = currentState?.text != state.text
         currentState = state
         applyPulseAnimation()
+
+        // A2: this panel is borderless, `ignoresMouseEvents`, and deliberately
+        // never key - so nothing about it reaches VoiceOver on its own, and a
+        // captain using one got no "Listening…" / "Pasted" / "Didn't catch
+        // that" at all while a sighted captain got all three. An announcement
+        // is the right shape precisely *because* the panel must not take key
+        // status; it needs no focus and steals none.
+        //
+        // Only on a genuine state change, so a re-presented identical state
+        // (which happens while a long transcription is still running) does not
+        // repeat itself in the captain's ear.
+        if isNewState {
+            NSAccessibility.post(element: NSApp as Any,
+                                 notification: .announcementRequested,
+                                 userInfo: [.announcement: state.text,
+                                            .priority: NSAccessibilityPriorityLevel.high.rawValue])
+        }
 
         positionPanel(panel)
         panel.alphaValue = panel.isVisible ? panel.alphaValue : 0
