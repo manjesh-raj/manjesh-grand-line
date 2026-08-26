@@ -18,10 +18,6 @@
 //   - `noteSRELeadTurn`      called from `handleSRELeadSubmit`'s own reply
 //                            completion - the same place the notification
 //                            centre is already told about a background reply.
-//   - `noteLogCapture`       called from `analyzeLogsTapped`, with the capture
-//                            `LogTerminalCaptureBuilder` already built.
-//   - `noteInvestigationSaved` forwarded from `LogAnalyzerController`'s own
-//                            save, via `AppShellController`.
 //   - `noteRunbookRun`       forwarded from `SRELeadBridge`, which reads the
 //                            event file `sre_kubectl_mcp.py`'s existing
 //                            `run_runbook` writes after it finishes. The
@@ -130,10 +126,10 @@ extension ConsoleController {
         guard let hostIdentity else { return }
         switch incidentStore.start(title: title, hostID: hostIdentity.id, hostLabel: hostIdentity.label) {
         case .success(let incident):
-            // Turn numbering is per incident, not per session: a tab that
-            // answered six questions during the last incident starts this
-            // one's timeline at "turn 1" again.
-            sreLeadTurnCounts.removeAll()
+            // Turn numbering is per incident, not per session: a session
+            // that answered six questions during the last incident starts
+            // this one's timeline at "turn 1" again.
+            sreLeadTurnCount = 0
             // F6 (fleet history / captain's log): appended here, from the one
             // code path that starts an incident, after the record genuinely
             // reached disk. Only the id, the title and the host label cross
@@ -182,11 +178,6 @@ extension ConsoleController {
             self.incidentStore.append(IncidentSources.note(text), to: incident.id)
             self.renderIncidentCard()
         }
-        incidentCard.onOpenEvidence = { [weak self] reference in
-            self?.incidentPopover.performClose(nil)
-            self?.onOpenInvestigation?(reference)
-        }
-
         let controller = NSViewController()
         controller.view = incidentCard
         incidentPopover.contentViewController = controller
@@ -244,49 +235,22 @@ extension ConsoleController {
 
     /// One completed SRE Lead turn. Called from `handleSRELeadSubmit`'s reply
     /// handler, so it only ever fires for a turn that genuinely produced an
-    /// answer - a failed turn is an error in that tab's own chat, not
-    /// something that happened to the cluster.
+    /// answer - a failed turn is an error in the chat, not something that
+    /// happened to the cluster.
     ///
     /// The transcript *as of this turn* is snapshotted into the incident's
     /// own artifact directory (redacted on the way in - see
     /// `IncidentStore.append`), which is the durability the review's F8 entry
-    /// asks for: the record does not depend on the tab still being open, or
-    /// on the app still running, to say what SRE Lead found.
-    func noteSRELeadTurn(question: String, tab: TabModel) {
+    /// asks for: the record does not depend on the session still being open,
+    /// or on the app still running, to say what SRE Lead found.
+    func noteSRELeadTurn(question: String, session target: ConsoleSession) {
         guard let incident = activeIncident() else { return }
-        let turn = (sreLeadTurnCounts[tab.id] ?? 0) + 1
-        sreLeadTurnCounts[tab.id] = turn
-        let transcript = tab.sreLead?.chatView?.transcriptForPostmortem
-        incidentStore.append(IncidentSources.sreLeadTurn(question: question, tabName: tab.name, turn: turn),
+        sreLeadTurnCount += 1
+        let turn = sreLeadTurnCount
+        let transcript = target.sreLead?.chatView?.transcriptForPostmortem
+        incidentStore.append(IncidentSources.sreLeadTurn(question: question, tabName: target.name, turn: turn),
                              to: incident.id,
                              artifactText: transcript)
-        renderIncidentCardIfShown()
-    }
-
-    /// The Analyze Logs capture. Only the capture's *shape* is recorded - the
-    /// line count and the scope sentence the builder already wrote for the
-    /// captain - never `capture.text`, which at this point has not been
-    /// through `LogRedactor` yet (that happens inside
-    /// `LogAnalyzerController.addEvidence`).
-    func noteLogCapture(_ capture: LogTerminalCapture, tabName: String) {
-        guard let incident = activeIncident() else { return }
-        let lines = capture.text.split(separator: "\n", omittingEmptySubsequences: false).count
-        incidentStore.append(IncidentSources.logCapture(tabName: tabName,
-                                                        lineCount: lines,
-                                                        scopeDescription: capture.scopeDescription),
-                             to: incident.id)
-        renderIncidentCardIfShown()
-    }
-
-    /// A Log Analyzer investigation that was saved while this incident was
-    /// active - the evidence row the captain can reopen later. Idempotent:
-    /// `LogAnalyzerController.persistIfNeeded` runs on every storage-choice
-    /// change for the same investigation, and the timeline wants one row per
-    /// investigation, not one per edit.
-    func noteInvestigationSaved(id: String, title: String) {
-        guard let incident = activeIncident() else { return }
-        guard !incident.entries.contains(where: { $0.reference == id }) else { return }
-        incidentStore.append(IncidentSources.investigationSaved(title: title, id: id), to: incident.id)
         renderIncidentCardIfShown()
     }
 

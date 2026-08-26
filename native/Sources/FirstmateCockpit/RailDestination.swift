@@ -147,7 +147,7 @@ enum RailDestination: CaseIterable {
     /// reachable through `show(_:)`), so nothing about routing needed a
     /// second concept.
     case homeCanvas
-    case overview, console, hosts, shift, review, logAnalyzer, tools, whiteboard, vault, dictation, schedules, health, docs, runbooks, postmortems, updates, bootstrap, automation, githubSync, settings
+    case overview, console, hosts, shift, review, tools, whiteboard, vault, dictation, schedules, health, docs, runbooks, postmortems, updates, bootstrap, automation, githubSync, settings
 
     var symbol: String {
         switch self {
@@ -169,10 +169,6 @@ enum RailDestination: CaseIterable {
         case .hosts: return "server.rack"
         case .console: return "terminal"
         case .review: return "arrow.triangle.branch"
-        // `fm/grandline-log-analyzer-build`: a magnifier over lines - the
-        // "read this output" idea, distinct from `.review`'s branch glyph
-        // and from Console's bare terminal.
-        case .logAnalyzer: return "text.magnifyingglass"
         case .tools: return "wrench.and.screwdriver"
         // `fm/grand-line-whiteboard-excalidraw`: a hand-drawn scribble - the
         // one glyph in this family that reads as "sketch on a surface" rather
@@ -212,7 +208,6 @@ enum RailDestination: CaseIterable {
         case .hosts: return "Hosts"
         case .console: return "Console"
         case .review: return "Review"
-        case .logAnalyzer: return "Log Analyzer"
         case .tools: return "Tools"
         case .whiteboard: return "Whiteboard"
         case .vault: return "Vault"
@@ -270,14 +265,14 @@ enum RailDestination: CaseIterable {
         case .bootstrap: return .warn
         case .automation: return .accent
         case .githubSync: return .violet
-        case .homeCanvas, .overview, .console, .hosts, .shift, .review, .logAnalyzer,
+        case .homeCanvas, .overview, .console, .hosts, .shift, .review,
              .tools, .whiteboard, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems, .settings: return .accent
         }
     }
 
     var isDailyUse: Bool {
         switch self {
-        case .homeCanvas, .overview, .console, .hosts, .shift, .review, .logAnalyzer: return true
+        case .homeCanvas, .overview, .console, .hosts, .shift, .review: return true
         case .tools, .whiteboard, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems,
              .updates, .bootstrap, .automation, .githubSync, .settings: return false
         }

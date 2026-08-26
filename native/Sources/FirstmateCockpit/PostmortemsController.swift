@@ -13,9 +13,11 @@
 // tab, ported verbatim onto a standalone `NSViewController` that fills the
 // whole destination rather than one tab of a shared page. Postmortems are
 // still list/display only here - generation lives in SRE Lead
-// (`ConsoleController+SRELead.swift`) and the Log Analyzer
-// (`LogAnalyzerController.createIncident`), both of which write straight
-// into `DocsRunbookStore` and are untouched by this split.
+// (`ConsoleController+SRELead.swift`), which writes straight
+// into `DocsRunbookStore` and is untouched by this split. (The Log
+// Analyzer's own generator, `LogAnalyzerController.createIncident`, was a
+// second writer here until that whole feature was removed by
+// `fm/grandline-menubar-remove-items`.)
 //
 // Root view follows AGENTS.md gotcha #8: a plain `NSView` with
 // `wantsLayer`/`HelmTheme` background, not `NSVisualEffectView` vibrancy.

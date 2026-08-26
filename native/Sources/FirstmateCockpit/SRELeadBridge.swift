@@ -21,9 +21,8 @@
 // memory, so the bridge is a small polling protocol over files in a per-session
 // scratch directory (`SRELeadSession.bridgeDir`, created by `SRELead.setUp`):
 // Python writes `request-<id>.json` (`{"command": "<kubectl ...>"}`), this
-// class notices it, injects `<command>` into the target tab exactly the way
-// `Snippet`'s "Run" action already does (`TerminalView.send(txt:)` -
-// `ConsoleController.runSnippetInActiveTab`/`runStartupSnippet`), wrapped with
+// class notices it, injects `<command>` into the target tab via
+// `TerminalView.send(txt:)`, wrapped with
 // two fresh random markers so the real output can be extracted unambiguously
 // from the tab's scrollback, then writes `response-<id>.json`. Python polls for
 // that file to appear (see `_run_kubectl` there) up to its own timeout.
@@ -33,7 +32,7 @@ import Foundation
 /// Everything `SRELeadBridge` needs from a terminal it injects commands into
 /// and reads output back from, abstracted so the polling/extraction/busy-
 /// detection logic below can be unit-tested without AppKit or SwiftTerm - see
-/// `FirstmateCockpitTests.SRELeadBridgeTests`'s `FakeBridgeTerminal`. `TabModel`
+/// `FirstmateCockpitTests.SRELeadBridgeTests`'s `FakeBridgeTerminal`. `ConsoleSession`
 /// conforms below by delegating to its own `terminal`.
 protocol SRELeadBridgeTerminal: AnyObject {
     /// Type `text` into the terminal, exactly like `TerminalView.send(txt:)`.
@@ -397,9 +396,9 @@ final class SRELeadBridge {
     }
 }
 
-// MARK: - TabModel conformance
+// MARK: - ConsoleSession conformance
 
-extension TabModel: SRELeadBridgeTerminal {
+extension ConsoleSession: SRELeadBridgeTerminal {
     func sendCommand(_ text: String) {
         terminal.send(txt: text)
     }

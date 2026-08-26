@@ -81,11 +81,11 @@ enum SetupStepChecks {
     }
 
     /// "Done" once there's something local to show for it - either a real
-    /// import already happened, or the captain built up hosts/snippets by
+    /// import already happened, or the captain built up hosts by
     /// hand. Never depends on a bundle file existing, so it's never stuck
     /// "pending" on a machine that doesn't use this feature at all.
-    static func restoreConfigDone(hostCount: Int, snippetCount: Int) -> Bool {
-        hostCount > 0 || snippetCount > 0
+    static func restoreConfigDone(hostCount: Int) -> Bool {
+        hostCount > 0
     }
 }
 

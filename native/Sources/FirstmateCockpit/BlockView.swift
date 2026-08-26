@@ -8,7 +8,7 @@
 // rather than reusing SwiftTerm's grid rendering for that pane") and reusing
 // `HelmUIComponents.swift`'s `IconTileView`/`HoverHighlightView` the way
 // every other modern-UI page already does. Scoped to one opted-in SSH host
-// page's tab only (`TabModel.blockViewOptIn`) - see AGENTS.md's block-view
+// page's tab only (`ConsoleSession.blockViewOptIn`) - see AGENTS.md's block-view
 // section for the scope narrowing and the crash history below.
 //
 // **No "Explain this," no re-run/copy actions, no live streaming - Stage 0

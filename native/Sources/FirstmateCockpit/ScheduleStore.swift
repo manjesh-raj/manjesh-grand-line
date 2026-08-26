@@ -8,7 +8,7 @@
 // single scalar preference, and every one of its properties is exactly that.
 // A schedule is a record with an identity, and there is a list of them that the
 // captain adds to and deletes from - which is what every other record-shaped
-// thing in this app (`HostStore`, `SSHKeyStore`, `SnippetStore`,
+// thing in this app (`HostStore`, `SSHKeyStore`,
 // `DictationStore`) already uses a JSON file for, with the GL-01 corrupt-file
 // durability behaviour and the GL-10 persistence-failure reporting that come
 // with it. Squeezing a growable list into one `UserDefaults` blob would get
@@ -136,7 +136,7 @@ final class ScheduleStore {
 
     /// `~/Library/Application Support/FirstmateCockpit/schedules.json`,
     /// overridable via `FM_SCHEDULES_FILE` - the same convention
-    /// `HostStore`/`SSHKeyStore`/`SnippetStore` already use, and what lets the
+    /// `HostStore`/`SSHKeyStore` already use, and what lets the
     /// self-test run against a scratch file rather than the captain's real
     /// schedules.
     static func storeURL() -> URL {

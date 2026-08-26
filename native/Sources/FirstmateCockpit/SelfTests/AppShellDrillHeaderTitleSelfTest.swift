@@ -142,16 +142,15 @@ enum AppShellDrillHeaderTitleSelfTest {
         )
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
-        let snippetStore = SnippetStore()
         let shiftStore = ShiftStore()
         let dictationStore = DictationStore()
         let shell = AppShellController(
-            hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
-            console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
-            settings: SettingsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore),
-            hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, shiftStore: shiftStore,
+            hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore),
+            console: ConsoleController(keyStore: keyStore, isFirstmateConsole: false),
+            settings: SettingsController(hostStore: hostStore, keyStore: keyStore, dictationStore: dictationStore),
+            hostStore: hostStore, keyStore: keyStore, shiftStore: shiftStore,
             dictationStore: dictationStore, commandLibraryStore: CommandLibraryStore(), scheduleStore: ScheduleStore(),
-            makeHostConsole: { ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false) }
+            makeHostConsole: { ConsoleController(keyStore: keyStore, isFirstmateConsole: false) }
         )
         window.contentViewController = shell
         return (window, shell)
@@ -326,11 +325,11 @@ enum AppShellDrillHeaderTitleSelfTest {
 
             var failures: [String] = []
             for i in 0..<12 {
-                shell.show(.logAnalyzer)
+                shell.show(.review)
                 window.displayIfNeeded()
                 shell.show(.console)
                 window.displayIfNeeded()
-                if let failure = titleFitsFailure(shell.drillHeaderForTests, context: "revisit \(i): .logAnalyzer -> .console") {
+                if let failure = titleFitsFailure(shell.drillHeaderForTests, context: "revisit \(i): .review -> .console") {
                     failures.append(failure)
                 }
             }

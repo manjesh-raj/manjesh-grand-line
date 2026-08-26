@@ -57,9 +57,6 @@ enum IncidentStatus: String, Codable, CaseIterable {
 enum IncidentEntryKind: String, Codable, CaseIterable {
     /// An SRE Lead turn completed on a tab of this host (`ConsoleController.handleSRELeadSubmit`).
     case sreLead
-    /// Terminal output was captured into the Log Analyzer, or the resulting
-    /// investigation was saved (`onAnalyzeLogs` / `LogAnalyzerStore.save`).
-    case logCapture
     /// A runbook ran through SRE Lead's MCP bridge (`sre_kubectl_mcp.py`'s
     /// `run_runbook`).
     case runbook
@@ -69,23 +66,21 @@ enum IncidentEntryKind: String, Codable, CaseIterable {
     /// The mockup's per-kind row glyph. Chosen to match what each source
     /// feature already uses for itself, so one concept is not drawn two ways
     /// a click apart: `sparkles` is SRE Lead's own glyph everywhere in this
-    /// app, and `text.magnifyingglass` is the Analyze Logs toolbar button's.
+    /// app.
     var symbol: String {
         switch self {
         case .sreLead: return "sparkles"
-        case .logCapture: return "text.magnifyingglass"
         case .runbook: return "doc.text"
         case .note: return "text.bubble"
         }
     }
 
-    /// The mockup's per-kind hue - violet for SRE Lead, blue for a capture,
-    /// green for a runbook run - resolved per theme through `HelmTint` rather
-    /// than the mockup's literal hexes, which were picked against one palette.
+    /// The mockup's per-kind hue - violet for SRE Lead, green for a runbook
+    /// run - resolved per theme through `HelmTint` rather than the mockup's
+    /// literal hexes, which were picked against one palette.
     var tint: HelmTint {
         switch self {
         case .sreLead: return .violet
-        case .logCapture: return .info
         case .runbook: return .good
         case .note: return .neutral
         }
@@ -95,7 +90,6 @@ enum IncidentEntryKind: String, Codable, CaseIterable {
     var kicker: String {
         switch self {
         case .sreLead: return "SRE Lead"
-        case .logCapture: return "Evidence"
         case .runbook: return "Runbook"
         case .note: return "Note"
         }
@@ -211,12 +205,6 @@ struct Incident: Equatable, Identifiable {
         return days == 1 ? "1 day ago" : "\(days) days ago"
     }
 
-    /// Every entry that belongs on the Evidence tab: the captures and the
-    /// saved investigations behind them. A runbook run and an SRE Lead turn
-    /// are timeline events, not evidence a captain would open.
-    var evidenceEntries: [IncidentTimelineEntry] {
-        entries.filter { $0.kind == .logCapture }
-    }
 }
 
 /// Where each timeline entry's wording is decided - the direct counterpart of
@@ -236,25 +224,6 @@ enum IncidentSources {
         return IncidentTimelineEntry(kind: .sreLead,
                                      title: title,
                                      detail: "\(quoted) · turn \(turn) on \(tabName) · transcript attached")
-    }
-
-    /// Terminal output handed to the Log Analyzer. Carries the *shape* of the
-    /// capture (how many lines, and the scope sentence the capture builder
-    /// already wrote for the captain) - never the captured text itself.
-    static func logCapture(tabName: String, lineCount: Int, scopeDescription: String) -> IncidentTimelineEntry {
-        IncidentTimelineEntry(kind: .logCapture,
-                              title: "Log Analyzer capture \u{2014} \(tabName)",
-                              detail: "\(lineCount) line\(lineCount == 1 ? "" : "s") · \(scopeDescription)")
-    }
-
-    /// A Log Analyzer investigation that was genuinely written to disk while
-    /// this incident was active - the one evidence entry that can be reopened
-    /// later, which is why it is the only one carrying a `reference`.
-    static func investigationSaved(title: String, id: String) -> IncidentTimelineEntry {
-        IncidentTimelineEntry(kind: .logCapture,
-                              title: "Saved investigation \u{201C}\(title)\u{201D}",
-                              detail: "Attached as evidence · open in Log Analyzer",
-                              reference: id)
     }
 
     /// A runbook run through SRE Lead's MCP bridge. `ran`/`total` differ when

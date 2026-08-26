@@ -75,7 +75,7 @@ enum DaylightModuleSelfTest {
     /// `daylight-ui-design.md`, verbatim.
     private static let lockedMembership: [DaylightSpace: Set<DaylightModule>] = [
         .command: [.console, .tasks, .mergeQueue],
-        .operations: [.hosts, .logAnalyzer, .health, .schedules],
+        .operations: [.hosts, .health, .schedules],
         // `fm/grandline-docs-split-runbooks-postmortems` added Runbooks and
         // Postmortems here, promoted out of `DocsController`'s former tabs
         // into their own destinations - the deliberate table change this
@@ -131,18 +131,20 @@ enum DaylightModuleSelfTest {
             }
         }
 
-        // Every one of the twelve trimmed-from-Overview modules must still be
+        // Every one of the fourteen trimmed-from-Overview modules must still be
         // fully reachable on its own space's canvas - the trim removes a
         // card from Overview specifically, never the module, its destination,
         // or its own canvas presence. A module that fell out of both would be
         // a real regression this suite has to catch, not just assume away.
         let trimmed = DaylightModule.allCases.filter { !overviewVisibleModules.contains($0) }
-        // 12 from the original trim, plus Runbooks and Postmortems
-        // (`fm/grandline-docs-split-runbooks-postmortems`) and Whiteboard
-        // (`fm/grand-line-whiteboard-excalidraw`) - all three new modules with
-        // `appearsOnOverview == false`, matching their Stores siblings.
-        if trimmed.count != 15 {
-            fail("expected exactly 15 modules trimmed from Overview, got \(trimmed.count): "
+        // 11 from the original trim (12, minus Log Analyzer - removed
+        // outright by `fm/grandline-menubar-remove-items`), plus Runbooks and
+        // Postmortems (`fm/grandline-docs-split-runbooks-postmortems`) and
+        // Whiteboard (`fm/grand-line-whiteboard-excalidraw`) - all three new
+        // modules with `appearsOnOverview == false`, matching their Stores
+        // siblings.
+        if trimmed.count != 14 {
+            fail("expected exactly 14 modules trimmed from Overview, got \(trimmed.count): "
                  + "\(trimmed.map(\.rawValue).sorted())", &ok)
         }
         for module in trimmed {
@@ -716,8 +718,8 @@ enum DaylightModuleSelfTest {
             .joined(separator: "\n")
 
         // A constructor call, not a mention: `Store()` / `Source()`.
-        let banned = ["ShiftStore(", "HostStore(", "ScheduleStore(", "LogAnalyzerStore(",
-                      "DocsRunbookStore(", "CommandLibraryStore(", "SnippetStore(",
+        let banned = ["ShiftStore(", "HostStore(", "ScheduleStore(",
+                      "DocsRunbookStore(", "CommandLibraryStore(",
                       "SSHKeyStore(", "DictationStore(", "IncidentStore(", "FleetLogStore("]
         for name in banned where code.contains(name) {
             fail("HomeCanvasController constructs a \(name.dropLast()) - it must be injected "
@@ -838,16 +840,15 @@ enum DaylightModuleSelfTest {
                                   styleMask: [.titled, .resizable], backing: .buffered, defer: false)
             let hostStore = HostStore()
             let keyStore = SSHKeyStore()
-            let snippetStore = SnippetStore()
             let shell = AppShellController(
-                hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
-                console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
+                hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore),
+                console: ConsoleController(keyStore: keyStore, isFirstmateConsole: false),
                 settings: SettingsController(hostStore: hostStore, keyStore: keyStore,
-                                             snippetStore: snippetStore, dictationStore: DictationStore()),
-                hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore,
+                                             dictationStore: DictationStore()),
+                hostStore: hostStore, keyStore: keyStore,
                 shiftStore: ShiftStore(), dictationStore: DictationStore(),
                 commandLibraryStore: CommandLibraryStore(), scheduleStore: ScheduleStore(),
-                makeHostConsole: { ConsoleController(keyStore: keyStore, snippetStore: snippetStore,
+                makeHostConsole: { ConsoleController(keyStore: keyStore,
                                                      isFirstmateConsole: false) }
             )
             window.contentViewController = shell
@@ -1033,16 +1034,15 @@ enum DaylightModuleSelfTest {
                                   styleMask: [.titled, .resizable], backing: .buffered, defer: false)
             let hostStore = HostStore()
             let keyStore = SSHKeyStore()
-            let snippetStore = SnippetStore()
             let shell = AppShellController(
-                hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
-                console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
+                hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore),
+                console: ConsoleController(keyStore: keyStore, isFirstmateConsole: false),
                 settings: SettingsController(hostStore: hostStore, keyStore: keyStore,
-                                             snippetStore: snippetStore, dictationStore: DictationStore()),
-                hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore,
+                                             dictationStore: DictationStore()),
+                hostStore: hostStore, keyStore: keyStore,
                 shiftStore: ShiftStore(), dictationStore: DictationStore(),
                 commandLibraryStore: CommandLibraryStore(), scheduleStore: ScheduleStore(),
-                makeHostConsole: { ConsoleController(keyStore: keyStore, snippetStore: snippetStore,
+                makeHostConsole: { ConsoleController(keyStore: keyStore,
                                                      isFirstmateConsole: false) }
             )
             window.contentViewController = shell

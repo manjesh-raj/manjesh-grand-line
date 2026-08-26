@@ -20,22 +20,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // key through it at connect time; the Keys window (below) is where the
     // captain generates/imports/browses them.
     let keyStore = SSHKeyStore()
-    // Phase 3: the saved-command library (B2/B5). The console resolves a
-    // host's startup snippet through it at connect time, and the Snippets
-    // window's "Run" sends a snippet straight to the active tab.
-    let snippetStore = SnippetStore()
     // Phase 5 (cockpit-shift-power-features): one `ShiftStore` shared by the
     // main window's Shift page, the menu bar item, the search palette, and
     // quick capture - all read/write the same tasks/follow-ups, never
     // separate store instances that could drift out of sync with each other.
     let shiftStore = ShiftStore()
-    lazy var console = ConsoleController(keyStore: keyStore, snippetStore: snippetStore)
+    lazy var console = ConsoleController(keyStore: keyStore)
     // Phase 5 of the full-app UI audit merged the Hosts destination and the
-    // two floating SSH Keys / Snippets windows into one destination with
-    // three segmented tabs, so this is now the only controller for all three
-    // stores' browsing/editing surfaces.
-    lazy var hostsPanel = HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore)
-    lazy var settingsController = SettingsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore)
+    // floating SSH Keys window into one destination with segmented tabs
+    // (the Snippets tab was removed along with the feature itself, per
+    // `fm/grandline-menubar-remove-items`), so this is now the only
+    // controller for both stores' browsing/editing surfaces.
+    lazy var hostsPanel = HostsController(hostStore: hostStore, keyStore: keyStore)
+    lazy var settingsController = SettingsController(hostStore: hostStore, keyStore: keyStore, dictationStore: dictationStore)
     lazy var shiftMenuBar = ShiftMenuBarController(store: shiftStore)
     // F5 (`fm/grandline-feature-f5-command-palette-expansion`): the `⌘K`
     // command palette, now the app's one search/verb surface - it absorbed
@@ -117,13 +114,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // onto for its whole lifetime, can't form a retain cycle with `self`.
     lazy var appShell: AppShellController = {
         let keyStore = self.keyStore
-        let snippetStore = self.snippetStore
         return AppShellController(
             hostsPanel: hostsPanel, console: console, settings: settingsController,
-            hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, shiftStore: shiftStore,
+            hostStore: hostStore, keyStore: keyStore, shiftStore: shiftStore,
             dictationStore: dictationStore, commandLibraryStore: commandLibraryStore,
             scheduleStore: scheduleStore,
-            makeHostConsole: { ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false) }
+            makeHostConsole: { ConsoleController(keyStore: keyStore, isFirstmateConsole: false) }
         )
     }()
     var hostEditorWindow: NSWindow?
@@ -138,12 +134,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // `connectToHost` below; an ad-hoc quick-connect (no saved identity to
         // pin a page to) still opens as a plain tab in the shared Firstmate
         // console, same as before Fix 1.
-        hostsPanel.onConnect = { [weak self] hostID, label, args, accentHex, keyID, startupSnippetID in
+        hostsPanel.onConnect = { [weak self] hostID, label, args, accentHex, keyID in
             guard let self else { return }
             if let hostID, let host = self.hostStore.host(id: hostID) {
                 self.connectToHost(host)
             } else {
-                self.console.openSSH(label: label, args: args, accentHex: accentHex, keyID: keyID, startupSnippetID: startupSnippetID)
+                self.console.openSSH(label: label, args: args, accentHex: accentHex, keyID: keyID)
                 self.appShell.show(.console)
             }
         }
@@ -194,9 +190,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             storeFailureNotices.append("Couldn't read saved SSH keys - backed up to \((backupPath as NSString).lastPathComponent). "
                 + "Keychain entries for those keys are still there.")
         }
-        if let backupPath = snippetStore.loadFailureBackupPath {
-            storeFailureNotices.append("Couldn't read saved snippets - backed up to \((backupPath as NSString).lastPathComponent)")
-        }
         for backupPath in dictationStore.loadFailureBackupPaths {
             storeFailureNotices.append("Couldn't read a dictation file - backed up to \((backupPath as NSString).lastPathComponent)")
         }
@@ -223,11 +216,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self.appShell.removeHostConsole(id: removedID)
             }
             self.knownHostIDs = currentIDs
-        }
-        // The Snippets tab's "Run" (Phase 3, B2) sends straight to the
-        // console's active tab.
-        appShell.onRunSnippet = { [weak self] snippet in
-            self?.console.runSnippetInActiveTab(snippet)
         }
         // Settings > Terminal's font-size stepper (Fix 3) talks straight to
         // the live console; Appearance goes through `ThemeManager` directly
@@ -313,7 +301,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ScheduleRunner.shared.start(store: scheduleStore,
                                     hostStore: hostStore,
                                     keyStore: keyStore,
-                                    snippetStore: snippetStore,
                                     dictationStore: dictationStore)
 
         // Phase 5 (cockpit-shift-power-features): menu bar popover + global
@@ -635,7 +622,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// window) are unchanged from PR #14.
     func presentHostEditor(for host: Host?) {
         let existingLabels = Set(hostStore.hosts.filter { $0.id != host?.id }.map { $0.label } + ["Firstmate"])
-        let editor = HostEditorController(host: host, keyStore: keyStore, snippets: snippetStore.snippets, existingLabels: existingLabels)
+        let editor = HostEditorController(host: host, keyStore: keyStore, existingLabels: existingLabels)
         editor.onSave = { [weak self] saved in
             guard let self else { return }
             if self.hostStore.host(id: saved.id) != nil {
@@ -663,11 +650,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
 
-        // Reuse one window across repeated Add/Edit calls (matching the Keys/
-        // Snippets windows below) rather than piling up a new one on every
-        // "+" click - only `contentViewController` needs to change since a
-        // fresh `HostEditorController` is built above for whichever host is
-        // being edited this time.
+        // Reuse one window across repeated Add/Edit calls rather than piling
+        // up a new one on every "+" click - only `contentViewController`
+        // needs to change since a fresh `HostEditorController` is built
+        // above for whichever host is being edited this time.
         let win: NSWindow
         if let existing = hostEditorWindow {
             win = existing
@@ -1016,56 +1002,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         quickCaptureItem.target = self
         shiftMenu.addItem(quickCaptureItem)
 
-        // Log Analyzer menu (`fm/grandline-log-analyzer-build`, spec §24).
-        //
-        // **Shortcut collisions were checked against this file, not assumed.**
-        // ⌘⇧L / ⌘⇧C / ⌘⇧T / ⌘⇧I were all genuinely free. ⌘⇧R was NOT - the
-        // Tab menu's "Rename Tab…" below already owns it - so spec §24's
-        // "⌘⇧R Create RCA" is bound to **⌘⇧A** instead (A for "after-action
-        // review"), which is free; taking ⌘⇧R would have silently broken an
-        // already-shipped shortcut. ⌘↵ (Analyze) is not a menu item at all:
-        // it is `analyzeButton`'s own `keyEquivalent`, so it only fires while
-        // the page is on screen rather than analyzing from any destination.
-        // Esc is handled by `LogAnalyzerController.cancelOperation`, the
-        // responder-chain path, for the same reason.
-        let logAnalyzerMenuItem = NSMenuItem()
-        mainMenu.addItem(logAnalyzerMenuItem)
-        let logAnalyzerMenu = NSMenu(title: "Log Analyzer")
-        logAnalyzerMenuItem.submenu = logAnalyzerMenu
-
-        let openAnalyzerItem = NSMenuItem(title: "Open Log Analyzer",
-                                          action: #selector(AppShellController.showLogAnalyzer), keyEquivalent: "l")
-        openAnalyzerItem.keyEquivalentModifierMask = [.command, .shift]
-        logAnalyzerMenu.addItem(openAnalyzerItem)
-
-        let analyzeClipboardItem = NSMenuItem(title: "Analyze Clipboard",
-                                              action: #selector(AppShellController.analyzeClipboardInLogAnalyzer),
-                                              keyEquivalent: "")
-        logAnalyzerMenu.addItem(analyzeClipboardItem)
-        logAnalyzerMenu.addItem(NSMenuItem.separator())
-
-        let copyAnalysisItem = NSMenuItem(title: "Copy Analysis",
-                                          action: #selector(AppShellController.logAnalyzerCopyAnalysis), keyEquivalent: "c")
-        copyAnalysisItem.keyEquivalentModifierMask = [.command, .shift]
-        logAnalyzerMenu.addItem(copyAnalysisItem)
-
-        let sendToTerminalItem = NSMenuItem(title: "Send Top Command to Terminal",
-                                            action: #selector(AppShellController.logAnalyzerSendToTerminal), keyEquivalent: "t")
-        sendToTerminalItem.keyEquivalentModifierMask = [.command, .shift]
-        logAnalyzerMenu.addItem(sendToTerminalItem)
-
-        let investigateItem = NSMenuItem(title: "Investigate Further",
-                                         action: #selector(AppShellController.logAnalyzerInvestigateFurther), keyEquivalent: "i")
-        investigateItem.keyEquivalentModifierMask = [.command, .shift]
-        logAnalyzerMenu.addItem(investigateItem)
-
-        let createRCAItem = NSMenuItem(title: "Create RCA",
-                                       action: #selector(AppShellController.logAnalyzerCreateRCA), keyEquivalent: "a")
-        createRCAItem.keyEquivalentModifierMask = [.command, .shift]
-        logAnalyzerMenu.addItem(createRCAItem)
-
-        for item in logAnalyzerMenu.items { item.target = appShell }
-
         // Keys menu - the Phase 2 Keychain screen. Both items target the app
         // shell (so they work regardless of focus, like the Hosts menu's New
         // Host / Quick Connect above). Phase 5 of the full-app UI audit folded
@@ -1082,167 +1018,89 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .keyEquivalentModifierMask = [.command, .shift]
         for item in keysMenu.items { item.target = appShell }
 
-        // Snippets menu - the Phase 3 saved-command library (B2/B5). Same
-        // shape as the Keys menu above, and folded into the same destination
-        // by the same phase.
-        let snippetsMenuItem = NSMenuItem()
-        mainMenu.addItem(snippetsMenuItem)
-        let snippetsMenu = NSMenu(title: "Snippets")
-        snippetsMenuItem.submenu = snippetsMenu
-        snippetsMenu.addItem(withTitle: "New Snippet…", action: #selector(AppShellController.newSnippetFromMenu), keyEquivalent: "n")
-            .keyEquivalentModifierMask = [.command, .option]
-        snippetsMenu.addItem(withTitle: "Manage Snippets…", action: #selector(AppShellController.selectSnippets), keyEquivalent: "p")
-            .keyEquivalentModifierMask = [.command, .option]
-        for item in snippetsMenu.items { item.target = appShell }
-
-        // Tab menu - the dynamic tab collection: new / duplicate / rename / close,
-        // reconnect, and ⌘1…⌘9 to jump to a tab. All resolve to ConsoleController.
+        // Tab menu.
+        //
+        // `fm/grandline-menubar-remove-items`: Console itself no longer has
+        // a tab collection - "every host connection collapses to one
+        // session per host/window" (the captain's own words) removed the
+        // whole chip-bar/new/duplicate/rename concept from
+        // `ConsoleController` (see that class's own header). This menu
+        // survives because `ToolsController`'s own multi-instance tool tabs
+        // (`fm/cockpit-tools-page-multi-session`, a genuinely different,
+        // untouched feature) still need New/Duplicate/Rename, and it
+        // deliberately keeps sharing plain selector names with
+        // `ConsoleController` rather than growing a second menu: an
+        // `NSMenuItem` with a `nil` target resolves by walking the responder
+        // chain for whichever object implements that exact selector, so
+        // "New Tab" simply goes inert (AppKit auto-disables it) while a
+        // Console session has focus and works normally while a Tools tab
+        // does - no per-item enabling logic needed. `#selector(ToolsController.X)`
+        // below is only a compile-time pick of which type's declaration to
+        // reference; it produces the identical runtime `Selector` either
+        // type would, which is what makes this style of sharing safe.
+        //
+        // `Close Tab` and `Reconnect Tab` are still meaningful on a Console
+        // session too (closing disconnects it - or, on the shared Firstmate
+        // console, replaces it with a fresh shell; reconnecting restarts
+        // its process) - `ConsoleController` still implements both under
+        // those names for exactly that reason, so those two items stay
+        // typed to it.
+        //
+        // The numbered "Select Tab 1"..."Select Tab 9" (⌘1…⌘9) items were
+        // removed earlier in this same task per captain feedback ("this is
+        // not required in Tab") - a Tools tab is still selectable by
+        // clicking its chip. `selectTabByShortcut` on both controllers had
+        // no other caller (it existed purely to serve those menu items),
+        // so both were deleted rather than left as dead code.
         let tabMenuItem = NSMenuItem()
         mainMenu.addItem(tabMenuItem)
         let tabMenu = NSMenu(title: "Tab")
         tabMenuItem.submenu = tabMenu
-        tabMenu.addItem(withTitle: "New Tab", action: #selector(ConsoleController.newShellTab), keyEquivalent: "t")
-        tabMenu.addItem(withTitle: "Duplicate Tab", action: #selector(ConsoleController.duplicateCurrentTab), keyEquivalent: "d")
-        let renameItem = NSMenuItem(title: "Rename Tab…", action: #selector(ConsoleController.renameCurrentTab), keyEquivalent: "r")
+        tabMenu.addItem(withTitle: "New Tab", action: #selector(ToolsController.newShellTab), keyEquivalent: "t")
+        tabMenu.addItem(withTitle: "Duplicate Tab", action: #selector(ToolsController.duplicateCurrentTab), keyEquivalent: "d")
+        let renameItem = NSMenuItem(title: "Rename Tab…", action: #selector(ToolsController.renameCurrentTab), keyEquivalent: "r")
         renameItem.keyEquivalentModifierMask = [.command, .shift]
         tabMenu.addItem(renameItem)
         tabMenu.addItem(withTitle: "Close Tab", action: #selector(ConsoleController.closeCurrentTab), keyEquivalent: "w")
         tabMenu.addItem(NSMenuItem.separator())
         tabMenu.addItem(withTitle: "Reconnect Tab", action: #selector(ConsoleController.reconnectActive), keyEquivalent: "r")
-        tabMenu.addItem(NSMenuItem.separator())
-        // ⌘1…⌘9 select the Nth tab; the tag carries the 1-based index.
-        for n in 1...9 {
-            let item = NSMenuItem(title: "Select Tab \(n)", action: #selector(ConsoleController.selectTabByShortcut(_:)), keyEquivalent: "\(n)")
-            item.tag = n
-            tabMenu.addItem(item)
-        }
 
-        // View menu - the Daylight spaces, then zoom + theme.
-        let viewMenuItem = NSMenuItem()
-        mainMenu.addItem(viewMenuItem)
-        let viewMenu = NSMenu(title: "View")
-        viewMenuItem.submenu = viewMenu
-
-        // Daylight Phase 2 (§5.2): `⌘1`…`⌘5` select the five spaces.
+        // `fm/grandline-menubar-remove-items`: the View, Window and Help
+        // top-level menus are gone outright, not hidden/disabled - per
+        // captain request, they were standard-system-menu clutter this app
+        // never needed a whole menu for.
         //
-        // **Why these live in View, after the Tab menu, and why that ordering
-        // is the whole design.** The spec asks for `⌘1`…`⌘5` on the spaces AND
-        // for "⌘T/⌘W/⌘1-9 Console and Tools tab behavior unchanged" - which
-        // collide on `⌘1`…`⌘5`. AppKit resolves a key equivalent by scanning
-        // the main menu in order and taking the first *enabled* match, and the
-        // Tab menu's items have a nil target (they route through the responder
-        // chain to whichever `ConsoleController`/`ToolsController` owns the
-        // first responder). So:
-        //
-        //   - With a terminal or a Tools tab focused, that controller IS in the
-        //     responder chain, the Tab item is enabled, and `⌘1` selects tab 1
-        //     exactly as it always has.
-        //   - Anywhere else - including the canvas, which is where a captain
-        //     reaching for a space actually is - nothing answers
-        //     `selectTabByShortcut`, AppKit disables that item, a disabled item
-        //     does not consume its key equivalent, and `⌘1` falls through to
-        //     the space item here.
-        //
-        // Both shortcuts therefore keep working, each in the context where it
-        // is the obvious meaning. The alternative was breaking one of them
-        // outright. A dedicated top-level "Go" menu would have read better but
-        // adds a 12th top-level menu, and this app's menu bar already overruns
-        // the notched-display budget (see AGENTS.md's menu-bar section) - View
-        // is where a space *filter* belongs anyway.
-        //
-        // These target `AppShellController` explicitly rather than the
-        // responder chain, so they are enabled regardless of what has focus.
-        for (index, space) in DaylightSpace.allCases.enumerated() {
-            let item = NSMenuItem(title: space.title,
-                                  action: #selector(AppShellController.selectSpaceByShortcut(_:)),
-                                  keyEquivalent: "\(index + 1)")
-            item.tag = index + 1
-            item.target = appShell
-            viewMenu.addItem(item)
-        }
-        viewMenu.addItem(NSMenuItem.separator())
-
-        viewMenu.addItem(withTitle: "Zoom In", action: #selector(ConsoleController.zoomIn), keyEquivalent: "+")
-        viewMenu.addItem(withTitle: "Zoom Out", action: #selector(ConsoleController.zoomOut), keyEquivalent: "-")
-        viewMenu.addItem(withTitle: "Actual Size", action: #selector(ConsoleController.zoomReset), keyEquivalent: "0")
-        viewMenu.addItem(NSMenuItem.separator())
-        // The toggle button itself moved off Console's toolbar onto the
-        // app-wide `DaylightBarController` (`fm/grandline-daylight-theme-
-        // toggle-relocate`), so this item now targets `AppShellController`
-        // explicitly - like the space shortcuts above - rather than the
-        // responder chain, which would only have resolved while a Console
-        // tab held first responder.
-        let themeItem = NSMenuItem(title: "Toggle Light/Dark", action: #selector(AppShellController.toggleTheme), keyEquivalent: "t")
-        themeItem.keyEquivalentModifierMask = [.command, .option]
-        themeItem.target = appShell
-        viewMenu.addItem(themeItem)
-
-        // GL-17: Window and Help. Before this, ⌘M did nothing at all, there
-        // was no Zoom or Bring All to Front, and there was no Help menu despite
-        // `setup-guide.md` living in the repo - the first three things a
-        // discerning Mac user checks.
-        //
-        // `NSApp.windowsMenu` is the load-bearing line: assigning it is what
-        // makes AppKit itself maintain the list of open windows underneath the
-        // separator, so a floating Host Editor or a secondary panel shows up
-        // without this file tracking windows by hand.
-        let windowMenuItem = NSMenuItem()
-        mainMenu.addItem(windowMenuItem)
-        let windowMenu = NSMenu(title: "Window")
-        windowMenuItem.submenu = windowMenu
-        windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
-        windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
-        windowMenu.addItem(NSMenuItem.separator())
-        windowMenu.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
-        NSApp.windowsMenu = windowMenu
-
-        let helpMenuItem = NSMenuItem()
-        mainMenu.addItem(helpMenuItem)
-        let helpMenu = NSMenu(title: "Help")
-        helpMenuItem.submenu = helpMenu
-        // Both open a real file that ships in this repo, resolved at click
-        // time (see `openRepoDoc`) rather than assumed to exist - the app can
-        // be running from a bundle whose source tree has moved.
-        helpMenu.addItem(withTitle: "Grand Line Setup Guide", action: #selector(openSetupGuide), keyEquivalent: "?")
-            .target = self
-        helpMenu.addItem(withTitle: "Read Me", action: #selector(openReadme), keyEquivalent: "")
-            .target = self
-        NSApp.helpMenu = helpMenu
+        // Nothing here is a silent capability loss - every action either
+        // moved to app-wide chrome earlier, or was pure OS window-chrome
+        // behavior that doesn't need a menu at all:
+        //  - The `⌘1`…`⌘5` Daylight-space shortcuts and the light/dark
+        //    toggle were the View menu's own keyboard-only affordances for
+        //    actions already reachable by clicking `DaylightBarController`'s
+        //    space pills / theme toggle button - see
+        //    `fm/grandline-daylight-theme-toggle-relocate`'s note above
+        //    `AppShellController.toggleTheme`. Losing the shortcut is the
+        //    intended cost of removing the menu that hosted it; the old
+        //    `⌘1`…`⌘9` Tab-menu-vs-View-menu key-equivalent race this comment
+        //    used to describe no longer applies, since there's no other
+        //    top-level menu contending for `⌘1`…`⌘5` now.
+        //  - Font-size zoom stays fully reachable via the Console toolbar's
+        //    own zoom in/out buttons (`ConsoleController+Toolbar.swift`) and
+        //    Settings' font-size presets - the View menu's `⌘+`/`⌘-`/`⌘0`
+        //    were a second, redundant path to the same `FontSizeManager`.
+        //  - Minimize/zoom/close via the title bar are native `NSWindow`
+        //    chrome (the traffic-light buttons + `styleMask`), entirely
+        //    independent of any menu item - removing the Window menu (and
+        //    its `NSApp.windowsMenu` assignment, which only maintained the
+        //    open-window list *under* that menu) doesn't touch them. `⌘M`
+        //    stops working as a shortcut, same trade-off as above.
+        //  - Help pointed at two repo docs (`setup-guide.md`/`README.md`)
+        //    with no other UI entry point - see the deleted
+        //    `openRepoDoc`/`openSetupGuide`/`openReadme` methods this menu
+        //    was their only caller for. Removed along with the menu rather
+        //    than left as dead code.
 
         NSApp.mainMenu = mainMenu
     }
-
-    // MARK: Help menu (GL-17)
-
-    /// Opens a doc that lives at the repo root, next to `native/`. Resolved
-    /// from `FirstmateHome`'s own resolution first (the captain's real
-    /// checkout), then relative to this executable for a `swift run` build.
-    /// Shows a plain alert rather than failing silently if neither exists -
-    /// a Help item that does nothing is worse than no Help item.
-    private func openRepoDoc(named name: String) {
-        var candidates: [URL] = []
-        // A bundled app sits at <repo>/dist/<App>.app/Contents/MacOS/<exe>;
-        // a `swift build` binary at <repo>/native/.build/<config>/<exe>.
-        let exe = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
-        var dir = exe.deletingLastPathComponent()
-        for _ in 0..<6 {
-            candidates.append(dir.appendingPathComponent(name))
-            dir = dir.deletingLastPathComponent()
-        }
-        guard let found = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
-            let alert = NSAlert()
-            alert.messageText = "Couldn't find \(name)"
-            alert.informativeText = "It ships at the root of the Manjesh Grand Line repository, "
-                + "next to the `native/` directory. This build couldn't locate that checkout."
-            alert.alertStyle = .informational
-            alert.runModal()
-            return
-        }
-        NSWorkspace.shared.open(found)
-    }
-
-    @objc private func openSetupGuide() { openRepoDoc(named: "setup-guide.md") }
-    @objc private func openReadme() { openRepoDoc(named: "README.md") }
 }
 
 // MARK: - Self-test dispatch (GL-27: debug builds only)
@@ -1262,11 +1120,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 // self-test process, unless the caller already pointed it somewhere.
 //
 // Not a precaution - a real defect this caught. `FleetLogStore.shared` is
-// appended to by `ShiftGitSync.resolveConflicts` and `LogAnalyzerStore.save`,
-// which `ShiftConflictSelfTest` and `LogAnalyzerSelfTest` both drive against
-// their own scratch stores. Those suites correctly override every store they
-// know about (`FM_SHIFT_DIR`, `FM_LOG_ANALYZER_DIR`, ...), but the fleet log
-// is reached indirectly, through a singleton neither of them constructs - so
+// appended to by `ShiftGitSync.resolveConflicts` and (formerly)
+// `LogAnalyzerStore.save`, deleted along with the rest of the Log Analyzer
+// feature by `fm/grandline-menubar-remove-items` - `ShiftConflictSelfTest`
+// drives one of those paths against its own scratch stores, correctly
+// overriding every store it knows about (`FM_SHIFT_DIR`, ...), but the fleet log
+// is reached indirectly, through a singleton it never constructs - so
 // a plain `./Scripts/run-all-tests.sh` wrote three fabricated events into the
 // captain's real `events.jsonl`. Doing it here rather than in those two
 // suites covers every present and future suite that reaches an append path,
@@ -1316,12 +1175,16 @@ if ProcessInfo.processInfo.environment["FM_RUN_SRE_LEAD_BRIDGE_TESTS"] == "1" {
     exit(SRELeadBridgeSelfTest.run() ? 0 : 1)
 }
 
-// `fm/grandline-sre-lead-per-tab`: same convention, for the real
-// `ConsoleController` per-tab SRE Lead integration (independent phases, no
-// chat cross-talk, tab-switch rebinding, the 5-tab cap, per-tab teardown on
-// close) - see `SRELeadPerTabSelfTest.swift`'s header.
-if ProcessInfo.processInfo.environment["FM_RUN_SRE_LEAD_PER_TAB_TESTS"] == "1" {
-    exit(SRELeadPerTabSelfTest.run() ? 0 : 1)
+// Same convention, for the real `ConsoleController` SRE Lead integration
+// (start/ask/reply, the empty-state/pane-open transition, teardown on
+// close, the scrollback-preservation invariant) - see
+// `SRELeadSessionSelfTest.swift`'s header. Originally
+// `FM_RUN_SRE_LEAD_PER_TAB_TESTS`/`SRELeadSessionSelfTest.swift`, from when a
+// console could hold several tabs' independent investigations at once;
+// `fm/grandline-menubar-remove-items` collapsed that to one session per
+// console and renamed the suite to match.
+if ProcessInfo.processInfo.environment["FM_RUN_SRE_LEAD_SESSION_TESTS"] == "1" {
+    exit(SRELeadSessionSelfTest.run() ? 0 : 1)
 }
 
 // `fm/cockpit-sre-lead-reply-formatting`: same convention, for
@@ -1589,15 +1452,6 @@ if ProcessInfo.processInfo.environment["FM_RUN_APP_LOCK_TESTS"] == "1" {
     exit(AppLockControllerSelfTest.run() ? 0 : 1)
 }
 
-// `fm/grandline-log-analyzer-build`: same convention, for the Log Analyzer's
-// whole pure-logic layer - redaction (including byte-level greps of a built
-// AI prompt and a saved investigation for planted secrets), source detection,
-// severity/grouping, timeline, correlation, AI reply parsing, Command Library
-// matching, artifact rendering, comparison, storage, and the terminal-capture
-// scope rule - see LogAnalyzerSelfTest.swift's header.
-if ProcessInfo.processInfo.environment["FM_RUN_LOG_ANALYZER_TESTS"] == "1" {
-    exit(LogAnalyzerSelfTest.run() ? 0 : 1)
-}
 
 // P2-P6 (`data/grand-line-e2e-audit/report.md`): the performance findings that
 // are testable as behaviour - see AuditPerfFixesSelfTest.swift's header.
@@ -1780,7 +1634,7 @@ if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_CENTER_TESTS"] == "1
 
 // The trickiest of the nine signals - SRE Lead replying on a tab you're not
 // looking at - driven against a real `ConsoleController`, same convention as
-// `SRELeadPerTabSelfTest.swift`. See NotificationCenterSRELeadSelfTest.swift's
+// `SRELeadSessionSelfTest.swift`. See NotificationCenterSRELeadSelfTest.swift's
 // header.
 if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_CENTER_SRE_LEAD_TESTS"] == "1" {
     exit(NotificationCenterSRELeadSelfTest.run() ? 0 : 1)
@@ -1984,7 +1838,7 @@ if ProcessInfo.processInfo.environment["FM_RUN_DEPENDENCY_CHECK_CACHE_TESTS"] ==
 // `FM_RUN_*_TESTS` block above (each of which `exit()`s, so a headless
 // self-test never contends for the lock and never blocks a real running
 // instance) and *before* `AppDelegate()` is constructed - which is the line
-// that builds `HostStore`/`SSHKeyStore`/`SnippetStore`/`DictationStore`/
+// that builds `HostStore`/`SSHKeyStore`/`DictationStore`/
 // `ShiftStore` and therefore the first thing that touches the shared files
 // two instances corrupt. See `SingleInstanceGuard`'s header for what each of
 // the three layers (Info.plist, NSRunningApplication, flock) actually covers.

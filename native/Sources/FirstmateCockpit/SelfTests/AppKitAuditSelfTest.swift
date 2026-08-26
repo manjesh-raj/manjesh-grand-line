@@ -31,7 +31,7 @@ enum AppKitAuditSelfTest {
             ("M1_backToCanvasSyncsTheSpacePill", test_m1),
             ("M5_runHistoryFooterPinsCloseToTheTrailingEdge", test_m5),
             ("M6_runHistorySheetDismissesOnEscape", test_m6),
-            ("S1_S2_aiCommandsReachTheTerminalOnlyThroughTheGate", test_s1_s2),
+            ("S2_aiCommandsReachTheTerminalOnlyThroughTheGate", test_s2),
             ("S3_multiLineAiCommandsAreRefused", test_s3),
             ("Pr1_scheduleStoresRedirectToScratchInASelfTestProcess", test_pr1),
             ("T5_audioTapReadsSnapshotsNotSharedMutableState", test_t5),
@@ -185,17 +185,21 @@ enum AppKitAuditSelfTest {
         return nil
     }
 
-    // MARK: S1 / S2 / S3 - the AI-authored command gate
+    // MARK: S2 / S3 - the AI-authored command gate
 
-    /// S1/S2: the app built one destructive-command confirmation and routed
-    /// its *least* AI-influenced path through it while leaving its two most
-    /// AI-influenced paths ungated. This is a source guard because the gate is
-    /// an `NSAlert.runModal()` - driving it for real means answering a modal,
-    /// which a headless suite cannot do without becoming a worse copy of the
-    /// thing it is checking. What can go wrong is a send site added or
-    /// restored that does not route through the gate, and that is what this
-    /// reads.
-    private static func test_s1_s2() -> String? {
+    /// S2: the app built one destructive-command confirmation and has to
+    /// route every AI-influenced send path through it. This is a source
+    /// guard because the gate is an `NSAlert.runModal()` - driving it for
+    /// real means answering a modal, which a headless suite cannot do
+    /// without becoming a worse copy of the thing it is checking. What can
+    /// go wrong is a send site added or restored that does not route
+    /// through the gate, and that is what this reads.
+    ///
+    /// S1 was the Log Analyzer's own equivalent gate on its `sendToTerminal`
+    /// method - removed along with the whole feature by
+    /// `fm/grandline-menubar-remove-items`, so that half of this check is
+    /// gone rather than left silently vacuous against a deleted file.
+    private static func test_s2() -> String? {
         guard let dir = SelfTestSources.appSourceDirectory() else { return nil }
 
         func code(_ file: String) -> String? {
@@ -204,22 +208,6 @@ enum AppKitAuditSelfTest {
                 .map(String.init)
                 .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
                 .joined(separator: "\n")
-        }
-
-        guard let analyzer = code("LogAnalyzerController.swift") else { return nil }
-        // Every suggested command reaches the console through this one method
-        // (the row button and spec §24's ⌘⇧T both call it), so the gate has to
-        // be inside it.
-        guard let body = analyzer.range(of: "private func sendToTerminal(_ command: String) {").map({ String(analyzer[$0.lowerBound...].prefix(900)) }) else {
-            return "LogAnalyzerController.sendToTerminal no longer exists - re-check where suggested commands reach the terminal"
-        }
-        if !body.contains("CommandRiskConfirmation.confirmAIAuthored") {
-            return "the Log Analyzer sends an AI-written command to the terminal without a confirmation (S1)"
-        }
-        // ... and nothing may call the sink around it.
-        let sinkCalls = analyzer.components(separatedBy: "onSendCommandToTerminal(").count - 1
-        if sinkCalls > 1 {
-            return "the Log Analyzer calls its terminal sink from \(sinkCalls) places - only the gated sendToTerminal may (S1)"
         }
 
         guard let console = code("ConsoleController.swift") else { return nil }

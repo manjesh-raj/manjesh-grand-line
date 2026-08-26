@@ -127,9 +127,9 @@ struct FleetLogEvent: Codable, Equatable, Identifiable {
 /// Where each event's one-line text is phrased - the direct counterpart of
 /// `NotificationSources`, and for the same reason: the call sites that append
 /// events are spread across `ReviewController`, `ShiftGitSync` and
-/// `LogAnalyzerStore`, and none of them should be inventing wording of its
-/// own. No detection logic lives here; every function takes a value its
-/// caller already had in hand.
+/// `ConsoleController+Incident`, and none of them should be inventing
+/// wording of its own. No detection logic lives here; every function takes a
+/// value its caller already had in hand.
 enum FleetLogSources {
 
     /// A merge that actually succeeded (`FleetDataSource.mergePR` returned

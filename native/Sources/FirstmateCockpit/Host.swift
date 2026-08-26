@@ -72,11 +72,6 @@ struct Host: Codable, Identifiable, Equatable {
     /// `-D` flags by `PortForwardRule.sshArguments`.
     var portForwards: [PortForwardRule] = []
 
-    /// Optional saved snippet (B2/B5) auto-run once this host's session looks
-    /// ready. Resolved through `SnippetStore` by `ConsoleController` - a host
-    /// only ever carries the id, never the command text.
-    var startupSnippetID: UUID?
-
     /// A typed-in password. **Session-only** - excluded from `CodingKeys`, so it
     /// is never written to disk (Phase 2 owns secure secret storage). Plain
     /// `ssh` prompts for it interactively on the PTY regardless.
@@ -110,7 +105,6 @@ struct Host: Codable, Identifiable, Equatable {
         agentForward: Bool = false,
         jumpVia: String? = nil,
         portForwards: [PortForwardRule] = [],
-        startupSnippetID: UUID? = nil,
         password: String? = nil,
         blockViewOptIn: Bool = false
     ) {
@@ -127,7 +121,6 @@ struct Host: Codable, Identifiable, Equatable {
         self.agentForward = agentForward
         self.jumpVia = jumpVia
         self.portForwards = portForwards
-        self.startupSnippetID = startupSnippetID
         self.password = password
         self.blockViewOptIn = blockViewOptIn
     }
@@ -135,7 +128,7 @@ struct Host: Codable, Identifiable, Equatable {
     /// Everything persisted - note `password` is intentionally absent.
     private enum CodingKeys: String, CodingKey {
         case id, label, address, port, username, keyID, iconSymbol, accentHex, group, tags,
-             agentForward, jumpVia, portForwards, startupSnippetID, blockViewOptIn
+             agentForward, jumpVia, portForwards, blockViewOptIn
     }
 
     /// Custom decode, deliberately NOT the compiler-synthesized one.
@@ -169,7 +162,6 @@ struct Host: Codable, Identifiable, Equatable {
         agentForward = try c.decodeIfPresent(Bool.self, forKey: .agentForward) ?? false
         jumpVia = try c.decodeIfPresent(String.self, forKey: .jumpVia)
         portForwards = try c.decodeIfPresent([PortForwardRule].self, forKey: .portForwards) ?? []
-        startupSnippetID = try c.decodeIfPresent(UUID.self, forKey: .startupSnippetID)
         blockViewOptIn = try c.decodeIfPresent(Bool.self, forKey: .blockViewOptIn) ?? false
     }
 

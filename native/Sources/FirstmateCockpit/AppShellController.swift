@@ -16,8 +16,8 @@
 //   - .hosts shows `HostsController` (Fix 2) as its own full destination -
 //     no longer nested inside Console, so it's reachable exactly like
 //     Settings is. As of Phase 5 of the full-app UI audit that destination
-//     also owns SSH Keys and Snippets as segmented tabs, so the two floating
-//     windows those used to live in no longer exist.
+//     also owns SSH Keys as a segmented tab, so the floating window that
+//     used to live in no longer exists.
 //   - .console shows `ConsoleController` alone: just the terminal/tabs area,
 //     with no Hosts panel required to be visible alongside it.
 //   - .review shows `ReviewController` (Fix 3, theme-audit task): the real,
@@ -95,17 +95,6 @@ final class AppShellController: NSViewController {
     private let overview: FleetController
     private let shift: ShiftController
     private let review = ReviewController()
-    /// `fm/grandline-log-analyzer-build`: the Log / Output Analyzer page.
-    /// Owns its own `CommandLibraryStore`/`DocsRunbookStore`/
-    /// `LogAnalyzerStore`, so this controller needs to know nothing about
-    /// any of them - the same forward-don't-own convention every other
-    /// destination here follows.
-    private let logAnalyzer: LogAnalyzerController
-    /// F8: the host page whose capture seeded whatever the Log Analyzer is
-    /// currently showing, so a save can be attached to that host's incident.
-    /// Weak - a deleted host's page is torn down and must not be kept alive
-    /// by this.
-    private weak var logAnalyzerCaptureSource: ConsoleController?
     private let tools = ToolsController()
     /// `fm/grand-line-whiteboard-excalidraw`: the embedded Excalidraw canvas.
     /// Lazy like every other utility destination, and deliberately so - see
@@ -144,7 +133,7 @@ final class AppShellController: NSViewController {
     /// tab(s) only, no Firstmate host's own Shell tab - see
     /// `ConsoleController.init(isFirstmateConsole:)`). Injected so this
     /// controller doesn't need to know about
-    /// `SSHKeyStore`/`SnippetStore`, matching how it already knows nothing
+    /// `SSHKeyStore`, matching how it already knows nothing
     /// about host persistence (see `onPresentHostEditor` below).
     private let makeHostConsole: () -> ConsoleController
 
@@ -152,6 +141,12 @@ final class AppShellController: NSViewController {
     /// lazily by `connectHost`, torn down by `removeHostConsole` when a host
     /// is deleted from the store.
     private var hostConsoles: [UUID: ConsoleController] = [:]
+
+    /// Every currently-open one-shot-command floating window
+    /// (`runInConsole`), retained so ARC doesn't reclaim a controller out
+    /// from under a still-running process. Each removes itself via its own
+    /// `onFinishedClosing` once its window closes.
+    private var commandRunners: [ConsoleCommandRunnerWindowController] = []
 
     /// The body area every destination view (fixed or host page) is added
     /// to - a stored property (rather than a `loadView`-local `let`) so
@@ -272,7 +267,7 @@ final class AppShellController: NSViewController {
 
     init(
         hostsPanel: HostsController, console: ConsoleController, settings: SettingsController,
-        hostStore: HostStore, keyStore: SSHKeyStore, snippetStore: SnippetStore, shiftStore: ShiftStore,
+        hostStore: HostStore, keyStore: SSHKeyStore, shiftStore: ShiftStore,
         dictationStore: DictationStore, commandLibraryStore: CommandLibraryStore,
         scheduleStore: ScheduleStore,
         makeHostConsole: @escaping () -> ConsoleController
@@ -293,10 +288,8 @@ final class AppShellController: NSViewController {
         // write the same tasks/follow-ups this page shows, not a second
         // independent store instance.
         self.shift = ShiftController(store: shiftStore, commandLibraryStore: commandLibraryStore)
-        // GL-23: the same instance the Tasks page uses.
-        self.logAnalyzer = LogAnalyzerController(commandLibrary: commandLibraryStore)
-        self.bootstrap = BootstrapController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore)
-        self.automation = AutomationController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore,
+        self.bootstrap = BootstrapController(hostStore: hostStore, keyStore: keyStore, dictationStore: dictationStore)
+        self.automation = AutomationController(hostStore: hostStore, keyStore: keyStore,
                                                dictationStore: dictationStore)
         // `fm/grandline-schedules-sidebar-move`: the schedules card's own
         // destination, not a section of `.automation` anymore.
@@ -304,17 +297,16 @@ final class AppShellController: NSViewController {
         self.makeHostConsole = makeHostConsole
         // Daylight Phase 2: the canvas reads already-owned stores, never its
         // own - see `HomeCanvasController`'s header, and the source guard in
-        // `DaylightModuleSelfTest` that enforces it. `DocsRunbookStore` and
-        // `LogAnalyzerStore` are the two the shell did not already hold, so
-        // they are constructed here alongside the rest of this controller's
-        // own dependencies rather than inside the canvas - each store re-reads
-        // its git-synced folder per call, which is the same "an independent
-        // instance is fine and cheap" pattern `UnifiedSearch` already uses.
+        // `DaylightModuleSelfTest` that enforces it. `DocsRunbookStore` is
+        // the one the shell did not already hold, so it is constructed here
+        // alongside the rest of this controller's own dependencies rather
+        // than inside the canvas - each store re-reads its git-synced folder
+        // per call, which is the same "an independent instance is fine and
+        // cheap" pattern `UnifiedSearch` already uses.
         self.homeCanvas = HomeCanvasController(sources: .init(
             shiftStore: shiftStore,
             hostStore: hostStore,
             scheduleStore: scheduleStore,
-            logAnalyzerStore: LogAnalyzerStore(),
             docsRunbookStore: DocsRunbookStore()))
         super.init(nibName: nil, bundle: nil)
     }
@@ -411,7 +403,6 @@ final class AppShellController: NSViewController {
         mounter.register(DestinationSlot(id: .hosts, title: RailDestination.hosts.bodyTitle, mountsEagerly: false, controller: hostsPanel))
         mounter.register(DestinationSlot(id: .shift, title: RailDestination.shift.bodyTitle, mountsEagerly: false, controller: shift))
         mounter.register(DestinationSlot(id: .review, title: RailDestination.review.bodyTitle, mountsEagerly: true, controller: review))
-        mounter.register(DestinationSlot(id: .logAnalyzer, title: RailDestination.logAnalyzer.bodyTitle, mountsEagerly: false, controller: logAnalyzer))
         mounter.register(DestinationSlot(id: .tools, title: RailDestination.tools.bodyTitle, mountsEagerly: false, controller: tools))
         mounter.register(DestinationSlot(id: .whiteboard, title: RailDestination.whiteboard.bodyTitle, mountsEagerly: false, controller: whiteboard))
         mounter.register(DestinationSlot(id: .vault, title: RailDestination.vault.bodyTitle, mountsEagerly: false, controller: vault))
@@ -559,57 +550,28 @@ final class AppShellController: NSViewController {
         // cockpit-settings-sudo-touchid: Settings' "Touch ID for sudo" row
         // runs `sudo av harden sudo`, which needs a real interactive `sudo`
         // prompt exactly like Bootstrap's provisioning actions - same
-        // one-shot Console command-tab mechanism, just reached from Settings
-        // instead.
+        // one-shot floating-window command mechanism (`runInConsole`, see
+        // its own doc comment), just reached from Settings instead.
         settings.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
         settings.onRunCommandTracked = { [weak self] label, command, completion in
             self?.runInConsole(label: label, command: command, completion: completion)
         }
         // fm/grandline-vault-tab: `av save`/`av inject` both need a real
         // interactive terminal (see `VaultController`'s header) - same
-        // one-shot Console command-tab mechanism as every other
+        // one-shot floating-window command mechanism as every other
         // interactive/sudo action in this app.
         vault.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
         vault.onRunCommandTracked = { [weak self] label, command, completion in
             self?.runInConsole(label: label, command: command, completion: completion)
         }
         // fm/grandline-devops-command-library-phase2: the Command Library's
-        // "Send to Terminal" types straight into whichever console tab is
-        // currently in front - not a new one-shot command tab (`runInConsole`
-        // above), the exact same "type this into the active tab" behavior
-        // Snippets' own "Run" already uses.
+        // "Send to Terminal" types straight into this console's own session
+        // - not a new one-shot command window (`runInConsole` above).
         shift.onSendCommandToTerminal = { [weak self] text in self?.console.sendCommandLibraryTextToActiveTab(text) }
         // F9 (v1): straight up to the app delegate - see `onSendCommandToHosts`.
         shift.onSendCommandToHosts = { [weak self] command, values, generated in
             self?.onSendCommandToHosts?(command, values, generated)
         }
-
-        // `fm/grandline-log-analyzer-build`: the Log Analyzer forwards the
-        // same two things Shift's Command Library already does - "run this
-        // command" goes to whichever console tab is in front, and a runbook
-        // or postmortem it just wrote opens in Docs. It owns neither.
-        logAnalyzer.onSendCommandToTerminal = { [weak self] text in
-            self?.console.sendCommandLibraryTextToActiveTab(text)
-        }
-        logAnalyzer.onOpenRunbook = { [weak self] id in self?.openRunbook(id: id) }
-        // `fm/grandline-docs-split-runbooks-postmortems`: `createIncident()`
-        // used to route its saved-postmortem confirmation through
-        // `onOpenRunbook` too, which opened it as a runbook - a postmortem id
-        // is never in `listRunbooks()`, so that silently no-opped. Fixed by
-        // giving it its own closure, wired to the postmortem destination.
-        logAnalyzer.onOpenPostmortem = { [weak self] id in self?.openPostmortem(id: id) }
-        // F8 (incident mode): a saved investigation attaches as openable
-        // evidence to the incident on whichever host page handed over the
-        // capture this investigation was built from - which is the only
-        // honest correlation available, since the Log Analyzer itself has no
-        // notion of a host. A clipboard analysis or an investigation reopened
-        // from history clears that association first (see
-        // `logAnalyzerCaptureSource`), so a save then attaches to nothing
-        // rather than to whichever host happened to be last.
-        logAnalyzer.onInvestigationSaved = { [weak self] id, title in
-            self?.logAnalyzerCaptureSource?.noteInvestigationSaved(id: id, title: title)
-        }
-        logAnalyzer.onOpenConsole = { [weak self] in self?.show(.console) }
 
         // fm/grandline-sidebar-badges: forward each page's own already-
         // computed "needs you" count straight to its rail icon - no new
@@ -688,7 +650,6 @@ final class AppShellController: NSViewController {
         // this too.
         setup.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         schedules.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        logAnalyzer.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         vault.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Docs' subtitle still tracks the Playbook's own real sync state; its
         // action cluster no longer changes while it's on screen now that the
@@ -728,15 +689,16 @@ final class AppShellController: NSViewController {
             self?.overview.refreshIfNeeded()
             self?.review.refreshIfNeeded()
         }
-        // The Console module's peek rows. A closure, so the canvas never holds
-        // a console or learns what a tab is.
+        // The Console module's peek rows. A closure, so the canvas never
+        // holds a console or learns what a session is.
+        // `fm/grandline-menubar-remove-items`: the shared Firstmate console
+        // has at most one session now, so this returns 0 or 1 rows rather
+        // than one per open tab.
         homeCanvas.consoleTabsProvider = { [weak self] in
-            guard let self else { return [] }
-            return self.console.tabs.map { tab in
-                HelmModulePeekRow(state: tab.terminal.process.running ? .ok : .idle,
-                                  text: tab.name,
-                                  value: tab.terminal.process.running ? "live" : "exited")
-            }
+            guard let self, let target = self.console.session else { return [] }
+            return [HelmModulePeekRow(state: target.terminal.process.running ? .ok : .idle,
+                                       text: target.name,
+                                       value: target.terminal.process.running ? "live" : "exited")]
         }
         homeCanvas.connectedHostIDs = { [weak self] in
             guard let self else { return [] }
@@ -923,14 +885,25 @@ final class AppShellController: NSViewController {
         onLockStateChanged?(false)
     }
 
-    /// Open `command` as a new tab in the shared Firstmate console and bring
-    /// Console forward, so its output (and any `sudo` prompt) is visible
-    /// immediately - the one path every Bootstrap-page action that can invoke
-    /// `darwin-rebuild switch` uses (`bootstrap.sh`, `rebuild.sh`, the initial
-    /// clone).
+    /// Run `command` in its own small floating window (`fm/grandline-
+    /// menubar-remove-items`: no longer a tab in the shared Firstmate
+    /// console - see `ConsoleCommandRunnerWindowController.swift`'s header
+    /// for why a one-shot provisioning command can't share the console's
+    /// one session with the captain's own persistent shell any more), so
+    /// its output (and any `sudo` prompt) is visible immediately - the one
+    /// path every Bootstrap-page action that can invoke
+    /// `darwin-rebuild switch` uses (`bootstrap.sh`, `rebuild.sh`, the
+    /// initial clone), plus Settings/Vault/NotSynced's own interactive
+    /// `sudo` actions.
     func runInConsole(label: String, command: String, completion: ((Bool) -> Void)? = nil) {
-        console.openCommandTab(label: label, command: command) { exitCode in completion?(exitCode == 0) }
-        show(.console)
+        var runner: ConsoleCommandRunnerWindowController!
+        runner = ConsoleCommandRunnerWindowController.run(label: label, command: command) { exitCode in
+            completion?(exitCode == 0)
+        }
+        runner.onFinishedClosing = { [weak self] in
+            self?.commandRunners.removeAll { $0 === runner }
+        }
+        commandRunners.append(runner)
     }
 
     /// Pin a destination view to fill `bodyContainer` below the top bar -
@@ -1345,7 +1318,7 @@ final class AppShellController: NSViewController {
         }
         controller.connectSSHIfNeeded(
             label: host.label, args: args, accentHex: host.accentHex,
-            keyID: host.keyID, startupSnippetID: host.startupSnippetID,
+            keyID: host.keyID,
             blockViewOptIn: host.blockViewOptIn
         )
 
@@ -1362,9 +1335,9 @@ final class AppShellController: NSViewController {
         // that either.
         let hostID = host.id
         let hostLabel = host.label
-        controller.onSRELeadReplyWhileBackground = { [weak self, weak controller] tab in
+        controller.onSRELeadReplyWhileBackground = { [weak self, weak controller] target in
             guard let self else { return }
-            NotificationSources.setSRELeadReply(tabID: tab.id, tabName: tab.name, hostLabel: hostLabel) { [weak self, weak controller] in
+            NotificationSources.setSRELeadReply(tabID: target.id, tabName: target.name, hostLabel: hostLabel) { [weak self, weak controller] in
                 guard let self, let controller else { return }
                 self.hideAllDestinations()
                 controller.view.isHidden = false
@@ -1373,19 +1346,9 @@ final class AppShellController: NSViewController {
                                       hue: RailDestination.hosts.domainHue, isCanvas: false,
                                       slotController: controller)
                 self.activeHostID = hostID
-                controller.selectAndFocusTab(id: tab.id)
+                controller.focusSession()
+                controller.markSessionAsRead()
             }
-        }
-
-        // `fm/grandline-log-analyzer-build`: reassigned on every call for
-        // the same reason `onSRELeadReplyWhileBackground` above is - a
-        // renamed host should show its current label on the imported
-        // evidence, and the closure only reads it when a capture actually
-        // happens.
-        controller.onAnalyzeLogs = { [weak self, weak controller] capture, tabName in
-            guard let self else { return }
-            self.logAnalyzerCaptureSource = controller
-            self.openLogAnalyzer(with: capture, hostLabel: "\(hostLabel) · \(tabName)")
         }
 
         // F8 (incident mode): this page's host identity. Set on every call
@@ -1402,17 +1365,6 @@ final class AppShellController: NSViewController {
         // reconnected many times.
         controller.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
 
-        // The incident card's Evidence tab reopening a saved Log Analyzer
-        // investigation. Routed through this controller because a console
-        // page knows nothing about rail destinations, exactly like
-        // `onAnalyzeLogs` above.
-        controller.onOpenInvestigation = { [weak self] investigationID in
-            guard let self else { return }
-            self.show(.logAnalyzer)
-            self.logAnalyzerCaptureSource = nil
-            self.logAnalyzer.openSavedInvestigation(id: investigationID)
-        }
-
         // F9 (v1): a multi-host send connects several hosts in one pass and
         // navigates once, at the end, to the first of them - so every
         // intermediate host is connected with `navigate: false` rather than
@@ -1424,7 +1376,7 @@ final class AppShellController: NSViewController {
         // `revealHostConsole` is the shared tail (see its own note): it hides
         // every other destination, shows this page, sets the drill header,
         // records this session as the active one and re-focuses its terminal -
-        // including the `markCurrentTabAsRead` that clears this page's own SRE
+        // including the `markSessionAsRead` that clears this page's own SRE
         // Lead unread entry, exactly as this method did inline before.
         revealHostConsole(controller, hostID: host.id, label: host.label)
     }
@@ -1448,10 +1400,9 @@ final class AppShellController: NSViewController {
     /// just on that host's console rather than the shared one.
     ///
     /// A host that was already open receives the text immediately. A host that
-    /// had to be connected first gets it after a short delay, for the same
-    /// reason - and with the same honest "best-effort, there is no protocol
-    /// signal for *the remote shell is ready now*" caveat - as
-    /// `ConsoleController.runStartupSnippet`, whose delay this matches.
+    /// had to be connected first gets it after a short delay - there is no
+    /// protocol signal for *the remote shell is ready now*, so this is
+    /// best-effort timing, matching `ConsoleController.remoteShellReadyDelay`.
     func sendCommandToHost(_ host: Host, args: [String], text: String) {
         let wasConnected = isHostConnected(host)
         connectHost(host, args: args, navigate: false)
@@ -1530,8 +1481,8 @@ final class AppShellController: NSViewController {
                          slotController: controller)
         activeHostID = hostID
         sessions.setActive(hostID)
-        controller.focusCurrentTab()
-        controller.markCurrentTabAsRead()
+        controller.focusSession()
+        controller.markSessionAsRead()
         updateKeyViewLoop()
     }
 
@@ -1622,14 +1573,6 @@ final class AppShellController: NSViewController {
         hostsPanel.focusQuickConnect()
     }
 
-    /// Wired by the app delegate: the Snippets tab's "Run" sends a snippet to
-    /// the console's active tab. Forwarded rather than owned, matching
-    /// `onPresentHostEditor` - this controller knows nothing about snippets.
-    var onRunSnippet: ((Snippet) -> Void)? {
-        get { hostsPanel.onRunSnippet }
-        set { hostsPanel.onRunSnippet = newValue }
-    }
-
     /// The Edit menu's "Find in Terminal" (no longer ⌘K as of phase 4 - see
     /// main.swift's Edit menu comment; ⌘K now opens the unified search
     /// palette instead): invoke the exact same find action the console
@@ -1684,24 +1627,11 @@ final class AppShellController: NSViewController {
         hostsPanel.select(tab: .keys)
     }
 
-    /// The Snippets menu's "Manage Snippets…" (⌘⌥P) - same shape as
-    /// `selectKeys`.
-    @objc func selectSnippets() {
-        show(.hosts)
-        hostsPanel.select(tab: .snippets)
-    }
-
     /// The Keys menu's "New Key…" (⌘⇧N): reveal the Keys tab and open the key
     /// editor sheet on it, regardless of which destination was showing.
     @objc func newKeyFromMenu() {
         show(.hosts)
         hostsPanel.newKey()
-    }
-
-    /// The Snippets menu's "New Snippet…" (⌘⌥N) - same shape.
-    @objc func newSnippetFromMenu() {
-        show(.hosts)
-        hostsPanel.newSnippet()
     }
 
     /// The Shift menu's "New Task…" (⌘N) - selects the Shift destination
@@ -1795,51 +1725,11 @@ final class AppShellController: NSViewController {
 
     /// The command palette's send action for a command that needs no input -
     /// the identical call `shift.onSendCommandToTerminal` is wired to above,
-    /// so both surfaces type into whichever console tab is in front. The risk
-    /// gate runs *before* this (see `CommandRiskConfirmation`); this method is
-    /// only the delivery half.
+    /// so both surfaces type into the shared Firstmate console's own
+    /// session. The risk gate runs *before* this (see
+    /// `CommandRiskConfirmation`); this method is only the delivery half.
     func sendCommandToConsole(_ text: String) {
         console.sendCommandLibraryTextToActiveTab(text)
-    }
-
-    // MARK: Log Analyzer (`fm/grandline-log-analyzer-build`)
-
-    /// ⌘⇧L / the Log Analyzer menu's "Open Log Analyzer" - switches to the
-    /// destination and focuses its input so a paste lands immediately (spec
-    /// §24's own success-criteria flow: ⌘⇧L → paste → ⌘↵).
-    @objc func showLogAnalyzer() {
-        show(.logAnalyzer)
-        logAnalyzer.focusForPaste()
-    }
-
-    /// The clipboard quick action (spec §2).
-    @objc func analyzeClipboardInLogAnalyzer() {
-        show(.logAnalyzer)
-        logAnalyzerCaptureSource = nil
-        logAnalyzer.analyzeClipboard()
-    }
-
-    /// Spec §2's terminal bridge. Called from the app delegate, which owns
-    /// the host consoles' `onAnalyzeLogs` closure - the capture decision
-    /// itself is made in `ConsoleController` (which has the tab, its block
-    /// tracker and its selection) via `LogTerminalCaptureBuilder`, so this
-    /// only routes an already-built capture to the page.
-    func openLogAnalyzer(with capture: LogTerminalCapture, hostLabel: String) {
-        show(.logAnalyzer)
-        logAnalyzer.importTerminalCapture(capture, hostLabel: hostLabel)
-    }
-
-    /// The remaining spec §24 shortcuts, all routed through the destination
-    /// so they behave identically whether they came from the menu or the
-    /// page's own buttons.
-    @objc func logAnalyzerCopyAnalysis() { showThenRun { $0.menuCopyAnalysis() } }
-    @objc func logAnalyzerSendToTerminal() { showThenRun { $0.menuSendToTerminal() } }
-    @objc func logAnalyzerInvestigateFurther() { showThenRun { $0.menuInvestigateFurther() } }
-    @objc func logAnalyzerCreateRCA() { showThenRun { $0.menuCreateRCA() } }
-
-    private func showThenRun(_ body: (LogAnalyzerController) -> Void) {
-        show(.logAnalyzer)
-        body(logAnalyzer)
     }
 
     /// Fix 5: a host save closes its own (separate) editor window

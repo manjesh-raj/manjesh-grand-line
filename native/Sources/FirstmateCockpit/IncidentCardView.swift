@@ -3,9 +3,12 @@
 // F8's "active incident" card - the captain-approved mockup's own shape
 // (`data/grandline-production-review/lavish-plan.html`, "F8 — Incident
 // mode"): a red-tinted header carrying the incident id, title, status pill
-// and "Active · started 32m ago on <host>" subtitle; three tabs (Timeline /
-// Evidence / RCA draft); a chronological list of the real events that
-// attached themselves; and the "End Incident → generate postmortem" action.
+// and "Active · started 32m ago on <host>" subtitle; two tabs (Timeline /
+// RCA draft - the mockup's third tab, Evidence, was Log Analyzer-sourced
+// evidence and was removed along with that whole feature by
+// `fm/grandline-menubar-remove-items`); a chronological list of the real
+// events that attached themselves; and the "End Incident → generate
+// postmortem" action.
 //
 // **Where this card is shown, and why it is not inline in the host page.**
 // The one hard constraint on this page is that a `TerminalView`'s frame must
@@ -37,13 +40,11 @@ final class IncidentCardView: NSView {
 
     enum Tab: String, CaseIterable {
         case timeline
-        case evidence
         case rca
 
         var title: String {
             switch self {
             case .timeline: return "Timeline"
-            case .evidence: return "Evidence"
             case .rca: return "RCA draft"
             }
         }
@@ -53,10 +54,6 @@ final class IncidentCardView: NSView {
 
     var onEndIncident: (() -> Void)?
     var onAddNote: ((String) -> Void)?
-    /// Fired with a Log Analyzer investigation id for an evidence row that
-    /// has one - the rows that do not (a capture the captain never saved)
-    /// have no button at all rather than a dead one.
-    var onOpenEvidence: ((String) -> Void)?
 
     // MARK: Views
 
@@ -284,20 +281,11 @@ final class IncidentCardView: NSView {
         case .timeline:
             guard !incident.entries.isEmpty else {
                 addEmptyState(symbol: "clock",
-                              body: "Nothing has attached yet. SRE Lead turns, Log Analyzer captures and "
+                              body: "Nothing has attached yet. SRE Lead turns and "
                                   + "runbook runs on this host attach here on their own.")
                 return
             }
             for entry in incident.entries { addRow(for: entry, incident: incident) }
-        case .evidence:
-            let evidence = incident.evidenceEntries
-            guard !evidence.isEmpty else {
-                addEmptyState(symbol: "text.magnifyingglass",
-                              body: "No evidence attached yet. \u{201C}Analyze Logs\u{201D} on this host's toolbar "
-                                  + "attaches a capture automatically.")
-                return
-            }
-            for entry in evidence { addRow(for: entry, incident: incident) }
         case .rca:
             guard let markdown = incident.rcaMarkdown, !markdown.isEmpty else {
                 addEmptyState(symbol: "doc.text",
@@ -311,20 +299,7 @@ final class IncidentCardView: NSView {
     }
 
     private func addRow(for entry: IncidentTimelineEntry, incident: Incident) {
-        var accessory: NSView?
-        if selectedTab == .evidence, let reference = entry.reference {
-            let open = HelmButton(title: "Open", variant: .secondary, size: .small)
-            open.setContentHuggingPriority(.required, for: .horizontal)
-            open.setContentCompressionResistancePriority(.required, for: .horizontal)
-            // A closure-owning wrapper would be a second mechanism; the row's
-            // reference is captured directly, which is all this needs.
-            open.target = self
-            open.action = #selector(openEvidenceClicked(_:))
-            open.identifier = NSUserInterfaceItemIdentifier(reference)
-            accessory = open
-        }
-
-        let row = HelmAccentRow(chipPlacement: .trailing, trailingAccessory: accessory, hover: false)
+        let row = HelmAccentRow(chipPlacement: .trailing, trailingAccessory: nil, hover: false)
         row.configure(HelmAccentRow.Content(tint: entry.kind.tint,
                                             kicker: "\(entry.clockText) · \(entry.kind.kicker)",
                                             title: entry.title,
@@ -357,11 +332,6 @@ final class IncidentCardView: NSView {
     // MARK: Actions
 
     @objc private func endIncidentClicked() { onEndIncident?() }
-
-    @objc private func openEvidenceClicked(_ sender: NSButton) {
-        guard let reference = sender.identifier?.rawValue else { return }
-        onOpenEvidence?(reference)
-    }
 
     @objc private func addNoteClicked() {
         let text = noteField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
