@@ -364,6 +364,48 @@ enum ShiftStoreSelfTest {
         check(afterRemoval.activeTasks.first { $0.id == noAttachTask.id }?.hasAttachment == false, "a plain addTask with no attachment argument should default hasAttachment to false")
         check(afterRemoval.attachmentData(forTaskID: noAttachTask.id) == nil, "a task with no attachment should have no attachment data to read")
 
+        // MARK: M2 - reloadAllAsync must not revert a write that raced its parse
+        //
+        // The shipped bug: `apply(_:)` overwrote the in-memory arrays with the
+        // background snapshot unconditionally, so an edit landing between the
+        // file read and the apply was reverted in memory and then erased from
+        // disk by the next persist. Driven here the way it actually happens -
+        // start the async reload, mutate the store while it is parsing, then
+        // let the apply land.
+        let raceStore = ShiftStore()
+        let baselineCount = raceStore.activeTasks.count
+        var racingTask = ShiftTask.fresh()
+        racingTask.title = "M2 - added while a reload was parsing"
+        var reloadFinished = false
+        raceStore.reloadAllAsync { reloadFinished = true }
+        // Same main-thread turn the parse was dispatched from: this is the
+        // window, and it is exactly what a menu-bar quick-add does.
+        raceStore.addTask(racingTask)
+        let raceDeadline = Date().addingTimeInterval(5)
+        while !reloadFinished, Date() < raceDeadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
+        }
+        check(reloadFinished, "M2: the async reload never completed")
+        check(raceStore.activeTasks.contains { $0.id == racingTask.id },
+              "M2: a task added while reloadAllAsync was parsing was reverted by the stale apply")
+        check(raceStore.activeTasks.count == baselineCount + 1,
+              "M2: the racing write should be the only change, got \(raceStore.activeTasks.count) vs \(baselineCount + 1)")
+        // And it must genuinely have survived to disk, not just in memory.
+        let afterRace = ShiftStore()
+        check(afterRace.activeTasks.contains { $0.id == racingTask.id },
+              "M2: the racing write did not reach disk - the stale apply erased it")
+
+        // An *unraced* reload must still apply, or the guard would be a
+        // permanent "never reload" and this check would pass vacuously.
+        raceStore.reloadAllAsync {}
+        var settled = false
+        let calmDeadline = Date().addingTimeInterval(5)
+        while !settled, Date() < calmDeadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
+            settled = raceStore.activeTasks.contains { $0.id == racingTask.id } && raceStore.activeTasks.count == baselineCount + 1
+        }
+        check(settled, "M2: an unraced reloadAllAsync no longer applies at all")
+
         return report(failures)
     }
 

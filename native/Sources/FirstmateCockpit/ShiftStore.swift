@@ -19,10 +19,34 @@ import Yaml
 
 final class ShiftStore {
 
-    private(set) var activeTasks: [ShiftTask] = []
-    private(set) var followUps: [ShiftFollowUp] = []
-    private(set) var projects: [ShiftProject] = []
-    private(set) var settings: ShiftSettings = ShiftSettings()
+    private(set) var activeTasks: [ShiftTask] = [] { didSet { noteMutation() } }
+    private(set) var followUps: [ShiftFollowUp] = [] { didSet { noteMutation() } }
+    private(set) var projects: [ShiftProject] = [] { didSet { noteMutation() } }
+    private(set) var settings: ShiftSettings = ShiftSettings() { didSet { noteMutation() } }
+
+    // MARK: M2 - the reload staleness guard
+    //
+    // `reloadAllAsync` parses off-main and applies on main, which opens a
+    // window the synchronous `reloadAll` it replaced never had: a write that
+    // lands between the file read and the apply (a menu-bar quick-add, an
+    // ⌥Space capture, an editor Save racing the `viewWillAppear` reload - and
+    // ⌘N switches to Shift first, arming exactly that reload) was silently
+    // reverted in memory, and the next `persist` wrote the pre-edit arrays
+    // back to disk. On a store that syncs to git, that is real data loss.
+    //
+    // The counter is bumped by the `didSet`s above rather than by each
+    // mutating method, so a method added later cannot forget it. `apply(_:)`
+    // suppresses it - a reload landing is not a mutation to protect against.
+
+    /// Bumped on every in-memory mutation that did not come from a reload.
+    private var mutationGeneration = 0
+    /// True only for the duration of `apply(_:)`.
+    private var isApplyingReload = false
+
+    private func noteMutation() {
+        guard !isApplyingReload else { return }
+        mutationGeneration &+= 1
+    }
 
     private var changeHandlers: [() -> Void] = []
     func observe(_ handler: @escaping () -> Void) { changeHandlers.append(handler) }
@@ -246,10 +270,21 @@ final class ShiftStore {
     /// `completion` runs on the main thread, after the results are applied.
     func reloadAllAsync(completion: @escaping () -> Void) {
         let root = self.root
+        let generation = mutationGeneration
         DispatchQueue.global(qos: .userInitiated).async {
             let parsed = Self.parseAll(root: root)
             DispatchQueue.main.async { [weak self] in
-                self?.apply(parsed)
+                guard let self else { completion(); return }
+                // M2: if anything mutated the store while we were parsing, this
+                // snapshot is already stale and applying it would revert the
+                // captain's edit. Two overlapping reloads also land here, and
+                // the queue is concurrent, so they can arrive out of order -
+                // the same check drops the older one.
+                if self.mutationGeneration == generation {
+                    self.apply(parsed)
+                } else {
+                    AppLog.store.debug("Tasks: dropped a stale async reload - the store changed while it was parsing.")
+                }
                 completion()
             }
         }
@@ -299,6 +334,8 @@ final class ShiftStore {
     /// GL-01 depends on, the first-run scaffold write, and the in-memory state
     /// itself. Byte-for-byte the decisions `reloadAll` always made.
     private func apply(_ loaded: LoadedState) {
+        isApplyingReload = true
+        defer { isApplyingReload = false }
         invalidateCompletedTasksCache()
         note(loaded.activeTasks.failed, path: activeTasksPath)
         note(loaded.followUps.failed, path: followUpsPath)
