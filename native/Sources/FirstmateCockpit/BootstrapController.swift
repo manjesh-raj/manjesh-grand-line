@@ -368,7 +368,7 @@ final class BootstrapController: NSViewController, SetupPageSummary {
             root?.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
             self?.theme = theme
             self?.applyTheme()
-            self?.rebuildDynamicSections()
+            self?.rebuildAfterThemeChangeIfVisible { self?.rebuildDynamicSections() }
         }
 
         let header = buildHeader()
@@ -484,8 +484,34 @@ final class BootstrapController: NSViewController, SetupPageSummary {
         // check.
     }
 
+
+    /// P1: a theme change repaints immediately and defers the *rebuild*.
+    ///
+    /// `ThemeManager` fans out to ~450 observers synchronously, and several
+    /// pages answered a theme change with a full teardown-rebuild - so once a
+    /// session had visited most destinations, ⌘⌥T stalled the main thread for
+    /// most of a second (measured: 0.9-1.9s with all 21 mounted). Every
+    /// destination stays mounted for the process's life, so most of that work
+    /// was rebuilding pages nobody was looking at.
+    ///
+    /// The cheap repaint still runs for every observer; only the expensive
+    /// rebuild waits for the page's next real appearance - the same
+    /// rebuild-on-change shape Health and Schedules already use for visits.
+    private var needsThemeRebuild = false
+
+    private func rebuildAfterThemeChangeIfVisible(_ rebuild: () -> Void) {
+        if view.isHiddenOrHasHiddenAncestor {
+            needsThemeRebuild = true
+        } else {
+            rebuild()
+        }
+    }
     override func viewWillAppear() {
         super.viewWillAppear()
+        if needsThemeRebuild {
+            needsThemeRebuild = false
+            rebuildDynamicSections()
+        }
         refreshFromSettings()
         refreshDotfiles()
         if !hasCheckedSoftwareOnce {

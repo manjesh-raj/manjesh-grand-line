@@ -293,6 +293,14 @@ enum DestinationMountingSelfTest {
         .docs: 3,
         .postmortems: 1,
         .whiteboard: 2,
+        // Pr1 pointed `FM_SCHEDULES_FILE` at a scratch path for the whole of a
+        // self-test process, so this page now renders its genuine empty state
+        // (card header, subtitle, one empty-state line) instead of the
+        // captain's real schedules. This case passed before *because* it was
+        // reading real data through the leak Pr1 closed - so the honest floor
+        // is the empty state's own, not the one a populated page happened to
+        // clear. Its own suite covers the populated shape.
+        .schedules: 3,
     ]
 
     private static func test_everyDestinationRendersRealContentOnFirstLoad() -> String? {
