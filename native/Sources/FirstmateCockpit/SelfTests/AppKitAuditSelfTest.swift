@@ -7,6 +7,7 @@
 //   swift build && FM_RUN_APPKIT_AUDIT_TESTS=1 .build/debug/FirstmateCockpit; echo $?
 //
 //   H3  no two main-menu items declare the same shortcut
+//   M1  navigating back to the canvas re-syncs the space pill
 //   M5  the Run History sheet's footer pins Close to the trailing edge
 //   M6  ... and can be dismissed with Escape
 //   S3  a command carrying an embedded newline never reaches a terminal
@@ -24,6 +25,7 @@ enum AppKitAuditSelfTest {
     static func run() -> Bool {
         let cases: [(String, () -> String?)] = [
             ("H3_noTwoMenuItemsShareAShortcut", test_h3),
+            ("M1_backToCanvasSyncsTheSpacePill", test_m1),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -38,6 +40,33 @@ enum AppKitAuditSelfTest {
               ? "AppKitAuditSelfTest: all \(cases.count) cases passed"
               : "AppKitAuditSelfTest: \(failures)/\(cases.count) cases FAILED")
         return failures == 0
+    }
+
+    // MARK: M1 - the space pill on the way back to the canvas
+
+    /// M1: `DaylightModule.space(forDestination:)` returns nil for the canvas
+    /// itself, and both the drill-header back button and `showHomeCanvas()`
+    /// route through `show(_:)` rather than `selectSpace` - so B5's fix left
+    /// the pill asserting the drill page's space while the canvas rendered the
+    /// space the captain last chose.
+    ///
+    /// A source guard for the same reason B5's own case is one: exercising it
+    /// for real needs a mounted `AppShellController`, which constructs every
+    /// store in the app. What can go wrong here is the branch being dropped,
+    /// and that is exactly what this reads.
+    private static func test_m1() -> String? {
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let shell = try? String(contentsOf: dir.appendingPathComponent("AppShellController.swift"), encoding: .utf8) else {
+            return nil
+        }
+        guard shell.contains("bar.setSelectedSpace(homeCanvas.selectedSpace)") else {
+            return "show(_:) no longer syncs the pill for .homeCanvas - the back button leaves the previous drill page's space lit"
+        }
+        // And the canvas has to be the one that owns the space, not a second copy.
+        guard DaylightModule.space(forDestination: .homeCanvas) == nil else {
+            return "space(forDestination:) now answers for .homeCanvas, so this branch is dead code - re-check which one wins"
+        }
+        return nil
     }
 
     // MARK: H3 - shortcut collisions in the main menu

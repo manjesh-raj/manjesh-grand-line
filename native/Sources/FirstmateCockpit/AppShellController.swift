@@ -1053,6 +1053,16 @@ final class AppShellController: NSViewController {
 
         if let space = DaylightModule.space(forDestination: dest) {
             bar.setSelectedSpace(space)
+        } else if dest == .homeCanvas {
+            // M1: `space(forDestination:)` returns nil for the canvas itself,
+            // and both the drill-header back button and `showHomeCanvas()`
+            // reach it through `show(_:)` rather than `selectSpace`. Without
+            // this the pill kept asserting the drill page's space while the
+            // canvas rendered the space the captain last chose - B5's own
+            // failure ("a highlight that asserts the wrong location is worse
+            // than none") one navigation later. The canvas owns that state, so
+            // this reads it rather than keeping a second copy.
+            bar.setSelectedSpace(homeCanvas.selectedSpace)
         }
 
         // §8 Phase 6: which destination is showing decides where the bar's
