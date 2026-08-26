@@ -1117,132 +1117,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             tabMenu.addItem(item)
         }
 
-        // View menu - the Daylight spaces, then zoom + theme.
-        let viewMenuItem = NSMenuItem()
-        mainMenu.addItem(viewMenuItem)
-        let viewMenu = NSMenu(title: "View")
-        viewMenuItem.submenu = viewMenu
-
-        // Daylight Phase 2 (§5.2): `⌘1`…`⌘5` select the five spaces.
+        // `fm/grandline-menubar-remove-items`: the View, Window and Help
+        // top-level menus are gone outright, not hidden/disabled - per
+        // captain request, they were standard-system-menu clutter this app
+        // never needed a whole menu for.
         //
-        // **Why these live in View, after the Tab menu, and why that ordering
-        // is the whole design.** The spec asks for `⌘1`…`⌘5` on the spaces AND
-        // for "⌘T/⌘W/⌘1-9 Console and Tools tab behavior unchanged" - which
-        // collide on `⌘1`…`⌘5`. AppKit resolves a key equivalent by scanning
-        // the main menu in order and taking the first *enabled* match, and the
-        // Tab menu's items have a nil target (they route through the responder
-        // chain to whichever `ConsoleController`/`ToolsController` owns the
-        // first responder). So:
-        //
-        //   - With a terminal or a Tools tab focused, that controller IS in the
-        //     responder chain, the Tab item is enabled, and `⌘1` selects tab 1
-        //     exactly as it always has.
-        //   - Anywhere else - including the canvas, which is where a captain
-        //     reaching for a space actually is - nothing answers
-        //     `selectTabByShortcut`, AppKit disables that item, a disabled item
-        //     does not consume its key equivalent, and `⌘1` falls through to
-        //     the space item here.
-        //
-        // Both shortcuts therefore keep working, each in the context where it
-        // is the obvious meaning. The alternative was breaking one of them
-        // outright. A dedicated top-level "Go" menu would have read better but
-        // adds a 12th top-level menu, and this app's menu bar already overruns
-        // the notched-display budget (see AGENTS.md's menu-bar section) - View
-        // is where a space *filter* belongs anyway.
-        //
-        // These target `AppShellController` explicitly rather than the
-        // responder chain, so they are enabled regardless of what has focus.
-        for (index, space) in DaylightSpace.allCases.enumerated() {
-            let item = NSMenuItem(title: space.title,
-                                  action: #selector(AppShellController.selectSpaceByShortcut(_:)),
-                                  keyEquivalent: "\(index + 1)")
-            item.tag = index + 1
-            item.target = appShell
-            viewMenu.addItem(item)
-        }
-        viewMenu.addItem(NSMenuItem.separator())
-
-        viewMenu.addItem(withTitle: "Zoom In", action: #selector(ConsoleController.zoomIn), keyEquivalent: "+")
-        viewMenu.addItem(withTitle: "Zoom Out", action: #selector(ConsoleController.zoomOut), keyEquivalent: "-")
-        viewMenu.addItem(withTitle: "Actual Size", action: #selector(ConsoleController.zoomReset), keyEquivalent: "0")
-        viewMenu.addItem(NSMenuItem.separator())
-        // The toggle button itself moved off Console's toolbar onto the
-        // app-wide `DaylightBarController` (`fm/grandline-daylight-theme-
-        // toggle-relocate`), so this item now targets `AppShellController`
-        // explicitly - like the space shortcuts above - rather than the
-        // responder chain, which would only have resolved while a Console
-        // tab held first responder.
-        let themeItem = NSMenuItem(title: "Toggle Light/Dark", action: #selector(AppShellController.toggleTheme), keyEquivalent: "t")
-        themeItem.keyEquivalentModifierMask = [.command, .option]
-        themeItem.target = appShell
-        viewMenu.addItem(themeItem)
-
-        // GL-17: Window and Help. Before this, ⌘M did nothing at all, there
-        // was no Zoom or Bring All to Front, and there was no Help menu despite
-        // `setup-guide.md` living in the repo - the first three things a
-        // discerning Mac user checks.
-        //
-        // `NSApp.windowsMenu` is the load-bearing line: assigning it is what
-        // makes AppKit itself maintain the list of open windows underneath the
-        // separator, so a floating Host Editor or a secondary panel shows up
-        // without this file tracking windows by hand.
-        let windowMenuItem = NSMenuItem()
-        mainMenu.addItem(windowMenuItem)
-        let windowMenu = NSMenu(title: "Window")
-        windowMenuItem.submenu = windowMenu
-        windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
-        windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
-        windowMenu.addItem(NSMenuItem.separator())
-        windowMenu.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
-        NSApp.windowsMenu = windowMenu
-
-        let helpMenuItem = NSMenuItem()
-        mainMenu.addItem(helpMenuItem)
-        let helpMenu = NSMenu(title: "Help")
-        helpMenuItem.submenu = helpMenu
-        // Both open a real file that ships in this repo, resolved at click
-        // time (see `openRepoDoc`) rather than assumed to exist - the app can
-        // be running from a bundle whose source tree has moved.
-        helpMenu.addItem(withTitle: "Grand Line Setup Guide", action: #selector(openSetupGuide), keyEquivalent: "?")
-            .target = self
-        helpMenu.addItem(withTitle: "Read Me", action: #selector(openReadme), keyEquivalent: "")
-            .target = self
-        NSApp.helpMenu = helpMenu
+        // Nothing here is a silent capability loss - every action either
+        // moved to app-wide chrome earlier, or was pure OS window-chrome
+        // behavior that doesn't need a menu at all:
+        //  - The `⌘1`…`⌘5` Daylight-space shortcuts and the light/dark
+        //    toggle were the View menu's own keyboard-only affordances for
+        //    actions already reachable by clicking `DaylightBarController`'s
+        //    space pills / theme toggle button - see
+        //    `fm/grandline-daylight-theme-toggle-relocate`'s note above
+        //    `AppShellController.toggleTheme`. Losing the shortcut is the
+        //    intended cost of removing the menu that hosted it; the old
+        //    `⌘1`…`⌘9` Tab-menu-vs-View-menu key-equivalent race this comment
+        //    used to describe no longer applies, since there's no other
+        //    top-level menu contending for `⌘1`…`⌘5` now.
+        //  - Font-size zoom stays fully reachable via the Console toolbar's
+        //    own zoom in/out buttons (`ConsoleController+Toolbar.swift`) and
+        //    Settings' font-size presets - the View menu's `⌘+`/`⌘-`/`⌘0`
+        //    were a second, redundant path to the same `FontSizeManager`.
+        //  - Minimize/zoom/close via the title bar are native `NSWindow`
+        //    chrome (the traffic-light buttons + `styleMask`), entirely
+        //    independent of any menu item - removing the Window menu (and
+        //    its `NSApp.windowsMenu` assignment, which only maintained the
+        //    open-window list *under* that menu) doesn't touch them. `⌘M`
+        //    stops working as a shortcut, same trade-off as above.
+        //  - Help pointed at two repo docs (`setup-guide.md`/`README.md`)
+        //    with no other UI entry point - see the deleted
+        //    `openRepoDoc`/`openSetupGuide`/`openReadme` methods this menu
+        //    was their only caller for. Removed along with the menu rather
+        //    than left as dead code.
 
         NSApp.mainMenu = mainMenu
     }
-
-    // MARK: Help menu (GL-17)
-
-    /// Opens a doc that lives at the repo root, next to `native/`. Resolved
-    /// from `FirstmateHome`'s own resolution first (the captain's real
-    /// checkout), then relative to this executable for a `swift run` build.
-    /// Shows a plain alert rather than failing silently if neither exists -
-    /// a Help item that does nothing is worse than no Help item.
-    private func openRepoDoc(named name: String) {
-        var candidates: [URL] = []
-        // A bundled app sits at <repo>/dist/<App>.app/Contents/MacOS/<exe>;
-        // a `swift build` binary at <repo>/native/.build/<config>/<exe>.
-        let exe = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
-        var dir = exe.deletingLastPathComponent()
-        for _ in 0..<6 {
-            candidates.append(dir.appendingPathComponent(name))
-            dir = dir.deletingLastPathComponent()
-        }
-        guard let found = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
-            let alert = NSAlert()
-            alert.messageText = "Couldn't find \(name)"
-            alert.informativeText = "It ships at the root of the Manjesh Grand Line repository, "
-                + "next to the `native/` directory. This build couldn't locate that checkout."
-            alert.alertStyle = .informational
-            alert.runModal()
-            return
-        }
-        NSWorkspace.shared.open(found)
-    }
-
-    @objc private func openSetupGuide() { openRepoDoc(named: "setup-guide.md") }
-    @objc private func openReadme() { openRepoDoc(named: "README.md") }
 }
 
 // MARK: - Self-test dispatch (GL-27: debug builds only)
