@@ -26,6 +26,8 @@ enum AppKitAuditSelfTest {
         let cases: [(String, () -> String?)] = [
             ("H3_noTwoMenuItemsShareAShortcut", test_h3),
             ("M1_backToCanvasSyncsTheSpacePill", test_m1),
+            ("M5_runHistoryFooterPinsCloseToTheTrailingEdge", test_m5),
+            ("M6_runHistorySheetDismissesOnEscape", test_m6),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -40,6 +42,108 @@ enum AppKitAuditSelfTest {
               ? "AppKitAuditSelfTest: all \(cases.count) cases passed"
               : "AppKitAuditSelfTest: \(failures)/\(cases.count) cases FAILED")
         return failures == 0
+    }
+
+    // MARK: M5 / M6 - the Run History sheet
+
+    private static func scratchDir() -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("appkit-audit-selftest-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private static func mountSheet() -> (ScheduleHistoryController, NSWindow) {
+        let schedule = AutomationSchedule(action: .driftCheck, cadence: .daily(hour: 9, minute: 0))
+        let sheet = ScheduleHistoryController(schedule: schedule,
+                                              historyStore: ScheduleRunHistoryStore(directory: scratchDir()))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 480),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = sheet.view
+        sheet.view.layoutSubtreeIfNeeded()
+        return (sheet, window)
+    }
+
+    /// M5: the footer is `[flexible spacer, Close]` pinned to the sheet's full
+    /// width, and it shipped at the default `.gravityAreas` distribution with
+    /// the slack plan resting on a content-hugging priority set on a bare
+    /// `NSView` - a documented no-op (gotcha 12) - and no hugging on the button
+    /// at all (gotcha 10). Who absorbed the row's slack was Auto Layout
+    /// tie-breaking, which is how "Connect" once rendered ~900pt wide.
+    ///
+    /// Measured on the real sheet, at two widths, because the failure is a
+    /// button whose width tracks the row rather than its own content.
+    private static func test_m5() -> String? {
+        var widths: [CGFloat] = []
+        for sheetWidth in [460.0, 900.0] as [CGFloat] {
+            let (sheet, window) = mountSheet()
+            defer { window.contentView = nil }
+            window.setContentSize(NSSize(width: sheetWidth, height: 480))
+            sheet.view.layoutSubtreeIfNeeded()
+            guard let frames = sheet.debugFooterFrames else {
+                return "could not reach the footer's Close button"
+            }
+            guard frames.footer.width > sheetWidth * 0.5 else {
+                return "the footer did not stretch to the sheet's width (\(frames.footer.width) of \(sheetWidth)) - this check would measure nothing"
+            }
+            if frames.close.width > 200 {
+                return "the Close button resolved to \(Int(frames.close.width))pt in a \(Int(sheetWidth))pt sheet - it is absorbing the row's slack instead of the spacer"
+            }
+            let trailingGap = frames.footer.width - frames.close.maxX
+            if trailingGap > 1 {
+                return "the Close button is \(trailingGap)pt short of the footer's trailing edge - it is no longer pinned there"
+            }
+            widths.append(frames.close.width)
+        }
+        // The same button, twice the sheet: its width must not have moved.
+        if let first = widths.first, let last = widths.last, abs(first - last) > 1 {
+            return "the Close button's width changed with the sheet's (\(first) -> \(last)) - its size is being decided by tie-breaking, not by its own content"
+        }
+
+        // Paired with a source guard on purpose, and this is the half that
+        // actually catches the regression: under `.gravityAreas` the outcome is
+        // Auto Layout *tie-breaking*, so it can measure correct on one run,
+        // one theme or one sibling-content shape and wrong on the next - which
+        // is exactly what makes the whole class hard to see. The measurement
+        // above proves today's geometry; this proves the row can no longer be
+        // decided by a coin toss.
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let source = try? String(contentsOf: dir.appendingPathComponent("ScheduleHistoryController.swift"), encoding: .utf8) else {
+            return nil
+        }
+        if !source.contains("footer.distribution = .fill") {
+            return "the footer is back at the default .gravityAreas distribution - the row's slack is decided by tie-breaking again (gotcha 10)"
+        }
+        // The comment above the fix quotes the old call to explain what was
+        // removed, so the guard reads code lines only.
+        let code = source.split(separator: "\n", omittingEmptySubsequences: false)
+            .map(String.init)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+        if code.contains("spacer.setContentHuggingPriority") {
+            return "the spacer is back on a content-hugging priority, which is a no-op on a view with no intrinsic size (gotcha 12)"
+        }
+        if !source.contains("spacer.widthAnchor.constraint(equalToConstant: 0)") {
+            return "the spacer no longer carries a real zero-width constraint, so nothing holds it collapsed"
+        }
+        if !source.contains("close.setContentHuggingPriority(.required, for: .horizontal)") {
+            return "the Close button no longer hugs its content, so it can absorb the row's slack"
+        }
+        return nil
+    }
+
+    /// M6: every sibling sheet pairs Return with Escape; this one shipped only
+    /// Return, so a keyboard user had to tab to Close.
+    private static func test_m6() -> String? {
+        let (sheet, window) = mountSheet()
+        defer { window.contentView = nil }
+        let before = sheet.debugCloseRequests
+        // What AppKit routes an Escape key press to on the first responder.
+        sheet.cancelOperation(nil)
+        guard sheet.debugCloseRequests == before + 1 else {
+            return "Escape did not reach the sheet's own close action - a keyboard user is stuck tabbing to Close"
+        }
+        return nil
     }
 
     // MARK: M1 - the space pill on the way back to the canvas
