@@ -152,6 +152,36 @@ const bridge = {
     }
   },
 
+  /// Serializes what is *actually* on the board right now, back into the same
+  /// element-skeleton shape `loadScene` accepts and `WhiteboardDiagram.parse`
+  /// validates.
+  ///
+  /// This is what makes iterative refinement honest. A model asked to "make the
+  /// database box bigger" has to be told what is on the board, and the board -
+  /// not whatever the model believes it drew three turns ago - is the truth:
+  /// the whole point of embedding a real Excalidraw is that the captain can
+  /// move, delete and draw with its own tools between two AI turns.
+  ///
+  /// Deliberately lossy, and lossy in a stated direction. Excalidraw publishes
+  /// no inverse of `convertToExcalidrawElements`, so this reconstructs the
+  /// documented skeleton surface only: geometry, type, id, the styling fields
+  /// the prompt itself offers, bound labels folded back into their container
+  /// (Excalidraw stores a shape's caption as a separate `text` element with a
+  /// `containerId`, which is exactly how the skeleton's `label` is expanded on
+  /// the way in), arrow bindings as `start`/`end` ids, and a frame's children
+  /// recovered from each element's own `frameId`. Everything derived - seeds,
+  /// version nonces, points arrays, `boundElements` - is left out on purpose:
+  /// the model has no business reasoning about it, and `loadScene` regenerates
+  /// all of it from the skeleton anyway.
+  snapshot(callID) {
+    try {
+      if (!api) throw new Error("the canvas is still starting up");
+      reply(callID, { ok: true, elements: toSkeleton(liveElements()) });
+    } catch (err) {
+      reply(callID, { ok: false, message: String((err && err.message) || err) });
+    }
+  },
+
   clear(callID) {
     try {
       if (!api) throw new Error("the canvas is still starting up");
@@ -235,6 +265,97 @@ const bridge = {
     });
   },
 };
+
+// --- Board -> skeleton ----------------------------------------------------
+
+// The styling fields the generation prompt itself offers, and nothing else. A
+// skeleton carrying an unknown key is not a crash, but it is noise in a prompt
+// that has to stay readable, and round-tripping a field the model was never
+// told about invites it to invent more of them.
+const SKELETON_STYLE_KEYS = [
+  "strokeColor",
+  "backgroundColor",
+  "fillStyle",
+  "strokeWidth",
+  "strokeStyle",
+  "roughness",
+  "fontSize",
+  "fontFamily",
+  "textAlign",
+];
+
+function toSkeleton(elements) {
+  // A shape's caption lives as its own `text` element pointing back at the
+  // container. Fold those in as `label` and drop them as standalone entries,
+  // which is the shape `loadScene` is handed on the way in.
+  const labels = new Map();
+  for (const el of elements) {
+    if (el.type === "text" && el.containerId) {
+      labels.set(el.containerId, el.text || "");
+    }
+  }
+  // A frame owns its children by each child naming the frame, not the other
+  // way round - but the skeleton format wants the list on the frame.
+  //
+  // A bound caption inherits its container's `frameId`, and captions are folded
+  // into their container below rather than emitted, so a naive membership list
+  // names ids that are not in the reply. That is not cosmetic: the native
+  // validator refuses a frame whose "children" names an element that is not
+  // there, and `convertToExcalidrawElements` needs every named child to exist.
+  // So a caption is skipped here for the same reason it is skipped below.
+  const children = new Map();
+  for (const el of elements) {
+    if (!el.frameId) continue;
+    if (el.type === "text" && el.containerId) continue;
+    if (!children.has(el.frameId)) children.set(el.frameId, []);
+    children.get(el.frameId).push(el.id);
+  }
+
+  const out = [];
+  for (const el of elements) {
+    if (el.type === "text" && el.containerId) continue;
+    const node = { type: el.type === "magicframe" ? "frame" : el.type, id: el.id };
+    for (const key of ["x", "y", "width", "height", "angle"]) {
+      if (typeof el[key] === "number" && el[key] !== 0) node[key] = round(el[key]);
+    }
+    for (const key of SKELETON_STYLE_KEYS) {
+      if (el[key] !== undefined && el[key] !== null) node[key] = el[key];
+    }
+    if (el.type === "text") {
+      node.text = el.text || "";
+    } else if (labels.has(el.id)) {
+      node.label = { text: labels.get(el.id) };
+    }
+    if (el.type === "arrow" || el.type === "line") {
+      if (el.startBinding && el.startBinding.elementId) {
+        node.start = { id: el.startBinding.elementId };
+      }
+      if (el.endBinding && el.endBinding.elementId) {
+        node.end = { id: el.endBinding.elementId };
+      }
+    }
+    if (node.type === "frame") {
+      node.name = el.name || "";
+      node.children = children.get(el.id) || [];
+    }
+    out.push(node);
+  }
+  // A frame with an empty `children` list is refused by the native validator
+  // and crashes `convertToExcalidrawElements` outright - so a frame the captain
+  // emptied by hand is degraded to a plain rectangle here rather than handed
+  // back as a skeleton nothing downstream will accept.
+  return out.map((node) => {
+    if (node.type !== "frame" || node.children.length > 0) return node;
+    const degraded = { ...node, type: "rectangle", label: { text: node.name || "" } };
+    // Deleted rather than set to undefined: this crosses the WebKit message
+    // bridge, where an undefined value is not the same as an absent key.
+    delete degraded.name;
+    delete degraded.children;
+    return degraded;
+  });
+}
+
+const round = (n) => Math.round(n * 100) / 100;
 
 let probeFrames = 0;
 let probeHandle = null;

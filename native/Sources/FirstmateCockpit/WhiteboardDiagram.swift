@@ -42,6 +42,37 @@
 //    (`fm/grand-line-whiteboard-generate-crash`). Caught here so it never
 //    reaches the page at all.
 //
+// ## Iterative refinement: two kinds of context, and why both
+//
+// A first generation is context-free by nature. A *follow-up* ("make the
+// database bigger", "drop the cache layer") is not: it names something, and
+// the only honest answer to "what does 'this' mean" is the board.
+//
+// So a refine turn carries two independent things, and they answer different
+// questions:
+//
+//  - **The current board's skeleton, re-serialized from the live canvas on
+//    every turn** (`snapshot` in `whiteboard.js`). This is the load-bearing
+//    half and the reason a refinement is correct rather than plausible. The
+//    whole point of embedding a real Excalidraw is that the captain moves,
+//    deletes and draws with its own tools - so what the model *said* it drew
+//    three turns ago and what is actually on the board are two different
+//    things, and only one of them is the truth. Re-supplying it also means a
+//    refine turn is correct even with no conversation at all, which is what
+//    makes the recovery below safe.
+//  - **`claude`'s own `--resume <session_id>`**, exactly as `SRELeadRunner`
+//    threads it (this app's established precedent for "an AI feature needs to
+//    remember what it already told the captain"). That carries the *intent*
+//    history - the nuance accumulated over several turns that a bare board
+//    dump cannot express - without this file reconstructing a transcript.
+//
+// Neither alone is sufficient: resume alone drifts from reality the first
+// time the captain nudges a box, and board-only forgets why the diagram looks
+// the way it does. Because the board half is what carries correctness, a
+// resume that fails (an expired or unresumable session) is recovered from by
+// retrying the same turn once *without* `--resume` - a genuine equivalent,
+// not a degraded guess - rather than losing the turn.
+//
 // Everything past that is genuinely Excalidraw's own business: a skeleton that
 // converts cleanly renders. But "the model got something else wrong that this
 // file cannot enumerate in advance" is a real possibility too, so `loadScene`
@@ -85,12 +116,14 @@ enum WhiteboardDiagram {
 
     // MARK: Prompt
 
-    static func prompt(for description: String) -> String {
-        """
-        You produce diagrams for Excalidraw. Reply with ONLY a JSON array of \
-        Excalidraw "element skeleton" objects - no prose, no explanation, no \
-        markdown code fence.
-
+    /// The format half of every prompt: what a skeleton is, which types are
+    /// allowed, and how to bind labels/arrows/frames.
+    ///
+    /// Shared verbatim by a first generation and a refinement rather than
+    /// duplicated: a rule that drifts between the two is a diagram that renders
+    /// on the first turn and fails on the second, which is exactly the bug this
+    /// file already shipped once (a frame with no `children`).
+    static let formatRules: String = """
         A skeleton element is a small object; Excalidraw fills in every derived \
         field (id, seed, versions, bindings) itself, so do not invent those. \
         Use only these element types: rectangle, diamond, ellipse, arrow, line, \
@@ -121,14 +154,76 @@ enum WhiteboardDiagram {
         strokeWidth (1|2|4), roughness (0|1|2), roundness ({"type":3}) and \
         fontSize.
 
-        Lay the diagram out yourself in absolute coordinates with x growing \
-        right and y growing down, starting near 0,0. Leave at least 60px of gap \
-        between shapes so arrows and labels have room, and keep the whole \
-        diagram under \(maxElements) elements.
+        Lay the diagram out in absolute coordinates with x growing right and y \
+        growing down, starting near 0,0. Leave at least 60px of gap between \
+        shapes so arrows and labels have room, and keep the whole diagram under \
+        \(maxElements) elements.
+        """
+
+    static func prompt(for description: String) -> String {
+        """
+        You produce diagrams for Excalidraw. Reply with ONLY a JSON array of \
+        Excalidraw "element skeleton" objects - no prose, no explanation, no \
+        markdown code fence.
+
+        \(formatRules)
 
         Diagram to draw:
         \(description)
         """
+    }
+
+    /// The follow-up form: revise the diagram that is *currently on the board*.
+    ///
+    /// `board` is the live canvas, re-serialized every turn (see this file's
+    /// header). Two rules carry the weight here and are stated as emphatically
+    /// as a prompt can state anything, because getting either wrong destroys
+    /// the captain's work rather than merely disappointing them:
+    ///
+    ///  - **Return the complete revised diagram, not a patch.** A refinement is
+    ///    applied by replacing the board, so anything the model silently drops
+    ///    is gone from the canvas.
+    ///  - **Keep the ids it was given.** That is what makes a refinement read
+    ///    as the same diagram, edited, rather than a new one that happens to
+    ///    look similar - arrows stay bound and frames keep their members.
+    static func refinePrompt(instruction: String, board: [[String: Any]]) -> String {
+        let boardJSON = encode(board) ?? "[]"
+        return """
+        You are revising an Excalidraw diagram you produced earlier. Reply with \
+        ONLY a JSON array of Excalidraw "element skeleton" objects - no prose, \
+        no explanation, no markdown code fence.
+
+        This is the diagram exactly as it stands on the board right now. It may \
+        differ from what you last sent: the captain can move, resize, delete and \
+        add elements with the whiteboard's own tools between turns, so THIS is \
+        the truth, not your memory of it.
+
+        \(boardJSON)
+
+        Apply the change below and reply with the COMPLETE revised diagram. \
+        Include every element that should still be on the board, even the ones \
+        the change does not touch - your reply REPLACES the board, so anything \
+        you leave out is deleted. Keep each element's existing "id" so the \
+        diagram stays the same diagram; only give a new id to something you are \
+        genuinely adding. Do not restate or re-explain the diagram in prose.
+
+        \(formatRules)
+
+        The change to make:
+        \(instruction)
+        """
+    }
+
+    /// JSON for a prompt, pretty-printed with sorted keys so a board that has
+    /// not changed serializes identically twice - which is what lets a
+    /// self-test assert on it, and what keeps a resumed conversation from
+    /// seeing the same board arrive looking different every turn.
+    static func encode(_ board: [[String: Any]]) -> String? {
+        guard JSONSerialization.isValidJSONObject(board),
+              let data = try? JSONSerialization.data(withJSONObject: board,
+                                                     options: [.sortedKeys, .withoutEscapingSlashes]),
+              let text = String(data: data, encoding: .utf8) else { return nil }
+        return text
     }
 
     // MARK: Parsing
@@ -287,25 +382,105 @@ enum WhiteboardDiagram {
 
     // MARK: Generation
 
-    /// Generates a diagram. `completion` is called on the main thread exactly
-    /// once. A failure is always a message worth showing - never a reason to
-    /// touch the board.
-    static func generate(description: String,
-                         completion: @escaping (Result<[[String: Any]], WhiteboardDiagramError>) -> Void) {
-        let trimmed = description.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// One AI turn: either the first diagram, or a revision of the board.
+    ///
+    /// A single entry point rather than a `generate` plus a `refine`, because
+    /// everything after the prompt - resolving `claude`, bounding the wait,
+    /// parsing, sanitising, reporting - is identical, and two copies of it is
+    /// how the first-generation path and the refinement path start disagreeing
+    /// about which replies are acceptable.
+    enum Turn {
+        /// A first diagram, from a plain-English description. Context-free by
+        /// nature.
+        case fresh(description: String)
+        /// A revision of the board as it stands right now. `board` is the live
+        /// canvas re-serialized this turn, never a cached copy.
+        case refine(instruction: String, board: [[String: Any]])
+
+        /// What the captain actually typed, for the empty-input guard and the
+        /// popover's own history line.
+        var instruction: String {
+            switch self {
+            case .fresh(let description): return description
+            case .refine(let instruction, _): return instruction
+            }
+        }
+    }
+
+    /// A turn's elements plus the `claude` session id to thread into the next
+    /// one. `sessionID` is nil when `claude` did not report one - which is not
+    /// a failure: the board half of a refine turn is what carries correctness,
+    /// so the next turn simply starts a fresh conversation.
+    struct Reply {
+        let elements: [[String: Any]]
+        let sessionID: String?
+    }
+
+    /// Runs one turn. `completion` is called on the main thread exactly once.
+    /// A failure is always a message worth showing - never a reason to touch
+    /// the board.
+    ///
+    /// `resumeSessionID` continues the conversation the previous turn started.
+    /// A run that fails while resuming is retried once without it: the prompt
+    /// already carries the whole board, so the retry is a genuine equivalent
+    /// rather than a degraded guess, and it turns "the session went stale" from
+    /// a lost turn into one that just worked.
+    static func run(turn: Turn,
+                    resumeSessionID: String? = nil,
+                    completion: @escaping (Result<Reply, WhiteboardDiagramError>) -> Void) {
+        let trimmed = turn.instruction.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            completion(.failure(WhiteboardDiagramError(message: "describe the diagram you want")))
+            switch turn {
+            case .fresh:
+                completion(.failure(WhiteboardDiagramError(message: "describe the diagram you want")))
+            case .refine:
+                completion(.failure(WhiteboardDiagramError(message: "describe the change you want")))
+            }
             return
         }
         guard let claude = claudePathOverrideForTests ?? SRELead.resolveClaude() else {
             completion(.failure(WhiteboardDiagramError(message: "claude is not installed or not on PATH")))
             return
         }
-        ClaudeOneShot.run(executable: claude, prompt: prompt(for: trimmed),
+
+        let text: String
+        switch turn {
+        case .fresh:
+            text = prompt(for: trimmed)
+        case .refine(_, let board):
+            text = refinePrompt(instruction: trimmed, board: board)
+        }
+
+        runOnce(claude: claude, prompt: text, resumeSessionID: resumeSessionID) { result in
+            switch result {
+            case .success:
+                completion(result)
+            case .failure(let error):
+                guard resumeSessionID != nil else {
+                    completion(.failure(error))
+                    return
+                }
+                AppLog.ai.error("whiteboard: refine turn failed while resuming - retrying without the session")
+                runOnce(claude: claude, prompt: text, resumeSessionID: nil, completion: completion)
+            }
+        }
+    }
+
+    private static func runOnce(claude: String,
+                                prompt text: String,
+                                resumeSessionID: String?,
+                                completion: @escaping (Result<Reply, WhiteboardDiagramError>) -> Void) {
+        ClaudeOneShot.run(executable: claude, prompt: text,
+                          resumeSessionID: resumeSessionID,
                           timeout: timeout, label: "claude -p (whiteboard)") { result in
             switch result {
             case .success(let reply):
-                completion(parse(reply.text))
+                switch parse(reply.text) {
+                case .success(let elements):
+                    completion(.success(Reply(elements: elements, sessionID: reply.sessionID)))
+                case .failure(let error):
+                    completion(.failure(error))
+                }
             case .failure(let error):
                 completion(.failure(WhiteboardDiagramError(message: error.message)))
             }

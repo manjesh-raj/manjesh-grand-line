@@ -128,6 +128,9 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
         composer.onGenerated = { [weak self] elements, append, done in
             self?.load(elements: elements, append: append, completion: done)
         }
+        composer.onBoardSnapshot = { [weak self] done in
+            self?.snapshotBoard(completion: done)
+        }
 
         ThemeManager.shared.observe { [weak self] theme in
             self?.theme = theme
@@ -191,6 +194,28 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
         }
     }
 
+    /// Reads the live board back as element skeletons, for a refine turn.
+    ///
+    /// Taken fresh on every turn rather than cached from the last generation:
+    /// the captain can move, delete and draw with Excalidraw's own tools
+    /// between two AI turns, and a refinement built from a stale copy would
+    /// silently undo whatever they did in between.
+    private func snapshotBoard(completion: @escaping (Result<[[String: Any]], WhiteboardBridgeError>) -> Void) {
+        guard webView.isReady else {
+            completion(.failure(WhiteboardBridgeError(message: "the canvas is still starting up")))
+            return
+        }
+        webView.call("snapshot") { result in
+            switch result {
+            case .success(let body):
+                let elements = (body["elements"] as? [[String: Any]]) ?? []
+                completion(.success(elements))
+            case .failure(let error):
+                completion(.failure(error))
+            }
+        }
+    }
+
     private func refreshElementCount() {
         guard webView.isReady else { return }
         webView.call("stats") { [weak self] result in
@@ -238,6 +263,11 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
             if case .success = result {
                 self.elementCount = 0
                 self.onDrillSubtitleChanged?()
+                // A cleared board has nothing left to refine, so the diagram
+                // conversation ends with it - otherwise the next visit to the
+                // composer would offer to revise a diagram that is gone.
+                self.composer.endSession(
+                    note: "Board cleared. The next diagram starts a new conversation.")
             }
         }
     }
@@ -302,6 +332,9 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
     var debugComposer: WhiteboardComposerController { composer }
     func debugLoad(elements: [[String: Any]], append: Bool, completion: @escaping (String?) -> Void) {
         load(elements: elements, append: append, completion: completion)
+    }
+    func debugSnapshotBoard(completion: @escaping (Result<[[String: Any]], WhiteboardBridgeError>) -> Void) {
+        snapshotBoard(completion: completion)
     }
     #endif
 }
