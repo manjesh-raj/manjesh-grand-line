@@ -97,23 +97,24 @@ enum DaylightDrillPageSlice3SelfTest {
 
     /// Scratch store files, so nothing here can reach the captain's real data
     /// (the convention every store-backed suite in this repo follows).
-    private static func scratchStores() -> (HostStore, SSHKeyStore, DictationStore, ScheduleStore) {
+    private static func scratchStores() -> (HostStore, SSHKeyStore, SnippetStore, DictationStore, ScheduleStore) {
         let dir = scratchDir()
         setenv("FM_HOSTS_FILE", dir.appendingPathComponent("hosts.json").path, 1)
         setenv("FM_KEYS_FILE", dir.appendingPathComponent("keys.json").path, 1)
+        setenv("FM_SNIPPETS_FILE", dir.appendingPathComponent("snippets.json").path, 1)
         setenv("FM_DICTATION_DIR", dir.appendingPathComponent("dictation").path, 1)
         setenv("FM_SCHEDULES_FILE", dir.appendingPathComponent("schedules.json").path, 1)
-        return (HostStore(), SSHKeyStore(), DictationStore(), ScheduleStore())
+        return (HostStore(), SSHKeyStore(), SnippetStore(), DictationStore(), ScheduleStore())
     }
 
     private static func makeSetup() -> SetupContainerController {
-        let (hostStore, keyStore, dictationStore, _) = scratchStores()
+        let (hostStore, keyStore, snippetStore, dictationStore, _) = scratchStores()
         return SetupContainerController(
             updates: UpdatesController(),
             bootstrap: BootstrapController(hostStore: hostStore, keyStore: keyStore,
-                                           dictationStore: dictationStore),
+                                           snippetStore: snippetStore, dictationStore: dictationStore),
             automation: AutomationController(hostStore: hostStore, keyStore: keyStore,
-                                             dictationStore: dictationStore),
+                                             snippetStore: snippetStore, dictationStore: dictationStore),
             githubSync: GitHubSyncController())
     }
 
@@ -242,7 +243,7 @@ enum DaylightDrillPageSlice3SelfTest {
 
     private static func checkSchedulesDrillHeader(_ ok: inout Bool) {
         print("\n-- §6.4: Schedules' header line and its hoisted add action --")
-        let (_, _, _, store) = scratchStores()
+        let (_, _, _, _, store) = scratchStores()
         let controller = SchedulesController(scheduleStore: store)
         _ = mount(controller)
 
@@ -470,7 +471,7 @@ enum DaylightDrillPageSlice3SelfTest {
 
     private static func checkTimeColumnAndTicks(_ ok: inout Bool) {
         print("\n-- §7: Schedules' mono time column, and no fabricated ticks --")
-        let (_, _, _, store) = scratchStores()
+        let (_, _, _, _, store) = scratchStores()
 
         // Three cadences whose clock strings differ in width ("2:00 AM" vs
         // "10:30 PM"), which is exactly what a non-column would misalign.
@@ -531,7 +532,7 @@ enum DaylightDrillPageSlice3SelfTest {
 
     private static func checkNoWindowWidthFloor(_ ok: inout Bool) {
         print("\n-- gotcha (13): the two restyled pages hold a narrow window --")
-        let (_, _, _, store) = scratchStores()
+        let (_, _, _, _, store) = scratchStores()
         store.add(AutomationSchedule(action: .configBackupExport, cadence: .daily(hour: 3, minute: 15)))
 
         func floor(of controller: NSViewController, label: String, widths: [CGFloat]) {

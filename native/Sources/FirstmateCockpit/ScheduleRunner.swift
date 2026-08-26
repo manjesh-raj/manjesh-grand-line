@@ -122,10 +122,10 @@ final class ScheduleRunner {
     var onRunStateChanged: ((UUID) -> Void)?
 
     private var store: ScheduleStore?
-    /// The stores the config-backup action needs. Injected rather than
+    /// The four stores the config-backup action needs. Injected rather than
     /// constructed here: a second `HostStore` would be a second writer to the
     /// same JSON file, which is exactly what GL-05 exists to prevent.
-    private var backupStores: (hosts: HostStore, keys: SSHKeyStore, dictation: DictationStore)?
+    private var backupStores: (hosts: HostStore, keys: SSHKeyStore, snippets: SnippetStore, dictation: DictationStore)?
     /// The run-history sink (`ScheduleRunHistory.swift`) - injected the same
     /// way, defaulting to the real on-disk log so existing `start(...)`
     /// callers need no change.
@@ -141,10 +141,11 @@ final class ScheduleRunner {
     func start(store: ScheduleStore,
                hostStore: HostStore,
                keyStore: SSHKeyStore,
+               snippetStore: SnippetStore,
                dictationStore: DictationStore,
                historyStore: ScheduleRunHistoryStore = .shared) {
         self.store = store
-        self.backupStores = (hostStore, keyStore, dictationStore)
+        self.backupStores = (hostStore, keyStore, snippetStore, dictationStore)
         self.historyStore = historyStore
         guard timer == nil else { return }
         // F1: declare the row so the Health card says "not run yet" rather than
@@ -310,7 +311,7 @@ final class ScheduleRunner {
 enum ScheduleActions {
 
     static func run(_ action: ScheduledActionKind,
-                    backupStores: (hosts: HostStore, keys: SSHKeyStore, dictation: DictationStore)?) -> ScheduleActionResult {
+                    backupStores: (hosts: HostStore, keys: SSHKeyStore, snippets: SnippetStore, dictation: DictationStore)?) -> ScheduleActionResult {
         switch action {
         case .driftCheck: return driftCheck()
         case .toolUpdateCheck: return toolUpdateCheck()
@@ -546,7 +547,7 @@ enum ScheduleActions {
 
     // MARK: Config backup export - a push of a .glbackup bundle
 
-    private static func configBackupExport(stores: (hosts: HostStore, keys: SSHKeyStore, dictation: DictationStore)?) -> ScheduleActionResult {
+    private static func configBackupExport(stores: (hosts: HostStore, keys: SSHKeyStore, snippets: SnippetStore, dictation: DictationStore)?) -> ScheduleActionResult {
         guard let stores else {
             return ScheduleActionResult(verdict: .failed, summary: "Backup stores are not available in this process.")
         }
@@ -556,7 +557,7 @@ enum ScheduleActions {
                 summary: "GitHub is not authenticated - run `gh auth login` so the backup can be pushed.")
         }
         // Reading the stores has to happen on the main thread: they are
-        // main-thread-only by design, and this
+        // main-thread-only by design (see `SnippetStore`'s header), and this
         // runs on a background queue. The `sync` back to main is only safe
         // because nothing on main ever waits on the runner's queue - this
         // asserts that rather than relying on it, the same way
@@ -566,6 +567,7 @@ enum ScheduleActions {
         DispatchQueue.main.sync {
             bundle = GrandLineBackupBuilder.build(
                 hosts: stores.hosts.hosts,
+                snippets: stores.snippets.snippets,
                 allKeys: stores.keys.keys,
                 dictationStore: stores.dictation)
         }
@@ -578,9 +580,15 @@ enum ScheduleActions {
             return ScheduleActionResult(verdict: .failed, summary: error.localizedDescription)
         }
         let hostCount = bundle.hosts.count
-        return ScheduleActionResult(
-            verdict: .changed,
-            summary: "Pushed \(hostCount) host\(hostCount == 1 ? "" : "s") to manjesh-config.")
+        let snippetCount = bundle.snippets.count
+        let summary = "Pushed \(hostCount) host\(hostCount == 1 ? "" : "s") and \(snippetCount) snippet\(snippetCount == 1 ? "" : "s") to manjesh-config."
+        // Labels only - never a command body or a credential (`GitHubBackupSource
+        // .export` already redacts private key bytes/passphrases from the
+        // bundle itself; this log just names what was in it).
+        let log = summary
+            + "\nHosts: \(bundle.hosts.map { $0.label }.joined(separator: ", "))"
+            + "\nSnippets: \(bundle.snippets.map { $0.label }.joined(separator: ", "))"
+        return ScheduleActionResult(verdict: .changed, summary: summary, log: log)
     }
 
     // MARK: Tool update check + install - captain-approved, no confirmation

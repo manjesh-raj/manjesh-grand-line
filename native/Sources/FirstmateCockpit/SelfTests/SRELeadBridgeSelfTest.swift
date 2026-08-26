@@ -4,7 +4,7 @@
 // regression check for `SRELeadBridge`'s polling/extraction/busy-detection
 // logic, run against `FakeBridgeTerminal` - a lightweight stand-in for
 // `CockpitTerminalView` that needs no AppKit or SwiftTerm, exercising exactly
-// the `SRELeadBridgeTerminal` protocol the real `ConsoleSession` conforms to. This
+// the `SRELeadBridgeTerminal` protocol the real `TabModel` conforms to. This
 // is the "verify the LOCAL half of the mechanism thoroughly even without a
 // real bastion" half of the acceptance criteria - the Python side has its
 // own tests in `native/Scripts/test_sre_kubectl_mcp.py`.

@@ -210,15 +210,16 @@ enum DaylightHardeningSelfTest {
                               styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
+        let snippetStore = SnippetStore()
         let shell = AppShellController(
-            hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore),
-            console: ConsoleController(keyStore: keyStore, isFirstmateConsole: false),
+            hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
+            console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
             settings: SettingsController(hostStore: hostStore, keyStore: keyStore,
-                                         dictationStore: DictationStore()),
-            hostStore: hostStore, keyStore: keyStore,
+                                         snippetStore: snippetStore, dictationStore: DictationStore()),
+            hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore,
             shiftStore: ShiftStore(), dictationStore: DictationStore(),
             commandLibraryStore: CommandLibraryStore(), scheduleStore: ScheduleStore(),
-            makeHostConsole: { ConsoleController(keyStore: keyStore,
+            makeHostConsole: { ConsoleController(keyStore: keyStore, snippetStore: snippetStore,
                                                  isFirstmateConsole: false) }
         )
         window.contentViewController = shell

@@ -503,6 +503,7 @@ extension RailDestination {
         case .overview: return .blue          // Fleet
         case .console: return .teal
         case .hosts: return .teal
+        case .logAnalyzer: return .teal
         case .shift: return .rose             // Tasks
         case .dictation: return .rose
         case .review: return .green           // Merge queue

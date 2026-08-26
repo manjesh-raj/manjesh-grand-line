@@ -109,15 +109,16 @@ enum SessionSwitcherSelfTest {
                               styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
+        let snippetStore = SnippetStore()
         let shell = AppShellController(
-            hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore),
-            console: ConsoleController(keyStore: keyStore, isFirstmateConsole: false),
+            hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
+            console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
             settings: SettingsController(hostStore: hostStore, keyStore: keyStore,
-                                         dictationStore: DictationStore()),
-            hostStore: hostStore, keyStore: keyStore,
+                                         snippetStore: snippetStore, dictationStore: DictationStore()),
+            hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore,
             shiftStore: ShiftStore(), dictationStore: DictationStore(),
             commandLibraryStore: CommandLibraryStore(), scheduleStore: ScheduleStore(),
-            makeHostConsole: { ConsoleController(keyStore: keyStore, isFirstmateConsole: false) }
+            makeHostConsole: { ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false) }
         )
         window.contentViewController = shell
         shell.view.layoutSubtreeIfNeeded()
@@ -339,7 +340,7 @@ enum SessionSwitcherSelfTest {
             let hostStore = HostStore()
             let host = devHost()
             hostStore.add(host)
-            let panel = HostsController(hostStore: hostStore, keyStore: SSHKeyStore())
+            let panel = HostsController(hostStore: hostStore, keyStore: SSHKeyStore(), snippetStore: SnippetStore())
             let registry = HostSessionRegistry()
             registry.register(hostID: host.id, label: host.label, accentHex: host.accentHex)
             panel.liveSession = { registry.session(for: $0) }
@@ -348,7 +349,7 @@ enum SessionSwitcherSelfTest {
             var ended: [UUID] = []
             panel.onSwitchToSession = { switched.append($0) }
             panel.onEndSession = { ended.append($0) }
-            panel.onConnect = { _, _, _, _, _ in connected = true }
+            panel.onConnect = { _, _, _, _, _, _ in connected = true }
             _ = panel.view
             panel.refreshLiveSessionState()
 
@@ -379,7 +380,7 @@ enum SessionSwitcherSelfTest {
             let hostStore = HostStore()
             let host = prodHost()
             hostStore.add(host)
-            let panel = HostsController(hostStore: hostStore, keyStore: SSHKeyStore())
+            let panel = HostsController(hostStore: hostStore, keyStore: SSHKeyStore(), snippetStore: SnippetStore())
             // No `liveSession` wired at all - the pre-switcher shape, which
             // must render exactly the pre-switcher row.
             _ = panel.view

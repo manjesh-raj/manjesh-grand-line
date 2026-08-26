@@ -41,7 +41,7 @@ final class CockpitTerminalView: LocalProcessTerminalView {
     /// The most recent moment a real keystroke or paste reached this
     /// terminal - never set by `SRELeadBridge`'s own `send(txt:)` injections,
     /// which don't go through key events. `SRELeadBridge` reads this (via
-    /// `ConsoleSession`'s `SRELeadBridgeTerminal` conformance) to refuse a command
+    /// `TabModel`'s `SRELeadBridgeTerminal` conformance) to refuse a command
     /// when the captain is actively using the tab, and to detect after the
     /// fact that the captain typed into it while a command was still
     /// running.

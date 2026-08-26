@@ -3,7 +3,7 @@
 // GL-05: refuse to run two copies of this app at once.
 //
 // Why this is a real problem and not hygiene: every JSON store in this app is
-// load-once-then-last-writer-wins (`HostStore`, `SSHKeyStore`,
+// load-once-then-last-writer-wins (`HostStore`, `SSHKeyStore`, `SnippetStore`,
 // `DictationStore`), so instance A's stale `persist()` silently discards
 // everything B saved since A launched - with no error and, crucially, no
 // corrupt-file backup either, because the file it overwrites decodes perfectly

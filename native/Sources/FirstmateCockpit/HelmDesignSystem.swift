@@ -2688,14 +2688,10 @@ final class HelmEmptyState: NSView {
 /// (§6.3's named model) promoted: its pill, its capsule, its 3pt inset, its
 /// accent-wash active state.
 ///
-/// **`TabChipView` is deliberately not folded in.** Tools' own tab strip
-/// (Console's own tab bar was removed outright by `fm/grandline-menubar-
-/// remove-items` - a console now holds at most one session, per an explicit
-/// captain decision, with no strip of anything to switch among; `TabChipView`
-/// survives only as a genuine, independent dependency of Tools' unrelated
-/// feature) is closable, user-created, dynamic chips - "manage a set of
-/// tabs", not "switch between a fixed few views". Per the audit's own
-/// framing those are different concepts, and they stay separate.
+/// **`TabChipView` is deliberately not folded in.** Console's and Tools' tab
+/// strips are closable, user-created, dynamic chips - "manage a set of tabs",
+/// not "switch between a fixed few views". Per the audit's own framing those
+/// are different concepts, and they stay separate.
 ///
 /// **It themes itself**: call `applyTheme` from the page's
 /// `ThemeManager.shared.observe` closure, and `select(_:)` when the active

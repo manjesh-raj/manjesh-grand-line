@@ -410,32 +410,10 @@ final class IncidentStore {
     private func newDirectory(for incident: Incident) -> URL {
         let calendar = Calendar(identifier: .gregorian)
         let year = String(calendar.component(.year, from: incident.startedAt))
-        let name = "\(incident.id)-\(Self.slugify(incident.title))"
+        let name = "\(incident.id)-\(LogAnalyzerStore.slugify(incident.title))"
         return incidentsDir
             .appendingPathComponent(year, isDirectory: true)
             .appendingPathComponent(name, isDirectory: true)
-    }
-
-    /// This app's one directory-name slugifier, formerly shared with
-    /// `LogAnalyzerStore` (deleted along with the rest of the Log Analyzer
-    /// feature by `fm/grandline-menubar-remove-items`) - kept here as this
-    /// store's own copy rather than a shared file for one small pure
-    /// function with a single remaining caller.
-    private static func slugify(_ title: String) -> String {
-        var slug = ""
-        var lastWasDash = false
-        for ch in title.lowercased() {
-            if ch.isLetter || ch.isNumber {
-                slug.append(ch)
-                lastWasDash = false
-            } else if !lastWasDash, !slug.isEmpty {
-                slug.append("-")
-                lastWasDash = true
-            }
-        }
-        while slug.hasSuffix("-") { slug.removeLast() }
-        if slug.isEmpty { slug = "incident" }
-        return String(slug.prefix(60))
     }
 
     /// `INC-001`, `INC-002`, ... - one past the highest number already on
@@ -447,53 +425,5 @@ final class IncidentStore {
     func nextIncidentID() -> String {
         let highest = all().compactMap { Int($0.id.dropFirst(Self.idPrefix.count)) }.max() ?? 0
         return String(format: "\(Self.idPrefix)%03d", highest + 1)
-    }
-}
-
-/// Thin, local YAML helpers - this store's own copy of a small bridge that
-/// used to live in the now-deleted `LogAnalyzerStore.swift` (removed along
-/// with the rest of the Log Analyzer feature by
-/// `fm/grandline-menubar-remove-items`). This is the only remaining caller,
-/// so it moved here rather than into a shared file for one small surface.
-///
-/// `ShiftYaml`'s own equivalents are `private` to that file, and widening
-/// them would mean this feature's storage format could be changed by an edit
-/// aimed at task/follow-up storage. Same vendored `Yaml` library and the
-/// same `YamlBeautify.dump` writer (so the order- and quote-preservation
-/// patches described in `YamlBeautify.swift`'s header apply here too) - just
-/// its own small surface.
-enum ShiftYamlBridge {
-    static func key(_ s: String) -> Yaml { .string(s, quoted: .double) }
-    static func str(_ s: String) -> Yaml { .string(s, quoted: .double) }
-
-    static func string(_ y: Yaml?) -> String? {
-        guard let y else { return nil }
-        if case .string(let s, _) = y { return s.isEmpty ? nil : s }
-        return nil
-    }
-
-    static func date(_ y: Yaml?) -> Date? {
-        guard let s = string(y) else { return nil }
-        return isoFormatter.date(from: s)
-    }
-
-    static func isoString(_ date: Date) -> String { isoFormatter.string(from: date) }
-
-    private static let isoFormatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime]
-        return f
-    }()
-
-    static func readMapping(path: String) -> Yaml? {
-        guard let text = try? String(contentsOfFile: path, encoding: .utf8), !text.isEmpty else { return nil }
-        return try? Yaml.load(text)
-    }
-
-    static func writeMapping(path: String, doc: Yaml) throws {
-        let text = YamlBeautify.dump([doc])
-        let url = URL(fileURLWithPath: path)
-        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try (text + "\n").write(to: url, atomically: true, encoding: .utf8)
     }
 }

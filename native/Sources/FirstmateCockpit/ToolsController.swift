@@ -14,18 +14,16 @@
 // `ResourceUnits.swift` for their pure logic.
 //
 // `fm/cockpit-tools-page-multi-session` merged before phase 3 landed and
-// gave this page a tab strip - originally mirroring Console's own
-// `[TabModel]` + `TabChipView` tab bar, see `TabChipView.swift`'s header for
-// the current state of that comparison (`fm/grandline-menubar-remove-items`
-// later collapsed Console down to one session per host/window and removed
-// its own tab-bar concept entirely; this page's own multi-instance tabs are
-// unaffected, a separate feature that reuses only `TabChipView`, not
-// `TabModel`) - so a captain can hold several independent instances of a
-// tool open at once - three separate Diff sessions comparing different
-// things, each with its own inputs/output. `ToolsController` now only owns
-// the tab strip, the landing-grid "pick a tool to open" picker, and which
-// tab's view is currently shown; each tab's actual tool logic lives in its
-// own `ToolInstance` (see ToolInstance.swift).
+// gave this page a tab strip
+// mirroring Console's ([TabModel] + TabChipView, see ConsoleController.swift)
+// so a captain can hold several independent instances of a tool open at
+// once - three separate Diff sessions comparing different things, each with
+// its own inputs/output. `ToolsController` now only owns the tab strip, the
+// landing-grid "pick a tool to open" picker, and which tab's view is
+// currently shown; each tab's actual tool logic lives in its own
+// `ToolInstance` (see ToolInstance.swift) - the same split Console already
+// has between `ConsoleController` (tab lifecycle/chrome) and `TabModel`
+// (one tab's own state).
 //
 // The landing grid is reused as the tool picker for New (⌘T): it's shown
 // whenever there are no tabs, or after clicking the tab bar's "+" - clicking
@@ -331,7 +329,7 @@ final class ToolsController: NSViewController, DaylightDrillActions {
         tabBar.setLeading(tabsStack)
 
         plusButton = HelmPageToolbar.iconButton(symbol: "plus",
-                                                tooltip: "New Tool Tab (⌘T)",
+                                                tooltip: "New Tool Tab",
                                                 target: self,
                                                 action: #selector(newShellTab))
 
@@ -351,8 +349,8 @@ final class ToolsController: NSViewController, DaylightDrillActions {
     ///
     /// Audit §4.8: with no tool tab open, this bar sat above the landing grid
     /// as dead chrome - a strip whose only content was a "+" that opens the
-    /// picker already filling the page. ⌘T still opens a new tab from the
-    /// menu regardless, and the strip reappears with it.
+    /// picker already filling the page. Clicking a card on that same landing
+    /// grid still opens a new tab regardless, and the strip reappears with it.
     private func updateTabBarVisibility() {
         tabBar.setCollapsed(tabs.isEmpty)
     }
@@ -594,14 +592,19 @@ final class ToolsController: NSViewController, DaylightDrillActions {
         return existing == 0 ? kind.shortName : "\(kind.shortName) \(existing + 1)"
     }
 
-    /// The tab bar's "+" (also reachable via the Tab menu's "New Tab" / ⌘T,
-    /// which dispatches through the first-responder chain by selector name -
-    /// `newShellTab` is `ConsoleController`'s selector for that exact menu
-    /// item, and NSMenuItem action dispatch matches by selector, not by
-    /// declaring class, so this method must keep that name to be reachable
-    /// from the menu while the Tools page - not Console - has focus): show
-    /// the picker so the captain can choose which tool to open next. It does
-    /// not by itself create a tab.
+    /// The tab bar's "+": show the picker so the captain can choose which
+    /// tool to open next. It does not by itself create a tab.
+    ///
+    /// This method's name (`newShellTab`, matching `ConsoleController`'s own
+    /// method of the same name) is a holdover from when both controllers
+    /// shared one Tab menu whose items dispatched through the first-
+    /// responder chain by selector name rather than a declared target -
+    /// that menu is gone now
+    /// (`fm/grandline-console-tabs-restore-tabmenu-fix`), so the shared name
+    /// no longer serves that purpose, but it's left as-is (both controllers'
+    /// tab actions - new/duplicate/rename/close - keep matching names) since
+    /// there's no reason to churn it and self-tests already call it directly
+    /// by that name.
     @objc func newShellTab() {
         showPicker()
     }
@@ -691,6 +694,13 @@ final class ToolsController: NSViewController, DaylightDrillActions {
         tab.name = trimmed.isEmpty ? defaultName(for: tab.kind) : trimmed
         tab.chip.setName(tab.name)
         styleChips()
+    }
+
+    /// ⌘1…⌘9: select the Nth open tab (menu items carry a 1-based tag).
+    @objc func selectTabByShortcut(_ sender: NSMenuItem) {
+        let idx = sender.tag - 1
+        guard idx >= 0, idx < tabs.count else { return }
+        selectTab(id: tabs[idx].id)
     }
 
     private func selectTab(id: UUID) {

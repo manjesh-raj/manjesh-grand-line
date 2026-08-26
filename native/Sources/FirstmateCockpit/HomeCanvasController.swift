@@ -58,6 +58,7 @@ final class HomeCanvasController: NSViewController {
         let shiftStore: ShiftStore
         let hostStore: HostStore
         let scheduleStore: ScheduleStore
+        let logAnalyzerStore: LogAnalyzerStore
         let docsRunbookStore: DocsRunbookStore
     }
 
@@ -509,6 +510,7 @@ final class HomeCanvasController: NSViewController {
         case .automation: fillAutomation(&content)
         case .githubSync: fillGitHubSync(&content)
         case .schedules: fillSchedules(&content)
+        case .logAnalyzer: fillLogAnalyzer(&content)
         case .vault: fillVault(&content)
         case .docs: fillDocs(&content)
         case .runbooks: fillRunbooks(&content)
@@ -837,6 +839,20 @@ final class HomeCanvasController: NSViewController {
                                      value: schedule.isEnabled ? schedule.cadence.displayString : "paused")
         }
         content.body = .peekRows(Array(rows))
+    }
+
+    private func fillLogAnalyzer(_ content: inout HelmModuleCard.Content) {
+        // Memoised inside the store (GL-35) - this is not a fresh disk walk
+        // on every canvas render.
+        let history = sources.logAnalyzerStore.history()
+        content.subtitle = history.first.map { "last: \($0.sourceKind.displayName)" } ?? "nothing saved"
+        guard let latest = history.first else {
+            content.body = .note("Paste output or capture a terminal block to start an investigation.")
+            return
+        }
+        content.body = .metric(value: "\(history.count)",
+                               unit: history.count == 1 ? "saved" : "saved",
+                               note: "Latest: \(latest.title)")
     }
 
     private func fillVault(_ content: inout HelmModuleCard.Content) {

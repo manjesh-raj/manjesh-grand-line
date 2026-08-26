@@ -1,7 +1,7 @@
 // Manjesh Grand Line - native macOS app.
 //
 // Daylight **Phase 5**'s own suite: the app's chrome that is not a destination
-// page - the eight editor sheets (§6.10), the ⌘K palette (§6.11), the
+// page - the nine editor sheets (§6.10), the ⌘K palette (§6.11), the
 // notification panel (§6.12), and toasts plus empty states (§6.14).
 //
 // What each case is protecting, and why it is worth a test rather than a
@@ -9,7 +9,7 @@
 //
 //   1. **The scaffold really applied §6.10 to every sheet, uniformly.** The
 //      whole reason §6.10 says "the scaffold makes that automatic" is that
-//      eight hand-restyled sheets drift. So this walks all eight, reaching each
+//      nine hand-restyled sheets drift. So this walks all nine, reaching each
 //      one's `HelmFormSheet` *through its own root view* rather than through a
 //      stored property - which also proves the scaffold is still the root, the
 //      thing that lets it own the sheet's background, appearance and single
@@ -113,17 +113,16 @@ enum DaylightChromeSelfTest {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         setenv("FM_HOSTS_FILE", dir.appendingPathComponent("hosts.json").path, 1)
         setenv("FM_KEYS_FILE", dir.appendingPathComponent("keys.json").path, 1)
+        setenv("FM_SNIPPETS_FILE", dir.appendingPathComponent("snippets.json").path, 1)
         setenv("FM_SHIFT_DIR", dir.appendingPathComponent("shift").path, 1)
         setenv("FM_COMMAND_LIBRARY_DIR", dir.appendingPathComponent("commands").path, 1)
     }
 
     /// Every editor sheet in the app, each reached through its real controller.
     ///
-    /// The six §6.10 names ("all six editor sheets") minus the Snippet editor
-    /// (the feature was removed outright by `fm/grandline-menubar-remove-items`)
-    /// plus the three built after that section was written - Key, Schedule and
-    /// the multi-host send picker - because the scaffold cannot restyle some
-    /// of these and leave others behind.
+    /// The six §6.10 names ("all six editor sheets") plus the three built after
+    /// that section was written - Key, Schedule and the multi-host send picker -
+    /// because the scaffold cannot restyle six of nine and leave three behind.
     private static func everySheet() -> [(name: String, controller: NSViewController)] {
         scratchStores()
         let keyStore = SSHKeyStore()
@@ -131,9 +130,10 @@ enum DaylightChromeSelfTest {
             ("Task", ShiftTaskEditorController(task: nil, projects: [])),
             ("Follow-up", ShiftFollowUpEditorController(followUp: nil, tasks: [], projects: [])),
             ("Project", ShiftProjectEditorController()),
+            ("Snippet", SnippetEditorController(snippet: nil)),
             ("Command", CommandEditorController(editingID: nil, prefill: nil,
                                                 config: .empty)),
-            ("Host", HostEditorController(host: nil, keyStore: keyStore)),
+            ("Host", HostEditorController(host: nil, keyStore: keyStore, snippets: [])),
             ("Key", KeyEditorController(key: nil)),
             ("Schedule", ScheduleEditorController(schedule: nil)),
             ("Send to…", MultiHostSendPickerController(command: sampleCommand(),
@@ -165,7 +165,7 @@ enum DaylightChromeSelfTest {
     // MARK: 1. §6.10 across every sheet
 
     private static func checkSheetRecipeAcrossEverySheet(_ ok: inout Bool) {
-        print("\n-- §6.10: one scaffold, eight sheets --")
+        print("\n-- §6.10: one scaffold, nine sheets --")
         let theme = daylight
         ThemeManager.shared.setTheme(theme)
         let card = HelmTheme.nsColor(DaylightPalette.card)

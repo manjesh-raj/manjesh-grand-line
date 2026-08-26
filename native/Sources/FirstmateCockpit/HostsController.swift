@@ -1,59 +1,61 @@
 // Manjesh Grand Line - native macOS app.
 //
-// The Hosts destination: saved SSH hosts and SSH keys, as two tabs of one
-// full-width page.
+// The Hosts destination: saved SSH hosts, SSH keys and command snippets, as
+// three tabs of one full-width page.
 //
-// **Why this file replaces two.** The full-app UI audit
+// **Why this file replaces three.** The full-app UI audit
 // (`data/grandline-full-ui-audit/report.md`, §4.4/§4.5, §6.4 and §7's Phase 5)
-// found Hosts and SSH Keys were "views of one concern in different
-// presentation modes": a rail destination that was still laid out as
+// found Hosts, SSH Keys and Snippets were "three views of one concern in three
+// different presentation modes": a rail destination that was still laid out as
 // the 220-260pt Termius-style sidebar it had been before
 // `fm/cockpit-native-ui-fixes2` promoted it to a full-size body destination,
-// plus a 380x520 floating window. The window (`KeysSidebarController`) was a
-// near-identical twin of the Hosts page - same footer-button helper, same
-// table setup, same title/caption treatment - and the Hosts page was the
-// audit's single worst-rendering surface, with three ~370pt `.fillEqually`
-// footer buttons and one 78pt row above ~800pt of empty space.
+// plus a 380x520 floating window and a 360x480 floating window. The two
+// windows (`KeysSidebarController`, `SnippetsController`) were near-identical
+// twins - same footer-button helper, same table setup, same title/caption
+// treatment - and the Hosts page was the audit's single worst-rendering
+// surface, with three ~370pt `.fillEqually` footer buttons and one 78pt row
+// above ~800pt of empty space.
 //
 // The captain approved the structural change (registered decision
-// `grandline-full-ui-audit-decision-hosts-keys-snippets-merge`): the floating
-// window is gone, and its content is a `HelmSegmentedTabs` tab inside this
-// destination. Everything it did still happens here - add/edit/delete a
-// host or key; connect; quick-connect; key generation and import; the pinned
-// "Firstmate" entry's connect - only the presentation changed. (A third tab,
-// Snippets, existed here too until `fm/grandline-menubar-remove-items`
-// removed the whole feature.)
+// `grandline-full-ui-audit-decision-hosts-keys-snippets-merge`): the two
+// windows are gone, and their content is a `HelmSegmentedTabs` tab inside this
+// destination. Everything they did still happens here - add/edit/delete a
+// host, key or snippet; connect; quick-connect; key generation and import;
+// snippet run; the pinned "Firstmate" entry's connect - only the presentation
+// changed.
 //
 // **What it is built out of.** Nothing new: the page is Phase 1-4's shared
 // components (`HelmDesignSystem.swift`) assembled - `HelmSegmentedTabs` for
 // the tab row, one `HelmCard` per tab, `HelmAccentRow` cards for every list
 // row, `HelmEmptyState` for every "nothing here yet", `HelmButton` for every
-// action. The two per-list bodies are one `HostsListSection`, fed a
+// action. The three per-list bodies are one `HostsListSection`, fed a
 // `[HostsListSection.Item]` array, which is what actually deletes the
 // duplication rather than moving it.
 //
 // **Where the actions went.** The footer strip is gone. A row's own actions
-// (Connect / Edit, plus an overflow menu carrying the rest) live in that
+// (Connect / Edit / Run, plus an overflow menu carrying the rest) live in that
 // row, in `HelmAccentRow`'s `trailingAccessory` slot; the "add" action lives
 // in its card's header. So no action is ever a 370pt-wide button, and no
 // action depends on the list having a selection first.
 //
-// This view stays decoupled from the terminal exactly as its predecessors
-// were: it takes the two stores plus `onConnect` / `onConnectPinned` /
-// `onAddOrEdit` closures, and never touches `ConsoleController` or SwiftTerm.
+// This view stays decoupled from the terminal exactly as its three
+// predecessors were: it takes the three stores plus `onConnect` /
+// `onConnectPinned` / `onAddOrEdit` / `onRunSnippet` closures, and never
+// touches `ConsoleController` or SwiftTerm.
 
 import AppKit
 
-/// Which of the destination's two tabs is showing. Raw values are the ids
+/// Which of the destination's three tabs is showing. Raw values are the ids
 /// `HelmSegmentedTabs` deals in (the component switches nothing itself - it
 /// hands an id back and this controller's own switch does the work).
 enum HostsTab: String, CaseIterable {
-    case hosts, keys
+    case hosts, keys, snippets
 
     var title: String {
         switch self {
         case .hosts: return "Hosts"
         case .keys: return "SSH Keys"
+        case .snippets: return "Snippets"
         }
     }
 }
@@ -62,14 +64,15 @@ final class HostsController: NSViewController, DaylightDrillActions {
 
     private let hostStore: HostStore
     private let keyStore: SSHKeyStore
+    private let snippetStore: SnippetStore
 
-    // MARK: Callbacks (unchanged from the controllers this replaces)
+    // MARK: Callbacks (unchanged from the three controllers this replaces)
 
     /// Open an ssh session: (saved host id - `nil` for an ad-hoc quick
     /// connect with no saved identity, tab label, ssh argv, host accent hex,
-    /// saved-key id). Wired by the app delegate to the
+    /// saved-key id, startup-snippet id). Wired by the app delegate to the
     /// same per-host dedicated-page connect the rail's pinned host icons use.
-    var onConnect: ((UUID?, String, [String], String?, UUID?) -> Void)?
+    var onConnect: ((UUID?, String, [String], String?, UUID?, UUID?) -> Void)?
 
     /// Connect the pinned "Firstmate" entry. Wired to
     /// `ConsoleController.openFirstmateHost`.
@@ -107,6 +110,10 @@ final class HostsController: NSViewController, DaylightDrillActions {
     /// owned by the app delegate, not a sheet on this page.
     var onAddOrEdit: ((Host?) -> Void)?
 
+    /// Run a snippet in the console's active/frontmost tab. Wired to
+    /// `ConsoleController.runSnippetInActiveTab`.
+    var onRunSnippet: ((Snippet) -> Void)?
+
     // MARK: Views
 
     private var tabs: HelmSegmentedTabs!
@@ -114,6 +121,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
 
     private let hostsTabView = NSView()
     private let keysTabView = NSView()
+    private let snippetsTabView = NSView()
 
     /// Quick connect / live filter, in the app's own search well
     /// (Phase 0's raw-input purge). An `NSSearchField` paints its own system
@@ -129,8 +137,9 @@ final class HostsController: NSViewController, DaylightDrillActions {
 
     private let hostsList = HostsListSection()
     private let keysList = HostsListSection()
+    private let snippetsList = HostsListSection()
 
-    /// The two "add" actions. Daylight §6.4 hoists a page's primary action
+    /// The three "add" actions. Daylight §6.4 hoists a page's primary action
     /// into the shell's drill header, and this page has one per tab - so they
     /// are built here (rather than inline in each `build*Tab`) and handed over
     /// through `drillHeaderActions`, which re-reads whichever tab is showing.
@@ -148,6 +157,13 @@ final class HostsController: NSViewController, DaylightDrillActions {
         b.toolTip = "New Key (⌘⇧N)"
         return b
     }()
+    private lazy var addSnippetButton: HelmButton = {
+        let b = HelmButton(title: "New Snippet", variant: .primary, size: .small,
+                           symbol: "plus", target: self, action: #selector(newSnippet))
+        b.toolTip = "New Snippet (⌘⌥N)"
+        return b
+    }()
+
     /// Set by `AppShellController` - "re-read my subtitle" / "re-read my
     /// actions". The drill header belongs to the shell; a page writing into it
     /// directly is how two owners of one view start disagreeing.
@@ -156,10 +172,12 @@ final class HostsController: NSViewController, DaylightDrillActions {
 
     private var hostsTitleLabel = NSTextField(labelWithString: HostsTab.hosts.title)
     private var keysTitleLabel = NSTextField(labelWithString: HostsTab.keys.title)
+    private var snippetsTitleLabel = NSTextField(labelWithString: HostsTab.snippets.title)
 
-    init(hostStore: HostStore, keyStore: SSHKeyStore) {
+    init(hostStore: HostStore, keyStore: SSHKeyStore, snippetStore: SnippetStore) {
         self.hostStore = hostStore
         self.keyStore = keyStore
+        self.snippetStore = snippetStore
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -195,6 +213,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
 
         buildHostsTab()
         buildKeysTab()
+        buildSnippetsTab()
 
         // The content column: gutter to gutter, exactly like every other
         // card-bearing destination in this app. An `NSLayoutGuide` rather
@@ -236,7 +255,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
             tabs.topAnchor.constraint(equalTo: column.topAnchor),
         ])
 
-        for tabView in [hostsTabView, keysTabView] {
+        for tabView in [hostsTabView, keysTabView, snippetsTabView] {
             tabView.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(tabView)
             NSLayoutConstraint.activate([
@@ -251,10 +270,12 @@ final class HostsController: NSViewController, DaylightDrillActions {
 
         hostStore.observe { [weak self] in self?.reloadHosts() }
         keyStore.onChange = { [weak self] in self?.reloadKeys() }
+        snippetStore.onChange = { [weak self] in self?.reloadSnippets() }
 
         select(tab: .hosts, moveTabControl: true)
         reloadHosts()
         reloadKeys()
+        reloadSnippets()
         // The `ThemeManager.observe` closure above fires synchronously at
         // registration - before the lists had any rows - so re-apply once the
         // page is fully built (`ThemeManager.swift`'s checklist item 4, the
@@ -331,6 +352,14 @@ final class HostsController: NSViewController, DaylightDrillActions {
         fill(keysTabView, with: keysList.card)
     }
 
+    private func buildSnippetsTab() {
+        snippetsList.card.setHeader(symbol: "chevron.left.forwardslash.chevron.right", tint: .info,
+                                    titleLabel: snippetsTitleLabel,
+                                    subtitleLabel: NSTextField(wrappingLabelWithString:
+                                        "Run sends a snippet's command, then Enter, to the active terminal tab."))
+        fill(snippetsTabView, with: snippetsList.card)
+    }
+
     private func fill(_ container: NSView, with child: NSView) {
         container.addSubview(child)
         NSLayoutConstraint.activate([
@@ -350,6 +379,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
         if moveTabControl { tabs?.select(tab.rawValue) }
         hostsTabView.isHidden = tab != .hosts
         keysTabView.isHidden = tab != .keys
+        snippetsTabView.isHidden = tab != .snippets
         // §6.4: both halves of the header describe the tab that is showing.
         onDrillActionsChanged?()
         onDrillSubtitleChanged?()
@@ -365,6 +395,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
         switch activeTab {
         case .hosts: return [addHostButton]
         case .keys: return [addKeyButton]
+        case .snippets: return [addSnippetButton]
         }
     }
 
@@ -374,6 +405,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
     var drillHeaderSubtitle: String? {
         let hosts = hostStore.hosts.count
         let keys = keyStore.keys.count
+        let snippets = snippetStore.snippets.count
         func plural(_ n: Int, _ one: String, _ many: String) -> String {
             "\(n) \(n == 1 ? one : many)"
         }
@@ -386,6 +418,10 @@ final class HostsController: NSViewController, DaylightDrillActions {
             return keys == 0
                 ? "No saved keys yet"
                 : "\(plural(keys, "key", "keys")) in the Keychain"
+        case .snippets:
+            return snippets == 0
+                ? "No snippets yet"
+                : plural(snippets, "saved snippet", "saved snippets")
         }
     }
 
@@ -400,6 +436,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
         tabs?.applyTheme(theme)
         hostsList.applyTheme(theme)
         keysList.applyTheme(theme)
+        snippetsList.applyTheme(theme)
     }
 
     // MARK: Hosts data
@@ -652,11 +689,45 @@ final class HostsController: NSViewController, DaylightDrillActions {
         return item
     }
 
+    // MARK: Snippets data
+
+    private func reloadSnippets() {
+        var items = snippetStore.snippets.map { snippetItem($0) }
+        if items.isEmpty {
+            items = [.empty(symbol: "chevron.left.forwardslash.chevron.right",
+                            title: "No snippets yet",
+                            body: "Save a command you run often, then send it to any terminal tab in one click.")]
+        }
+        snippetsTitleLabel.stringValue = snippetStore.snippets.isEmpty
+            ? HostsTab.snippets.title
+            : "\(HostsTab.snippets.title) (\(snippetStore.snippets.count))"
+        snippetsList.setItems(items)
+        onDrillSubtitleChanged?()
+    }
+
+    private func snippetItem(_ snippet: Snippet) -> HostsListSection.Item {
+        var content = HelmAccentRow.Content(tint: .info,
+                                            kicker: "Snippet",
+                                            title: snippet.label,
+                                            meta: snippet.subtitle,
+                                            badgeSymbol: "chevron.left.forwardslash.chevron.right")
+        content.metaIsCode = true
+        var item = HostsListSection.Item(content: content)
+        item.primary = .init(title: "Run", symbol: "play.fill") { [weak self] in self?.onRunSnippet?(snippet) }
+        item.activate = { [weak self] in self?.onRunSnippet?(snippet) }
+        item.overflow = [
+            .init(title: "Edit…") { [weak self] in self?.presentSnippetEditor(for: snippet) },
+            .init(title: "Copy Command") { copyToPasteboard(snippet.command) },
+            .init(title: "Delete") { [weak self] in self?.confirmDeleteSnippet(snippet) },
+        ]
+        return item
+    }
+
     // MARK: Host actions
 
     private func connect(_ host: Host) {
         onConnect?(host.id, host.label, host.sshArguments(allHosts: hostStore.hosts),
-                   host.accentHex, host.keyID)
+                   host.accentHex, host.keyID, host.startupSnippetID)
     }
 
     private func duplicate(_ host: Host) {
@@ -695,7 +766,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
             return
         }
         if let parsed = HostCatalog.parseQuickConnect(raw) {
-            onConnect?(nil, parsed.label, parsed.args, nil, nil)
+            onConnect?(nil, parsed.label, parsed.args, nil, nil, nil)
             searchField.stringValue = ""
             applyHostFilter("")
             return
@@ -785,6 +856,45 @@ final class HostsController: NSViewController, DaylightDrillActions {
         keyStore.delete(id: key.id)
     }
 
+    // MARK: Snippet actions
+
+    /// ⌘⌥N / the card header's "New Snippet".
+    @objc func newSnippet() {
+        select(tab: .snippets)
+        presentSnippetEditor(for: nil)
+    }
+
+    private func presentSnippetEditor(for snippet: Snippet?) {
+        let editor = SnippetEditorController(snippet: snippet)
+        editor.onSave = { [weak self] saved in
+            guard let self else { return }
+            if self.snippetStore.snippet(id: saved.id) != nil {
+                self.snippetStore.update(saved)
+            } else {
+                self.snippetStore.add(saved)
+            }
+        }
+        // GL-06: same fix as the key editor above - route the sheet's Delete
+        // through the row-level confirmation instead of deleting outright.
+        editor.onDelete = { [weak self] id in
+            DispatchQueue.main.async {
+                guard let self, let snippet = self.snippetStore.snippet(id: id) else { return }
+                self.confirmDeleteSnippet(snippet)
+            }
+        }
+        presentAsSheet(editor)
+    }
+
+    private func confirmDeleteSnippet(_ snippet: Snippet) {
+        guard confirm(message: "Delete \u{201C}\(snippet.label)\u{201D}?",
+                      detail: "Any host using this as its startup snippet will fall back to no startup command.")
+        else { return }
+        snippetStore.delete(id: snippet.id)
+        Toast.showUndo(in: view, message: "Deleted \u{201C}\(snippet.label)\u{201D}") { [weak self] in
+            self?.snippetStore.add(snippet)
+        }
+    }
+
     // MARK: Shared alerts
 
     /// GL-06: one implementation, shared with the host editor window in
@@ -810,10 +920,12 @@ final class HostsController: NSViewController, DaylightDrillActions {
         let activeTab: String
         let hostRowCount: Int
         let keyRowCount: Int
+        let snippetRowCount: Int
         let hostsCardFrame: NSRect
         let rootWidth: CGFloat
         let hostsTabVisible: Bool
         let keysTabVisible: Bool
+        let snippetsTabVisible: Bool
     }
 
     func debugState() -> Debug {
@@ -821,16 +933,19 @@ final class HostsController: NSViewController, DaylightDrillActions {
         return Debug(activeTab: activeTab.rawValue,
                      hostRowCount: hostsList.debugRowCount,
                      keyRowCount: keysList.debugRowCount,
+                     snippetRowCount: snippetsList.debugRowCount,
                      hostsCardFrame: hostsList.card.convert(hostsList.card.bounds, to: view),
                      rootWidth: view.bounds.width,
                      hostsTabVisible: !hostsTabView.isHidden,
-                     keysTabVisible: !keysTabView.isHidden)
+                     keysTabVisible: !keysTabView.isHidden,
+                     snippetsTabVisible: !snippetsTabView.isHidden)
     }
 
     func debugList(_ tab: HostsTab) -> HostsListSection {
         switch tab {
         case .hosts: return hostsList
         case .keys: return keysList
+        case .snippets: return snippetsList
         }
     }
 }

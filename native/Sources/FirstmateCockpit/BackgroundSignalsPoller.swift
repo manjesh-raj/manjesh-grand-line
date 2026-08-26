@@ -411,7 +411,8 @@ final class BackgroundSignalsPoller {
         let softwareDone = SetupStepChecks.softwareDone(isLoading: false, statuses: softwareStatuses)
 
         let hostCount = HostStore().hosts.count
-        let restoreConfigDone = SetupStepChecks.restoreConfigDone(hostCount: hostCount)
+        let snippetCount = SnippetStore().snippets.count
+        let restoreConfigDone = SetupStepChecks.restoreConfigDone(hostCount: hostCount, snippetCount: snippetCount)
 
         // `restoreConfigDone` has no "not yet checked" state (it's a pure
         // synchronous read), and `firstmateHomeDone` is likewise always a
