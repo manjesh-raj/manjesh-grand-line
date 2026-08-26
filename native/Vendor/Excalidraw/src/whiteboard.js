@@ -125,7 +125,23 @@ const bridge = {
       if (!Array.isArray(skeleton) || skeleton.length === 0) {
         throw new Error("no elements to load");
       }
-      const converted = convertToExcalidrawElements(skeleton);
+      // `convertToExcalidrawElements` is Excalidraw's own internals, not this
+      // app's - a skeleton shape the native-side validation did not (or
+      // cannot) catch can still make it throw a raw JS runtime error (a
+      // TypeError like "undefined is not an object (evaluating
+      // 'o.children.forEach')", or one of its own internal `Error`s naming
+      // an id). None of that is something the captain can act on, so it is
+      // caught here specifically - never let it reach the outer catch's
+      // `reply` verbatim - logged for debugging, and replaced with one
+      // message that is always actionable regardless of what went wrong
+      // inside the library.
+      let converted;
+      try {
+        converted = convertToExcalidrawElements(skeleton);
+      } catch (convErr) {
+        if (window.console) console.error("whiteboard: convertToExcalidrawElements failed", convErr);
+        throw new Error("Claude's diagram used something this whiteboard couldn't draw. Try rewording the description, or try again.");
+      }
       if (!converted.length) throw new Error("no elements survived conversion");
       const existing = payload.mode === "append" ? liveElements() : [];
       api.updateScene({ elements: [...existing, ...converted] });

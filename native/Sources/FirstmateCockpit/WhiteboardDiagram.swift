@@ -34,10 +34,24 @@
 //    accepting one would only produce a broken box. Refusing up front says why.
 //  - **A bounded element count.** A model that misreads "diagram" as "draw me a
 //    city" should not be able to hand the canvas ten thousand elements.
+//  - **A "frame" element's "children" list.** `convertToExcalidrawElements()`
+//    requires every frame to name the ids of the elements it groups, calls
+//    `.forEach` on that field with no nil guard, and never infers membership
+//    from position - a frame with no "children" key crashes the library with
+//    a raw JS TypeError, reproduced live from a real captain report
+//    (`fm/grand-line-whiteboard-generate-crash`). Caught here so it never
+//    reaches the page at all.
 //
-// Everything past that is Excalidraw's own business: a skeleton that converts
-// cleanly renders, and a skeleton it rejects comes back through the bridge as a
-// real error message the captain sees.
+// Everything past that is genuinely Excalidraw's own business: a skeleton that
+// converts cleanly renders. But "the model got something else wrong that this
+// file cannot enumerate in advance" is a real possibility too, so `loadScene`
+// in `whiteboard.js` wraps its own call to `convertToExcalidrawElements` in a
+// second try/catch and never lets whatever comes out of *that* - a raw
+// internal JS error - reach the bridge reply verbatim. A skeleton this file
+// rejects gets one of the specific messages below; anything that gets past
+// this file and still fails inside the library gets a generic, always-
+// actionable one instead. Neither path can put raw JS crash text in front of
+// the captain.
 
 import Foundation
 
@@ -94,6 +108,14 @@ enum WhiteboardDiagram {
         {"type":"arrow","x":210,"y":50,"width":80,"height":0,\
         "start":{"id":"gateway"},"end":{"id":"service"},"label":{"text":"HTTPS"}}.
 
+        Frames group elements into a labelled boundary box (e.g. "Kubernetes \
+        Cluster" around several pods). A frame MUST have a non-empty \
+        "children" array naming the "id" of every element inside it - Excalidraw \
+        does not infer membership from position, and never omit "children" or \
+        leave it empty: {"type":"frame","id":"cluster","name":"Kubernetes \
+        Cluster","children":["pod-a","pod-b"]}. If you are not grouping \
+        elements, use a plain rectangle instead of a frame.
+
         Optional styling fields you may use: strokeColor and backgroundColor \
         (hex strings), fillStyle ("hachure"|"cross-hatch"|"solid"), \
         strokeWidth (1|2|4), roughness (0|1|2), roundness ({"type":3}) and \
@@ -148,6 +170,17 @@ enum WhiteboardDiagram {
                 message: "that came back as \(raw.count) elements, past the \(maxElements)-element limit. Try asking for something smaller."))
         }
 
+        // Frame validation (below) needs to know every id the model declared
+        // anywhere in the reply - a frame's own "children" list names the ids
+        // of *sibling* elements, so the full set has to be known before any
+        // one frame can be checked against it.
+        var declaredIDs: Set<String> = []
+        for entry in raw {
+            if let element = entry as? [String: Any], let id = element["id"] as? String, !id.isEmpty {
+                declaredIDs.insert(id)
+            }
+        }
+
         var elements: [[String: Any]] = []
         elements.reserveCapacity(raw.count)
         for (index, entry) in raw.enumerated() {
@@ -162,6 +195,32 @@ enum WhiteboardDiagram {
             guard allowedTypes.contains(type) else {
                 return .failure(WhiteboardDiagramError(
                     message: "element \(index + 1) is a \"\(type)\", which this whiteboard doesn't generate."))
+            }
+            // `convertToExcalidrawElements` requires every "frame" (and
+            // "magicframe", which is not in `allowedTypes` at all) skeleton
+            // element to carry a "children" array naming the elements it
+            // contains - it never infers membership from position, and it
+            // calls `.forEach` on that field with no nil guard. A frame with
+            // no "children" key throws a raw JS TypeError deep inside the
+            // library ("undefined is not an object (evaluating
+            // 'o.children.forEach')") - reproduced live from a real captain
+            // report, root-caused by reading the vendored bundle's own
+            // frame-processing loop. Caught here so a malformed frame is
+            // refused with a real message before it ever reaches the page.
+            if type == "frame" {
+                guard let children = element["children"] as? [Any], !children.isEmpty else {
+                    return .failure(WhiteboardDiagramError(
+                        message: "element \(index + 1) is a frame with no \"children\" list. A frame has to name the ids of the elements inside it - give it a \"children\" array, or use a plain rectangle instead."))
+                }
+                guard let childIDs = children as? [String], !childIDs.contains(where: { $0.isEmpty }) else {
+                    return .failure(WhiteboardDiagramError(
+                        message: "element \(index + 1)'s frame \"children\" list has an entry that isn't a real id."))
+                }
+                let selfID = element["id"] as? String
+                guard childIDs.allSatisfy({ declaredIDs.contains($0) && $0 != selfID }) else {
+                    return .failure(WhiteboardDiagramError(
+                        message: "element \(index + 1)'s frame \"children\" list names an id that isn't any other element in the diagram."))
+                }
             }
             elements.append(element)
         }
