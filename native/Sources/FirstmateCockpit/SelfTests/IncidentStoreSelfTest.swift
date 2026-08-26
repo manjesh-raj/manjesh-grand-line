@@ -312,6 +312,28 @@ enum IncidentStoreSelfTest {
         if let savedIncidents { setenv("FM_INCIDENTS_DIR", savedIncidents, 1) }
         if let savedShift { setenv("FM_SHIFT_DIR", savedShift, 1) } else { unsetenv("FM_SHIFT_DIR") }
 
+        // MARK: S6 - an artifact path read off disk cannot escape its incident
+        //
+        // `artifact` comes from the incident's own on-disk YAML, and it was
+        // appended to the incident directory unvalidated - so a tampered
+        // `incident.yaml` carrying `../../../../etc/passwd` would have made
+        // `artifactText` read an arbitrary file and show it to the captain.
+        for escape in ["../../../../etc/passwd",
+                       "artifacts/../../../etc/passwd",
+                       "/etc/passwd",
+                       "~/.ssh/id_ed25519",
+                       "artifacts/../../secret.md",
+                       "a/b/c/d.md",
+                       ".hidden",
+                       ""] {
+            check(IncidentStore.safeArtifactName(escape) == nil,
+                  "S6: \(escape.debugDescription) should be refused as an artifact path")
+        }
+        // ... and the one shape this store actually writes must still work, or
+        // the guard would have silently broken every real artifact.
+        check(IncidentStore.safeArtifactName("artifacts/entry-1.md") == "artifacts/entry-1.md",
+              "S6: the store's own artifact path shape was refused")
+
         // MARK: Report
 
         if failures.isEmpty {

@@ -224,8 +224,42 @@ final class IncidentStore {
 
     /// The stored text of an entry's artifact, if it has one.
     func artifactText(incidentID: String, entry: IncidentTimelineEntry) -> String? {
-        guard let artifact = entry.artifact, let dir = directory(forID: incidentID) else { return nil }
-        return try? String(contentsOf: dir.appendingPathComponent(artifact), encoding: .utf8)
+        guard let artifact = entry.artifact,
+              let safe = Self.safeArtifactName(artifact),
+              let dir = directory(forID: incidentID) else { return nil }
+        return try? String(contentsOf: dir.appendingPathComponent(safe), encoding: .utf8)
+    }
+
+    /// S6: an entry's `artifact` is a *relative path read back off disk* (from
+    /// the incident's own `incident.yaml`, which lives in the git-synced
+    /// incident tree), and it was appended to the incident directory with no
+    /// validation - so `artifact: ../../../../etc/passwd` would have made this
+    /// read an arbitrary file and show it to the captain.
+    ///
+    /// This store only ever *writes* a plain `<entry-id>.md` next to the
+    /// record, so anything that is not a single, non-dotted path component is
+    /// not something this store produced. `slugify` already keeps the directory
+    /// name safe; this is the file-name half it never had.
+    ///
+    /// Applied at load as well as here, so a traversal path never reaches the
+    /// model in the first place.
+    static func safeArtifactName(_ raw: String) -> String? {
+        let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty,
+              !name.hasPrefix("/"), !name.hasPrefix("~"),
+              !name.contains("\\"),
+              !name.unicodeScalars.contains(where: { $0.value == 0 }) else { return nil }
+        // `artifacts/<entry-id>.md` is the one shape this store writes, so a
+        // relative path of one or two plain components is allowed and anything
+        // that could climb out - a `..`, a `.`-prefixed component, an empty
+        // component from a doubled slash - is not.
+        let components = name.split(separator: "/", omittingEmptySubsequences: false).map(String.init)
+        guard components.count <= 2 else { return nil }
+        for component in components {
+            guard !component.isEmpty, component != ".", component != "..",
+                  !component.hasPrefix(".") else { return nil }
+        }
+        return name
     }
 
     /// Everything the postmortem generator is fed, assembled from the record
@@ -332,7 +366,7 @@ final class IncidentStore {
                                          title: title,
                                          detail: ShiftYamlBridge.string(e["detail"]),
                                          reference: ShiftYamlBridge.string(e["reference"]),
-                                         artifact: ShiftYamlBridge.string(e["artifact"]))
+                                         artifact: ShiftYamlBridge.string(e["artifact"]).flatMap(Self.safeArtifactName))
         }
 
         let hasRCA = dict["has_rca"]?.bool ?? false

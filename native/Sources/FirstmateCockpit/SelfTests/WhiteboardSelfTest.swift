@@ -37,11 +37,52 @@ enum WhiteboardSelfTest {
         checkOfflineByConstruction(check)
         checkPrompt(check)
         checkParsing(check)
+        checkFieldAllowlist(check)
         checkGeneration(check)
         checkDestinationWiring(check)
 
         print(ok ? "WhiteboardSelfTest: OK" : "WhiteboardSelfTest: FAILURES")
         return ok
+    }
+
+    // MARK: S5 - field-level sanitising
+
+    /// The parse used to allowlist `type` and then append the whole element,
+    /// so every other model-written string reached the web view verbatim -
+    /// including `link`, which Excalidraw turns into a clickable hyperlink.
+    /// Safe in practice only because this app happens to have no
+    /// `WKUIDelegate`, which is an omission rather than a decision.
+    private static func checkFieldAllowlist(_ check: (Bool, String) -> Void) {
+        let json = #"""
+        [
+          {"type":"rectangle","x":0,"y":0,"width":100,"height":50,
+           "link":"javascript:alert(1)",
+           "strokeColor":"#1e1e1e",
+           "label":{"text":"ok","link":"javascript:alert(2)"}},
+          {"type":"text","x":0,"y":80,"text":"data:text/html,<script>alert(3)</script>"}
+        ]
+        """#
+        guard case .success(let elements) = WhiteboardDiagram.parse(json) else {
+            check(false, "S5: the sanitising fixture no longer parses at all")
+            return
+        }
+        check(elements.count == 2, "S5: both elements should survive - sanitising drops fields, not elements")
+        check(elements[0]["link"] == nil, "S5: a `link` field reached the web view")
+        check(elements[0]["strokeColor"] != nil, "S5: an ordinary field was dropped - the sanitiser is too broad")
+        if let label = elements[0]["label"] as? [String: Any] {
+            check(label["link"] == nil, "S5: a nested `label.link` reached the web view")
+            check(label["text"] as? String == "ok", "S5: a nested ordinary field was dropped")
+        } else {
+            check(false, "S5: the label sub-dictionary was dropped entirely")
+        }
+        check(elements[1]["text"] == nil, "S5: a `data:` URI reached the web view as element text")
+
+        // And an ordinary diagram must be untouched, or this would be a
+        // sanitiser that quietly breaks real output.
+        check(!WhiteboardDiagram.hasDangerousScheme("Uses JavaScript to render"),
+              "S5: an ordinary label mentioning JavaScript was treated as a URI")
+        check(WhiteboardDiagram.hasDangerousScheme("  JAVASCRIPT:alert(1)"),
+              "S5: a padded, upper-cased javascript: URI was not recognised")
     }
 
     // MARK: Assets
