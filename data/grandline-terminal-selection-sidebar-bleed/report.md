@@ -150,3 +150,60 @@ GUI verification, to avoid disturbing or colliding with that running instance. E
 above is a full, traced code-path analysis across `CockpitTerminalView.swift` and the
 vendored `MacTerminalView.swift`/`Terminal.swift`/`AppleTerminalView.swift`, not a live
 click-drag reproduction.
+
+## Captain's decision: Option B, pending one concrete check
+
+The captain chose **Option B** (invert the `.shell`-tab default so a plain drag forwards to
+the child, matching WezTerm exactly, with Shift+drag now giving Grand Line's own local
+selection instead) and confirmed tmux is no longer a real concern for his own workflow
+(moved onto herdr), so that specific regression risk from the original decision is
+accepted. But he flagged one thing the investigation above hadn't checked and asked for it
+to be verified concretely before implementing: **does the `claude` CLI (Claude Code) itself
+enable the same SGR mouse-reporting sequences (`?1002h`/`?1006h`) that herdr/vim/tmux use?**
+`.shell` tabs are exactly where the fleet's own claude/firstmate crewmate sessions run
+routinely, so if `claude` does enable mouse reporting, flipping the default would mean
+losing plain-drag-to-copy specifically while reading a crewmate's own terminal output -
+something he'd hit far more often than the vim case ever was.
+
+### Verified, empirically, with a real pty capture - not read from docs
+
+`claude` (Claude Code CLI, v2.1.231, confirmed installed at `/opt/homebrew/bin/claude` on
+this machine) was run in a real pseudo-tty (`pty.fork()`, never inside Grand Line's own
+process or window - a fully separate, disposable child in a scratch `/tmp` directory, with
+no query ever submitted to the assistant) and its raw output bytes were captured and
+scanned for private-mode CSI sequences at each stage of startup:
+
+- **Stage 1** (the initial "trust this folder?" dialog, before any interaction): only
+  `?25` (cursor visibility), `?2004` (bracketed paste), `?1004` (focus reporting), `?2031`/
+  `?2026` (synchronized output) - no mouse-mode sequences yet.
+- **Stage 2** (immediately after accepting the trust dialog and landing on the empty chat
+  prompt - **before any menu was opened, before any scrolling, before anything was
+  typed**): `?1049h` (alternate screen buffer) followed directly by
+  **`?1000h`, `?1002h`, `?1003h`, `?1006h`** - X10 tracking, button-event tracking,
+  any-event tracking, and SGR extended coordinates, all four together.
+
+So: `claude`'s interactive TUI enables full SGR mouse reporting as **baseline startup
+behaviour of its main chat prompt**, not as a special mode entered only for a scrollable
+menu - it was already active before the slash-command menu (`/`) was even sent in this
+same test. This independently confirms, with a fresh live capture rather than a
+recollection, what `AGENTS.md`'s own `fm/grand-line-shell-selection-investigate-fix` entry
+had already measured and listed Claude Code among ("a child that enables mouse capture
+(**Claude Code, vim, `less`, tmux, or `herdr` run by hand**)").
+
+**Consequence for Option B as decided**: since `MacTerminalView.mouseDragged`'s routing
+(`allowMouseReporting && !shiftBypassesMouseReporting(event) && terminal.mouseMode != .off`)
+does not distinguish *which* mouse-reporting program is running - it only asks "is mouse
+reporting on" - inverting the `.shell` default so a plain drag forwards to the child would
+apply identically to a tab running `claude` as to one running herdr. A plain drag against a
+crewmate's `claude` session's own output would then be swallowed by `claude`'s own TUI
+(which has no text-selection UI of its own the way herdr's sidebar does - it's a chat
+interface, and its own mouse handling is generally for its own scroll/menu interaction, not
+for producing a copyable highlight back to the captain) rather than building Grand Line's
+themed selection - the captain would need Shift+drag to copy from a `claude` session's
+terminal output, the exact regression he flagged as a real, frequent concern rather than a
+theoretical one, since `.shell` tabs running `claude`/firstmate crewmate sessions are
+central to his daily fleet workflow.
+
+This is exactly the fresh, concrete trade-off the captain asked to see spelled out before
+implementation proceeds - not something to silently absorb into Option B as originally
+scoped. See the `needs-decision` status line for the follow-up options.
