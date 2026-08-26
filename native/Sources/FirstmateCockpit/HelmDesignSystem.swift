@@ -2182,6 +2182,19 @@ final class HelmAccentRow: NSView {
     }
 
     var debugTitle: String { titleLabel.stringValue }
+    /// The kicker's real rendered text, so a test can prove it is unchanged by
+    /// something that only touches the chip.
+    var debugKickerText: String { kickerLabel.stringValue }
+    /// The chip's real rendered text - `nil` when the chip is hidden (no
+    /// `chipText` was set), so a test can tell "no chip" from "an empty one".
+    var debugChipText: String? { chip.isHidden ? nil : chipLabel.stringValue }
+    /// Fires the row's own `trailingAccessory`'s primary control, if that
+    /// control is a real `NSButton` - a test drives the actual target/action
+    /// path (`performClick(nil)`) rather than reaching into the controller
+    /// that built it.
+    func debugClickTrailingAccessory() {
+        (trailingAccessory as? NSButton)?.performClick(nil)
+    }
     #endif
 }
 

@@ -1781,6 +1781,17 @@ if ProcessInfo.processInfo.environment["FM_RUN_SCHEDULE_SEEDING_TESTS"] == "1" {
     exit(ScheduleSeedingSelfTest.run() ? 0 : 1)
 }
 
+// Run History status clarity + "View Log": the plain succeeded/failed/
+// needs-attention chip, the run's own output persisting through
+// `ScheduleRunHistoryEntry.log` (with truncation and old-format tolerance),
+// and the Run History sheet's "View Log" button/`ScheduleRunLogController`
+// pair. Window-backed - mounts real `ScheduleHistoryController`/
+// `ScheduleRunLogController` instances. See
+// ScheduleRunHistoryStatusAndLogSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_SCHEDULE_RUN_HISTORY_STATUS_LOG_TESTS"] == "1" {
+    exit(ScheduleRunHistoryStatusAndLogSelfTest.run() ? 0 : 1)
+}
+
 // F12 (`fm/grandline-feature-f12-morning-briefing`): the morning briefing's
 // local composer (what data goes in, and the unknown-is-not-zero rule) plus
 // its degradation path, driven through the real `ClaudeOneShot` against a

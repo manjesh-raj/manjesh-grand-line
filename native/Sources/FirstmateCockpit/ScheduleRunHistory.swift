@@ -87,15 +87,40 @@ struct ScheduleRunHistoryEntry: Codable, Equatable, Identifiable {
     /// carry a live count (tracked-tool totals, fork counts) that may have
     /// moved on by the time this entry is read back.
     let actionTitle: String
+    /// The run's own output - see `ScheduleActionResult.log`'s doc comment
+    /// (`ScheduleRunner.swift`) for where this comes from. `nil` only for an
+    /// entry an old build wrote before this field existed - Swift's
+    /// synthesized `Decodable` treats a missing key on an `Optional`
+    /// property as `nil`, the same tolerance `Host.init(from:)` and
+    /// `AutomationSchedule.init(from:)` already document for a non-`Codable`-
+    /// custom struct - so an old on-disk line still decodes; it just has
+    /// nothing for "View Log" to show beyond `summary`.
+    let log: String?
 
     init(id: String = UUID().uuidString, scheduleID: UUID, at: Date, verdict: ScheduleRunVerdict,
-         summary: String, actionTitle: String) {
+         summary: String, actionTitle: String, log: String? = nil) {
         self.id = id
         self.scheduleID = scheduleID
         self.at = at
         self.verdict = verdict
         self.summary = summary
         self.actionTitle = actionTitle
+        self.log = Self.truncated(log)
+    }
+
+    /// A run's real command output can run to tens of KB across a dozen
+    /// tools - bounded here, the one place every entry is constructed,
+    /// rather than at each of `ScheduleActions`' own call sites. Generous on
+    /// purpose: `Subprocess.excerpt`'s 400-character bound is right for a log
+    /// *line* (a breadcrumb), but "View Log" exists specifically to show the
+    /// real transcript, so the ceiling here is sized to hold a genuinely
+    /// large multi-tool run rather than to keep this file terse.
+    static let maxLogLength = 40_000
+
+    private static func truncated(_ log: String?) -> String? {
+        guard let log, log.count > maxLogLength else { return log }
+        let dropped = log.count - maxLogLength
+        return String(log.prefix(maxLogLength)) + "\n\u{2026} (truncated - \(dropped) more character\(dropped == 1 ? "" : "s"))"
     }
 }
 

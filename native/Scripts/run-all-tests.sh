@@ -134,6 +134,10 @@ NEEDS_SESSION=(
   # Reads and writes the machine's real Keychain (and can prompt), which a
   # runner has no unlocked login keychain for.
   "FM_RUN_VAULT_DATA_TESTS"
+  # Mounts real ScheduleHistoryController/ScheduleRunLogController instances
+  # and touches the real pasteboard - window-backed for the same reason as
+  # FM_RUN_APPKIT_AUDIT_TESTS' own M5/M6 cases.
+  "FM_RUN_SCHEDULE_RUN_HISTORY_STATUS_LOG_TESTS"
 )
 
 if [ "$CI_MODE" -eq 1 ]; then
