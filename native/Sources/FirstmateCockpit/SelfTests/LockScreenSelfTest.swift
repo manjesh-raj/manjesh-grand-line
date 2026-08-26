@@ -489,6 +489,20 @@ enum LockScreenSelfTest {
             if controller.debugLoopingAnimationsAttached {
                 fail(&ok, "the looping animations survived the unlock - they would run on hidden layers for the rest of the session")
             }
+            // H2: a layout pass while the overlay is hidden (which is how it
+            // sits after an unlock - permanently mounted, merely hidden, and
+            // still fully participating in layout) must NOT re-attach them.
+            // Before the visibility guard, the first window resize after an
+            // unlock did exactly that and undid E4 for the rest of the session.
+            controller.view.isHidden = true
+            controller.view.layoutSubtreeIfNeeded()
+            controller.viewDidLayout()
+            controller.restartAnimationsIfNeeded()
+            if controller.debugLoopingAnimationsAttached {
+                fail(&ok, "a layout pass on the hidden lock overlay re-attached the looping animations - E4's fix is undone")
+            }
+            controller.view.isHidden = false
+
             // And a re-lock must genuinely restart them, which is what
             // clearing the latch buys.
             controller.restartAnimationsIfNeeded()
