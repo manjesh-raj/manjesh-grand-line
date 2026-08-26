@@ -259,6 +259,58 @@ final class CockpitTerminalView: LocalProcessTerminalView {
     /// untouched, and Shift+drag forwards the drag as before.
     var prefersLocalSelection = false
 
+    /// Per-tab, off by default: when `true`, this tab's *resting* (no-modifier)
+    /// drag and its Shift-held drag **swap meanings** - a plain drag now
+    /// forwards the whole gesture to the child (matching what a program with
+    /// its own correct, mouse-driven selection UI needs, e.g. `herdr`'s
+    /// pane-aware highlight), and holding Shift is what builds this app's own
+    /// local selection instead.
+    ///
+    /// `fm/grandline-terminal-selection-sidebar-bleed`: this exists because
+    /// `prefersLocalSelection`'s blanket default (above) is provably wrong for
+    /// at least one real, routinely-used program. herdr draws its own pane
+    /// layout (a sidebar plus content) and, when its own SGR mouse reporting
+    /// receives the drag, renders a correct pane-aware selection of its own -
+    /// exactly what a captain sees in WezTerm, which forwards drags rather
+    /// than hijacking them. Grand Line's default hijacks the drag into
+    /// SwiftTerm's own pane-blind stream selection instead (see
+    /// `data/grandline-terminal-selection-sidebar-bleed/report.md`), which for
+    /// herdr specifically paints across its sidebar since SwiftTerm has no way
+    /// to know herdr's own column boundary.
+    ///
+    /// The blanket default was **not** simply inverted for every `.shell` tab,
+    /// though: a captured, real `claude` (Claude Code CLI) session was traced
+    /// enabling the *identical* `?1000h`/`?1002h`/`?1003h`/`?1006h` SGR mouse
+    /// reporting as baseline behaviour of its own interactive chat prompt
+    /// (verified with a real pty capture, not read from docs - see the report
+    /// above), and `.shell` tabs running `claude`/firstmate crewmate sessions
+    /// are the captain's own stated primary, routine workflow - a global
+    /// inversion would have silently broken plain-drag-copy there to fix
+    /// herdr's sidebar. There is no protocol-level signal that distinguishes
+    /// "this mouse-reporting child has a correct selection UI of its own,
+    /// forward to it" from "this one doesn't, keep hijacking" - vim, tmux,
+    /// `less`, herdr and `claude` all enable the same mouse modes - so Grand
+    /// Line cannot decide this automatically without hardcoding a specific
+    /// program's name, which is exactly the herdr-layout-awareness this app
+    /// has repeatedly ruled out building.
+    ///
+    /// So this is the captain's own explicit, per-tab, sticky choice instead
+    /// (the tab chip's right-click menu, "Forward Drags to This Tab's
+    /// Program" - see `TabChipView.forwardDragsEnabled`/`onToggleForwardDrags`
+    /// and `ConsoleController.toggleForwardDragsToChild(id:)`), off by default
+    /// everywhere (so `claude`/firstmate crewmate sessions are completely
+    /// unaffected unless he flips it) and flipped on deliberately for a
+    /// specific `.shell` tab he knows is running herdr (or any other program
+    /// with its own good mouse-driven selection). It survives a reconnect of
+    /// that same tab (`ConsoleController.reconnectActive` restarts the child
+    /// process on the *same* `CockpitTerminalView` instance, never
+    /// reallocating this property) and is deliberately **not** inherited by a
+    /// fresh `.shell` tab (⌘T) - only an explicit *duplicate* of an
+    /// already-toggled tab carries it forward (`ConsoleController.duplicateTab`),
+    /// on the same "a duplicate is the same session, a new tab is not"
+    /// reasoning `blockViewOptIn` already follows.
+    var forwardDragsToChild = false
+
     /// The left-button press we deliberately did not deliver yet, held until
     /// the gesture reveals itself as a click (forward it) or a drag (keep it).
     /// Deferring - rather than forwarding the press and then stealing the
@@ -327,10 +379,20 @@ final class CockpitTerminalView: LocalProcessTerminalView {
     }
 
     /// Should this event start a local selection instead of being reported?
+    ///
+    /// `forwardDragsToChild` swaps which gesture is "at rest": with it `false`
+    /// (the default everywhere), a plain drag diverts to local selection and
+    /// Shift+drag forwards, exactly as it always has. With it `true` for this
+    /// one tab, a plain drag forwards instead and Shift+drag is what diverts -
+    /// the `== ` below reads as "Shift held matches the toggle's own resting
+    /// state," which is precisely the swap: `shift == forwardDragsToChild`
+    /// is true both when neither is set (toggle off, no Shift - local
+    /// selection, today's default) and when both are (toggle on, Shift held -
+    /// local selection, the deliberately inverted case).
     private func divertsToLocalSelection(_ event: NSEvent) -> Bool {
         guard prefersLocalSelection, allowMouseReporting else { return false }
         guard getTerminal().mouseMode != .off else { return false }
-        return !event.modifierFlags.contains(.shift)
+        return event.modifierFlags.contains(.shift) == forwardDragsToChild
     }
 
     /// Run `body` with mouse reporting suppressed, so SwiftTerm's own

@@ -5,7 +5,7 @@
 //
 //   - single click  -> select the tab
 //   - double click  -> rename it inline (the label becomes an editable field)
-//   - right click    -> Rename / Duplicate / Close (/ Reconnect) menu
+//   - right click    -> Rename / Duplicate / Close (/ Reconnect) (/ Forward Drags) menu
 //   - the "×" button -> close the tab
 //
 // The chip is a dumb view: every action is handed back to `ConsoleController`
@@ -19,6 +19,13 @@
 // class for its local, non-connection tool tabs) never sets it, so its right-
 // click menu simply omits the item rather than showing a "Reconnect" that
 // does nothing.
+//
+// `forwardDragsEnabled`/`onToggleForwardDrags` follow the identical optional
+// pattern for a narrower reason (`fm/grandline-terminal-selection-sidebar-
+// bleed`, see `CockpitTerminalView.forwardDragsToChild`'s own doc comment for
+// the full story): only Console's `.shell` tabs wire them, since the toggle
+// is meaningless anywhere `CockpitTerminalView.prefersLocalSelection` is
+// never set in the first place - `.ssh` tabs and every Tools tool tab.
 
 import AppKit
 
@@ -42,6 +49,18 @@ final class TabChipView: NSView, NSTextFieldDelegate {
     /// tabs; never Tools' own tool tabs, which have no connection to
     /// restart).
     var onReconnect: (() -> Void)?
+    /// `fm/grandline-terminal-selection-sidebar-bleed`: reads this tab's
+    /// current `CockpitTerminalView.forwardDragsToChild` state, consulted only
+    /// while building the right-click menu (so the checkmark is always fresh -
+    /// no separate state to keep in sync). `nil` on any tab that has no
+    /// meaning for the toggle - Console's own `.ssh` tabs and every one of
+    /// Tools' tool tabs - which is exactly what makes the menu item itself
+    /// conditional, mirroring `onReconnect`'s own "optional means hidden"
+    /// convention above.
+    var forwardDragsEnabled: (() -> Bool)?
+    /// Flips the "Forward Drags to This Tab's Program" toggle. Shown only
+    /// alongside `forwardDragsEnabled`.
+    var onToggleForwardDrags: (() -> Void)?
 
     private(set) var isRenaming = false
     private var nameBeforeRename = ""
@@ -291,6 +310,14 @@ final class TabChipView: NSView, NSTextFieldDelegate {
             reconnect.target = self
             menu.addItem(reconnect)
         }
+        // `.shell`-tabs-only (`forwardDragsEnabled` is nil everywhere else) -
+        // see this property's own doc comment.
+        if let forwardDragsEnabled {
+            let forward = NSMenuItem(title: "Forward Drags to This Tab's Program", action: #selector(toggleForwardDragsFromMenu), keyEquivalent: "")
+            forward.target = self
+            forward.state = forwardDragsEnabled() ? .on : .off
+            menu.addItem(forward)
+        }
         menu.addItem(.separator())
         let close = NSMenuItem(title: "Close", action: #selector(closeClicked), keyEquivalent: "")
         close.target = self
@@ -301,6 +328,7 @@ final class TabChipView: NSView, NSTextFieldDelegate {
     @objc private func renameFromMenu() { beginRename() }
     @objc private func duplicateFromMenu() { onDuplicate?() }
     @objc private func reconnectFromMenu() { onReconnect?() }
+    @objc private func toggleForwardDragsFromMenu() { onToggleForwardDrags?() }
     @objc private func closeClicked() { onClose?() }
 
     // MARK: NSTextFieldDelegate (inline rename lifecycle)

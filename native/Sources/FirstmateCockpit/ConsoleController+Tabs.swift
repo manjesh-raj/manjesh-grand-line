@@ -74,9 +74,13 @@ extension ConsoleController {
     /// from `AppShellController.connectHost` through `connectSSHIfNeeded`/
     /// `openSSH`; every other caller (⌘T, ⌘D, the Firstmate console's own
     /// Shell tab, an ad-hoc quick-connect with no saved `Host`)
-    /// leaves it at the default `false`.
+    /// leaves it at the default `false`. `forwardDragsToChild` is
+    /// `CockpitTerminalView.forwardDragsToChild`'s own seed value - `false`
+    /// (today's default) for every fresh `.shell` tab (⌘T), and only ever
+    /// non-`false` when `duplicateTab` below carries an already-toggled tab's
+    /// state forward.
     @discardableResult
-    func addTab(launch: TabLaunch, name: String, select: Bool, accentHex: String? = nil, isOneShotCommand: Bool = false, blockViewOptIn: Bool = false) -> TabModel {
+    func addTab(launch: TabLaunch, name: String, select: Bool, accentHex: String? = nil, isOneShotCommand: Bool = false, blockViewOptIn: Bool = false, forwardDragsToChild: Bool = false) -> TabModel {
         let term = makeTerminal()
         let tab = TabModel(name: name, launch: launch, terminal: term, accentHex: accentHex)
         tab.isOneShotCommand = isOneShotCommand
@@ -95,7 +99,22 @@ extension ConsoleController {
         // `CockpitTerminalView.prefersLocalSelection` for the full reasoning
         // and for why this is a re-scoping of pre-existing routing rather than
         // a reinstatement of the removed Mirror tab.
-        if case .shell = launch { term.prefersLocalSelection = true }
+        //
+        // `fm/grandline-terminal-selection-sidebar-bleed`: `prefersLocalSelection`
+        // is a blanket, unconditional default across every `.shell` tab -
+        // provably wrong specifically for a program like herdr that has its
+        // own correct, pane-aware mouse-driven selection. `forwardDragsToChild`
+        // is the captain's own per-tab, sticky escape hatch out of that
+        // default (right-click a `.shell` tab's chip - "Forward Drags to This
+        // Tab's Program") - see `CockpitTerminalView.forwardDragsToChild`'s
+        // doc comment for the full reasoning, including why the default
+        // itself was not simply inverted for every `.shell` tab (a real,
+        // captured `claude` session enables the identical SGR mouse reporting
+        // herdr does).
+        if case .shell = launch {
+            term.prefersLocalSelection = true
+            term.forwardDragsToChild = forwardDragsToChild
+        }
 
         // `fm/cockpit-block-view-stage0`: only ever true for an `.ssh` tab on
         // the one opted-in host, and only when the whole feature is enabled
@@ -139,6 +158,18 @@ extension ConsoleController {
         chip.onReconnect = { [weak self] in
             self?.select(tabID: id)
             self?.reconnectActive()
+        }
+        // `fm/grandline-terminal-selection-sidebar-bleed`: `.shell`-tabs-only,
+        // mirroring `if case .shell = launch { term.prefersLocalSelection =
+        // true; term.forwardDragsToChild = ... }` above - the toggle is
+        // meaningless on any tab kind that never opts into local selection in
+        // the first place. Reads/writes `term.forwardDragsToChild` directly
+        // rather than mirroring it onto a second stored property on `tab` -
+        // `term` (a `CockpitTerminalView`) already survives a reconnect of
+        // this same tab unchanged, so there's nothing to keep in sync.
+        if case .shell = launch {
+            chip.forwardDragsEnabled = { [weak term] in term?.forwardDragsToChild ?? false }
+            chip.onToggleForwardDrags = { [weak self] in self?.toggleForwardDragsToChild(id: id) }
         }
         tab.chip = chip
 
@@ -265,7 +296,11 @@ extension ConsoleController {
 
     func duplicateTab(id: UUID) {
         guard let src = tabs.first(where: { $0.id == id }) else { return }
-        addTab(launch: src.launch, name: numberedName(for: src.launch), select: true, accentHex: src.accentHex, blockViewOptIn: src.blockViewOptIn)
+        // A duplicate carries `forwardDragsToChild` forward - it's the same
+        // session's own choice, not a fresh tab's default - on the identical
+        // "duplicate means keep going, a new tab means start over" reasoning
+        // `blockViewOptIn` already follows one argument earlier.
+        addTab(launch: src.launch, name: numberedName(for: src.launch), select: true, accentHex: src.accentHex, blockViewOptIn: src.blockViewOptIn, forwardDragsToChild: src.terminal.forwardDragsToChild)
     }
 
     /// ⌘W: close the current tab.
@@ -359,6 +394,19 @@ extension ConsoleController {
         let idx = sender.tag - 1
         guard idx >= 0, idx < tabs.count else { return }
         select(tabID: tabs[idx].id)
+    }
+
+    /// The tab chip's right-click "Forward Drags to This Tab's Program".
+    /// Flips `CockpitTerminalView.forwardDragsToChild` for this one tab - see
+    /// that property's own doc comment for the full reasoning
+    /// (`fm/grandline-terminal-selection-sidebar-bleed`). No other state to
+    /// update: the menu item's own checkmark is read fresh from
+    /// `forwardDragsToChild` every time the chip is right-clicked
+    /// (`TabChipView.forwardDragsEnabled`), and the mouse-routing change
+    /// itself takes effect on the very next drag with no reconnect needed.
+    func toggleForwardDragsToChild(id: UUID) {
+        guard let tab = tabs.first(where: { $0.id == id }) else { return }
+        tab.terminal.forwardDragsToChild.toggle()
     }
 
     // MARK: Selection
