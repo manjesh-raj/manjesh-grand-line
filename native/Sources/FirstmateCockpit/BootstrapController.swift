@@ -506,6 +506,25 @@ final class BootstrapController: NSViewController, SetupPageSummary {
             rebuild()
         }
     }
+
+    /// P2: how recently the dotfiles state has to have been read for a visit to
+    /// reuse it rather than fetch again.
+    ///
+    /// `refreshDotfiles` runs a real `git fetch origin` - correctly off-main,
+    /// so it never stalled anything, but it fired on *every* visit to this
+    /// page, which is a network and radio wake per tab switch. The same
+    /// 15-minute TTL `DependencyCheckCache` already uses for this class of
+    /// check; every explicit action on this page (Run, Create link, Re-check
+    /// now, the full-setup sequencer) still calls `refreshDotfiles()` directly
+    /// and is unaffected.
+    private static let dotfilesVisitTTL: TimeInterval = 15 * 60
+    private var lastDotfilesRefreshAt: Date?
+
+    private func refreshDotfilesIfStale() {
+        if let last = lastDotfilesRefreshAt, Date().timeIntervalSince(last) < Self.dotfilesVisitTTL { return }
+        refreshDotfiles()
+    }
+
     override func viewWillAppear() {
         super.viewWillAppear()
         if needsThemeRebuild {
@@ -513,7 +532,7 @@ final class BootstrapController: NSViewController, SetupPageSummary {
             rebuildDynamicSections()
         }
         refreshFromSettings()
-        refreshDotfiles()
+        refreshDotfilesIfStale()
         if !hasCheckedSoftwareOnce {
             hasCheckedSoftwareOnce = true
             checkAllSoftware()
@@ -1219,6 +1238,10 @@ final class BootstrapController: NSViewController, SetupPageSummary {
     /// looks frozen while `git` runs.
     private func refreshDotfiles(completion: (() -> Void)? = nil) {
         guard isViewLoaded else { completion?(); return }
+        // Stamped here rather than at the visit call site, so an explicit
+        // refresh (Run, Create link, Re-check now, the sequencer) also counts
+        // as recent and a visit straight afterwards does not fetch again.
+        lastDotfilesRefreshAt = Date()
         isLoadingDotfiles = true
         rebuildDynamicSections()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
