@@ -26,7 +26,7 @@ extension ConsoleController {
         tabsStack.translatesAutoresizingMaskIntoConstraints = false
         tabBar.setLeading(tabsStack)
 
-        plusButton = makeIconButton(symbol: "plus", tooltip: "New Shell Tab (⌘T)", action: #selector(newShellTab))
+        plusButton = makeIconButton(symbol: "plus", tooltip: "New Shell Tab", action: #selector(newShellTab))
 
         // **Named features are labelled; pure utilities stay icon squares.**
         //

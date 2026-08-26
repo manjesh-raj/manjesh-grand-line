@@ -5,17 +5,26 @@
 //
 //   - single click  -> select the tab
 //   - double click  -> rename it inline (the label becomes an editable field)
-//   - right click    -> Rename / Duplicate / Close menu
+//   - right click    -> Rename / Duplicate / Close (/ Reconnect) menu
 //   - the "×" button -> close the tab
 //
 // The chip is a dumb view: every action is handed back to `ConsoleController`
 // through a closure, so the chip knows nothing about the tab collection. The
 // controller owns naming, selection, duplication, and closing.
+//
+// `onReconnect` is optional and deliberately so: it's the tab-strip UI
+// equivalent of the removed Tab menu's "Reconnect Tab" (⌘R,
+// `fm/grandline-console-tabs-restore-tabmenu-fix`) - a Console SSH/shell tab
+// wires it, and `ToolsController`'s own tab strip (which reuses this exact
+// class for its local, non-connection tool tabs) never sets it, so its right-
+// click menu simply omits the item rather than showing a "Reconnect" that
+// does nothing.
 
 import AppKit
 
-/// A single tab chip. Selection, rename, duplicate, and close are delivered to
-/// the owner via closures keyed by this chip's `tabID`.
+/// A single tab chip. Selection, rename, duplicate, close, and (optionally)
+/// reconnect are delivered to the owner via closures keyed by this chip's
+/// `tabID`.
 final class TabChipView: NSView, NSTextFieldDelegate {
 
     let tabID: UUID
@@ -28,6 +37,11 @@ final class TabChipView: NSView, NSTextFieldDelegate {
     var onDuplicate: (() -> Void)?
     /// Called with the edited text when an inline rename commits.
     var onRename: ((String) -> Void)?
+    /// Restart this tab's process from its launch spec - the right-click
+    /// menu's "Reconnect", shown only when this is set (Console's SSH/shell
+    /// tabs; never Tools' own tool tabs, which have no connection to
+    /// restart).
+    var onReconnect: (() -> Void)?
 
     private(set) var isRenaming = false
     private var nameBeforeRename = ""
@@ -68,7 +82,7 @@ final class TabChipView: NSView, NSTextFieldDelegate {
         closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close Tab")
         closeButton.target = self
         closeButton.action = #selector(closeClicked)
-        closeButton.toolTip = "Close Tab (⌘W)"
+        closeButton.toolTip = "Close Tab"
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(closeButton)
 
@@ -270,6 +284,13 @@ final class TabChipView: NSView, NSTextFieldDelegate {
         let duplicate = NSMenuItem(title: "Duplicate", action: #selector(duplicateFromMenu), keyEquivalent: "")
         duplicate.target = self
         menu.addItem(duplicate)
+        // Console-only (`onReconnect` is nil for Tools' own tool tabs) - see
+        // this file's header.
+        if onReconnect != nil {
+            let reconnect = NSMenuItem(title: "Reconnect", action: #selector(reconnectFromMenu), keyEquivalent: "")
+            reconnect.target = self
+            menu.addItem(reconnect)
+        }
         menu.addItem(.separator())
         let close = NSMenuItem(title: "Close", action: #selector(closeClicked), keyEquivalent: "")
         close.target = self
@@ -279,6 +300,7 @@ final class TabChipView: NSView, NSTextFieldDelegate {
 
     @objc private func renameFromMenu() { beginRename() }
     @objc private func duplicateFromMenu() { onDuplicate?() }
+    @objc private func reconnectFromMenu() { onReconnect?() }
     @objc private func closeClicked() { onClose?() }
 
     // MARK: NSTextFieldDelegate (inline rename lifecycle)

@@ -329,7 +329,7 @@ final class ToolsController: NSViewController, DaylightDrillActions {
         tabBar.setLeading(tabsStack)
 
         plusButton = HelmPageToolbar.iconButton(symbol: "plus",
-                                                tooltip: "New Tool Tab (⌘T)",
+                                                tooltip: "New Tool Tab",
                                                 target: self,
                                                 action: #selector(newShellTab))
 
@@ -349,8 +349,8 @@ final class ToolsController: NSViewController, DaylightDrillActions {
     ///
     /// Audit §4.8: with no tool tab open, this bar sat above the landing grid
     /// as dead chrome - a strip whose only content was a "+" that opens the
-    /// picker already filling the page. ⌘T still opens a new tab from the
-    /// menu regardless, and the strip reappears with it.
+    /// picker already filling the page. Clicking a card on that same landing
+    /// grid still opens a new tab regardless, and the strip reappears with it.
     private func updateTabBarVisibility() {
         tabBar.setCollapsed(tabs.isEmpty)
     }
@@ -592,14 +592,19 @@ final class ToolsController: NSViewController, DaylightDrillActions {
         return existing == 0 ? kind.shortName : "\(kind.shortName) \(existing + 1)"
     }
 
-    /// The tab bar's "+" (also reachable via the Tab menu's "New Tab" / ⌘T,
-    /// which dispatches through the first-responder chain by selector name -
-    /// `newShellTab` is `ConsoleController`'s selector for that exact menu
-    /// item, and NSMenuItem action dispatch matches by selector, not by
-    /// declaring class, so this method must keep that name to be reachable
-    /// from the menu while the Tools page - not Console - has focus): show
-    /// the picker so the captain can choose which tool to open next. It does
-    /// not by itself create a tab.
+    /// The tab bar's "+": show the picker so the captain can choose which
+    /// tool to open next. It does not by itself create a tab.
+    ///
+    /// This method's name (`newShellTab`, matching `ConsoleController`'s own
+    /// method of the same name) is a holdover from when both controllers
+    /// shared one Tab menu whose items dispatched through the first-
+    /// responder chain by selector name rather than a declared target -
+    /// that menu is gone now
+    /// (`fm/grandline-console-tabs-restore-tabmenu-fix`), so the shared name
+    /// no longer serves that purpose, but it's left as-is (both controllers'
+    /// tab actions - new/duplicate/rename/close - keep matching names) since
+    /// there's no reason to churn it and self-tests already call it directly
+    /// by that name.
     @objc func newShellTab() {
         showPicker()
     }

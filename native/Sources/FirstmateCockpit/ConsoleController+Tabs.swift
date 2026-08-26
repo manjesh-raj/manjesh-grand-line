@@ -132,6 +132,14 @@ extension ConsoleController {
         chip.onClose = { [weak self] in self?.closeTab(id: id) }
         chip.onDuplicate = { [weak self] in self?.duplicateTab(id: id) }
         chip.onRename = { [weak self] newName in self?.renameTab(id: id, to: newName) }
+        // Console-only UI path for `reconnectActive()` (the removed Tab
+        // menu's ⌘R) - select this tab first, since `reconnectActive`
+        // restarts whichever tab is `currentTab`, exactly like the manual
+        // ⌘R shortcut always did.
+        chip.onReconnect = { [weak self] in
+            self?.select(tabID: id)
+            self?.reconnectActive()
+        }
         tab.chip = chip
 
         tabs.append(tab)
@@ -485,7 +493,7 @@ extension ConsoleController {
     /// Settings > Terminal's "Reconnect automatically" (Fix 3): when on, this
     /// also schedules a real reconnect of the same tab after a short delay
     /// (mirroring `reconnectActive()`'s per-launch-kind restart), instead of
-    /// only showing the hint and waiting for ⌘R.
+    /// only showing the hint and waiting for a manual reconnect.
     ///
     /// A one-shot command tab (`openCommandTab`, e.g. Bootstrap's
     /// `rebuild.sh`) is never auto-reconnected here, regardless of the
@@ -512,7 +520,7 @@ extension ConsoleController {
             return
         }
 
-        let hint = AppSettings.shared.autoReconnect ? "reconnecting…" : "press ⌘R to reconnect"
+        let hint = AppSettings.shared.autoReconnect ? "reconnecting…" : "right-click this tab to reconnect"
         source.feed(text: "\r\n  \u{1b}[2m[process ended\(code) - \(hint)]\u{1b}[0m\r\n")
 
         if AppSettings.shared.autoReconnect {

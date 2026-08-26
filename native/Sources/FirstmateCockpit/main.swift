@@ -529,8 +529,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// content underneath it are already blocked by ordinary AppKit hit-
     /// testing - but most of this app's menu items have a concrete `target`
     /// (not `nil`, routed through the first-responder chain), so a keyboard
-    /// shortcut like ⌘N or ⌘T would otherwise still reach its destination's
-    /// action even while that destination is hidden behind the overlay. This
+    /// shortcut like ⌘⌃N (New Host) would otherwise still reach its
+    /// destination's action even while that destination is hidden behind the
+    /// overlay. This
     /// is the one choke point that closes that gap: every submenu except
     /// Edit (Cut/Copy/Paste/Select All/Find are all `nil`-target, responder-
     /// chain-routed items - while locked, the only thing that can ever be
@@ -826,15 +827,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Menu
 
-    /// The main menu. Three load-bearing groups:
+    /// The main menu. Two load-bearing groups:
     ///  - Edit > Paste (⌘V) targets the first responder via `NSText.paste(_:)`,
     ///    which resolves to the focused terminal's `paste(_:)` - the screenshot-
     ///    paste-into-Claude flow. A plain `swift run` executable has no Paste
     ///    action otherwise (the old WKWebView got one for free from the browser).
-    ///  - Edit > Find, the Tab items, and the View items target the responder
-    ///    chain, resolving to `ConsoleController` (the window's content view
-    ///    controller), so ⌘F / ⌘T / ⌘D / ⌘W / ⌘R / ⌘1…⌘9 / zoom / theme all work
-    ///    from the keyboard.
+    ///  - Edit > Find targets the responder chain, resolving to
+    ///    `ConsoleController` (the window's content view controller), so ⌘F
+    ///    works from the keyboard.
+    ///
+    /// There is no Tab, View, Window, or Help top-level menu
+    /// (`fm/grandline-console-tabs-restore-tabmenu-fix`) - see the long
+    /// comment at the end of this method for what that costs and what still
+    /// works. ⌘T / ⌘D / ⇧⌘R / ⌘W / ⌘R / ⌘1…⌘9 / zoom / theme no longer have
+    /// any keyboard shortcut; every one of their underlying actions is still
+    /// reachable from the tab strip, the console toolbar, or Settings.
     func buildMenu() {
         let mainMenu = NSMenu()
 
@@ -940,11 +947,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // top-level menu would push the gap wider for no gain.
         //
         // **⌘⌃1…9, not ⌘1…9, and that is forced rather than preferred.** The
-        // mockup shows ⌘1/⌘2 on the pills, but ⌘1-⌘9 is already spoken for
-        // *twice* in this app: the Tab menu's "Select Tab N" (nil-target, so it
-        // only resolves while a Console/Tools tab holds first responder) and
-        // the View menu's five space shortcuts (explicit target, always
-        // enabled - see that menu's own long note on how the two coexist).
+        // mockup shows ⌘1/⌘2 on the pills, but ⌘1-⌘9 was already spoken for
+        // *twice* in this app at the time this shipped: the Tab menu's
+        // "Select Tab N" (nil-target, so it only resolved while a
+        // Console/Tools tab held first responder) and the View menu's five
+        // space shortcuts (explicit target, always enabled). Both of those
+        // menus are gone now (`fm/grandline-console-tabs-restore-tabmenu-
+        // fix`), which frees ⌘1-⌘9 again, but this stays on ⌘⌃1…9 regardless -
+        // an already-shipped shortcut isn't this fix's to change.
         // A session's whole point is being reachable from anywhere, i.e.
         // precisely where the always-enabled space item wins, so ⌘1 could
         // never have reached a session. ⌘⌃ is the modifier this menu already
@@ -1020,10 +1030,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         //
         // **Shortcut collisions were checked against this file, not assumed.**
         // ⌘⇧L / ⌘⇧C / ⌘⇧T / ⌘⇧I were all genuinely free. ⌘⇧R was NOT - the
-        // Tab menu's "Rename Tab…" below already owns it - so spec §24's
-        // "⌘⇧R Create RCA" is bound to **⌘⇧A** instead (A for "after-action
-        // review"), which is free; taking ⌘⇧R would have silently broken an
-        // already-shipped shortcut. ⌘↵ (Analyze) is not a menu item at all:
+        // Tab menu's "Rename Tab…" claimed it back when the Tab menu was a
+        // top-level entry - so spec §24's "⌘⇧R Create RCA" is bound to
+        // **⌘⇧A** instead (A for "after-action review"), which is free;
+        // taking ⌘⇧R would have silently broken an already-shipped shortcut.
+        // The Tab menu is gone from the menu bar now
+        // (`fm/grandline-console-tabs-restore-tabmenu-fix`), which frees
+        // ⇧⌘R again - Log Analyzer stays on ⌘⇧A regardless, since changing
+        // an already-shipped shortcut isn't this fix's job. ⌘↵ (Analyze) is
+        // not a menu item at all:
         // it is `analyzeButton`'s own `keyEquivalent`, so it only fires while
         // the page is on screen rather than analyzing from any destination.
         // Esc is handled by `LogAnalyzerController.cancelOperation`, the
@@ -1095,154 +1110,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .keyEquivalentModifierMask = [.command, .option]
         for item in snippetsMenu.items { item.target = appShell }
 
-        // Tab menu - the dynamic tab collection: new / duplicate / rename / close,
-        // reconnect, and ⌘1…⌘9 to jump to a tab. All resolve to ConsoleController.
-        let tabMenuItem = NSMenuItem()
-        mainMenu.addItem(tabMenuItem)
-        let tabMenu = NSMenu(title: "Tab")
-        tabMenuItem.submenu = tabMenu
-        tabMenu.addItem(withTitle: "New Tab", action: #selector(ConsoleController.newShellTab), keyEquivalent: "t")
-        tabMenu.addItem(withTitle: "Duplicate Tab", action: #selector(ConsoleController.duplicateCurrentTab), keyEquivalent: "d")
-        let renameItem = NSMenuItem(title: "Rename Tab…", action: #selector(ConsoleController.renameCurrentTab), keyEquivalent: "r")
-        renameItem.keyEquivalentModifierMask = [.command, .shift]
-        tabMenu.addItem(renameItem)
-        tabMenu.addItem(withTitle: "Close Tab", action: #selector(ConsoleController.closeCurrentTab), keyEquivalent: "w")
-        tabMenu.addItem(NSMenuItem.separator())
-        tabMenu.addItem(withTitle: "Reconnect Tab", action: #selector(ConsoleController.reconnectActive), keyEquivalent: "r")
-        tabMenu.addItem(NSMenuItem.separator())
-        // ⌘1…⌘9 select the Nth tab; the tag carries the 1-based index.
-        for n in 1...9 {
-            let item = NSMenuItem(title: "Select Tab \(n)", action: #selector(ConsoleController.selectTabByShortcut(_:)), keyEquivalent: "\(n)")
-            item.tag = n
-            tabMenu.addItem(item)
-        }
-
-        // View menu - the Daylight spaces, then zoom + theme.
-        let viewMenuItem = NSMenuItem()
-        mainMenu.addItem(viewMenuItem)
-        let viewMenu = NSMenu(title: "View")
-        viewMenuItem.submenu = viewMenu
-
-        // Daylight Phase 2 (§5.2): `⌘1`…`⌘5` select the five spaces.
+        // No Tab, View, Window, or Help top-level menu.
         //
-        // **Why these live in View, after the Tab menu, and why that ordering
-        // is the whole design.** The spec asks for `⌘1`…`⌘5` on the spaces AND
-        // for "⌘T/⌘W/⌘1-9 Console and Tools tab behavior unchanged" - which
-        // collide on `⌘1`…`⌘5`. AppKit resolves a key equivalent by scanning
-        // the main menu in order and taking the first *enabled* match, and the
-        // Tab menu's items have a nil target (they route through the responder
-        // chain to whichever `ConsoleController`/`ToolsController` owns the
-        // first responder). So:
+        // View/Window/Help were standard-system-provided menus that never
+        // fit this app: the View menu's `⌘1`-`⌘5` space shortcuts and
+        // light/dark toggle duplicated `DaylightBarController`'s own
+        // pills/button, its zoom items duplicated the Console toolbar's zoom
+        // buttons and Settings' font-size presets; Window's minimize/zoom
+        // are native title-bar chrome independent of any menu; Help pointed
+        // at two repo docs with no other entry point. Their removal drops
+        // the now-dead `openRepoDoc`/`openSetupGuide`/`openReadme` helpers
+        // (their only callers) and `AppShellController`'s
+        // `selectSpaceByShortcut(_:)`/`toggleTheme()` menu-item wrappers
+        // (`selectSpace(_:)` itself is still very much alive - it's what
+        // `DaylightBarController`'s own space pills call; only the
+        // `NSMenuItem`-shaped `⌘1`-`⌘5` wrapper around it is gone. Same for
+        // `ThemeManager.shared.toggle()`, still called directly by
+        // `DaylightBarController`'s own theme-toggle button).
         //
-        //   - With a terminal or a Tools tab focused, that controller IS in the
-        //     responder chain, the Tab item is enabled, and `⌘1` selects tab 1
-        //     exactly as it always has.
-        //   - Anywhere else - including the canvas, which is where a captain
-        //     reaching for a space actually is - nothing answers
-        //     `selectTabByShortcut`, AppKit disables that item, a disabled item
-        //     does not consume its key equivalent, and `⌘1` falls through to
-        //     the space item here.
-        //
-        // Both shortcuts therefore keep working, each in the context where it
-        // is the obvious meaning. The alternative was breaking one of them
-        // outright. A dedicated top-level "Go" menu would have read better but
-        // adds a 12th top-level menu, and this app's menu bar already overruns
-        // the notched-display budget (see AGENTS.md's menu-bar section) - View
-        // is where a space *filter* belongs anyway.
-        //
-        // These target `AppShellController` explicitly rather than the
-        // responder chain, so they are enabled regardless of what has focus.
-        for (index, space) in DaylightSpace.allCases.enumerated() {
-            let item = NSMenuItem(title: space.title,
-                                  action: #selector(AppShellController.selectSpaceByShortcut(_:)),
-                                  keyEquivalent: "\(index + 1)")
-            item.tag = index + 1
-            item.target = appShell
-            viewMenu.addItem(item)
-        }
-        viewMenu.addItem(NSMenuItem.separator())
-
-        viewMenu.addItem(withTitle: "Zoom In", action: #selector(ConsoleController.zoomIn), keyEquivalent: "+")
-        viewMenu.addItem(withTitle: "Zoom Out", action: #selector(ConsoleController.zoomOut), keyEquivalent: "-")
-        viewMenu.addItem(withTitle: "Actual Size", action: #selector(ConsoleController.zoomReset), keyEquivalent: "0")
-        viewMenu.addItem(NSMenuItem.separator())
-        // The toggle button itself moved off Console's toolbar onto the
-        // app-wide `DaylightBarController` (`fm/grandline-daylight-theme-
-        // toggle-relocate`), so this item now targets `AppShellController`
-        // explicitly - like the space shortcuts above - rather than the
-        // responder chain, which would only have resolved while a Console
-        // tab held first responder.
-        let themeItem = NSMenuItem(title: "Toggle Light/Dark", action: #selector(AppShellController.toggleTheme), keyEquivalent: "t")
-        themeItem.keyEquivalentModifierMask = [.command, .option]
-        themeItem.target = appShell
-        viewMenu.addItem(themeItem)
-
-        // GL-17: Window and Help. Before this, ⌘M did nothing at all, there
-        // was no Zoom or Bring All to Front, and there was no Help menu despite
-        // `setup-guide.md` living in the repo - the first three things a
-        // discerning Mac user checks.
-        //
-        // `NSApp.windowsMenu` is the load-bearing line: assigning it is what
-        // makes AppKit itself maintain the list of open windows underneath the
-        // separator, so a floating Host Editor or a secondary panel shows up
-        // without this file tracking windows by hand.
-        let windowMenuItem = NSMenuItem()
-        mainMenu.addItem(windowMenuItem)
-        let windowMenu = NSMenu(title: "Window")
-        windowMenuItem.submenu = windowMenu
-        windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
-        windowMenu.addItem(withTitle: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
-        windowMenu.addItem(NSMenuItem.separator())
-        windowMenu.addItem(withTitle: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
-        NSApp.windowsMenu = windowMenu
-
-        let helpMenuItem = NSMenuItem()
-        mainMenu.addItem(helpMenuItem)
-        let helpMenu = NSMenu(title: "Help")
-        helpMenuItem.submenu = helpMenu
-        // Both open a real file that ships in this repo, resolved at click
-        // time (see `openRepoDoc`) rather than assumed to exist - the app can
-        // be running from a bundle whose source tree has moved.
-        helpMenu.addItem(withTitle: "Grand Line Setup Guide", action: #selector(openSetupGuide), keyEquivalent: "?")
-            .target = self
-        helpMenu.addItem(withTitle: "Read Me", action: #selector(openReadme), keyEquivalent: "")
-            .target = self
-        NSApp.helpMenu = helpMenu
+        // The Tab menu (new / duplicate / rename / close / reconnect / jump
+        // to tab N) is a separate, later removal
+        // (`fm/grandline-console-tabs-restore-tabmenu-fix`) - the captain's
+        // own original intent, distinct from the View/Window/Help cleanup
+        // above: every capability it offered has a non-keyboard equivalent
+        // already built into the tab strip (`TabChipView`) - the "+" button
+        // for New, a chip's own double-click for Rename, and its right-click
+        // menu for Rename/Duplicate/Close/**Reconnect** (the last one added
+        // alongside this removal specifically so "reconnect a dead tab"
+        // stays reachable with no menu backing it - see
+        // `TabChipView.onReconnect`) - and jumping to a specific tab is
+        // simply clicking its chip, which was always the primary way to do
+        // it. What does NOT survive, because AppKit's standard key-equivalent
+        // handling only walks items that are genuinely part of
+        // `NSApp.mainMenu`'s tree (hiding a top-level item via `isHidden`
+        // excludes its whole submenu from that walk exactly like removing it
+        // outright does - there is no "present in the tree but invisible in
+        // the bar" middle ground) is every one of the Tab menu's keyboard
+        // shortcuts: ⌘T (new tab), ⌘D (duplicate), ⇧⌘R (rename), ⌘W (close),
+        // ⌘R (reconnect), and ⌘1-⌘9 (jump to tab N). This is the same,
+        // captain-accepted trade-off as ⌘M silently doing nothing once the
+        // Window menu above went - the shortcuts are gone, the underlying
+        // action is one click away either way. This is also shared with
+        // `ToolsController`'s own, separate multi-instance tab strip, which
+        // reused these exact selector names precisely so one Tab menu could
+        // drive whichever controller had focus (see `ToolsController`'s own
+        // `newShellTab`/`duplicateCurrentTab`/`renameCurrentTab`/
+        // `closeCurrentTab`) - Tools' own "+" button and its tab chips'
+        // double-click/right-click are completely unaffected, since neither
+        // ever routed through this menu to begin with.
 
         NSApp.mainMenu = mainMenu
     }
-
-    // MARK: Help menu (GL-17)
-
-    /// Opens a doc that lives at the repo root, next to `native/`. Resolved
-    /// from `FirstmateHome`'s own resolution first (the captain's real
-    /// checkout), then relative to this executable for a `swift run` build.
-    /// Shows a plain alert rather than failing silently if neither exists -
-    /// a Help item that does nothing is worse than no Help item.
-    private func openRepoDoc(named name: String) {
-        var candidates: [URL] = []
-        // A bundled app sits at <repo>/dist/<App>.app/Contents/MacOS/<exe>;
-        // a `swift build` binary at <repo>/native/.build/<config>/<exe>.
-        let exe = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
-        var dir = exe.deletingLastPathComponent()
-        for _ in 0..<6 {
-            candidates.append(dir.appendingPathComponent(name))
-            dir = dir.deletingLastPathComponent()
-        }
-        guard let found = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else {
-            let alert = NSAlert()
-            alert.messageText = "Couldn't find \(name)"
-            alert.informativeText = "It ships at the root of the Manjesh Grand Line repository, "
-                + "next to the `native/` directory. This build couldn't locate that checkout."
-            alert.alertStyle = .informational
-            alert.runModal()
-            return
-        }
-        NSWorkspace.shared.open(found)
-    }
-
-    @objc private func openSetupGuide() { openRepoDoc(named: "setup-guide.md") }
-    @objc private func openReadme() { openRepoDoc(named: "README.md") }
 }
 
 // MARK: - Self-test dispatch (GL-27: debug builds only)

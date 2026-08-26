@@ -1286,8 +1286,8 @@ final class AppShellController: NSViewController {
 
     // MARK: Spaces (Daylight §5.3)
 
-    /// A space pill (or `⌘1`…`⌘5`) was picked: land on the canvas if we are
-    /// not already there, then filter it.
+    /// A space pill was picked: land on the canvas if we are not already
+    /// there, then filter it.
     ///
     /// Both halves live here rather than in either component, which is what
     /// keeps §5.3's rule true from both directions - the bar does not know
@@ -1298,30 +1298,9 @@ final class AppShellController: NSViewController {
         show(.homeCanvas)
     }
 
-    /// The menu's `⌘1`…`⌘5` items. See `AppDelegate.buildMenu` for why these
-    /// are ordered *after* the Tab menu's own `⌘1`…`⌘9`.
-    @objc func selectSpaceByShortcut(_ sender: NSMenuItem) {
-        let index = sender.tag - 1
-        guard DaylightSpace.allCases.indices.contains(index) else { return }
-        selectSpace(DaylightSpace.allCases[index])
-    }
-
     /// The canvas itself, for a caller that wants the hub without changing
     /// the space (the app delegate's launch landing).
     @objc func showHomeCanvas() { show(.homeCanvas) }
-
-    /// The View menu's "Toggle Light/Dark" (⌘⌥T). Targets this controller
-    /// explicitly rather than the responder chain
-    /// (`fm/grandline-daylight-theme-toggle-relocate`) - the toggle used to
-    /// live on Console's own toolbar and resolved via
-    /// `#selector(ConsoleController.toggleTheme)`, which only fired while a
-    /// Console tab held first responder. Now that the button itself lives on
-    /// the app-wide `DaylightBarController`, the shortcut needs to work
-    /// regardless of what has focus, matching the space shortcuts just above
-    /// it in `AppDelegate.buildMenu`.
-    @objc func toggleTheme() {
-        ThemeManager.shared.toggle()
-    }
 
     /// Fix 1: connect to `host` (its own dedicated page). The first call for
     /// a given host builds its `ConsoleController` (via `makeHostConsole`),
