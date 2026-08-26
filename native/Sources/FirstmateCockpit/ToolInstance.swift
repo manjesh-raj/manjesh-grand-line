@@ -1,16 +1,9 @@
 // Manjesh Grand Line - native macOS app.
 //
 // `fm/cockpit-tools-page-multi-session` gives the Tools page the same "many
-// independent tabs of the same kind of thing" shape Console's own SSH/Shell
-// tabs used to have (New ⌘T / Duplicate ⌘D / Close ⌘W). `fm/grandline-
-// menubar-remove-items` later collapsed Console down to one session per
-// host/window, per an explicit captain decision, and removed that whole
-// tab-bar concept from `ConsoleController`/`TabModel` (renamed
-// `ConsoleSession.swift`, and trimmed to a single-session shape) - `Tools`'
-// own multi-instance tabs are a separate, unrelated feature that was never
-// part of that ask, so `TabChipView.swift` (the one class both features
-// share) is untouched and this page's own tab strip is unaffected. One
-// `ToolInstance` is one open tab: one tool
+// independent tabs of the same kind of thing" shape Console already has for
+// SSH/Shell tabs (see `TabModel.swift`/`ConsoleController.swift`'s New ⌘T /
+// Duplicate ⌘D / Close ⌘W). One `ToolInstance` is one open tab: one tool
 // panel (YAML, JSON, Base64, JWT, Timestamp, Diff, Certificate, Cron, or
 // Resource units) with its own view and its own copy of every field the old
 // single-instance `ToolsController` used to own directly (inputs, outputs,
@@ -62,9 +55,8 @@ final class ToolInstance: NSObject {
     let kind: ToolKind
 
     /// The tab-bar chip's display name - defaulted by `ToolsController` (e.g.
-    /// "Diff", "Diff 2") and freely renamable via the chip; renaming only
-    /// ever changes this label, never anything about the tool instance
-    /// itself.
+    /// "Diff", "Diff 2") and freely renamable via the chip, exactly like a
+    /// Console tab's name never touching its underlying process.
     var name: String
 
     /// The panel view for this tab (the same `panelCard`-wrapped chrome every

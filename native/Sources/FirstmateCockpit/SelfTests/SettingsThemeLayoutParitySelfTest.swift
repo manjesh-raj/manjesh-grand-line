@@ -109,20 +109,21 @@ enum SettingsThemeLayoutParitySelfTest {
 
     /// Scratch store files, so nothing here can reach the captain's real data
     /// (the convention every store-backed suite in this repo follows).
-    private static func scratchStores() -> (HostStore, SSHKeyStore, DictationStore) {
+    private static func scratchStores() -> (HostStore, SSHKeyStore, SnippetStore, DictationStore) {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("settings-theme-parity-\(ProcessInfo.processInfo.processIdentifier)-\(UUID().uuidString)")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         setenv("FM_HOSTS_FILE", dir.appendingPathComponent("hosts.json").path, 1)
         setenv("FM_KEYS_FILE", dir.appendingPathComponent("keys.json").path, 1)
+        setenv("FM_SNIPPETS_FILE", dir.appendingPathComponent("snippets.json").path, 1)
         setenv("FM_DICTATION_DIR", dir.appendingPathComponent("dictation").path, 1)
-        return (HostStore(), SSHKeyStore(), DictationStore())
+        return (HostStore(), SSHKeyStore(), SnippetStore(), DictationStore())
     }
 
     private static func makeSettings() -> SettingsController {
-        let (hosts, keys, dictation) = scratchStores()
+        let (hosts, keys, snippets, dictation) = scratchStores()
         return SettingsController(hostStore: hosts, keyStore: keys,
-                                  dictationStore: dictation)
+                                  snippetStore: snippets, dictationStore: dictation)
     }
 
     private static func mount(_ controller: NSViewController, width: CGFloat) -> NSWindow {

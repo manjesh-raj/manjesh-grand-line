@@ -30,13 +30,10 @@ import Foundation
 final class FleetLogStore {
 
     /// The app-wide sink. `ReviewController`, `ShiftGitSync` and
-    /// `ConsoleController+Incident` append through this rather than being
-    /// handed an instance - none of them is constructed anywhere that could
-    /// inject one, and the alternative (threading a store through unrelated
-    /// call chains) buys nothing a self-test cannot get from
-    /// `init(directory:)`. (`LogAnalyzerStore` was a fourth writer here
-    /// until that whole feature was removed by
-    /// `fm/grandline-menubar-remove-items`.)
+    /// `LogAnalyzerStore` append through this rather than being handed an
+    /// instance - none of them is constructed anywhere that could inject one,
+    /// and the alternative (threading a store through three unrelated call
+    /// chains) buys nothing a self-test cannot get from `init(directory:)`.
     static let shared = FleetLogStore(directory: FleetLogStore.defaultDirectory())
 
     /// See this file's header. Public so the self-test can assert the real

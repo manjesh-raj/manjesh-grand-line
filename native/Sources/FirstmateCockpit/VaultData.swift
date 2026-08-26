@@ -161,7 +161,7 @@ enum VaultSource {
         }
     }
 
-    // MARK: Command strings for the command-runner window (never executed directly here)
+    // MARK: Command strings for the Console tab (never executed directly here)
 
     /// `av save <name>` - reads the secret value from the real terminal's
     /// own `/dev/tty` (confirmed live: piping a value in via stdin fails
@@ -345,9 +345,8 @@ enum VaultSource {
     /// Mirrors `injectCommand`'s "av inject +NAME -- command" mechanism used
     /// by the Vault page's "Run injected..." action, but run directly as a
     /// background `Process` (like `av list`/`av doctor` above) rather than
-    /// through a visible command-runner window: a password check has no
-    /// output worth showing the captain and must not depend on a terminal
-    /// window being open.
+    /// through a visible Console tab: a password check has no output worth
+    /// showing the captain and must not depend on a terminal tab being open.
     /// The typed guess travels via `GRANDLINE_LOCK_CANDIDATE` in the child's
     /// environment, never spliced into the shell command text or argv, so it
     /// never appears in a process listing's command column.

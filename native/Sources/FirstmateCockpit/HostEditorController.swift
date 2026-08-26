@@ -12,8 +12,9 @@
 // a `keyID` reference, never a path, per design report Section A2/C3.
 //
 // Phase 3 (Section B1/B2/B4, Section D Phase 3) adds: Group + Tags (B4);
-// Agent Forwarding and Jump Via (B1); and a "Port Forwarding\u{2026}" button
-// that opens `PortForwardingController` as a nested sheet (B1).
+// Agent Forwarding and Jump Via (B1); a "Port Forwarding\u{2026}" button that
+// opens `PortForwardingController` as a nested sheet (B1); and a Startup
+// Snippet popup sourced from `SnippetStore` (B2/B5).
 //
 // Fix 5 adds a "+ New Key…" entry at the bottom of the key chooser, so a key
 // can be created without leaving this form: it opens the Phase-2
@@ -71,6 +72,13 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     /// and written to by the inline "+ New Key…" flow (Fix 5).
     private let keyStore: SSHKeyStore
 
+    /// Saved snippets to offer in the startup-snippet chooser - a snapshot
+    /// taken when the sheet opens (matches how the icon/colour catalogues
+    /// are snapshotted too; a snippet added while this sheet is open won't
+    /// appear until reopened - unlike `keyStore`, nothing in this sheet can
+    /// create a new snippet).
+    private let snippets: [Snippet]
+
     /// Every other saved host's label (never including `editing`'s own, and
     /// never the pinned "Firstmate" entry's fixed display name - see
     /// `save()`), used only to warn on a duplicate label at Save time
@@ -111,10 +119,12 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     )
     private let jumpViaField = HelmTextField(placeholder: "Host label or user@bastion")
     private let portForwardingButton = HelmButton(title: "", variant: .secondary)
+    private let snippetCard = HelmFieldCard(label: "Startup snippet")
 
     /// The key chooser's current selection: `nil` is "None (use system ssh
     /// agent)", the same meaning index 0 carried when this was a popup.
     private var selectedKeyID: UUID?
+    private var selectedSnippetID: UUID?
 
     /// Edited in the nested `PortForwardingController` sheet, carried here
     /// until Save.
@@ -128,14 +138,16 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
 
     // MARK: Init
 
-    init(host: Host?, keyStore: SSHKeyStore, existingLabels: Set<String> = []) {
+    init(host: Host?, keyStore: SSHKeyStore, snippets: [Snippet], existingLabels: Set<String> = []) {
         self.editing = host
         self.keyStore = keyStore
+        self.snippets = snippets
         self.existingLabels = existingLabels
         self.portForwards = host?.portForwards ?? []
         self.selectedIcon = host?.iconSymbol ?? HostCatalog.defaultIcon
         self.selectedAccent = host?.accentHex ?? HostCatalog.defaultAccent
         self.selectedKeyID = host?.keyID
+        self.selectedSnippetID = host?.startupSnippetID
         self.tagChips = host?.tags ?? []
         super.init(nibName: nil, bundle: nil)
     }
@@ -221,6 +233,8 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         forwardingRow.translatesAutoresizingMaskIntoConstraints = false
         forwardingRow.arrangedSubviews[1].setContentHuggingPriority(.defaultLow, for: .horizontal)
         form.addRow(form.labelledField("Port forwarding", forwardingRow))
+        buildSnippetChooser()
+        form.addRow(snippetCard)
         form.addCaption("Jumping chains through another saved host's own jump host automatically. "
             + "Agent forwarding and port-forwarding rules apply to this host's own connection.")
 
@@ -299,7 +313,19 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         alert.runModal()
     }
 
-    // MARK: Port forwarding (Phase 3)
+    // MARK: Snippet chooser + port forwarding (Phase 3)
+
+    /// "None" plus every saved snippet, by label - the same shape as
+    /// `buildKeyChooser`, so a startup snippet is picked the same way a key is.
+    private func buildSnippetChooser() {
+        let ids: [UUID?] = [nil] + snippets.map { $0.id }
+        let titles = ["None"] + snippets.map { $0.label }
+        let index = selectedSnippetID.flatMap { ids.firstIndex(of: $0) } ?? 0
+        selectedSnippetID = ids.indices.contains(index) ? ids[index] : nil
+        snippetCard.configureChoices(titles, selectedIndex: index) { [weak self] chosen in
+            self?.selectedSnippetID = ids.indices.contains(chosen) ? ids[chosen] : nil
+        }
+    }
 
     private func updatePortForwardingButtonTitle() {
         portForwardingButton.title = portForwards.isEmpty
@@ -512,6 +538,7 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         let jumpVia = jumpViaField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         host.jumpVia = jumpVia.isEmpty ? nil : jumpVia
         host.portForwards = portForwards
+        host.startupSnippetID = selectedSnippetID
         host.iconSymbol = selectedIcon
         host.accentHex = selectedAccent
 

@@ -14,7 +14,7 @@
 // (1033 - 84 = 949) - a 479pt discrepancy repeated identically across
 // `bodyContainer` and all twelve destination views mounted inside it. This
 // file builds a real `AppShellController` inside a real `NSWindow` (the
-// same shape `BlockViewHierarchySelfTest.swift`/`SRELeadSessionSelfTest.swift`
+// same shape `BlockViewHierarchySelfTest.swift`/`SRELeadPerTabSelfTest.swift`
 // already use for this kind of real-view-hierarchy regression test) and
 // drives real window resizes through it, asserting `bodyContainer`'s width
 // tracks the window's actual current content width at every step - the
@@ -284,15 +284,16 @@ enum AppShellBodyWidthSelfTest {
         )
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
+        let snippetStore = SnippetStore()
         let shiftStore = ShiftStore()
         let dictationStore = DictationStore()
         let shell = AppShellController(
-            hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore),
-            console: ConsoleController(keyStore: keyStore, isFirstmateConsole: false),
-            settings: SettingsController(hostStore: hostStore, keyStore: keyStore, dictationStore: dictationStore),
-            hostStore: hostStore, keyStore: keyStore, shiftStore: shiftStore,
+            hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
+            console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
+            settings: SettingsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore),
+            hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, shiftStore: shiftStore,
             dictationStore: dictationStore, commandLibraryStore: CommandLibraryStore(), scheduleStore: ScheduleStore(),
-            makeHostConsole: { ConsoleController(keyStore: keyStore, isFirstmateConsole: false) }
+            makeHostConsole: { ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false) }
         )
         window.contentViewController = shell
         return (window, shell)

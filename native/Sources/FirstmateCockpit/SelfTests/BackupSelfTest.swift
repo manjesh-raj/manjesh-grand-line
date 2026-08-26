@@ -7,10 +7,10 @@
 // file's neighbors already use for pure-Swift logic with no AppKit window to
 // screenshot (`SRELeadBridgeSelfTest.swift`, `SRELeadMarkdownSelfTest.swift`).
 //
-// Exercises: writing a bundle from one set of hosts/keys, reading it
+// Exercises: writing a bundle from one set of hosts/snippets/keys, reading it
 // back on a "different machine" (separate scratch store files, driven by
-// `HostStore`/`SSHKeyStore`'s own `FM_HOSTS_FILE`/
-// `FM_KEYS_FILE` overrides), diffing against empty stores
+// `HostStore`/`SSHKeyStore`/`SnippetStore`'s own `FM_HOSTS_FILE`/
+// `FM_KEYS_FILE`/`FM_SNIPPETS_FILE` overrides), diffing against empty stores
 // (expect all `.new`), applying, re-diffing the unchanged result (expect all
 // `.unchanged`), editing one host locally and re-diffing (expect exactly that
 // one `.changed`), and grepping the actual written bundle file's bytes for
@@ -22,16 +22,14 @@
 // `DictationHistoryEntry`/history is never present in the exported bytes at
 // all - it's per-machine usage data, deliberately excluded from the bundle.
 //
-// Two cases here are specifically about a *removed* field rather than an
-// added one: `fm/grandline-remove-session-logging` dropped
+// One case here is specifically about a *removed* field rather than an added
+// one: `fm/grandline-remove-session-logging` dropped
 // `BackupSettings.sessionLoggingDefault` when the session-logging feature was
-// deleted, and `fm/grandline-menubar-remove-items` dropped the whole
-// `snippets` array when the Snippets feature was removed - so a `.glbackup`
-// a captain exported from an earlier build still carries either key.
-// `legacyBundleWithRemovedKeyStillDecodes` asserts that bundle imports rather
-// than failing the decode - which is what makes dropping a field from this
-// format safe with no `formatVersion` bump, in the same way adding one
-// already was.
+// deleted, so a `.glbackup` a captain exported from an earlier build still
+// carries that key. `legacyBundleWithRemovedKeyStillDecodes` asserts that
+// bundle imports rather than failing the decode - which is what makes
+// dropping an optional field from this format safe with no `formatVersion`
+// bump, in the same way adding one already was.
 
 // GL-27: compiled into debug builds only.
 //
@@ -77,9 +75,11 @@ enum BackupSelfTest {
         // MARK: "Machine A" - the source of the export.
         setenv("FM_HOSTS_FILE", tmp.appendingPathComponent("a-hosts.json").path, 1)
         setenv("FM_KEYS_FILE", tmp.appendingPathComponent("a-keys.json").path, 1)
+        setenv("FM_SNIPPETS_FILE", tmp.appendingPathComponent("a-snippets.json").path, 1)
         setenv("FM_DICTATION_DIR", tmp.appendingPathComponent("a-dictation").path, 1)
         let hostStoreA = HostStore()
         let keyStoreA = SSHKeyStore()
+        let snippetStoreA = SnippetStore()
         let dictationStoreA = DictationStore()
         dictationStoreA.addVocabularyWord("Pramata")
         dictationStoreA.addVocabularyWord("Grand Line")
@@ -108,9 +108,11 @@ enum BackupSelfTest {
         bastion.tags = ["prod"]
         hostStoreA.add(bastion)
         hostStoreA.add(Host(label: "Staging box", address: "10.0.0.5"))
+        snippetStoreA.add(Snippet(label: "tail logs", command: "tail -f /var/log/app.log"))
 
-        let bundle = GrandLineBackupBuilder.build(hosts: hostStoreA.hosts, allKeys: keyStoreA.keys, dictationStore: dictationStoreA)
+        let bundle = GrandLineBackupBuilder.build(hosts: hostStoreA.hosts, snippets: snippetStoreA.snippets, allKeys: keyStoreA.keys, dictationStore: dictationStoreA)
         check(bundle.hosts.count == 2, "bundle carries both hosts")
+        check(bundle.snippets.count == 1, "bundle carries the one snippet")
         check(bundle.keys.count == 1 && bundle.keys[0].id == key.id, "bundle carries only the referenced key's metadata")
         check(bundle.dictation?.vocabulary?.count == 2, "bundle carries both vocabulary words")
         check(bundle.dictation?.vocabulary?.contains("Pramata") == true && bundle.dictation?.vocabulary?.contains("Grand Line") == true, "bundle carries the exact vocabulary words")
@@ -140,15 +142,17 @@ enum BackupSelfTest {
         // MARK: "Machine B" - a different machine, starting empty.
         setenv("FM_HOSTS_FILE", tmp.appendingPathComponent("b-hosts.json").path, 1)
         setenv("FM_KEYS_FILE", tmp.appendingPathComponent("b-keys.json").path, 1)
+        setenv("FM_SNIPPETS_FILE", tmp.appendingPathComponent("b-snippets.json").path, 1)
         setenv("FM_DICTATION_DIR", tmp.appendingPathComponent("b-dictation").path, 1)
         let hostStoreB = HostStore()
         let keyStoreB = SSHKeyStore()
+        let snippetStoreB = SnippetStore()
         let dictationStoreB = DictationStore()
         // Machine B already has one of the two words, case-differently
         // spelled - the diff should still recognize it as already present.
         dictationStoreB.addVocabularyWord("pramata")
         let shortcutB = DictationShortcut.defaultShortcut
-        check(hostStoreB.hosts.isEmpty, "machine B starts with an empty host store")
+        check(hostStoreB.hosts.isEmpty && snippetStoreB.snippets.isEmpty, "machine B starts with empty stores")
 
         guard let readBackData = try? Data(contentsOf: bundleURL), let readBack = try? GrandLineBackupFile.decode(readBackData) else {
             check(false, "read the bundle back")
@@ -156,30 +160,59 @@ enum BackupSelfTest {
         }
 
         let firstDiff = BackupImport.diff(
-            bundle: readBack, existingHosts: hostStoreB.hosts, existingKeys: keyStoreB.keys,
+            bundle: readBack, existingHosts: hostStoreB.hosts, existingSnippets: snippetStoreB.snippets, existingKeys: keyStoreB.keys,
             existingVocabulary: dictationStoreB.vocabulary, existingShortcut: shortcutB
         )
         check(firstDiff.newHostsCount == 2 && firstDiff.changedHostsCount == 0 && firstDiff.unchangedHostsCount == 0, "first import diff: both hosts are new")
+        check(firstDiff.newSnippetsCount == 1, "first import diff: the snippet is new")
         check(firstDiff.keyWarnings.count == 1 && firstDiff.keyWarnings[0].contains("Prod bastion"), "first import diff: flags the bastion's missing key by name")
         check(firstDiff.newVocabularyCount == 1 && firstDiff.unchangedVocabularyCount == 1, "first import diff: one vocabulary word new, one already present (case-insensitively)")
         check(firstDiff.vocabularyRows.first(where: { $0.word == "Grand Line" })?.status == .new, "first import diff: \"Grand Line\" is the new word")
         check(firstDiff.vocabularyRows.first(where: { $0.word == "Pramata" })?.status == .unchanged, "first import diff: \"Pramata\" matches machine B's \"pramata\" case-insensitively")
         check(firstDiff.shortcutStatus == .changed, "first import diff: shortcut differs from machine B's default")
 
-        BackupImport.apply(firstDiff, bundle: readBack, hostStore: hostStoreB, dictationStore: dictationStoreB)
+        BackupImport.apply(firstDiff, bundle: readBack, hostStore: hostStoreB, snippetStore: snippetStoreB, dictationStore: dictationStoreB)
         check(hostStoreB.hosts.count == 2, "machine B now has both hosts")
+        check(snippetStoreB.snippets.count == 1, "machine B now has the snippet")
         check(hostStoreB.hosts.contains { $0.label == "Prod bastion" && $0.keyID == key.id }, "machine B's bastion still references the same key id (still dangling, by design - never auto-created)")
         check(!keyStoreB.keys.contains { $0.id == key.id }, "machine B's key store was NOT modified by the import (metadata is informational only)")
         check(dictationStoreB.vocabulary.count == 2 && dictationStoreB.vocabulary.contains("Grand Line") && dictationStoreB.vocabulary.contains("pramata"), "machine B's vocabulary gained the new word and kept its own casing of the already-present one")
         check(AppSettings.shared.dictationShortcut == shortcutA, "machine B's shortcut now matches the imported bundle's")
         check(dictationStoreB.history.isEmpty, "machine B's history is untouched by the import - nothing to apply, since none was ever in the bundle")
 
+        // S4: a bundled snippet's *command text* has to be visible in the
+        // preview, and a snippet some bundled host will auto-run on connect has
+        // to say so. The preview used to surface labels only, so a tampered
+        // bundle could plant a host whose startup snippet was a malicious
+        // command that fires ~1.5s after the next connect, invisible during the
+        // import the captain approved.
+        let autoRunRow = firstDiff.snippetRows.first { $0.autoRunsOnConnect }
+        check(autoRunRow == nil, "S4: no bundled host in this fixture names a startup snippet, so nothing claims to auto-run")
+        if var bastion = readBack.hosts.first(where: { $0.label == "Prod bastion" }),
+           let bundledSnippet = readBack.snippets.first {
+            bastion.startupSnippetID = bundledSnippet.id
+            var tampered = readBack
+            tampered.hosts = readBack.hosts.map { $0.label == "Prod bastion" ? bastion : $0 }
+            let tamperedDiff = BackupImport.diff(
+                bundle: tampered, existingHosts: [], existingSnippets: [], existingKeys: [],
+                existingVocabulary: [], existingShortcut: nil
+            )
+            let row = tamperedDiff.snippetRows.first { $0.bundleSnippet.id == bundledSnippet.id }
+            check(row?.autoRunsOnConnect == true,
+                  "S4: a snippet a bundled host names as its startup snippet is flagged as auto-running")
+            check(row?.bundleSnippet.command == bundledSnippet.command,
+                  "S4: the preview row carries the real command text, not just the label")
+        } else {
+            check(false, "S4: could not build the tampered-bundle fixture")
+        }
+
         // Re-importing the identical bundle should now show everything as unchanged.
         let secondDiff = BackupImport.diff(
-            bundle: readBack, existingHosts: hostStoreB.hosts, existingKeys: keyStoreB.keys,
+            bundle: readBack, existingHosts: hostStoreB.hosts, existingSnippets: snippetStoreB.snippets, existingKeys: keyStoreB.keys,
             existingVocabulary: dictationStoreB.vocabulary, existingShortcut: AppSettings.shared.dictationShortcut
         )
         check(secondDiff.unchangedHostsCount == 2 && secondDiff.newHostsCount == 0 && secondDiff.changedHostsCount == 0, "second import diff: both hosts now unchanged")
+        check(secondDiff.unchangedSnippetsCount == 1, "second import diff: the snippet now unchanged")
         check(secondDiff.newVocabularyCount == 0 && secondDiff.unchangedVocabularyCount == 2, "second import diff: both vocabulary words now unchanged")
         check(secondDiff.shortcutStatus == .unchanged, "second import diff: shortcut now unchanged")
 
@@ -190,14 +223,14 @@ enum BackupSelfTest {
             hostStoreB.update(editedStaging)
         }
         let thirdDiff = BackupImport.diff(
-            bundle: readBack, existingHosts: hostStoreB.hosts, existingKeys: keyStoreB.keys,
+            bundle: readBack, existingHosts: hostStoreB.hosts, existingSnippets: snippetStoreB.snippets, existingKeys: keyStoreB.keys,
             existingVocabulary: dictationStoreB.vocabulary, existingShortcut: AppSettings.shared.dictationShortcut
         )
         check(thirdDiff.changedHostsCount == 1, "third import diff: exactly one host changed after a local edit")
         check(thirdDiff.hostRows.first(where: { $0.label == "Staging box" })?.status == .changed, "third import diff: the edited host is the one flagged changed")
         check(thirdDiff.hostRows.first(where: { $0.label == "Prod bastion" })?.status == .unchanged, "third import diff: the untouched host is still unchanged")
 
-        BackupImport.apply(thirdDiff, bundle: readBack, hostStore: hostStoreB, dictationStore: dictationStoreB)
+        BackupImport.apply(thirdDiff, bundle: readBack, hostStore: hostStoreB, snippetStore: snippetStoreB, dictationStore: dictationStoreB)
         check(hostStoreB.hosts.first(where: { $0.label == "Staging box" })?.port == 22, "re-applying the bundle reverts the local edit back to the exported value")
 
         // A future, unsupported format version must be rejected, not silently misread.
@@ -214,14 +247,14 @@ enum BackupSelfTest {
             }
         }
 
-        // fm/grandline-remove-session-logging + fm/grandline-menubar-remove-items:
-        // a bundle exported by an earlier build still carries the now-deleted
-        // `BackupSettings.sessionLoggingDefault` key and/or a top-level
-        // `snippets` array. Decoding it must succeed and simply ignore those
-        // keys - never throw - and every field this file still declares must
-        // survive alongside them. Built by injecting the legacy keys into a
-        // real encoded bundle's JSON rather than hand-writing a whole bundle
-        // literal, so this case cannot drift out of shape as the format grows.
+        // fm/grandline-remove-session-logging: a bundle exported by an
+        // earlier build still carries the now-deleted
+        // `BackupSettings.sessionLoggingDefault` key. Decoding it must
+        // succeed and simply ignore that key - never throw - and every
+        // setting this file still declares must survive alongside it.
+        // Built by injecting the legacy key into a real encoded bundle's
+        // JSON rather than hand-writing a whole bundle literal, so this
+        // case cannot drift out of shape as the format grows.
         if let realData = try? GrandLineBackupFile.encode(bundle),
            var json = (try? JSONSerialization.jsonObject(with: realData)) as? [String: Any] {
             var settings = (json["settings"] as? [String: Any]) ?? [:]
@@ -231,25 +264,20 @@ enum BackupSelfTest {
             // older export carrying it must still decode.
             settings["mirrorTarget"] = "legacy-session"
             json["settings"] = settings
-            // The Snippets feature's removal dropped the whole top-level
-            // `snippets` array from this bundle's schema - an old export
-            // still carries it.
-            json["snippets"] = [["id": UUID().uuidString, "label": "legacy snippet", "command": "echo hi"]]
             if let legacyData = try? JSONSerialization.data(withJSONObject: json) {
                 // Guard against this case passing vacuously: the bytes being
-                // decoded must genuinely carry the removed keys.
-                let legacyText = String(data: legacyData, encoding: .utf8) ?? ""
-                check(legacyText.contains("sessionLoggingDefault") && legacyText.contains("\"snippets\""),
-                      "the legacy bundle's bytes genuinely carry the removed sessionLoggingDefault and snippets keys")
+                // decoded must genuinely carry the removed key.
+                check(String(data: legacyData, encoding: .utf8)?.contains("sessionLoggingDefault") == true,
+                      "the legacy bundle's bytes genuinely carry the removed sessionLoggingDefault key")
                 do {
                     let legacy = try GrandLineBackupFile.decode(legacyData)
-                    check(true, "a legacy bundle carrying the removed sessionLoggingDefault/snippets keys still decodes")
+                    check(true, "a legacy bundle carrying the removed sessionLoggingDefault key still decodes")
                     check(legacy.settings.themeID == bundle.settings.themeID,
                           "the legacy bundle's other settings still decode alongside the removed keys")
                     check(legacy.hosts.count == bundle.hosts.count,
-                          "the legacy bundle's hosts still decode alongside the removed keys")
+                          "the legacy bundle's hosts still decode alongside the removed key")
                 } catch {
-                    check(false, "a legacy bundle carrying the removed sessionLoggingDefault/snippets keys still decodes (threw: \(error))")
+                    check(false, "a legacy bundle carrying the removed sessionLoggingDefault key still decodes (threw: \(error))")
                 }
             }
         }

@@ -44,8 +44,8 @@
 //   2. Dotfiles & machine config - always runs (rebuild.sh/bootstrap.sh are
 //      idempotent): clones if `~/.dotfiles` is absent, else runs rebuild.sh.
 //      Both reuse `onRunCommandTracked` (a completion-carrying sibling of
-//      `onRunCommand`) so the sequencer waits for the real command-runner window's
-//      process to exit before continuing, never a fixed timer.
+//      `onRunCommand`) so the sequencer waits for the real Console tab exit
+//      before continuing, never a fixed timer.
 //   3. Global agent instructions - a re-check only, since it resolves itself
 //      once step 2's home-manager run has completed.
 //   4. Software checklist - runs the card's new "Install everything missing"
@@ -60,12 +60,8 @@
 // rebuild.sh, and Part B's "Create link", which just re-runs rebuild.sh)
 // needs `sudo`'s interactive TTY prompt, so all three go through
 // `onRunCommand`, wired by `AppShellController.runInConsole` to open a real
-// interactive terminal - never a silent background `Process`. That terminal
-// used to be a temporary Console tab; `fm/grandline-menubar-remove-items`
-// moved it into its own small floating window
-// (`ConsoleCommandRunnerWindowController.swift`) once a console could hold
-// only one session, no longer room for a second, temporary one alongside
-// the captain's own persistent shell.
+// Console tab - never a silent background `Process` (see
+// `ConsoleController.openCommandTab`).
 //
 // "Make local state portable" roadmap, part 3 of 3 (parts 1-2 - export/import
 // with GitHub support, and this page's "Restore Grand Line config" step -
@@ -191,17 +187,19 @@ extension SetupStepKind {
 
 final class BootstrapController: NSViewController, SetupPageSummary {
 
-    /// The stores the "Restore Grand Line config" step reads/writes
+    /// The three stores the "Restore Grand Line config" step reads/writes
     /// through the shared `BackupUI.importFlow` (fm/cockpit-local-state-
     /// portable) - injected the same way `AppShellController` stays ignorant
     /// of `HostStore` via `onPresentHostEditor`.
     private let hostStore: HostStore
     private let keyStore: SSHKeyStore
+    private let snippetStore: SnippetStore
     private let dictationStore: DictationStore
 
-    init(hostStore: HostStore, keyStore: SSHKeyStore, dictationStore: DictationStore) {
+    init(hostStore: HostStore, keyStore: SSHKeyStore, snippetStore: SnippetStore, dictationStore: DictationStore) {
         self.hostStore = hostStore
         self.keyStore = keyStore
+        self.snippetStore = snippetStore
         self.dictationStore = dictationStore
         super.init(nibName: nil, bundle: nil)
     }
@@ -220,13 +218,13 @@ final class BootstrapController: NSViewController, SetupPageSummary {
 
     /// Set by `AppShellController` (mirrors `onPresentHostEditor`'s wiring
     /// pattern) so this controller can ask for a command to run in the
-    /// own floating command-runner window, without knowing anything about
-    /// `ConsoleCommandRunnerWindowController` itself.
+    /// shared Console tab, without knowing anything about `ConsoleController`
+    /// itself.
     var onRunCommand: ((String, String) -> Void)?
 
     /// Same wiring as `onRunCommand`, but for callers (the "Run full setup"
-    /// sequencer below) that need to know when the command's own window's
-    /// process actually exits, not just that it was started.
+    /// sequencer below) that need to know when the command's Console tab
+    /// actually exits, not just that it was started.
     var onRunCommandTracked: ((String, String, @escaping (Bool) -> Void) -> Void)?
 
     private var cards: [HelmCard] = []
@@ -940,7 +938,7 @@ final class BootstrapController: NSViewController, SetupPageSummary {
                     self.updateSetupStep(.dotfiles, .done)
                     self.runSetupStepAgentInstructions()
                 } else {
-                    self.updateSetupStep(.dotfiles, .failed("\(label) exited with a non-zero status - see its own window for output."))
+                    self.updateSetupStep(.dotfiles, .failed("\(label) exited with a non-zero status - see its Console tab for output."))
                     self.finishFullSetup()
                 }
             }
@@ -995,7 +993,7 @@ final class BootstrapController: NSViewController, SetupPageSummary {
         case .software:
             return SetupStepChecks.softwareDone(isLoading: isLoadingSoftware, statuses: softwareRows.map { $0.status })
         case .restoreConfig:
-            return SetupStepChecks.restoreConfigDone(hostCount: hostStore.hosts.count)
+            return SetupStepChecks.restoreConfigDone(hostCount: hostStore.hosts.count, snippetCount: snippetStore.snippets.count)
         }
     }
 
@@ -1034,8 +1032,9 @@ final class BootstrapController: NSViewController, SetupPageSummary {
             return missing == 0 ? ("All installed", theme.ansiHex[2]) : ("\(missing) missing", theme.ansiHex[3])
         case .restoreConfig:
             let hostCount = hostStore.hosts.count
-            guard hostCount > 0 else { return ("Nothing to show yet", theme.chromeInkHex) }
-            return ("\(hostCount) host\(hostCount == 1 ? "" : "s")", theme.ansiHex[2])
+            let snippetCount = snippetStore.snippets.count
+            guard hostCount > 0 || snippetCount > 0 else { return ("Nothing to show yet", theme.chromeInkHex) }
+            return ("\(hostCount) host\(hostCount == 1 ? "" : "s"), \(snippetCount) snippet\(snippetCount == 1 ? "" : "s")", theme.ansiHex[2])
         }
     }
 
@@ -1051,7 +1050,7 @@ final class BootstrapController: NSViewController, SetupPageSummary {
         case .software:
             return "\(softwareRows.count) tracked dependencies across \(DependencyCatalog.categoryOrder.count) categories."
         case .restoreConfig:
-            return "Import a .glbackup file exported from another machine to bring in its saved hosts and preferences here."
+            return "Import a .glbackup file exported from another machine to bring in its saved hosts, snippets, and preferences here."
         }
     }
 
@@ -1299,14 +1298,15 @@ final class BootstrapController: NSViewController, SetupPageSummary {
     private func rebuildRestoreSection() {
         clearStack(restoreStack)
 
-        let desc = NSTextField(wrappingLabelWithString: "Bring in saved hosts and preferences exported from another machine. SSH private keys never leave the Keychain - a restored host referencing a key not on this machine needs that key re-added from the Keys screen.")
+        let desc = NSTextField(wrappingLabelWithString: "Bring in saved hosts, snippets, and preferences exported from another machine. SSH private keys never leave the Keychain - a restored host referencing a key not on this machine needs that key re-added from the Keys screen.")
         desc.font = .systemFont(ofSize: 11)
         desc.textColor = HelmTheme.mutedInk(theme)
         desc.preferredMaxLayoutWidth = 520
         dynamicLabels.append(desc)
 
         let hostCount = hostStore.hosts.count
-        restoreStatusLabel.stringValue = "Currently saved here: \(hostCount) host\(hostCount == 1 ? "" : "s")."
+        let snippetCount = snippetStore.snippets.count
+        restoreStatusLabel.stringValue = "Currently saved here: \(hostCount) host\(hostCount == 1 ? "" : "s"), \(snippetCount) snippet\(snippetCount == 1 ? "" : "s")."
         restoreStatusLabel.font = .systemFont(ofSize: 11)
         restoreStatusLabel.textColor = HelmTheme.mutedInk(theme)
         dynamicLabels.append(restoreStatusLabel)
@@ -1322,7 +1322,7 @@ final class BootstrapController: NSViewController, SetupPageSummary {
     }
 
     @objc private func importRestoreConfigClicked() {
-        BackupUI.importFlow(from: self, hostStore: hostStore, keyStore: keyStore, dictationStore: dictationStore) { [weak self] in
+        BackupUI.importFlow(from: self, hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore) { [weak self] in
             self?.rebuildDynamicSections()
         }
     }
@@ -2446,7 +2446,7 @@ final class BootstrapController: NSViewController, SetupPageSummary {
 
     /// Fetches and fast-forwards from `origin` before applying - never a
     /// forced overwrite. `git pull --ff-only` aborts on its own, with a real,
-    /// visible error in its own command-runner window, if the local checkout has diverged
+    /// visible error in the Console tab, if the local checkout has diverged
     /// (uncommitted changes or a genuine merge conflict) - `rebuild.sh` never
     /// runs against a repo state that didn't cleanly update from GitHub.
     private static func rebuildCommand(repoPath: String) -> String {

@@ -1,27 +1,16 @@
 // Manjesh Grand Line - native macOS app.
 //
-// One tab chip. Originally built for the console's own dynamic tab bar
-// (design report A4/A5); `fm/grandline-menubar-remove-items` collapsed a
-// console to one session per host/window, per an explicit captain decision
-// - "every host connection collapses to one session per host/window" - so
-// `ConsoleController` no longer instantiates this class at all.
-//
-// **Kept, unmodified, because it's a genuine, independent dependency of
-// `ToolsController`'s own multi-instance tool tabs** (`fm/cockpit-tools-
-// page-multi-session`) - a completely unrelated feature that was never part
-// of the captain's ask, discovered while removing Console's own tab bar the
-// same way `LogRedactor`/`ShiftYamlBridge` were discovered as genuine Log
-// Analyzer-adjacent dependencies during this same task's earlier removal
-// work. A rounded chip with an editable name label and a close button:
+// One tab in the console's dynamic tab bar. A rounded chip with an editable name
+// label and a close button. Interaction (design report A4/A5):
 //
 //   - single click  -> select the tab
 //   - double click  -> rename it inline (the label becomes an editable field)
 //   - right click    -> Rename / Duplicate / Close menu
 //   - the "×" button -> close the tab
 //
-// The chip is a dumb view: every action is handed back to its owner through
-// a closure, so the chip knows nothing about the collection it's one of.
-// `ToolsController` owns naming, selection, duplication, and closing.
+// The chip is a dumb view: every action is handed back to `ConsoleController`
+// through a closure, so the chip knows nothing about the tab collection. The
+// controller owns naming, selection, duplication, and closing.
 
 import AppKit
 

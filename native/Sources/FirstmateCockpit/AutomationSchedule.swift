@@ -60,7 +60,7 @@ import Foundation
 ///  - Dotfiles clone / rebuild (`DotfilesRunCommand.runOrCloneCommand`) -
 ///    runs `darwin-rebuild switch`, which needs a real interactive `sudo`
 ///    prompt, which is why Bootstrap and Automation both open it as a real
-///    real floating command-runner window rather than a background process.
+///    Console tab rather than a background process.
 ///  - Every `av harden …` action (`NotSyncedController`) - named by F11
 ///    itself as the excluded class. Automic Vault's own approval helper can
 ///    prompt, and the Homebrew hardener additionally requires an explicit

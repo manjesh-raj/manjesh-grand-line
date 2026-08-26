@@ -18,15 +18,15 @@
 //     stdin fails outright ("failed to open /dev/tty") - so it can only ever
 //     run inside a real interactive terminal. This page never even
 //     constructs the value; only the NAME crosses into a shell command
-//     string, and that command runs in its own real floating command-
-//     runner window (`AppShellController.runInConsole`, the exact mechanism
-//     every other sudo/interactive action in this app already uses - see
-//     Bootstrap's `onRunCommand`/Settings' Touch ID row).
+//     string, and that command runs in a real Console tab
+//     (`AppShellController.runInConsole`, the exact mechanism every other
+//     sudo/interactive action in this app already uses - see Bootstrap's
+//     `onRunCommand`/Settings' Touch ID row).
 //   - Triggering an injected run (`av inject +NAME -- cmd`) is confirmed
 //     live to work fine as a background process with no controlling
 //     terminal (Automic Vault's own approval prompt, when one fires, is
 //     handled by its separate menu-bar app, not `/dev/tty`) - but this page
-//     still routes it through the same command-runner mechanism rather than
+//     still routes it through the same Console tab mechanism rather than
 //     capturing the command's output itself, since the command is
 //     caller-authored free text and may print anything; Grand Line must
 //     never be the thing that captures or logs a command's real output.
@@ -60,7 +60,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
     var onRunCommand: ((String, String) -> Void)?
     /// Same as above, but the caller learns when the command finished -
     /// used after "Save secret" so the secrets list can refresh once the
-    /// captain's real `av save` in its own command-runner window actually completes.
+    /// captain's real `av save` in the Console tab actually completes.
     var onRunCommandTracked: ((String, String, @escaping (Bool) -> Void) -> Void)?
 
     private let scroll = NSScrollView()
@@ -1266,7 +1266,7 @@ final class VaultInjectSheetController: NSViewController {
         let title = NSTextField(labelWithString: "Run with a secret injected")
         title.font = .systemFont(ofSize: 14, weight: .semibold)
 
-        let help = NSTextField(wrappingLabelWithString: "Runs \u{201c}av inject +SECRET -- command\u{201d} in its own floating window, so any output or approval prompt is visible directly - never captured by this app.")
+        let help = NSTextField(wrappingLabelWithString: "Runs \u{201c}av inject +SECRET -- command\u{201d} in a Console tab, so any output or approval prompt is visible directly - never captured by this app.")
         help.font = .systemFont(ofSize: 11)
         help.textColor = HelmTheme.mutedInk(ThemeManager.shared.theme)
         help.preferredMaxLayoutWidth = 340

@@ -1,69 +1,65 @@
 // Manjesh Grand Line - native macOS app.
 //
-// The console: one surface hosting **exactly one session at a time**, a
-// SwiftTerm terminal. This was originally Phase 0 of the connection-manager
-// work (design report `data/cockpit-ssh-manager-research/report.md`, Section
-// A4/A5 + Section D Phase 0) - a dynamic `[TabModel]` collection rendered as
-// a growing tab-chip bar, supporting new/duplicate/rename/close/reconnect.
+// The console: one surface hosting a **flexible collection of tabs**, each a
+// SwiftTerm terminal. This is Phase 0 of the connection-manager work (design
+// report `data/cockpit-ssh-manager-research/report.md`, Section A4/A5 + Section D
+// Phase 0): the old fixed `enum Tab { case shell, mirror }` is gone, replaced by
+// `[TabModel]` rendered in a dynamic tab bar that grows and shrinks.
 //
-// `fm/grandline-menubar-remove-items` collapsed that back down to one
-// session per console, per an explicit captain decision: "every host
-// connection collapses to one session per host/window." What survives from
-// the tab-bar era: **Reconnect** (⌘R) restarts the session's process from its
-// launch recipe, and **Close/Disconnect** (⌘W, host pages only) terminates
-// it. New/Duplicate/Rename and the whole tab-chip strip are gone - there is
-// nothing to add a second one of, nothing to duplicate into, and nothing to
-// rename on a page whose one session already carries the host's own name.
+// What the tab model buys us:
+//   - **New tab** (⌘T / the "+" button): a fresh login shell.
+//   - **Duplicate** (⌘D): a new tab running the *same* argv as the current one -
+//     the primitive that will later duplicate a host session.
+//   - **Rename** (double-click a tab, ⌘⇧R, or right-click -> Rename): per-tab
+//     name that never touches the process.
+//   - **Close** (⌘W / the "×"): with the last-tab edge case handled - closing the
+//     final tab opens a fresh shell so the window is never empty.
 //
-// The pinned Firstmate host opens with its one Shell session
+// The pinned Firstmate host opens with a single Shell tab
 // (`fm/grand-line-remove-firstmate-mirror` deleted the herdr-attached tab
-// this console used to open alongside it, well before the tab bar itself
-// went away - see that file's PR for the full removal and why). The session
-// is a paste-hardening `CockpitTerminalView`, so screenshot-paste into
-// Claude works, and it gets Helm theming, font zoom, find, copy, a generous
-// scrollback, and smooth native scrolling.
-//
-// One-shot provisioning commands (Bootstrap/Automation/Settings/Vault's
-// interactive `sudo` actions, e.g. `rebuild.sh`) used to run as a second,
-// temporary tab alongside the Firstmate console's persistent Shell - that's
-// exactly the kind of second session this collapse removes, so they now run
-// in their own small floating window instead
-// (`ConsoleCommandRunnerWindowController.swift`), never inside this
-// controller at all.
+// this console used to open alongside it - see that file's PR for the full
+// removal and why). Every tab is a paste-hardening `CockpitTerminalView`, so
+// screenshot-paste into Claude works on all of them, and every terminal gets
+// Helm theming, font zoom, find, copy, a
+// generous scrollback, and smooth native scrolling.
+
 //
 // **GL-36: where the rest of this controller lives.** This file used to be
-// 2,297 lines holding seven separable features at once; it is now the core -
+// 2,297 lines holding seven separable features at once. It is now the core -
 // the stored state, `init`, `loadView` and the view lifecycle - and the
-// features it hosts sit in one file each, split along the `// MARK:` seams
-// this file already had. The menu-bar-removal task's single-session rewrite
-// touched every one of these, so "verified line-for-line against the
-// pre-split file" no longer holds - each is its own rewrite now, not a move:
+// features it hosts sit in one file each, split verbatim along the `// MARK:`
+// seams this file already had:
 //
-//   - `ConsoleController+Session.swift`    session lifecycle, reconnect,
-//                                          close, window title,
+//   - `ConsoleController+Tabs.swift`       tab lifecycle, selection, rename,
+//                                          close, reconnect, window title,
 //                                          `LocalProcessTerminalViewDelegate`
-//   - `ConsoleController+Sessions.swift`   what the session runs: the
-//                                          Firstmate host's own shell,
-//                                          `ssh` + key unlock
+//   - `ConsoleController+Sessions.swift`   what a tab runs: the Firstmate
+//                                          host's own shell, one-shot
+//                                          command tabs, `ssh` + key unlock
 //   - `ConsoleController+Toolbar.swift`    the page toolbar, the Compose
 //                                          popover, theme/font/find/copy
 //                                          actions
-//   - `ConsoleController+SRELead.swift`    the SRE Lead pane for this
-//                                          console's one session
-//   - `ConsoleController+LogCapture.swift` Block View
+//   - `ConsoleController+SRELead.swift`    the whole per-tab SRE Lead pane
+//   - `ConsoleController+LogCapture.swift` Block View + the Log Analyzer
+//                                          capture bridge
 //   - `ConsoleController+TestSupport.swift` the `debug*` hooks the console's
-//                                          self-tests drive - behind
-//                                          `FM_SELFTESTS`, so they don't ship
-//                                          in the `.app`
+//                                          self-tests drive - now behind
+//                                          `FM_SELFTESTS`, so unlike before
+//                                          they no longer ship in the `.app`
+//
+// Nothing moved changed: the split was verified to be line-for-line verbatim
+// against the pre-split file (modulo the access change below), and every
+// console-touching suite - block view restart, SRE Lead per-tab, the SRE Lead
+// bridge, notification-center SRE Lead - passes unchanged.
 //
 // **The one real cost, stated plainly.** Swift's `private` is file-scoped, so
 // members this controller's own extensions reach across those file
-// boundaries are internal rather than `private`. They are still
+// boundaries are now internal rather than `private`. They are still
 // module-internal and nothing outside this app can see them, but the compiler
 // no longer enforces "only the console touches this". That is the price of
-// the split; the alternative was either one very large file or inventing
-// coordinator objects that would need the session, the toolbar and the
-// terminal card handed to them and would buy nothing beyond the file
+// the split; the alternative was either leaving one 2,300-line file or
+// inventing coordinator objects that would need the current tab, the toolbar
+// and the terminal card handed to them and would buy nothing beyond the file
 // boundary an extension already gives. Treat every member below as private to
 // the `ConsoleController*.swift` family.
 
@@ -77,6 +73,11 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// (`connectSSH`); everything secret stays inside `KeychainKeyStore` /
     /// `SSHKeyMaterializer`.
     let keyStore: SSHKeyStore
+
+    /// The snippet library (Phase 3, B2/B5) - consulted to resolve a host's
+    /// startup-snippet id, and by `runSnippetInActiveTab` for the Snippets
+    /// panel's "Run" action.
+    let snippetStore: SnippetStore
 
     /// Fix 1 (dedicated host pages): `false` for a per-host console
     /// (`AppShellController.connectHost`'s `makeHostConsole` factory), which
@@ -93,8 +94,9 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// reconnecting that host.
     let isFirstmateConsole: Bool
 
-    init(keyStore: SSHKeyStore, isFirstmateConsole: Bool = true) {
+    init(keyStore: SSHKeyStore, snippetStore: SnippetStore, isFirstmateConsole: Bool = true) {
         self.keyStore = keyStore
+        self.snippetStore = snippetStore
         self.isFirstmateConsole = isFirstmateConsole
         super.init(nibName: nil, bundle: nil)
     }
@@ -102,21 +104,18 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     /// `fm/grandline-notification-center`: fired when an SRE Lead reply
-    /// lands on this console's session while it isn't the one currently
-    /// visible to the captain (this whole host page not the currently shown
-    /// destination). `AppShellController.connectHost` wires this to build
-    /// the in-app notification and its own navigate-back closure - this
-    /// controller only reports the event, it doesn't know about rail
-    /// destinations or other host pages.
-    var onSRELeadReplyWhileBackground: ((ConsoleSession) -> Void)?
+    /// lands on a tab that isn't the one currently visible to the captain
+    /// (a different tab selected, or this whole host page not the currently
+    /// shown destination). `AppShellController.connectHost` wires this to
+    /// build the in-app notification and its own navigate-back-to-this-tab
+    /// closure - this controller only reports the event, it doesn't know
+    /// about rail destinations or other host pages.
+    var onSRELeadReplyWhileBackground: ((TabModel) -> Void)?
 
-    // MARK: Session
+    // MARK: Tabs
 
-    /// This console's one live session, or `nil` before it's connected (a
-    /// dedicated host page before its first `connectSSHIfNeeded`) or after
-    /// it's been closed. `fm/grandline-menubar-remove-items`: was
-    /// `[TabModel]` + a selected id - see this file's header.
-    var session: ConsoleSession?
+    var tabs: [TabModel] = []
+    var currentTab: TabModel?
     var hasAppeared = false
 
     /// Scrollback retained per normal-screen terminal. SwiftTerm defaults to 500
@@ -127,13 +126,12 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// GL-36: lives here rather than in `ConsoleController+LogCapture.swift`
     /// with the rest of Block View, because a Swift extension cannot declare
     /// a stored property.
-    /// Whether the session is showing parsed blocks instead of raw
+    /// Whether the current tab is showing parsed blocks instead of raw
     /// scrollback right now - a per-console, session-only toggle (not
     /// persisted, not a process-wide flag like the original PR #79/#83
     /// attempts' `BlockViewManager`) since Stage 0 only ever has at most one
-    /// opted-in session per console to toggle at all. Only ever visibly
-    /// matters for a session with a `blockContainer` - see
-    /// `updateSessionViewVisibility`.
+    /// opted-in tab per console to toggle at all. Only ever visibly matters
+    /// for a tab with a `blockContainer` - see `updateTabViewVisibility`.
     var blockViewShowing = false
 
     // MARK: Theme + font
@@ -165,13 +163,14 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// Tools' own comment said it was a copy of this one - `HelmPageToolbar`
     /// is now the single definition of the height, fill, hairline and insets
     /// for all three pages that have such a bar.
-    let toolbar = HelmPageToolbar()
+    let tabBar = HelmPageToolbar()
     let content = NSView()
+    let tabsStack = NSStackView()
 
     /// The bordered-terminal-card chrome (`fm/grandline-sre-lead-app-feel`) -
     /// see `ConsoleCardChrome.swift`'s header for the whole mechanism and why
     /// it is drawn over the terminal rather than wrapped around it. Always the
-    /// topmost subview of `content`, hidden unless the session has SRE
+    /// topmost subview of `content`, hidden unless the current tab has SRE
     /// Lead active.
     let cardChrome = ConsoleCardChrome(frame: .zero)
 
@@ -236,16 +235,38 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// showing - see `updateBlockViewControls`). `HelmButton.restyle()` owns
     /// `contentTintColor`, so assigning that directly would be silently
     /// overwritten on the next theme change - `tint` is the seam.
+    var plusButton: HelmButton!
     var findButton: HelmButton!
     var zoomInButton: HelmButton!
     var zoomOutButton: HelmButton!
     /// `fm/cockpit-block-view-stage0` - only ever shown for the one opted-in
-    /// host's session, see `updateBlockViewControls`.
+    /// host's tab, see `updateBlockViewControls`.
     var blockViewToggleButton: HelmButton!
     var blockViewRefreshButton: HelmButton!
     /// Phase 3 of "Knowledge and speed" (`fm/grandline-console-command-
-    /// composer`) - only ever shown for a plain `.shell` session, see
-    /// `updateComposeControls`.
+    /// composer`) - only ever shown for a plain `.shell` tab that isn't a
+    /// one-shot command, see `updateComposeControls`.
+    /// `fm/grandline-log-analyzer-build`, spec §2's "Send from Terminal":
+    /// captures this tab's most recent completed command (or the captain's
+    /// current selection) and hands it to the Log Analyzer. A peer of SRE
+    /// Lead and Compose in the same toolbar cluster, and - like SRE Lead -
+    /// a dedicated-host-page affordance only (`!isFirstmateConsole`): the
+    /// shared Firstmate console's own Shell tab is this app's own
+    /// session, not infrastructure output an investigation would be built
+    /// from. See `LogAnalyzerCapture.swift` for exactly what gets captured
+    /// and what happens on a host without per-command block tracking.
+    var analyzeLogsButton: HelmButton?
+
+    /// Fired by "Analyze Logs" with an already-built capture plus this
+    /// tab's label. Forwarded (never handled here) exactly like every other
+    /// cross-destination action this controller exposes - the console knows
+    /// nothing about the Log Analyzer destination.
+    var onAnalyzeLogs: ((LogTerminalCapture, String) -> Void)?
+
+    /// F8 (incident mode): forwarded to `AppShellController`, which opens the
+    /// Log Analyzer on a saved investigation. Fired only from the incident
+    /// card's Evidence tab, for a row that carries a real investigation id.
+    var onOpenInvestigation: ((String) -> Void)?
 
     // MARK: F8 - incident mode (dedicated host pages only)
     //
@@ -275,13 +296,11 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     let incidentPopover = NSPopover()
     let incidentCard = IncidentCardView()
 
-    /// How many SRE Lead turns this console's session has completed during
-    /// the current incident, so a timeline entry can say "turn 3" without
-    /// re-deriving it from a chat view that may since have been torn down.
-    /// A console has at most one session, so this is a plain counter rather
-    /// than a dictionary keyed by session id - reset to 0 by
-    /// `startIncident` for a fresh incident.
-    var sreLeadTurnCount = 0
+    /// How many SRE Lead turns each tab has completed during the current
+    /// incident, so a timeline entry can say "turn 3" without re-deriving it
+    /// from a chat view that may since have been torn down. Keyed by
+    /// `TabModel.id`, exactly like every other per-tab bookkeeping here.
+    var sreLeadTurnCounts: [UUID: Int] = [:]
 
     var composeButton: HelmButton!
     let composer = ConsoleComposerController()
@@ -373,6 +392,12 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     var sreLeadPaneWidthConstraint: NSLayoutConstraint!
     let sreLeadPaneWidth: CGFloat = 380
 
+    /// Captain-specified cap (task brief): at most this many tabs on one
+    /// host page may have SRE Lead running (`.starting`/`.ready`)
+    /// simultaneously. Attempting to start a 6th shows a clear alert instead
+    /// of silently queuing or silently refusing.
+    let sreLeadMaxConcurrent = 5
+
     // MARK: Lifecycle
 
     override func loadView() {
@@ -409,34 +434,35 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
         composer.onRunInTerminal = { [weak self] command in
             CommandRiskConfirmation.confirmAIAuthored(command: command,
                                                       source: "Compose") {
-                self?.session?.terminal.send(txt: command + "\n")
+                self?.currentTab?.terminal.send(txt: command + "\n")
             }
         }
 
         sreLeadPaneWidthConstraint = sreLeadPane.widthAnchor.constraint(equalToConstant: 0)
 
         NSLayoutConstraint.activate([
-            toolbar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            toolbar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            toolbar.topAnchor.constraint(equalTo: root.topAnchor),
+            tabBar.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            tabBar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            tabBar.topAnchor.constraint(equalTo: root.topAnchor),
 
-            // `content` (and therefore the session's terminal inside it,
-            // including the one SRE Lead's bridge injects into) is pinned to
-            // the root's full width, never to `sreLeadPane`'s leading edge.
-            // Opening/closing the SRE Lead pane only changes
-            // `sreLeadPaneWidthConstraint` below - it used to also resize
-            // `content` (trailing was pinned to `sreLeadPane.leadingAnchor`),
-            // and any frame change on a SwiftTerm view triggers
-            // `resize(cols:rows:)`, which reflows the buffer at the new
-            // column count and can truncate/garble scrollback the captain
-            // had already built up logging into a bastion. The pane now
-            // overlays the right edge of `content` (it's added after
-            // `content`, so it already renders on top) instead of pushing it
-            // - a real width change on `content` only ever happens from an
-            // actual window resize now, not from toggling this pane.
+            // `content` (and therefore every tab's terminal inside it,
+            // including the primary interactive tab SRE Lead's bridge
+            // injects into) is pinned to the root's full width, never to
+            // `sreLeadPane`'s leading edge. Opening/closing the SRE Lead
+            // pane only changes `sreLeadPaneWidthConstraint` below - it used
+            // to also resize `content` (trailing was pinned to
+            // `sreLeadPane.leadingAnchor`), and any frame change on a
+            // SwiftTerm view triggers `resize(cols:rows:)`, which reflows
+            // the buffer at the new column count and can truncate/garble
+            // scrollback the captain had already built up logging into a
+            // bastion. The pane now overlays the right edge of `content`
+            // (it's added after `content`, so it already renders on top)
+            // instead of pushing it - a real width change on `content` only
+            // ever happens from an actual window resize now, not from
+            // toggling this pane.
             content.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            content.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            content.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
             content.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 
             cardChrome.leadingAnchor.constraint(equalTo: content.leadingAnchor),
@@ -445,16 +471,17 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
             cardChrome.bottomAnchor.constraint(equalTo: content.bottomAnchor),
 
             sreLeadPane.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            sreLeadPane.topAnchor.constraint(equalTo: toolbar.bottomAnchor),
+            sreLeadPane.topAnchor.constraint(equalTo: tabBar.bottomAnchor),
             sreLeadPane.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             sreLeadPaneWidthConstraint,
         ])
 
-        // The Firstmate host's own Shell session (Fix 4: this is also
+        // The starting set: the pinned "Firstmate" host's own Shell tab,
+        // matching the previous fixed-tabs behaviour (Fix 4: this is now also
         // reachable from the Hosts sidebar's pinned entry, but the app still
-        // lands here automatically on launch). The process starts in
+        // lands here automatically on launch). Its process starts in
         // `viewDidAppear` (once the view is on screen). A per-host console
-        // (Fix 1) opts out - its one ssh session is opened on demand by
+        // (Fix 1) opts out - its one tab is added on demand by
         // `connectSSHIfNeeded` instead.
         if isFirstmateConsole {
             openFirstmateHost(focus: false)
@@ -478,7 +505,8 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
         fontSizeObservation = FontSizeManager.shared.observe { [weak self] size in
             guard let self else { return }
             self.fontSize = size
-            self.session?.terminal.font = self.currentFont()
+            let f = self.currentFont()
+            for tab in self.tabs { tab.terminal.font = f }
         }
     }
 
@@ -488,7 +516,7 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     override func viewDidAppear() {
         super.viewDidAppear()
         hasAppeared = true
-        if let session, !session.started { startSession(session) }
-        if let session { view.window?.makeFirstResponder(session.terminal) }
+        for tab in tabs where !tab.started { startTab(tab) }
+        if let tab = currentTab { view.window?.makeFirstResponder(tab.terminal) }
     }
 }

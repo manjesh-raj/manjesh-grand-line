@@ -10,28 +10,20 @@
 // wired to the same `QuotaUsageController` `FleetController`'s Morning
 // Briefing card already uses (`fm/grandline-herdr-utilization-panel`).
 //
-// This drives the *real* `ConsoleController.openFirstmateHost`/`newShellSession` -
-// not reimplementations - following `BlockViewRestartIntegrationSelfTest.swift`'s
-// construction pattern (a real `ConsoleController` mounted in a real,
-// off-screen `NSWindow`). What it does NOT do: call
-// `QuotaUsageController.toggle`/`NSPopover.show` - no self-test in this
-// codebase exercises a real `NSPopover.show(relativeTo:of:preferredEdge:)`
-// headlessly (checked before writing this), and that popover's own
-// open/close/refresh/theme mechanics are pre-existing, already-shipped code
-// this task didn't touch (`FleetController` already relies on it in
-// production). What genuinely IS new here, and what this test covers, is
-// `updateQuotaUsageControls()`'s availability rule - that it mirrors
-// `updateComposeControls()` byte-for-byte, on both the shared Firstmate
-// console and a dedicated host page.
-//
-// `fm/grandline-menubar-remove-items` rewrote this suite: the original
-// "hidden on a one-shot command tab" case (and the tab-selection-transition
-// case built around it) no longer has anything to test - one-shot
-// provisioning commands moved out of `ConsoleController` entirely into
-// their own floating window (`ConsoleCommandRunnerWindowController.swift`),
-// which has no Compose/Claude-usage buttons at all. What's left is the
-// simpler, still-real question: are the buttons visible with a session and
-// hidden with none, agreeing with Compose either way.
+// This drives the *real* `ConsoleController.newShellTab`/`openCommandTab`/
+// `select(tabID:)` - not reimplementations - following
+// `BlockViewRestartIntegrationSelfTest.swift`'s construction pattern (a real
+// `ConsoleController` mounted in a real, off-screen `NSWindow`). What it does
+// NOT do: call `QuotaUsageController.toggle`/`NSPopover.show` - no self-test
+// in this codebase exercises a real `NSPopover.show(relativeTo:of:
+// preferredEdge:)` headlessly (checked before writing this), and that
+// popover's own open/close/refresh/theme mechanics are pre-existing,
+// already-shipped code this task didn't touch (`FleetController` already
+// relies on it in production). What genuinely IS new here, and what this
+// test covers, is `updateQuotaUsageControls()`'s availability rule - that it
+// mirrors `updateComposeControls()` byte-for-byte across tab-selection
+// transitions, on both the shared Firstmate console and a dedicated host
+// page.
 //
 // Run with:
 //   swift build && FM_RUN_CONSOLE_CLAUDE_USAGE_TESTS=1 .build/debug/FirstmateCockpit; echo $?
@@ -56,9 +48,10 @@ enum ConsoleClaudeUsageSelfTest {
 
     static func run() -> Bool {
         let cases: [(String, () -> String?)] = [
-            ("visibleAndMatchesComposeOnTheSharedConsoleShellSession", test_visibleOnFirstmateShellSession),
-            ("visibleAndMatchesComposeOnAHostPageShellSession", test_visibleOnHostShellSession),
-            ("hiddenAndMatchesComposeWithNoSession", test_hiddenWithNoSession),
+            ("visibleAndMatchesComposeOnAPlainShellTabOnTheSharedConsole", test_visibleOnFirstmateShellTab),
+            ("visibleAndMatchesComposeOnAPlainShellTabOnAHostPage", test_visibleOnHostShellTab),
+            ("hiddenAndMatchesComposeOnAOneShotCommandTab", test_hiddenOnOneShotTab),
+            ("visibilityFollowsTabSelectionAcrossBothKinds", test_visibilityFollowsSelection),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -77,12 +70,12 @@ enum ConsoleClaudeUsageSelfTest {
 
     // MARK: Helpers
 
-    /// A real `ConsoleController` mounted in a real `NSWindow`, with no
-    /// session open yet - `isFirstmateConsole` picks the shared-console
-    /// shape (matching the task's own "the plain Shell tab" framing) or a
+    /// A real `ConsoleController` mounted in a real `NSWindow`, with no tab
+    /// open yet - `isFirstmateConsole` picks the shared-console shape
+    /// (matching the task's own "the plain Shell tab" framing) or a
     /// dedicated-host-page shape.
     private static func makeTestConsole(isFirstmateConsole: Bool) -> (window: NSWindow, controller: ConsoleController) {
-        let controller = ConsoleController(keyStore: SSHKeyStore(), isFirstmateConsole: isFirstmateConsole)
+        let controller = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(), isFirstmateConsole: isFirstmateConsole)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
             styleMask: [.titled],
@@ -105,41 +98,70 @@ enum ConsoleClaudeUsageSelfTest {
         }
         guard quotaButton.isHidden == composeButton.isHidden else {
             return "Claude usage's visibility (\(quotaButton.isHidden)) disagrees with Compose's " +
-                "(\(composeButton.isHidden)) on the same session - they must share the exact same availability rule"
+                "(\(composeButton.isHidden)) on the same tab - they must share the exact same availability rule"
         }
         return nil
     }
 
     // MARK: Cases
 
-    private static func test_visibleOnFirstmateShellSession() -> String? {
-        // `ConsoleController.loadView()` already opens the Firstmate host's
-        // Shell session for an `isFirstmateConsole: true` controller.
+    private static func test_visibleOnFirstmateShellTab() -> String? {
         let (window, controller) = makeTestConsole(isFirstmateConsole: true)
+        controller.newShellTab()
         controller.view.layoutSubtreeIfNeeded()
         let failure = checkButtonsAgree(controller, expectedHidden: false)
         _ = window
         return failure
     }
 
-    private static func test_visibleOnHostShellSession() -> String? {
+    private static func test_visibleOnHostShellTab() -> String? {
         let (window, controller) = makeTestConsole(isFirstmateConsole: false)
-        controller.newShellSession()
+        controller.newShellTab()
         controller.view.layoutSubtreeIfNeeded()
         let failure = checkButtonsAgree(controller, expectedHidden: false)
         _ = window
         return failure
     }
 
-    private static func test_hiddenWithNoSession() -> String? {
-        // A dedicated host page before its own `connectSSHIfNeeded` has ever
-        // run - `session == nil`, matching real production state the moment
-        // a host page is first mounted.
+    private static func test_hiddenOnOneShotTab() -> String? {
         let (window, controller) = makeTestConsole(isFirstmateConsole: false)
+        _ = controller.openCommandTab(label: "one-shot test", command: "true")
         controller.view.layoutSubtreeIfNeeded()
         let failure = checkButtonsAgree(controller, expectedHidden: true)
         _ = window
         return failure
+    }
+
+    /// Opens a real Shell tab (available), then a real one-shot command tab
+    /// (unavailable, and auto-selected by `addTab`'s own `select: true`),
+    /// then switches back - the exact `select(tabID:)` path
+    /// `updateQuotaUsageControls()` has to stay correct through, matching
+    /// `updateComposeControls()` at every step.
+    private static func test_visibilityFollowsSelection() -> String? {
+        let (window, controller) = makeTestConsole(isFirstmateConsole: false)
+
+        controller.newShellTab()
+        controller.view.layoutSubtreeIfNeeded()
+        if let failure = checkButtonsAgree(controller, expectedHidden: false) {
+            return "after opening a Shell tab: \(failure)"
+        }
+        guard let shellTabID = controller.currentTab?.id else { return "no current tab after newShellTab()" }
+
+        let oneShot = controller.openCommandTab(label: "one-shot test", command: "true")
+        controller.view.layoutSubtreeIfNeeded()
+        if let failure = checkButtonsAgree(controller, expectedHidden: true) {
+            return "after switching to a one-shot tab: \(failure)"
+        }
+        _ = oneShot
+
+        controller.debugSelectTab(shellTabID)
+        controller.view.layoutSubtreeIfNeeded()
+        if let failure = checkButtonsAgree(controller, expectedHidden: false) {
+            return "after switching back to the Shell tab: \(failure)"
+        }
+
+        _ = window
+        return nil
     }
 }
 

@@ -136,7 +136,7 @@ enum DestinationMountingSelfTest {
             // mounting it eagerly would start a WebKit content process at
             // launch for a page the captain may never open
             // (`fm/grand-line-whiteboard-excalidraw`).
-            let mustBeLazy: Set<DestinationSlotID> = [.docs, .runbooks, .postmortems, .tools, .whiteboard, .vault, .dictation, .schedules, .health, .hosts, .shift, .settings]
+            let mustBeLazy: Set<DestinationSlotID> = [.docs, .runbooks, .postmortems, .tools, .whiteboard, .logAnalyzer, .vault, .dictation, .schedules, .health, .hosts, .shift, .settings]
             let eagerlyBuilt = mounted.intersection(mustBeLazy)
             guard eagerlyBuilt.isEmpty else {
                 return "these should not be built at launch: \(eagerlyBuilt.map(\.rawValue).sorted())"
@@ -610,15 +610,16 @@ enum DestinationMountingSelfTest {
         )
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
+        let snippetStore = SnippetStore()
         let shiftStore = ShiftStore()
         let dictationStore = DictationStore()
         let shell = AppShellController(
-            hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore),
-            console: ConsoleController(keyStore: keyStore, isFirstmateConsole: false),
-            settings: SettingsController(hostStore: hostStore, keyStore: keyStore, dictationStore: dictationStore),
-            hostStore: hostStore, keyStore: keyStore, shiftStore: shiftStore,
+            hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
+            console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
+            settings: SettingsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore),
+            hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, shiftStore: shiftStore,
             dictationStore: dictationStore, commandLibraryStore: CommandLibraryStore(), scheduleStore: ScheduleStore(),
-            makeHostConsole: { ConsoleController(keyStore: keyStore, isFirstmateConsole: false) }
+            makeHostConsole: { ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false) }
         )
         window.contentViewController = shell
         return (window, shell)
