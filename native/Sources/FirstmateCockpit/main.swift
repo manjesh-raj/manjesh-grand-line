@@ -754,11 +754,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func buildUnifiedSearchIndex() -> UnifiedSearchIndex {
         let index = UnifiedSearchIndex()
 
+        // `fm/grandline-session-switcher`, item 4: live sessions first, and
+        // they *switch* rather than reconnect. Registered before the Hosts
+        // provider only for readability - the palette's own ordering comes
+        // from `UnifiedSearchKind.groupOrder`, not from registration order.
+        index.register(UnifiedSearchSessionProvider(
+            registry: appShell.sessions,
+            store: hostStore,
+            onSwitch: { [weak self] hostID in self?.appShell.switchToSession(hostID: hostID) }
+        ))
+
         // Hosts -> the one place a saved host is connected to, shared with
-        // the Hosts list's own Connect and the rail's per-host icons.
-        index.register(UnifiedSearchHostProvider(store: hostStore) { [weak self] host in
-            self?.connectToHost(host)
-        })
+        // the Hosts list's own Connect and the rail's per-host icons. A host
+        // that is already live is left to the group above rather than listed
+        // twice with two different verbs.
+        index.register(UnifiedSearchHostProvider(
+            store: hostStore,
+            onConnect: { [weak self] host in self?.connectToHost(host) },
+            isLive: { [weak self] hostID in self?.appShell.sessions.isLive(hostID) ?? false }
+        ))
 
         // Saved commands -> the Command Library's own Send-to-terminal path,
         // behind the Command Library's own risk gate. `CommandRiskConfirmation`
@@ -918,6 +932,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         showHostsItem.keyEquivalentModifierMask = [.command, .control]
         showHostsItem.target = appShell
         hostsMenu.addItem(showHostsItem)
+
+        // Session switching (`fm/grandline-session-switcher`, item 3). These
+        // live in the Hosts menu rather than a new top-level one: a session
+        // *is* a host, and this app's menu bar already overruns the
+        // notched-display budget (AGENTS.md's menu-bar section), so a 12th
+        // top-level menu would push the gap wider for no gain.
+        //
+        // **⌘⌃1…9, not ⌘1…9, and that is forced rather than preferred.** The
+        // mockup shows ⌘1/⌘2 on the pills, but ⌘1-⌘9 is already spoken for
+        // *twice* in this app: the Tab menu's "Select Tab N" (nil-target, so it
+        // only resolves while a Console/Tools tab holds first responder) and
+        // the View menu's five space shortcuts (explicit target, always
+        // enabled - see that menu's own long note on how the two coexist).
+        // A session's whole point is being reachable from anywhere, i.e.
+        // precisely where the always-enabled space item wins, so ⌘1 could
+        // never have reached a session. ⌘⌃ is the modifier this menu already
+        // uses for its own two items (⌘⌃N, ⌘⌃S) and its number space is free.
+        //
+        // ⌘] / ⌘[ were verified unused anywhere in this menu bar.
+        hostsMenu.addItem(NSMenuItem.separator())
+        let nextSessionItem = NSMenuItem(title: "Next Session",
+                                        action: #selector(AppShellController.nextSession),
+                                        keyEquivalent: "]")
+        nextSessionItem.target = appShell
+        hostsMenu.addItem(nextSessionItem)
+        let previousSessionItem = NSMenuItem(title: "Previous Session",
+                                            action: #selector(AppShellController.previousSession),
+                                            keyEquivalent: "[")
+        previousSessionItem.target = appShell
+        hostsMenu.addItem(previousSessionItem)
+        for n in 1...9 {
+            let item = NSMenuItem(title: "Session \(n)",
+                                  action: #selector(AppShellController.selectSessionByShortcut(_:)),
+                                  keyEquivalent: "\(n)")
+            item.keyEquivalentModifierMask = [.command, .control]
+            item.tag = n
+            item.target = appShell
+            hostsMenu.addItem(item)
+        }
 
         // Shift menu (cockpit-shift-create-edit, phase 2) - task/follow-up
         // creation. Both items target the app shell directly (like the Hosts
@@ -1872,6 +1925,15 @@ if ProcessInfo.processInfo.environment["FM_RUN_UPDATES_REFRESH_BUTTON_THEME_TEST
 // while already hovering).
 if ProcessInfo.processInfo.environment["FM_RUN_TOPNAV_PILL_PRESSED_STATE_TESTS"] == "1" {
     exit(TopNavPillPressedStateSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-session-switcher`: the persistent live-session strip, the
+// Hosts list's per-row live state, the ⌘K palette's pinned "Active sessions"
+// group and the ⌘⌃1…9 / ⌘] / ⌘[ shortcut arithmetic. Window-backed (it mounts
+// a real `AppShellController`), so it sits in `run-all-tests.sh`'s
+// `NEEDS_SESSION` list.
+if ProcessInfo.processInfo.environment["FM_RUN_SESSION_SWITCHER_TESTS"] == "1" {
+    exit(SessionSwitcherSelfTest.run() ? 0 : 1)
 }
 
 // A real, captain-reported structural bug: Settings' whole page LAYOUT (card

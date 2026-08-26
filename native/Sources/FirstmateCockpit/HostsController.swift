@@ -78,6 +78,34 @@ final class HostsController: NSViewController, DaylightDrillActions {
     /// `ConsoleController.openFirstmateHost`.
     var onConnectPinned: (() -> Void)?
 
+    // MARK: Live sessions (`fm/grandline-session-switcher`)
+
+    /// Is this host already connected, and since when? Answered by
+    /// `AppShellController`'s `HostSessionRegistry` through a closure, so this
+    /// page reads the app's one notion of liveness without learning what a
+    /// `ConsoleController` is - the same forward-don't-own shape as
+    /// `onConnect`/`onAddOrEdit` above. `nil` (the default) means "nothing
+    /// wired liveness up", which renders exactly the pre-switcher rows.
+    var liveSession: ((UUID) -> HostSession?)?
+    /// Jump back into an existing session rather than opening a connection.
+    var onSwitchToSession: ((UUID) -> Void)?
+    /// End a live session (the shell owns the confirm).
+    var onEndSession: ((UUID) -> Void)?
+
+    /// Re-render the host rows so their live state is current. Called by the
+    /// shell whenever the registry changes, and on this page's own
+    /// `viewWillAppear`.
+    ///
+    /// Deliberately **not** on a timer: a row's "Connected · 14m" would then
+    /// need the whole table reloaded every minute while this page is open,
+    /// which resets scroll and selection for a string that is honest for a
+    /// whole minute anyway. It is recomputed on every visit and on every real
+    /// session change, which is when it can actually be wrong.
+    func refreshLiveSessionState() {
+        guard isViewLoaded else { return }
+        applyHostFilter(searchField.stringValue)
+    }
+
     /// Add (`nil`) or edit (a host) - the host editor is a dedicated window
     /// owned by the app delegate, not a sheet on this page.
     var onAddOrEdit: ((Host?) -> Void)?
@@ -156,6 +184,15 @@ final class HostsController: NSViewController, DaylightDrillActions {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     // MARK: Layout
+
+    /// `fm/grandline-session-switcher`: a session may have started or ended
+    /// while this page was hidden (the shell skips rebuilding rows nobody can
+    /// see), so the live state is re-derived on every visit. Cheap - a
+    /// handful of rows and no I/O.
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        refreshLiveSessionState()
+    }
 
     override func loadView() {
         // A plain, layer-backed, theme-filled root - never an
@@ -481,6 +518,9 @@ final class HostsController: NSViewController, DaylightDrillActions {
         hostsTitleLabel.stringValue = hostStore.hosts.isEmpty
             ? HostsTab.hosts.title
             : "\(HostsTab.hosts.title) (\(hostStore.hosts.count))"
+        #if FM_SELFTESTS
+        lastHostItems = items
+        #endif
         hostsList.setItems(items)
         onDrillSubtitleChanged?()
     }
@@ -501,6 +541,22 @@ final class HostsController: NSViewController, DaylightDrillActions {
         }
         return hosts
     }
+
+    // MARK: Probe / self-test surface
+
+    #if FM_SELFTESTS
+    /// The last set of rows this page rendered - recorded only in a debug
+    /// build, so the shipped binary carries neither the array nor the write.
+    private var lastHostItems: [HostsListSection.Item] = []
+
+    /// The real `Item` this page built for a host, so a suite can assert what
+    /// a row *says and does* rather than re-deriving it. Reads the last
+    /// rendered set, so a caller must have driven a real
+    /// `refreshLiveSessionState()`/filter pass first.
+    func debugHostRowItem(labelled label: String) -> HostsListSection.Item? {
+        lastHostItems.first { $0.isRecord && $0.content.title == label }
+    }
+    #endif
 
     private func normalizedGroup(_ host: Host) -> String? {
         let g = host.group?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -542,14 +598,41 @@ final class HostsController: NSViewController, DaylightDrillActions {
         if host.tags.count > 1 {
             content.chipText = "+\(host.tags.count - 1) more"
         }
+        // `fm/grandline-session-switcher`, item 1: a host that already has a
+        // live session reads as connected and its headline action resumes that
+        // session rather than looking identical to a fresh connect. The chip
+        // carries it (`chipTint: .good`) rather than a new component or a
+        // hand-coloured meta line - `ToolRowLayout.pill` behind it is the app's
+        // one contrast-corrected chip, so this is legible in all 14 palettes
+        // without this page picking a green of its own.
+        let session = liveSession?(host.id)
+        if let session {
+            content.chipText = "Connected \u{00B7} \(session.durationText)"
+            content.chipTint = .good
+        }
         var item = HostsListSection.Item(content: content)
-        item.primary = .init(title: "Connect", symbol: "bolt.fill") { [weak self] in self?.connect(host) }
-        item.activate = { [weak self] in self?.connect(host) }
-        item.overflow = [
+        if session != nil {
+            item.primary = .init(title: "Switch to session", symbol: "arrow.right.circle.fill") { [weak self] in
+                self?.onSwitchToSession?(host.id)
+            }
+            item.activate = { [weak self] in self?.onSwitchToSession?(host.id) }
+        } else {
+            item.primary = .init(title: "Connect", symbol: "bolt.fill") { [weak self] in self?.connect(host) }
+            item.activate = { [weak self] in self?.connect(host) }
+        }
+        var overflow: [HostsListSection.Action] = []
+        if session != nil {
+            // The one place a captain can end the session they are *currently
+            // looking at* - the strip's own ✕ deliberately never appears on the
+            // active pill, so a mis-click cannot close it (mockup callout c).
+            overflow.append(.init(title: "End Session") { [weak self] in self?.onEndSession?(host.id) })
+        }
+        overflow += [
             .init(title: "Edit…") { [weak self] in self?.onAddOrEdit?(host) },
             .init(title: "Duplicate…") { [weak self] in self?.duplicate(host) },
             .init(title: "Delete") { [weak self] in self?.confirmDeleteHost(host) },
         ]
+        item.overflow = overflow
         return item
     }
 

@@ -191,6 +191,27 @@ final class AppShellController: NSViewController {
     /// (Daylight §5.1) this is the only copy.
     private var activeHostID: UUID?
 
+    // MARK: Live SSH sessions (`fm/grandline-session-switcher`)
+
+    /// The app's one answer to "which hosts are live right now". Written only
+    /// from the three moments this controller already owned that fact
+    /// (`connectHost`, `revealHostConsole`, `removeHostConsole`); read by the
+    /// session strip, the Hosts list's per-row live state, the ⌘K palette's
+    /// pinned "Active sessions" group and the session shortcuts. `hostConsoles`
+    /// above is still the only thing that maps an id back to a real console -
+    /// this registry carries no controller reference, deliberately.
+    let sessions = HostSessionRegistry()
+
+    /// The persistent pill strip, docked under the bar. Visible only while at
+    /// least one session is live, and collapsed to height 0 as well as hidden
+    /// when it is not - an ordinary hidden `NSView`'s constraints still
+    /// participate fully in layout (AGENTS.md gotcha (11)), so hiding alone
+    /// would leave a permanent gap above every destination.
+    private let sessionStrip = SessionStripView()
+    private var sessionStripHeightConstraint: NSLayoutConstraint!
+    private var bodyTopConstraint: NSLayoutConstraint!
+    private var sessionsToken: UUID?
+
     /// Add/Edit Host, requested from the Hosts panel - forwarded to whoever
     /// owns the host store (the app delegate), since this controller only
     /// arranges views and knows nothing about persistence.
@@ -420,15 +441,38 @@ final class AppShellController: NSViewController {
 
         drillHeaderHeightConstraint = drillHeader.heightAnchor.constraint(equalToConstant: HelmDrillHeader.height)
 
+        // The session strip sits between the floating bar and the body, at the
+        // bar's own side margins so the two read as one piece of chrome. It is
+        // a sibling here rather than a second row inside
+        // `DaylightBarController` because the vertical stack above the body is
+        // this controller's own decision, and that controller's geometry
+        // (`reservedTopHeight`, its two independently-anchored constraint
+        // chains, B4's pill-label priority band) is measured and self-tested
+        // as-is.
+        root.addSubview(sessionStrip)
+        sessionStrip.onSelect = { [weak self] id in self?.switchToSession(hostID: id) }
+        sessionStrip.onClose = { [weak self] id in self?.confirmEndSession(hostID: id) }
+        sessionStrip.onAddRequested = { [weak self] in self?.show(.hosts) }
+        sessionStripHeightConstraint = sessionStrip.heightAnchor.constraint(equalToConstant: 0)
+        bodyTopConstraint = bodyContainer.topAnchor.constraint(
+            equalTo: root.topAnchor, constant: DaylightBarController.reservedTopHeight)
+
         NSLayoutConstraint.activate([
             bar.view.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             bar.view.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             bar.view.topAnchor.constraint(equalTo: root.topAnchor),
 
+            sessionStrip.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            sessionStrip.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            sessionStrip.topAnchor.constraint(
+                equalTo: root.topAnchor,
+                constant: DaylightBarController.topMargin + DaylightBarController.height
+                    + SessionStripView.gapBelowBar),
+            sessionStripHeightConstraint,
+
             bodyLeadingConstraint,
             bodyTrailingConstraint,
-            bodyContainer.topAnchor.constraint(equalTo: root.topAnchor,
-                                               constant: DaylightBarController.reservedTopHeight),
+            bodyTopConstraint,
             bodyContainer.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 
             drillHeader.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
@@ -619,6 +663,23 @@ final class AppShellController: NSViewController {
         // as the subtitle callback - the page says "re-ask me", the shell owns
         // the header.
         hostsPanel.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
+
+        // `fm/grandline-session-switcher`: the Hosts list reads liveness from
+        // the same registry the strip does, through a closure, so that page
+        // never learns what a `ConsoleController` is - the same
+        // forward-don't-own shape as every other `hostsPanel` hook here.
+        hostsPanel.liveSession = { [weak self] hostID in self?.sessions.session(for: hostID) }
+        hostsPanel.onSwitchToSession = { [weak self] hostID in self?.switchToSession(hostID: hostID) }
+        hostsPanel.onEndSession = { [weak self] hostID in self?.confirmEndSession(hostID: hostID) }
+
+        // One observer turns every registry change into the two things that
+        // have to follow it: the strip re-renders (and appears/disappears),
+        // and the Hosts list's live rows are rebuilt if it is showing. Fired
+        // synchronously at registration, which for an empty registry is
+        // exactly the collapsed strip this wants at launch.
+        sessionsToken = sessions.observe { [weak self] registry in
+            self?.applySessionRegistry(registry)
+        }
         health.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         console.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Setup's header line is per-tab (§7's four tabs count entirely
@@ -963,6 +1024,19 @@ final class AppShellController: NSViewController {
     /// view, never measure the container itself.
     var bodyContainerFrameForTests: NSRect { bodyContainer.frame }
 
+    // MARK: Session-switcher probe surface (`fm/grandline-session-switcher`)
+
+    /// The real strip, so a suite can read its real pills rather than a
+    /// reimplementation of what it should contain.
+    var sessionStripForTests: SessionStripView { sessionStrip }
+    var sessionStripIsHiddenForTests: Bool { sessionStrip.isHidden }
+    var sessionStripHeightForTests: CGFloat { sessionStripHeightConstraint.constant }
+    /// The gap the body reserves above itself - grows by the strip's own
+    /// height plus its gap when the strip is showing, which is the half of
+    /// this that a plain `isHidden` check cannot see (AGENTS.md gotcha (11)).
+    var bodyTopInsetForTests: CGFloat { bodyTopConstraint.constant }
+    var activeHostIDForTests: UUID? { activeHostID }
+
     /// Simulates the exact failure this task's scout report captured live:
     /// AppKit (for whatever internal reason - a transient required-
     /// constraint conflict elsewhere, or simply a resize that happened with
@@ -1094,7 +1168,10 @@ final class AppShellController: NSViewController {
         window.autorecalculatesKeyViewLoop = false
         window.recalculateKeyViewLoop()
 
-        let chain = bar.keyViewChain
+        // Bar -> session strip -> body. The strip sits between them visually,
+        // so it sits between them in the key loop too; it contributes nothing
+        // when collapsed, because `keyViewChain` filters hidden views.
+        let chain = bar.keyViewChain + (sessionStrip.isHidden ? [] : sessionStrip.keyViewChain)
         for (from, to) in zip(chain, chain.dropFirst()) { from.nextKeyView = to }
         chain.last?.nextKeyView = firstBodyKeyView()
         if window.initialFirstResponder == nil { window.initialFirstResponder = chain.first }
@@ -1272,6 +1349,12 @@ final class AppShellController: NSViewController {
             blockViewOptIn: host.blockViewOptIn
         )
 
+        // `fm/grandline-session-switcher`: this host now has a live session.
+        // Idempotent, and re-called on every connect for the same reason the
+        // closures below are reassigned - a renamed host or a recoloured
+        // accent should be current on the strip without needing a reconnect.
+        sessions.register(hostID: host.id, label: host.label, accentHex: host.accentHex)
+
         // fm/grandline-notification-center: reassigned on every call (not
         // just the first) so a renamed host label is always current in the
         // notification's own subtext - cheap, and `host.label` is only read
@@ -1338,20 +1421,12 @@ final class AppShellController: NSViewController {
         // ⌘K palette) keeps the default and behaves exactly as before.
         guard navigate else { return }
 
-        hideAllDestinations()
-        controller.view.isHidden = false
-        applyDrillHeader(title: host.label, subtitle: "Dedicated host page",
-                         symbol: RailDestination.hosts.symbol,
-                         hue: RailDestination.hosts.domainHue, isCanvas: false,
-                         slotController: controller)
-        activeHostID = host.id
-        controller.focusCurrentTab()
-        // fm/grandline-notification-center: this page coming back on screen
-        // (via the rail icon or the Hosts list, not necessarily through a
-        // notification click) also counts as "the captain is looking at the
-        // currently-selected tab now" - clears its own SRE Lead unread
-        // entry, if any, the same as an in-page tab switch already does.
-        controller.markCurrentTabAsRead()
+        // `revealHostConsole` is the shared tail (see its own note): it hides
+        // every other destination, shows this page, sets the drill header,
+        // records this session as the active one and re-focuses its terminal -
+        // including the `markCurrentTabAsRead` that clears this page's own SRE
+        // Lead unread entry, exactly as this method did inline before.
+        revealHostConsole(controller, hostID: host.id, label: host.label)
     }
 
     /// F9 (v1): does this host already have a live dedicated page? Read by
@@ -1403,12 +1478,123 @@ final class AppShellController: NSViewController {
     /// the deleted host's page happened to be the one showing.
     func removeHostConsole(id: UUID) {
         guard let controller = hostConsoles.removeValue(forKey: id) else { return }
+        let wasActive = activeHostID == id
         controller.shutdown()
         controller.view.removeFromSuperview()
         controller.removeFromParent()
-        if activeHostID == id {
-            show(.console)
+        // `fm/grandline-session-switcher`: this is the app's one teardown path
+        // for a host page (a deleted host, or an explicit "end session"), so it
+        // is where the registry stops claiming that host is live. Unregistering
+        // anywhere else would be a second writer.
+        sessions.unregister(hostID: id)
+        if wasActive {
+            // Prefer a sibling live session over dumping the captain on the
+            // shared Firstmate console: with two sessions open, closing one
+            // should land on the other rather than somewhere neither of them
+            // was. Falls back to the previous behaviour when nothing is left.
+            if let next = sessions.sessions.first {
+                switchToSession(hostID: next.hostID)
+            } else {
+                show(.console)
+            }
         }
+    }
+
+    // MARK: Session switching (`fm/grandline-session-switcher`)
+
+    /// Bring an **already live** session's page forward. Deliberately separate
+    /// from `connectHost`: that one needs the host's resolved `ssh` argv (so
+    /// its caller needs the host store), while switching back into a session
+    /// that already exists needs nothing but its id - which is what lets the
+    /// strip, the ⌘K palette and the keyboard shortcuts all reach it without
+    /// any of them learning how a host's argv is built.
+    ///
+    /// A no-op for a host with no live session, so every caller can fire it
+    /// against a possibly-stale id without checking first.
+    func switchToSession(hostID: UUID) {
+        guard let controller = hostConsoles[hostID],
+              let session = sessions.session(for: hostID) else { return }
+        revealHostConsole(controller, hostID: hostID, label: session.label)
+    }
+
+    /// The shared tail of `connectHost` and `switchToSession` - one definition
+    /// of "this host's page is now the thing on screen", so the drill header,
+    /// the registry's active session and the focused terminal can never
+    /// disagree about which of them is showing.
+    private func revealHostConsole(_ controller: ConsoleController, hostID: UUID, label: String) {
+        hideAllDestinations()
+        controller.view.isHidden = false
+        applyDrillHeader(title: label, subtitle: "Dedicated host page",
+                         symbol: RailDestination.hosts.symbol,
+                         hue: RailDestination.hosts.domainHue, isCanvas: false,
+                         slotController: controller)
+        activeHostID = hostID
+        sessions.setActive(hostID)
+        controller.focusCurrentTab()
+        controller.markCurrentTabAsRead()
+        updateKeyViewLoop()
+    }
+
+    /// End a live session, after a confirm.
+    ///
+    /// **Always confirmed, never conditionally.** The mockup asks for a
+    /// confirm "if a command may be mid-flight", and this app has no reliable
+    /// signal for that: the only structured record of a running command is
+    /// `TerminalBlockTracker`'s OSC 133 markers, which exist solely on a host
+    /// that opted into Block View (off by default, one host at a time - see
+    /// AGENTS.md's Block View section), so on every other host "is something
+    /// running?" is genuinely unknown. Confirming only when we happen to know
+    /// would mean silently killing whatever was running on every host that
+    /// cannot answer - so the alert is unconditional, and says why.
+    func confirmEndSession(hostID: UUID) {
+        guard let session = sessions.session(for: hostID) else { return }
+        let alert = NSAlert()
+        alert.messageText = "End the session on \(session.label)?"
+        alert.informativeText = "Anything still running in that terminal will be terminated."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "End Session")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        removeHostConsole(id: hostID)
+    }
+
+    /// The Hosts menu's "Session N" items (⌘⌃1…⌘⌃9). The tag is 1-based and
+    /// past the end is simply nothing to do - a captain with two sessions
+    /// pressing ⌘⌃5 should get silence, not the nearest session.
+    @objc func selectSessionByShortcut(_ sender: NSMenuItem) {
+        let index = sender.tag - 1
+        guard sessions.sessions.indices.contains(index) else { return }
+        switchToSession(hostID: sessions.sessions[index].hostID)
+    }
+
+    /// ⌘] / ⌘[ - cycle forward/back through the live sessions, wrapping.
+    @objc func nextSession() {
+        guard let next = sessions.session(steppedBy: 1) else { return }
+        switchToSession(hostID: next.hostID)
+    }
+
+    @objc func previousSession() {
+        guard let previous = sessions.session(steppedBy: -1) else { return }
+        switchToSession(hostID: previous.hostID)
+    }
+
+    /// Every registry change lands here: the strip re-renders and shows or
+    /// collapses, and the Hosts list's rows are rebuilt so a row that just
+    /// went live (or just died) reads correctly the moment it is looked at.
+    private func applySessionRegistry(_ registry: HostSessionRegistry) {
+        guard isViewLoaded, sessionStripHeightConstraint != nil else { return }
+        sessionStrip.render(registry)
+        let visible = !registry.isEmpty
+        sessionStrip.isHidden = !visible
+        sessionStripHeightConstraint.constant = visible ? SessionStripView.height : 0
+        bodyTopConstraint.constant = DaylightBarController.reservedTopHeight
+            + (visible ? SessionStripView.gapBelowBar + SessionStripView.height : 0)
+        // Rebuilding a hidden page's rows would be work nobody can see; it
+        // gets them on its next `viewWillAppear` instead.
+        if hostsPanel.isViewLoaded, !hostsPanel.view.isHidden {
+            hostsPanel.refreshLiveSessionState()
+        }
+        updateKeyViewLoop()
     }
 
     private func hideAllDestinations() {
@@ -1421,6 +1607,11 @@ final class AppShellController: NSViewController {
             controller.view.isHidden = true
         }
         activeHostID = nil
+        // `fm/grandline-session-switcher`: no session's page is on screen any
+        // more. The sessions themselves are untouched - a live session that is
+        // not showing is still live, just not active - so the strip keeps its
+        // pills and simply stops filling one of them in.
+        sessions.setActive(nil)
     }
 
     /// The Hosts menu's "Quick Connect" (⌘K): reveal the Hosts destination
