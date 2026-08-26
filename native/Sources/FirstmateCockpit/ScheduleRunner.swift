@@ -425,6 +425,19 @@ enum ScheduleActions {
                 summary: "No local manjesh-config clone found - set it up from Bootstrap's dotfiles card first.")
         }
         let snapshot = VaultSource.loadSnapshot()
+        // H1/B1: the same guard the two manual export paths carry
+        // (`VaultController.exportRecipeTapped`). A degraded snapshot means the
+        // `av` read failed, and `VaultRecipe.build`'s `?? []` would turn that
+        // into a recipe asserting this machine has zero secrets and zero
+        // hardened launchers - which this action then commits and pushes to the
+        // private config repo, unattended. A weekly schedule is exactly when the
+        // approval helper is most likely wedged (after sleep), so this guard
+        // matters more here than on the button the captain is watching.
+        guard !snapshot.isDegraded else {
+            return ScheduleActionResult(
+                verdict: .failed,
+                summary: "Couldn\u{2019}t read Automic Vault, so nothing was exported - a recipe built from a failed read would claim this machine has no secrets.")
+        }
         let recipe = VaultRecipe.build(from: snapshot, generatedAt: ISO8601DateFormatter().string(from: Date()))
         let result = VaultRecipeGit.export(recipe: recipe, repoPath: repoPath)
         guard result.ok else {

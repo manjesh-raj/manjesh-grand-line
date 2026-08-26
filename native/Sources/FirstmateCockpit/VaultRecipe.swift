@@ -60,11 +60,14 @@ struct VaultRecipe: Codable, Equatable {
         return VaultRecipe(
             generatedAt: generatedAt,
             avVersion: versionLabel,
-            // B1: a failed read is `nil`, and recording it as "no secrets"
-            // would bake a lie into the backup. `VaultController` refuses to
-            // export a degraded snapshot at all (see `exportRecipeTapped`),
-            // so this only ever sees a complete one - `?? []` is the
-            // belt-and-braces half, not the decision.
+            // B1/H1: a failed read is `nil`, and recording it as "no secrets"
+            // would bake a lie into the backup. Every caller is required to
+            // refuse a degraded snapshot before reaching here - the two manual
+            // paths in `VaultController` (see `exportRecipeTapped`) and the F11
+            // scheduled exporter (`ScheduleRunner.vaultRecipeExport`). `?? []`
+            // is the belt-and-braces half, not the decision - but note the
+            // scheduled caller was missing its guard for a while, so a new
+            // caller must add one rather than assume this is safe by itself.
             secrets: (snapshot.secrets ?? [])
                 .map { VaultRecipeSecret(name: $0.name) }
                 .sorted { $0.name < $1.name },
