@@ -38,7 +38,7 @@
 // block closes.
 //
 // Attached only to an SSH host page's tab, and only for the one host that
-// opted in (`Host.blockViewOptIn`) - see `TabModel.blockViewOptIn` and
+// opted in (`Host.blockViewOptIn`) - see `ConsoleSession.blockViewOptIn` and
 // AGENTS.md's block-view section for the scope narrowing.
 import Foundation
 import SwiftTerm

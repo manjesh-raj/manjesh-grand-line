@@ -44,8 +44,8 @@
 //   2. Dotfiles & machine config - always runs (rebuild.sh/bootstrap.sh are
 //      idempotent): clones if `~/.dotfiles` is absent, else runs rebuild.sh.
 //      Both reuse `onRunCommandTracked` (a completion-carrying sibling of
-//      `onRunCommand`) so the sequencer waits for the real Console tab exit
-//      before continuing, never a fixed timer.
+//      `onRunCommand`) so the sequencer waits for the real command-runner window's
+//      process to exit before continuing, never a fixed timer.
 //   3. Global agent instructions - a re-check only, since it resolves itself
 //      once step 2's home-manager run has completed.
 //   4. Software checklist - runs the card's new "Install everything missing"
@@ -60,8 +60,12 @@
 // rebuild.sh, and Part B's "Create link", which just re-runs rebuild.sh)
 // needs `sudo`'s interactive TTY prompt, so all three go through
 // `onRunCommand`, wired by `AppShellController.runInConsole` to open a real
-// Console tab - never a silent background `Process` (see
-// `ConsoleController.openCommandTab`).
+// interactive terminal - never a silent background `Process`. That terminal
+// used to be a temporary Console tab; `fm/grandline-menubar-remove-items`
+// moved it into its own small floating window
+// (`ConsoleCommandRunnerWindowController.swift`) once a console could hold
+// only one session, no longer room for a second, temporary one alongside
+// the captain's own persistent shell.
 //
 // "Make local state portable" roadmap, part 3 of 3 (parts 1-2 - export/import
 // with GitHub support, and this page's "Restore Grand Line config" step -
@@ -216,13 +220,13 @@ final class BootstrapController: NSViewController, SetupPageSummary {
 
     /// Set by `AppShellController` (mirrors `onPresentHostEditor`'s wiring
     /// pattern) so this controller can ask for a command to run in the
-    /// shared Console tab, without knowing anything about `ConsoleController`
-    /// itself.
+    /// own floating command-runner window, without knowing anything about
+    /// `ConsoleCommandRunnerWindowController` itself.
     var onRunCommand: ((String, String) -> Void)?
 
     /// Same wiring as `onRunCommand`, but for callers (the "Run full setup"
-    /// sequencer below) that need to know when the command's Console tab
-    /// actually exits, not just that it was started.
+    /// sequencer below) that need to know when the command's own window's
+    /// process actually exits, not just that it was started.
     var onRunCommandTracked: ((String, String, @escaping (Bool) -> Void) -> Void)?
 
     private var cards: [HelmCard] = []
@@ -936,7 +940,7 @@ final class BootstrapController: NSViewController, SetupPageSummary {
                     self.updateSetupStep(.dotfiles, .done)
                     self.runSetupStepAgentInstructions()
                 } else {
-                    self.updateSetupStep(.dotfiles, .failed("\(label) exited with a non-zero status - see its Console tab for output."))
+                    self.updateSetupStep(.dotfiles, .failed("\(label) exited with a non-zero status - see its own window for output."))
                     self.finishFullSetup()
                 }
             }
@@ -2442,7 +2446,7 @@ final class BootstrapController: NSViewController, SetupPageSummary {
 
     /// Fetches and fast-forwards from `origin` before applying - never a
     /// forced overwrite. `git pull --ff-only` aborts on its own, with a real,
-    /// visible error in the Console tab, if the local checkout has diverged
+    /// visible error in its own command-runner window, if the local checkout has diverged
     /// (uncommitted changes or a genuine merge conflict) - `rebuild.sh` never
     /// runs against a repo state that didn't cleanly update from GitHub.
     private static func rebuildCommand(repoPath: String) -> String {

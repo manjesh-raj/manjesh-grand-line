@@ -14,7 +14,7 @@
 // (1033 - 84 = 949) - a 479pt discrepancy repeated identically across
 // `bodyContainer` and all twelve destination views mounted inside it. This
 // file builds a real `AppShellController` inside a real `NSWindow` (the
-// same shape `BlockViewHierarchySelfTest.swift`/`SRELeadPerTabSelfTest.swift`
+// same shape `BlockViewHierarchySelfTest.swift`/`SRELeadSessionSelfTest.swift`
 // already use for this kind of real-view-hierarchy regression test) and
 // drives real window resizes through it, asserting `bodyContainer`'s width
 // tracks the window's actual current content width at every step - the

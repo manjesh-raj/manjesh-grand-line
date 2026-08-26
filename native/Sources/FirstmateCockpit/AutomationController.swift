@@ -145,7 +145,7 @@ final class AutomationController: NSViewController, SetupPageSummary {
     /// Same wiring convention as `BootstrapController.onRunCommand`/
     /// `onRunCommandTracked` (set by `AppShellController`) - the dotfiles
     /// step's clone/rebuild needs a real interactive `sudo` TTY, so it opens
-    /// as a Console tab exactly like Bootstrap's own equivalent action.
+    /// as its own floating command-runner window, exactly like Bootstrap's own equivalent action.
     var onRunCommandTracked: ((String, String, @escaping (Bool) -> Void) -> Void)?
 
     private var scrollView: NSScrollView!
@@ -434,7 +434,7 @@ final class AutomationController: NSViewController, SetupPageSummary {
                     self.updateStep(.dotfiles, .done)
                     self.runStep(at: index + 1)
                 } else {
-                    self.updateStep(.dotfiles, .failed("\(label) exited with a non-zero status - see its Console tab for output."))
+                    self.updateStep(.dotfiles, .failed("\(label) exited with a non-zero status - see its own window for output."))
                     self.finishRun()
                 }
             }

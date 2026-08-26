@@ -32,7 +32,7 @@ import Foundation
 /// Everything `SRELeadBridge` needs from a terminal it injects commands into
 /// and reads output back from, abstracted so the polling/extraction/busy-
 /// detection logic below can be unit-tested without AppKit or SwiftTerm - see
-/// `FirstmateCockpitTests.SRELeadBridgeTests`'s `FakeBridgeTerminal`. `TabModel`
+/// `FirstmateCockpitTests.SRELeadBridgeTests`'s `FakeBridgeTerminal`. `ConsoleSession`
 /// conforms below by delegating to its own `terminal`.
 protocol SRELeadBridgeTerminal: AnyObject {
     /// Type `text` into the terminal, exactly like `TerminalView.send(txt:)`.
@@ -396,9 +396,9 @@ final class SRELeadBridge {
     }
 }
 
-// MARK: - TabModel conformance
+// MARK: - ConsoleSession conformance
 
-extension TabModel: SRELeadBridgeTerminal {
+extension ConsoleSession: SRELeadBridgeTerminal {
     func sendCommand(_ text: String) {
         terminal.send(txt: text)
     }

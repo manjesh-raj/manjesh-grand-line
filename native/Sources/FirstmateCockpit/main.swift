@@ -1018,24 +1018,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .keyEquivalentModifierMask = [.command, .shift]
         for item in keysMenu.items { item.target = appShell }
 
-        // Tab menu - the dynamic tab collection: new / duplicate / rename /
-        // close / reconnect. All resolve to ConsoleController.
+        // Tab menu.
         //
-        // `fm/grandline-menubar-remove-items`: the numbered "Select Tab
-        // 1"..."Select Tab 9" (⌘1…⌘9) items were removed per captain
-        // feedback ("this is not required in Tab") - a tab is still
-        // selectable by clicking its chip in the tab bar. `selectTabByShortcut`
-        // on both `ConsoleController` and `ToolsController` had no other
-        // caller (it existed purely to serve these menu items - see either
-        // method's own doc comment), so both were deleted rather than left
-        // as dead code.
+        // `fm/grandline-menubar-remove-items`: Console itself no longer has
+        // a tab collection - "every host connection collapses to one
+        // session per host/window" (the captain's own words) removed the
+        // whole chip-bar/new/duplicate/rename concept from
+        // `ConsoleController` (see that class's own header). This menu
+        // survives because `ToolsController`'s own multi-instance tool tabs
+        // (`fm/cockpit-tools-page-multi-session`, a genuinely different,
+        // untouched feature) still need New/Duplicate/Rename, and it
+        // deliberately keeps sharing plain selector names with
+        // `ConsoleController` rather than growing a second menu: an
+        // `NSMenuItem` with a `nil` target resolves by walking the responder
+        // chain for whichever object implements that exact selector, so
+        // "New Tab" simply goes inert (AppKit auto-disables it) while a
+        // Console session has focus and works normally while a Tools tab
+        // does - no per-item enabling logic needed. `#selector(ToolsController.X)`
+        // below is only a compile-time pick of which type's declaration to
+        // reference; it produces the identical runtime `Selector` either
+        // type would, which is what makes this style of sharing safe.
+        //
+        // `Close Tab` and `Reconnect Tab` are still meaningful on a Console
+        // session too (closing disconnects it - or, on the shared Firstmate
+        // console, replaces it with a fresh shell; reconnecting restarts
+        // its process) - `ConsoleController` still implements both under
+        // those names for exactly that reason, so those two items stay
+        // typed to it.
+        //
+        // The numbered "Select Tab 1"..."Select Tab 9" (⌘1…⌘9) items were
+        // removed earlier in this same task per captain feedback ("this is
+        // not required in Tab") - a Tools tab is still selectable by
+        // clicking its chip. `selectTabByShortcut` on both controllers had
+        // no other caller (it existed purely to serve those menu items),
+        // so both were deleted rather than left as dead code.
         let tabMenuItem = NSMenuItem()
         mainMenu.addItem(tabMenuItem)
         let tabMenu = NSMenu(title: "Tab")
         tabMenuItem.submenu = tabMenu
-        tabMenu.addItem(withTitle: "New Tab", action: #selector(ConsoleController.newShellTab), keyEquivalent: "t")
-        tabMenu.addItem(withTitle: "Duplicate Tab", action: #selector(ConsoleController.duplicateCurrentTab), keyEquivalent: "d")
-        let renameItem = NSMenuItem(title: "Rename Tab…", action: #selector(ConsoleController.renameCurrentTab), keyEquivalent: "r")
+        tabMenu.addItem(withTitle: "New Tab", action: #selector(ToolsController.newShellTab), keyEquivalent: "t")
+        tabMenu.addItem(withTitle: "Duplicate Tab", action: #selector(ToolsController.duplicateCurrentTab), keyEquivalent: "d")
+        let renameItem = NSMenuItem(title: "Rename Tab…", action: #selector(ToolsController.renameCurrentTab), keyEquivalent: "r")
         renameItem.keyEquivalentModifierMask = [.command, .shift]
         tabMenu.addItem(renameItem)
         tabMenu.addItem(withTitle: "Close Tab", action: #selector(ConsoleController.closeCurrentTab), keyEquivalent: "w")
@@ -1152,12 +1175,16 @@ if ProcessInfo.processInfo.environment["FM_RUN_SRE_LEAD_BRIDGE_TESTS"] == "1" {
     exit(SRELeadBridgeSelfTest.run() ? 0 : 1)
 }
 
-// `fm/grandline-sre-lead-per-tab`: same convention, for the real
-// `ConsoleController` per-tab SRE Lead integration (independent phases, no
-// chat cross-talk, tab-switch rebinding, the 5-tab cap, per-tab teardown on
-// close) - see `SRELeadPerTabSelfTest.swift`'s header.
-if ProcessInfo.processInfo.environment["FM_RUN_SRE_LEAD_PER_TAB_TESTS"] == "1" {
-    exit(SRELeadPerTabSelfTest.run() ? 0 : 1)
+// Same convention, for the real `ConsoleController` SRE Lead integration
+// (start/ask/reply, the empty-state/pane-open transition, teardown on
+// close, the scrollback-preservation invariant) - see
+// `SRELeadSessionSelfTest.swift`'s header. Originally
+// `FM_RUN_SRE_LEAD_PER_TAB_TESTS`/`SRELeadSessionSelfTest.swift`, from when a
+// console could hold several tabs' independent investigations at once;
+// `fm/grandline-menubar-remove-items` collapsed that to one session per
+// console and renamed the suite to match.
+if ProcessInfo.processInfo.environment["FM_RUN_SRE_LEAD_SESSION_TESTS"] == "1" {
+    exit(SRELeadSessionSelfTest.run() ? 0 : 1)
 }
 
 // `fm/cockpit-sre-lead-reply-formatting`: same convention, for
@@ -1607,7 +1634,7 @@ if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_CENTER_TESTS"] == "1
 
 // The trickiest of the nine signals - SRE Lead replying on a tab you're not
 // looking at - driven against a real `ConsoleController`, same convention as
-// `SRELeadPerTabSelfTest.swift`. See NotificationCenterSRELeadSelfTest.swift's
+// `SRELeadSessionSelfTest.swift`. See NotificationCenterSRELeadSelfTest.swift's
 // header.
 if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_CENTER_SRE_LEAD_TESTS"] == "1" {
     exit(NotificationCenterSRELeadSelfTest.run() ? 0 : 1)

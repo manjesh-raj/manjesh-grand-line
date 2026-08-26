@@ -149,7 +149,7 @@ enum AccessibilitySelfTest {
                 fail("a segment announced as \(String(describing: pill.accessibilityRole())) rather than .radioButton", &ok)
             }
             if !pill.acceptsFirstResponder {
-                fail("a segment cannot take keyboard focus - ⌘1-9 covers console tabs only", &ok)
+                fail("a segment cannot take keyboard focus - there is no keyboard shortcut that reaches it otherwise", &ok)
             }
         }
         if pills[0].accessibilityValue() as? String != "selected" {

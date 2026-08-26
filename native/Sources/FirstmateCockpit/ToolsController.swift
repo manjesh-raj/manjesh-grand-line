@@ -14,16 +14,18 @@
 // `ResourceUnits.swift` for their pure logic.
 //
 // `fm/cockpit-tools-page-multi-session` merged before phase 3 landed and
-// gave this page a tab strip
-// mirroring Console's ([TabModel] + TabChipView, see ConsoleController.swift)
-// so a captain can hold several independent instances of a tool open at
-// once - three separate Diff sessions comparing different things, each with
-// its own inputs/output. `ToolsController` now only owns the tab strip, the
-// landing-grid "pick a tool to open" picker, and which tab's view is
-// currently shown; each tab's actual tool logic lives in its own
-// `ToolInstance` (see ToolInstance.swift) - the same split Console already
-// has between `ConsoleController` (tab lifecycle/chrome) and `TabModel`
-// (one tab's own state).
+// gave this page a tab strip - originally mirroring Console's own
+// `[TabModel]` + `TabChipView` tab bar, see `TabChipView.swift`'s header for
+// the current state of that comparison (`fm/grandline-menubar-remove-items`
+// later collapsed Console down to one session per host/window and removed
+// its own tab-bar concept entirely; this page's own multi-instance tabs are
+// unaffected, a separate feature that reuses only `TabChipView`, not
+// `TabModel`) - so a captain can hold several independent instances of a
+// tool open at once - three separate Diff sessions comparing different
+// things, each with its own inputs/output. `ToolsController` now only owns
+// the tab strip, the landing-grid "pick a tool to open" picker, and which
+// tab's view is currently shown; each tab's actual tool logic lives in its
+// own `ToolInstance` (see ToolInstance.swift).
 //
 // The landing grid is reused as the tool picker for New (⌘T): it's shown
 // whenever there are no tabs, or after clicking the tab bar's "+" - clicking

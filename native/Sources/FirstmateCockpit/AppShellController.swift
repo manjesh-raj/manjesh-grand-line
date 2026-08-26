@@ -142,6 +142,12 @@ final class AppShellController: NSViewController {
     /// is deleted from the store.
     private var hostConsoles: [UUID: ConsoleController] = [:]
 
+    /// Every currently-open one-shot-command floating window
+    /// (`runInConsole`), retained so ARC doesn't reclaim a controller out
+    /// from under a still-running process. Each removes itself via its own
+    /// `onFinishedClosing` once its window closes.
+    private var commandRunners: [ConsoleCommandRunnerWindowController] = []
+
     /// The body area every destination view (fixed or host page) is added
     /// to - a stored property (rather than a `loadView`-local `let`) so
     /// `connectHost`/`removeHostConsole` can add and remove host pages after
@@ -544,24 +550,23 @@ final class AppShellController: NSViewController {
         // cockpit-settings-sudo-touchid: Settings' "Touch ID for sudo" row
         // runs `sudo av harden sudo`, which needs a real interactive `sudo`
         // prompt exactly like Bootstrap's provisioning actions - same
-        // one-shot Console command-tab mechanism, just reached from Settings
-        // instead.
+        // one-shot floating-window command mechanism (`runInConsole`, see
+        // its own doc comment), just reached from Settings instead.
         settings.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
         settings.onRunCommandTracked = { [weak self] label, command, completion in
             self?.runInConsole(label: label, command: command, completion: completion)
         }
         // fm/grandline-vault-tab: `av save`/`av inject` both need a real
         // interactive terminal (see `VaultController`'s header) - same
-        // one-shot Console command-tab mechanism as every other
+        // one-shot floating-window command mechanism as every other
         // interactive/sudo action in this app.
         vault.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
         vault.onRunCommandTracked = { [weak self] label, command, completion in
             self?.runInConsole(label: label, command: command, completion: completion)
         }
         // fm/grandline-devops-command-library-phase2: the Command Library's
-        // "Send to Terminal" types straight into whichever console tab is
-        // currently in front - not a new one-shot command tab (`runInConsole`
-        // above).
+        // "Send to Terminal" types straight into this console's own session
+        // - not a new one-shot command window (`runInConsole` above).
         shift.onSendCommandToTerminal = { [weak self] text in self?.console.sendCommandLibraryTextToActiveTab(text) }
         // F9 (v1): straight up to the app delegate - see `onSendCommandToHosts`.
         shift.onSendCommandToHosts = { [weak self] command, values, generated in
@@ -684,15 +689,16 @@ final class AppShellController: NSViewController {
             self?.overview.refreshIfNeeded()
             self?.review.refreshIfNeeded()
         }
-        // The Console module's peek rows. A closure, so the canvas never holds
-        // a console or learns what a tab is.
+        // The Console module's peek rows. A closure, so the canvas never
+        // holds a console or learns what a session is.
+        // `fm/grandline-menubar-remove-items`: the shared Firstmate console
+        // has at most one session now, so this returns 0 or 1 rows rather
+        // than one per open tab.
         homeCanvas.consoleTabsProvider = { [weak self] in
-            guard let self else { return [] }
-            return self.console.tabs.map { tab in
-                HelmModulePeekRow(state: tab.terminal.process.running ? .ok : .idle,
-                                  text: tab.name,
-                                  value: tab.terminal.process.running ? "live" : "exited")
-            }
+            guard let self, let target = self.console.session else { return [] }
+            return [HelmModulePeekRow(state: target.terminal.process.running ? .ok : .idle,
+                                       text: target.name,
+                                       value: target.terminal.process.running ? "live" : "exited")]
         }
         homeCanvas.connectedHostIDs = { [weak self] in
             guard let self else { return [] }
@@ -879,14 +885,25 @@ final class AppShellController: NSViewController {
         onLockStateChanged?(false)
     }
 
-    /// Open `command` as a new tab in the shared Firstmate console and bring
-    /// Console forward, so its output (and any `sudo` prompt) is visible
-    /// immediately - the one path every Bootstrap-page action that can invoke
-    /// `darwin-rebuild switch` uses (`bootstrap.sh`, `rebuild.sh`, the initial
-    /// clone).
+    /// Run `command` in its own small floating window (`fm/grandline-
+    /// menubar-remove-items`: no longer a tab in the shared Firstmate
+    /// console - see `ConsoleCommandRunnerWindowController.swift`'s header
+    /// for why a one-shot provisioning command can't share the console's
+    /// one session with the captain's own persistent shell any more), so
+    /// its output (and any `sudo` prompt) is visible immediately - the one
+    /// path every Bootstrap-page action that can invoke
+    /// `darwin-rebuild switch` uses (`bootstrap.sh`, `rebuild.sh`, the
+    /// initial clone), plus Settings/Vault/NotSynced's own interactive
+    /// `sudo` actions.
     func runInConsole(label: String, command: String, completion: ((Bool) -> Void)? = nil) {
-        console.openCommandTab(label: label, command: command) { exitCode in completion?(exitCode == 0) }
-        show(.console)
+        var runner: ConsoleCommandRunnerWindowController!
+        runner = ConsoleCommandRunnerWindowController.run(label: label, command: command) { exitCode in
+            completion?(exitCode == 0)
+        }
+        runner.onFinishedClosing = { [weak self] in
+            self?.commandRunners.removeAll { $0 === runner }
+        }
+        commandRunners.append(runner)
     }
 
     /// Pin a destination view to fill `bodyContainer` below the top bar -
@@ -1318,9 +1335,9 @@ final class AppShellController: NSViewController {
         // that either.
         let hostID = host.id
         let hostLabel = host.label
-        controller.onSRELeadReplyWhileBackground = { [weak self, weak controller] tab in
+        controller.onSRELeadReplyWhileBackground = { [weak self, weak controller] target in
             guard let self else { return }
-            NotificationSources.setSRELeadReply(tabID: tab.id, tabName: tab.name, hostLabel: hostLabel) { [weak self, weak controller] in
+            NotificationSources.setSRELeadReply(tabID: target.id, tabName: target.name, hostLabel: hostLabel) { [weak self, weak controller] in
                 guard let self, let controller else { return }
                 self.hideAllDestinations()
                 controller.view.isHidden = false
@@ -1329,7 +1346,8 @@ final class AppShellController: NSViewController {
                                       hue: RailDestination.hosts.domainHue, isCanvas: false,
                                       slotController: controller)
                 self.activeHostID = hostID
-                controller.selectAndFocusTab(id: tab.id)
+                controller.focusSession()
+                controller.markSessionAsRead()
             }
         }
 
@@ -1358,7 +1376,7 @@ final class AppShellController: NSViewController {
         // `revealHostConsole` is the shared tail (see its own note): it hides
         // every other destination, shows this page, sets the drill header,
         // records this session as the active one and re-focuses its terminal -
-        // including the `markCurrentTabAsRead` that clears this page's own SRE
+        // including the `markSessionAsRead` that clears this page's own SRE
         // Lead unread entry, exactly as this method did inline before.
         revealHostConsole(controller, hostID: host.id, label: host.label)
     }
@@ -1463,8 +1481,8 @@ final class AppShellController: NSViewController {
                          slotController: controller)
         activeHostID = hostID
         sessions.setActive(hostID)
-        controller.focusCurrentTab()
-        controller.markCurrentTabAsRead()
+        controller.focusSession()
+        controller.markSessionAsRead()
         updateKeyViewLoop()
     }
 
@@ -1707,9 +1725,9 @@ final class AppShellController: NSViewController {
 
     /// The command palette's send action for a command that needs no input -
     /// the identical call `shift.onSendCommandToTerminal` is wired to above,
-    /// so both surfaces type into whichever console tab is in front. The risk
-    /// gate runs *before* this (see `CommandRiskConfirmation`); this method is
-    /// only the delivery half.
+    /// so both surfaces type into the shared Firstmate console's own
+    /// session. The risk gate runs *before* this (see
+    /// `CommandRiskConfirmation`); this method is only the delivery half.
     func sendCommandToConsole(_ text: String) {
         console.sendCommandLibraryTextToActiveTab(text)
     }

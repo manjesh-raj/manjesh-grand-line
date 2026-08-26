@@ -887,7 +887,7 @@ final class DictationEngine {
     /// deliberately: `AXUIElement` text-insertion only works against apps
     /// that expose a conforming Accessibility text role for their focused
     /// element, which excludes most terminal emulators (including this app's
-    /// own SwiftTerm-based Console tabs) and many Electron/web-based editors
+    /// own SwiftTerm-based terminals) and many Electron/web-based editors
     /// - a synthetic Cmd+V lands in any app that accepts a real paste
     /// keystroke, which is a strictly larger and more predictable set. Both
     /// approaches need the same Accessibility trust already required for the

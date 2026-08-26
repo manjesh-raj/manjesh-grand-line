@@ -349,7 +349,7 @@ final class SRELeadChatView: NSView, NSTextViewDelegate {
     }
 
     /// `fm/grandline-sre-lead-per-tab`: the exact text of every message in
-    /// this chat, in order - lets `SRELeadPerTabSelfTest` confirm a tab's
+    /// this chat, in order - lets `SRELeadSessionSelfTest` confirm a tab's
     /// chat contains only its own question/answer, never another tab's.
     func debugMessageTexts() -> [String] { messages.map { $0.text } }
 

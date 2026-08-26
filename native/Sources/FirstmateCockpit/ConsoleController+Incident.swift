@@ -126,10 +126,10 @@ extension ConsoleController {
         guard let hostIdentity else { return }
         switch incidentStore.start(title: title, hostID: hostIdentity.id, hostLabel: hostIdentity.label) {
         case .success(let incident):
-            // Turn numbering is per incident, not per session: a tab that
-            // answered six questions during the last incident starts this
-            // one's timeline at "turn 1" again.
-            sreLeadTurnCounts.removeAll()
+            // Turn numbering is per incident, not per session: a session
+            // that answered six questions during the last incident starts
+            // this one's timeline at "turn 1" again.
+            sreLeadTurnCount = 0
             // F6 (fleet history / captain's log): appended here, from the one
             // code path that starts an incident, after the record genuinely
             // reached disk. Only the id, the title and the host label cross
@@ -235,20 +235,20 @@ extension ConsoleController {
 
     /// One completed SRE Lead turn. Called from `handleSRELeadSubmit`'s reply
     /// handler, so it only ever fires for a turn that genuinely produced an
-    /// answer - a failed turn is an error in that tab's own chat, not
-    /// something that happened to the cluster.
+    /// answer - a failed turn is an error in the chat, not something that
+    /// happened to the cluster.
     ///
     /// The transcript *as of this turn* is snapshotted into the incident's
     /// own artifact directory (redacted on the way in - see
     /// `IncidentStore.append`), which is the durability the review's F8 entry
-    /// asks for: the record does not depend on the tab still being open, or
-    /// on the app still running, to say what SRE Lead found.
-    func noteSRELeadTurn(question: String, tab: TabModel) {
+    /// asks for: the record does not depend on the session still being open,
+    /// or on the app still running, to say what SRE Lead found.
+    func noteSRELeadTurn(question: String, session target: ConsoleSession) {
         guard let incident = activeIncident() else { return }
-        let turn = (sreLeadTurnCounts[tab.id] ?? 0) + 1
-        sreLeadTurnCounts[tab.id] = turn
-        let transcript = tab.sreLead?.chatView?.transcriptForPostmortem
-        incidentStore.append(IncidentSources.sreLeadTurn(question: question, tabName: tab.name, turn: turn),
+        sreLeadTurnCount += 1
+        let turn = sreLeadTurnCount
+        let transcript = target.sreLead?.chatView?.transcriptForPostmortem
+        incidentStore.append(IncidentSources.sreLeadTurn(question: question, tabName: target.name, turn: turn),
                              to: incident.id,
                              artifactText: transcript)
         renderIncidentCardIfShown()

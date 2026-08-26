@@ -20,7 +20,7 @@
 //      the theme switch that turns the card on.** A card that resized the
 //      terminal would reflow the buffer and truncate a captain's scrollback,
 //      which is the bug `fm/cockpit-sre-lead-ux-fixes` fixed once and
-//      `SRELeadPerTabSelfTest.scrollbackSurvivesSRELeadToggle` guards for the
+//      `SRELeadSessionSelfTest.scrollbackSurvivesSRELeadToggle` guards for the
 //      pane toggle. This slice added a *second* trigger for the same overlay,
 //      so it gets the same assertion.
 //   4. **A host row's gradient tile carries the captain's own colour**, not a
@@ -134,20 +134,23 @@ enum DaylightDrillPageSlice2SelfTest {
         print("\n-- §6.4: Console / Hosts / Health carry live drill headers --")
         let (hostStore, keyStore) = scratchStores()
 
-        // Console: a live subtitle from its own tab set, and a deliberately
+        // Console: a live subtitle from its own session, and a deliberately
         // empty action cluster (§6.13 keeps its actions in the page toolbar).
+        // `fm/grandline-menubar-remove-items` collapsed a console to one
+        // session per host/window, so the subtitle is that session's own
+        // name now, not a "N tabs" count.
         let console = ConsoleController(keyStore: keyStore,
                                         isFirstmateConsole: false)
         let consoleWindow = mount(console)
         defer { _ = consoleWindow }
         guard let empty = console.drillHeaderSubtitle, !empty.isEmpty else {
-            print("  FAIL Console reports no drill subtitle with no tabs open")
+            print("  FAIL Console reports no drill subtitle with no session")
             ok = false
             return
         }
         console.debugOpenTestSSHTab(label: "bastion")
-        guard let withTab = console.drillHeaderSubtitle, withTab.contains("tab") else {
-            print("  FAIL Console's subtitle does not report its tab count (\(console.drillHeaderSubtitle ?? "nil"))")
+        guard let withSession = console.drillHeaderSubtitle, withSession == "bastion" else {
+            print("  FAIL Console's subtitle does not report its session's own name (\(console.drillHeaderSubtitle ?? "nil"))")
             ok = false
             return
         }
@@ -221,7 +224,7 @@ enum DaylightDrillPageSlice2SelfTest {
             print("  FAIL Health rebuilds its Copy diagnostics button on every read")
             ok = false
         }
-        print("  OK - Console \"\(withTab)\" + 0 actions; Hosts 3 tabs / 3 stable actions; Health \"\(healthSubtitle)\"")
+        print("  OK - Console \"\(withSession)\" + 0 actions; Hosts 3 tabs / 3 stable actions; Health \"\(healthSubtitle)\"")
     }
 
     // MARK: 2. No in-page heroes left (§6.4)
@@ -266,7 +269,7 @@ enum DaylightDrillPageSlice2SelfTest {
         // the card to live in.
         //
         // `contentViewController` plus a real `viewDidAppear`, matching
-        // `SRELeadPerTabSelfTest.makeStartedTestConsole` - assigning
+        // `SRELeadSessionSelfTest.makeStartedTestConsole` - assigning
         // `contentView` alone leaves the terminal at a zero frame, which would
         // make the "did not move" comparison below vacuous.
         let host = ConsoleController(keyStore: keyStore,
@@ -284,7 +287,7 @@ enum DaylightDrillPageSlice2SelfTest {
         host.view.layoutSubtreeIfNeeded()
         // A window that is never ordered front resolves its terminal's real
         // geometry a runloop turn or two later - the same wait
-        // `SRELeadPerTabSelfTest.scrollbackSurvivesSRELeadToggle` documents.
+        // `SRELeadSessionSelfTest.scrollbackSurvivesSRELeadToggle` documents.
         // Without it the baseline is a zero rect and the comparison proves
         // nothing.
         _ = waitUntil(timeout: 6) {

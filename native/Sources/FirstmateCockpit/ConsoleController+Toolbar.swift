@@ -5,10 +5,11 @@
 // (Compose, Claude usage) and the appearance/find/copy actions its buttons
 // drive.
 //
-// Split out verbatim along this controller's own existing `// MARK:` seams;
-// no statement here changed in the move. See `ConsoleController.swift`'s
-// header for what the split is and why some members stopped being
-// `private`.
+// `fm/grandline-menubar-remove-items` rewrote this file: it used to also
+// build the tab-chip strip's leading side (`tabsStack` + a "+" button) and
+// `refreshTabBar()`/`styleChips()`, all gone now that a console holds at
+// most one session and there is nothing to show a strip of. See
+// `ConsoleController.swift`'s header for the rest of what changed.
 
 import AppKit
 import SwiftTerm
@@ -18,15 +19,7 @@ extension ConsoleController {
     // MARK: Building the top bar
 
     func buildTabBar() {
-        view.addSubview(tabBar)
-
-        tabsStack.orientation = .horizontal
-        tabsStack.spacing = 4
-        tabsStack.alignment = .centerY
-        tabsStack.translatesAutoresizingMaskIntoConstraints = false
-        tabBar.setLeading(tabsStack)
-
-        plusButton = makeIconButton(symbol: "plus", tooltip: "New Shell Tab (⌘T)", action: #selector(newShellTab))
+        view.addSubview(toolbar)
 
         // **Named features are labelled; pure utilities stay icon squares.**
         //
@@ -39,11 +32,10 @@ extension ConsoleController {
         // names, plus Block View, which is the same kind of thing: a named,
         // stateful feature toggle rather than a glyph-native utility.
         //
-        // Zoom in / zoom out / "+" stay icon squares deliberately - they have
-        // no prototype counterpart, their glyphs are universally legible on
-        // their own, and labelling more controls would leave a long tab
-        // strip nowhere to go. The light/dark toggle that used to sit here
-        // moved onto `DaylightBarController`, next to the bell
+        // Zoom in / zoom out stay icon squares deliberately - they have no
+        // prototype counterpart and their glyphs are universally legible on
+        // their own. The light/dark toggle that used to sit here moved onto
+        // `DaylightBarController`, next to the bell
         // (`fm/grandline-daylight-theme-toggle-relocate`) - it is an
         // app-wide preference, not something scoped to Console.
         findButton = makeLabeledButton(symbol: "magnifyingglass", title: "Find", tooltip: "Find (⌘F)", action: #selector(showFind))
@@ -58,9 +50,10 @@ extension ConsoleController {
         // SRE Lead (design brief Part C) and block view (`fm/cockpit-block-
         // view-stage0`) are both dedicated-host-page-only affordances - the
         // shared Firstmate console has no single host cluster to
-        // investigate, and its Shell tab never gets a block tracker
-        // at all (see `TabModel.blockViewOptIn`) - a bug there took down the
-        // whole app on every launch in the original PR #79/#80 attempt.
+        // investigate, and its Shell session never gets a block tracker
+        // at all (see `ConsoleSession.blockViewOptIn`) - a bug there took
+        // down the whole app on every launch in the original PR #79/#80
+        // attempt.
         var toolViews: [NSView] = []
         if !isFirstmateConsole {
             let button = makeLabeledButton(symbol: SRELeadPhase.notStarted.symbol,
@@ -72,12 +65,12 @@ extension ConsoleController {
             toolViews.append(button)
         }
         // Compose (phase 3, `fm/grandline-console-command-composer`) is
-        // available on both the shared Firstmate console (its Shell tab is a
-        // plain `.shell` launch too) and every dedicated host page - visibility
-        // is per-tab (`updateComposeControls`), not per-console like SRE
-        // Lead/block view above. Placed immediately after SRE Lead (or first,
-        // on the shared console, which has no SRE Lead button to sit next to)
-        // per captain request.
+        // available on both the shared Firstmate console (its Shell session
+        // is a plain `.shell` launch too) and every dedicated host page -
+        // visibility is per-session (`updateComposeControls`), not per-
+        // console like SRE Lead/block view above. Placed immediately after
+        // SRE Lead (or first, on the shared console, which has no SRE Lead
+        // button to sit next to) per captain request.
         toolViews.append(composeButton)
         // "Claude usage" sits immediately beside Compose, per captain
         // request - the toolbar prototype's own original pairing
@@ -100,10 +93,9 @@ extension ConsoleController {
         if !isFirstmateConsole {
             toolViews += [blockViewToggleButton, blockViewRefreshButton]
         }
-        // `setTrailing` also installs the clearance inequality that keeps a
-        // long tab strip truncating rather than running under the actions -
-        // the constraint this method used to activate by hand.
-        tabBar.setTrailing(HelmPageToolbar.group(toolViews))
+        // `setTrailing` also installs the clearance inequality that keeps
+        // this bar's controls from ever colliding with the leading edge.
+        toolbar.setTrailing(HelmPageToolbar.group(toolViews))
     }
 
     func makeIconButton(symbol: String, tooltip: String, action: Selector) -> HelmButton {
@@ -114,34 +106,17 @@ extension ConsoleController {
         HelmPageToolbar.labeledButton(symbol: symbol, title: title, tooltip: tooltip, target: self, action: action)
     }
 
-    /// Re-lay the tab bar: one chip per tab, then the "+" button.
-    func refreshTabBar() {
-        for v in tabsStack.arrangedSubviews {
-            tabsStack.removeArrangedSubview(v)
-            v.removeFromSuperview()
-        }
-        for tab in tabs {
-            tabsStack.addArrangedSubview(tab.chip)
-        }
-        tabsStack.addArrangedSubview(plusButton)
-        styleChips()
-    }
-
     // MARK: Compose (`fm/grandline-console-command-composer`)
 
-    /// Shown for a plain `.shell` tab or an `.ssh` tab (a dedicated host
-    /// page's own SSH session), as long as it isn't a one-shot provisioning
-    /// command (`isOneShotCommand`, which already has a fixed, tracked
-    /// purpose). `.ssh` is included so Compose is available on a host page
-    /// exactly like it already is on the shared Firstmate console's Shell
-    /// tab - the generated command still just gets sent as text into that
-    /// tab's own real terminal (`TerminalView.send(txt:)`), so it lands in
-    /// whatever shell the remote host itself is running, the same as
-    /// anything else typed into that tab. Closes the popover outright when
-    /// the current tab stops qualifying (e.g. switching away mid-review), so
-    /// it never sits open pointed at a tab it no longer applies to.
+    /// Shown when this console has a session, as long as it's connected -
+    /// the generated command still just gets sent as text into the
+    /// session's own real terminal (`TerminalView.send(txt:)`), so it lands
+    /// in whatever shell the remote host itself is running, the same as
+    /// anything else typed into it. Closes the popover outright when this
+    /// console stops having a session (e.g. disconnecting mid-review), so
+    /// it never sits open pointed at nothing.
     func updateComposeControls() {
-        let available = currentTab.map { !$0.isOneShotCommand } ?? false
+        let available = session != nil
         composeButton.isHidden = !available
         if !available { composer.close() }
         // No `contentTintColor` here - `HelmButton.restyle()` owns that
@@ -160,11 +135,11 @@ extension ConsoleController {
 
     /// Byte-for-byte `updateComposeControls()`'s own availability rule -
     /// "Claude usage" is the same shape of feature as Compose, sitting right
-    /// beside it. Closes the popover outright when the current tab stops
-    /// qualifying, so it never sits open pointed at a tab it no longer
-    /// applies to (matching Compose's own reasoning).
+    /// beside it. Closes the popover outright when this console stops
+    /// having a session, so it never sits open pointed at nothing (matching
+    /// Compose's own reasoning).
     func updateQuotaUsageControls() {
-        let available = currentTab.map { !$0.isOneShotCommand } ?? false
+        let available = session != nil
         quotaUsageButton.isHidden = !available
         if !available { quotaUsage.close() }
     }
@@ -177,9 +152,9 @@ extension ConsoleController {
     // MARK: Theme
 
     func applyTheme() {
-        for tab in tabs {
-            theme.apply(to: tab.terminal)
-            tab.blockContainer?.applyTheme(theme)
+        if let target = session {
+            theme.apply(to: target.terminal)
+            target.blockContainer?.applyTheme(theme)
         }
 
         let line = HelmTheme.nsColor(theme.chromeLineHex)
@@ -189,10 +164,9 @@ extension ConsoleController {
         // component's / `HelmButton`'s own business now - this page no longer
         // keeps a toolbar-button registry to re-tint (`ThemeManager.swift`'s
         // checklist item 4).
-        tabBar.applyTheme(theme)
+        toolbar.applyTheme(theme)
         content.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
 
-        styleChips()
         updateBlockViewControls()
         updateComposeControls()
         updateQuotaUsageControls()
@@ -236,13 +210,13 @@ extension ConsoleController {
         // `refreshTerminalCardChrome()`.
         refreshTerminalCardChrome()
         sreLeadEmptyStateLabel.textColor = HelmTheme.mutedInk(theme)
-        // Every started tab's own chat, not just the current one - each is a
-        // real, independent view that needs to stay in sync with the active
-        // theme whether or not it happens to be the one currently visible.
-        for tab in tabs { tab.sreLead?.chatView?.applyTheme(theme) }
+        // The session's own chat, if it has one - a real, independent view
+        // that needs to stay in sync with the active theme regardless.
+        session?.sreLead?.chatView?.applyTheme(theme)
         // Re-applies `sreLeadButton`'s theme + refreshes the pane/postmortem
-        // button/tooltip for whichever tab is current.
+        // button/tooltip.
         updateSRELeadControls()
+        onDrillSubtitleChanged?()
     }
 
     // MARK: Drill header (Daylight §6.4)
@@ -252,11 +226,11 @@ extension ConsoleController {
     ///
     /// §6.4's action cluster is "that page's primary + quiet actions", and
     /// §6.13 is explicit that Console's own actions stay in the page toolbar
-    /// ("tab chips, toolbar buttons, Compose popover, SRE Lead pane all take
-    /// the Daylight button/well/card recipes") - that bar sits directly under
+    /// ("toolbar buttons, Compose popover, SRE Lead pane all take the
+    /// Daylight button/well/card recipes") - that bar sits directly under
     /// the drill header and already carries every one of them. Hoisting a
-    /// copy of New Tab / Find / Compose up one row would put two of each on
-    /// screen 44pt apart, which is the duplication §6.4 exists to remove.
+    /// copy of Find / Compose up one row would put two of each on screen
+    /// 44pt apart, which is the duplication §6.4 exists to remove.
     ///
     /// The conformance is still worth having: `drillHeaderSubtitle` below is
     /// what gives this destination - and every dedicated host page, which the
@@ -264,41 +238,14 @@ extension ConsoleController {
     var drillHeaderActions: [NSView] { [] }
 
     /// §6.4's "`caption()` subtitle with live numbers", from state this page
-    /// already has: how many tabs are open and which one is showing. No new
-    /// collection, and nothing here can disagree with the tab strip, because
-    /// both read the same `tabs`/`currentTab`.
+    /// already has: whether there's a session, and its name.
+    /// `fm/grandline-menubar-remove-items`: no longer a tab count (there's
+    /// at most one session, so counting it would be a strange thing to say).
     var drillHeaderSubtitle: String? {
-        guard !tabs.isEmpty else {
-            return isFirstmateConsole ? "No tabs open" : "Not connected yet"
+        guard let target = session else {
+            return isFirstmateConsole ? "No session running" : "Not connected yet"
         }
-        let count = tabs.count == 1 ? "1 tab" : "\(tabs.count) tabs"
-        guard let name = currentTab?.name, !name.isEmpty else { return count }
-        return "\(count) \u{00B7} \(name)"
-    }
-
-    func styleChips() {
-        let accent = HelmTheme.nsColor(theme.accentHex)
-        let ink = HelmTheme.nsColor(theme.chromeInkHex)
-        // `mutedInk` under Daylight, where that token is contrast-corrected
-        // per theme against the surface a chip actually sits on; the twelve
-        // palettes keep the hand-rolled 0.55 they have always rendered.
-        let muted = theme.isDaylight ? HelmTheme.mutedInk(theme) : ink.withAlphaComponent(0.55)
-        for tab in tabs {
-            // Host tabs carry their own accent (A3); other tabs use the theme accent.
-            let chipAccent = tab.accentHex.map(HelmTheme.nsColor) ?? accent
-            let chipTint = chipAccent.withAlphaComponent(theme.mode == .dark ? 0.20 : 0.14)
-            tab.chip.applyStyle(selected: tab === currentTab, accent: chipAccent, muted: muted, tint: chipTint)
-        }
-        // §6.4's live subtitle. This method is the one choke point every tab
-        // add / close / rename / selection already passes through, so hooking
-        // it here is what keeps the drill header's "3 tabs · Shell" honest
-        // without a second notification path.
-        onDrillSubtitleChanged?()
-        // `plusButton` is a `HelmButton` and themes itself: `restyle()` owns
-        // `contentTintColor` and overwrites anything set here on the next
-        // theme change, so this line was a coin-flip that also defeated the
-        // button's own §6.6 Daylight recipe (Phase 2's own rule, and the same
-        // correction `updateComposeControls` already took).
+        return target.name
     }
 
     // MARK: Font zoom
@@ -314,13 +261,13 @@ extension ConsoleController {
     func stepFontSize(by delta: CGFloat) { FontSizeManager.shared.step(by: delta) }
     var currentFontSize: CGFloat { fontSize }
 
-    // MARK: Find + copy (routed to the active terminal)
+    // MARK: Find + copy (routed to the session's terminal)
 
     @objc func showFind() {
-        // Route to the active terminal's native find bar. SwiftTerm's
+        // Route to the session's native find bar. SwiftTerm's
         // `performFindPanelAction` expects a menu item whose tag is the
         // NSFindPanelAction; showFindPanel == 1.
-        guard let term = activeTerminal() else { return }
+        guard let term = session?.terminal else { return }
         let item = NSMenuItem()
         item.tag = Int(NSFindPanelAction.showFindPanel.rawValue)
         view.window?.makeFirstResponder(term)
@@ -328,6 +275,6 @@ extension ConsoleController {
     }
 
     @objc func copySelection() {
-        activeTerminal()?.copy(self)
+        session?.terminal.copy(self)
     }
 }

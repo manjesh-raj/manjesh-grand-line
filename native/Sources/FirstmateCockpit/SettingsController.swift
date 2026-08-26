@@ -87,8 +87,8 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     var onRunCommand: ((String, String) -> Void)?
 
     /// Same wiring as `onRunCommand`, but with a completion callback so the
-    /// row can re-check status once the Console tab's `av harden sudo`
-    /// actually exits, rather than on a fixed timer.
+    /// row can re-check status once its own `av harden sudo` window's
+    /// process actually exits, rather than on a fixed timer.
     var onRunCommandTracked: ((String, String, @escaping (Bool) -> Void) -> Void)?
 
     private var theme: HelmTheme = ThemeManager.shared.theme

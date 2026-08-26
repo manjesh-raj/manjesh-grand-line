@@ -34,7 +34,7 @@
 // they were: each caller resolves its own executable and passes it in. That is
 // what lets the existing `DictationCleanupSelfTest`,
 // `SRELeadPostmortemSelfTest`, `ConsoleCommandComposerSelfTest`,
-// `SRELeadPerTabSelfTest` and `NotificationCenterSRELeadSelfTest` fake-`claude`
+// `SRELeadSessionSelfTest` and `NotificationCenterSRELeadSelfTest` fake-`claude`
 // harnesses keep working untouched.
 //
 // The prompt still travels as an argv element, never through a shell - which

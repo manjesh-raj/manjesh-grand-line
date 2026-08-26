@@ -54,10 +54,12 @@
 // ## What it deliberately does not do
 //
 // It does not wrap interactive/PTY work. `LocalProcessTerminalView` (every
-// terminal tab, including the one-shot Console command tabs) forks its child
-// in-process through SwiftTerm and has nothing to do with `Process`; a real
-// `sudo` password prompt still needs a real terminal, which is why Bootstrap
-// and Settings route through a Console tab rather than through this file.
+// terminal in the app, including one-shot provisioning commands' own small
+// floating windows - `ConsoleCommandRunnerWindowController.swift`) forks its
+// child in-process through SwiftTerm and has nothing to do with `Process`; a
+// real `sudo` password prompt still needs a real terminal, which is why
+// Bootstrap and Settings route through a real terminal rather than through
+// this file.
 //
 // It is also synchronous by design. Callers that must not block - the pollers,
 // the AI one-shots - already own a background queue or a completion handler;

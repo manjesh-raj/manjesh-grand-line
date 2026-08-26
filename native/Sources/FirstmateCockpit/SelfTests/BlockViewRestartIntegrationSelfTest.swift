@@ -7,16 +7,16 @@
 // only exercises OSC 133 parsing against a bare `HeadlessTerminal`, and
 // `BlockViewHierarchySelfTest` only drives `BlockContainerView` in isolation
 // with hand-built `TerminalBlock` structs - neither ever goes through
-// `ConsoleController`'s real `addTab`/`startTab`/`reconnectActive` wiring,
+// `ConsoleController`'s real `openSession`/`startSession`/`reconnectActive` wiring,
 // which is exactly where the original bug lived: `reconnectActive` (⌘R)
 // explicitly reset the block tracker after restarting a process, but the
 // automatic-reconnect timer (`processTerminated`, on a real network drop)
-// called `startTab` directly, and `startTab` never reset anything - so an
+// called `startSession` directly, and `startSession` never reset anything - so an
 // auto-reconnected SSH session kept a stuck "running" block from the dead
 // session, with the new session's output silently bleeding into it.
 //
 // This test drives the *real* `ConsoleController` - the actual
-// `openSSH`/`viewDidAppear`/`startTab`/`reconnectActive` methods, not
+// `openSSH`/`viewDidAppear`/`startSession`/`reconnectActive` methods, not
 // reimplementations of them - through both restart-shaped code paths (see
 // `ConsoleController`'s "Test support" section, added for exactly this) and
 // asserts the tracker ends up in the same clean state after either one:
@@ -29,8 +29,8 @@
 // a dropped mid-command connection would leave behind.
 //
 // **This test was verified to actually catch the original bug, not just to
-// pass**: temporarily removing the `restartTabBookkeeping(tab)` call from
-// `ConsoleController.startTab` (reintroducing Mechanism A for the auto-
+// pass**: temporarily removing the `restartSessionBookkeeping(target)` call from
+// `ConsoleController.startSession` (reintroducing Mechanism A for the auto-
 // reconnect-shaped path only, since `reconnectActive` still calls it
 // directly) made `test_autoReconnectShapedRestartClearsStuckBlock` fail with
 // a stuck running block while `test_manualReconnectShapedRestartClearsStuckBlock`
@@ -108,9 +108,9 @@ enum BlockViewRestartIntegrationSelfTest {
 
         controller.debugOpenTestSSHTab(label: "Restart Test Host")
         // Mirrors real app launch: the tab is created before the view has
-        // ever appeared (`hasAppeared` is false), so `addTab` defers the
+        // ever appeared (`hasAppeared` is false), so `openSession` defers the
         // actual process start to `viewDidAppear` - the real initial-start
-        // path, not a direct `startTab` call from this test.
+        // path, not a direct `startSession` call from this test.
         controller.viewDidAppear()
         controller.view.layoutSubtreeIfNeeded()
         return (window, controller)
@@ -137,7 +137,7 @@ enum BlockViewRestartIntegrationSelfTest {
 
         // The exact shape `processTerminated`'s `AppSettings.shared.
         // autoReconnect` timer drives on a real network drop: it calls
-        // `startTab` directly on the same `TabModel`, never `reconnectActive`.
+        // `startSession` directly on the same `ConsoleSession`, never `reconnectActive`.
         controller.debugSimulateAutoReconnectRestart()
 
         guard let state = controller.debugBlockState() else { return "block tracker disappeared after restart" }

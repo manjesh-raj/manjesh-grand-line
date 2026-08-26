@@ -8,11 +8,9 @@
 // This file used to also hold the Log Analyzer capture bridge (spec §2),
 // which read those same OSC 133 marks to decide how much scrollback a
 // captain meant by "analyze this" - removed along with the rest of that
-// feature by `fm/grandline-menubar-remove-items`.
-//
-// Split out verbatim along this controller's own existing `// MARK:` seams;
-// no statement here changed in the move. See `ConsoleController.swift`'s
-// header.
+// feature by `fm/grandline-menubar-remove-items`, which also collapsed a
+// console down to one session and renamed every `tab` here to `session`
+// accordingly.
 
 import AppKit
 import SwiftTerm
@@ -21,36 +19,29 @@ extension ConsoleController {
 
     // MARK: Block view (`fm/cockpit-block-view-stage0`)
 
-
-    /// Decides which of a tab's two views (raw `terminal` or parsed
-    /// `blockContainer`) is visible right now - never both, and never for a
-    /// tab that isn't the current one. Toggling never touches `terminal`'s
-    /// process or `startProcess` state either way. A tab with no
-    /// `blockContainer` (every tab except the one opted-in host's, when the
-    /// feature is enabled - see `TabModel.blockViewOptIn`) always shows raw
-    /// `terminal` regardless of `blockViewShowing`.
-    func updateTabViewVisibility(_ tab: TabModel) {
-        let isCurrent = (tab === currentTab)
-        guard isCurrent else {
-            tab.terminal.isHidden = true
-            tab.blockContainer?.isHidden = true
-            return
-        }
-        if blockViewShowing, let container = tab.blockContainer {
-            tab.terminal.isHidden = true
+    /// Decides which of the session's two views (raw `terminal` or parsed
+    /// `blockContainer`) is visible right now - never both. Toggling never
+    /// touches `terminal`'s process or `startProcess` state either way. A
+    /// session with no `blockContainer` (every session except the one
+    /// opted-in host's, when the feature is enabled - see
+    /// `ConsoleSession.blockViewOptIn`) always shows raw `terminal`
+    /// regardless of `blockViewShowing`.
+    func updateSessionViewVisibility(_ target: ConsoleSession) {
+        if blockViewShowing, let container = target.blockContainer {
+            target.terminal.isHidden = true
             container.isHidden = false
         } else {
-            tab.terminal.isHidden = false
-            tab.blockContainer?.isHidden = true
+            target.terminal.isHidden = false
+            target.blockContainer?.isHidden = true
         }
     }
 
     /// Toolbar toggle - only meaningful (and only shown at all, see
-    /// `updateBlockViewControls`) for the one opted-in host's tab.
+    /// `updateBlockViewControls`) for the one opted-in host's session.
     @objc func toggleBlockView() {
-        guard currentTab?.blockContainer != nil else { return }
+        guard session?.blockContainer != nil else { return }
         blockViewShowing.toggle()
-        if let tab = currentTab { updateTabViewVisibility(tab) }
+        if let target = session { updateSessionViewVisibility(target) }
         updateBlockViewControls()
     }
 
@@ -61,16 +52,15 @@ extension ConsoleController {
     /// automatically - this manual click is the only way the panel updates,
     /// by design (see `BlockView.swift`'s header).
     @objc func refreshBlockView() {
-        guard let tab = currentTab, let tracker = tab.blockTracker, let container = tab.blockContainer else { return }
+        guard let target = session, let tracker = target.blockTracker, let container = target.blockContainer else { return }
         container.render(tracker.blocks)
     }
 
     /// Shows/hides and restyles the two block-view toolbar buttons - only
-    /// present at all when the current tab has a tracker (i.e. is the one
-    /// opted-in host's tab with the feature enabled); every other tab hides
-    /// both, matching `sreLeadButton`'s existing per-tab-relevance pattern.
+    /// present at all when this console's session has a tracker (i.e. is the
+    /// one opted-in host's session with the feature enabled).
     func updateBlockViewControls() {
-        let available = currentTab?.blockContainer != nil
+        let available = session?.blockContainer != nil
         blockViewToggleButton.isHidden = !available
         blockViewRefreshButton.isHidden = !available || !blockViewShowing
         guard available else { return }
