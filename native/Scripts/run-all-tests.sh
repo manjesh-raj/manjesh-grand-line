@@ -89,6 +89,8 @@ NEEDS_SESSION=(
   # The AppKit-expert audit fixes: M5 measures a real sheet footer.
   "FM_RUN_APPKIT_AUDIT_TESTS"
   "FM_RUN_APP_SHELL_BODY_WIDTH_TESTS"
+  # The session switcher mounts a real `AppShellController` in a real window.
+  "FM_RUN_SESSION_SWITCHER_TESTS"
   "FM_RUN_DRILL_HEADER_TITLE_TESTS"
   "FM_RUN_DAYLIGHT_MODULE_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_TESTS"

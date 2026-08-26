@@ -58,6 +58,11 @@ import AppKit
 /// follow-ups" section exactly like the mockup shows, without the palette
 /// needing to know why.
 enum UnifiedSearchKind {
+    /// A live SSH session (`fm/grandline-session-switcher`, item 4). Its own
+    /// kind rather than a flag on `.host` because it groups separately, sorts
+    /// first, and dispatches a different action - switching into a session
+    /// that already exists, never opening a connection.
+    case session
     case host
     case command
     case task
@@ -69,6 +74,7 @@ enum UnifiedSearchKind {
 
     var groupTitle: String {
         switch self {
+        case .session: return "Active sessions"
         case .host: return "Hosts"
         case .command: return "Commands"
         case .task, .followUp, .project: return "Tasks & follow-ups"
@@ -81,10 +87,15 @@ enum UnifiedSearchKind {
     /// Section order in the palette. Hosts first (the mockup's own order, and
     /// the most common verb for an SRE), actions last since they are always
     /// present and never the thing being hunted for.
-    static let groupOrder = ["Hosts", "Commands", "Tasks & follow-ups", "Runbooks", "Postmortems", "Actions"]
+    /// Active sessions are pinned first: with a live session open, "take me
+    /// back into it" is more likely than anything else a query could mean, and
+    /// landing on a host's *detail* page when the captain meant its live shell
+    /// is exactly the confusion the session switcher exists to remove.
+    static let groupOrder = ["Active sessions", "Hosts", "Commands", "Tasks & follow-ups", "Runbooks", "Postmortems", "Actions"]
 
     var symbol: String {
         switch self {
+        case .session: return "bolt.horizontal.circle.fill"
         case .host: return "server.rack"
         case .command: return "terminal"
         case .task: return "checkmark.circle"
@@ -101,6 +112,9 @@ enum UnifiedSearchKind {
     /// cases, never literal hexes, so all 12 palettes resolve their own.
     var tint: HelmTint {
         switch self {
+        // A live session reads as healthy/running, the same `.good` the Hosts
+        // row's own "Connected" chip uses - one hue for one fact.
+        case .session: return .good
         case .host: return .info
         case .command: return .violet
         case .task, .followUp, .project: return .warn
@@ -160,6 +174,57 @@ protocol UnifiedSearchProvider {
     func items(query: String) -> [UnifiedSearchItem]
 }
 
+// MARK: - Live sessions
+
+/// The live SSH sessions, pinned above the Hosts group
+/// (`fm/grandline-session-switcher`, item 4).
+///
+/// Reads `HostSessionRegistry` - the app's one notion of liveness, the same one
+/// the session strip and the Hosts rows read - and dispatches
+/// `AppShellController.switchToSession`, which reveals an already-built console
+/// page and needs no `ssh` argv at all. That is the whole point of the group:
+/// ⌘K, "prod", Return lands *in* the live session instead of reconnecting.
+///
+/// **Two deliberate departures from the other content providers**, both stated
+/// because they are exceptions to conventions AGENTS.md records:
+///
+///   * It answers an **empty query**, unlike every provider except
+///     `UnifiedSearchActionProvider`. The set is bounded by however many
+///     sessions are actually open (a handful, never a wall of noise like the
+///     70+ seeded commands), and a captain who opens ⌘K with two live sessions
+///     should see them without typing.
+///   * It matches on the *host's* fields, via `UnifiedSearchHostProvider.
+///     matches`, rather than re-implementing a matcher for the session's label
+///     alone - so typing an address or a tag finds the live session too.
+struct UnifiedSearchSessionProvider: UnifiedSearchProvider {
+    let registry: HostSessionRegistry
+    let store: HostStore
+    let onSwitch: (UUID) -> Void
+
+    func items(query: String) -> [UnifiedSearchItem] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return registry.sessions.compactMap { session in
+            // A session whose host was deleted out from under it still matches
+            // on its own label - the registry carries that, so a stale id
+            // never silently drops the row the captain can see on the strip.
+            let host = store.host(id: session.hostID)
+            if !trimmed.isEmpty {
+                let hostMatches = host.map { UnifiedSearchHostProvider.matches($0, query: trimmed) } ?? false
+                guard hostMatches || session.label.lowercased().contains(trimmed.lowercased()) else { return nil }
+            }
+            let meta = host.map { UnifiedSearchHostProvider.meta(for: $0) } ?? "Live session"
+            return UnifiedSearchItem(
+                kind: .session,
+                id: session.hostID.uuidString,
+                title: session.label,
+                meta: "LIVE \u{00B7} connected \(session.durationText) \u{00B7} \(meta)",
+                actionHint: "Switch \u{21B5}",
+                activate: { onSwitch(session.hostID) }
+            )
+        }
+    }
+}
+
 // MARK: - Hosts
 
 /// Saved SSH hosts, matched on label/address/username/group/tags - every
@@ -170,6 +235,13 @@ protocol UnifiedSearchProvider {
 struct UnifiedSearchHostProvider: UnifiedSearchProvider {
     let store: HostStore
     let onConnect: (Host) -> Void
+    /// `fm/grandline-session-switcher`: a host with a live session is rendered
+    /// by `UnifiedSearchSessionProvider` in the pinned "Active sessions" group
+    /// above, so it is skipped here rather than appearing twice - once as
+    /// "Switch" and once as "Connect", which is precisely the ambiguity the
+    /// switcher removes. Defaults to "nothing is live", which is the exact
+    /// pre-switcher behaviour.
+    var isLive: (UUID) -> Bool = { _ in false }
 
     /// `Host` has no matcher of its own (unlike `DevOpsCommand.matches`), so
     /// this is the one written here. Same plain case-insensitive substring
@@ -198,7 +270,9 @@ struct UnifiedSearchHostProvider: UnifiedSearchProvider {
     func items(query: String) -> [UnifiedSearchItem] {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
-        return store.hosts.filter { Self.matches($0, query: trimmed) }.map { host in
+        return store.hosts
+            .filter { !isLive($0.id) && Self.matches($0, query: trimmed) }
+            .map { host in
             UnifiedSearchItem(
                 kind: .host,
                 id: host.id.uuidString,
