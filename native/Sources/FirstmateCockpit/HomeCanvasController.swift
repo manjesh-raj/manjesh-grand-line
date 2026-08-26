@@ -818,7 +818,11 @@ final class HomeCanvasController: NSViewController {
         let schedules = sources.scheduleStore.schedules
         content.subtitle = "unattended"
         guard !schedules.isEmpty else {
-            content.body = .note("Nothing scheduled. Add one to have it run on its own.")
+            // L3: the old copy ("Nothing scheduled. Add one to have it run on
+            // its own.") ran past the two-line note cap at a narrow column and
+            // truncated mid-word - the same class as B9's Health note. Short
+            // enough to fit, and the card's title already says what "one" is.
+            content.body = .note("Nothing scheduled yet. Add one here.")
             return
         }
         let failed = schedules.filter { $0.lastRun?.verdict == .failed }

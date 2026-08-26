@@ -222,9 +222,52 @@ enum WhiteboardDiagram {
                         message: "element \(index + 1)'s frame \"children\" list names an id that isn't any other element in the diagram."))
                 }
             }
-            elements.append(element)
+            elements.append(sanitized(element))
         }
         return .success(elements)
+    }
+
+    /// S5: strip the fields a diagram has no business carrying.
+    ///
+    /// `parse` allowlisted `type` and validated the frame's `children`, then
+    /// appended the *whole* dictionary - so every other string the model wrote
+    /// (`text`, `label.text`, `link`, `fontFamily`, `strokeColor`) reached
+    /// `convertToExcalidrawElements` verbatim. Excalidraw elements support a
+    /// `link` property that becomes a clickable hyperlink, and a prompt-injected
+    /// model could emit `"link":"javascript:…"`.
+    ///
+    /// That was safe in practice and safe by *accident*: the offline CSP blocks
+    /// execution, and with no `WKUIDelegate` an external link's `window.open`
+    /// returns nil. Both are true because nobody has added a UI delegate yet -
+    /// which is not a property to rely on. `link` is dropped outright (this app
+    /// generates diagrams, not link targets) and, for anything else that ever
+    /// carries a URI, a `javascript:`/`data:`/`vbscript:` scheme is refused - so
+    /// the class is closed by construction rather than by omission.
+    private static func sanitized(_ element: [String: Any]) -> [String: Any] {
+        var out = element
+        out.removeValue(forKey: "link")
+        for (key, value) in out {
+            guard let text = value as? String, hasDangerousScheme(text) else { continue }
+            out.removeValue(forKey: key)
+        }
+        if var label = out["label"] as? [String: Any] {
+            label.removeValue(forKey: "link")
+            for (key, value) in label {
+                guard let text = value as? String, hasDangerousScheme(text) else { continue }
+                label.removeValue(forKey: key)
+            }
+            out["label"] = label
+        }
+        return out
+    }
+
+    /// Scheme check on the *value*, deliberately not a substring search: a
+    /// perfectly ordinary label may talk about JavaScript.
+    static func hasDangerousScheme(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "\u{0000}", with: "")
+            .lowercased()
+        return ["javascript:", "data:", "vbscript:", "file:"].contains { trimmed.hasPrefix($0) }
     }
 
     /// Defensive only, exactly as `ConsoleCommandComposer.stripWrappingFormatting`

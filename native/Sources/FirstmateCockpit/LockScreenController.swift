@@ -867,6 +867,15 @@ final class LockScreenController: NSViewController {
     }
 
     private func startAnimationsIfNeeded() {
+        // H2: `viewDidLayout` calls this unconditionally, and the lock view is
+        // permanently mounted and merely hidden after an unlock - a hidden
+        // `NSView` still participates fully in layout (gotcha 11). Once E4
+        // started clearing the `animationsStarted` latch on unlock, the first
+        // window resize afterwards re-attached all three infinite animations to
+        // hidden layers for the rest of the session, undoing exactly the
+        // render-server cost E4 removed. `showLock` unhides the view before it
+        // calls `restartAnimationsIfNeeded()`, so the visible path is unaffected.
+        guard view.window != nil, !view.isHiddenOrHasHiddenAncestor else { return }
         guard !animationsStarted, waveWidth > 0 else { return }
         animationsStarted = true
 

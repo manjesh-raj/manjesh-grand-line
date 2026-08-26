@@ -426,8 +426,16 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
         // The one path that ever sends a composed command anywhere - see
         // `ConsoleComposerPopover.swift`'s header for why this is never
         // triggered automatically.
+        // S2: the composed command is written by a model (`claude -p`) and runs
+        // the instant this fires - the *intent* is the captain's, but the shell
+        // command is not, and it used to reach the terminal with no gate at all
+        // while the DevOps Command Library's own send has always confirmed.
+        // Same asymmetry as S1, one path over.
         composer.onRunInTerminal = { [weak self] command in
-            self?.currentTab?.terminal.send(txt: command + "\n")
+            CommandRiskConfirmation.confirmAIAuthored(command: command,
+                                                      source: "Compose") {
+                self?.currentTab?.terminal.send(txt: command + "\n")
+            }
         }
 
         sreLeadPaneWidthConstraint = sreLeadPane.widthAnchor.constraint(equalToConstant: 0)

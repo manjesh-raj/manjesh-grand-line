@@ -111,6 +111,20 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
 
     /// The last successfully generated/verified private-key bytes - `saveButton`
     /// stays disabled until this is non-nil, so a half-filled form can't be saved.
+    /// T1: the two subprocess-backed actions and their busy state.
+    private weak var generateButton: HelmButton?
+    private weak var verifyButton: HelmButton?
+    private var workInFlight = 0
+    private let spinner: NSProgressIndicator = {
+        let s = NSProgressIndicator()
+        s.style = .spinning
+        s.controlSize = .small
+        s.isDisplayedWhenStopped = false
+        s.isHidden = true
+        s.translatesAutoresizingMaskIntoConstraints = false
+        return s
+    }()
+
     private var pendingPrivateKey: Data?
     private var pendingPublicKeyLine: String?
     private var pendingFingerprint: String?
@@ -259,6 +273,7 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
 
     private func buildGeneratePanel() {
         let generate = HelmButton(title: "Generate", variant: .primary, target: self, action: #selector(generateKey))
+        generateButton = generate
 
         let fieldsRow = NSStackView(views: [
             form.labelledField("Key type", typeSwitch),
@@ -270,7 +285,9 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
         fieldsRow.spacing = HelmMetrics.s3 - 2
         fieldsRow.translatesAutoresizingMaskIntoConstraints = false
 
-        let generateRow = NSStackView(views: [NSView(), generate])
+        // T1: the spinner lives beside Generate (the slower of the two
+        // actions) and is shown for whichever action is running.
+        let generateRow = NSStackView(views: [NSView(), spinner, generate])
         generateRow.orientation = .horizontal
         generateRow.distribution = .fill
         generateRow.translatesAutoresizingMaskIntoConstraints = false
@@ -314,6 +331,7 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
         let pasteField = form.labelledField("Private key", importTextView)
 
         let verify = HelmButton(title: "Verify", variant: .secondary, target: self, action: #selector(verifyImport))
+        verifyButton = verify
         let verifyRow = NSStackView(views: [form.labelledField("Passphrase", importPassphraseField), verify])
         verifyRow.orientation = .horizontal
         verifyRow.alignment = .bottom
@@ -445,25 +463,66 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
         form.sizeToFitContent()
     }
 
+    /// T1: `SSHKeyGenerator.generate` runs several `ssh-keygen` subprocesses
+    /// with a 60s timeout each, and this used to call it straight from the
+    /// button action - so an RSA-4096 generation was a guaranteed ~1s+
+    /// beachball and a wedged `ssh-keygen` froze the whole app for up to a
+    /// minute. Every sibling subprocess caller in this app already hops off
+    /// main (GL-25 did exactly this for the connect-time key path); the editor
+    /// path never did.
     @objc private func generateKey() {
         let label = labelField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !label.isEmpty else { flag(labelField); return }
         let type = SSHKeyType(rawValue: typeSwitch.selected) ?? .ed25519
         let passphrase = generatePassphraseField.stringValue
-        do {
-            let generated = try SSHKeyGenerator.generate(type: type, label: label, passphrase: passphrase)
-            pendingPrivateKey = generated.privateKey
-            pendingPublicKeyLine = generated.publicKeyLine
-            pendingFingerprint = generated.fingerprint
-            pendingType = type
-            pendingPassphrase = passphrase.isEmpty ? nil : passphrase
-            publicKeyView.string = generated.publicKeyLine
-            fingerprintField.stringValue = generated.fingerprint
-            statusLabel.stringValue = ""
-        } catch {
-            statusLabel.stringValue = error.localizedDescription
+        beginWork(statusText: "Generating a \(type.displayName) key\u{2026}")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Result { try SSHKeyGenerator.generate(type: type, label: label, passphrase: passphrase) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.endWork()
+                switch result {
+                case .success(let generated):
+                    self.pendingPrivateKey = generated.privateKey
+                    self.pendingPublicKeyLine = generated.publicKeyLine
+                    self.pendingFingerprint = generated.fingerprint
+                    self.pendingType = type
+                    self.pendingPassphrase = passphrase.isEmpty ? nil : passphrase
+                    self.publicKeyView.string = generated.publicKeyLine
+                    self.fingerprintField.stringValue = generated.fingerprint
+                    self.statusLabel.stringValue = ""
+                case .failure(let error):
+                    self.setStatusTone(.critical)
+                    self.statusLabel.stringValue = error.localizedDescription
+                }
+                self.updateSaveEnabled()
+            }
         }
+    }
+
+    // MARK: T1 - the shared busy state for the two subprocess-backed actions
+
+    /// Disables both actions and shows a spinner. Both are keyed off one
+    /// counter rather than a bool so a Verify started while a Generate is
+    /// still running cannot re-enable the buttons early.
+    private func beginWork(statusText: String) {
+        workInFlight += 1
+        generateButton?.isEnabled = false
+        verifyButton?.isEnabled = false
+        spinner.isHidden = false
+        spinner.startAnimation(nil)
+        setStatusTone(.neutral)
+        statusLabel.stringValue = statusText
         updateSaveEnabled()
+    }
+
+    private func endWork() {
+        workInFlight = max(0, workInFlight - 1)
+        guard workInFlight == 0 else { return }
+        generateButton?.isEnabled = true
+        verifyButton?.isEnabled = true
+        spinner.stopAnimation(nil)
+        spinner.isHidden = true
     }
 
     // MARK: Actions - Import
@@ -490,6 +549,8 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
         verifyImport()
     }
 
+    /// T1: `SSHKeyGenerator.inspect` shells out the same way `generate` does -
+    /// off main, for the same reason.
     @objc private func verifyImport() {
         let text = importTextView.string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty, let data = text.data(using: .utf8) else {
@@ -497,23 +558,31 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
             return
         }
         let passphrase = importPassphraseField.stringValue
-        do {
-            let imported = try SSHKeyGenerator.inspect(privateKey: data, passphrase: passphrase)
-            pendingPrivateKey = data
-            pendingPublicKeyLine = imported.publicKeyLine
-            pendingFingerprint = imported.fingerprint
-            pendingType = imported.type
-            pendingPassphrase = passphrase.isEmpty ? nil : passphrase
-            publicKeyView.string = imported.publicKeyLine
-            fingerprintField.stringValue = imported.fingerprint
-            statusLabel.stringValue = "Verified \(imported.type.displayName) key."
-            setStatusTone(.good)
-        } catch {
-            pendingPrivateKey = nil
-            setStatusTone(.critical)
-            statusLabel.stringValue = error.localizedDescription
+        beginWork(statusText: "Verifying\u{2026}")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Result { try SSHKeyGenerator.inspect(privateKey: data, passphrase: passphrase) }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.endWork()
+                switch result {
+                case .success(let imported):
+                    self.pendingPrivateKey = data
+                    self.pendingPublicKeyLine = imported.publicKeyLine
+                    self.pendingFingerprint = imported.fingerprint
+                    self.pendingType = imported.type
+                    self.pendingPassphrase = passphrase.isEmpty ? nil : passphrase
+                    self.publicKeyView.string = imported.publicKeyLine
+                    self.fingerprintField.stringValue = imported.fingerprint
+                    self.statusLabel.stringValue = "Verified \(imported.type.displayName) key."
+                    self.setStatusTone(.good)
+                case .failure(let error):
+                    self.pendingPrivateKey = nil
+                    self.setStatusTone(.critical)
+                    self.statusLabel.stringValue = error.localizedDescription
+                }
+                self.updateSaveEnabled()
+            }
         }
-        updateSaveEnabled()
     }
 
     @objc private func copyPublicKey() {

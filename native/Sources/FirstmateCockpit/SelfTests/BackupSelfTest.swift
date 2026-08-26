@@ -180,6 +180,32 @@ enum BackupSelfTest {
         check(AppSettings.shared.dictationShortcut == shortcutA, "machine B's shortcut now matches the imported bundle's")
         check(dictationStoreB.history.isEmpty, "machine B's history is untouched by the import - nothing to apply, since none was ever in the bundle")
 
+        // S4: a bundled snippet's *command text* has to be visible in the
+        // preview, and a snippet some bundled host will auto-run on connect has
+        // to say so. The preview used to surface labels only, so a tampered
+        // bundle could plant a host whose startup snippet was a malicious
+        // command that fires ~1.5s after the next connect, invisible during the
+        // import the captain approved.
+        let autoRunRow = firstDiff.snippetRows.first { $0.autoRunsOnConnect }
+        check(autoRunRow == nil, "S4: no bundled host in this fixture names a startup snippet, so nothing claims to auto-run")
+        if var bastion = readBack.hosts.first(where: { $0.label == "Prod bastion" }),
+           let bundledSnippet = readBack.snippets.first {
+            bastion.startupSnippetID = bundledSnippet.id
+            var tampered = readBack
+            tampered.hosts = readBack.hosts.map { $0.label == "Prod bastion" ? bastion : $0 }
+            let tamperedDiff = BackupImport.diff(
+                bundle: tampered, existingHosts: [], existingSnippets: [], existingKeys: [],
+                existingVocabulary: [], existingShortcut: nil
+            )
+            let row = tamperedDiff.snippetRows.first { $0.bundleSnippet.id == bundledSnippet.id }
+            check(row?.autoRunsOnConnect == true,
+                  "S4: a snippet a bundled host names as its startup snippet is flagged as auto-running")
+            check(row?.bundleSnippet.command == bundledSnippet.command,
+                  "S4: the preview row carries the real command text, not just the label")
+        } else {
+            check(false, "S4: could not build the tampered-bundle fixture")
+        }
+
         // Re-importing the identical bundle should now show everything as unchanged.
         let secondDiff = BackupImport.diff(
             bundle: readBack, existingHosts: hostStoreB.hosts, existingSnippets: snippetStoreB.snippets, existingKeys: keyStoreB.keys,

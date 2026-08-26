@@ -43,6 +43,9 @@ final class ScheduleHistoryController: NSViewController {
     /// every presentation - the same fix `ShiftSnoozeCustomController` and the
     /// six `HelmFormSheet` editors already carry.
     private var themeObservation: ThemeObservation?
+    /// M5: the footer's Close button, kept so a self-test can measure where it
+    /// actually lands rather than trusting the constraints that declared it.
+    private weak var closeButton: HelmButton?
     private var theme: HelmTheme = ThemeManager.shared.theme
 
     private let table = HelmTableView()
@@ -104,11 +107,30 @@ final class ScheduleHistoryController: NSViewController {
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
         let close = HelmButton(title: "Close", variant: .primary, target: self, action: #selector(closeClicked))
+        closeButton = close
         close.keyEquivalent = "\r"
+        // M5 (gotchas 10 + 12): this row is `[flexible spacer, Close]` pinned
+        // to the sheet's full width, so *something* has to absorb the slack.
+        // It used to be left at the default `.gravityAreas` distribution with
+        // the plan resting on `spacer.setContentHuggingPriority` - a documented
+        // no-op on a bare `NSView`, which has no intrinsic content size - and
+        // no hugging on the button at all, so who grew was Auto Layout
+        // tie-breaking. That is the exact nondeterministic shape behind the
+        // Updates-chevron, Bootstrap-row and Hosts-"Connect ~900pt wide"
+        // incidents. `.fill` plus a real (low-priority, so it yields rather
+        // than fighting the width tie) zero-width constraint on the spacer and
+        // `.required` hugging on the button makes the button's own width the
+        // only stable answer.
         let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        let collapsed = spacer.widthAnchor.constraint(equalToConstant: 0)
+        collapsed.priority = .defaultLow
+        collapsed.isActive = true
+        close.setContentHuggingPriority(.required, for: .horizontal)
+        close.setContentCompressionResistancePriority(.required, for: .horizontal)
         let footer = NSStackView(views: [spacer, close])
         footer.orientation = .horizontal
+        footer.distribution = .fill
         footer.spacing = 10
         footer.translatesAutoresizingMaskIntoConstraints = false
 
@@ -152,7 +174,26 @@ final class ScheduleHistoryController: NSViewController {
     }()
 
     @objc private func closeClicked() {
+        #if FM_SELFTESTS
+        debugCloseRequests += 1
+        #endif
+        // `dismiss(_:)` raises rather than no-opping when nothing presented
+        // this controller (measured, contrary to the "documented no-op" note
+        // in AGENTS.md gotcha 6), so the sheet says what it needs rather than
+        // trusting its own presentation state.
+        guard presentingViewController != nil else { return }
         dismiss(self)
+    }
+
+    /// M6: every sibling sheet in this app pairs Return with Escape
+    /// (`ShiftSnoozeCustomController`, `PortForwardingController`, both Vault
+    /// sheets, and `HelmFormSheet.setFooter` for all nine form sheets). This
+    /// one - deliberately not a `HelmFormSheet`, since it is read-only and has
+    /// nothing to save - shipped only the Return half, so a keyboard user had
+    /// to tab to Close. `cancelOperation` rather than a second key equivalent:
+    /// there is one dismissal path, and it is the button's own action.
+    override func cancelOperation(_ sender: Any?) {
+        closeClicked()
     }
 
     deinit {
@@ -162,9 +203,20 @@ final class ScheduleHistoryController: NSViewController {
     // MARK: Probe / self-test surface
 
     #if FM_SELFTESTS
+    /// M6: how many times a dismissal was actually requested, so a test can
+    /// tell an Escape that routes to Close from one that does nothing
+    /// (`dismiss(_:)` is a documented no-op on a sheet that was never
+    /// presented, so its effect is not observable on its own).
+    var debugCloseRequests = 0
     var debugRowCount: Int { entries.count }
     var debugShowsEmptyState: Bool { entries.isEmpty }
     var debugTitleColor: NSColor? { titleLabel.textColor }
+    /// M5: the real Close button and the row it lives in, so a test measures
+    /// resolved frames rather than the constraints that were declared.
+    var debugFooterFrames: (footer: NSRect, close: NSRect)? {
+        guard let close = closeButton, let footer = close.superview else { return nil }
+        return (footer.frame, close.frame)
+    }
     var debugSubtitleColor: NSColor? { subtitleLabel.textColor }
     /// The real row view the table produces for `row`, so a test measures what
     /// the captain sees rather than a fixture.

@@ -368,7 +368,7 @@ final class BootstrapController: NSViewController, SetupPageSummary {
             root?.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
             self?.theme = theme
             self?.applyTheme()
-            self?.rebuildDynamicSections()
+            self?.rebuildAfterThemeChangeIfVisible { self?.rebuildDynamicSections() }
         }
 
         let header = buildHeader()
@@ -484,10 +484,55 @@ final class BootstrapController: NSViewController, SetupPageSummary {
         // check.
     }
 
+
+    /// P1: a theme change repaints immediately and defers the *rebuild*.
+    ///
+    /// `ThemeManager` fans out to ~450 observers synchronously, and several
+    /// pages answered a theme change with a full teardown-rebuild - so once a
+    /// session had visited most destinations, ⌘⌥T stalled the main thread for
+    /// most of a second (measured: 0.9-1.9s with all 21 mounted). Every
+    /// destination stays mounted for the process's life, so most of that work
+    /// was rebuilding pages nobody was looking at.
+    ///
+    /// The cheap repaint still runs for every observer; only the expensive
+    /// rebuild waits for the page's next real appearance - the same
+    /// rebuild-on-change shape Health and Schedules already use for visits.
+    private var needsThemeRebuild = false
+
+    private func rebuildAfterThemeChangeIfVisible(_ rebuild: () -> Void) {
+        if view.isHiddenOrHasHiddenAncestor {
+            needsThemeRebuild = true
+        } else {
+            rebuild()
+        }
+    }
+
+    /// P2: how recently the dotfiles state has to have been read for a visit to
+    /// reuse it rather than fetch again.
+    ///
+    /// `refreshDotfiles` runs a real `git fetch origin` - correctly off-main,
+    /// so it never stalled anything, but it fired on *every* visit to this
+    /// page, which is a network and radio wake per tab switch. The same
+    /// 15-minute TTL `DependencyCheckCache` already uses for this class of
+    /// check; every explicit action on this page (Run, Create link, Re-check
+    /// now, the full-setup sequencer) still calls `refreshDotfiles()` directly
+    /// and is unaffected.
+    private static let dotfilesVisitTTL: TimeInterval = 15 * 60
+    private var lastDotfilesRefreshAt: Date?
+
+    private func refreshDotfilesIfStale() {
+        if let last = lastDotfilesRefreshAt, Date().timeIntervalSince(last) < Self.dotfilesVisitTTL { return }
+        refreshDotfiles()
+    }
+
     override func viewWillAppear() {
         super.viewWillAppear()
+        if needsThemeRebuild {
+            needsThemeRebuild = false
+            rebuildDynamicSections()
+        }
         refreshFromSettings()
-        refreshDotfiles()
+        refreshDotfilesIfStale()
         if !hasCheckedSoftwareOnce {
             hasCheckedSoftwareOnce = true
             checkAllSoftware()
@@ -1193,6 +1238,10 @@ final class BootstrapController: NSViewController, SetupPageSummary {
     /// looks frozen while `git` runs.
     private func refreshDotfiles(completion: (() -> Void)? = nil) {
         guard isViewLoaded else { completion?(); return }
+        // Stamped here rather than at the visit call site, so an explicit
+        // refresh (Run, Create link, Re-check now, the sequencer) also counts
+        // as recent and a visit straight afterwards does not fetch again.
+        lastDotfilesRefreshAt = Date()
         isLoadingDotfiles = true
         rebuildDynamicSections()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in

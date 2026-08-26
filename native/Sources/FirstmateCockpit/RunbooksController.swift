@@ -126,7 +126,7 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
 
     override func viewWillAppear() {
         super.viewWillAppear()
-        reloadRunbooksList()
+        reloadRunbooksListAsync()
     }
 
     override func viewDidAppear() {
@@ -305,8 +305,40 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
 
     // MARK: Data
 
+    /// M4: the per-visit reload, off the main thread.
+    ///
+    /// `listRunbooks()` reads the *whole content* of every markdown file plus
+    /// its attributes, and the visit path ran that synchronously on main on
+    /// every navigation - linear in total markdown bytes, per visit.
+    /// `ShiftController` got `reloadAllAsync` for exactly this shape; these
+    /// pages didn't. `loadView` keeps the synchronous call so a destination
+    /// reached before it is ever interactively shown still renders real
+    /// content immediately.
+    ///
+    /// The generation guard is M2's: an edit (create/save/delete) that lands
+    /// while a visit reload is reading must not be reverted by the older
+    /// snapshot, and two overlapping reloads must not apply out of order.
+    private var reloadGeneration = 0
+
+    private func reloadRunbooksListAsync() {
+        reloadGeneration &+= 1
+        let generation = reloadGeneration
+        let store = runbookStore
+        DispatchQueue.global(qos: .userInitiated).async {
+            let runbooks = store.listRunbooks()
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.reloadGeneration == generation else { return }
+                self.applyRunbooks(runbooks)
+            }
+        }
+    }
+
     private func reloadRunbooksList() {
-        let runbooks = runbookStore.listRunbooks()
+        reloadGeneration &+= 1
+        applyRunbooks(runbookStore.listRunbooks())
+    }
+
+    private func applyRunbooks(_ runbooks: [DocsRunbook]) {
         runbookGridItems = runbooks.map { runbook in
             // The card's own metadata line - "Kubernetes \u{00B7} 3 steps" -
             // read out of the runbook's own fenced steps

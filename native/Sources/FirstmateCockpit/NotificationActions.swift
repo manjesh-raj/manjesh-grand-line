@@ -340,8 +340,18 @@ final class NotificationActionRouter: NSObject, UNUserNotificationCenterDelegate
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                didReceive response: UNNotificationResponse,
                                withCompletionHandler completionHandler: @escaping () -> Void) {
-        handle(actionIdentifier: response.actionIdentifier,
-               userInfo: response.notification.request.content.userInfo)
+        // `UNUserNotificationCenter` does not document which queue it delivers
+        // on - in practice main on macOS, but `handle` reaches AppKit
+        // (`AppShellController.show`) and a main-thread-only store
+        // (`ShiftStore.snoozeFollowUp`), so this is the one seam in the app
+        // that neither hopped nor asserted. One hop rather than a
+        // `dispatchPrecondition`: an assertion here would trade a latent
+        // correctness bug for a crash on whatever OS release changes its mind.
+        let userInfo = response.notification.request.content.userInfo
+        let identifier = response.actionIdentifier
+        DispatchQueue.main.async { [weak self] in
+            self?.handle(actionIdentifier: identifier, userInfo: userInfo)
+        }
         completionHandler()
     }
 
@@ -361,6 +371,7 @@ final class NotificationActionRouter: NSObject, UNUserNotificationCenterDelegate
     /// routing/performing path with a plain dictionary - `UNNotificationResponse`
     /// cannot be constructed outside the system.
     func handle(actionIdentifier: String, userInfo: [AnyHashable: Any]) {
+        dispatchPrecondition(condition: .onQueue(.main))
         guard isAllowed() else {
             AppLog.lifecycle.info("notification action refused - app is locked (GL-09)")
             return

@@ -303,6 +303,14 @@ extension ConsoleController {
                 currentTab = nil
                 refreshTabBar()
                 updateSRELeadPaneContent()
+                // The toolbar has to follow the tab going away too, or Compose
+                // and the Claude-usage button stay visible with `currentTab ==
+                // nil` - clicking Compose then opens a composer whose "Run in
+                // Terminal" silently does nothing. Pre-existing; #294 inherited
+                // it faithfully when it restored the usage button.
+                updateComposeControls()
+                updateQuotaUsageControls()
+                updateBlockViewControls()
             }
             return
         }

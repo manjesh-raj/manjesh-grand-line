@@ -502,15 +502,27 @@ enum DocsKnowledgeSearch {
     /// same simplicity `ShiftSearchIndex.search` uses. Deliberately not
     /// wired to global `⌘K` or terminal history yet - see AGENTS.md.
     static func search(query: String, store: DocsRunbookStore) -> [DocsKnowledgeSearchResult] {
+        search(query: query, runbooks: store.listRunbooks(), postmortems: store.listPostmortems())
+    }
+
+    /// The same search over an already-loaded corpus, so a caller that reads
+    /// the library once can match against it many times.
+    ///
+    /// The ⌘K palette re-enumerated the runbook and postmortem directories and
+    /// `String(contentsOf:)`'d every markdown file on *every keystroke* -
+    /// synchronous, on main, uncached. Splitting the read from the match is
+    /// what lets `UnifiedSearchDocsProvider` hold the corpus for a moment
+    /// instead.
+    static func search(query: String, runbooks: [DocsRunbook], postmortems: [DocsRunbook]) -> [DocsKnowledgeSearchResult] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return [] }
         var results: [DocsKnowledgeSearchResult] = []
-        for r in store.listRunbooks() {
+        for r in runbooks {
             if let snippet = matchSnippet(query: q, in: r) {
                 results.append(DocsKnowledgeSearchResult(scope: .runbook, runbook: r, snippet: snippet))
             }
         }
-        for r in store.listPostmortems() {
+        for r in postmortems {
             if let snippet = matchSnippet(query: q, in: r) {
                 results.append(DocsKnowledgeSearchResult(scope: .postmortem, runbook: r, snippet: snippet))
             }

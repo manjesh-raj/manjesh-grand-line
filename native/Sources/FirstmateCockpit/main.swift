@@ -896,7 +896,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(hostsMenuItem)
         let hostsMenu = NSMenu(title: "Hosts")
         hostsMenuItem.submenu = hostsMenu
+        // H3: this used to be a plain ⌘N, which is also what the Tasks menu's
+        // "New Task…" declares. AppKit resolves a key equivalent to the first
+        // *enabled* match in menu order and neither item is ever disabled (this
+        // app implements no `validateMenuItem` at all), so the Hosts menu -
+        // added first - swallowed ⌘N and the Tasks item's displayed shortcut
+        // could never fire. ⌘N stays with New Task, which is the far more
+        // frequent action and the one AGENTS.md documents; New Host takes ⌘⌃N,
+        // matching this menu's own "Show Hosts" (⌘⌃S).
         let newHostItem = NSMenuItem(title: "New Host…", action: #selector(AppShellController.newHostFromMenu), keyEquivalent: "n")
+        newHostItem.keyEquivalentModifierMask = [.command, .control]
         newHostItem.target = appShell
         hostsMenu.addItem(newHostItem)
         // No keyboard shortcut (⌘K now belongs to Find in Terminal above) -
@@ -1211,12 +1220,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 // including a single suite run by hand, which is the case a per-suite fix
 // would keep missing. Same reasoning as `CommandLibraryStore` honouring
 // `FM_SHIFT_DIR` (see AGENTS.md's DevOps Commands section).
-if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_RUN_") }),
-   (ProcessInfo.processInfo.environment["FM_FLEET_LOG_DIR"] ?? "").isEmpty {
-    let scratch = FileManager.default.temporaryDirectory
-        .appendingPathComponent("fleet-log-selftest-process-\(ProcessInfo.processInfo.processIdentifier)",
+//
+// Pr1 extends the same treatment to the schedule stores, for exactly the
+// reason the paragraph above gives. Several suites construct a bare
+// `ScheduleStore()` purely to satisfy an initializer's parameter list
+// (`AppShellBodyWidthSelfTest`, `AppShellDrillHeaderTitleSelfTest`,
+// `DaylightHardeningSelfTest`, `DaylightModuleSelfTest`,
+// `DestinationMountingSelfTest`) and their `withScratchEnv` blocks omit
+// `FM_SCHEDULES_FILE`, so each of those *reads* the captain's real
+// `schedules.json` during a plain test run - and `ScheduleRunHistoryStore.shared`
+// (PR #289) is a second indirectly-reachable singleton with no redirect at
+// all. No suite drives a schedule write today, which is the only reason
+// nothing has been corrupted yet; AGENTS.md's own post-incident rule says to
+// close that here rather than wait for the suite that does.
+if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_RUN_") }) {
+    let scratchRoot = FileManager.default.temporaryDirectory
+        .appendingPathComponent("selftest-process-\(ProcessInfo.processInfo.processIdentifier)",
                                 isDirectory: true)
-    setenv("FM_FLEET_LOG_DIR", scratch.path, 1)
+    if (ProcessInfo.processInfo.environment["FM_FLEET_LOG_DIR"] ?? "").isEmpty {
+        setenv("FM_FLEET_LOG_DIR", scratchRoot.appendingPathComponent("fleet-log", isDirectory: true).path, 1)
+    }
+    if (ProcessInfo.processInfo.environment["FM_SCHEDULES_FILE"] ?? "").isEmpty {
+        setenv("FM_SCHEDULES_FILE", scratchRoot.appendingPathComponent("schedules.json").path, 1)
+    }
+    if (ProcessInfo.processInfo.environment["FM_SCHEDULE_HISTORY_DIR"] ?? "").isEmpty {
+        setenv("FM_SCHEDULE_HISTORY_DIR", scratchRoot.appendingPathComponent("schedule-history", isDirectory: true).path, 1)
+    }
 }
 
 // `fm/cockpit-sre-lead-shared-terminal`: `swift build && FM_RUN_SRE_LEAD_BRIDGE_TESTS=1
@@ -1521,6 +1550,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_LOG_ANALYZER_TESTS"] == "1" {
 // are testable as behaviour - see AuditPerfFixesSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_AUDIT_PERF_FIXES_TESTS"] == "1" {
     exit(AuditPerfFixesSelfTest.run() ? 0 : 1)
+}
+
+// `data/grand-line-appkit-expert-audit/report.md`: the AppKit-expert audit's
+// smaller findings, one case per finding id - see AppKitAuditSelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_APPKIT_AUDIT_TESTS"] == "1" {
+    exit(AppKitAuditSelfTest.run() ? 0 : 1)
 }
 
 // B3-B9 (`data/grand-line-e2e-audit/report.md`): the Section 2 UI bugs, one

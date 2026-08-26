@@ -261,6 +261,13 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
     /// their hover fill. Rebuilt (and cleared) on every render of that card
     /// rather than growing unbounded across renders.
     private var commandRowContainers: [HoverHighlightView] = []
+    /// S3: the wrapping command labels, so their `preferredMaxLayoutWidth` can
+    /// be re-derived from the width they actually resolved to. A wrapping
+    /// `NSTextField` left at the default computes a one-line intrinsic height
+    /// and then draws its second line outside its own bounds - the four-times-
+    /// confirmed defect this repo has already fixed on Docs cards, Settings,
+    /// Health and Dictation.
+    private var commandLabels: [NSTextField] = []
 
     /// Every `HelmCard` on the page, re-themed together (the convention
     /// `ReviewController.cards` established).
@@ -322,6 +329,24 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
         view.layoutSubtreeIfNeeded()
         scrollToTop()
         reloadHistory()
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        syncCommandLabelWrapWidths()
+    }
+
+    /// S3: reads each label's real resolved width back and hands it to the
+    /// label, so the wrapped command's own intrinsic height matches the column
+    /// it is actually laid out in. Guarded on inequality, matching every
+    /// sibling site in this app.
+    private func syncCommandLabelWrapWidths() {
+        for label in commandLabels {
+            let width = label.bounds.width
+            guard width > 1, abs(label.preferredMaxLayoutWidth - width) > 0.5 else { continue }
+            label.preferredMaxLayoutWidth = width
+            label.invalidateIntrinsicContentSize()
+        }
     }
 
     private func scrollToTop() {
@@ -1311,8 +1336,17 @@ extension LogAnalyzerController: NSTextViewDelegate {
     private func addEvidence(raw: String, label: String, origin: LogEvidenceOrigin, sourceDetail: String? = nil) -> Bool {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
+        return addRedactedEvidence(LogRedactor.redact(raw), label: label, origin: origin, sourceDetail: sourceDetail)
+    }
 
-        let result = LogRedactor.redact(raw)
+    /// T3: the same boundary, entered with the redaction already done.
+    ///
+    /// The redaction boundary is unchanged - raw text is still only ever a
+    /// local, never stored - this just lets `importFiles` do the file read and
+    /// the redaction sweep off the main thread instead of doing both on it for
+    /// every file the captain drops.
+    private func addRedactedEvidence(_ result: LogRedactionResult, label: String, origin: LogEvidenceOrigin, sourceDetail: String? = nil) -> Bool {
+        guard !result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         let detection = LogSourceDetector.detect(result.text, override: sourceOverride)
         let item = LogEvidenceItem(label: label, origin: origin, sourceDetail: sourceDetail,
                                    text: result.text, detection: detection,
@@ -1432,18 +1466,34 @@ extension LogAnalyzerController: NSTextViewDelegate {
 
     /// Spec §2's drag & drop and file picker share this one path.
     func importFiles(_ urls: [URL]) {
-        var added = 0
-        for url in urls {
-            guard let text = try? String(contentsOf: url, encoding: .utf8) else {
-                Toast.show(in: view, message: "Could not read \(url.lastPathComponent) as text")
-                continue
+        // T3: reading a whole log file and sweeping the redaction regexes over
+        // it, once per dropped file, on the main thread - the two things a
+        // captain notices when they drop a large capture. Both off-main now;
+        // only appending the (already redacted) evidence happens on main.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var loaded: [(LogRedactionResult, URL)] = []
+            var unreadable: [String] = []
+            for url in urls {
+                guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+                    unreadable.append(url.lastPathComponent)
+                    continue
+                }
+                loaded.append((LogRedactor.redact(text), url))
             }
-            if addEvidence(raw: text, label: url.lastPathComponent, origin: .file, sourceDetail: url.path) {
-                added += 1
+            DispatchQueue.main.async {
+                guard let self else { return }
+                for name in unreadable {
+                    Toast.show(in: self.view, message: "Could not read \(name) as text")
+                }
+                var added = 0
+                for (result, url) in loaded
+                where self.addRedactedEvidence(result, label: url.lastPathComponent, origin: .file, sourceDetail: url.path) {
+                    added += 1
+                }
+                guard added > 0 else { return }
+                Toast.show(in: self.view, message: added == 1 ? "Added 1 file" : "Added \(added) files")
             }
         }
-        guard added > 0 else { return }
-        Toast.show(in: view, message: added == 1 ? "Added 1 file" : "Added \(added) files")
     }
 
     /// Spec §12's "[Paste More Logs]" - reveals the input card again (it is
@@ -1503,12 +1553,30 @@ extension LogAnalyzerController: NSTextViewDelegate {
         guard !isAnalyzing else { return }
 
         let combined = investigation.combinedText
-        let local = Self.buildLocalAnalysis(text: combined, override: sourceOverride)
         // A fresh analysis supersedes any earlier "what's still needed"
         // answer - that list was about the older evidence set.
         neededEvidenceVisible = false
         pendingNeededEvidence = []
 
+        // T3: `buildLocalAnalysis` sweeps regexes over the *entire* evidence
+        // text - source detection, error grouping, the timeline and the
+        // correlation - and the raw pane routinely holds thousands of lines.
+        // This ran synchronously on the main thread from an `@objc` button
+        // action, so the "always present, works offline" half of an analysis
+        // was also the half that froze the window. Only the `claude` call was
+        // ever off-main.
+        let override = sourceOverride
+        setAnalyzing(true, message: "Analyzing output — grouping errors, checking correlation…")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let local = Self.buildLocalAnalysis(text: combined, override: override)
+            DispatchQueue.main.async {
+                self?.finishLocalAnalysis(local, combined: combined)
+            }
+        }
+    }
+
+    /// The main-thread half of `runAnalysis`, once the local layer is built.
+    private func finishLocalAnalysis(_ local: LogLocalAnalysis, combined: String) {
         // Render the local half immediately - a big log's grouping/timeline
         // is genuinely useful on its own, and the captain shouldn't stare at
         // a spinner for it while a network call runs.
@@ -1517,6 +1585,7 @@ extension LogAnalyzerController: NSTextViewDelegate {
         renderInvestigation()
 
         guard LogAnalyzerAI.isAvailable else {
+            setAnalyzing(false, message: "")
             investigation.analysis?.aiFailure = "claude is not installed or not on PATH, so only the local "
                 + "analysis (source detection, severity, grouped patterns and the timeline) is shown."
             renderInvestigation()
@@ -1524,7 +1593,6 @@ extension LogAnalyzerController: NSTextViewDelegate {
             return
         }
 
-        setAnalyzing(true, message: "Analyzing output — grouping errors, checking correlation…")
         LogAnalyzerAI.analyze(mode: mode, local: local, body: combined) { [weak self] result in
             guard let self else { return }
             self.setAnalyzing(false, message: "")
@@ -1669,13 +1737,27 @@ extension LogAnalyzerController {
         sendToTerminal(command.command)
     }
 
+    /// S1/S3: the one choke point every suggested command reaches the console
+    /// through - the row's "Terminal" button, and spec §24's ⌘⇧T.
+    ///
+    /// These commands are written by a model reading the evidence text, which
+    /// can be a pasted log or output captured from a possibly-compromised host
+    /// - i.e. content an attacker can influence. The sink appends a newline and
+    /// runs immediately, and the prompt's "read-only only" instruction is a
+    /// soft constraint prompt injection defeats. The DevOps Command Library's
+    /// own send has always confirmed before running anything risky; this path
+    /// was the app's least-vouched-for command and had no gate at all.
     private func sendToTerminal(_ command: String) {
         guard let onSendCommandToTerminal else {
             Toast.show(in: view, message: "No terminal is available")
             return
         }
-        onSendCommandToTerminal(command)
-        Toast.show(in: view, message: "Sent to terminal")
+        CommandRiskConfirmation.confirmAIAuthored(command: command,
+                                                  source: "The log analysis") { [weak self] in
+            guard let self else { return }
+            onSendCommandToTerminal(command)
+            Toast.show(in: self.view, message: "Sent to terminal")
+        }
     }
 
     // MARK: Spec §17 / §18 / §19
@@ -1794,11 +1876,26 @@ extension LogAnalyzerController {
             Toast.show(in: view, message: "Provide both a Before and an After")
             return
         }
-        // Redacted on the way in here too - Compare accepts raw pasted text
-        // directly, so it needs its own pass rather than relying on
-        // `addEvidence`'s.
-        let redactedBefore = LogRedactor.redact(before)
-        let redactedAfter = LogRedactor.redact(after)
+        // T3: two full redaction passes plus `DiffEngine.lineDiff` - a full
+        // O(n*m) LCS table (now capped, see `DiffEngine.maxLCSCells`) - all ran
+        // synchronously on the main thread from this `@objc` action, on two
+        // captain-pasted logs. Off-main, with the spinner the AI half already
+        // implies, and every view touched back on main.
+        setAnalyzing(true, message: "Comparing the two outputs…")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let redactedBefore = LogRedactor.redact(before)
+            let redactedAfter = LogRedactor.redact(after)
+            let result = LogAnalyzerArtifacts.compare(before: redactedBefore.text, after: redactedAfter.text)
+            DispatchQueue.main.async {
+                self?.finishCompare(redactedBefore: redactedBefore, redactedAfter: redactedAfter, result: result)
+            }
+        }
+    }
+
+    private func finishCompare(redactedBefore: LogRedactionResult,
+                               redactedAfter: LogRedactionResult,
+                               result: LogAnalyzerArtifacts.ComparisonResult) {
+        setAnalyzing(false, message: "")
         if redactedBefore.count + redactedAfter.count > 0 {
             compareBefore.string = redactedBefore.text
             compareAfter.string = redactedAfter.text
@@ -1806,7 +1903,6 @@ extension LogAnalyzerController {
             renderRedactions()
         }
 
-        let result = LogAnalyzerArtifacts.compare(before: redactedBefore.text, after: redactedAfter.text)
         comparison = result
         compareDiff.setRows(result.rows)
         compareDiff.applyTheme(theme)
@@ -1828,8 +1924,17 @@ extension LogAnalyzerController {
         ===== AFTER =====
         \(redactedAfter.text)
         """
-        let local = Self.buildLocalAnalysis(text: body, override: sourceOverride)
+        // T3: this second `buildLocalAnalysis` sweeps the *combined* before+after
+        // text, so it is the larger of the two - off main like the first.
+        let override = sourceOverride
         setAnalyzing(true, message: "Comparing the two outputs…")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let local = Self.buildLocalAnalysis(text: body, override: override)
+            DispatchQueue.main.async { self?.runCompareAIPass(body: body, local: local, localSummary: localSummary) }
+        }
+    }
+
+    private func runCompareAIPass(body: String, local: LogLocalAnalysis, localSummary: String) {
         LogAnalyzerAI.analyze(mode: .compare, local: local, body: body,
                               extraContext: "The counted differences are: \(localSummary)") { [weak self] aiResult in
             guard let self else { return }
@@ -1893,16 +1998,22 @@ extension LogAnalyzerController {
         historyRail.isHidden = !historyVisible
         historyRailWidth.constant = historyVisible ? Self.historyRailWidthWhenVisible : 0
         historyToggleButton.title = historyVisible ? "Hide history" : "History"
-        if historyVisible { reloadHistory() }
+        if historyVisible { reloadHistory(forcingDiskRescan: true) }
     }
 
-    func reloadHistory() {
-        // GL-35: `history()` is memoised now, and this is the page's own
-        // "show me what is actually on disk" path (the history rail being
-        // revealed, or a save/delete completing) - so it is the one place that
-        // should look past the cache. Everything else in a single interaction
-        // reads the same snapshot.
-        store.invalidateHistoryCache()
+    /// M3: `forcingDiskRescan` is what makes GL-35's memoisation real.
+    ///
+    /// This used to invalidate the cache unconditionally, and `viewWillAppear`
+    /// called it - so every single tab switch to Log Analyzer paid the full
+    /// uncached walk (enumerate every year dir, every investigation dir, parse
+    /// every `investigation.yaml`) synchronously on the main thread, which is
+    /// exactly the work the cache exists to avoid. The store already
+    /// invalidates its own cache on `save` and `delete`, so an in-app change
+    /// is picked up without forcing anything; only a genuine "show me what is
+    /// on disk right now" moment (revealing the rail, or opening an
+    /// investigation handed over from outside this page) needs the rescan.
+    func reloadHistory(forcingDiskRescan force: Bool = false) {
+        if force { store.invalidateHistoryCache() }
         historyEntries = store.history()
         let contents = historyEntries.map { entry -> HelmAccentRow.Content in
             var content = HelmAccentRow.Content(tint: entry.severity.tint,
@@ -1924,7 +2035,7 @@ extension LogAnalyzerController {
     /// investigation is reopened exactly the same way regardless of where the
     /// captain clicked.
     func openSavedInvestigation(id: String) {
-        reloadHistory()
+        reloadHistory(forcingDiskRescan: true)
         guard let index = historyEntries.firstIndex(where: { $0.id == id }) else {
             Toast.show(in: view, message: "That investigation is no longer saved")
             return
@@ -2242,6 +2353,7 @@ extension LogAnalyzerController {
     private func renderCommands() {
         clearStack(commandsStack)
         commandRowContainers.removeAll()
+        commandLabels.removeAll()
         let commands = investigation.analysis?.ai?.suggestedCommands ?? []
         guard !commands.isEmpty else {
             let empty = NSTextField(wrappingLabelWithString: investigation.analysis == nil
@@ -2272,9 +2384,17 @@ extension LogAnalyzerController {
         title.translatesAutoresizingMaskIntoConstraints = false
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let commandLabel = NSTextField(labelWithString: command.command)
+        // S3: the command the captain is being asked to review must be shown
+        // in full. Truncating it to one tail-elided line is what made "the
+        // captain reads it before sending" a deceptive mitigation - the sink
+        // runs every line, and a long or multi-line command showed as a first
+        // fragment plus an ellipsis. It wraps now, and `sendToTerminal`
+        // refuses a multi-line command outright.
+        let commandLabel = NSTextField(wrappingLabelWithString: command.command)
         commandLabel.font = HelmType.code()
-        commandLabel.lineBreakMode = .byTruncatingTail
+        commandLabel.isSelectable = true
+        commandLabel.lineBreakMode = .byWordWrapping
+        commandLabel.maximumNumberOfLines = 0
         commandLabel.translatesAutoresizingMaskIntoConstraints = false
         commandLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
@@ -2341,6 +2461,7 @@ extension LogAnalyzerController {
         ])
         for sub in columnViews { sub.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true }
         commandRowContainers.append(container)
+        commandLabels.append(commandLabel)
         return container
     }
 

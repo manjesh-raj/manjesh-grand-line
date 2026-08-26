@@ -423,6 +423,11 @@ final class DictationEngine {
     private var cachedWhisperEngine: WhisperCppEngine?
     private var cachedWhisperEngineModelPath: String?
     private let whisperEngineLock = NSLock()
+
+    /// T5: whether this engine currently has a tap on the input node. Reading
+    /// `audioEngine.inputNode` instantiates it, which blocks in a process with
+    /// no audio input, so every teardown path asks this first.
+    private var tapInstalled = false
     private var whisperIdleUnload: DispatchWorkItem?
 
     /// How long a loaded local Whisper engine stays resident after the last
@@ -552,16 +557,39 @@ final class DictationEngine {
         usingLocalWhisperThisRecording = localWhisperEnabledProvider?() ?? false
         if usingLocalWhisperThisRecording {
             whisperResampler.reset()
+            // E2 (tech debt): a dictation started just before the idle deadline
+            // and held through it used to have the engine released mid-recording
+            // and re-parse the 547MB model at finish. Correctness was never at
+            // risk (the background transcribe holds its own strong reference),
+            // but the latency was real and avoidable. Re-armed by
+            // `scheduleWhisperIdleUnload()` at the end of that transcription.
+            whisperIdleUnload?.cancel()
+            whisperIdleUnload = nil
         }
 
         let inputNode = audioEngine.inputNode
         let format = inputNode.outputFormat(forBus: 0)
         inputNode.removeTap(onBus: 0)
+        // T5: this closure runs on `AVAudioEngine`'s real-time render thread,
+        // and it used to read `self.recognitionRequest` (an Optional class
+        // reference) and `self.usingLocalWhisperThisRecording` - both written
+        // on the main thread. GL-28(d) locked the resampler's sample array and
+        // left these two unguarded, which is a formal data race (a tap callback
+        // can race `finish()`'s nil-store on that reference), even where arm64
+        // makes the store look atomic.
+        //
+        // Snapshotted rather than locked: both are fixed for the whole of a
+        // recording, and taking a lock on the audio render thread is the worse
+        // of the two fixes. `request` is the same object the recogniser already
+        // holds, and the tap is removed before anything drops it (see
+        // `finish`), so nothing is appended to a request that has gone away.
+        let capturedRequest = request
+        let usesLocalWhisper = usingLocalWhisperThisRecording
+        tapInstalled = true
         inputNode.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
-            guard let self else { return }
-            self.recognitionRequest?.append(buffer)
-            if self.usingLocalWhisperThisRecording {
-                self.whisperResampler.append(buffer)
+            capturedRequest.append(buffer)
+            if usesLocalWhisper {
+                self?.whisperResampler.append(buffer)
             }
         }
 
@@ -569,7 +597,7 @@ final class DictationEngine {
         do {
             try audioEngine.start()
         } catch {
-            inputNode.removeTap(onBus: 0)
+            removeTapIfInstalled()
             recognitionRequest = nil
             report(DictationPermissions.currentStatus())
             return
@@ -625,12 +653,18 @@ final class DictationEngine {
     /// and just as reproducible with the default Right ⌥ Option - it's a
     /// pure timing race, not specific to either key; see this file's header
     /// and `CLAUDE.md`'s Dictation section for the full writeup).
+    private func removeTapIfInstalled() {
+        guard tapInstalled else { return }
+        tapInstalled = false
+        audioEngine.inputNode.removeTap(onBus: 0)
+    }
+
     func stopRecording() {
         wantsToRecord = false
         guard isRecording else { return }
         isRecording = false
         report(.transcribing)
-        audioEngine.inputNode.removeTap(onBus: 0)
+        removeTapIfInstalled()
         audioEngine.stop()
         recognitionRequest?.endAudio()
 
@@ -650,6 +684,16 @@ final class DictationEngine {
         finishTimeoutWorkItem = nil
         recognitionTask?.cancel()
         recognitionTask = nil
+        // T5: the tap holds the request, so it has to come off first - dropping
+        // the reference while a tap callback might still be running is the race
+        // this fix exists to remove.
+        //
+        // Guarded on `tapInstalled` rather than removed unconditionally:
+        // touching `audioEngine.inputNode` *instantiates* it, and in a process
+        // with no audio input (a headless self-test) that blocks. Reaching for
+        // it only when this engine genuinely installed a tap keeps that off the
+        // no-recording path entirely.
+        removeTapIfInstalled()
         recognitionRequest = nil
 
         // The real root cause of the stuck-forever bug this method's header
@@ -669,7 +713,7 @@ final class DictationEngine {
         // it correctly no-ops instead of stomping this method's own result.
         if isRecording {
             isRecording = false
-            audioEngine.inputNode.removeTap(onBus: 0)
+            removeTapIfInstalled()
             audioEngine.stop()
         }
 
@@ -742,8 +786,11 @@ final class DictationEngine {
         // Deliberately not holding the lock across the load: it reads and
         // parses ~547MB, and the only other toucher is the idle timer, whose
         // job is to release a *stale* engine - releasing one while this load
-        // is in flight is harmless (the new one is assigned below and the
-        // timer is rearmed after every dictation anyway).
+        // is in flight is harmless (the new one is assigned below). Note the
+        // timer is armed at the *end* of a transcription and cancelled at the
+        // start of the next `beginCapture`, so it cannot fire mid-recording;
+        // the comment here used to say it was "rearmed after every dictation",
+        // which described neither end of that.
         guard let engine = WhisperCppEngine(modelPath: modelPath) else { return nil }
         whisperEngineLock.lock()
         cachedWhisperEngine = engine

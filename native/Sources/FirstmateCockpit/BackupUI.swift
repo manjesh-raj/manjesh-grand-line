@@ -32,16 +32,19 @@ enum BackupUI {
     static func exportFlow(from viewController: NSViewController, hostStore: HostStore, keyStore: SSHKeyStore, snippetStore: SnippetStore, dictationStore: DictationStore) {
         let bundle = GrandLineBackupBuilder.build(hosts: hostStore.hosts, snippets: snippetStore.snippets, allKeys: keyStore.keys, dictationStore: dictationStore)
 
-        guard let destination = chooseDestination(
-            in: viewController, verb: "Export", title: "Export Grand Line config",
-            localLabel: "Local File…", githubLabel: "Export to \(GitHubBackupSource.destinationLabel)"
-        ) else { return }
+        resolveGitHubAvailability { githubAvailable in
+            guard let destination = chooseDestination(
+                in: viewController, verb: "Export", title: "Export Grand Line config",
+                localLabel: "Local File…", githubLabel: "Export to \(GitHubBackupSource.destinationLabel)",
+                githubAvailable: githubAvailable
+            ) else { return }
 
-        switch destination {
-        case .local:
-            exportToLocal(bundle, from: viewController)
-        case .github:
-            exportToGitHub(bundle, from: viewController)
+            switch destination {
+            case .local:
+                exportToLocal(bundle, from: viewController)
+            case .github:
+                exportToGitHub(bundle, from: viewController)
+            }
         }
     }
 
@@ -106,16 +109,19 @@ enum BackupUI {
     /// anything - identical downstream of the source, whether the bytes came
     /// from a local file or GitHub.
     static func importFlow(from viewController: NSViewController, hostStore: HostStore, keyStore: SSHKeyStore, snippetStore: SnippetStore, dictationStore: DictationStore, onApplied: (() -> Void)? = nil) {
-        guard let source = chooseDestination(
-            in: viewController, verb: "Import", title: "Import Grand Line config",
-            localLabel: "Upload from Local…", githubLabel: "Import from \(GitHubBackupSource.destinationLabel)"
-        ) else { return }
+        resolveGitHubAvailability { githubAvailable in
+            guard let source = chooseDestination(
+                in: viewController, verb: "Import", title: "Import Grand Line config",
+                localLabel: "Upload from Local…", githubLabel: "Import from \(GitHubBackupSource.destinationLabel)",
+                githubAvailable: githubAvailable
+            ) else { return }
 
-        switch source {
-        case .local:
-            importFromLocal(from: viewController, hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore, onApplied: onApplied)
-        case .github:
-            importFromGitHub(from: viewController, hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore, onApplied: onApplied)
+            switch source {
+            case .local:
+                importFromLocal(from: viewController, hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore, onApplied: onApplied)
+            case .github:
+                importFromGitHub(from: viewController, hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore, onApplied: onApplied)
+            }
         }
     }
 
@@ -181,10 +187,36 @@ enum BackupUI {
     /// authenticated - the same guidance-only convention this app already
     /// uses for a missing prerequisite (e.g. the gh-cli isotope row in "Not
     /// synced here, by design").
-    private static func chooseDestination(in viewController: NSViewController, verb: String, title: String, localLabel: String, githubLabel: String) -> BackupDestination? {
+    /// T2: whether the GitHub option is selectable, resolved off the main
+    /// thread and cached for the process.
+    ///
+    /// `GitHubBackupSource.isAvailable()` shells out to `gh auth token` - a
+    /// synchronous fork/exec plus a `group.wait` - and this used to run on the
+    /// main thread *before* the picker was even built, on every Export/Import
+    /// click: typically ~50-200ms of beachball, and up to the subprocess's own
+    /// 15s timeout if `gh` or the keychain stalled. The actual export/fetch was
+    /// already correctly off-main; only this availability probe was not, and it
+    /// was the one main-thread `ghAuthToken()` caller in the app.
+    ///
+    /// Cached because the answer is "is `gh` logged in", which does not change
+    /// between two clicks of the same button, and a stale `true` degrades to
+    /// the same real error the export would have produced anyway.
+    private static var cachedGitHubAvailability: Bool?
+
+    private static func resolveGitHubAvailability(_ completion: @escaping (Bool) -> Void) {
+        if let cached = cachedGitHubAvailability { completion(cached); return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let available = GitHubBackupSource.isAvailable()
+            DispatchQueue.main.async {
+                cachedGitHubAvailability = available
+                completion(available)
+            }
+        }
+    }
+
+    private static func chooseDestination(in viewController: NSViewController, verb: String, title: String, localLabel: String, githubLabel: String, githubAvailable: Bool) -> BackupDestination? {
         let alert = NSAlert()
         alert.messageText = title
-        let githubAvailable = GitHubBackupSource.isAvailable()
         alert.informativeText = githubAvailable
             ? "Choose where to \(verb.lowercased()) this config."
             : "Choose where to \(verb.lowercased()) this config.\n\n\(GitHubBackupSource.unavailableReason)"
@@ -258,7 +290,18 @@ enum BackupUI {
         if preview.snippetRows.isEmpty {
             lines.append("  (none in this file)")
         } else {
-            for row in preview.snippetRows { lines.append("  [\(row.status.rawValue.uppercased())] \(row.label)") }
+            // S4: the command text, not just the label. A snippet is a shell
+            // command this app types into a terminal, and a bundled host can
+            // name one as its startup snippet - which runs it by itself on the
+            // next connect. Approving an import used to mean approving command
+            // text the preview never showed.
+            for row in preview.snippetRows {
+                let autoRun = row.autoRunsOnConnect ? "  \u{26A0} RUNS AUTOMATICALLY ON CONNECT" : ""
+                lines.append("  [\(row.status.rawValue.uppercased())] \(row.label)\(autoRun)")
+                for commandLine in row.bundleSnippet.command.components(separatedBy: .newlines) {
+                    lines.append("      $ \(commandLine)")
+                }
+            }
         }
         if !preview.vocabularyRows.isEmpty {
             lines.append("")

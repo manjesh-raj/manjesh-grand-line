@@ -173,8 +173,30 @@ final class NotificationBellButton: NSButton {
 
     func setBadgeCount(_ count: Int) {
         badgeContainer.isHidden = count <= 0
-        guard count > 0 else { return }
-        badgeLabel.stringValue = count > 99 ? "99+" : "\(count)"
+        if count > 0 {
+            badgeLabel.stringValue = count > 99 ? "99+" : "\(count)"
+        }
+        // A1: the badge is the app's primary "something needs you" signal, and
+        // it used to be sighted-only - the label was set once at construction,
+        // so VoiceOver said "Notifications, button" whether nothing or 99+
+        // items were waiting. Updated alongside the visible count, the same
+        // pattern `MultiHostSendPicker`'s row already uses.
+        //
+        // The label carries the count too, not just the value: a value alone
+        // is easy to miss when a button is reached by tabbing rather than read
+        // outright, and this is the one control whose whole point is the count.
+        let spoken: String
+        switch count {
+        case ..<1: spoken = "Notifications, none waiting"
+        case 1: spoken = "Notifications, 1 waiting"
+        default: spoken = "Notifications, \(count) waiting"
+        }
+        setAccessibilityLabel(spoken)
+        setAccessibilityValue(count)
+        // The badge itself is decoration on top of that label - left as its own
+        // element it surfaces a stray "5, text" beside the button.
+        badgeLabel.setAccessibilityElement(false)
+        badgeContainer.setAccessibilityElement(false)
     }
 
     func applyTheme(ink: NSColor, line: NSColor, surface: NSColor) {

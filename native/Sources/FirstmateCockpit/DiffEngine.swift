@@ -49,10 +49,33 @@ enum DiffEngine {
     /// LCS, then groups consecutive delete/insert runs into paired `changed`
     /// rows (paired by index within the run), with any count mismatch
     /// rendered as pure add/remove against a blank counterpart.
+    /// T3/T4: the ceiling on the LCS table.
+    ///
+    /// `lcsOps` builds a full `(n+1) x (m+1)` `Int` DP matrix, so two 5,000-line
+    /// inputs is ~25M cells and seconds of work - and this ran synchronously on
+    /// the main thread from both the Tools page's Diff tab and the Log
+    /// Analyzer's Compare tab, on input the captain pastes. 4M cells is roughly
+    /// 2,000 x 2,000 lines, which is far past any realistic manifest or config
+    /// diff and still resolves in well under a second.
+    static let maxLCSCells = 4_000_000
+
+    /// The exact diff plus, when the input was too large to align exactly, a
+    /// line saying so. **No silent caps**: a caller that shows a degraded diff
+    /// has to be able to say it is degraded.
+    struct Diff {
+        let rows: [DiffRow]
+        /// Non-nil when the alignment fell back to a positional comparison.
+        let degradedNote: String?
+    }
+
     static func lineDiff(before: String, after: String) -> [DiffRow] {
+        checkedLineDiff(before: before, after: after).rows
+    }
+
+    static func checkedLineDiff(before: String, after: String) -> Diff {
         let a = before.components(separatedBy: "\n")
         let b = after.components(separatedBy: "\n")
-        let ops = lcsOps(a, b)
+        let (ops, degraded) = alignedOps(a, b)
 
         var rows: [DiffRow] = []
         var leftNum = 1
@@ -106,7 +129,55 @@ enum DiffEngine {
                 }
             }
         }
-        return rows
+        return Diff(rows: rows,
+                    degradedNote: degraded
+                        ? "These inputs are too large to align exactly (\(a.count) vs \(b.count) lines), so this comparison is line-by-line rather than a best-match alignment."
+                        : nil)
+    }
+
+    /// Trims the common head and tail first - exact, cheap, and on real logs it
+    /// removes most of the table - then either runs the exact LCS or, if the
+    /// remaining middle is still past `maxLCSCells`, falls back to a positional
+    /// comparison and says so.
+    private static func alignedOps(_ a: [String], _ b: [String]) -> ([LineOp], Bool) {
+        var head = 0
+        while head < a.count, head < b.count, a[head] == b[head] { head += 1 }
+        var tail = 0
+        while tail < a.count - head, tail < b.count - head,
+              a[a.count - 1 - tail] == b[b.count - 1 - tail] { tail += 1 }
+
+        let midA = Array(a[head..<(a.count - tail)])
+        let midB = Array(b[head..<(b.count - tail)])
+
+        var ops: [LineOp] = a[0..<head].map { .equal($0) }
+        var degraded = false
+        if (midA.count + 1) * (midB.count + 1) > maxLCSCells {
+            degraded = true
+            ops.append(contentsOf: positionalOps(midA, midB))
+        } else {
+            ops.append(contentsOf: lcsOps(midA, midB))
+        }
+        ops.append(contentsOf: a[(a.count - tail)...].map { .equal($0) })
+        return (ops, degraded)
+    }
+
+    /// The fallback: pair line `i` with line `i`, and report the overhang.
+    /// Not a best-match alignment, which is exactly what the degraded note
+    /// tells the captain.
+    private static func positionalOps(_ a: [String], _ b: [String]) -> [LineOp] {
+        var ops: [LineOp] = []
+        for i in 0..<Swift.max(a.count, b.count) {
+            let left = i < a.count ? a[i] : nil
+            let right = i < b.count ? b[i] : nil
+            switch (left, right) {
+            case let (l?, r?) where l == r: ops.append(.equal(l))
+            case let (l?, r?): ops.append(.delete(l)); ops.append(.insert(r))
+            case let (l?, nil): ops.append(.delete(l))
+            case let (nil, r?): ops.append(.insert(r))
+            case (nil, nil): break
+            }
+        }
+        return ops
     }
 
     private enum LineOp {

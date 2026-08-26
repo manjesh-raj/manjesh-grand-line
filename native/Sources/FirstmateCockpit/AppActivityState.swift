@@ -81,7 +81,17 @@ final class AppActivityState {
     private func becameActive() {
         pendingCrossing?.cancel()
         pendingCrossing = nil
-        let wasBackgrounded = isBackgrounded
+        // The "came back" callback was unreachable: this runs from
+        // `didBecomeActive`, where `NSApplication.shared.isActive` is already
+        // `true`, so `isBackgrounded` short-circuits to `false` on its first
+        // line and `notify(false)` never fired. Harmless today (nothing calls
+        // `observe`, and the three pollers read `isBackgrounded` directly), but
+        // the doc above advertises the callback and the first adopter would get
+        // "went away" with no matching "came back".
+        //
+        // Computed from elapsed time *before* `lastActiveAt` is reset, which is
+        // the only reading that still means anything once the app is active.
+        let wasBackgrounded = Date().timeIntervalSince(lastActiveAt) >= Self.backgroundThreshold
         lastActiveAt = Date()
         if wasBackgrounded { notify(false) }
     }
