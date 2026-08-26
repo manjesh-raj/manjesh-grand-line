@@ -86,6 +86,8 @@ SKIP_FLAGS=(
 # self-hosted or headless runner may not, and a suite that hangs waiting for
 # one is worse in CI than a suite that is honestly skipped.
 NEEDS_SESSION=(
+  # The AppKit-expert audit fixes: M5 measures a real sheet footer.
+  "FM_RUN_APPKIT_AUDIT_TESTS"
   "FM_RUN_APP_SHELL_BODY_WIDTH_TESTS"
   "FM_RUN_DRILL_HEADER_TITLE_TESTS"
   "FM_RUN_DAYLIGHT_MODULE_TESTS"

@@ -896,7 +896,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(hostsMenuItem)
         let hostsMenu = NSMenu(title: "Hosts")
         hostsMenuItem.submenu = hostsMenu
+        // H3: this used to be a plain ⌘N, which is also what the Tasks menu's
+        // "New Task…" declares. AppKit resolves a key equivalent to the first
+        // *enabled* match in menu order and neither item is ever disabled (this
+        // app implements no `validateMenuItem` at all), so the Hosts menu -
+        // added first - swallowed ⌘N and the Tasks item's displayed shortcut
+        // could never fire. ⌘N stays with New Task, which is the far more
+        // frequent action and the one AGENTS.md documents; New Host takes ⌘⌃N,
+        // matching this menu's own "Show Hosts" (⌘⌃S).
         let newHostItem = NSMenuItem(title: "New Host…", action: #selector(AppShellController.newHostFromMenu), keyEquivalent: "n")
+        newHostItem.keyEquivalentModifierMask = [.command, .control]
         newHostItem.target = appShell
         hostsMenu.addItem(newHostItem)
         // No keyboard shortcut (⌘K now belongs to Find in Terminal above) -
@@ -1521,6 +1530,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_LOG_ANALYZER_TESTS"] == "1" {
 // are testable as behaviour - see AuditPerfFixesSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_AUDIT_PERF_FIXES_TESTS"] == "1" {
     exit(AuditPerfFixesSelfTest.run() ? 0 : 1)
+}
+
+// `data/grand-line-appkit-expert-audit/report.md`: the AppKit-expert audit's
+// smaller findings, one case per finding id - see AppKitAuditSelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_APPKIT_AUDIT_TESTS"] == "1" {
+    exit(AppKitAuditSelfTest.run() ? 0 : 1)
 }
 
 // B3-B9 (`data/grand-line-e2e-audit/report.md`): the Section 2 UI bugs, one
