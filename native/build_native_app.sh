@@ -124,6 +124,38 @@ else
   echo "    \"Local signing setup\" section to create this identity once per machine."
 fi
 
+# Install/update the copy in /Applications so the app behaves like a normal
+# installed app - every rebuild keeps /Applications in sync automatically,
+# with no separate manual install step. /Applications is normally writable by
+# the admin user with no sudo needed on a single-user Mac, so this never
+# prompts; if it can't write there (e.g. permissions, /Applications missing),
+# warn and continue rather than failing the whole build - the dist/ build
+# above must still succeed either way.
+#
+# Replacing the bundle at /Applications/$APP_NAME while a stale copy of the
+# app is still running is safe on macOS: the running process keeps its own
+# open file handles to the old bundle's files, so this doesn't disturb it -
+# the replacement just means the *next* launch picks up the new build.
+INSTALLED_APP="/Applications/$APP_NAME"
+INSTALL_OK=1
+if [ -d "/Applications" ] && [ -w "/Applications" ]; then
+  if rm -rf "$INSTALLED_APP" 2>/dev/null && ditto "$APP_DIR" "$INSTALLED_APP" 2>/dev/null; then
+    INSTALL_OK=1
+  else
+    INSTALL_OK=0
+  fi
+else
+  INSTALL_OK=0
+fi
+
+if [ "$INSTALL_OK" -ne 1 ]; then
+  echo "⚠️  Could not install to /Applications/$APP_NAME - leaving it unchanged."
+  echo "    The build in $DIST_DIR/$APP_NAME is unaffected."
+fi
+
 echo ""
 echo "✓ Built: $(cd "$DIST_DIR" && pwd)/$APP_NAME"
+if [ "$INSTALL_OK" -eq 1 ]; then
+  echo "✓ Installed: $INSTALLED_APP"
+fi
 echo "  Open with:  open $APP_DIR"
