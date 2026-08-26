@@ -258,7 +258,18 @@ enum BackupUI {
         if preview.snippetRows.isEmpty {
             lines.append("  (none in this file)")
         } else {
-            for row in preview.snippetRows { lines.append("  [\(row.status.rawValue.uppercased())] \(row.label)") }
+            // S4: the command text, not just the label. A snippet is a shell
+            // command this app types into a terminal, and a bundled host can
+            // name one as its startup snippet - which runs it by itself on the
+            // next connect. Approving an import used to mean approving command
+            // text the preview never showed.
+            for row in preview.snippetRows {
+                let autoRun = row.autoRunsOnConnect ? "  \u{26A0} RUNS AUTOMATICALLY ON CONNECT" : ""
+                lines.append("  [\(row.status.rawValue.uppercased())] \(row.label)\(autoRun)")
+                for commandLine in row.bundleSnippet.command.components(separatedBy: .newlines) {
+                    lines.append("      $ \(commandLine)")
+                }
+            }
         }
         if !preview.vocabularyRows.isEmpty {
             lines.append("")

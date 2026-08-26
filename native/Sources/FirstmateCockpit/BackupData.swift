@@ -225,6 +225,13 @@ struct BackupSnippetDiffRow {
     var status: BackupDiffStatus
     var bundleSnippet: Snippet
     var matchedLocalID: UUID?
+    /// S4: true when some host in the same bundle names this snippet as its
+    /// `startupSnippetID`, i.e. importing it means this command text runs by
+    /// itself ~1.5s after the next connect to that host, with no further
+    /// confirmation. That is the one thing about a bundled snippet a captain
+    /// most needs to see before approving an import, and the preview used to
+    /// show neither it nor the command text - only the label.
+    var autoRunsOnConnect: Bool = false
 }
 
 /// A single bundled vocabulary word - `.changed` is never produced here (a
@@ -306,14 +313,16 @@ enum BackupImport {
             }
         }
 
+        // S4: which bundled snippets a bundled host will auto-run on connect.
+        let autoRunIDs = Set(bundle.hosts.compactMap { $0.startupSnippetID })
         var snippetRows: [BackupSnippetDiffRow] = []
         for bundleSnippet in bundle.snippets {
             if let match = existingSnippets.first(where: { $0.id == bundleSnippet.id })
                 ?? existingSnippets.first(where: { $0.label.caseInsensitiveCompare(bundleSnippet.label) == .orderedSame }) {
                 let same = match.label == bundleSnippet.label && match.command == bundleSnippet.command
-                snippetRows.append(BackupSnippetDiffRow(label: bundleSnippet.label, status: same ? .unchanged : .changed, bundleSnippet: bundleSnippet, matchedLocalID: match.id))
+                snippetRows.append(BackupSnippetDiffRow(label: bundleSnippet.label, status: same ? .unchanged : .changed, bundleSnippet: bundleSnippet, matchedLocalID: match.id, autoRunsOnConnect: autoRunIDs.contains(bundleSnippet.id)))
             } else {
-                snippetRows.append(BackupSnippetDiffRow(label: bundleSnippet.label, status: .new, bundleSnippet: bundleSnippet, matchedLocalID: nil))
+                snippetRows.append(BackupSnippetDiffRow(label: bundleSnippet.label, status: .new, bundleSnippet: bundleSnippet, matchedLocalID: nil, autoRunsOnConnect: autoRunIDs.contains(bundleSnippet.id)))
             }
         }
 
