@@ -261,6 +261,13 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
     /// their hover fill. Rebuilt (and cleared) on every render of that card
     /// rather than growing unbounded across renders.
     private var commandRowContainers: [HoverHighlightView] = []
+    /// S3: the wrapping command labels, so their `preferredMaxLayoutWidth` can
+    /// be re-derived from the width they actually resolved to. A wrapping
+    /// `NSTextField` left at the default computes a one-line intrinsic height
+    /// and then draws its second line outside its own bounds - the four-times-
+    /// confirmed defect this repo has already fixed on Docs cards, Settings,
+    /// Health and Dictation.
+    private var commandLabels: [NSTextField] = []
 
     /// Every `HelmCard` on the page, re-themed together (the convention
     /// `ReviewController.cards` established).
@@ -322,6 +329,24 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
         view.layoutSubtreeIfNeeded()
         scrollToTop()
         reloadHistory()
+    }
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        syncCommandLabelWrapWidths()
+    }
+
+    /// S3: reads each label's real resolved width back and hands it to the
+    /// label, so the wrapped command's own intrinsic height matches the column
+    /// it is actually laid out in. Guarded on inequality, matching every
+    /// sibling site in this app.
+    private func syncCommandLabelWrapWidths() {
+        for label in commandLabels {
+            let width = label.bounds.width
+            guard width > 1, abs(label.preferredMaxLayoutWidth - width) > 0.5 else { continue }
+            label.preferredMaxLayoutWidth = width
+            label.invalidateIntrinsicContentSize()
+        }
     }
 
     private func scrollToTop() {
@@ -1669,13 +1694,27 @@ extension LogAnalyzerController {
         sendToTerminal(command.command)
     }
 
+    /// S1/S3: the one choke point every suggested command reaches the console
+    /// through - the row's "Terminal" button, and spec §24's ⌘⇧T.
+    ///
+    /// These commands are written by a model reading the evidence text, which
+    /// can be a pasted log or output captured from a possibly-compromised host
+    /// - i.e. content an attacker can influence. The sink appends a newline and
+    /// runs immediately, and the prompt's "read-only only" instruction is a
+    /// soft constraint prompt injection defeats. The DevOps Command Library's
+    /// own send has always confirmed before running anything risky; this path
+    /// was the app's least-vouched-for command and had no gate at all.
     private func sendToTerminal(_ command: String) {
         guard let onSendCommandToTerminal else {
             Toast.show(in: view, message: "No terminal is available")
             return
         }
-        onSendCommandToTerminal(command)
-        Toast.show(in: view, message: "Sent to terminal")
+        CommandRiskConfirmation.confirmAIAuthored(command: command,
+                                                  source: "The log analysis") { [weak self] in
+            guard let self else { return }
+            onSendCommandToTerminal(command)
+            Toast.show(in: self.view, message: "Sent to terminal")
+        }
     }
 
     // MARK: Spec §17 / §18 / §19
@@ -2248,6 +2287,7 @@ extension LogAnalyzerController {
     private func renderCommands() {
         clearStack(commandsStack)
         commandRowContainers.removeAll()
+        commandLabels.removeAll()
         let commands = investigation.analysis?.ai?.suggestedCommands ?? []
         guard !commands.isEmpty else {
             let empty = NSTextField(wrappingLabelWithString: investigation.analysis == nil
@@ -2278,9 +2318,17 @@ extension LogAnalyzerController {
         title.translatesAutoresizingMaskIntoConstraints = false
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let commandLabel = NSTextField(labelWithString: command.command)
+        // S3: the command the captain is being asked to review must be shown
+        // in full. Truncating it to one tail-elided line is what made "the
+        // captain reads it before sending" a deceptive mitigation - the sink
+        // runs every line, and a long or multi-line command showed as a first
+        // fragment plus an ellipsis. It wraps now, and `sendToTerminal`
+        // refuses a multi-line command outright.
+        let commandLabel = NSTextField(wrappingLabelWithString: command.command)
         commandLabel.font = HelmType.code()
-        commandLabel.lineBreakMode = .byTruncatingTail
+        commandLabel.isSelectable = true
+        commandLabel.lineBreakMode = .byWordWrapping
+        commandLabel.maximumNumberOfLines = 0
         commandLabel.translatesAutoresizingMaskIntoConstraints = false
         commandLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
@@ -2347,6 +2395,7 @@ extension LogAnalyzerController {
         ])
         for sub in columnViews { sub.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true }
         commandRowContainers.append(container)
+        commandLabels.append(commandLabel)
         return container
     }
 

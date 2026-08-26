@@ -1086,6 +1086,81 @@ enum CommandRiskConfirmation {
             proceed()
         }
     }
+
+    // MARK: S1/S2/S3 - the AI-authored path
+    //
+    // The audit's finding was a gate *asymmetry*: this app built one
+    // destructive-command confirmation and routed its least AI-influenced path
+    // through it (the captain's own saved library command, whose risk level the
+    // captain set) while leaving its most AI-influenced paths ungated - a Log
+    // Analyzer suggestion written by a model reading attacker-influenceable log
+    // text, and a Console Compose command written by a model. Both sinks append
+    // a newline and execute immediately.
+    //
+    // A model-authored command has no `DevOpsCommand` and therefore no risk
+    // level anybody vouched for, so this never silently proceeds: the
+    // confirmation is unconditional, and the heuristic below only decides how
+    // loud it is. That is deliberately the safe direction - a classifier that
+    // could "clear" a command would reintroduce exactly the trust this closes.
+
+    /// S3: an AI command carrying an embedded newline executes as several
+    /// shell commands while the review UI shows one truncated line, which
+    /// defeats the human-in-the-loop mitigation S1/S2 rest on. Both prompts
+    /// already ask for a single command, so this is a refusal rather than a
+    /// silent collapse - rewriting what the captain approved would be its own
+    /// small lie.
+    static func isSingleCommand(_ command: String) -> Bool {
+        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Scalars, not Characters: Swift treats CRLF as a *single* grapheme
+        // cluster, so `trimmed.contains("\n")` is false for "a\r\nb" - which
+        // would have let exactly the S3 payload through.
+        return !trimmed.unicodeScalars.contains { CharacterSet.newlines.contains($0) }
+    }
+
+    /// A conservative "how loud should this confirmation be" heuristic. It
+    /// never clears a command - the quietest answer it can give is
+    /// `.potentiallyDisruptive`, which still confirms.
+    static func heuristicRisk(of command: String) -> CommandRiskLevel {
+        let lowered = command.lowercased()
+        let destructiveMarkers = [
+            "rm ", "rm -", "mkfs", "dd ", "shred", "> /dev/", ":(){", "kill -9",
+            "delete", "destroy", "drop ", "truncate", "terminate", "--replicas=0",
+            "rollout undo", "chmod 777", "curl ", "wget ", "| sh", "| bash", "sudo ",
+        ]
+        for marker in destructiveMarkers where lowered.contains(marker) {
+            return .destructive
+        }
+        return .potentiallyDisruptive
+    }
+
+    /// The gate every model-authored command passes through before it reaches
+    /// a terminal. `source` names where the command came from, because "an AI
+    /// wrote this" is the load-bearing half of the warning.
+    static func confirmAIAuthored(command: String, source: String, proceed: () -> Void) {
+        guard isSingleCommand(command) else {
+            let alert = NSAlert()
+            alert.alertStyle = .critical
+            alert.messageText = "That command spans more than one line"
+            alert.informativeText = "\(source) produced a command containing a line break, which would run as "
+                + "several separate shell commands while only the first line is visible. It was not sent."
+                + "\n\n\(command)"
+            alert.addButton(withTitle: "OK")
+            alert.runModal()
+            return
+        }
+        let risk = heuristicRisk(of: command)
+        let alert = NSAlert()
+        alert.alertStyle = risk == .destructive ? .critical : .warning
+        alert.messageText = risk == .destructive
+            ? "\u{26A0}\u{FE0F} Run this AI-written command?"
+            : "Run this AI-written command?"
+        alert.informativeText = "\(source) wrote this command. Nobody has vouched for it - read it before it runs:"
+            + "\n\n\(command)"
+        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "Send Anyway")
+        guard alert.runModal() == .alertSecondButtonReturn else { return }
+        proceed()
+    }
 }
 
 extension CommandLibraryPageView: NSTextFieldDelegate {

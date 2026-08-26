@@ -28,6 +28,8 @@ enum AppKitAuditSelfTest {
             ("M1_backToCanvasSyncsTheSpacePill", test_m1),
             ("M5_runHistoryFooterPinsCloseToTheTrailingEdge", test_m5),
             ("M6_runHistorySheetDismissesOnEscape", test_m6),
+            ("S1_S2_aiCommandsReachTheTerminalOnlyThroughTheGate", test_s1_s2),
+            ("S3_multiLineAiCommandsAreRefused", test_s3),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -42,6 +44,79 @@ enum AppKitAuditSelfTest {
               ? "AppKitAuditSelfTest: all \(cases.count) cases passed"
               : "AppKitAuditSelfTest: \(failures)/\(cases.count) cases FAILED")
         return failures == 0
+    }
+
+    // MARK: S1 / S2 / S3 - the AI-authored command gate
+
+    /// S1/S2: the app built one destructive-command confirmation and routed
+    /// its *least* AI-influenced path through it while leaving its two most
+    /// AI-influenced paths ungated. This is a source guard because the gate is
+    /// an `NSAlert.runModal()` - driving it for real means answering a modal,
+    /// which a headless suite cannot do without becoming a worse copy of the
+    /// thing it is checking. What can go wrong is a send site added or
+    /// restored that does not route through the gate, and that is what this
+    /// reads.
+    private static func test_s1_s2() -> String? {
+        guard let dir = SelfTestSources.appSourceDirectory() else { return nil }
+
+        func code(_ file: String) -> String? {
+            guard let raw = try? String(contentsOf: dir.appendingPathComponent(file), encoding: .utf8) else { return nil }
+            return raw.split(separator: "\n", omittingEmptySubsequences: false)
+                .map(String.init)
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+                .joined(separator: "\n")
+        }
+
+        guard let analyzer = code("LogAnalyzerController.swift") else { return nil }
+        // Every suggested command reaches the console through this one method
+        // (the row button and spec §24's ⌘⇧T both call it), so the gate has to
+        // be inside it.
+        guard let body = analyzer.range(of: "private func sendToTerminal(_ command: String) {").map({ String(analyzer[$0.lowerBound...].prefix(900)) }) else {
+            return "LogAnalyzerController.sendToTerminal no longer exists - re-check where suggested commands reach the terminal"
+        }
+        if !body.contains("CommandRiskConfirmation.confirmAIAuthored") {
+            return "the Log Analyzer sends an AI-written command to the terminal without a confirmation (S1)"
+        }
+        // ... and nothing may call the sink around it.
+        let sinkCalls = analyzer.components(separatedBy: "onSendCommandToTerminal(").count - 1
+        if sinkCalls > 1 {
+            return "the Log Analyzer calls its terminal sink from \(sinkCalls) places - only the gated sendToTerminal may (S1)"
+        }
+
+        guard let console = code("ConsoleController.swift") else { return nil }
+        guard let composer = console.range(of: "composer.onRunInTerminal = ").map({ String(console[$0.lowerBound...].prefix(500)) }) else {
+            return "Console's Compose Run-in-Terminal wiring has moved - re-check its gate"
+        }
+        if !composer.contains("CommandRiskConfirmation.confirmAIAuthored") {
+            return "Console Compose runs an AI-written command with no confirmation (S2)"
+        }
+        return nil
+    }
+
+    /// S3: an AI command carrying an embedded newline runs every line as its
+    /// own shell command while the review shows one - which is what made the
+    /// human-in-the-loop mitigation S1/S2 rest on deceptive.
+    private static func test_s3() -> String? {
+        let multiline = [
+            "kubectl get pods\nrm -rf ~/work",
+            "kubectl get pods\r\nrm -rf ~/work",
+            "echo one\necho two",
+        ]
+        for command in multiline where CommandRiskConfirmation.isSingleCommand(command) {
+            return "a command containing a line break was accepted as a single command: \(command.debugDescription)"
+        }
+        // Trailing/leading whitespace is not a second command.
+        for command in ["  kubectl get pods  ", "\nkubectl get pods\n"] where !CommandRiskConfirmation.isSingleCommand(command) {
+            return "a plain command with surrounding whitespace was rejected: \(command.debugDescription)"
+        }
+        // The heuristic never clears anything - the quietest answer still confirms.
+        if CommandRiskConfirmation.heuristicRisk(of: "kubectl get pods -n prod") == .readOnly {
+            return "the AI-command heuristic can clear a command outright, which reintroduces exactly the trust S1 closes"
+        }
+        if CommandRiskConfirmation.heuristicRisk(of: "rm -rf /tmp/x") != .destructive {
+            return "an obviously destructive AI command was not classified as destructive"
+        }
+        return nil
     }
 
     // MARK: M5 / M6 - the Run History sheet
