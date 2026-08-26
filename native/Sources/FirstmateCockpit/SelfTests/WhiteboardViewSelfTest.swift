@@ -93,7 +93,9 @@ enum WhiteboardViewSelfTest {
         check(!controller.debugOverlayVisible, "the overlay should be gone once the canvas is ready")
 
         checkSceneLoading(controller, check)
+        checkFrameChildrenSafetyNet(controller, check)
         checkComposerDrawsOntoTheCanvas(controller, check)
+        checkKubernetesRequestPathRepro(controller, check)
         checkGating(controller, webView, check)
         checkNoLeakedBridgeCalls(webView, check)
 
@@ -182,6 +184,45 @@ enum WhiteboardViewSelfTest {
         check(rejection != nil, "an empty element list should be reported, not silently accepted")
     }
 
+    // MARK: JS-side safety net for a malformed skeleton (real bundle)
+
+    /// The defense-in-depth half of the frame-crash fix
+    /// (`fm/grand-line-whiteboard-generate-crash`): whatever the Swift-side
+    /// `WhiteboardDiagram.parse` validation does or does not catch, the page's
+    /// own `loadScene` must never let a raw internal JS error from
+    /// `convertToExcalidrawElements` reach the captain. This drives
+    /// `controller.debugLoad` directly with a skeleton that skips
+    /// `WhiteboardDiagram.parse` entirely - a frame with no "children" key,
+    /// the exact real, captain-reported crash - against the real vendored
+    /// bundle, so it is the one test in this codebase proving the safety net
+    /// (not just the Swift-side check) actually holds.
+    private static func checkFrameChildrenSafetyNet(_ controller: WhiteboardController, _ check: (Bool, String) -> Void) {
+        let before = statsCount(controller.debugWebView) ?? 0
+
+        let malformedFrame: [[String: Any]] = [
+            ["type": "rectangle", "x": 0, "y": 0, "width": 200, "height": 100, "id": "ingress"],
+            ["type": "frame", "id": "cluster", "name": "Kubernetes Cluster"],
+        ]
+        var failure: String? = "never answered"
+        var answered = false
+        controller.debugLoad(elements: malformedFrame, append: true) { message in
+            failure = message
+            answered = true
+        }
+        check(waitFor(timeout: 15, until: { answered }), "a malformed frame load should still answer")
+        check(failure != nil, "a frame with no children must be reported as a failure, not silently accepted")
+        if let failure {
+            check(!failure.contains("forEach") && !failure.contains("undefined is not an object"),
+                  "the raw JS crash text leaked to the captain: \"\(failure)\"")
+            check(!failure.isEmpty, "the failure needs a real message, not an empty string")
+        }
+        // A rejected load must leave the board untouched - the whole reason
+        // `append` mode exists is so a failed generation cannot destroy
+        // whatever was already there.
+        check((statsCount(controller.debugWebView) ?? -1) == before,
+              "a failed load must not change the board (\(before) -> \(String(describing: statsCount(controller.debugWebView))))")
+    }
+
     // MARK: The composer, end to end
 
     /// The whole AI path as the captain drives it: type a description, click
@@ -218,11 +259,96 @@ enum WhiteboardViewSelfTest {
         WhiteboardDiagram.claudePathOverrideForTests = bad.path
         composer.debugPrepare(prompt: "something impossible", appends: true)
         composer.debugClickGenerate()
-        _ = waitFor(timeout: 20, until: { !composer.debugStatus.contains("Drew") && !composer.debugStatus.isEmpty })
+        // The synchronous interim status ("Asking Claude for a diagram…") set
+        // the instant the click fires already satisfies "not empty and not
+        // Drew" - waiting on that alone (as this used to) does not actually
+        // wait for the async generation to finish, and lets its completion
+        // land later, stale, clobbering whatever the *next* check happens to
+        // be reading at that moment. Wait for the interim status to be gone
+        // instead, matching the positive-outcome wait every other scenario in
+        // this file uses.
+        _ = waitFor(timeout: 20, until: { !composer.debugStatus.isEmpty && !composer.debugStatus.contains("Asking") })
         check(!composer.debugStatus.isEmpty && !composer.debugStatus.contains("Drew"),
               "a prose reply should surface as an error in the popover, got \"\(composer.debugStatus)\"")
         check((statsCount(controller.debugWebView) ?? 0) == after,
               "a failed generation must not change the board")
+    }
+
+    // MARK: The captain's exact repro - "Kubernetes request path"
+
+    /// `fm/grand-line-whiteboard-generate-crash`'s captain-reported repro: type
+    /// "Kubernetes request path" into the composer, click Generate. Two
+    /// scenarios, both against the real composer, real popover controls and
+    /// the real vendored bundle:
+    ///
+    ///  1. A model reply shaped exactly like the one that crashed in the wild
+    ///     (a frame grouping some pods, with no "children" list) must now be
+    ///     refused by `WhiteboardDiagram.parse` - at the *Swift* layer, before
+    ///     ever reaching the page - with a clear message in the popover, and
+    ///     the board must be untouched.
+    ///  2. A well-formed reply for the same prompt - the shape the prompt's
+    ///     own new documentation asks the model to produce - must draw onto
+    ///     the real canvas with no error, which is the acceptance bar the
+    ///     captain's report set.
+    private static func checkKubernetesRequestPathRepro(_ controller: WhiteboardController, _ check: (Bool, String) -> Void) {
+        let composer = controller.debugComposer
+        let before = statsCount(controller.debugWebView) ?? 0
+
+        // Scenario 1: the malformed reply, unwittingly reproducing what a
+        // real Claude call for this exact prompt returned before the prompt
+        // was told about "children".
+        let malformed = "[{\"type\":\"rectangle\",\"x\":0,\"y\":0,\"width\":200,\"height\":100," +
+            "\"id\":\"ingress\",\"label\":{\"text\":\"Ingress\"}}," +
+            "{\"type\":\"rectangle\",\"x\":300,\"y\":0,\"width\":200,\"height\":100," +
+            "\"id\":\"svc\",\"label\":{\"text\":\"Service\"}}," +
+            "{\"type\":\"arrow\",\"x\":210,\"y\":50,\"width\":80,\"height\":0," +
+            "\"start\":{\"id\":\"ingress\"},\"end\":{\"id\":\"svc\"}}," +
+            "{\"type\":\"frame\",\"id\":\"cluster\",\"name\":\"Kubernetes Cluster\"}]"
+        let malformedScript = writeFakeClaude(result: malformed)
+        defer {
+            try? FileManager.default.removeItem(at: malformedScript)
+            WhiteboardDiagram.claudePathOverrideForTests = nil
+        }
+        WhiteboardDiagram.claudePathOverrideForTests = malformedScript.path
+
+        composer.debugPrepare(prompt: "Kubernetes request path", appends: true)
+        composer.debugClickGenerate()
+        _ = waitFor(timeout: 20, until: { !composer.debugStatus.isEmpty && !composer.debugStatus.contains("Asking") })
+        let malformedStatus = composer.debugStatus
+        check(!malformedStatus.isEmpty && !malformedStatus.contains("Drew"),
+              "a frame with no children should surface as a refusal, got \"\(malformedStatus)\"")
+        check(malformedStatus.contains("children"),
+              "the refusal should be the Swift-side parse error naming the missing field, got \"\(malformedStatus)\"")
+        check(!malformedStatus.contains("forEach") && !malformedStatus.contains("undefined is not an object"),
+              "the raw JS crash text must never reach the popover, got \"\(malformedStatus)\"")
+        check((statsCount(controller.debugWebView) ?? -1) == before,
+              "the malformed reply must not touch the board")
+
+        // Scenario 2: a well-formed reply for the identical prompt - the
+        // acceptance bar - draws a real diagram with no error.
+        let wellFormed = "[{\"type\":\"rectangle\",\"x\":0,\"y\":0,\"width\":200,\"height\":100," +
+            "\"id\":\"ingress\",\"label\":{\"text\":\"Ingress\"}}," +
+            "{\"type\":\"rectangle\",\"x\":300,\"y\":0,\"width\":200,\"height\":100," +
+            "\"id\":\"svc-a\",\"label\":{\"text\":\"Service A\"}}," +
+            "{\"type\":\"rectangle\",\"x\":300,\"y\":150,\"width\":200,\"height\":100," +
+            "\"id\":\"svc-b\",\"label\":{\"text\":\"Service B\"}}," +
+            "{\"type\":\"arrow\",\"x\":210,\"y\":50,\"width\":80,\"height\":30," +
+            "\"start\":{\"id\":\"ingress\"},\"end\":{\"id\":\"svc-a\"}}," +
+            "{\"type\":\"arrow\",\"x\":210,\"y\":50,\"width\":80,\"height\":150," +
+            "\"start\":{\"id\":\"ingress\"},\"end\":{\"id\":\"svc-b\"}}," +
+            "{\"type\":\"frame\",\"id\":\"cluster\",\"name\":\"Kubernetes Cluster\"," +
+            "\"children\":[\"ingress\",\"svc-a\",\"svc-b\"]}]"
+        let wellFormedScript = writeFakeClaude(result: wellFormed)
+        defer { try? FileManager.default.removeItem(at: wellFormedScript) }
+        WhiteboardDiagram.claudePathOverrideForTests = wellFormedScript.path
+
+        composer.debugPrepare(prompt: "Kubernetes request path", appends: true)
+        composer.debugClickGenerate()
+        _ = waitFor(timeout: 20, until: { composer.debugStatus.contains("Drew") || composer.debugStatus.contains("couldn't") })
+        check(composer.debugStatus.contains("Drew"),
+              "a well-formed reply for the captain's exact prompt should draw with no error, got \"\(composer.debugStatus)\"")
+        let after = statsCount(controller.debugWebView) ?? 0
+        check(after > before, "the real diagram should reach the canvas (\(before) -> \(after))")
     }
 
     private static func writeFakeClaude(result: String) -> URL {

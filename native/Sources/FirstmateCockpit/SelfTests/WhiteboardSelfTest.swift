@@ -171,6 +171,13 @@ enum WhiteboardSelfTest {
             check(prompt.contains(type), "the prompt should list \(type) as an allowed type")
         }
         check(prompt.contains("\"start\""), "the prompt should show how to bind an arrow to two shapes")
+        // The prompt used to say nothing about "children" at all, and a
+        // frame without one is exactly what crashed Excalidraw's own
+        // `convertToExcalidrawElements` (see `checkParsing`'s frame cases and
+        // this file's `checkFrameChildrenIsDocumented`) - so the model has to
+        // be told the requirement, not just have it silently enforced.
+        check(prompt.contains("\"children\""), "the prompt should show how to give a frame its \"children\" list")
+        check(prompt.lowercased().contains("non-empty"), "the prompt should say a frame's children list must not be empty")
     }
 
     // MARK: Parsing
@@ -239,6 +246,72 @@ enum WhiteboardSelfTest {
             .joined(separator: ",")
         check(succeeded(parse("[\(justEnough)]"))?.count == WhiteboardDiagram.maxElements,
               "exactly maxElements must be accepted - the cap is a ceiling, not an off-by-one")
+
+        checkFrameChildren(check: check, parse: parse, succeeded: succeeded, failureMessage: failureMessage)
+    }
+
+    /// A "frame" skeleton element with no (or a malformed) "children" array is
+    /// exactly the shape that made a real, captain-reported "Kubernetes
+    /// request path" generation crash `convertToExcalidrawElements` deep
+    /// inside the vendored bundle - reproduced live against the real library
+    /// (`undefined is not an object (evaluating 'o.children.forEach')`),
+    /// root-caused by reading its own frame-processing loop, which iterates
+    /// every frame-typed element and calls `.forEach` on `children` with no
+    /// nil guard. This is the parse-time half of the fix: catch it before it
+    /// ever reaches the page. `WhiteboardViewSelfTest.checkFrameChildrenSafetyNet`
+    /// covers the second half - that a malformed skeleton which somehow
+    /// bypasses this check (or trips some other internal library error) still
+    /// cannot surface a raw JS error to the captain.
+    private static func checkFrameChildren(
+        check: (Bool, String) -> Void,
+        parse: (String) -> Result<[[String: Any]], WhiteboardDiagramError>,
+        succeeded: (Result<[[String: Any]], WhiteboardDiagramError>) -> [[String: Any]]?,
+        failureMessage: (Result<[[String: Any]], WhiteboardDiagramError>) -> String?
+    ) {
+        // The exact captain repro: a frame with no "children" key at all.
+        let noChildren = "[{\"type\":\"rectangle\",\"x\":0,\"y\":0,\"width\":100,\"height\":50,\"id\":\"a\"}," +
+            "{\"type\":\"frame\",\"id\":\"cluster\",\"name\":\"Kubernetes Cluster\"}]"
+        let noChildrenMessage = failureMessage(parse(noChildren))
+        check(noChildrenMessage != nil, "a frame with no \"children\" key must be refused, not sent to the canvas")
+        check(noChildrenMessage?.contains("children") == true,
+              "the refusal should name the missing field, got \(String(describing: noChildrenMessage))")
+        // The exact raw JS error text this bug produces must never leak into
+        // the Swift-side message either.
+        check(noChildrenMessage?.contains("forEach") != true && noChildrenMessage?.contains("undefined is not an object") != true,
+              "the refusal must be a human message, not the raw JS crash text, got \(String(describing: noChildrenMessage))")
+
+        let emptyChildren = "[{\"type\":\"frame\",\"id\":\"cluster\",\"children\":[]}]"
+        check(failureMessage(parse(emptyChildren)) != nil,
+              "a frame with an empty \"children\" array must be refused - it does not crash the library, but it groups nothing")
+
+        let notAnArray = "[{\"type\":\"frame\",\"id\":\"cluster\",\"children\":\"a\"}]"
+        check(failureMessage(parse(notAnArray)) != nil, "a frame whose \"children\" isn't an array must be refused")
+
+        let nonStringEntry = "[{\"type\":\"rectangle\",\"x\":0,\"y\":0,\"width\":10,\"height\":10,\"id\":\"a\"}," +
+            "{\"type\":\"frame\",\"id\":\"cluster\",\"children\":[\"a\",1]}]"
+        check(failureMessage(parse(nonStringEntry)) != nil, "a frame \"children\" entry that isn't a string must be refused")
+
+        let danglingReference = "[{\"type\":\"rectangle\",\"x\":0,\"y\":0,\"width\":10,\"height\":10,\"id\":\"a\"}," +
+            "{\"type\":\"frame\",\"id\":\"cluster\",\"children\":[\"does-not-exist\"]}]"
+        let danglingMessage = failureMessage(parse(danglingReference))
+        check(danglingMessage != nil, "a frame naming an id that matches no other element must be refused")
+        check(danglingMessage?.contains("id") == true,
+              "the refusal should explain the id problem, got \(String(describing: danglingMessage))")
+
+        let selfReference = "[{\"type\":\"frame\",\"id\":\"cluster\",\"children\":[\"cluster\"]}]"
+        check(failureMessage(parse(selfReference)) != nil,
+              "a frame naming itself as its own child must be refused")
+
+        // The well-formed shape - a frame with a real, non-empty children
+        // list naming real sibling ids - must still succeed. This is what
+        // keeps the fix from being "reject every frame".
+        let wellFormed = "[{\"type\":\"rectangle\",\"x\":0,\"y\":0,\"width\":100,\"height\":50,\"id\":\"pod-a\"}," +
+            "{\"type\":\"rectangle\",\"x\":150,\"y\":0,\"width\":100,\"height\":50,\"id\":\"pod-b\"}," +
+            "{\"type\":\"frame\",\"id\":\"cluster\",\"name\":\"Kubernetes Cluster\",\"children\":[\"pod-a\",\"pod-b\"]}]"
+        let wellFormedElements = succeeded(parse(wellFormed))
+        check(wellFormedElements?.count == 3, "a well-formed frame with a real children list must be accepted, got \(String(describing: wellFormedElements))")
+        check(wellFormedElements?.last?["children"] as? [String] == ["pod-a", "pod-b"],
+              "the frame's children list must survive parsing unchanged")
     }
 
     // MARK: Generation (real Process/parse path, fake `claude`)
