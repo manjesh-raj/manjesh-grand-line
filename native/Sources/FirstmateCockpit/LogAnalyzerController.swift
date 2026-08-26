@@ -1336,8 +1336,17 @@ extension LogAnalyzerController: NSTextViewDelegate {
     private func addEvidence(raw: String, label: String, origin: LogEvidenceOrigin, sourceDetail: String? = nil) -> Bool {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }
+        return addRedactedEvidence(LogRedactor.redact(raw), label: label, origin: origin, sourceDetail: sourceDetail)
+    }
 
-        let result = LogRedactor.redact(raw)
+    /// T3: the same boundary, entered with the redaction already done.
+    ///
+    /// The redaction boundary is unchanged - raw text is still only ever a
+    /// local, never stored - this just lets `importFiles` do the file read and
+    /// the redaction sweep off the main thread instead of doing both on it for
+    /// every file the captain drops.
+    private func addRedactedEvidence(_ result: LogRedactionResult, label: String, origin: LogEvidenceOrigin, sourceDetail: String? = nil) -> Bool {
+        guard !result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         let detection = LogSourceDetector.detect(result.text, override: sourceOverride)
         let item = LogEvidenceItem(label: label, origin: origin, sourceDetail: sourceDetail,
                                    text: result.text, detection: detection,
@@ -1457,18 +1466,34 @@ extension LogAnalyzerController: NSTextViewDelegate {
 
     /// Spec §2's drag & drop and file picker share this one path.
     func importFiles(_ urls: [URL]) {
-        var added = 0
-        for url in urls {
-            guard let text = try? String(contentsOf: url, encoding: .utf8) else {
-                Toast.show(in: view, message: "Could not read \(url.lastPathComponent) as text")
-                continue
+        // T3: reading a whole log file and sweeping the redaction regexes over
+        // it, once per dropped file, on the main thread - the two things a
+        // captain notices when they drop a large capture. Both off-main now;
+        // only appending the (already redacted) evidence happens on main.
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            var loaded: [(LogRedactionResult, URL)] = []
+            var unreadable: [String] = []
+            for url in urls {
+                guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+                    unreadable.append(url.lastPathComponent)
+                    continue
+                }
+                loaded.append((LogRedactor.redact(text), url))
             }
-            if addEvidence(raw: text, label: url.lastPathComponent, origin: .file, sourceDetail: url.path) {
-                added += 1
+            DispatchQueue.main.async {
+                guard let self else { return }
+                for name in unreadable {
+                    Toast.show(in: self.view, message: "Could not read \(name) as text")
+                }
+                var added = 0
+                for (result, url) in loaded
+                where self.addRedactedEvidence(result, label: url.lastPathComponent, origin: .file, sourceDetail: url.path) {
+                    added += 1
+                }
+                guard added > 0 else { return }
+                Toast.show(in: self.view, message: added == 1 ? "Added 1 file" : "Added \(added) files")
             }
         }
-        guard added > 0 else { return }
-        Toast.show(in: view, message: added == 1 ? "Added 1 file" : "Added \(added) files")
     }
 
     /// Spec §12's "[Paste More Logs]" - reveals the input card again (it is
@@ -1528,12 +1553,30 @@ extension LogAnalyzerController: NSTextViewDelegate {
         guard !isAnalyzing else { return }
 
         let combined = investigation.combinedText
-        let local = Self.buildLocalAnalysis(text: combined, override: sourceOverride)
         // A fresh analysis supersedes any earlier "what's still needed"
         // answer - that list was about the older evidence set.
         neededEvidenceVisible = false
         pendingNeededEvidence = []
 
+        // T3: `buildLocalAnalysis` sweeps regexes over the *entire* evidence
+        // text - source detection, error grouping, the timeline and the
+        // correlation - and the raw pane routinely holds thousands of lines.
+        // This ran synchronously on the main thread from an `@objc` button
+        // action, so the "always present, works offline" half of an analysis
+        // was also the half that froze the window. Only the `claude` call was
+        // ever off-main.
+        let override = sourceOverride
+        setAnalyzing(true, message: "Analyzing output — grouping errors, checking correlation…")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let local = Self.buildLocalAnalysis(text: combined, override: override)
+            DispatchQueue.main.async {
+                self?.finishLocalAnalysis(local, combined: combined)
+            }
+        }
+    }
+
+    /// The main-thread half of `runAnalysis`, once the local layer is built.
+    private func finishLocalAnalysis(_ local: LogLocalAnalysis, combined: String) {
         // Render the local half immediately - a big log's grouping/timeline
         // is genuinely useful on its own, and the captain shouldn't stare at
         // a spinner for it while a network call runs.
@@ -1542,6 +1585,7 @@ extension LogAnalyzerController: NSTextViewDelegate {
         renderInvestigation()
 
         guard LogAnalyzerAI.isAvailable else {
+            setAnalyzing(false, message: "")
             investigation.analysis?.aiFailure = "claude is not installed or not on PATH, so only the local "
                 + "analysis (source detection, severity, grouped patterns and the timeline) is shown."
             renderInvestigation()
@@ -1549,7 +1593,6 @@ extension LogAnalyzerController: NSTextViewDelegate {
             return
         }
 
-        setAnalyzing(true, message: "Analyzing output — grouping errors, checking correlation…")
         LogAnalyzerAI.analyze(mode: mode, local: local, body: combined) { [weak self] result in
             guard let self else { return }
             self.setAnalyzing(false, message: "")
@@ -1833,11 +1876,26 @@ extension LogAnalyzerController {
             Toast.show(in: view, message: "Provide both a Before and an After")
             return
         }
-        // Redacted on the way in here too - Compare accepts raw pasted text
-        // directly, so it needs its own pass rather than relying on
-        // `addEvidence`'s.
-        let redactedBefore = LogRedactor.redact(before)
-        let redactedAfter = LogRedactor.redact(after)
+        // T3: two full redaction passes plus `DiffEngine.lineDiff` - a full
+        // O(n*m) LCS table (now capped, see `DiffEngine.maxLCSCells`) - all ran
+        // synchronously on the main thread from this `@objc` action, on two
+        // captain-pasted logs. Off-main, with the spinner the AI half already
+        // implies, and every view touched back on main.
+        setAnalyzing(true, message: "Comparing the two outputs…")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let redactedBefore = LogRedactor.redact(before)
+            let redactedAfter = LogRedactor.redact(after)
+            let result = LogAnalyzerArtifacts.compare(before: redactedBefore.text, after: redactedAfter.text)
+            DispatchQueue.main.async {
+                self?.finishCompare(redactedBefore: redactedBefore, redactedAfter: redactedAfter, result: result)
+            }
+        }
+    }
+
+    private func finishCompare(redactedBefore: LogRedactionResult,
+                               redactedAfter: LogRedactionResult,
+                               result: LogAnalyzerArtifacts.ComparisonResult) {
+        setAnalyzing(false, message: "")
         if redactedBefore.count + redactedAfter.count > 0 {
             compareBefore.string = redactedBefore.text
             compareAfter.string = redactedAfter.text
@@ -1845,7 +1903,6 @@ extension LogAnalyzerController {
             renderRedactions()
         }
 
-        let result = LogAnalyzerArtifacts.compare(before: redactedBefore.text, after: redactedAfter.text)
         comparison = result
         compareDiff.setRows(result.rows)
         compareDiff.applyTheme(theme)
@@ -1867,8 +1924,17 @@ extension LogAnalyzerController {
         ===== AFTER =====
         \(redactedAfter.text)
         """
-        let local = Self.buildLocalAnalysis(text: body, override: sourceOverride)
+        // T3: this second `buildLocalAnalysis` sweeps the *combined* before+after
+        // text, so it is the larger of the two - off main like the first.
+        let override = sourceOverride
         setAnalyzing(true, message: "Comparing the two outputs…")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let local = Self.buildLocalAnalysis(text: body, override: override)
+            DispatchQueue.main.async { self?.runCompareAIPass(body: body, local: local, localSummary: localSummary) }
+        }
+    }
+
+    private func runCompareAIPass(body: String, local: LogLocalAnalysis, localSummary: String) {
         LogAnalyzerAI.analyze(mode: .compare, local: local, body: body,
                               extraContext: "The counted differences are: \(localSummary)") { [weak self] aiResult in
             guard let self else { return }

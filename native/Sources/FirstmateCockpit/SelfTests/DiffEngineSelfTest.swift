@@ -46,6 +46,7 @@ enum DiffEngineSelfTest {
             ("oneEditedLineProducesAChangedRowWithWordHighlights", test_oneEditedLineProducesAChangedRowWithWordHighlights),
             ("manifestPairProducesExactlyOneRemovedOneChangedTwoAdded", test_manifestPairProducesExactlyOneRemovedOneChangedTwoAdded),
             ("wordDiffPreservesWhitespaceOnReassembly", test_wordDiffPreservesWhitespaceOnReassembly),
+            ("T4_hugeInputsStayBoundedAndSayTheyAreDegraded", test_t4_cap),
         ]
 
         var failures = 0
@@ -59,6 +60,48 @@ enum DiffEngineSelfTest {
         }
         print(failures == 0 ? "DiffEngineSelfTest: all \(cases.count) cases passed" : "DiffEngineSelfTest: \(failures)/\(cases.count) cases FAILED")
         return failures == 0
+    }
+
+    // MARK: T3/T4 - the quadratic cap
+
+    /// `lcsOps` builds a full (n+1)x(m+1) Int matrix, and both callers (the
+    /// Tools page's Diff tab and the Log Analyzer's Compare tab) ran it
+    /// synchronously on the main thread on captain-pasted input - two
+    /// 5,000-line logs is ~25M cells and seconds of work.
+    private static func test_t4_cap() -> String? {
+        // Two large, genuinely different inputs with no shared head or tail,
+        // so the prefix/suffix trim cannot rescue them.
+        let n = 4000
+        let before = (0..<n).map { "left line \($0) \(($0 * 7) % 13)" }.joined(separator: "\n")
+        let after = (0..<n).map { "right line \($0) \(($0 * 11) % 17)" }.joined(separator: "\n")
+
+        let start = Date()
+        let diff = DiffEngine.checkedLineDiff(before: before, after: after)
+        let elapsed = Date().timeIntervalSince(start)
+        if elapsed > 5 {
+            return "a \(n)-line comparison took \(String(format: "%.1f", elapsed))s - the cap is not holding"
+        }
+        if diff.degradedNote == nil {
+            return "a comparison well past maxLCSCells did not report itself as degraded - a silent cap"
+        }
+        if diff.rows.isEmpty {
+            return "the degraded comparison produced no rows at all"
+        }
+
+        // Trimming the common head/tail is exact, so a pair that differs only
+        // in the middle must NOT be reported as degraded even when it is long.
+        let shared = (0..<n).map { "shared \($0)" }
+        var tweaked = shared
+        tweaked[n / 2] = "changed here"
+        let exact = DiffEngine.checkedLineDiff(before: shared.joined(separator: "\n"),
+                                               after: tweaked.joined(separator: "\n"))
+        if exact.degradedNote != nil {
+            return "a long pair that differs on one line was reported as degraded - the head/tail trim is not running"
+        }
+        if exact.rows.filter({ $0.kind != .unchanged }).count != 1 {
+            return "the trimmed comparison did not find exactly the one changed line"
+        }
+        return nil
     }
 
     // MARK: Cases - each returns `nil` on success, or a failure message.
