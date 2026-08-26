@@ -1050,7 +1050,6 @@ final class AppShellController: NSViewController {
         // and the canvas itself, leave the pills alone - the canvas's space is
         // whatever the captain last chose, which `selectSpace` still owns.
 
-
         if let space = DaylightModule.space(forDestination: dest) {
             bar.setSelectedSpace(space)
         } else if dest == .homeCanvas {

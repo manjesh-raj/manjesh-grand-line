@@ -20,7 +20,7 @@
 //     never written back into `SSHKeyStore` on import (a metadata-only
 //     key entry with no secret behind it would be worse than the plain
 //     "re-add this key" message this file's diff already produces).
-//   - A named subset of `AppSettings`: mirror target, default working
+//   - A named subset of `AppSettings`: the default working
 //     directory, the active theme id, terminal font size, and the two
 //     terminal-behavior toggles (auto-reconnect, needs-decision
 //     notifications). Everything else backed by `UserDefaults` in this app
