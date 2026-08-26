@@ -1,22 +1,19 @@
 // Manjesh Grand Line - native macOS app.
 //
-// `fm/grandline-log-analyzer-build`, spec §14 ("this is extremely
-// important"): every piece of text the Log Analyzer touches passes through
-// here *first*, before it is stored on this type's own model, before it is
-// rendered, and - the part that actually matters - before any of it reaches
-// a `claude -p` process.
+// Originally built for the Log Analyzer feature (`fm/grandline-log-analyzer-
+// build`, spec §14, "this is extremely important") to redact secrets from
+// captured terminal text before storing/rendering it or handing it to
+// `claude -p`. That feature was removed outright by
+// `fm/grandline-menubar-remove-items`, but this redaction engine is a real,
+// standalone dependency Incident mode (F8) also relies on - see
+// `IncidentStore.append`'s own doc comment - so it stayed rather than being
+// deleted with the rest.
 //
-// The ordering guarantee, and where it is enforced: `LogAnalyzerController`
-// calls `LogRedactor.redact` at the single moment a piece of evidence is
-// created (paste, drop, clipboard, or the terminal bridge) and stores only
-// the redacted string on `LogEvidenceItem.text`. Nothing downstream ever
-// sees the raw text again - it is a local `let` in that one call and is
-// never written to the model, to disk, or to a pasteboard. So the AI layer
-// (`LogAnalyzerAI`) cannot leak a secret even if it were called wrongly:
-// there is no unredacted copy left for it to read. `LogAnalyzerSelfTest`
-// asserts this the only way that is actually meaningful - by grepping the
-// literal bytes of a built prompt and a saved investigation file for the
-// planted secret values, rather than by reasoning about call order.
+// The ordering guarantee still matters wherever this is called from: run
+// `redact` at the single moment raw text is captured, store only the
+// redacted string, and never keep the raw text around afterward. Nothing
+// downstream should ever see the raw text again - it should be a local `let`
+// in that one call, never written to the model, to disk, or to a pasteboard.
 //
 // What a `Redaction` deliberately does NOT carry: the secret. `preview` is
 // the *masked* result line, and `matchedText` is a fingerprint - the first

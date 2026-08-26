@@ -18,10 +18,6 @@
 //   - `noteSRELeadTurn`      called from `handleSRELeadSubmit`'s own reply
 //                            completion - the same place the notification
 //                            centre is already told about a background reply.
-//   - `noteLogCapture`       called from `analyzeLogsTapped`, with the capture
-//                            `LogTerminalCaptureBuilder` already built.
-//   - `noteInvestigationSaved` forwarded from `LogAnalyzerController`'s own
-//                            save, via `AppShellController`.
 //   - `noteRunbookRun`       forwarded from `SRELeadBridge`, which reads the
 //                            event file `sre_kubectl_mcp.py`'s existing
 //                            `run_runbook` writes after it finishes. The
@@ -182,11 +178,6 @@ extension ConsoleController {
             self.incidentStore.append(IncidentSources.note(text), to: incident.id)
             self.renderIncidentCard()
         }
-        incidentCard.onOpenEvidence = { [weak self] reference in
-            self?.incidentPopover.performClose(nil)
-            self?.onOpenInvestigation?(reference)
-        }
-
         let controller = NSViewController()
         controller.view = incidentCard
         incidentPopover.contentViewController = controller
@@ -260,33 +251,6 @@ extension ConsoleController {
         incidentStore.append(IncidentSources.sreLeadTurn(question: question, tabName: tab.name, turn: turn),
                              to: incident.id,
                              artifactText: transcript)
-        renderIncidentCardIfShown()
-    }
-
-    /// The Analyze Logs capture. Only the capture's *shape* is recorded - the
-    /// line count and the scope sentence the builder already wrote for the
-    /// captain - never `capture.text`, which at this point has not been
-    /// through `LogRedactor` yet (that happens inside
-    /// `LogAnalyzerController.addEvidence`).
-    func noteLogCapture(_ capture: LogTerminalCapture, tabName: String) {
-        guard let incident = activeIncident() else { return }
-        let lines = capture.text.split(separator: "\n", omittingEmptySubsequences: false).count
-        incidentStore.append(IncidentSources.logCapture(tabName: tabName,
-                                                        lineCount: lines,
-                                                        scopeDescription: capture.scopeDescription),
-                             to: incident.id)
-        renderIncidentCardIfShown()
-    }
-
-    /// A Log Analyzer investigation that was saved while this incident was
-    /// active - the evidence row the captain can reopen later. Idempotent:
-    /// `LogAnalyzerController.persistIfNeeded` runs on every storage-choice
-    /// change for the same investigation, and the timeline wants one row per
-    /// investigation, not one per edit.
-    func noteInvestigationSaved(id: String, title: String) {
-        guard let incident = activeIncident() else { return }
-        guard !incident.entries.contains(where: { $0.reference == id }) else { return }
-        incidentStore.append(IncidentSources.investigationSaved(title: title, id: id), to: incident.id)
         renderIncidentCardIfShown()
     }
 

@@ -325,11 +325,11 @@ enum AppShellDrillHeaderTitleSelfTest {
 
             var failures: [String] = []
             for i in 0..<12 {
-                shell.show(.logAnalyzer)
+                shell.show(.review)
                 window.displayIfNeeded()
                 shell.show(.console)
                 window.displayIfNeeded()
-                if let failure = titleFitsFailure(shell.drillHeaderForTests, context: "revisit \(i): .logAnalyzer -> .console") {
+                if let failure = titleFitsFailure(shell.drillHeaderForTests, context: "revisit \(i): .review -> .console") {
                     failures.append(failure)
                 }
             }

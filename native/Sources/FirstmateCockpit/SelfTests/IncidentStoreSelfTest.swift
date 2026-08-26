@@ -99,19 +99,17 @@ enum IncidentStoreSelfTest {
 
         // MARK: Appends hit the disk immediately, one at a time
 
-        let capture = IncidentSources.logCapture(tabName: "EKS Preprod Bastion",
-                                                 lineCount: 42,
-                                                 scopeDescription: "the last completed command's output")
-        check(store.append(capture, to: created.id), "appending a capture entry should succeed")
+        let firstNote = IncidentSources.note("paged by monitoring")
+        check(store.append(firstNote, to: created.id), "appending a note entry should succeed")
         check(IncidentStore(root: scratch).load(id: created.id)?.entries.count == 1,
-              "the capture entry should be on disk before append returned")
+              "the note entry should be on disk before append returned")
 
         let runbook = IncidentSources.runbookRun(name: "Restart OOMKilled pod", ran: 2, total: 2,
                                                  ok: true, refused: false)
         check(store.append(runbook, to: created.id), "appending a runbook entry should succeed")
         let afterTwo = IncidentStore(root: scratch).load(id: created.id)
         check(afterTwo?.entries.count == 2, "both entries should be on disk, got \(afterTwo?.entries.count ?? -1)")
-        check(afterTwo?.entries.first?.kind == .logCapture, "entries should keep the order they happened in")
+        check(afterTwo?.entries.first?.kind == .note, "entries should keep the order they happened in")
         check(afterTwo?.entries.last?.title.contains("Restart OOMKilled pod") == true,
               "the runbook entry should name the runbook")
         check(afterTwo?.entries.last?.detail == "2 steps · all green",
@@ -172,19 +170,6 @@ enum IncidentStoreSelfTest {
         check(long.title.count <= IncidentTimelineEntry.maxTextLength,
               "a pathological title must be bounded, got \(long.title.count) characters")
 
-        // MARK: Evidence is the captures, not everything
-
-        let evidence = IncidentStore(root: scratch).load(id: created.id)?.evidenceEntries ?? []
-        check(evidence.count == 1, "only the capture should be evidence, got \(evidence.count)")
-        check(evidence.first?.kind == .logCapture, "evidence rows should all be captures")
-
-        // A saved investigation is the openable kind of evidence.
-        let saved = IncidentSources.investigationSaved(title: "payments-worker crash loop", id: "inv-77")
-        check(saved.reference == "inv-77", "a saved investigation should carry its id as the reference")
-        check(store.append(saved, to: created.id), "appending a saved investigation should succeed")
-        check(IncidentStore(root: scratch).load(id: created.id)?.evidenceEntries.count == 2,
-              "a saved investigation should join the evidence list")
-
         // MARK: What the postmortem generator is actually fed
 
         guard let full = IncidentStore(root: scratch).load(id: created.id) else {
@@ -196,7 +181,6 @@ enum IncidentStoreSelfTest {
               "the aggregate should identify the incident")
         check(aggregate.contains("EKS Preprod Bastion"), "the aggregate should name the host")
         check(aggregate.contains("Restart OOMKilled pod"), "the aggregate should include the runbook run")
-        check(aggregate.contains("Log Analyzer capture"), "the aggregate should include the capture")
         check(aggregate.contains("the pod cannot reach S3"),
               "the aggregate should include the SRE Lead transcript itself, not just a one-liner")
         check(!aggregate.contains(secret), "the aggregate handed to the generator must be redacted too")

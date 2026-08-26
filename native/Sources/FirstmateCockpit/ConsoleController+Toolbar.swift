@@ -83,20 +83,9 @@ extension ConsoleController {
         // request - the toolbar prototype's own original pairing
         // (this file's header).
         toolViews.append(quotaUsageButton)
-        // Analyze Logs sits immediately after Compose, so the three
-        // investigation-shaped features (SRE Lead, Compose, Analyze Logs)
-        // read as one cluster - the placement the captain asked for.
-        if !isFirstmateConsole {
-            let button = makeLabeledButton(symbol: "text.magnifyingglass", title: "Analyze Logs",
-                                           tooltip: "Send this tab's last command output to the Log Analyzer. "
-                                               + "Select text in the terminal first to send that instead.",
-                                           action: #selector(analyzeLogsTapped))
-            analyzeLogsButton = button
-            toolViews.append(button)
-        }
-        // F8 (incident mode): the red action that ties SRE Lead, the Log
-        // Analyzer and runbook runs on this host into one record. Sits at the
-        // end of the investigation cluster (SRE Lead / Compose / Analyze Logs)
+        // F8 (incident mode): the red action that ties SRE Lead and runbook
+        // runs on this host into one record. Sits at the
+        // end of the investigation cluster (SRE Lead / Compose)
         // and, like SRE Lead, only exists on a dedicated host page - an
         // incident belongs to a host.
         if !isFirstmateConsole {

@@ -95,17 +95,6 @@ final class AppShellController: NSViewController {
     private let overview: FleetController
     private let shift: ShiftController
     private let review = ReviewController()
-    /// `fm/grandline-log-analyzer-build`: the Log / Output Analyzer page.
-    /// Owns its own `CommandLibraryStore`/`DocsRunbookStore`/
-    /// `LogAnalyzerStore`, so this controller needs to know nothing about
-    /// any of them - the same forward-don't-own convention every other
-    /// destination here follows.
-    private let logAnalyzer: LogAnalyzerController
-    /// F8: the host page whose capture seeded whatever the Log Analyzer is
-    /// currently showing, so a save can be attached to that host's incident.
-    /// Weak - a deleted host's page is torn down and must not be kept alive
-    /// by this.
-    private weak var logAnalyzerCaptureSource: ConsoleController?
     private let tools = ToolsController()
     /// `fm/grand-line-whiteboard-excalidraw`: the embedded Excalidraw canvas.
     /// Lazy like every other utility destination, and deliberately so - see
@@ -293,8 +282,6 @@ final class AppShellController: NSViewController {
         // write the same tasks/follow-ups this page shows, not a second
         // independent store instance.
         self.shift = ShiftController(store: shiftStore, commandLibraryStore: commandLibraryStore)
-        // GL-23: the same instance the Tasks page uses.
-        self.logAnalyzer = LogAnalyzerController(commandLibrary: commandLibraryStore)
         self.bootstrap = BootstrapController(hostStore: hostStore, keyStore: keyStore, dictationStore: dictationStore)
         self.automation = AutomationController(hostStore: hostStore, keyStore: keyStore,
                                                dictationStore: dictationStore)
@@ -304,17 +291,16 @@ final class AppShellController: NSViewController {
         self.makeHostConsole = makeHostConsole
         // Daylight Phase 2: the canvas reads already-owned stores, never its
         // own - see `HomeCanvasController`'s header, and the source guard in
-        // `DaylightModuleSelfTest` that enforces it. `DocsRunbookStore` and
-        // `LogAnalyzerStore` are the two the shell did not already hold, so
-        // they are constructed here alongside the rest of this controller's
-        // own dependencies rather than inside the canvas - each store re-reads
-        // its git-synced folder per call, which is the same "an independent
-        // instance is fine and cheap" pattern `UnifiedSearch` already uses.
+        // `DaylightModuleSelfTest` that enforces it. `DocsRunbookStore` is
+        // the one the shell did not already hold, so it is constructed here
+        // alongside the rest of this controller's own dependencies rather
+        // than inside the canvas - each store re-reads its git-synced folder
+        // per call, which is the same "an independent instance is fine and
+        // cheap" pattern `UnifiedSearch` already uses.
         self.homeCanvas = HomeCanvasController(sources: .init(
             shiftStore: shiftStore,
             hostStore: hostStore,
             scheduleStore: scheduleStore,
-            logAnalyzerStore: LogAnalyzerStore(),
             docsRunbookStore: DocsRunbookStore()))
         super.init(nibName: nil, bundle: nil)
     }
@@ -411,7 +397,6 @@ final class AppShellController: NSViewController {
         mounter.register(DestinationSlot(id: .hosts, title: RailDestination.hosts.bodyTitle, mountsEagerly: false, controller: hostsPanel))
         mounter.register(DestinationSlot(id: .shift, title: RailDestination.shift.bodyTitle, mountsEagerly: false, controller: shift))
         mounter.register(DestinationSlot(id: .review, title: RailDestination.review.bodyTitle, mountsEagerly: true, controller: review))
-        mounter.register(DestinationSlot(id: .logAnalyzer, title: RailDestination.logAnalyzer.bodyTitle, mountsEagerly: false, controller: logAnalyzer))
         mounter.register(DestinationSlot(id: .tools, title: RailDestination.tools.bodyTitle, mountsEagerly: false, controller: tools))
         mounter.register(DestinationSlot(id: .whiteboard, title: RailDestination.whiteboard.bodyTitle, mountsEagerly: false, controller: whiteboard))
         mounter.register(DestinationSlot(id: .vault, title: RailDestination.vault.bodyTitle, mountsEagerly: false, controller: vault))
@@ -583,33 +568,6 @@ final class AppShellController: NSViewController {
             self?.onSendCommandToHosts?(command, values, generated)
         }
 
-        // `fm/grandline-log-analyzer-build`: the Log Analyzer forwards the
-        // same two things Shift's Command Library already does - "run this
-        // command" goes to whichever console tab is in front, and a runbook
-        // or postmortem it just wrote opens in Docs. It owns neither.
-        logAnalyzer.onSendCommandToTerminal = { [weak self] text in
-            self?.console.sendCommandLibraryTextToActiveTab(text)
-        }
-        logAnalyzer.onOpenRunbook = { [weak self] id in self?.openRunbook(id: id) }
-        // `fm/grandline-docs-split-runbooks-postmortems`: `createIncident()`
-        // used to route its saved-postmortem confirmation through
-        // `onOpenRunbook` too, which opened it as a runbook - a postmortem id
-        // is never in `listRunbooks()`, so that silently no-opped. Fixed by
-        // giving it its own closure, wired to the postmortem destination.
-        logAnalyzer.onOpenPostmortem = { [weak self] id in self?.openPostmortem(id: id) }
-        // F8 (incident mode): a saved investigation attaches as openable
-        // evidence to the incident on whichever host page handed over the
-        // capture this investigation was built from - which is the only
-        // honest correlation available, since the Log Analyzer itself has no
-        // notion of a host. A clipboard analysis or an investigation reopened
-        // from history clears that association first (see
-        // `logAnalyzerCaptureSource`), so a save then attaches to nothing
-        // rather than to whichever host happened to be last.
-        logAnalyzer.onInvestigationSaved = { [weak self] id, title in
-            self?.logAnalyzerCaptureSource?.noteInvestigationSaved(id: id, title: title)
-        }
-        logAnalyzer.onOpenConsole = { [weak self] in self?.show(.console) }
-
         // fm/grandline-sidebar-badges: forward each page's own already-
         // computed "needs you" count straight to its rail icon - no new
         // signal invented here, just the counts these two pages already
@@ -687,7 +645,6 @@ final class AppShellController: NSViewController {
         // this too.
         setup.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         schedules.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        logAnalyzer.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         vault.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Docs' subtitle still tracks the Playbook's own real sync state; its
         // action cluster no longer changes while it's on screen now that the
@@ -1376,17 +1333,6 @@ final class AppShellController: NSViewController {
             }
         }
 
-        // `fm/grandline-log-analyzer-build`: reassigned on every call for
-        // the same reason `onSRELeadReplyWhileBackground` above is - a
-        // renamed host should show its current label on the imported
-        // evidence, and the closure only reads it when a capture actually
-        // happens.
-        controller.onAnalyzeLogs = { [weak self, weak controller] capture, tabName in
-            guard let self else { return }
-            self.logAnalyzerCaptureSource = controller
-            self.openLogAnalyzer(with: capture, hostLabel: "\(hostLabel) · \(tabName)")
-        }
-
         // F8 (incident mode): this page's host identity. Set on every call
         // for the same reason the two closures above are reassigned - a
         // renamed host should show its current label on a new incident - and
@@ -1400,17 +1346,6 @@ final class AppShellController: NSViewController {
         // reason the closures above are - the page is created once and
         // reconnected many times.
         controller.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-
-        // The incident card's Evidence tab reopening a saved Log Analyzer
-        // investigation. Routed through this controller because a console
-        // page knows nothing about rail destinations, exactly like
-        // `onAnalyzeLogs` above.
-        controller.onOpenInvestigation = { [weak self] investigationID in
-            guard let self else { return }
-            self.show(.logAnalyzer)
-            self.logAnalyzerCaptureSource = nil
-            self.logAnalyzer.openSavedInvestigation(id: investigationID)
-        }
 
         // F9 (v1): a multi-host send connects several hosts in one pass and
         // navigates once, at the end, to the first of them - so every
@@ -1777,46 +1712,6 @@ final class AppShellController: NSViewController {
     /// only the delivery half.
     func sendCommandToConsole(_ text: String) {
         console.sendCommandLibraryTextToActiveTab(text)
-    }
-
-    // MARK: Log Analyzer (`fm/grandline-log-analyzer-build`)
-
-    /// ⌘⇧L / the Log Analyzer menu's "Open Log Analyzer" - switches to the
-    /// destination and focuses its input so a paste lands immediately (spec
-    /// §24's own success-criteria flow: ⌘⇧L → paste → ⌘↵).
-    @objc func showLogAnalyzer() {
-        show(.logAnalyzer)
-        logAnalyzer.focusForPaste()
-    }
-
-    /// The clipboard quick action (spec §2).
-    @objc func analyzeClipboardInLogAnalyzer() {
-        show(.logAnalyzer)
-        logAnalyzerCaptureSource = nil
-        logAnalyzer.analyzeClipboard()
-    }
-
-    /// Spec §2's terminal bridge. Called from the app delegate, which owns
-    /// the host consoles' `onAnalyzeLogs` closure - the capture decision
-    /// itself is made in `ConsoleController` (which has the tab, its block
-    /// tracker and its selection) via `LogTerminalCaptureBuilder`, so this
-    /// only routes an already-built capture to the page.
-    func openLogAnalyzer(with capture: LogTerminalCapture, hostLabel: String) {
-        show(.logAnalyzer)
-        logAnalyzer.importTerminalCapture(capture, hostLabel: hostLabel)
-    }
-
-    /// The remaining spec §24 shortcuts, all routed through the destination
-    /// so they behave identically whether they came from the menu or the
-    /// page's own buttons.
-    @objc func logAnalyzerCopyAnalysis() { showThenRun { $0.menuCopyAnalysis() } }
-    @objc func logAnalyzerSendToTerminal() { showThenRun { $0.menuSendToTerminal() } }
-    @objc func logAnalyzerInvestigateFurther() { showThenRun { $0.menuInvestigateFurther() } }
-    @objc func logAnalyzerCreateRCA() { showThenRun { $0.menuCreateRCA() } }
-
-    private func showThenRun(_ body: (LogAnalyzerController) -> Void) {
-        show(.logAnalyzer)
-        body(logAnalyzer)
     }
 
     /// Fix 5: a host save closes its own (separate) editor window

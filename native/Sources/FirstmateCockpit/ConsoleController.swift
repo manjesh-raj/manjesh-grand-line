@@ -240,27 +240,6 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// Phase 3 of "Knowledge and speed" (`fm/grandline-console-command-
     /// composer`) - only ever shown for a plain `.shell` tab that isn't a
     /// one-shot command, see `updateComposeControls`.
-    /// `fm/grandline-log-analyzer-build`, spec §2's "Send from Terminal":
-    /// captures this tab's most recent completed command (or the captain's
-    /// current selection) and hands it to the Log Analyzer. A peer of SRE
-    /// Lead and Compose in the same toolbar cluster, and - like SRE Lead -
-    /// a dedicated-host-page affordance only (`!isFirstmateConsole`): the
-    /// shared Firstmate console's own Shell tab is this app's own
-    /// session, not infrastructure output an investigation would be built
-    /// from. See `LogAnalyzerCapture.swift` for exactly what gets captured
-    /// and what happens on a host without per-command block tracking.
-    var analyzeLogsButton: HelmButton?
-
-    /// Fired by "Analyze Logs" with an already-built capture plus this
-    /// tab's label. Forwarded (never handled here) exactly like every other
-    /// cross-destination action this controller exposes - the console knows
-    /// nothing about the Log Analyzer destination.
-    var onAnalyzeLogs: ((LogTerminalCapture, String) -> Void)?
-
-    /// F8 (incident mode): forwarded to `AppShellController`, which opens the
-    /// Log Analyzer on a saved investigation. Fired only from the incident
-    /// card's Evidence tab, for a row that carries a real investigation id.
-    var onOpenInvestigation: ((String) -> Void)?
 
     // MARK: F8 - incident mode (dedicated host pages only)
     //

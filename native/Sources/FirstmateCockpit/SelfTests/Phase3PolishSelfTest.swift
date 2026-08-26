@@ -206,7 +206,6 @@ enum Phase3PolishSelfTest {
             ("GitHubSyncData.swift", "pruneOrphanedManualClones", "nothing removes a clone for a repo no longer in the catalog"),
             ("WhisperModel.swift", "deleteDownloadedModel", "the 547MB model has no delete action"),
             ("ShiftStore.swift", "completedTasksCache", "completed month files are parsed per render again"),
-            ("LogAnalyzerStore.swift", "invalidateHistoryCache", "the investigation history walk is uncached again"),
         ]
         for expectation in expectations {
             guard let text = try? String(contentsOf: dir.appendingPathComponent(expectation.file), encoding: .utf8) else {

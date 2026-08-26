@@ -1002,56 +1002,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         quickCaptureItem.target = self
         shiftMenu.addItem(quickCaptureItem)
 
-        // Log Analyzer menu (`fm/grandline-log-analyzer-build`, spec §24).
-        //
-        // **Shortcut collisions were checked against this file, not assumed.**
-        // ⌘⇧L / ⌘⇧C / ⌘⇧T / ⌘⇧I were all genuinely free. ⌘⇧R was NOT - the
-        // Tab menu's "Rename Tab…" below already owns it - so spec §24's
-        // "⌘⇧R Create RCA" is bound to **⌘⇧A** instead (A for "after-action
-        // review"), which is free; taking ⌘⇧R would have silently broken an
-        // already-shipped shortcut. ⌘↵ (Analyze) is not a menu item at all:
-        // it is `analyzeButton`'s own `keyEquivalent`, so it only fires while
-        // the page is on screen rather than analyzing from any destination.
-        // Esc is handled by `LogAnalyzerController.cancelOperation`, the
-        // responder-chain path, for the same reason.
-        let logAnalyzerMenuItem = NSMenuItem()
-        mainMenu.addItem(logAnalyzerMenuItem)
-        let logAnalyzerMenu = NSMenu(title: "Log Analyzer")
-        logAnalyzerMenuItem.submenu = logAnalyzerMenu
-
-        let openAnalyzerItem = NSMenuItem(title: "Open Log Analyzer",
-                                          action: #selector(AppShellController.showLogAnalyzer), keyEquivalent: "l")
-        openAnalyzerItem.keyEquivalentModifierMask = [.command, .shift]
-        logAnalyzerMenu.addItem(openAnalyzerItem)
-
-        let analyzeClipboardItem = NSMenuItem(title: "Analyze Clipboard",
-                                              action: #selector(AppShellController.analyzeClipboardInLogAnalyzer),
-                                              keyEquivalent: "")
-        logAnalyzerMenu.addItem(analyzeClipboardItem)
-        logAnalyzerMenu.addItem(NSMenuItem.separator())
-
-        let copyAnalysisItem = NSMenuItem(title: "Copy Analysis",
-                                          action: #selector(AppShellController.logAnalyzerCopyAnalysis), keyEquivalent: "c")
-        copyAnalysisItem.keyEquivalentModifierMask = [.command, .shift]
-        logAnalyzerMenu.addItem(copyAnalysisItem)
-
-        let sendToTerminalItem = NSMenuItem(title: "Send Top Command to Terminal",
-                                            action: #selector(AppShellController.logAnalyzerSendToTerminal), keyEquivalent: "t")
-        sendToTerminalItem.keyEquivalentModifierMask = [.command, .shift]
-        logAnalyzerMenu.addItem(sendToTerminalItem)
-
-        let investigateItem = NSMenuItem(title: "Investigate Further",
-                                         action: #selector(AppShellController.logAnalyzerInvestigateFurther), keyEquivalent: "i")
-        investigateItem.keyEquivalentModifierMask = [.command, .shift]
-        logAnalyzerMenu.addItem(investigateItem)
-
-        let createRCAItem = NSMenuItem(title: "Create RCA",
-                                       action: #selector(AppShellController.logAnalyzerCreateRCA), keyEquivalent: "a")
-        createRCAItem.keyEquivalentModifierMask = [.command, .shift]
-        logAnalyzerMenu.addItem(createRCAItem)
-
-        for item in logAnalyzerMenu.items { item.target = appShell }
-
         // Keys menu - the Phase 2 Keychain screen. Both items target the app
         // shell (so they work regardless of focus, like the Hosts menu's New
         // Host / Quick Connect above). Phase 5 of the full-app UI audit folded
@@ -1147,11 +1097,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 // self-test process, unless the caller already pointed it somewhere.
 //
 // Not a precaution - a real defect this caught. `FleetLogStore.shared` is
-// appended to by `ShiftGitSync.resolveConflicts` and `LogAnalyzerStore.save`,
-// which `ShiftConflictSelfTest` and `LogAnalyzerSelfTest` both drive against
-// their own scratch stores. Those suites correctly override every store they
-// know about (`FM_SHIFT_DIR`, `FM_LOG_ANALYZER_DIR`, ...), but the fleet log
-// is reached indirectly, through a singleton neither of them constructs - so
+// appended to by `ShiftGitSync.resolveConflicts` and (formerly)
+// `LogAnalyzerStore.save`, deleted along with the rest of the Log Analyzer
+// feature by `fm/grandline-menubar-remove-items` - `ShiftConflictSelfTest`
+// drives one of those paths against its own scratch stores, correctly
+// overriding every store it knows about (`FM_SHIFT_DIR`, ...), but the fleet log
+// is reached indirectly, through a singleton it never constructs - so
 // a plain `./Scripts/run-all-tests.sh` wrote three fabricated events into the
 // captain's real `events.jsonl`. Doing it here rather than in those two
 // suites covers every present and future suite that reaches an append path,
@@ -1474,15 +1425,6 @@ if ProcessInfo.processInfo.environment["FM_RUN_APP_LOCK_TESTS"] == "1" {
     exit(AppLockControllerSelfTest.run() ? 0 : 1)
 }
 
-// `fm/grandline-log-analyzer-build`: same convention, for the Log Analyzer's
-// whole pure-logic layer - redaction (including byte-level greps of a built
-// AI prompt and a saved investigation for planted secrets), source detection,
-// severity/grouping, timeline, correlation, AI reply parsing, Command Library
-// matching, artifact rendering, comparison, storage, and the terminal-capture
-// scope rule - see LogAnalyzerSelfTest.swift's header.
-if ProcessInfo.processInfo.environment["FM_RUN_LOG_ANALYZER_TESTS"] == "1" {
-    exit(LogAnalyzerSelfTest.run() ? 0 : 1)
-}
 
 // P2-P6 (`data/grand-line-e2e-audit/report.md`): the performance findings that
 // are testable as behaviour - see AuditPerfFixesSelfTest.swift's header.

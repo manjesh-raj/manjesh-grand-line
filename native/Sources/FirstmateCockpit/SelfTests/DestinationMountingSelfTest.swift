@@ -136,7 +136,7 @@ enum DestinationMountingSelfTest {
             // mounting it eagerly would start a WebKit content process at
             // launch for a page the captain may never open
             // (`fm/grand-line-whiteboard-excalidraw`).
-            let mustBeLazy: Set<DestinationSlotID> = [.docs, .runbooks, .postmortems, .tools, .whiteboard, .logAnalyzer, .vault, .dictation, .schedules, .health, .hosts, .shift, .settings]
+            let mustBeLazy: Set<DestinationSlotID> = [.docs, .runbooks, .postmortems, .tools, .whiteboard, .vault, .dictation, .schedules, .health, .hosts, .shift, .settings]
             let eagerlyBuilt = mounted.intersection(mustBeLazy)
             guard eagerlyBuilt.isEmpty else {
                 return "these should not be built at launch: \(eagerlyBuilt.map(\.rawValue).sorted())"
