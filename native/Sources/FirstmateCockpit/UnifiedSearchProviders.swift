@@ -375,6 +375,36 @@ struct UnifiedSearchDocsProvider: UnifiedSearchProvider {
     let onOpenRunbook: (String) -> Void
     let onOpenPostmortem: (String) -> Void
 
+    /// The corpus, held briefly so a burst of keystrokes reads the library
+    /// once rather than once per character.
+    ///
+    /// This provider used to call `DocsKnowledgeSearch.search(query:store:)`
+    /// on every keystroke, which re-enumerates both directories and reads the
+    /// whole content of every markdown file - synchronous, on main, uncached.
+    /// A short TTL rather than a session cache: the palette's owner
+    /// (`AppDelegate.unifiedSearch`) is app-lifetime, so "for this session"
+    /// would mean "until relaunch", and a runbook saved while the app is open
+    /// has to turn up. Two seconds covers typing and is under the time it
+    /// takes to switch to Runbooks, add one, and come back.
+    private final class Corpus {
+        static let ttl: TimeInterval = 2
+        var loadedAt = Date.distantPast
+        var runbooks: [DocsRunbook] = []
+        var postmortems: [DocsRunbook] = []
+    }
+
+    private static let corpus = Corpus()
+
+    private func loadedCorpus() -> (runbooks: [DocsRunbook], postmortems: [DocsRunbook]) {
+        let corpus = Self.corpus
+        if Date().timeIntervalSince(corpus.loadedAt) >= Corpus.ttl {
+            corpus.runbooks = store.listRunbooks()
+            corpus.postmortems = store.listPostmortems()
+            corpus.loadedAt = Date()
+        }
+        return (corpus.runbooks, corpus.postmortems)
+    }
+
     static func runbookMeta(_ runbook: DocsRunbook) -> String {
         let steps = DocsRunbookMetadata.stepCount(in: runbook.content)
         var bits = ["Runbook"]
@@ -384,7 +414,10 @@ struct UnifiedSearchDocsProvider: UnifiedSearchProvider {
     }
 
     func items(query: String) -> [UnifiedSearchItem] {
-        DocsKnowledgeSearch.search(query: query, store: store).map { result in
+        let corpus = loadedCorpus()
+        return DocsKnowledgeSearch.search(query: query,
+                                          runbooks: corpus.runbooks,
+                                          postmortems: corpus.postmortems).map { result in
             switch result.scope {
             case .runbook:
                 return UnifiedSearchItem(

@@ -117,6 +117,12 @@ final class DependencyCheckCache {
     /// real check and overwrites the cache, so a captain who explicitly asked
     /// for the truth never gets served a stale answer, and the refreshed
     /// truth is what every other page sees next.
+    /// How long a coalesced waiter blocks on the in-flight runner before
+    /// giving up and checking for itself. Comfortably longer than a real
+    /// check; short enough that a wedged one cannot park a pool thread
+    /// indefinitely.
+    static let inFlightWaitTimeout: TimeInterval = 120
+
     func check(_ item: DependencyItem, forceRefresh: Bool = false, maxAge: TimeInterval = defaultTTL) -> CheckOutcome {
         while true {
             lock.lock()
@@ -126,7 +132,14 @@ final class DependencyCheckCache {
             }
             if let group = inFlight[item.id] {
                 lock.unlock()
-                group.wait()
+                // Bounded rather than an open `wait()`: the runner in front of
+                // us is only transitively bounded by the per-subprocess timeout,
+                // and an unbounded wait parks a pool thread for however long
+                // that takes with no watchdog of its own. Timing out just
+                // re-reads the cache on the next turn - the runner still
+                // publishes its result, so nothing is lost, and a waiter that
+                // gives up runs its own check rather than hanging.
+                _ = group.wait(timeout: .now() + Self.inFlightWaitTimeout)
                 continue
             }
             let group = DispatchGroup()
