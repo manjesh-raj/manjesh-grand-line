@@ -1896,6 +1896,16 @@ if ProcessInfo.processInfo.environment["FM_RUN_DEPENDENCY_CHECK_CACHE_TESTS"] ==
     exit(DependencyCheckCacheSelfTest.run() ? 0 : 1)
 }
 
+// `fm/grandline-terminal-selection-sidebar-bleed`: the "Forward Drags to This
+// Tab's Program" per-tab toggle's tab-lifecycle wiring (chip closures,
+// duplicate propagation, a fresh tab never inheriting a sibling's state) -
+// the mouse-routing formula itself is proven from real pixels by
+// TerminalSelectionRenderSelfTest's case 7. See TabForwardDragsToggleSelfTest.swift's
+// header.
+if ProcessInfo.processInfo.environment["FM_RUN_TAB_FORWARD_DRAGS_TOGGLE_TESTS"] == "1" {
+    exit(TabForwardDragsToggleSelfTest.run() ? 0 : 1)
+}
+
 #endif
 
 // GL-05: refuse to be a second instance. This sits *after* every

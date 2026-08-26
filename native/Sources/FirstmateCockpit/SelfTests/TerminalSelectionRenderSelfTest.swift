@@ -63,6 +63,14 @@
 //      steadier click to reach the child - and could paint the app's own
 //      themed selection colour over part of the child's own on-screen UI,
 //      which read as a highlight "bleeding" past where it should stop.
+//   7. `fm/grandline-terminal-selection-sidebar-bleed`: `forwardDragsToChild`
+//      (the per-tab "Forward Drags to This Tab's Program" toggle) genuinely
+//      swaps which gesture is which - with it on, a plain drag over a
+//      mouse-reporting child is forwarded (nothing painted locally, real
+//      bytes reach the child) and Shift+drag is what paints this app's own
+//      local, themed selection instead - the exact inverse of cases 3/4,
+//      proven the same way, from real pixels and real captured bytes, not
+//      from reading the routing formula and trusting it.
 //
 // Run with:
 //   swift build && FM_RUN_TERMINAL_SELECTION_RENDER_TESTS=1 .build/debug/FirstmateCockpit; echo $?
@@ -83,7 +91,8 @@ enum TerminalSelectionRenderSelfTest {
                       checkMouseReportingChildStillSelectsLocally,
                       checkChildKeepsItsMouse,
                       checkShellTabsOptIn,
-                      checkClickJitterDoesNotEatTheClickOrBleedTheSelection] {
+                      checkClickJitterDoesNotEatTheClickOrBleedTheSelection,
+                      checkForwardDragsToggleInvertsRouting] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -144,6 +153,7 @@ enum TerminalSelectionRenderSelfTest {
     private static func renderDrag(theme: HelmTheme,
                                    mouseCapture: Bool = false,
                                    localSelection: Bool = true,
+                                   forwardDragsToChild: Bool = false,
                                    shiftHeld: Bool = false,
                                    clickOnly: Bool = false,
                                    jitter: Bool = false,
@@ -153,6 +163,7 @@ enum TerminalSelectionRenderSelfTest {
         let view = CockpitTerminalView(frame: NSRect(origin: .zero, size: size))
         view.sentToChildForTests = []
         view.prefersLocalSelection = localSelection
+        view.forwardDragsToChild = forwardDragsToChild
         // A deliberately large glyph: text is drawn antialiased, so at a normal
         // UI size almost no pixel reaches the nominal ink colour and a
         // pixel-measured contrast would systematically under-report. Big
@@ -437,23 +448,38 @@ enum TerminalSelectionRenderSelfTest {
     /// The scope *is* the captain's decision here, and it is invisible in a
     /// render: an `.ssh` tab opted in by mistake would paint exactly the same
     /// pixels as the `.shell` tab this suite drives, while silently changing
-    /// what a plain drag does inside a remote vim or tmux.
+    /// what a plain drag does inside a remote vim or tmux. The same reasoning
+    /// applies to the `forwardDragsToChild` toggle's own chip wiring
+    /// (`fm/grandline-terminal-selection-sidebar-bleed`): an `.ssh` tab
+    /// offering the toggle would paint byte-identical chrome while silently
+    /// giving that tab a routing mode it was never meant to have.
     private static func checkShellTabsOptIn(_ ok: inout Bool) {
-        print("TerminalSelectionRenderSelfTest: `.shell` is what opts into local selection, and `.ssh` does not")
+        print("TerminalSelectionRenderSelfTest: `.shell` is what opts into local selection (and the forward-drags toggle), and `.ssh` does not")
         let path = SelfTestSources.appSourceDirectory()?
             .appendingPathComponent("ConsoleController+Tabs.swift")
         guard let path, let text = try? String(contentsOf: path, encoding: .utf8) else {
             print("  SKIP: app sources not reachable from here")
             return
         }
-        if !text.contains("if case .shell = launch { term.prefersLocalSelection = true }") {
+        if !text.contains("if case .shell = launch {") || !text.contains("term.prefersLocalSelection = true") {
             fail(&ok, "ConsoleController+Tabs.swift no longer opts the `.shell` tab into local selection")
         }
         let optIns = text.components(separatedBy: "prefersLocalSelection = true").count - 1
         if optIns != 1 {
             fail(&ok, "expected exactly one `prefersLocalSelection = true` opt-in in addTab, found \(optIns)")
         }
-        if ok { print("  addTab opts `.shell` in, and nothing else") }
+        if !text.contains("term.forwardDragsToChild = forwardDragsToChild") {
+            fail(&ok, "ConsoleController+Tabs.swift no longer seeds the `.shell` tab's forwardDragsToChild toggle")
+        }
+        let toggleEnabledWires = text.components(separatedBy: "chip.forwardDragsEnabled =").count - 1
+        if toggleEnabledWires != 1 {
+            fail(&ok, "expected exactly one `chip.forwardDragsEnabled =` wire-up, found \(toggleEnabledWires)")
+        }
+        let toggleActionWires = text.components(separatedBy: "chip.onToggleForwardDrags =").count - 1
+        if toggleActionWires != 1 {
+            fail(&ok, "expected exactly one `chip.onToggleForwardDrags =` wire-up, found \(toggleActionWires)")
+        }
+        if ok { print("  addTab opts `.shell` in (and only `.shell` gets the forward-drags toggle)") }
     }
 
     // MARK: 6 - a click's own hand-tremor jitter is still a click
@@ -488,6 +514,71 @@ enum TerminalSelectionRenderSelfTest {
             fail(&ok, "forcing the pre-fix threshold reproduced neither symptom - this case can no longer tell the fix from its absence")
         }
         if ok { print("  jitter still reaches the child and paints nothing locally; the pre-fix (zero) threshold reproduces the regression") }
+    }
+
+    // MARK: 7 - the forward-drags toggle genuinely swaps which gesture is which
+
+    /// `fm/grandline-terminal-selection-sidebar-bleed`: the captain's chosen
+    /// fix for herdr's sidebar bleeding into a plain drag is a per-tab,
+    /// sticky toggle - never a global default change, since a real captured
+    /// `claude` (Claude Code) session enables the identical SGR mouse
+    /// reporting herdr does (see `data/grandline-terminal-selection-sidebar-
+    /// bleed/report.md`), and `.shell` tabs running `claude`/firstmate
+    /// crewmate sessions are the captain's own primary, routine workflow -
+    /// unaffected by this toggle staying off by default (case 3/4 above,
+    /// untouched by this case's own `forwardDragsToChild: false` reruns).
+    /// This proves the toggle's *on* state from the same real pixels and
+    /// real captured bytes those cases use, not from re-reading the formula.
+    private static func checkForwardDragsToggleInvertsRouting(_ ok: inout Bool) {
+        print("TerminalSelectionRenderSelfTest: forwardDragsToChild swaps plain-drag/Shift-drag routing")
+        guard let theme = HelmTheme.allThemes.first(where: { $0.id == "helm-light" }) else {
+            fail(&ok, "helm-light not found"); return
+        }
+
+        // With the toggle ON: a plain drag over a mouse-reporting child must
+        // now forward - the exact inverse of case 3's off-state assertion
+        // that a plain drag stays local.
+        var plainDragBytes: [UInt8] = []
+        guard let plainDragToggled = renderDrag(theme: theme, mouseCapture: true, forwardDragsToChild: true,
+                                                sentBytes: &plainDragBytes) else {
+            fail(&ok, "toggled-on plain drag did not render"); return
+        }
+        if plainDragBytes.isEmpty {
+            fail(&ok, "with the toggle on, a plain drag reported nothing to the child - it should forward, matching herdr's own pane-aware selection")
+        }
+        if plainDragToggled.filledRows != 0 {
+            fail(&ok, "with the toggle on, a plain drag also painted \(plainDragToggled.filledRows) local row(s) - it should be forwarded only, or the child's own selection would sit under ours")
+        }
+
+        // With the toggle ON: Shift+drag must now build LOCAL selection - the
+        // exact inverse of case 4's off-state assertion that Shift+drag
+        // forwards. Same theme pair, same pixel proof as case 1.
+        var shiftDragBytes: [UInt8] = []
+        guard let shiftDragToggled = renderDrag(theme: theme, mouseCapture: true, forwardDragsToChild: true,
+                                                shiftHeld: true, sentBytes: &shiftDragBytes) else {
+            fail(&ok, "toggled-on Shift-drag did not render"); return
+        }
+        if !shiftDragBytes.isEmpty {
+            fail(&ok, "with the toggle on, a Shift-drag reported \(shiftDragBytes.count) byte(s) to the child - it should be kept local instead")
+        }
+        if shiftDragToggled.filledRows < 3 {
+            fail(&ok, "with the toggle on, a Shift-drag painted only \(shiftDragToggled.filledRows) selected row(s) - it should build this app's own local selection")
+        }
+        if !matches(shiftDragToggled.fill, theme.selectionHex, in: shiftDragToggled.repSpace) {
+            fail(&ok, "with the toggle on, Shift-drag's local selection fill \(hex(shiftDragToggled.fill)) is not selectionHex \(theme.selectionHex)")
+        }
+
+        // A plain click still reaches the child either way - the toggle only
+        // ever changes what a *drag* does, matching case 4's own guarantee
+        // that nothing the child can do with the mouse is lost.
+        var clickBytes: [UInt8] = []
+        _ = renderDrag(theme: theme, mouseCapture: true, forwardDragsToChild: true, clickOnly: true,
+                       sentBytes: &clickBytes)
+        if clickBytes.isEmpty {
+            fail(&ok, "with the toggle on, a plain click reported nothing to the child")
+        }
+
+        if ok { print("  toggle on: plain drag forwards, Shift-drag builds local selection, clicks still reach the child") }
     }
 }
 
