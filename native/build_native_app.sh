@@ -58,6 +58,14 @@ if [ -f "Scripts/sre_kubectl_mcp.py" ]; then
   cp "Scripts/sre_kubectl_mcp.py" "$APP_DIR/Contents/Resources/sre_kubectl_mcp.py"
 fi
 
+# The Video destination's setup script (VideoGenEnvironment.resolveSetupScript()
+# resolves it via Bundle.main.resourceURL first, falling back to the source
+# tree for swift run/swift build dev flows - the same three-step resolution
+# sre_kubectl_mcp.py already uses).
+if [ -f "Scripts/videogen-setup.sh" ]; then
+  cp "Scripts/videogen-setup.sh" "$APP_DIR/Contents/Resources/videogen-setup.sh"
+fi
+
 # The Whiteboard destination's vendored Excalidraw bundle (WhiteboardAssets.swift
 # looks for it under Contents/Resources first, falling back to the source tree
 # for the swift run/swift build dev flow - the same three-step resolution
