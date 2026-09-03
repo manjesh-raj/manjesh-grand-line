@@ -9,11 +9,26 @@
 // generation), and `VideoPromptEnhancer` (against a real, disposable fake
 // `claude` script, same convention as `DictationCleanupSelfTest.swift`).
 // `FM_RUN_VIDEOGEN_TESTS=1 .build/debug/FirstmateCockpit`.
+//
+// `fm/grandline-videogen-settings-fix` extended this suite with the new
+// settings work: `testFrameCountAndEstimates` (the pure duration-to-frame-
+// count grid math and the wall-clock estimate/timeout derivation, no
+// subprocess involved), `testOptionToArgumentMapping` (every duration/
+// resolution/clarity/reference-type combination's real, captured CLI argv -
+// via a fake `ltx-2-mlx` that writes its own `$@` to a side file rather than
+// just touching `-o`, so the test can assert on the exact flags this app
+// sent, not just that *something* ran), `testFeedbackRevision` (the
+// feedback-driven regeneration loop's `VideoPromptEnhancer
+// .reviseForFeedback`, same fake-`claude` convention as `testPromptEnhancer`),
+// and `testVersionHistoryAndRestore` (a real `VideoGenController`, driven
+// through its `#if FM_SELFTESTS` debug hooks, confirming "Restore this
+// version" never spawns a real generation).
 
 // GL-27: compiled into debug builds only - see `DictationCleanupSelfTest
 // .swift`'s header for the full reasoning. Do not remove this guard.
 #if FM_SELFTESTS
 
+import AppKit
 import Foundation
 
 enum VideoGenSelfTest {
@@ -32,6 +47,10 @@ enum VideoGenSelfTest {
         testGenerateGuards(&ok)
         testGenerateSuccessAndFailure(&ok)
         testPromptEnhancer(&ok)
+        testFrameCountAndEstimates(&ok)
+        testOptionToArgumentMapping(&ok)
+        testFeedbackRevision(&ok)
+        testVersionHistoryAndRestore(&ok)
 
         return ok
     }
@@ -235,6 +254,243 @@ enum VideoGenSelfTest {
         }
     }
 
+    // MARK: VideoGenEngine.frameCount / estimatedSeconds / timeout - pure logic, no subprocess
+
+    private static func testFrameCountAndEstimates(_ ok: inout Bool) {
+        check(VideoGenEngine.frameCount(forSeconds: 4, frameRate: 24) == 97,
+              "4s @ 24fps should snap to 97 frames - the scout report's own validated case", &ok)
+        check(VideoGenEngine.frameCount(forSeconds: 8, frameRate: 24) == 193,
+              "8s @ 24fps should snap to the nearest 8k+1 grid point (193/24=8.04s)", &ok)
+        for seconds in VideoGenController.durationRangeForTests {
+            let frames = VideoGenEngine.frameCount(forSeconds: Double(seconds), frameRate: 24)
+            check((frames - 1) % 8 == 0,
+                  "every offered duration (\(seconds)s) should produce a frame count on the VAE's 8k+1 temporal grid, got \(frames)", &ok)
+            check(frames >= 1, "frame count should never be zero or negative, got \(frames) for \(seconds)s", &ok)
+        }
+
+        let baseline = VideoGenEngine.estimatedSeconds(forFrameCount: 97, width: 704, height: 448, clarity: .standard)
+        check(abs(baseline - 85.8) < 0.01,
+              "the exact validated combination (97 frames, 704x448, standard) should reproduce the scout report's own 85.8s number, got \(baseline)", &ok)
+
+        let draft = VideoGenEngine.estimatedSeconds(forFrameCount: 97, width: 704, height: 448, clarity: .draft)
+        check(draft < baseline, "draft clarity's fewer denoising steps should estimate faster than standard, got \(draft) vs \(baseline)", &ok)
+
+        let high = VideoGenEngine.estimatedSeconds(forFrameCount: 97, width: 704, height: 448, clarity: .high)
+        check(high > baseline, "high clarity's CFG-guided two-stage pipeline should estimate slower than standard, got \(high) vs \(baseline)", &ok)
+
+        let small = VideoGenEngine.estimatedSeconds(forFrameCount: 97, width: 512, height: 320, clarity: .standard)
+        check(small < baseline, "a smaller resolution should estimate faster than the validated baseline, got \(small) vs \(baseline)", &ok)
+
+        let large = VideoGenEngine.estimatedSeconds(forFrameCount: 97, width: 896, height: 576, clarity: .standard)
+        check(large > baseline, "a larger resolution should estimate slower than the validated baseline, got \(large) vs \(baseline)", &ok)
+
+        let doubleDuration = VideoGenEngine.estimatedSeconds(forFrameCount: 194, width: 704, height: 448, clarity: .standard)
+        check(abs(doubleDuration - baseline * 2) < 0.1,
+              "doubling the frame count should roughly double the estimate (linear scaling), got \(doubleDuration) vs \(baseline * 2)", &ok)
+
+        let floorTimeout = VideoGenEngine.timeout(forFrameCount: 41, width: 512, height: 320, clarity: .draft)
+        check(floorTimeout >= 360, "the timeout should never drop below the original validated floor even for a cheap combination, got \(floorTimeout)", &ok)
+
+        let standardTimeout = VideoGenEngine.timeout(forFrameCount: 97, width: 704, height: 448, clarity: .standard)
+        let bigTimeout = VideoGenEngine.timeout(forFrameCount: 97 * 3, width: 896, height: 576, clarity: .high)
+        check(bigTimeout > standardTimeout,
+              "a slower/larger/longer combination should get a proportionally larger timeout bound, got \(bigTimeout) vs \(standardTimeout)", &ok)
+    }
+
+    // MARK: Every duration/resolution/clarity/reference-type combination -> real CLI argv
+
+    private static func testOptionToArgumentMapping(_ ok: inout Bool) {
+        let outputScratch = makeScratchDir("videogen-argv-output")
+        defer { try? FileManager.default.removeItem(at: outputScratch) }
+        let captureDir = makeScratchDir("videogen-argv-capture")
+        defer { try? FileManager.default.removeItem(at: captureDir) }
+
+        withEnv(["FM_VIDEOGEN_OUTPUT_DIR": outputScratch.path]) {
+            VideoGenEngine.readyOverrideForTests = true
+
+            func capturedArgv(_ label: String, prompt: String, durationSeconds: Double,
+                              resolution: VideoGenResolutionPreset, clarity: VideoGenClarity,
+                              reference: VideoGenReferenceType) -> [String] {
+                let captureURL = captureDir.appendingPathComponent("\(label)-\(UUID().uuidString).txt")
+                let script = writeFakeLtxCapturingArgv(to: captureURL)
+                defer { try? FileManager.default.removeItem(at: script) }
+                VideoGenEngine.executableOverrideForTests = script.path
+                _ = runGenerateSyncFull(prompt: prompt, durationSeconds: durationSeconds,
+                                        resolution: resolution, clarity: clarity, reference: reference)
+                return (try? String(contentsOf: captureURL, encoding: .utf8))?
+                    .split(separator: "\n", omittingEmptySubsequences: false).map(String.init) ?? []
+            }
+
+            // Duration -> frame count, at a fixed 24fps.
+            let durationArgv = capturedArgv("duration", prompt: "duration test", durationSeconds: 4,
+                                            resolution: .standard, clarity: .standard, reference: .text)
+            check(argvContainsPair(durationArgv, flag: "-f", value: "97"),
+                  "requesting 4s should pass -f 97 (the validated case), got \(durationArgv)", &ok)
+            check(argvContainsPair(durationArgv, flag: "--frame-rate", value: "24"),
+                  "frame rate should stay fixed at 24 regardless of duration, got \(durationArgv)", &ok)
+
+            let longerDurationArgv = capturedArgv("duration-8s", prompt: "duration test 2", durationSeconds: 8,
+                                                  resolution: .standard, clarity: .standard, reference: .text)
+            check(argvContainsPair(longerDurationArgv, flag: "-f", value: "193"),
+                  "requesting 8s should pass -f 193 (nearest 8k+1 grid point), got \(longerDurationArgv)", &ok)
+
+            // Resolution presets -> --height/--width, every preset an exact
+            // multiple of 64 (see VideoGenEngine.swift's header on why).
+            for preset in VideoGenResolutionPreset.allCases {
+                let argv = capturedArgv("resolution-\(preset.rawValue)", prompt: "resolution test \(preset.rawValue)",
+                                        durationSeconds: 5, resolution: preset, clarity: .standard, reference: .text)
+                check(argvContainsPair(argv, flag: "--width", value: String(preset.width)),
+                      "\(preset.rawValue) preset should pass width \(preset.width), got \(argv)", &ok)
+                check(argvContainsPair(argv, flag: "--height", value: String(preset.height)),
+                      "\(preset.rawValue) preset should pass height \(preset.height), got \(argv)", &ok)
+                check(preset.width % 64 == 0 && preset.height % 64 == 0,
+                      "\(preset.rawValue) preset's dims should be exact multiples of 64 (never silently floor-snapped by the tool), got \(preset.width)x\(preset.height)", &ok)
+            }
+
+            // Clarity -> the real, mutually exclusive pipeline-mode flags.
+            let draftArgv = capturedArgv("clarity-draft", prompt: "clarity test draft", durationSeconds: 5,
+                                         resolution: .standard, clarity: .draft, reference: .text)
+            check(draftArgv.contains("--distilled"),
+                  "draft clarity should still use the validated --distilled pipeline, got \(draftArgv)", &ok)
+            check(argvContainsPair(draftArgv, flag: "--stage1-steps", value: "4"),
+                  "draft clarity should reduce stage1 steps, got \(draftArgv)", &ok)
+            check(argvContainsPair(draftArgv, flag: "--stage2-steps", value: "2"),
+                  "draft clarity should reduce stage2 steps, got \(draftArgv)", &ok)
+
+            let standardArgv = capturedArgv("clarity-standard", prompt: "clarity test standard", durationSeconds: 5,
+                                            resolution: .standard, clarity: .standard, reference: .text)
+            check(standardArgv.contains("--distilled"), "standard clarity should use --distilled, got \(standardArgv)", &ok)
+            check(!standardArgv.contains("--stage1-steps"),
+                  "standard clarity should use --distilled's own defaults, not an override, got \(standardArgv)", &ok)
+
+            let highArgv = capturedArgv("clarity-high", prompt: "clarity test high", durationSeconds: 5,
+                                        resolution: .standard, clarity: .high, reference: .text)
+            check(highArgv.contains("--two-stages-hq"), "high clarity should use --two-stages-hq, got \(highArgv)", &ok)
+            check(!highArgv.contains("--distilled"), "high clarity should not also pass --distilled, got \(highArgv)", &ok)
+
+            // Reference type -> --image (or its real absence for text-only).
+            let textArgv = capturedArgv("reference-text", prompt: "text reference test", durationSeconds: 5,
+                                        resolution: .standard, clarity: .standard, reference: .text)
+            check(!textArgv.contains("--image"), "a text reference should never pass --image, got \(textArgv)", &ok)
+
+            let imageFile = outputScratch.appendingPathComponent("ref-image.png")
+            FileManager.default.createFile(atPath: imageFile.path, contents: Data([0x89, 0x50, 0x4E, 0x47]))
+            let imageArgv = capturedArgv("reference-image", prompt: "image reference test", durationSeconds: 5,
+                                         resolution: .standard, clarity: .standard, reference: .image(path: imageFile.path))
+            check(argvContainsPair(imageArgv, flag: "--image", value: imageFile.path),
+                  "an image reference should pass --image <path>, got \(imageArgv)", &ok)
+
+            // A reference image that doesn't exist on disk fails before
+            // spawning anything - never silently falls back to text-only.
+            VideoGenEngine.executableOverrideForTests = "/nonexistent/should-not-be-invoked-\(UUID().uuidString)"
+            let missingImageOutcome = runGenerateSyncFull(
+                prompt: "missing image", durationSeconds: 5, resolution: .standard, clarity: .standard,
+                reference: .image(path: "/nonexistent/ref-\(UUID().uuidString).png"))
+            check(missingImageOutcome.isFailure,
+                  "a reference image that doesn't exist on disk should fail without spawning a process", &ok)
+        }
+    }
+
+    // MARK: VideoPromptEnhancer.reviseForFeedback - the feedback-driven regeneration loop
+
+    private static func testFeedbackRevision(_ ok: inout Bool) {
+        do {
+            let script = writeFakeClaude(outputJSON: #"{"result": "A calm ocean at sunset with choppy, wind-driven waves.", "is_error": false}"#)
+            defer { try? FileManager.default.removeItem(at: script) }
+            VideoPromptEnhancer.claudePathOverrideForTests = script.path
+            let outcome = runReviseSync(currentPrompt: "A calm ocean at sunset.", feedback: "the water is too still, make it choppier")
+            check(outcome == .success("A calm ocean at sunset with choppy, wind-driven waves."),
+                  "a well-formed revision should parse cleanly, got \(outcome)", &ok)
+        }
+
+        do {
+            let script = writeFakeClaude(outputJSON: #"{"result": "\"Quoted revised prompt.\"", "is_error": false}"#)
+            defer { try? FileManager.default.removeItem(at: script) }
+            VideoPromptEnhancer.claudePathOverrideForTests = script.path
+            let outcome = runReviseSync(currentPrompt: "A calm ocean at sunset.", feedback: "make it darker")
+            check(outcome == .success("Quoted revised prompt."), "a quote-wrapped result should be unwrapped, got \(outcome)", &ok)
+        }
+
+        do {
+            let script = writeFakeClaude(outputJSON: #"{"result": "not authenticated", "is_error": true}"#)
+            defer { try? FileManager.default.removeItem(at: script) }
+            VideoPromptEnhancer.claudePathOverrideForTests = script.path
+            let outcome = runReviseSync(currentPrompt: "A calm ocean at sunset.", feedback: "make it darker")
+            check(outcome.isFailure, "is_error:true should be reported as a failure, got \(outcome)", &ok)
+        }
+
+        do {
+            VideoPromptEnhancer.claudePathOverrideForTests = "/nonexistent/path/to/claude-\(UUID().uuidString)"
+            let outcome = runReviseSync(currentPrompt: "A calm ocean at sunset.", feedback: "make it darker")
+            check(outcome.isFailure, "a nonexistent claude path should fail cleanly, got \(outcome)", &ok)
+        }
+
+        do {
+            VideoPromptEnhancer.claudePathOverrideForTests = "/nonexistent/should-not-be-invoked"
+            let outcome = runReviseSync(currentPrompt: "A calm ocean at sunset.", feedback: "   ")
+            check(outcome.isFailure, "empty feedback should fail without spawning a process", &ok)
+        }
+
+        do {
+            VideoPromptEnhancer.claudePathOverrideForTests = "/nonexistent/should-not-be-invoked"
+            let outcome = runReviseSync(currentPrompt: "   ", feedback: "make it darker")
+            check(outcome.isFailure, "an empty current prompt should fail without spawning a process", &ok)
+        }
+
+        do {
+            let prompt = VideoPromptEnhancer.revisionPrompt(currentPrompt: "A calm ocean at sunset.", feedback: "make it choppier")
+            check(prompt.contains("A calm ocean at sunset."), "the revision prompt should embed the current prompt", &ok)
+            check(prompt.contains("make it choppier"), "the revision prompt should embed the feedback text", &ok)
+        }
+    }
+
+    // MARK: Version history + restore-without-regenerating
+
+    private static func testVersionHistoryAndRestore(_ ok: inout Bool) {
+        let controller = VideoGenController()
+        _ = controller.view // force loadView() so the debug hooks below have something to read
+
+        check(controller.debugVersions.isEmpty, "a fresh controller should start with no version history", &ok)
+        check(controller.debugActiveVersionIndex == nil, "a fresh controller should have no active version", &ok)
+
+        let clipV1 = FileManager.default.temporaryDirectory.appendingPathComponent("v1-\(UUID().uuidString).mp4")
+        controller.debugRecordVersion(prompt: "A calm ocean at sunset.", feedback: nil, outputPath: clipV1)
+        check(controller.debugVersions.count == 1, "recording a version should add it to history, got \(controller.debugVersions.count)", &ok)
+        check(controller.debugVersions.first?.number == 1, "the first version should be numbered 1", &ok)
+        check(controller.debugVersions.first?.historyLabel == "Original",
+              "v1 with no feedback should be labeled Original, got \(controller.debugVersions.first?.historyLabel ?? "nil")", &ok)
+        check(controller.debugActiveVersionIndex == 0, "recording a version should make it the active one", &ok)
+
+        let clipV2 = FileManager.default.temporaryDirectory.appendingPathComponent("v2-\(UUID().uuidString).mp4")
+        controller.debugRecordVersion(prompt: "A calm ocean at sunset with choppy waves.",
+                                      feedback: "the water is too still, make it choppier", outputPath: clipV2)
+        check(controller.debugVersions.count == 2, "a second recorded version should append, not replace, got \(controller.debugVersions.count)", &ok)
+        check(controller.debugVersions.last?.historyLabel == "the water is too still, make it choppier",
+              "v2's history label should be its feedback text, got \(controller.debugVersions.last?.historyLabel ?? "nil")", &ok)
+        check(controller.debugActiveVersionIndex == 1, "the newest version should become active", &ok)
+
+        // Restore v1 - this must NOT spawn a real generation. Pointing the
+        // executable override at a nonexistent path is what proves it: if
+        // `restoreVersionTapped` ever called `VideoGenEngine.generate`, the
+        // fake path would be invoked, `isGenerating` would flip, and this
+        // whole check would fail loudly rather than silently.
+        VideoGenEngine.executableOverrideForTests = "/nonexistent/should-not-be-invoked-by-restore-\(UUID().uuidString)"
+        controller.debugRestoreVersion(number: 1)
+        check(controller.debugActiveVersionIndex == 0, "restoring v1 should make it active again", &ok)
+        check(controller.debugPromptField.stringValue == "A calm ocean at sunset.",
+              "restoring a version should make its prompt the active one, got \(controller.debugPromptField.stringValue)", &ok)
+        check(controller.debugActiveVersion?.outputPath == clipV1,
+              "restoring a version should point the active clip at that version's own file", &ok)
+        check(!controller.debugIsGenerating, "restoring a version must never trigger a real generation", &ok)
+        check(controller.debugVersions.count == 2, "restoring must never delete or overwrite any prior version - both clips stay in history", &ok)
+
+        // Restoring an unknown version number is a no-op, not a crash.
+        controller.debugRestoreVersion(number: 999)
+        check(controller.debugActiveVersionIndex == 0, "restoring a nonexistent version number should be a no-op", &ok)
+
+        VideoGenEngine.executableOverrideForTests = nil
+    }
+
     // MARK: Fakes
 
     /// A fake `ltx-2-mlx`: parses `-o <path>` out of its own argv and, when
@@ -269,6 +525,41 @@ enum VideoGenSelfTest {
         return path
     }
 
+    /// A fake `ltx-2-mlx` that writes every argument it was given, one per
+    /// line, to `captureURL` (rather than just parsing out `-o` like
+    /// `writeFakeLtx` above) - what `testOptionToArgumentMapping` reads back
+    /// to assert on the *exact* flags this app sent for a given duration/
+    /// resolution/clarity/reference-type combination, not just that
+    /// something ran and produced a file. Also touches `-o`'s path so the
+    /// real `generate()` call this drives reports success.
+    private static func writeFakeLtxCapturingArgv(to captureURL: URL, exitCode: Int32 = 0) -> URL {
+        let dir = FileManager.default.temporaryDirectory
+        let path = dir.appendingPathComponent("fake-ltx-argv-\(UUID().uuidString).sh")
+        let script = """
+        #!/bin/sh
+        out=""
+        : > "\(captureURL.path)"
+        while [ $# -gt 0 ]; do
+          printf '%s\\n' "$1" >> "\(captureURL.path)"
+          if [ "$1" = "-o" ]; then out="$2"; fi
+          shift
+        done
+        if [ -n "$out" ]; then touch "$out"; fi
+        exit \(exitCode)
+        """
+        try? script.write(to: path, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
+        return path
+    }
+
+    /// True when `argv` contains `flag` immediately followed by `value` -
+    /// the way this app always passes a two-token option (`-f 97`,
+    /// `--width 704`), never `--flag=value`.
+    private static func argvContainsPair(_ argv: [String], flag: String, value: String) -> Bool {
+        guard let index = argv.firstIndex(of: flag), argv.indices.contains(index + 1) else { return false }
+        return argv[index + 1] == value
+    }
+
     // MARK: Small helpers
 
     private enum Outcome<T: Equatable>: Equatable {
@@ -293,6 +584,39 @@ enum VideoGenSelfTest {
         final class Box { var outcome: Outcome<String>? }
         let box = Box()
         VideoPromptEnhancer.enhance(idea) { result in
+            switch result {
+            case .success(let text): box.outcome = .success(text)
+            case .failure: box.outcome = .failure
+            }
+        }
+        return pump { box.outcome }
+    }
+
+    /// `generate()`'s full signature, for the settings/argument-mapping
+    /// tests - `runGenerateSync` above stays as-is (unchanged callers, plain
+    /// defaults) rather than widening it and touching every existing case.
+    private static func runGenerateSyncFull(
+        prompt: String, durationSeconds: Double, resolution: VideoGenResolutionPreset,
+        clarity: VideoGenClarity, reference: VideoGenReferenceType
+    ) -> Outcome<VideoGenResult.Comparable> {
+        final class Box { var outcome: Outcome<VideoGenResult.Comparable>? }
+        let box = Box()
+        VideoGenEngine.generate(
+            prompt: prompt, durationSeconds: durationSeconds, resolution: resolution,
+            clarity: clarity, reference: reference
+        ) { result in
+            switch result {
+            case .success(let r): box.outcome = .success(.init(outputPath: r.outputPath))
+            case .failure: box.outcome = .failure
+            }
+        }
+        return pump { box.outcome }
+    }
+
+    private static func runReviseSync(currentPrompt: String, feedback: String) -> Outcome<String> {
+        final class Box { var outcome: Outcome<String>? }
+        let box = Box()
+        VideoPromptEnhancer.reviseForFeedback(currentPrompt: currentPrompt, feedback: feedback) { result in
             switch result {
             case .success(let text): box.outcome = .success(text)
             case .failure: box.outcome = .failure

@@ -17,6 +17,17 @@
 // (no network, not authenticated, `claude` missing, a garbled reply) never
 // blocks generation - `VideoGenController` falls back to the captain's own
 // typed text.
+//
+// `reviseForFeedback(prompt:feedback:completion:)` (fm/grandline-videogen-
+// settings-fix's expanded scope - the feedback-driven regeneration loop) is
+// the *same* one-shot mechanism, a second prompt template on the identical
+// `ClaudeOneShot.run` call - not a second Claude-calling path. It folds a
+// captain's "what should change?" note into the prompt that produced the
+// clip they're looking at, and - like `enhance` above - always shows the
+// revised prompt to the captain before anything regenerates
+// (`VideoGenController` sets `promptField.stringValue` to the reply exactly
+// as `generateTapped`'s existing enhance branch already does); a failure
+// here is reported, never silently substituted.
 
 import Foundation
 
@@ -38,6 +49,26 @@ enum VideoPromptEnhancer {
 
         Idea:
         \(idea)
+        """
+    }
+
+    /// The revision half of the feedback loop - folds `feedback` into
+    /// `currentPrompt`, keeping everything about the current prompt that the
+    /// feedback doesn't address.
+    static func revisionPrompt(currentPrompt: String, feedback: String) -> String {
+        """
+        You wrote the following prompt for an AI text-to-video model. The \
+        captain watched the resulting clip and left feedback on what should \
+        change. Revise the prompt to address the feedback, keeping everything \
+        else about the scene, subject, and framing the same unless the \
+        feedback implies otherwise. Reply with ONLY the revised prompt and \
+        nothing else - no quotes, no preamble, no explanation.
+
+        Current prompt:
+        \(currentPrompt)
+
+        Feedback:
+        \(feedback)
         """
     }
 
@@ -66,6 +97,47 @@ enum VideoPromptEnhancer {
                 let cleaned = stripWrappingQuotes(reply.text)
                 if cleaned.isEmpty {
                     completion(.failure(VideoGenError(message: "Claude's rewrite was empty.")))
+                } else {
+                    completion(.success(cleaned))
+                }
+            case .failure(let error):
+                completion(.failure(VideoGenError(message: error.message)))
+            }
+        }
+    }
+
+    /// Folds captain feedback ("the water is too still, make it choppier")
+    /// into `currentPrompt` via one `ClaudeOneShot` call - the exact same
+    /// mechanism `enhance` above uses, a different prompt template only.
+    static func reviseForFeedback(
+        currentPrompt: String, feedback: String,
+        completion: @escaping (Result<String, VideoGenError>) -> Void
+    ) {
+        let trimmedFeedback = feedback.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedFeedback.isEmpty else {
+            completion(.failure(VideoGenError(message: "Say what should change first.")))
+            return
+        }
+        let trimmedPrompt = currentPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPrompt.isEmpty else {
+            completion(.failure(VideoGenError(message: "There's no prompt to revise yet.")))
+            return
+        }
+        guard let claude = claudePathOverrideForTests ?? SRELead.resolveClaude() else {
+            completion(.failure(VideoGenError(message: "claude is not installed or not on PATH")))
+            return
+        }
+
+        ClaudeOneShot.run(
+            executable: claude,
+            prompt: revisionPrompt(currentPrompt: trimmedPrompt, feedback: trimmedFeedback),
+            timeout: timeout, label: "claude -p (video prompt revision)"
+        ) { result in
+            switch result {
+            case .success(let reply):
+                let cleaned = stripWrappingQuotes(reply.text)
+                if cleaned.isEmpty {
+                    completion(.failure(VideoGenError(message: "Claude's revision was empty.")))
                 } else {
                     completion(.success(cleaned))
                 }
