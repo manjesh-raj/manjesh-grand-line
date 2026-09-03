@@ -108,7 +108,7 @@ enum DestinationSlotID: String, CaseIterable {
     /// launch landing and the target of every drill page's back button.
     case homeCanvas
     case overview, console, hosts, shift, review, logAnalyzer
-    case tools, whiteboard, vault, dictation, videoGen, schedules, health, docs, runbooks, postmortems, setup, settings
+    case tools, whiteboard, vault, dictation, schedules, health, docs, runbooks, postmortems, setup, settings
 }
 
 extension RailDestination {
@@ -126,7 +126,6 @@ extension RailDestination {
         case .whiteboard: return .whiteboard
         case .vault: return .vault
         case .dictation: return .dictation
-        case .videoGen: return .videoGen
         case .schedules: return .schedules
         case .health: return .health
         case .docs: return .docs
@@ -163,7 +162,6 @@ extension RailDestination {
         case .whiteboard: return "An Excalidraw canvas, offline, with AI diagrams"
         case .vault: return "Secrets and verified launchers - names only"
         case .dictation: return "Speech to text, on this machine"
-        case .videoGen: return "Generate short video clips from a text prompt, on this machine"
         case .schedules: return "Unattended runs of actions this app already has"
         case .health: return "How this app's own background services are doing"
         // `fm/grandline-docs-split-runbooks-postmortems` narrowed this to

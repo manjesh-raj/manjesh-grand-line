@@ -526,11 +526,6 @@ extension RailDestination {
         // clean-up card), and the Whiteboard's headline capability is the
         // Claude-generated diagram.
         case .whiteboard: return .violet
-        // `fm/grandline-videogen-feasibility-scout`: the same "AI feature"
-        // hue as Whiteboard, for the same stated reason - Video's headline
-        // capability is Claude writing the prompt for a locally-rendered
-        // clip.
-        case .videoGen: return .violet
         }
     }
 }

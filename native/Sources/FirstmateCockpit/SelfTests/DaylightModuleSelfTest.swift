@@ -83,11 +83,8 @@ enum DaylightModuleSelfTest {
         // `fm/grand-line-whiteboard-excalidraw` added `.whiteboard` here for
         // the same reason and by the same rule: a whiteboard is a thinking
         // surface, which belongs on the same shelf as the reference material
-        // it gets used next to. `fm/grandline-videogen-feasibility-scout`
-        // added `.videoGen` here the same way: a local text-to-video
-        // generator is a Stores utility, matching its `.vault`/`.dictation`/
-        // `.whiteboard` siblings.
-        .stores: [.vault, .docs, .runbooks, .postmortems, .tools, .dictation, .videoGen, .whiteboard],
+        // it gets used next to.
+        .stores: [.vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard],
         .engineering: [.updates, .bootstrap, .automation, .githubSync, .settings],
     ]
 
@@ -141,12 +138,11 @@ enum DaylightModuleSelfTest {
         // a real regression this suite has to catch, not just assume away.
         let trimmed = DaylightModule.allCases.filter { !overviewVisibleModules.contains($0) }
         // 12 from the original trim, plus Runbooks, Postmortems
-        // (`fm/grandline-docs-split-runbooks-postmortems`), Whiteboard
-        // (`fm/grand-line-whiteboard-excalidraw`), and Video
-        // (`fm/grandline-videogen-feasibility-scout`) - all four new modules
+        // (`fm/grandline-docs-split-runbooks-postmortems`) and Whiteboard
+        // (`fm/grand-line-whiteboard-excalidraw`) - all three new modules
         // with `appearsOnOverview == false`, matching their Stores siblings.
-        if trimmed.count != 16 {
-            fail("expected exactly 16 modules trimmed from Overview, got \(trimmed.count): "
+        if trimmed.count != 15 {
+            fail("expected exactly 15 modules trimmed from Overview, got \(trimmed.count): "
                  + "\(trimmed.map(\.rawValue).sorted())", &ok)
         }
         for module in trimmed {
