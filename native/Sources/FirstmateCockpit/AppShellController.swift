@@ -114,7 +114,6 @@ final class AppShellController: NSViewController {
     private let whiteboard = WhiteboardController()
     private let vault = VaultController()
     private let dictation: DictationController
-    private let videoGen = VideoGenController()
     /// `fm/grandline-schedules-sidebar-move`: F11's Schedules card, promoted
     /// off the Automation page onto its own rail destination - see
     /// `SchedulesController.swift`'s header.
@@ -417,7 +416,6 @@ final class AppShellController: NSViewController {
         mounter.register(DestinationSlot(id: .whiteboard, title: RailDestination.whiteboard.bodyTitle, mountsEagerly: false, controller: whiteboard))
         mounter.register(DestinationSlot(id: .vault, title: RailDestination.vault.bodyTitle, mountsEagerly: false, controller: vault))
         mounter.register(DestinationSlot(id: .dictation, title: RailDestination.dictation.bodyTitle, mountsEagerly: false, controller: dictation))
-        mounter.register(DestinationSlot(id: .videoGen, title: RailDestination.videoGen.bodyTitle, mountsEagerly: false, controller: videoGen))
         mounter.register(DestinationSlot(id: .schedules, title: RailDestination.schedules.bodyTitle, mountsEagerly: false, controller: schedules))
         mounter.register(DestinationSlot(id: .health, title: RailDestination.health.bodyTitle, mountsEagerly: false, controller: health))
         mounter.register(DestinationSlot(id: .docs, title: RailDestination.docs.bodyTitle, mountsEagerly: false, controller: docs))
@@ -573,17 +571,6 @@ final class AppShellController: NSViewController {
         // interactive/sudo action in this app.
         vault.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
         vault.onRunCommandTracked = { [weak self] label, command, completion in
-            self?.runInConsole(label: label, command: command, completion: completion)
-        }
-        // fm/grandline-videogen-feasibility-scout: the video model's one-time
-        // ~27GB/~15-minute setup needs the same real, visible Console tab
-        // every other multi-gigabyte/long-running action in this app uses -
-        // see `VideoGenEnvironment.swift`'s header for the full reasoning.
-        // The tracked completion is what lets the Video page re-check its
-        // own on-disk state the moment the Console tab's command exits,
-        // instead of only on the page's own next `viewWillAppear`.
-        videoGen.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
-        videoGen.onRunCommandTracked = { [weak self] label, command, completion in
             self?.runInConsole(label: label, command: command, completion: completion)
         }
         // fm/grandline-devops-command-library-phase2: the Command Library's

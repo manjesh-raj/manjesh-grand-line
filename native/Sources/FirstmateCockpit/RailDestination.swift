@@ -140,11 +140,6 @@ import AppKit
 ///     They are left in place rather than deleted so the rail's own
 ///     decision history stays greppable; if a future phase wants a rail-like
 ///     surface back, they are what it should read.
-/// `fm/grandline-videogen-feasibility-scout` added `.videoGen` ("Video"),
-/// a Stores utility alongside `.vault`/`.dictation`/`.whiteboard` - a local
-/// LTX-2 text-to-video generator, pinned directly *above* `.docs` and below
-/// `.dictation`, matching the identical convention every prior Stores
-/// addition in this list already established.
 enum RailDestination: CaseIterable {
     /// Daylight Phase 2: the home canvas (`HomeCanvasController`) - the hub
     /// every module card and every drill page's back button returns to. It is
@@ -152,7 +147,7 @@ enum RailDestination: CaseIterable {
     /// reachable through `show(_:)`), so nothing about routing needed a
     /// second concept.
     case homeCanvas
-    case overview, console, hosts, shift, review, logAnalyzer, tools, whiteboard, vault, dictation, videoGen, schedules, health, docs, runbooks, postmortems, updates, bootstrap, automation, githubSync, settings
+    case overview, console, hosts, shift, review, logAnalyzer, tools, whiteboard, vault, dictation, schedules, health, docs, runbooks, postmortems, updates, bootstrap, automation, githubSync, settings
 
     var symbol: String {
         switch self {
@@ -187,10 +182,6 @@ enum RailDestination: CaseIterable {
         case .whiteboard: return "scribble.variable"
         case .vault: return "lock.shield"
         case .dictation: return "waveform"
-        // `fm/grandline-videogen-feasibility-scout`: a film reel - the "video"
-        // idea in one glyph, distinct from Dictation's waveform and available
-        // since SF Symbols 1.0 (no resolution risk).
-        case .videoGen: return "film"
         // `fm/grandline-schedules-sidebar-move`: a calendar - matches
         // `SchedulesCardView`'s own header icon, so the rail row and the
         // card it opens onto agree.
@@ -226,7 +217,6 @@ enum RailDestination: CaseIterable {
         case .whiteboard: return "Whiteboard"
         case .vault: return "Vault"
         case .dictation: return "Dictation"
-        case .videoGen: return "Video"
         case .schedules: return "Schedules"
         case .health: return "Health"
         case .docs: return "Docs"
@@ -281,14 +271,14 @@ enum RailDestination: CaseIterable {
         case .automation: return .accent
         case .githubSync: return .violet
         case .homeCanvas, .overview, .console, .hosts, .shift, .review, .logAnalyzer,
-             .tools, .whiteboard, .vault, .dictation, .videoGen, .schedules, .health, .docs, .runbooks, .postmortems, .settings: return .accent
+             .tools, .whiteboard, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems, .settings: return .accent
         }
     }
 
     var isDailyUse: Bool {
         switch self {
         case .homeCanvas, .overview, .console, .hosts, .shift, .review, .logAnalyzer: return true
-        case .tools, .whiteboard, .vault, .dictation, .videoGen, .schedules, .health, .docs, .runbooks, .postmortems,
+        case .tools, .whiteboard, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems,
              .updates, .bootstrap, .automation, .githubSync, .settings: return false
         }
     }

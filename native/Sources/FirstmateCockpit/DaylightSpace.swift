@@ -121,7 +121,6 @@ enum DaylightModule: String, CaseIterable {
     case runbooks
     case postmortems
     case dictation
-    case videoGen
     case tools
     case whiteboard
     case settings
@@ -142,7 +141,7 @@ enum DaylightModule: String, CaseIterable {
         // their own destinations - see `DaylightModuleSelfTest.checkSpaceTable`,
         // updated alongside this per this file's own "change it here and in
         // that test together" rule.
-        case .vault, .docs, .runbooks, .postmortems, .tools, .dictation, .videoGen, .whiteboard: return .stores
+        case .vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard: return .stores
         case .updates, .bootstrap, .automation, .githubSync, .settings: return .engineering
         }
     }
@@ -169,7 +168,7 @@ enum DaylightModule: String, CaseIterable {
     var appearsOnOverview: Bool {
         switch self {
         case .tasks, .hosts, .updates, .bootstrap, .automation, .githubSync,
-             .logAnalyzer, .vault, .docs, .runbooks, .postmortems, .dictation, .videoGen, .tools, .whiteboard, .settings:
+             .logAnalyzer, .vault, .docs, .runbooks, .postmortems, .dictation, .tools, .whiteboard, .settings:
             return false
         default:
             return true
@@ -227,7 +226,6 @@ enum DaylightModule: String, CaseIterable {
         case .runbooks: return .runbooks
         case .postmortems: return .postmortems
         case .dictation: return .dictation
-        case .videoGen: return .videoGen
         case .tools: return .tools
         case .whiteboard: return .whiteboard
         case .settings: return .settings
@@ -270,7 +268,6 @@ enum DaylightModule: String, CaseIterable {
         case .runbooks: return "list.bullet.rectangle"
         case .postmortems: return "doc.text.magnifyingglass"
         case .dictation: return "mic.fill"
-        case .videoGen: return "film.fill"
         case .tools: return "wrench.and.screwdriver.fill"
         case .whiteboard: return "scribble.variable"
         case .settings: return "slider.horizontal.3"
@@ -313,7 +310,6 @@ enum DaylightModule: String, CaseIterable {
         case .runbooks: return "Runbooks"
         case .postmortems: return "Postmortems"
         case .dictation: return "Dictation"
-        case .videoGen: return "Video"
         case .tools: return "Tools"
         case .whiteboard: return "Whiteboard"
         case .settings: return "Settings"
