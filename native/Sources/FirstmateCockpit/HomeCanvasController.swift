@@ -516,6 +516,7 @@ final class HomeCanvasController: NSViewController {
         case .runbooks: fillRunbooks(&content)
         case .postmortems: fillPostmortems(&content)
         case .dictation: fillDictation(&content)
+        case .videoGen: fillVideoGen(&content)
         case .tools: fillTools(&content)
         case .whiteboard: fillWhiteboard(&content)
         case .settings: fillSettings(&content)
@@ -939,6 +940,32 @@ final class HomeCanvasController: NSViewController {
         default: content.chip = .warn("Needs access")
         }
         content.body = .note(dictationStatus.detail(shortcutDisplay: AppSettings.shared.dictationShortcut.displayString))
+    }
+
+    /// `VideoGenEnvironment.currentState()` is a cheap on-disk file-existence
+    /// check (the same class of check `fillDictation` above already makes via
+    /// `DictationPermissions.currentStatus()`) - never a store construction or
+    /// a network fetch, so it's safe here per this file's own "the canvas
+    /// never constructs a store and never fires a fetch" rule.
+    private func fillVideoGen(_ content: inout HelmModuleCard.Content) {
+        switch VideoGenEnvironment.currentState() {
+        case .ready:
+            content.subtitle = "ready"
+            content.chip = .ok("Ready")
+            content.body = .note("Generate a short clip from a text prompt, on this machine.")
+        case .settingUp:
+            content.subtitle = "setting up"
+            content.chip = .mute("Setting up")
+            content.body = .note("Downloading the local video model.")
+        case .failed(let message):
+            content.subtitle = "setup failed"
+            content.chip = .warn("Failed")
+            content.body = .note(message)
+        case .notSetUp:
+            content.subtitle = "not set up"
+            content.chip = .warn("Set up needed")
+            content.body = .note("Downloads a local video model (~27GB) the first time you use it.")
+        }
     }
 
     private func fillTools(_ content: inout HelmModuleCard.Content) {

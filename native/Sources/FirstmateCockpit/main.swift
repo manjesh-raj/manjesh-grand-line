@@ -1630,6 +1630,15 @@ if ProcessInfo.processInfo.environment["FM_RUN_DICTATION_CLEANUP_TESTS"] == "1" 
     exit(DictationCleanupSelfTest.run() ? 0 : 1)
 }
 
+// fm/grandline-videogen-feasibility-scout: the Video Stores destination's
+// pure environment/state logic, its generate() guard/subprocess contract
+// (against a real, disposable fake `ltx-2-mlx`), and its Claude prompt-
+// enhancement step (against a real, disposable fake `claude`) - see
+// VideoGenSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_VIDEOGEN_TESTS"] == "1" {
+    exit(VideoGenSelfTest.run() ? 0 : 1)
+}
+
 // `fm/grandline-dictation-whisper-engine`: same convention, for the vendored
 // whisper.cpp wrapper's model validation, audio resampling, and (when a real
 // model path is provided) real load/transcribe - see
