@@ -86,6 +86,29 @@
 // is kept exactly as-is (see `KubernetesController.refreshCluster`'s own
 // note on the choice **not** to bypass the activity check and send anyway:
 // doing so would be the one thing this bridge exists to prevent).
+//
+// **`stop()` used to silently drop an in-flight request's own completion
+// (`fm/grandline-k8s-refresh-stuck-audit`).** The `fm/grandline-k8s-feed-tab
+// -stall-fix` work above fixed the *queued-but-not-yet-issued* half of "a
+// request that never resolves" - but `stop()` itself had the identical bug
+// one level deeper: it set `inFlight = nil` without ever calling that
+// request's `completion`, only failing what was still sitting in `queue`.
+// That is silent by construction: `pendingReason` (the mechanism the prior
+// fix built) only ever describes something *queued*, so a request already
+// issued to the terminal when `stop()` ran left no trace anywhere - not in
+// `pendingReason`, not in `queueDepth`, nothing. A caller that fans a batch
+// out across several commands (`KubernetesController.refreshCluster()`'s
+// `enqueueBatch`, tracking its own "how many are still outstanding" counter)
+// would then have that counter stuck above zero forever, because the one
+// completion that would have brought it to zero was the one `stop()` just
+// dropped - and the caller has no way to tell the difference between "still
+// genuinely running" and "silently abandoned". `stop()` is reachable mid
+// -command any time the captain switches the feed-tab picker or the scope
+// strip (`KubernetesController.teardownFeed()`), and a real discovery sweep
+// against a real cluster easily takes long enough for exactly that timing.
+// See `checkInFlightRequestResolvedOnStop`/`checkBatchStillCompletesWhenStopp
+// edMidFlight` for the fix, proven against the bug rather than merely
+// described.
 
 import Foundation
 
@@ -396,20 +419,42 @@ final class KubeBridge {
         timer = t
     }
 
-    /// Stops the timer, fails everything still queued, and forgets any
-    /// in-flight command.
+    /// Stops the timer, fails everything still queued **and anything
+    /// currently in flight**, and forgets any in-flight command.
     ///
     /// Deliberately leaves `consecutiveFailureCount`/`hasStoppedRetrying`
     /// alone - this is "pause" (the page went away, the feed tab changed),
-    /// not "give up", exactly like `KubeContextBridge.stop()`.
+    /// not "give up", exactly like `KubeContextBridge.stop()`. Bypasses
+    /// `deliver(_:_:)` for the same reason: a stopped-by-teardown request
+    /// must never itself count toward the give-up threshold.
+    ///
+    /// **The in-flight resolution is the fix for
+    /// `fm/grandline-k8s-refresh-stuck-audit`.** Before it, `inFlight = nil`
+    /// silently discarded that request's own `completion` - see this file's
+    /// header for why that left a caller's own multi-command counter
+    /// (`KubernetesController.refreshCluster()`'s `isRefreshingCluster`)
+    /// stuck forever, with no trace anywhere in this bridge's own visible
+    /// state to explain why.
     func stop() {
         timer?.invalidate()
         timer = nil
+        pendingReason = nil
+        let droppedInFlight = inFlight
         inFlight = nil
         inFlightLabel = nil
-        pendingReason = nil
         let pending = queue
         queue.removeAll()
+        if let request = droppedInFlight?.request {
+            AppLog.ui.info("""
+                KubeBridge stop(): resolving an in-flight command (\
+                \(request.command.shortLabel, privacy: .public)) that was still \
+                waiting on its markers, plus \(pending.count, privacy: .public) \
+                still-queued request(s) - none are left dangling.
+                """)
+            request.completion(.failure(.unavailable("the log/cluster feed was stopped")))
+        } else if !pending.isEmpty {
+            AppLog.ui.info("KubeBridge stop(): failing \(pending.count, privacy: .public) still-queued request(s)")
+        }
         for request in pending {
             request.completion(.failure(.unavailable("the log/cluster feed was stopped")))
         }
@@ -420,6 +465,7 @@ final class KubeBridge {
     /// the single entry point back in, matching `KubeContextBridge.start()`'s
     /// deliberate unification of activation and retry.
     func resume() {
+        AppLog.ui.info("KubeBridge resume(): captain-initiated retry after give-up")
         consecutiveFailureCount = 0
         hasStoppedRetrying = false
         lastFailureMessage = nil
@@ -433,6 +479,7 @@ final class KubeBridge {
     /// rather than silently re-aimed - a `describe` for a pod discovered on
     /// one cluster must never be answered by a different one.
     func retarget(_ newTarget: SRELeadBridgeTerminal?) {
+        AppLog.ui.info("KubeBridge retarget(): switching feed tab (had target: \(self.target != nil, privacy: .public))")
         stop()
         target = newTarget
         consecutiveFailureCount = 0
@@ -547,6 +594,7 @@ final class KubeBridge {
         inFlight = InFlight(request: next, startMarker: startMarker, endMarker: endMarker,
                             startedAt: startedAt, searchFromLine: searchFromLine, ticks: 0)
         inFlightLabel = next.command.shortLabel
+        AppLog.ui.info("KubeBridge: issuing \(next.command.shortLabel, privacy: .public)")
         onStateChanged?()
     }
 
@@ -644,9 +692,15 @@ final class KubeBridge {
     private func deliver(_ request: KubeRequest, _ result: Result<String, KubeBridgeError>) {
         switch result {
         case .success:
+            AppLog.ui.info("KubeBridge: \(request.command.shortLabel, privacy: .public) succeeded")
             consecutiveFailureCount = 0
             lastFailureMessage = nil
         case .failure(let error):
+            AppLog.ui.error("""
+                KubeBridge: \(request.command.shortLabel, privacy: .public) failed - \
+                \(error.message, privacy: .public) (counts toward give-up: \
+                \(error.countsAsGenuineFailure, privacy: .public))
+                """)
             lastFailureMessage = error.message
             if error.countsAsGenuineFailure {
                 consecutiveFailureCount += 1
@@ -661,6 +715,10 @@ final class KubeBridge {
     /// request is failed rather than left dangling - a caller that never
     /// hears back cannot tell "gave up" from "still running".
     private func giveUp() {
+        AppLog.ui.error("""
+            KubeBridge: giving up after \(self.consecutiveFailureCount, privacy: .public) consecutive \
+            genuine failures - \(self.lastFailureMessage ?? "no detail", privacy: .public)
+            """)
         hasStoppedRetrying = true
         timer?.invalidate()
         timer = nil

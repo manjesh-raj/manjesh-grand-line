@@ -108,6 +108,7 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         if let sessionsToken { sessions.unobserve(sessionsToken) }
         clusterTimer?.invalidate()
         tailTimer?.invalidate()
+        refreshWatchdogTimer?.invalidate()
     }
 
     // MARK: State
@@ -140,6 +141,42 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
     var clusterMessage: String?
     var lastRefreshedAt: Date?
     var isRefreshingCluster = false
+
+    /// `fm/grandline-k8s-refresh-stuck-audit`'s mandatory hard safety net,
+    /// independent of whatever causes a stuck refresh - see this file's
+    /// header and `checkRefreshWatchdog()`'s own doc comment. `isRefreshing
+    /// Cluster` must never be trusted to resolve on its own no matter what
+    /// bug (this one, or a future one) might otherwise leave it stuck.
+    var refreshStartedAt: Date?
+    var refreshWatchdogTimer: Timer?
+    /// True only while `refreshCluster()`'s own hard ceiling has fired and
+    /// forced the page out of an indefinite "Refreshing…" - cleared the
+    /// moment a fresh attempt starts, or if the original, once-stuck request
+    /// eventually straggles in on its own (`applySweep` clears it too).
+    var clusterRefreshStuck = false
+    /// Every `refreshCluster()` call gets a fresh id. A batch's completion
+    /// only applies its results (and only clears `isRefreshingCluster`) if
+    /// its own generation still matches - so a request the watchdog already
+    /// forced past, which later straggles in anyway, cannot silently step on
+    /// whatever a newer, already-started attempt has since rendered. This is
+    /// what keeps the watchdog a genuine safety net rather than a new source
+    /// of double-applied or out-of-order state.
+    var refreshGeneration = 0
+    /// How long a cluster refresh may run with no completion (success or
+    /// failure) before this page forces itself out of an indefinite
+    /// "Refreshing…" into a clear, actionable "stuck" state - counted from
+    /// `refreshStartedAt`, not reset by an in-between `pendingReason`
+    /// transition (waiting on contention is still time the captain has been
+    /// looking at "Refreshing…" with nothing resolving). Deliberately
+    /// independent of `KubeBridge`'s own much shorter `commandTimeout`/
+    /// `queueDeadline` - this ceiling exists to catch a dropped completion
+    /// *anywhere* along the chain, not to second-guess a genuinely slow
+    /// cluster.
+    static let clusterRefreshHardCeiling: TimeInterval = 75
+    /// How often the watchdog checks - independent of, and much finer than,
+    /// `clusterPollInterval`, so the stuck state appears promptly once the
+    /// ceiling is crossed rather than waiting for the next 30s poll.
+    static let refreshWatchdogInterval: TimeInterval = 5
 
     let merger = KubeLogMerger()
     var selectedPods: [String] = []
@@ -176,6 +213,12 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
     var clusterTabs: HelmSegmentedTabs!
     var clusterTable: KubeResourceTableView!
     var clusterStatusLabel: NSTextField!
+    /// `fm/grandline-k8s-refresh-stuck-audit`'s mandatory safety net: the
+    /// real "Try again" action for a refresh the hard-ceiling watchdog forced
+    /// out of an indefinite "Refreshing…". Hidden whenever the feed is
+    /// working - a retry button beside a healthy refresh invites a pointless
+    /// extra command, matching `retryFeedButton`'s own precedent.
+    var clusterRetryButton: HelmButton!
     var describeDrawer: NSView!
     var describeTitleLabel: NSTextField!
     var describeTextView: NSTextView!
@@ -464,7 +507,18 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         clusterTable = KubeResourceTableView()
         buildDescribeDrawer()
 
-        let header = NSStackView(views: [clusterTabs, clusterStatusLabel])
+        // `fm/grandline-k8s-refresh-stuck-audit`: the hard-ceiling watchdog's
+        // own real "Try again" action - see `checkRefreshWatchdog()`. Shown
+        // only in the stuck state, never beside a healthy or genuinely
+        // running refresh.
+        clusterRetryButton = HelmButton(title: "Try again", variant: .primary, size: .small)
+        clusterRetryButton.target = self
+        clusterRetryButton.action = #selector(retryStuckClusterRefreshTapped)
+        clusterRetryButton.isHidden = true
+        clusterRetryButton.setContentHuggingPriority(.required, for: .horizontal)
+        clusterRetryButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let header = NSStackView(views: [clusterTabs, clusterStatusLabel, clusterRetryButton!])
         header.orientation = .horizontal
         header.alignment = .centerY
         header.spacing = HelmMetrics.s3
