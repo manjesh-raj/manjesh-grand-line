@@ -511,6 +511,7 @@ final class HomeCanvasController: NSViewController {
         case .githubSync: fillGitHubSync(&content)
         case .schedules: fillSchedules(&content)
         case .logAnalyzer: fillLogAnalyzer(&content)
+        case .kubernetes: fillKubernetes(&content)
         case .vault: fillVault(&content)
         case .docs: fillDocs(&content)
         case .runbooks: fillRunbooks(&content)
@@ -853,6 +854,22 @@ final class HomeCanvasController: NSViewController {
         content.body = .metric(value: "\(history.count)",
                                unit: history.count == 1 ? "saved" : "saved",
                                note: "Latest: \(latest.title)")
+    }
+
+    /// `fm/grandline-k8s-cluster-tail`. Reads the same `connectedHostIDs`
+    /// closure the Hosts module already uses - `HostSessionRegistry`'s own
+    /// live set, in memory, one hop away - and nothing else. The canvas constructs no store and fires no fetch
+    /// (`DaylightModuleSelfTest.checkCanvasConstructsNoStores` is a source
+    /// guard on exactly that), and this page's own data needs a feed tab the
+    /// canvas has no business creating.
+    private func fillKubernetes(_ content: inout HelmModuleCard.Content) {
+        let live = connectedHostIDs?().count ?? 0
+        content.subtitle = live == 0 ? "no live session" : (live == 1 ? "1 live session" : "\(live) live sessions")
+        guard live > 0 else {
+            content.body = .note("Cluster browsing and log tailing run inside a bastion session you're already logged into. Connect a host first.")
+            return
+        }
+        content.body = .note("Browse pods, deployments and events read-only, or tail several pods at once - through a session you've already authenticated.")
     }
 
     private func fillVault(_ content: inout HelmModuleCard.Content) {

@@ -276,6 +276,18 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// nothing about the Log Analyzer destination.
     var onAnalyzeLogs: ((LogTerminalCapture, String) -> Void)?
 
+    /// `fm/grandline-k8s-cluster-tail`: the "Tail Logs" toolbar button, a
+    /// dedicated-host-page affordance only.
+    ///
+    /// It carries **no cluster logic of its own** - it is the Shape-C deep
+    /// link, forwarding to `AppShellController.openKubernetes(hostID:showTail:)`
+    /// so the standalone `.kubernetes` destination opens pre-scoped to this
+    /// host. The scout report's own hybrid: both entry points, one
+    /// implementation. `nil` (and the button absent) on the shared Firstmate
+    /// console and on any host page opened without a saved-host id behind it.
+    var onTailLogs: (() -> Void)?
+    var tailLogsButton: HelmButton?
+
     /// F8 (incident mode): forwarded to `AppShellController`, which opens the
     /// Log Analyzer on a saved investigation. Fired only from the incident
     /// card's Evidence tab, for a row that carries a real investigation id.

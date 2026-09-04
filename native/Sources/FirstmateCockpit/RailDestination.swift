@@ -147,7 +147,7 @@ enum RailDestination: CaseIterable {
     /// reachable through `show(_:)`), so nothing about routing needed a
     /// second concept.
     case homeCanvas
-    case overview, console, hosts, shift, review, logAnalyzer, tools, whiteboard, vault, dictation, schedules, health, docs, runbooks, postmortems, updates, bootstrap, automation, githubSync, settings
+    case overview, console, hosts, shift, review, logAnalyzer, kubernetes, tools, whiteboard, vault, dictation, schedules, health, docs, runbooks, postmortems, updates, bootstrap, automation, githubSync, settings
 
     var symbol: String {
         switch self {
@@ -173,6 +173,11 @@ enum RailDestination: CaseIterable {
         // "read this output" idea, distinct from `.review`'s branch glyph
         // and from Console's bare terminal.
         case .logAnalyzer: return "text.magnifyingglass"
+        // The Kubernetes logo is literally a ship's helm, which would suit
+        // this app's nautical identity - but `steeringwheel` is already
+        // Updates'. `cube.transparent` is the next-closest read for "a
+        // cluster of things you can see into", and is unclaimed here.
+        case .kubernetes: return "cube.transparent"
         case .tools: return "wrench.and.screwdriver"
         // `fm/grand-line-whiteboard-excalidraw`: a hand-drawn scribble - the
         // one glyph in this family that reads as "sketch on a surface" rather
@@ -213,6 +218,7 @@ enum RailDestination: CaseIterable {
         case .console: return "Console"
         case .review: return "Review"
         case .logAnalyzer: return "Log Analyzer"
+        case .kubernetes: return "Kubernetes"
         case .tools: return "Tools"
         case .whiteboard: return "Whiteboard"
         case .vault: return "Vault"
@@ -270,7 +276,7 @@ enum RailDestination: CaseIterable {
         case .bootstrap: return .warn
         case .automation: return .accent
         case .githubSync: return .violet
-        case .homeCanvas, .overview, .console, .hosts, .shift, .review, .logAnalyzer,
+        case .homeCanvas, .overview, .console, .hosts, .shift, .review, .logAnalyzer, .kubernetes,
              .tools, .whiteboard, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems, .settings: return .accent
         }
     }
@@ -278,7 +284,13 @@ enum RailDestination: CaseIterable {
     var isDailyUse: Bool {
         switch self {
         case .homeCanvas, .overview, .console, .hosts, .shift, .review, .logAnalyzer: return true
-        case .tools, .whiteboard, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems,
+        // A utility (`isDailyUse == false`) on the same criterion as
+        // Log Analyzer's siblings: cluster state is looked at when something
+        // is wrong, not checked every morning. Its own space is Operations
+        // (`DaylightModule.kubernetes`), beside Log Analyzer, per the scout
+        // report's own placement note.
+        case .kubernetes,
+             .tools, .whiteboard, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems,
              .updates, .bootstrap, .automation, .githubSync, .settings: return false
         }
     }

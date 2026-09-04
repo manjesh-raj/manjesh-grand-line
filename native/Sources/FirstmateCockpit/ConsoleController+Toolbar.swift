@@ -107,6 +107,23 @@ extension ConsoleController {
             analyzeLogsButton = button
             toolViews.append(button)
         }
+        // `fm/grandline-k8s-cluster-tail`: "Tail Logs" joins the same
+        // investigation cluster, as a pre-scoped deep link into the
+        // standalone `.kubernetes` destination rather than a panel of its own
+        // (the scout report's Shape C). `!isFirstmateConsole` is the whole
+        // gate, exactly like Analyze Logs above: every dedicated host page has
+        // a saved host id by construction, and an ad-hoc quick-connect opens
+        // in the *shared* console, which this branch already excludes. It
+        // cannot be gated on `onTailLogs != nil` - the toolbar is built during
+        // `loadView`, which `embed(controller.view)` triggers before
+        // `connectHost` has assigned any of its closures.
+        if !isFirstmateConsole {
+            let button = makeLabeledButton(symbol: "list.bullet.rectangle.portrait", title: "Tail Logs",
+                                           tooltip: "Open Kubernetes, scoped to this host, and tail pod logs there.",
+                                           action: #selector(tailLogsTapped))
+            tailLogsButton = button
+            toolViews.append(button)
+        }
         // F8 (incident mode): the red action that ties SRE Lead, the Log
         // Analyzer and runbook runs on this host into one record. Sits at the
         // end of the investigation cluster (SRE Lead / Compose / Analyze Logs)
@@ -404,4 +421,12 @@ extension ConsoleController {
     @objc func copySelection() {
         activeTerminal()?.copy(self)
     }
+}
+
+
+// MARK: - Kubernetes deep link (`fm/grandline-k8s-cluster-tail`)
+
+extension ConsoleController {
+    /// Forwards, never handles. See `onTailLogs`' own doc comment.
+    @objc func tailLogsTapped() { onTailLogs?() }
 }

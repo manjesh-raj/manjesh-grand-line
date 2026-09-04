@@ -116,6 +116,7 @@ enum DaylightModule: String, CaseIterable {
     case githubSync
     case schedules
     case logAnalyzer
+    case kubernetes
     case vault
     case docs
     case runbooks
@@ -135,7 +136,7 @@ enum DaylightModule: String, CaseIterable {
         switch self {
         case .briefing, .fleet: return nil
         case .console, .tasks, .mergeQueue: return .command
-        case .hosts, .logAnalyzer, .health, .schedules: return .operations
+        case .hosts, .logAnalyzer, .kubernetes, .health, .schedules: return .operations
         // `fm/grandline-docs-split-runbooks-postmortems` added Runbooks and
         // Postmortems here, promoted out of `DocsController`'s own tabs into
         // their own destinations - see `DaylightModuleSelfTest.checkSpaceTable`,
@@ -168,7 +169,7 @@ enum DaylightModule: String, CaseIterable {
     var appearsOnOverview: Bool {
         switch self {
         case .tasks, .hosts, .updates, .bootstrap, .automation, .githubSync,
-             .logAnalyzer, .vault, .docs, .runbooks, .postmortems, .dictation, .tools, .whiteboard, .settings:
+             .logAnalyzer, .kubernetes, .vault, .docs, .runbooks, .postmortems, .dictation, .tools, .whiteboard, .settings:
             return false
         default:
             return true
@@ -221,6 +222,7 @@ enum DaylightModule: String, CaseIterable {
         case .githubSync: return .githubSync
         case .schedules: return .schedules
         case .logAnalyzer: return .logAnalyzer
+        case .kubernetes: return .kubernetes
         case .vault: return .vault
         case .docs: return .docs
         case .runbooks: return .runbooks
@@ -263,6 +265,7 @@ enum DaylightModule: String, CaseIterable {
         case .githubSync: return "arrow.2.squarepath"
         case .schedules: return "clock.fill"
         case .logAnalyzer: return "text.magnifyingglass"
+        case .kubernetes: return "cube.transparent"
         case .vault: return "lock.fill"
         case .docs: return "book.fill"
         case .runbooks: return "list.bullet.rectangle"
@@ -305,6 +308,7 @@ enum DaylightModule: String, CaseIterable {
         case .githubSync: return "GitHub Sync"
         case .schedules: return "Schedules"
         case .logAnalyzer: return "Log Analyzer"
+        case .kubernetes: return "Kubernetes"
         case .vault: return "Vault"
         case .docs: return "Docs"
         case .runbooks: return "Runbooks"

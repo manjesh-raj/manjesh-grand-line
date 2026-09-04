@@ -1,0 +1,338 @@
+// Manjesh Grand Line - native macOS app.
+//
+// `fm/grandline-k8s-cluster-tail`: `KubernetesController`'s rendering half.
+// See `KubernetesController.swift`'s header for the page's design and
+// `+Behaviour.swift`'s for the split.
+
+import AppKit
+
+extension KubernetesController {
+
+    // MARK: - Whole page
+
+    func render() {
+        guard isViewLoaded else { return }
+        let hasSession = !sessions.isEmpty
+        scopeTabsHost.isHidden = !hasSession
+        scopeEmptyState.isHidden = hasSession
+
+        let hasScope = hasSession && scopeHostID != nil
+        feedCard.isHidden = !hasScope
+        let ready = hasScope && feedTabID != nil
+        workArea.isHidden = !ready
+
+        clusterContainer.isHidden = !(ready && pageTab == .cluster)
+        tailContainer.isHidden = !(ready && pageTab == .logTail)
+
+        renderFeedPicker()
+        renderFeedStatus()
+        renderClusterTable()
+        renderPodPicker()
+        renderLogLines(follow: true)
+        renderTailStatus()
+        onDrillSubtitleChanged?()
+    }
+
+    // MARK: - Feed card
+
+    func renderFeedPicker() {
+        guard let hostID = scopeHostID else { return }
+        let tabs = access.tabs(hostID)
+        feedTabPicker.removeAllItems()
+        if tabs.isEmpty {
+            feedTabPicker.addItem(withTitle: "No open tabs")
+            feedTabPicker.isEnabled = false
+        } else {
+            for tab in tabs { feedTabPicker.addItem(withTitle: tab.name) }
+            feedTabPicker.isEnabled = true
+            if let feedTabID, let index = tabs.firstIndex(where: { $0.id == feedTabID }) {
+                feedTabPicker.selectItem(at: index)
+            }
+        }
+    }
+
+    func renderFeedStatus() {
+        guard isViewLoaded, let hostID = scopeHostID,
+              let session = sessions.session(for: hostID) else { return }
+        guard feedTabID != nil, let bridge else {
+            retryFeedButton.isHidden = true
+            feedStatusLabel.stringValue =
+                "Pick a tab on \(session.label) for this page to type into, or duplicate one. "
+                + "It must be logged all the way in to the box that has kubectl - that hop is password-gated by policy, so it is one manual login per session, then hands-free. "
+                + "Your other tabs are never touched."
+            return
+        }
+        let name = feedTabName ?? "a tab"
+        retryFeedButton.isHidden = !bridge.hasStoppedRetrying
+        if bridge.hasStoppedRetrying {
+            feedStatusLabel.stringValue =
+                "kubectl kept failing in \u{201C}\(name)\u{201D} - \(bridge.lastFailureMessage ?? "no detail") - so this page stopped retrying. "
+                + "That usually means the tab hasn't reached the box with kubectl on it yet. Log in there, then try again."
+            return
+        }
+        var parts = ["Feeding from \u{201C}\(name)\u{201D}."]
+        if let running = bridge.inFlightLabel { parts.append("Running \(running)\u{2026}") }
+        if bridge.queueDepth > 0 { parts.append("\(bridge.queueDepth) queued.") }
+        parts.append("Every command it runs is visible in that tab.")
+        feedStatusLabel.stringValue = parts.joined(separator: " ")
+    }
+
+    // MARK: - Cluster tables
+
+    func renderClusterStatus(running: Bool) {
+        guard isViewLoaded else { return }
+        if running {
+            clusterStatusLabel.stringValue = "Refreshing\u{2026}"
+            return
+        }
+        var parts: [String] = []
+        if let lastRefreshedAt {
+            parts.append("refreshed \(HostSession.durationText(since: lastRefreshedAt)) ago")
+        }
+        parts.append("polls every \(Int(Self.clusterPollInterval))s while open")
+        if let clusterMessage { parts.insert(clusterMessage, at: 0) }
+        clusterStatusLabel.stringValue = parts.joined(separator: " \u{00B7} ")
+    }
+
+    func renderClusterTable() {
+        guard isViewLoaded else { return }
+        renderClusterStatus(running: isRefreshingCluster)
+        switch clusterTab {
+        case .pods:
+            let showsMetrics = pods.contains { $0.cpu != nil }
+            var columns: [KubeResourceTableView.Column] = [
+                .init("NAME", showsMetrics ? 0.36 : 0.44, monospaced: true),
+                .init("READY", 0.09),
+                .init("STATUS", 0.16),
+                .init("RESTARTS", 0.11),
+                .init("AGE", 0.10),
+            ]
+            if showsMetrics {
+                columns.append(.init("CPU", 0.09, monospaced: true))
+                columns.append(.init("MEM", 0.09, monospaced: true))
+            } else {
+                columns.append(.init("NODE", 0.21, monospaced: true))
+            }
+            let rows = pods.map { pod -> KubeResourceTableView.Row in
+                var values = [pod.name, pod.ready, pod.status, "\(pod.restarts)", pod.age]
+                if showsMetrics {
+                    values.append(pod.cpu ?? "-")
+                    values.append(pod.memory ?? "-")
+                } else {
+                    values.append(pod.node ?? "-")
+                }
+                let tint: HelmTint?
+                switch pod.health {
+                case .healthy: tint = nil
+                case .warning: tint = .warn
+                case .bad: tint = .critical
+                }
+                return .init(values: values, tint: tint, key: pod.name)
+            }
+            clusterTable.onSelectRow = { [weak self] key in self?.describePod(key) }
+            clusterTable.setContent(columns: columns, rows: rows, theme: theme)
+        case .deployments:
+            let columns: [KubeResourceTableView.Column] = [
+                .init("NAME", 0.46, monospaced: true), .init("READY", 0.14),
+                .init("UP-TO-DATE", 0.16), .init("AVAILABLE", 0.14), .init("AGE", 0.10),
+            ]
+            clusterTable.onSelectRow = nil
+            clusterTable.setContent(columns: columns, rows: deployments.map {
+                .init(values: [$0.name, $0.ready, $0.upToDate, $0.available, $0.age],
+                      tint: $0.isFullyReady ? nil : .warn, key: $0.name)
+            }, theme: theme)
+        case .services:
+            let columns: [KubeResourceTableView.Column] = [
+                .init("NAME", 0.32, monospaced: true), .init("TYPE", 0.15),
+                .init("CLUSTER-IP", 0.18, monospaced: true), .init("EXTERNAL-IP", 0.15, monospaced: true),
+                .init("PORT(S)", 0.20, monospaced: true),
+            ]
+            clusterTable.onSelectRow = nil
+            clusterTable.setContent(columns: columns, rows: services.map {
+                .init(values: [$0.name, $0.type, $0.clusterIP, $0.externalIP ?? "-", $0.ports], key: $0.name)
+            }, theme: theme)
+        case .events:
+            let columns: [KubeResourceTableView.Column] = [
+                .init("LAST SEEN", 0.12), .init("TYPE", 0.10), .init("REASON", 0.16),
+                .init("OBJECT", 0.24, monospaced: true), .init("MESSAGE", 0.38),
+            ]
+            clusterTable.onSelectRow = nil
+            clusterTable.setContent(columns: columns, rows: events.map {
+                .init(values: [$0.lastSeen, $0.type, $0.reason, $0.object, $0.message],
+                      tint: $0.isWarning ? .warn : nil, key: $0.object)
+            }, theme: theme)
+        }
+    }
+
+    // MARK: - Log tail
+
+    func renderPodPicker() {
+        guard isViewLoaded else { return }
+        for existing in podPickerStack.arrangedSubviews {
+            podPickerStack.removeArrangedSubview(existing)
+            existing.removeFromSuperview()
+        }
+        let heading = NSTextField(labelWithString: pods.isEmpty ? "No pods discovered" : "Pods in \(namespace)")
+        heading.font = HelmType.kicker()
+        heading.textColor = HelmTheme.mutedInk(theme)
+        podPickerStack.addArrangedSubview(heading)
+
+        for pod in pods {
+            let checkbox = NSButton(checkboxWithTitle: pod.name, target: self,
+                                    action: #selector(togglePodSelection(_:)))
+            checkbox.state = selectedPods.contains(pod.name) ? .on : .off
+            checkbox.font = HelmType.body()
+            checkbox.toolTip = "\(pod.name) \u{00B7} \(pod.status)"
+            checkbox.lineBreakMode = .byTruncatingMiddle
+            // A pod name is long and this column is 230pt: without this, the
+            // checkbox's own intrinsic width becomes a floor on the whole
+            // window (gotcha (13), which has shipped four times here).
+            checkbox.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            if selectedPods.contains(pod.name) {
+                checkbox.contentTintColor = HelmContrast.legibleTintedText(
+                    tintHex: merger.tint(for: pod.name).hex(in: theme),
+                    over: HelmTheme.nsColor(theme.chromeBackgroundHex), theme: theme)
+            }
+            podPickerStack.addArrangedSubview(checkbox)
+            checkbox.widthAnchor.constraint(equalTo: podPickerStack.widthAnchor).isActive = true
+        }
+        if pods.isEmpty {
+            let hint = NSTextField(wrappingLabelWithString:
+                "Open the Cluster tab (or hit Refresh) to discover pods - the picker is built from a real `get pods`, never a hardcoded list.")
+            hint.font = HelmType.caption()
+            hint.textColor = HelmTheme.mutedInk(theme)
+            hint.preferredMaxLayoutWidth = 200
+            podPickerStack.addArrangedSubview(hint)
+            hint.widthAnchor.constraint(equalTo: podPickerStack.widthAnchor).isActive = true
+        }
+    }
+
+    func renderLogLines(follow: Bool) {
+        guard isViewLoaded else { return }
+        logList.setLines(merger.visibleLines(errorsOnly: errorsOnly),
+                         tintForPod: { [merger] pod in merger.tint(for: pod) },
+                         theme: theme, follow: follow)
+    }
+
+    func renderTailStatus() {
+        guard isViewLoaded else { return }
+        var parts: [String] = []
+        if let tailStatus { parts.append(tailStatus) }
+        if selectedPods.isEmpty {
+            parts.append("Tick a pod on the left to start tailing.")
+        } else if isTailPaused {
+            parts.append("Paused - nothing is being typed into the feed tab.")
+        } else {
+            parts.append("Tailing \(selectedPods.count) pod\(selectedPods.count == 1 ? "" : "s").")
+        }
+        parts.append(KubeLogTailSession.limitsNote)
+        tailStatusLabel.stringValue = parts.joined(separator: " ")
+    }
+
+    // MARK: - Theme
+
+    func applyTheme(_ theme: HelmTheme) {
+        self.theme = theme
+        guard isViewLoaded else { return }
+        root.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+        root.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
+        scopeCard.applyTheme(theme)
+        feedCard.applyTheme(theme)
+        scopeTabs?.applyTheme(theme)
+        scopeEmptyState.applyTheme(theme)
+        pageTabs.applyTheme(theme)
+        clusterTabs.applyTheme(theme)
+        clusterTable.applyTheme(theme)
+        logList.applyTheme(theme)
+        namespaceField.applyTheme(theme)
+        for label in [feedStatusLabel, clusterStatusLabel, tailStatusLabel, describeTitleLabel] {
+            label?.textColor = HelmTheme.mutedInk(theme)
+            label?.font = HelmType.caption()
+        }
+        describeTitleLabel.font = HelmType.rowTitle()
+        describeTitleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+        applyDescribeTheme()
+        renderClusterTable()
+        renderPodPicker()
+        renderLogLines(follow: false)
+    }
+
+    func applyDescribeTheme() {
+        guard isViewLoaded else { return }
+        // `describe` output is a command's raw text, so it lands on the same
+        // dark card the log stream uses rather than the page surface - one
+        // definition (`KubeLogListView.surfaceColor`), so the two panes can
+        // never disagree about what raw output looks like.
+        let surface = KubeLogListView.surfaceColor(for: theme)
+        describeScroll.backgroundColor = surface
+        describeScroll.wantsLayer = true
+        describeScroll.layer?.masksToBounds = true
+        describeScroll.layer?.cornerRadius = theme.isDaylight ? HelmMetrics.dSurface : HelmMetrics.rCard
+        describeTextView.backgroundColor = surface
+        describeTextView.font = HelmType.code()
+        describeTextView.textColor = KubeLogListView.inkColor(for: theme)
+        // Phase 0's D4: an owned `NSTextView` paints its own selection, and
+        // `HelmContrastSelfTest.checkEveryTextViewIsThemed` fails the build on
+        // one that never reaches `HelmSelection`.
+        HelmSelection.apply(to: describeTextView, theme: theme)
+    }
+}
+
+#if FM_SELFTESTS
+// MARK: - Probe / self-test surface (`fm/grandline-k8s-cluster-tail`)
+//
+// Reads real state this page already renders, so `KubernetesDestinationSelfTest`
+// asserts what a captain would actually see rather than re-deriving it. Compiled
+// into debug builds only (GL-27): `Package.swift` defines `FM_SELFTESTS` for the
+// debug configuration, so none of this reaches the shipped `.app`.
+extension KubernetesController {
+    var debugEmptyStateVisible: Bool { isViewLoaded && !scopeEmptyState.isHidden }
+    var debugScopeStripVisible: Bool { isViewLoaded && !scopeTabsHost.isHidden && scopeTabs != nil }
+    var debugFeedCardVisible: Bool { isViewLoaded && !feedCard.isHidden }
+    var debugWorkAreaVisible: Bool { isViewLoaded && !workArea.isHidden }
+    var debugClusterVisible: Bool { isViewLoaded && !clusterContainer.isHidden }
+    var debugTailVisible: Bool { isViewLoaded && !tailContainer.isHidden }
+    var debugDescribeVisible: Bool { isViewLoaded && !describeDrawer.isHidden }
+    var debugScopeHostID: UUID? { scopeHostID }
+    var debugFeedTabID: UUID? { feedTabID }
+    var debugPods: [KubePod] { pods }
+    var debugClusterRows: [KubeResourceTableView.Row] { isViewLoaded ? clusterTable.debugRows : [] }
+    var debugClusterColumns: [String] { isViewLoaded ? clusterTable.debugColumnTitles : [] }
+    var debugEvents: [KubeEvent] { events }
+    var debugDeployments: [KubeDeployment] { deployments }
+    var debugLogLines: [KubeLogLine] { merger.visibleLines(errorsOnly: errorsOnly) }
+    var debugSelectedPods: [String] { selectedPods }
+    var debugFeedStatusText: String { isViewLoaded ? feedStatusLabel.stringValue : "" }
+    var debugRetryVisible: Bool { isViewLoaded && !retryFeedButton.isHidden }
+    var debugTailStatusText: String { isViewLoaded ? tailStatusLabel.stringValue : "" }
+    var debugClusterStatusText: String { isViewLoaded ? clusterStatusLabel.stringValue : "" }
+    var debugDescribeText: String { isViewLoaded ? describeTextView.string : "" }
+    var debugBridge: KubeBridge? { bridge }
+    var debugNamespace: String { namespace }
+    var debugPodTint: (String) -> HelmTint { { [merger] pod in merger.tint(for: pod) } }
+    var debugSubtitle: String? { drillHeaderSubtitle }
+
+    /// Drives the bridge's own poll by hand - a headless suite never pumps a
+    /// run loop, so the real `Timer` never fires (the same reason
+    /// `KubeContextBridge.tick()` is not private).
+    func debugTick(_ count: Int = 1) { for _ in 0..<count { bridge?.tick() } }
+    func debugAdoptFeedTab(_ tab: KubeFeedTab) { adoptFeedTab(tab) }
+    func debugRefreshCluster() { refreshCluster() }
+    func debugPollTail() { pollTail() }
+    func debugSelectClusterTab(_ raw: String) {
+        guard let tab = ClusterTab(rawValue: raw) else { return }
+        clusterTab = tab
+        renderClusterTable()
+    }
+    func debugSetNamespace(_ value: String) {
+        namespaceField.stringValue = value
+        namespaceCommitted()
+    }
+    /// Fires the picker's *real* checkbox action, so the cap and the colour
+    /// assignment are exercised through the same path a click takes.
+    func debugTogglePod(_ name: String) {
+        let button = NSButton(checkboxWithTitle: name, target: self, action: #selector(togglePodSelection(_:)))
+        togglePodSelection(button)
+    }
+}
+#endif

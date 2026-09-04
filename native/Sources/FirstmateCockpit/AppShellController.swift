@@ -101,6 +101,13 @@ final class AppShellController: NSViewController {
     /// any of them - the same forward-don't-own convention every other
     /// destination here follows.
     private let logAnalyzer: LogAnalyzerController
+    /// `fm/grandline-k8s-cluster-tail`. `lazy` for one concrete reason: it
+    /// needs *this* controller's own `sessions` registry (there is exactly
+    /// one - a second would be a second source of truth for "which hosts are
+    /// live"), and a stored property with an inline default cannot be read
+    /// from an initialiser's phase-1 assignments. It is still lazily *mounted*
+    /// like every other non-eager destination; this only defers construction.
+    private lazy var kubernetes = KubernetesController(sessions: sessions)
     /// F8: the host page whose capture seeded whatever the Log Analyzer is
     /// currently showing, so a save can be attached to that host's incident.
     /// Weak - a deleted host's page is torn down and must not be kept alive
@@ -412,6 +419,7 @@ final class AppShellController: NSViewController {
         mounter.register(DestinationSlot(id: .shift, title: RailDestination.shift.bodyTitle, mountsEagerly: false, controller: shift))
         mounter.register(DestinationSlot(id: .review, title: RailDestination.review.bodyTitle, mountsEagerly: true, controller: review))
         mounter.register(DestinationSlot(id: .logAnalyzer, title: RailDestination.logAnalyzer.bodyTitle, mountsEagerly: false, controller: logAnalyzer))
+        mounter.register(DestinationSlot(id: .kubernetes, title: RailDestination.kubernetes.bodyTitle, mountsEagerly: false, controller: kubernetes))
         mounter.register(DestinationSlot(id: .tools, title: RailDestination.tools.bodyTitle, mountsEagerly: false, controller: tools))
         mounter.register(DestinationSlot(id: .whiteboard, title: RailDestination.whiteboard.bodyTitle, mountsEagerly: false, controller: whiteboard))
         mounter.register(DestinationSlot(id: .vault, title: RailDestination.vault.bodyTitle, mountsEagerly: false, controller: vault))
@@ -547,6 +555,19 @@ final class AppShellController: NSViewController {
         // itemized "Ready to merge" list was removed as a duplicate of
         // `.review`'s - the stat tile that's left jumps straight there.
         overview.onNavigateToReview = { [weak self] in self?.show(.review) }
+
+        // `fm/grandline-k8s-cluster-tail`: everything the `.kubernetes`
+        // destination needs from the shell, as closures. Forward-don't-own -
+        // that page knows nothing about `hostConsoles` or `ConsoleController`,
+        // and this controller knows nothing about pods.
+        kubernetes.configure(access: KubeSessionAccess(
+            tabs: { [weak self] hostID in self?.hostConsoles[hostID]?.kubeFeedTabs() ?? [] },
+            duplicateTabForFeed: { [weak self] hostID in self?.hostConsoles[hostID]?.duplicateTabForKubeFeed() },
+            isTabBusyElsewhere: { [weak self] hostID, tabID in
+                self?.hostConsoles[hostID]?.isTabBusyForKubeFeed(tabID) ?? false
+            },
+            revealHost: { [weak self] hostID in self?.switchToSession(hostID: hostID) },
+            openHosts: { [weak self] in self?.show(.hosts) }))
         // GL-31: Overview's unconfigured banner leads straight into the
         // Bootstrap stepper, which is where firstmate home is actually set.
         overview.onNavigateToSetup = { [weak self] in self?.show(.bootstrap) }
@@ -1356,6 +1377,12 @@ final class AppShellController: NSViewController {
             }
         }
 
+        // `fm/grandline-k8s-cluster-tail`: the Shape-C deep link. Assigned
+        // here (rather than in `makeHostConsole`) for the same reason every
+        // closure around it is - this is where the host id exists, and a
+        // reassign on every connect keeps a renamed host current.
+        controller.onTailLogs = { [weak self] in self?.openKubernetes(hostID: hostID, showTail: true) }
+
         // `fm/grandline-log-analyzer-build`: reassigned on every call for
         // the same reason `onSRELeadReplyWhileBackground` above is - a
         // renamed host should show its current label on the imported
@@ -1728,6 +1755,16 @@ final class AppShellController: NSViewController {
     func openShiftTask(id: String) {
         show(.shift)
         shift.openTask(id: id)
+    }
+
+    /// `fm/grandline-k8s-cluster-tail`: the Shape-C deep link. A host page's
+    /// own "Tail Logs" / "Cluster" toolbar buttons land here with that host
+    /// already selected as the scope, so the captain reaches the same one
+    /// implementation from either front door - the identical idiom Overview's
+    /// ready-to-merge tile already uses to reach Review.
+    func openKubernetes(hostID: UUID, showTail: Bool) {
+        show(.kubernetes)
+        kubernetes.openScoped(hostID: hostID, showTail: showTail)
     }
 
     func openShiftFollowUp(id: String) {

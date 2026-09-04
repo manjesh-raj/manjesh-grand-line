@@ -1916,6 +1916,26 @@ if ProcessInfo.processInfo.environment["FM_RUN_KUBE_CONTEXT_BRIDGE_TESTS"] == "1
     exit(KubeContextBridgeSelfTest.run() ? 0 : 1)
 }
 
+// `fm/grandline-k8s-cluster-tail`: the shared `KubeBridge` plumbing both the
+// Cluster browser and the Log Tail consume - its serialized queue, both
+// terminal guards, the queue deadline, and the backoff/give-up the task brief
+// names explicitly - plus `KubeResourceParser`'s column parsing and
+// `KubeLogMerger`'s ordering/dedupe. Pure logic, so it runs in CI; the
+// window-backed half is `FM_RUN_KUBERNETES_DESTINATION_TESTS`.
+if ProcessInfo.processInfo.environment["FM_RUN_KUBE_BRIDGE_TESTS"] == "1" {
+    exit(KubeBridgeSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-k8s-cluster-tail`: the real `.kubernetes` destination mounted
+// in a real window - the scope strip's honest empty state, feed-tab adoption,
+// a full Cluster sweep landing real parsed rows, the describe drawer, a real
+// Log Tail poll producing merged coloured lines, the Shape-C deep link, and
+// the give-up state's own UI. Window-backed, so it sits in
+// `run-all-tests.sh`'s NEEDS_SESSION list.
+if ProcessInfo.processInfo.environment["FM_RUN_KUBERNETES_DESTINATION_TESTS"] == "1" {
+    exit(KubernetesDestinationSelfTest.run() ? 0 : 1)
+}
+
 #endif
 
 // GL-05: refuse to be a second instance. This sits *after* every
