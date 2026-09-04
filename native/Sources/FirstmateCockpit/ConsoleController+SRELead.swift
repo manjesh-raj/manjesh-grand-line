@@ -220,6 +220,11 @@ extension ConsoleController {
                 case .success(let session):
                     state.session = session
                     state.bridge = SRELeadBridge(bridgeDir: session.bridgeDir, target: tab)
+                    // `fm/grandline-k8s-context-badge`: refuse rather than
+                    // collide with the context/namespace badge's own
+                    // in-flight command on this same tab - see
+                    // `SRELeadBridge.isTerminalBusyElsewhere`'s doc comment.
+                    state.bridge?.isTerminalBusyElsewhere = { [weak tab] in tab?.kubeContextBridge?.isBusy ?? false }
                     // F8: a runbook that runs through this tab's bridge
                     // attaches itself to an active incident on this host. The
                     // bridge only *observes* the run - see its

@@ -257,6 +257,15 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// and what happens on a host without per-command block tracking.
     var analyzeLogsButton: HelmButton?
 
+    /// `fm/grandline-k8s-context-badge`: the context/namespace safety badge -
+    /// only ever shown for the current tab of the one opted-in host whose
+    /// `Host.kubeContextBadgeOptIn` is set (`updateKubeContextBadgeControls`),
+    /// following `blockViewToggleButton`'s exact per-tab-relevance pattern.
+    /// A plain themed pill (`ToolRowLayout.pill`), not a `HelmButton` - it
+    /// states a fact, it doesn't trigger an action.
+    var kubeContextPill: NSView!
+    var kubeContextLabel: NSTextField!
+
     /// Fired by "Analyze Logs" with an already-built capture plus this
     /// tab's label. Forwarded (never handled here) exactly like every other
     /// cross-destination action this controller exposes - the console knows

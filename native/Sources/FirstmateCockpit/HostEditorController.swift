@@ -117,6 +117,12 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         title: "Render command blocks",
         subtitle: "Stage 0 - also needs FM_BLOCK_VIEW_ENABLED in the environment."
     )
+    /// Context/namespace safety badge opt-in (`fm/grandline-k8s-context-badge`)
+    /// - see `Host.kubeContextBadgeOptIn`'s doc comment.
+    private lazy var kubeContextBadgeRow = HelmToggleRow(
+        title: "Show Kubernetes context badge",
+        subtitle: "Only for a host with a kubectl context - shows the current context/namespace in the toolbar."
+    )
     private let jumpViaField = HelmTextField(placeholder: "Host label or user@bastion")
     private let portForwardingButton = HelmButton(title: "", variant: .secondary)
     private let snippetCard = HelmFieldCard(label: "Startup snippet")
@@ -220,8 +226,10 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         form.addSection("Advanced", number: "05")
         agentForwardRow.isOn = editing?.agentForward ?? false
         blockViewRow.isOn = editing?.blockViewOptIn ?? false
+        kubeContextBadgeRow.isOn = editing?.kubeContextBadgeOptIn ?? false
         form.addRow(agentForwardRow)
         form.addRow(blockViewRow)
+        form.addRow(kubeContextBadgeRow)
         jumpViaField.stringValue = editing?.jumpVia ?? ""
         form.addField("Jump via", jumpViaField)
         portForwardingButton.target = self
@@ -535,6 +543,7 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         host.tags = tagChips
         host.agentForward = agentForwardRow.isOn
         host.blockViewOptIn = blockViewRow.isOn
+        host.kubeContextBadgeOptIn = kubeContextBadgeRow.isOn
         let jumpVia = jumpViaField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         host.jumpVia = jumpVia.isEmpty ? nil : jumpVia
         host.portForwards = portForwards

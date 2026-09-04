@@ -55,6 +55,17 @@ extension ConsoleController {
         quotaUsageButton = makeLabeledButton(symbol: quotaUsageGaugeSymbol, title: "Claude usage",
                                              tooltip: "Check Claude usage", action: #selector(toggleQuotaUsage))
 
+        // The context/namespace safety badge (`fm/grandline-k8s-context-badge`)
+        // - built unconditionally (styling needs somewhere to live before the
+        // first refresh ever completes) but only shown at all on a dedicated
+        // host page, and even there only for the current tab of the one
+        // opted-in host (`updateKubeContextBadgeControls`). Not a button -
+        // clicking it does nothing, it just states a fact.
+        kubeContextLabel = NSTextField(labelWithString: "")
+        kubeContextPill = NSView()
+        kubeContextPill.isHidden = true
+        kubeContextPill.translatesAutoresizingMaskIntoConstraints = false
+
         // SRE Lead (design brief Part C) and block view (`fm/cockpit-block-
         // view-stage0`) are both dedicated-host-page-only affordances - the
         // shared Firstmate console has no single host cluster to
@@ -63,6 +74,10 @@ extension ConsoleController {
         // whole app on every launch in the original PR #79/#80 attempt.
         var toolViews: [NSView] = []
         if !isFirstmateConsole {
+            // Sits first, ahead of every action button - the wrong-cluster
+            // guard is the thing worth seeing before reaching for any of the
+            // investigation actions beside it.
+            toolViews.append(kubeContextPill)
             let button = makeLabeledButton(symbol: SRELeadPhase.notStarted.symbol,
                                            title: SRELeadPhase.notStarted.text,
                                            tooltip: "Toggle the SRE Lead investigation pane",
@@ -185,6 +200,36 @@ extension ConsoleController {
         quotaUsage.toggle(relativeTo: quotaUsageButton)
     }
 
+    // MARK: Context/namespace safety badge (`fm/grandline-k8s-context-badge`)
+
+    /// Shows/hides and restyles the context/namespace badge - only ever
+    /// present at all when the current tab has both a bridge (i.e. is the
+    /// one opted-in host's tab - see `TabModel.kubeContextBadgeOptIn`) AND a
+    /// successfully fetched value; every other tab, and a tab whose first
+    /// refresh hasn't landed yet, hides it. Matches
+    /// `updateBlockViewControls`'s exact per-tab-relevance pattern.
+    func updateKubeContextBadgeControls() {
+        guard let tab = currentTab, tab.kubeContextBridge != nil, let info = tab.kubeContextInfo else {
+            kubeContextPill.isHidden = true
+            return
+        }
+        kubeContextPill.isHidden = false
+        // ⎈ (U+2388 HELM SYMBOL) matches the kube-ps1 convention this badge
+        // replaces. `.critical` (red) vs `.neutral` is the prod-pattern
+        // safety signal from `KubeContextInfo.looksLikeProduction` - see
+        // that property's own doc comment for the heuristic's exact,
+        // deliberately simple rule.
+        let tint: HelmTint = info.looksLikeProduction ? .critical : .neutral
+        let text = "\u{2388} \(info.contextName) \u{00B7} ns \(info.namespace)"
+        ToolRowLayout.pill(text: text, colorHex: tint.hex(in: theme),
+                          into: kubeContextPill, label: kubeContextLabel, theme: theme)
+        var tooltip = "Kubernetes context: \(info.contextName)\nNamespace: \(info.namespace)"
+        if info.looksLikeProduction {
+            tooltip += "\n\nThis context's name matches a simple \u{201C}prod\u{201D} pattern - a heuristic, not a guarantee. Double-check before running anything destructive."
+        }
+        kubeContextPill.toolTip = tooltip
+    }
+
     // MARK: Theme
 
     func applyTheme() {
@@ -207,6 +252,7 @@ extension ConsoleController {
         updateBlockViewControls()
         updateComposeControls()
         updateQuotaUsageControls()
+        updateKubeContextBadgeControls()
         updateIncidentControls()
         incidentCard.applyTheme(theme)
         if incidentPopover.isShown { renderIncidentCard() }

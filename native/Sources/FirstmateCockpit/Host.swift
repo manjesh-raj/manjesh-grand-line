@@ -92,6 +92,17 @@ struct Host: Codable, Identifiable, Equatable {
     /// this narrow, single-host gate.
     var blockViewOptIn: Bool = false
 
+    /// Context/namespace safety badge opt-in (`fm/grandline-k8s-context-badge`):
+    /// this host's dedicated page shows a toolbar pill naming the current
+    /// `kubectl` context/namespace, kept current by periodically typing two
+    /// read-only `kubectl config` commands into the connected tab
+    /// (`KubeContextBridge.swift`). Defaults `false` for the same reason
+    /// `blockViewOptIn` does - not every saved host has a Kubernetes context
+    /// at all, and running `kubectl config get-contexts` against a random
+    /// non-k8s SSH host would be wasted, visibly-typed-into-the-tab noise for
+    /// no reason. The captain opts in one host at a time, deliberately.
+    var kubeContextBadgeOptIn: Bool = false
+
     /// Restores the compiler-synthesized memberwise initializer, which Swift
     /// suppresses once any custom `init` (here, `init(from:)`) is declared -
     /// every call site that builds a `Host` in Swift code (host editor save,
@@ -112,7 +123,8 @@ struct Host: Codable, Identifiable, Equatable {
         portForwards: [PortForwardRule] = [],
         startupSnippetID: UUID? = nil,
         password: String? = nil,
-        blockViewOptIn: Bool = false
+        blockViewOptIn: Bool = false,
+        kubeContextBadgeOptIn: Bool = false
     ) {
         self.id = id
         self.label = label
@@ -130,12 +142,13 @@ struct Host: Codable, Identifiable, Equatable {
         self.startupSnippetID = startupSnippetID
         self.password = password
         self.blockViewOptIn = blockViewOptIn
+        self.kubeContextBadgeOptIn = kubeContextBadgeOptIn
     }
 
     /// Everything persisted - note `password` is intentionally absent.
     private enum CodingKeys: String, CodingKey {
         case id, label, address, port, username, keyID, iconSymbol, accentHex, group, tags,
-             agentForward, jumpVia, portForwards, startupSnippetID, blockViewOptIn
+             agentForward, jumpVia, portForwards, startupSnippetID, blockViewOptIn, kubeContextBadgeOptIn
     }
 
     /// Custom decode, deliberately NOT the compiler-synthesized one.
@@ -171,6 +184,7 @@ struct Host: Codable, Identifiable, Equatable {
         portForwards = try c.decodeIfPresent([PortForwardRule].self, forKey: .portForwards) ?? []
         startupSnippetID = try c.decodeIfPresent(UUID.self, forKey: .startupSnippetID)
         blockViewOptIn = try c.decodeIfPresent(Bool.self, forKey: .blockViewOptIn) ?? false
+        kubeContextBadgeOptIn = try c.decodeIfPresent(Bool.self, forKey: .kubeContextBadgeOptIn) ?? false
     }
 
     /// The full `ssh` argument vector for this host, minus any identity file

@@ -6,6 +6,23 @@ Minimal MCP stdio JSON-RPC server (`initialize`, `notifications/initialized`,
 `tools/list`, `tools/call`), standard library only, no pip install. Spawned
 as a subprocess of the local `claude` CLI (see `SRELead.swift`).
 
+**`fm/grandline-k8s-context-badge` widened `_ALLOWED_VERBS` to include
+`config`, but only its two read-only subcommands** - `get-contexts` and
+`current-context` (see `_CONFIG_READONLY_SUBCOMMANDS`) - for a
+context/namespace safety badge on host pages (`KubeContextBridge.swift`).
+The badge itself never spawns this script or goes through this MCP
+server/`claude` layer at all: it injects the two fixed, hardcoded commands
+directly via a small sibling of `SRELeadBridge`, the same marker-injection
+mechanism, with no AI reasoning involved. This widening exists so `_validate_args`
+- the one place read-only enforcement lives, reused by both `kubectl_readonly`
+and `run_runbook` - stays the single, carefully reviewed definition of what's
+safe to type into the shared terminal, in case SRE Lead's own AI is ever
+asked about the current context/namespace too. `config`'s real WRITE forms
+(`use-context`, `set-context`, `delete-context`, `rename-context`, `set`,
+`unset`, ...) are refused explicitly, not just left to the generic character-
+set/smuggled-verb checks that were never designed to know about `config`'s
+own subcommand vocabulary.
+
 **`fm/grandline-sre-lead-runbook-execution` added a second tool,
 `run_runbook`**, for the captain's conversational "run the API latency spike
 runbook" ask. It is deliberately NOT a new capability: it looks a runbook up
@@ -91,7 +108,29 @@ RUNBOOK_TOOL_NAME = "run_runbook"
 # create, annotate, label, rollout (restart/undo/etc is a write; `rollout
 # status`/`rollout history` are read-only but not worth the extra surface
 # area for a v1 read-only tool) - is refused outright.
-_ALLOWED_VERBS = {"get", "describe", "logs", "top", "events"}
+#
+# `fm/grandline-k8s-context-badge` added `config` to this set - but ONLY for
+# its two genuinely read-only subcommands, `get-contexts` and
+# `current-context` (see `_CONFIG_READONLY_SUBCOMMANDS` below). This is not
+# "config is now allowed": `kubectl config` also has real WRITE forms
+# (`use-context`, `set-context`, `delete-context`, `rename-context`, `set`,
+# `unset`, ...) that mutate the connected host's `~/.kube/config`, and none
+# of those are caught by `_SAFE_CHARS` (a hyphenated word like "use-context"
+# is plain, safe-looking text) or by the smuggled-write-verb guard below
+# (that guard's fixed word list has nothing to do with `config`'s own
+# subcommand vocabulary - "use-context" doesn't contain "apply"/"delete"/
+# etc). So `_validate_args` checks `config`'s own subcommand against its own
+# explicit allowlist *before* either of those generic checks ever runs -
+# widening the generic checks later can never accidentally re-widen `config`.
+_ALLOWED_VERBS = {"get", "describe", "logs", "top", "events", "config"}
+
+# The only two `kubectl config` invocations this tool will ever run - each
+# exactly `kubectl config <subcommand>` with no other arguments at all (no
+# `-o`/`--output`, no positional context name, nothing). Read-only, and
+# narrow on purpose: this exists for a context/namespace safety badge, which
+# only ever needs "what context/namespace am I on" - not a general "config"
+# capability.
+_CONFIG_READONLY_SUBCOMMANDS = {"get-contexts", "current-context"}
 
 # Conservative allowlist for every individual argv token after the verb:
 # letters, digits, and a small set of punctuation kubectl args legitimately
@@ -115,6 +154,22 @@ def _validate_args(subcommand, args):
         return f"'{subcommand}' is not a read-only kubectl verb. Allowed: {sorted(_ALLOWED_VERBS)}"
     if not isinstance(args, list) or not all(isinstance(a, str) for a in args):
         return "args must be a list of strings"
+    if subcommand == "config":
+        # `kubectl config` is only ever run for one of its two read-only
+        # subcommands, with no other arguments - see
+        # `_CONFIG_READONLY_SUBCOMMANDS`'s own comment for why this can't be
+        # left to the generic character-set/smuggled-verb checks below, which
+        # know nothing about `config`'s own write-vs-read subcommand
+        # vocabulary (`use-context`, `set-context`, `delete-context`,
+        # `rename-context`, `set`, `unset`, ... would all otherwise pass
+        # both of those checks untouched).
+        if len(args) != 1 or args[0] not in _CONFIG_READONLY_SUBCOMMANDS:
+            return (
+                f"'kubectl config {' '.join(args)}' is not allowed - only "
+                f"{sorted(_CONFIG_READONLY_SUBCOMMANDS)} (with no other arguments) are "
+                "read-only enough to run here"
+            )
+        return None
     for arg in args:
         if not arg:
             continue
@@ -408,11 +463,14 @@ def _tool_schema():
     return {
         "name": TOOL_NAME,
         "description": (
-            "Run a READ-ONLY kubectl command (get, describe, logs, top, or events) "
-            "in the captain's own already-connected terminal tab for this host, using "
-            "whatever cluster access that tab already has. Any other verb (apply, "
-            "delete, patch, exec, ...) is refused. Can occasionally fail with a "
-            "'busy' error if that tab is actively being used - wait a moment and retry."
+            "Run a READ-ONLY kubectl command (get, describe, logs, top, events, or "
+            "config get-contexts/current-context) in the captain's own already-connected "
+            "terminal tab for this host, using whatever cluster access that tab already "
+            "has. Any other verb (apply, delete, patch, exec, ...) is refused, and "
+            "'config' is refused for every subcommand except get-contexts/current-context "
+            "(use-context, set-context, etc. all mutate the connected host's kubeconfig "
+            "and are never allowed). Can occasionally fail with a 'busy' error if that tab "
+            "is actively being used - wait a moment and retry."
         ),
         "inputSchema": {
             "type": "object",
