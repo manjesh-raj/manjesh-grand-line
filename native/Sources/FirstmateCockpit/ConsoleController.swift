@@ -347,7 +347,18 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     var quotaUsageButton: HelmButton!
     let quotaUsage = QuotaUsageController()
 
-    // MARK: SRE Lead (dedicated host pages only - see `SRELead.swift`)
+    /// `fm/grandline-drag-forward-indicator`: the always-visible "how does a
+    /// drag on this tab route right now" indicator, sitting right beside
+    /// Compose/Claude usage per the captain's own ask for something more
+    /// prominent than the tab chip's own small icon. `.shell`-tabs-only
+    /// (`updateDragForwardingControls`), matching `TabChipView.
+    /// forwardDragsEnabled`'s exact gating - hidden for every `.ssh` tab and
+    /// for the shared Firstmate console before its first tab exists. Clicking
+    /// it calls the same `toggleForwardDragsToChild(id:)` the tab chip's own
+    /// right-click menu already used - one toggle mechanism, two places to
+    /// reach it, per the task's explicit "don't change the routing/toggle
+    /// behaviour" ask.
+    var dragForwardingButton: HelmButton!
 
     /// `fm/grandline-sre-lead-per-tab`: SRE Lead's own state (session,
     /// bridge, runner, chat, phase) lives on each `TabModel.sreLead`, not

@@ -38,20 +38,36 @@ final class TabChipView: NSView, NSTextFieldDelegate {
 
     private let label = NSTextField()
     private let closeButton = NSButton()
-    /// `fm/grandline-herdr-selection-theme-fix`: a small, always-legible
-    /// indicator shown only while this tab's `forwardDragsToChild` is on -
-    /// the one thing that can make an otherwise-correct `.shell` tab's plain
-    /// drag paint a mouse-reporting child's *own* colours instead of this
-    /// app's theme (verified live against a real herdr session: with the
-    /// toggle off, a plain drag stays local and paints `selectionHex`/
-    /// `selectionTextHex`; with it on, the toggle's own documented effect is
-    /// that the drag forwards to the child instead, whose own UI paints
-    /// whatever it likes). Before this, the only place that state was visible
-    /// at all was the right-click menu's checkmark - a tab that had it toggled
-    /// (directly, or carried forward by `ConsoleController.duplicateTab`) gave
-    /// no visible reason its selection colour differed from every other tab's.
+    /// `fm/grandline-herdr-selection-theme-fix`: a small indicator shown only
+    /// while this tab's `forwardDragsToChild` is on - the one thing that can
+    /// make an otherwise-correct `.shell` tab's plain drag paint a
+    /// mouse-reporting child's *own* colours instead of this app's theme
+    /// (verified live against a real herdr session: with the toggle off, a
+    /// plain drag stays local and paints `selectionHex`/`selectionTextHex`;
+    /// with it on, the toggle's own documented effect is that the drag
+    /// forwards to the child instead, whose own UI paints whatever it
+    /// likes). Before this, the only place that state was visible at all was
+    /// the right-click menu's checkmark - a tab that had it toggled (directly,
+    /// or carried forward by `ConsoleController.duplicateTab`) gave no
+    /// visible reason its selection colour differed from every other tab's.
+    ///
+    /// `fm/grandline-drag-forward-indicator`: a captain hit this without ever
+    /// noticing the icon existed - a plain, ink-tinted 12x12 glyph, easy to
+    /// miss while scanning a strip of small tabs. It now draws its own
+    /// small, always-legible tinted badge (`HelmContrast.tintedSurface`, the
+    /// same non-text-target helper `IconTileView` already uses) rather than
+    /// matching the chip's own ink, so it reads as a distinct state signal
+    /// rather than chip decoration - and the same active-tab state is now
+    /// also surfaced, always visible (not only while on), on the terminal's
+    /// own toolbar (`ConsoleController+Toolbar.swift`'s "drag routing"
+    /// button, `DragForwardingIndicator.swift`), which is the more
+    /// discoverable of the two per the captain's own report that this small
+    /// chip glyph alone wasn't enough.
     private let forwardDragsIndicator = NSImageView()
     private var forwardDragsIndicatorWidth: NSLayoutConstraint!
+    /// The badge's fixed size while shown - up from the pre-existing 12pt,
+    /// per the same "make it bigger" ask this task carries.
+    private static let forwardDragsIndicatorSize: CGFloat = 16
 
     var onSelect: (() -> Void)?
     var onClose: (() -> Void)?
@@ -119,13 +135,19 @@ final class TabChipView: NSView, NSTextFieldDelegate {
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(closeButton)
 
+        // A small, always-legible tinted badge, not a bare glyph -
+        // `wantsLayer`/`cornerRadius` here draw the badge's own opaque fill
+        // (set by `refreshForwardDragsIndicator()` below), which is what
+        // guarantees the glyph on top of it clears contrast regardless of
+        // the chip's own selected/unselected background.
+        forwardDragsIndicator.wantsLayer = true
+        forwardDragsIndicator.layer?.cornerRadius = Self.forwardDragsIndicatorSize / 2
         forwardDragsIndicator.image = NSImage(
             systemSymbolName: "arrowshape.turn.up.forward.fill",
             accessibilityDescription: "Drags in this tab are forwarded to its program"
-        )
+        )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold))
         forwardDragsIndicator.imageScaling = .scaleProportionallyDown
-        forwardDragsIndicator.toolTip = "Drags in this tab are forwarded to its program (e.g. herdr) instead of "
-            + "building this app's own selection - right-click the tab to turn this off."
+        forwardDragsIndicator.toolTip = DragForwardingIndicator.forwarding.tooltip
         forwardDragsIndicator.isHidden = true
         forwardDragsIndicator.translatesAutoresizingMaskIntoConstraints = false
         addSubview(forwardDragsIndicator)
@@ -147,7 +169,7 @@ final class TabChipView: NSView, NSTextFieldDelegate {
             forwardDragsIndicator.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 4),
             forwardDragsIndicator.centerYAnchor.constraint(equalTo: centerYAnchor),
             forwardDragsIndicatorWidth,
-            forwardDragsIndicator.heightAnchor.constraint(equalToConstant: 12),
+            forwardDragsIndicator.heightAnchor.constraint(equalToConstant: Self.forwardDragsIndicatorSize),
 
             closeButton.leadingAnchor.constraint(equalTo: forwardDragsIndicator.trailingAnchor, constant: 6),
             closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
@@ -263,7 +285,6 @@ final class TabChipView: NSView, NSTextFieldDelegate {
                 : .systemFont(ofSize: 13, weight: selected ? .semibold : .regular)
         }
         closeButton.contentTintColor = selected ? selectedInk : muted
-        forwardDragsIndicator.contentTintColor = selected ? selectedInk : muted
         refreshForwardDragsIndicator()
     }
 
@@ -273,10 +294,24 @@ final class TabChipView: NSView, NSTextFieldDelegate {
     /// calls it directly right after flipping the state, so the chip reflects
     /// a toggle the instant it changes rather than waiting for the next
     /// unrelated `styleChips()` pass.
+    ///
+    /// `fm/grandline-drag-forward-indicator`: owns the badge's own fill and
+    /// glyph tint too now (not `applyStyle`'s ink-matching, which this used
+    /// to inherit) - `HelmContrast.tintedSurface` against `.warn`, the same
+    /// non-text-target helper `IconTileView` uses, so the badge is
+    /// guaranteed legible against its own opaque fill regardless of whether
+    /// this chip is selected.
     func refreshForwardDragsIndicator() {
         let forwarding = forwardDragsEnabled?() ?? false
         forwardDragsIndicator.isHidden = !forwarding
-        forwardDragsIndicatorWidth.constant = forwarding ? 12 : 0
+        forwardDragsIndicatorWidth.constant = forwarding ? Self.forwardDragsIndicatorSize : 0
+        guard forwarding else { return }
+        let theme = ThemeManager.shared.theme
+        let resolved = HelmContrast.tintedSurface(tintHex: HelmTint.warn.hex(in: theme),
+                                                  theme: theme,
+                                                  target: HelmContrast.nonTextTarget)
+        forwardDragsIndicator.layer?.backgroundColor = resolved.fill.cgColor
+        forwardDragsIndicator.contentTintColor = resolved.foreground
     }
 
     #if FM_SELFTESTS

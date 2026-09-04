@@ -54,6 +54,15 @@ extension ConsoleController {
         composeButton = makeLabeledButton(symbol: "sparkles", title: "Compose", tooltip: "Compose a command…", action: #selector(toggleComposer))
         quotaUsageButton = makeLabeledButton(symbol: quotaUsageGaugeSymbol, title: "Claude usage",
                                              tooltip: "Check Claude usage", action: #selector(toggleQuotaUsage))
+        // `fm/grandline-drag-forward-indicator`: seeded with `.local`'s
+        // display (the default), refreshed to the real per-tab state by
+        // `updateDragForwardingControls()` below every time it might have
+        // changed - the same seed-then-refresh shape `kubeContextButton`/
+        // `sreLeadButton` already use.
+        dragForwardingButton = makeLabeledButton(symbol: DragForwardingIndicator.local.buttonSymbol,
+                                                  title: DragForwardingIndicator.local.buttonTitle,
+                                                  tooltip: DragForwardingIndicator.local.tooltip,
+                                                  action: #selector(toggleDragForwarding))
 
         // SRE Lead (design brief Part C) and block view (`fm/cockpit-block-
         // view-stage0`) are both dedicated-host-page-only affordances - the
@@ -96,6 +105,11 @@ extension ConsoleController {
         // request - the toolbar prototype's own original pairing
         // (this file's header).
         toolViews.append(quotaUsageButton)
+        // The drag-routing indicator sits right after Claude usage - "near
+        // the terminal's own toolbar/composer area", per the task that added
+        // it. `.shell`-tabs-only, exactly like `TabChipView.
+        // forwardDragsEnabled`'s own gating - hidden for every `.ssh` tab.
+        toolViews.append(dragForwardingButton)
         // Analyze Logs sits immediately after Compose, so the three
         // investigation-shaped features (SRE Lead, Compose, Analyze Logs)
         // read as one cluster - the placement the captain asked for.
@@ -215,6 +229,43 @@ extension ConsoleController {
         quotaUsage.toggle(relativeTo: quotaUsageButton)
     }
 
+    // MARK: Drag routing indicator (`fm/grandline-drag-forward-indicator`)
+
+    /// Shows/hides and restyles the toolbar's own "drag routing" button -
+    /// hidden entirely unless `currentTab` is a `.shell` tab
+    /// (`CockpitTerminalView.prefersLocalSelection` is only ever set for
+    /// that launch kind, see `ConsoleController+Tabs.addTab`), matching
+    /// `TabChipView.forwardDragsEnabled`'s exact per-tab-relevance gating -
+    /// hidden for every `.ssh` tab, and for the shared Firstmate console
+    /// before its first tab exists. When shown, always reflects
+    /// `tab.terminal.forwardDragsToChild` directly via `DragForwardingIndicator`
+    /// - the same single source of truth the tab chip's own icon reads, so
+    /// the two can never disagree about which state is current.
+    func updateDragForwardingControls() {
+        guard let tab = currentTab, tab.terminal.prefersLocalSelection else {
+            dragForwardingButton.isHidden = true
+            return
+        }
+        dragForwardingButton.isHidden = false
+        let indicator = DragForwardingIndicator(forwardDragsToChild: tab.terminal.forwardDragsToChild)
+        dragForwardingButton.title = indicator.buttonTitle
+        dragForwardingButton.symbolName = indicator.buttonSymbol
+        dragForwardingButton.tint = indicator.buttonTint
+        dragForwardingButton.toolTip = indicator.tooltip
+    }
+
+    /// The toolbar button's click action - flips the same
+    /// `CockpitTerminalView.forwardDragsToChild` the tab chip's own
+    /// right-click menu already flips (`toggleForwardDragsToChild(id:)`,
+    /// unchanged), then refreshes this button immediately so a click is
+    /// never left showing stale state until the next unrelated
+    /// `updateDragForwardingControls()` call.
+    @objc func toggleDragForwarding() {
+        guard let tab = currentTab, tab.terminal.prefersLocalSelection else { return }
+        toggleForwardDragsToChild(id: tab.id)
+        updateDragForwardingControls()
+    }
+
     // MARK: Context/namespace safety badge (`fm/grandline-k8s-context-badge`,
     // per-tab activation and backoff from `fm/grandline-k8s-badge-fixes`)
 
@@ -286,6 +337,7 @@ extension ConsoleController {
         updateBlockViewControls()
         updateComposeControls()
         updateQuotaUsageControls()
+        updateDragForwardingControls()
         updateKubeContextBadgeControls()
         updateIncidentControls()
         incidentCard.applyTheme(theme)
