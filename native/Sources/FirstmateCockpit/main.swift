@@ -280,6 +280,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         BackgroundSignalsPoller.shared.onNavigateToBootstrap = { [weak self] in self?.appShell.show(.bootstrap) }
         BackgroundSignalsPoller.shared.start()
 
+        // fm/grandline-herdr-selection-color-sync: keep herdr's own
+        // `[theme.custom].selection_bg` (~/.config/herdr/config.toml) in
+        // sync with the active Helm theme's accent, so a Shift+drag on a
+        // `.shell` tab with drag-forwarding on - which forwards the gesture
+        // to herdr and shows herdr's *own* selection rendering - reads in
+        // the same colour as everything Grand Line draws itself. No
+        // closures to wire: unlike the pollers above, this reacts to
+        // `ThemeManager` directly and needs nothing from `AppShellController`.
+        HerdrThemeSync.shared.start()
+
         // F11 follow-up: seed the "daily-github-sync" schedule once - a daily
         // 11:10 AM fast-forward of every personal fork, exactly what Setup >
         // GitHub Sync's "Sync All" button already does (`ScheduleActions.
@@ -1934,6 +1944,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_KUBE_BRIDGE_TESTS"] == "1" {
 // `run-all-tests.sh`'s NEEDS_SESSION list.
 if ProcessInfo.processInfo.environment["FM_RUN_KUBERNETES_DESTINATION_TESTS"] == "1" {
     exit(KubernetesDestinationSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-herdr-selection-color-sync`: `HerdrConfigPatcher`'s surgical
+// TOML edit (in place, insert into an existing table, create a fresh table,
+// every abort condition) plus `HerdrThemeSync`'s real-disk read/patch/write
+// pipeline against a scratch file. See HerdrThemeSyncSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_HERDR_THEME_SYNC_TESTS"] == "1" {
+    exit(HerdrThemeSyncSelfTest.run() ? 0 : 1)
 }
 
 #endif
