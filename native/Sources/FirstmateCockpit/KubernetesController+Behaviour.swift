@@ -104,8 +104,15 @@ extension KubernetesController {
             access.isTabBusyElsewhere(hostID, tabID)
         }
         newBridge.onStateChanged = { [weak self] in
-            self?.renderFeedStatus()
-            self?.onDrillSubtitleChanged?()
+            guard let self else { return }
+            self.renderFeedStatus()
+            // A cluster sweep that's stuck behind contention keeps
+            // `isRefreshingCluster` true for the whole wait, so its status
+            // label needs to be re-rendered live as `pendingReason` changes -
+            // otherwise it's stuck showing whatever text was set the moment
+            // the sweep started (`fm/grandline-k8s-feed-tab-stall-fix`).
+            if self.isRefreshingCluster { self.renderClusterStatus(running: true) }
+            self.onDrillSubtitleChanged?()
         }
         newBridge.start()
         bridge = newBridge
@@ -228,6 +235,25 @@ extension KubernetesController {
     /// run only when that tab is opened"): Pods always, because the Log
     /// Tail's own picker is fed from it too, plus whichever other table is on
     /// screen.
+    ///
+    /// **The bounded-wait decision, documented per `fm/grandline-k8s-feed-tab
+    /// -stall-fix`'s brief.** A sweep queued behind contention (a sibling
+    /// bridge, or the captain typing in the feed tab) does **not** get sent
+    /// anyway once some ceiling passes - it stays refused, and
+    /// `KubeBridge.queueDeadline` (45s) already bounds how long: past that,
+    /// the queued command fails with `.busy` (see `applySweep`), and this
+    /// page's own 30s cluster-poll timer tries again automatically shortly
+    /// after. That's option (b) from the brief, not (a): sending a command
+    /// while the captain is mid-keystroke is exactly the interleaving hazard
+    /// this bridge exists to prevent (see `KubeBridge.checkInFlight`'s
+    /// discard guard for the in-flight half of the identical rule), and
+    /// bypassing it for a UI-responsiveness win would trade a real, if rare,
+    /// data-corruption risk for a captain-visible inconvenience that this
+    /// fix's own visibility improvement (`pendingWaitText()`) already
+    /// resolves - the wait is now legible instead of silent, which is what
+    /// made it read as a hang in the first place. The existing 45s ceiling
+    /// plus the 30s auto-retry means a captain who stops typing recovers
+    /// within roughly a minute with no action of their own.
     func refreshCluster() {
         guard let bridge, !isRefreshingCluster else { return }
         guard !bridge.hasStoppedRetrying else { return }

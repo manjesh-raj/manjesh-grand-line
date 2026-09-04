@@ -41,6 +41,15 @@ enum KubeBridgeSelfTest {
             ("bridge_expiresARequestThatWaitedTooLongBehindContention", test_bridge_expiresARequestThatWaitedTooLongBehindContention),
             ("bridge_refusesAnUnsafeCommandWithoutInjectingAnything", test_bridge_refusesAnUnsafeCommandWithoutInjectingAnything),
 
+            // `fm/grandline-k8s-feed-tab-stall-fix`: the pending-reason
+            // distinction that makes "waiting on contention" tell apart from
+            // "genuinely running" or "nothing queued".
+            ("pendingReason_reflectsWaitingForQuietTab", test_pendingReason_reflectsWaitingForQuietTab),
+            ("pendingReason_reflectsBusyElsewhere", test_pendingReason_reflectsBusyElsewhere),
+            ("pendingReason_isNilWithAnEmptyQueue", test_pendingReason_isNilWithAnEmptyQueue),
+            ("pendingReason_isNilWhileGenuinelyInFlight", test_pendingReason_isNilWhileGenuinelyInFlight),
+            ("pendingReason_clearsAndInjectsOnceContentionEnds", test_pendingReason_clearsAndInjectsOnceContentionEnds),
+
             // The task brief's own named requirement.
             ("backoff_stopsAfterRepeatedGenuineFailures", test_backoff_stopsAfterRepeatedGenuineFailures),
             ("backoff_contentionNeverCountsTowardGivingUp", test_backoff_contentionNeverCountsTowardGivingUp),
@@ -346,6 +355,110 @@ enum KubeBridgeSelfTest {
         }
         guard fake.sentCommands.isEmpty else { return "an unsafe command reached the terminal" }
         guard !bridge.hasStoppedRetrying else { return "an unsafe command counted toward give-up" }
+        return nil
+    }
+
+    // MARK: Pending reason (`fm/grandline-k8s-feed-tab-stall-fix`)
+
+    /// The captain's own real repro: checking on the feed tab by typing a
+    /// manual login directly into it. `pendingReason` must say so - and stop
+    /// saying so, and inject, the moment activity genuinely clears - with no
+    /// weakening of the underlying refusal (nothing is ever injected while
+    /// blocked).
+    private static func test_pendingReason_reflectsWaitingForQuietTab() -> String? {
+        let fake = FakeBridgeTerminal()
+        fake.lastUserActivity = Date()
+        let bridge = KubeBridge(target: fake, userActivityQuietWindow: 30)
+        var stateChanges = 0
+        bridge.onStateChanged = { stateChanges += 1 }
+        var result: Result<String, KubeBridgeError>?
+        bridge.enqueue(.getPods(namespace: "ns")) { result = $0 }
+        for _ in 0..<5 { bridge.tick() }
+        guard bridge.pendingReason == .waitingForQuietTab else {
+            return "expected .waitingForQuietTab while the captain is typing, got \(String(describing: bridge.pendingReason))"
+        }
+        guard bridge.pendingSince != nil else { return "pendingSince was nil while genuinely pending" }
+        guard fake.sentCommands.isEmpty else { return "injected into the tab while the captain was typing" }
+        guard stateChanges >= 1 else { return "onStateChanged never fired for the new pending reason" }
+
+        // Being blocked on the *same* reason tick after tick must not keep
+        // re-firing onStateChanged - only a genuine transition should.
+        let settled = stateChanges
+        for _ in 0..<5 { bridge.tick() }
+        guard stateChanges == settled else {
+            return "onStateChanged fired \(stateChanges - settled) extra times with no real state change"
+        }
+
+        // Once the captain genuinely stops typing, the reason clears and the
+        // queued command is finally issued with no further nudging.
+        fake.lastUserActivity = nil
+        answerAll(fake) { _ in "NAME\napi-0" }
+        tickUntil(bridge) { result != nil }
+        guard case .success? = result else {
+            return "the request was never issued once activity cleared: \(String(describing: result))"
+        }
+        guard bridge.pendingReason == nil else { return "pendingReason did not clear once issued" }
+        return nil
+    }
+
+    private static func test_pendingReason_reflectsBusyElsewhere() -> String? {
+        let fake = FakeBridgeTerminal()
+        let bridge = KubeBridge(target: fake)
+        bridge.isTerminalBusyElsewhere = { true }
+        bridge.enqueue(.getPods(namespace: "ns")) { _ in }
+        for _ in 0..<5 { bridge.tick() }
+        guard bridge.pendingReason == .busyElsewhere else {
+            return "expected .busyElsewhere, got \(String(describing: bridge.pendingReason))"
+        }
+        guard fake.sentCommands.isEmpty else { return "injected while a sibling bridge held the tab" }
+        return nil
+    }
+
+    private static func test_pendingReason_isNilWithAnEmptyQueue() -> String? {
+        let fake = FakeBridgeTerminal()
+        let bridge = KubeBridge(target: fake)
+        for _ in 0..<3 { bridge.tick() }
+        guard bridge.pendingReason == nil else {
+            return "pendingReason was set with an empty queue: \(String(describing: bridge.pendingReason))"
+        }
+        guard bridge.pendingSince == nil else { return "pendingSince was set with nothing pending" }
+        return nil
+    }
+
+    /// While something is genuinely in flight (`inFlightLabel`), pending
+    /// reason must be nil - the two are mutually exclusive by construction,
+    /// so the UI never has to reconcile a "pending" and a "running" signal
+    /// at once.
+    private static func test_pendingReason_isNilWhileGenuinelyInFlight() -> String? {
+        let fake = FakeBridgeTerminal()
+        let bridge = KubeBridge(target: fake)
+        fake.onSendCommand = { _ in } // never answers - stays in flight
+        bridge.enqueue(.getPods(namespace: "ns")) { _ in }
+        for _ in 0..<5 { bridge.tick() }
+        guard bridge.inFlightLabel != nil else { return "the command was never issued" }
+        guard bridge.pendingReason == nil else {
+            return "pendingReason was set while genuinely in flight: \(String(describing: bridge.pendingReason))"
+        }
+        return nil
+    }
+
+    /// The queued command is never abandoned by contention alone - once the
+    /// sibling bridge releases the tab, it proceeds on the very next tick,
+    /// with no separate nudge required.
+    private static func test_pendingReason_clearsAndInjectsOnceContentionEnds() -> String? {
+        let fake = FakeBridgeTerminal()
+        let bridge = KubeBridge(target: fake)
+        var busy = true
+        bridge.isTerminalBusyElsewhere = { busy }
+        answerAll(fake) { _ in "NAME\napi-0" }
+        var result: Result<String, KubeBridgeError>?
+        bridge.enqueue(.getPods(namespace: "ns")) { result = $0 }
+        for _ in 0..<5 { bridge.tick() }
+        guard bridge.pendingReason == .busyElsewhere else { return "expected busyElsewhere first" }
+        busy = false
+        tickUntil(bridge) { result != nil }
+        guard case .success? = result else { return "never issued once the sibling released the tab" }
+        guard bridge.pendingReason == nil else { return "pendingReason did not clear" }
         return nil
     }
 

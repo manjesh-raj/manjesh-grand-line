@@ -35,6 +35,9 @@ enum KubernetesDestinationSelfTest {
             ("feedTabIsNeverAdoptedSilentlyWhenSeveralExist", test_feedTabIsNeverAdoptedSilentlyWhenSeveralExist),
             ("clusterSweepRendersRealParsedPods", test_clusterSweepRendersRealParsedPods),
             ("clusterSweepSurvivesAFailingTopPods", test_clusterSweepSurvivesAFailingTopPods),
+            ("clusterRefreshShowsWhyItIsWaitingOnFeedTabActivity", test_clusterRefreshShowsWhyItIsWaitingOnFeedTabActivity),
+            ("feedCardCopyWarnsAgainstTypingIntoIt", test_feedCardCopyWarnsAgainstTypingIntoIt),
+            ("discardOnMidCommandActivityIsUnchanged", test_discardOnMidCommandActivityIsUnchanged),
             ("emptyNamespaceSaysSoRatherThanLookingBroken", test_emptyNamespaceSaysSoRatherThanLookingBroken),
             ("describeDrawerRunsOneCommandForTheClickedPod", test_describeDrawerRunsOneCommandForTheClickedPod),
             ("eventsTabFetchesOnlyWhenOpened", test_eventsTabFetchesOnlyWhenOpened),
@@ -302,6 +305,82 @@ enum KubernetesDestinationSelfTest {
         }
         guard !(harness.controller.debugClusterStatusText.lowercased().contains("metrics api")) else {
             return "a normal missing metrics-server was reported as a page-level failure"
+        }
+        return nil
+    }
+
+    // MARK: `fm/grandline-k8s-feed-tab-stall-fix`
+
+    /// The captain's own real repro, verified against the **rendered**
+    /// state, not just the bridge's own `pendingReason`: checking on the feed
+    /// tab by typing into it directly used to render as an indistinguishable
+    /// "Refreshing…" spinner, with no indication that the captain's own
+    /// typing was what was pausing it.
+    private static func test_clusterRefreshShowsWhyItIsWaitingOnFeedTabActivity() -> String? {
+        let harness = liveHarness()
+        // `liveHarness()` already ran one successful sweep to get here -
+        // measure new commands from this point, not the whole history.
+        let before = harness.fake.sentCommands.count
+        // The captain typed directly into the feed tab, as reported.
+        harness.fake.lastUserActivity = Date()
+        harness.controller.debugRefreshCluster()
+        harness.drain(4)
+        let status = harness.controller.debugClusterStatusText
+        guard status != "Refreshing\u{2026}" else {
+            return "the pending status still rendered as the generic \u{201C}Refreshing\u{2026}\u{201D} while blocked on feed-tab activity"
+        }
+        guard status.lowercased().contains("idle") else {
+            return "the pending status did not explain that the feed tab's own activity is the cause: \(status)"
+        }
+        // The feed card's own status line says the same thing.
+        guard harness.controller.debugFeedStatusText.lowercased().contains("idle") else {
+            return "the feed card status did not surface the waiting reason: \(harness.controller.debugFeedStatusText)"
+        }
+        // The safety property is unweakened: nothing new was injected while
+        // blocked, regardless of how confusing the wait looked.
+        guard harness.fake.sentCommands.count == before else {
+            return "a command reached the tab while it was supposed to be waiting for quiet"
+        }
+        // Once activity genuinely clears, the sweep proceeds and lands real
+        // data - this fix only changes what's shown while it waits.
+        harness.fake.lastUserActivity = nil
+        harness.drain()
+        guard harness.controller.debugPods.count == 3 else {
+            return "the sweep never completed once activity cleared: \(harness.controller.debugPods.count) pods"
+        }
+        return nil
+    }
+
+    /// The feed tab card's own explanatory copy must warn up front that
+    /// typing into it pauses automated commands - exactly the behaviour the
+    /// captain hit and had to discover by confusion.
+    private static func test_feedCardCopyWarnsAgainstTypingIntoIt() -> String? {
+        let harness = liveHarness()
+        guard findLabel(containing: "pauses automated commands", in: harness.controller.view) else {
+            return "the feed tab card's copy does not warn that typing into it pauses automated commands"
+        }
+        return nil
+    }
+
+    /// The genuine safety property this task must never touch: a real
+    /// keystroke arriving after a command was injected but before it
+    /// completed means the captain's own input and the shell's output could
+    /// have interleaved, so the result is discarded rather than trusted -
+    /// unchanged by this task's pending-reason work, and driven here through
+    /// the real page's own `describePod` rather than the bridge directly.
+    private static func test_discardOnMidCommandActivityIsUnchanged() -> String? {
+        let harness = liveHarness()
+        harness.fake.onSendCommand = { [fake = harness.fake] injected in
+            guard let (start, end) = markers(in: injected) else { return }
+            fake.appendOutput("\(start)\nNode: ip-10-40-5-88\n\(end)")
+            // The captain typed while this command was still running - the
+            // shell's input and ours could have interleaved.
+            fake.lastUserActivity = Date()
+        }
+        harness.controller.describePod("billing-cron-29471120-tzkkd")
+        harness.drain()
+        guard harness.controller.debugDescribeText.contains("received input while the command was running") else {
+            return "mid-command activity did not discard the output: \(harness.controller.debugDescribeText)"
         }
         return nil
     }
@@ -608,6 +687,17 @@ enum KubernetesDestinationSelfTest {
             if let found = findButton(titled: title, in: subview) { return found }
         }
         return nil
+    }
+
+    /// Walks the real view tree for a label whose text contains `substring` -
+    /// used to prove a piece of card copy is actually present on screen
+    /// rather than reaching into `HelmCard`'s own private label properties.
+    private static func findLabel(containing substring: String, in view: NSView) -> Bool {
+        if let field = view as? NSTextField, field.stringValue.contains(substring) { return true }
+        for subview in view.subviews {
+            if findLabel(containing: substring, in: subview) { return true }
+        }
+        return false
     }
 }
 #endif
