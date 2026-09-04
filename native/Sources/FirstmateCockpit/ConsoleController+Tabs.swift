@@ -516,14 +516,21 @@ extension ConsoleController {
     /// The tab chip's right-click "Forward Drags to This Tab's Program".
     /// Flips `CockpitTerminalView.forwardDragsToChild` for this one tab - see
     /// that property's own doc comment for the full reasoning
-    /// (`fm/grandline-terminal-selection-sidebar-bleed`). No other state to
-    /// update: the menu item's own checkmark is read fresh from
-    /// `forwardDragsToChild` every time the chip is right-clicked
-    /// (`TabChipView.forwardDragsEnabled`), and the mouse-routing change
-    /// itself takes effect on the very next drag with no reconnect needed.
+    /// (`fm/grandline-terminal-selection-sidebar-bleed`). The menu item's own
+    /// checkmark is read fresh from `forwardDragsToChild` every time the chip
+    /// is right-clicked (`TabChipView.forwardDragsEnabled`), and the
+    /// mouse-routing change itself takes effect on the very next drag with no
+    /// reconnect needed. `fm/grandline-herdr-selection-theme-fix` added the
+    /// one thing that *did* need an explicit refresh: the chip's own small
+    /// "drags forwarded" indicator, which without this call would only update
+    /// the next time `styleChips()` happened to run for an unrelated reason
+    /// (select, rename, refresh) - a captain toggling this from the menu
+    /// deserves to see it change immediately, not on the next incidental
+    /// repaint.
     func toggleForwardDragsToChild(id: UUID) {
         guard let tab = tabs.first(where: { $0.id == id }) else { return }
         tab.terminal.forwardDragsToChild.toggle()
+        tab.chip.refreshForwardDragsIndicator()
     }
 
     // MARK: Selection
