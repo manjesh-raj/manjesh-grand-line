@@ -504,6 +504,11 @@ extension RailDestination {
         case .console: return .teal
         case .hosts: return .teal
         case .logAnalyzer: return .teal
+        // `fm/grandline-k8s-cluster-tail`: the Operations space's own hue,
+        // shared with Hosts/Console/Log Analyzer for the same reason the four
+        // Setup pages share amber - the hue belongs to the *area*, and this
+        // page is the running systems seen from a different angle.
+        case .kubernetes: return .teal
         case .shift: return .rose             // Tasks
         case .dictation: return .rose
         case .review: return .green           // Merge queue

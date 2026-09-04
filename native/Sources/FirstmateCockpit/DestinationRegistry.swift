@@ -107,7 +107,7 @@ enum DestinationSlotID: String, CaseIterable {
     /// Daylight Phase 2's home canvas - eagerly mounted, because it is the
     /// launch landing and the target of every drill page's back button.
     case homeCanvas
-    case overview, console, hosts, shift, review, logAnalyzer
+    case overview, console, hosts, shift, review, logAnalyzer, kubernetes
     case tools, whiteboard, vault, dictation, schedules, health, docs, runbooks, postmortems, setup, settings
 }
 
@@ -122,6 +122,7 @@ extension RailDestination {
         case .shift: return .shift
         case .review: return .review
         case .logAnalyzer: return .logAnalyzer
+        case .kubernetes: return .kubernetes
         case .tools: return .tools
         case .whiteboard: return .whiteboard
         case .vault: return .vault
@@ -158,6 +159,7 @@ extension RailDestination {
         case .shift: return "Tasks, follow-ups, projects and DevOps commands"
         case .review: return "Open pull requests, ready to merge"
         case .logAnalyzer: return "Collect, analyse and explain captured output"
+        case .kubernetes: return "Read-only cluster browsing and multi-pod log tailing"
         case .tools: return "Nine offline utilities"
         case .whiteboard: return "An Excalidraw canvas, offline, with AI diagrams"
         case .vault: return "Secrets and verified launchers - names only"

@@ -91,6 +91,10 @@ NEEDS_SESSION=(
   "FM_RUN_APP_SHELL_BODY_WIDTH_TESTS"
   # The session switcher mounts a real `AppShellController` in a real window.
   "FM_RUN_SESSION_SWITCHER_TESTS"
+  # `fm/grandline-k8s-cluster-tail`: mounts the real `.kubernetes` destination
+  # in a real window. Its pure-logic half (FM_RUN_KUBE_BRIDGE_TESTS) is
+  # deliberately not here - that one runs in CI.
+  "FM_RUN_KUBERNETES_DESTINATION_TESTS"
   "FM_RUN_DRILL_HEADER_TITLE_TESTS"
   "FM_RUN_DAYLIGHT_MODULE_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_TESTS"

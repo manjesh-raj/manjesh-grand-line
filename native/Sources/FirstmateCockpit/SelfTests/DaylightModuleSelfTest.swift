@@ -75,7 +75,12 @@ enum DaylightModuleSelfTest {
     /// `daylight-ui-design.md`, verbatim.
     private static let lockedMembership: [DaylightSpace: Set<DaylightModule>] = [
         .command: [.console, .tasks, .mergeQueue],
-        .operations: [.hosts, .logAnalyzer, .health, .schedules],
+        // `fm/grandline-k8s-cluster-tail` added `.kubernetes` here - the
+        // deliberate table change this file's own doc comment says to make
+        // together with `DaylightModule.space`. The scout report's own
+        // placement note puts it in Operations, beside Log Analyzer: it is the
+        // running systems seen from a different angle.
+        .operations: [.hosts, .logAnalyzer, .kubernetes, .health, .schedules],
         // `fm/grandline-docs-split-runbooks-postmortems` added Runbooks and
         // Postmortems here, promoted out of `DocsController`'s former tabs
         // into their own destinations - the deliberate table change this
@@ -138,11 +143,15 @@ enum DaylightModuleSelfTest {
         // a real regression this suite has to catch, not just assume away.
         let trimmed = DaylightModule.allCases.filter { !overviewVisibleModules.contains($0) }
         // 12 from the original trim, plus Runbooks, Postmortems
-        // (`fm/grandline-docs-split-runbooks-postmortems`) and Whiteboard
-        // (`fm/grand-line-whiteboard-excalidraw`) - all three new modules
-        // with `appearsOnOverview == false`, matching their Stores siblings.
-        if trimmed.count != 15 {
-            fail("expected exactly 15 modules trimmed from Overview, got \(trimmed.count): "
+        // (`fm/grandline-docs-split-runbooks-postmortems`), Whiteboard
+        // (`fm/grand-line-whiteboard-excalidraw`) and Kubernetes
+        // (`fm/grandline-k8s-cluster-tail`) - all four new modules with
+        // `appearsOnOverview == false`, matching their space siblings. The
+        // Kubernetes card in particular has nothing to show without a live
+        // session and a chosen feed tab, so it belongs on Operations beside
+        // Log Analyzer rather than on the pulse-check hub.
+        if trimmed.count != 16 {
+            fail("expected exactly 16 modules trimmed from Overview, got \(trimmed.count): "
                  + "\(trimmed.map(\.rawValue).sorted())", &ok)
         }
         for module in trimmed {

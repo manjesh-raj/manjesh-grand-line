@@ -698,3 +698,48 @@ extension ConsoleController {
         }
     }
 }
+
+// MARK: - Kubernetes feed tabs (`fm/grandline-k8s-cluster-tail`)
+
+extension ConsoleController {
+
+    /// The tabs the `.kubernetes` destination may use as its feed, in
+    /// tab-strip order.
+    ///
+    /// Every tab is offered, including the one the captain is typing in - the
+    /// page's own picker is what makes the choice deliberate, and refusing to
+    /// list a tab would be a worse failure than offering one they will
+    /// obviously not pick (a one-tab host has no other option, and the
+    /// `KubeBridge`'s own quiet-window guard protects a busy tab regardless).
+    func kubeFeedTabs() -> [KubeFeedTab] {
+        tabs.map { KubeFeedTab(id: $0.id, name: $0.name, terminal: $0) }
+    }
+
+    /// Duplicate the current tab and hand it back as a feed candidate.
+    ///
+    /// A duplicate re-runs the same launch spec, so the jump-box hop replays
+    /// automatically and only the password-gated hop is left for the captain -
+    /// which is exactly the one manual beat the scout report accepts. The
+    /// duplicate is *not* selected: the captain asked for a feed, not to be
+    /// moved off whatever they were reading.
+    func duplicateTabForKubeFeed() -> KubeFeedTab? {
+        guard let source = currentTab else { return nil }
+        let tab = addTab(launch: source.launch,
+                         name: numberedName(for: source.launch) + " \u{00B7} k8s feed",
+                         select: false,
+                         accentHex: source.accentHex,
+                         blockViewOptIn: source.blockViewOptIn,
+                         kubeContextBadgeOptIn: source.kubeContextBadgeOptIn,
+                         forwardDragsToChild: source.terminal.forwardDragsToChild)
+        return KubeFeedTab(id: tab.id, name: tab.name, terminal: tab)
+    }
+
+    /// Whether a sibling bridge already holds that tab - `KubeBridge`'s
+    /// `isTerminalBusyElsewhere` seam. Two independently-injected commands on
+    /// one real shell interleave keystrokes and corrupt both outputs, which is
+    /// the hazard `KubeContextBridge`'s own header documents at length.
+    func isTabBusyForKubeFeed(_ tabID: UUID) -> Bool {
+        guard let tab = tabs.first(where: { $0.id == tabID }) else { return false }
+        return tab.sreLead?.bridge?.isBusy == true || tab.kubeContextBridge?.isBusy == true
+    }
+}
