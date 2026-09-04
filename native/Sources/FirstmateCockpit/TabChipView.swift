@@ -38,6 +38,20 @@ final class TabChipView: NSView, NSTextFieldDelegate {
 
     private let label = NSTextField()
     private let closeButton = NSButton()
+    /// `fm/grandline-herdr-selection-theme-fix`: a small, always-legible
+    /// indicator shown only while this tab's `forwardDragsToChild` is on -
+    /// the one thing that can make an otherwise-correct `.shell` tab's plain
+    /// drag paint a mouse-reporting child's *own* colours instead of this
+    /// app's theme (verified live against a real herdr session: with the
+    /// toggle off, a plain drag stays local and paints `selectionHex`/
+    /// `selectionTextHex`; with it on, the toggle's own documented effect is
+    /// that the drag forwards to the child instead, whose own UI paints
+    /// whatever it likes). Before this, the only place that state was visible
+    /// at all was the right-click menu's checkmark - a tab that had it toggled
+    /// (directly, or carried forward by `ConsoleController.duplicateTab`) gave
+    /// no visible reason its selection colour differed from every other tab's.
+    private let forwardDragsIndicator = NSImageView()
+    private var forwardDragsIndicatorWidth: NSLayoutConstraint!
 
     var onSelect: (() -> Void)?
     var onClose: (() -> Void)?
@@ -105,6 +119,24 @@ final class TabChipView: NSView, NSTextFieldDelegate {
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(closeButton)
 
+        forwardDragsIndicator.image = NSImage(
+            systemSymbolName: "arrowshape.turn.up.forward.fill",
+            accessibilityDescription: "Drags in this tab are forwarded to its program"
+        )
+        forwardDragsIndicator.imageScaling = .scaleProportionallyDown
+        forwardDragsIndicator.toolTip = "Drags in this tab are forwarded to its program (e.g. herdr) instead of "
+            + "building this app's own selection - right-click the tab to turn this off."
+        forwardDragsIndicator.isHidden = true
+        forwardDragsIndicator.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(forwardDragsIndicator)
+
+        // A real, collapsible width constraint - not just `isHidden` - so a
+        // chip with the indicator off reclaims its space rather than leaving
+        // a dead gap before the close button (the same "an invisible slot
+        // still needs a real width == 0 constraint, not merely isHidden"
+        // lesson this app has hit before for a reserved-but-empty column).
+        forwardDragsIndicatorWidth = forwardDragsIndicator.widthAnchor.constraint(equalToConstant: 0)
+
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 28),
             widthAnchor.constraint(lessThanOrEqualToConstant: 240),
@@ -112,7 +144,12 @@ final class TabChipView: NSView, NSTextFieldDelegate {
             label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
 
-            closeButton.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 6),
+            forwardDragsIndicator.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 4),
+            forwardDragsIndicator.centerYAnchor.constraint(equalTo: centerYAnchor),
+            forwardDragsIndicatorWidth,
+            forwardDragsIndicator.heightAnchor.constraint(equalToConstant: 12),
+
+            closeButton.leadingAnchor.constraint(equalTo: forwardDragsIndicator.trailingAnchor, constant: 6),
             closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             closeButton.widthAnchor.constraint(equalToConstant: 15),
@@ -226,7 +263,30 @@ final class TabChipView: NSView, NSTextFieldDelegate {
                 : .systemFont(ofSize: 13, weight: selected ? .semibold : .regular)
         }
         closeButton.contentTintColor = selected ? selectedInk : muted
+        forwardDragsIndicator.contentTintColor = selected ? selectedInk : muted
+        refreshForwardDragsIndicator()
     }
+
+    /// Show/hide the indicator against this tab's *current*
+    /// `forwardDragsToChild` state - `applyStyle` already calls this on every
+    /// re-theme/re-select, and `ConsoleController.toggleForwardDragsToChild`
+    /// calls it directly right after flipping the state, so the chip reflects
+    /// a toggle the instant it changes rather than waiting for the next
+    /// unrelated `styleChips()` pass.
+    func refreshForwardDragsIndicator() {
+        let forwarding = forwardDragsEnabled?() ?? false
+        forwardDragsIndicator.isHidden = !forwarding
+        forwardDragsIndicatorWidth.constant = forwarding ? 12 : 0
+    }
+
+    #if FM_SELFTESTS
+    /// Whether the "drags forwarded" indicator is actually visible right now
+    /// - both halves (`isHidden` and the collapsible width), since either one
+    /// alone regressing would leave a dead gap or a stray always-shown icon.
+    var debugForwardDragsIndicatorVisible: Bool {
+        !forwardDragsIndicator.isHidden && forwardDragsIndicatorWidth.constant > 0
+    }
+    #endif
 
     /// A capsule's real radius for a chip of `height` - falling back to the
     /// chip's own resolved content height before its first layout pass.

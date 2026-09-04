@@ -21,6 +21,20 @@
 // deliberately left to the source guard rather than a second, riskier
 // behavioural harness here.
 //
+// `fm/grandline-herdr-selection-theme-fix` added the last case
+// (`chipIndicatorTracksTheToggleImmediately`): a real live reproduction
+// against the actual herdr binary attached to a real herdr session confirmed
+// the mouse-routing mechanism itself was already correct (a default `.shell`
+// tab's plain drag builds a real, theme-coloured local selection with zero
+// bytes forwarded to herdr; a tab with `forwardDragsToChild` toggled on
+// forwards the drag to herdr instead, which then paints its own, unrelated
+// colours - the toggle's documented, intended effect). The one genuine gap
+// that investigation found was visibility: nothing on the tab itself showed
+// that state, only a right-click menu's checkmark - so a captain looking at
+// two tabs with different selection colours (one toggled directly, or one
+// carrying the state forward from `duplicateTab`) had no on-screen way to
+// tell why. `TabChipView`'s small indicator (and this case) close that gap.
+//
 // Run with:
 //   swift build && FM_RUN_TAB_FORWARD_DRAGS_TOGGLE_TESTS=1 .build/debug/FirstmateCockpit; echo $?
 
@@ -40,6 +54,7 @@ enum TabForwardDragsToggleSelfTest {
             ("toggleActionClosureActuallyToggles", test_onToggleForwardDragsClosureToggles),
             ("duplicateCarriesAnAlreadyToggledStateForward", test_duplicatePropagatesToggle),
             ("aFreshTabNeverInheritsAnUnrelatedTabsToggle", test_freshTabDoesNotInheritSiblingState),
+            ("chipIndicatorTracksTheToggleImmediately", test_chipIndicatorTracksToggle),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -177,6 +192,58 @@ enum TabForwardDragsToggleSelfTest {
         guard second.terminal.forwardDragsToChild == false else {
             return "a brand-new .shell tab inherited an unrelated tab's forwardDragsToChild state - each tab's toggle must start independent"
         }
+        _ = window
+        return nil
+    }
+
+    /// `fm/grandline-herdr-selection-theme-fix`: the tab chip's own visible
+    /// "drags forwarded to this tab's program" indicator - the fix for the
+    /// only real gap the live-herdr investigation found. The routing
+    /// mechanism itself (`prefersLocalSelection`/`forwardDragsToChild`) was
+    /// verified correct against a real, live herdr session (see that task's
+    /// PR); the reported symptom - a `.shell` tab painting herdr's own dark
+    /// selection colour instead of the theme's - only happens when this
+    /// per-tab toggle is on, which is its documented, intended effect, not a
+    /// bug. Before this, that state was visible nowhere but a right-click
+    /// menu's checkmark, so a captain looking at two differently-behaving
+    /// tabs (one toggled, one not - whether toggled directly or carried
+    /// forward by a duplicate) had no way to tell why without hunting for it.
+    private static func test_chipIndicatorTracksToggle() -> String? {
+        let (window, controller) = makeTestConsole()
+        controller.newShellTab()
+        guard let tab = controller.currentTab else { return "no current tab after newShellTab()" }
+
+        guard !tab.chip.debugForwardDragsIndicatorVisible else {
+            return "a fresh .shell tab's chip already shows the forward-drags indicator"
+        }
+
+        controller.toggleForwardDragsToChild(id: tab.id)
+        guard tab.chip.debugForwardDragsIndicatorVisible else {
+            return "toggling forwardDragsToChild on did not make the chip's indicator visible immediately - " +
+                "it should not need a separate styleChips() pass to show"
+        }
+
+        controller.toggleForwardDragsToChild(id: tab.id)
+        guard !tab.chip.debugForwardDragsIndicatorVisible else {
+            return "toggling forwardDragsToChild back off left the chip's indicator visible"
+        }
+
+        // A second, untouched tab must never show the first tab's state -
+        // the same independence `test_freshTabDoesNotInheritSiblingState`
+        // proves for the underlying property, proven here for its visible
+        // indicator too.
+        controller.toggleForwardDragsToChild(id: tab.id)
+        controller.newShellTab()
+        guard let second = controller.currentTab, second.id != tab.id else {
+            return "the second newShellTab() did not open a new, distinct tab"
+        }
+        guard !second.chip.debugForwardDragsIndicatorVisible else {
+            return "a brand-new tab's chip showed the indicator for an unrelated tab's toggled state"
+        }
+        guard tab.chip.debugForwardDragsIndicatorVisible else {
+            return "opening a second tab cleared the first tab's own already-visible indicator"
+        }
+
         _ = window
         return nil
     }
