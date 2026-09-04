@@ -67,6 +67,65 @@ class ValidationTests(unittest.TestCase):
         self.assertIsNone(err)
 
 
+class ConfigSubcommandTests(unittest.TestCase):
+    """`fm/grandline-k8s-context-badge`: `config` is allowed only for its two
+    read-only subcommands, `get-contexts` and `current-context` - every real
+    write form (`use-context`, `set-context`, `delete-context`,
+    `rename-context`, `set`, `unset`) must stay refused even though none of
+    them are stopped by `_SAFE_CHARS` or the smuggled-write-verb guard
+    (neither check has anything to do with `config`'s own subcommand
+    vocabulary), so this is the one place proving the dedicated
+    `_CONFIG_READONLY_SUBCOMMANDS` check actually does the job."""
+
+    def test_accepts_get_contexts(self):
+        self.assertIsNone(mcp._validate_args("config", ["get-contexts"]))
+
+    def test_accepts_current_context(self):
+        self.assertIsNone(mcp._validate_args("config", ["current-context"]))
+
+    def test_rejects_use_context(self):
+        err = mcp._validate_args("config", ["use-context", "prod"])
+        self.assertIsNotNone(err)
+        self.assertIn("use-context", err)
+
+    def test_rejects_set_context(self):
+        err = mcp._validate_args("config", ["set-context", "--current", "--namespace=prod"])
+        self.assertIsNotNone(err)
+
+    def test_rejects_delete_context(self):
+        err = mcp._validate_args("config", ["delete-context", "prod"])
+        self.assertIsNotNone(err)
+
+    def test_rejects_rename_context(self):
+        err = mcp._validate_args("config", ["rename-context", "old", "new"])
+        self.assertIsNotNone(err)
+
+    def test_rejects_bare_set_and_unset(self):
+        self.assertIsNotNone(mcp._validate_args("config", ["set", "current-context", "prod"]))
+        self.assertIsNotNone(mcp._validate_args("config", ["unset", "current-context"]))
+
+    def test_rejects_get_contexts_with_extra_arguments(self):
+        # Even an apparently-harmless extra flag is refused: the allowlist is
+        # "exactly this one token", not "starts with this token".
+        err = mcp._validate_args("config", ["get-contexts", "-o", "name"])
+        self.assertIsNotNone(err)
+
+    def test_rejects_current_context_with_a_positional_argument(self):
+        err = mcp._validate_args("config", ["current-context", "extra"])
+        self.assertIsNotNone(err)
+
+    def test_rejects_config_with_no_subcommand_at_all(self):
+        err = mcp._validate_args("config", [])
+        self.assertIsNotNone(err)
+
+    def test_config_is_now_a_listed_allowed_verb(self):
+        self.assertIn("config", mcp._ALLOWED_VERBS)
+
+    def test_tool_schema_advertises_config_as_a_subcommand_choice(self):
+        schema = mcp._tool_schema()
+        self.assertIn("config", schema["inputSchema"]["properties"]["subcommand"]["enum"])
+
+
 class BridgeRequestTests(unittest.TestCase):
     """Assert the request file's exact shape and that validation runs before
     any file is ever written."""
@@ -92,6 +151,47 @@ class BridgeRequestTests(unittest.TestCase):
         outcome = mcp._run_kubectl("delete", ["pod/foo"], None)
         self.assertFalse(outcome["ok"])
         self.assertIn("delete", outcome["error"])
+        self.assertEqual(self._requests(), [])
+
+    def test_config_use_context_never_writes_a_request_file(self):
+        # `fm/grandline-k8s-context-badge`: a write form of `config` reaches
+        # `_run_kubectl` exactly like any other refused command would, and
+        # must be stopped here too - not just at `_validate_args` in
+        # isolation (`ConfigSubcommandTests` above already covers that).
+        outcome = mcp._run_kubectl("config", ["use-context", "prod"], None)
+        self.assertFalse(outcome["ok"])
+        self.assertIn("use-context", outcome["error"])
+        self.assertEqual(self._requests(), [])
+
+    def test_config_get_contexts_runs_through_the_bridge_end_to_end(self):
+        def respond():
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                reqs = self._requests()
+                if reqs:
+                    request_id = reqs[0][len("request-"):-len(".json")]
+                    with open(os.path.join(self.bridge_dir, reqs[0])) as f:
+                        payload = json.load(f)
+                    assert payload["command"] == "kubectl config get-contexts", payload
+                    os.remove(os.path.join(self.bridge_dir, reqs[0]))
+                    fake_output = (
+                        "CURRENT   NAME           CLUSTER        AUTHINFO   NAMESPACE\n"
+                        "*         preprod-eks    preprod-eks    aws        raas-uat\n"
+                        "          dev-eks        dev-eks        aws        default\n"
+                    )
+                    with open(os.path.join(self.bridge_dir, f"response-{request_id}.json"), "w") as f:
+                        json.dump({"ok": True, "output": fake_output}, f)
+                    return
+                time.sleep(0.05)
+            raise AssertionError("no request file appeared")
+
+        t = threading.Thread(target=respond)
+        t.start()
+        outcome = mcp._run_kubectl("config", ["get-contexts"], None)
+        t.join(timeout=5)
+
+        self.assertTrue(outcome["ok"], outcome)
+        self.assertIn("preprod-eks", outcome["output"])
         self.assertEqual(self._requests(), [])
 
     def test_writes_exactly_one_request_file_with_the_quoted_command(self):

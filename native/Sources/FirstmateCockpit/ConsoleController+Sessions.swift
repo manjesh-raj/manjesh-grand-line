@@ -91,12 +91,16 @@ extension ConsoleController {
     /// `connectSSHIfNeeded` (a saved host's dedicated page) ever passes
     /// `true`, and only for the one host whose `Host.blockViewOptIn` is set;
     /// an ad-hoc quick-connect has no `Host` to read that flag from at all.
-    func openSSH(label: String, args: [String], accentHex: String?, keyID: UUID?, startupSnippetID: UUID? = nil, blockViewOptIn: Bool = false) {
+    /// `kubeContextBadgeOptIn` (`fm/grandline-k8s-context-badge`) follows the
+    /// identical rule for `Host.kubeContextBadgeOptIn`.
+    func openSSH(label: String, args: [String], accentHex: String?, keyID: UUID?, startupSnippetID: UUID? = nil,
+                 blockViewOptIn: Bool = false, kubeContextBadgeOptIn: Bool = false) {
         let launch = TabLaunch.ssh(
             label: label, executable: HostCatalog.sshExecutable, hostArgs: args,
             keyID: keyID, startupSnippetID: startupSnippetID
         )
-        addTab(launch: launch, name: numberedName(for: launch), select: true, accentHex: accentHex, blockViewOptIn: blockViewOptIn)
+        addTab(launch: launch, name: numberedName(for: launch), select: true, accentHex: accentHex,
+               blockViewOptIn: blockViewOptIn, kubeContextBadgeOptIn: kubeContextBadgeOptIn)
         // Bring the console forward if the user was in the sidebar.
         if let tab = currentTab { view.window?.makeFirstResponder(tab.terminal) }
     }
@@ -111,9 +115,11 @@ extension ConsoleController {
     /// part) instead of implicitly stacking a second tab. A deliberate
     /// second session to the same host still works via the tab chip's own
     /// Duplicate affordance (⌘D / `duplicateTab`).
-    func connectSSHIfNeeded(label: String, args: [String], accentHex: String?, keyID: UUID?, startupSnippetID: UUID?, blockViewOptIn: Bool = false) {
+    func connectSSHIfNeeded(label: String, args: [String], accentHex: String?, keyID: UUID?, startupSnippetID: UUID?,
+                            blockViewOptIn: Bool = false, kubeContextBadgeOptIn: Bool = false) {
         guard tabs.isEmpty else { return }
-        openSSH(label: label, args: args, accentHex: accentHex, keyID: keyID, startupSnippetID: startupSnippetID, blockViewOptIn: blockViewOptIn)
+        openSSH(label: label, args: args, accentHex: accentHex, keyID: keyID, startupSnippetID: startupSnippetID,
+               blockViewOptIn: blockViewOptIn, kubeContextBadgeOptIn: kubeContextBadgeOptIn)
         // `fm/grandline-sre-lead-per-tab`: no `primarySSHTab` to set anymore -
         // SRE Lead is per-tab now (`TabModel.sreLead`), started explicitly by
         // the captain for whichever tab they're looking at, never pinned to

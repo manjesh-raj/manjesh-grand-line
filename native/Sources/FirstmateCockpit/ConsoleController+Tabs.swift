@@ -74,13 +74,16 @@ extension ConsoleController {
     /// from `AppShellController.connectHost` through `connectSSHIfNeeded`/
     /// `openSSH`; every other caller (⌘T, ⌘D, the Firstmate console's own
     /// Shell tab, an ad-hoc quick-connect with no saved `Host`)
-    /// leaves it at the default `false`. `forwardDragsToChild` is
+    /// leaves it at the default `false`. `kubeContextBadgeOptIn`
+    /// (`fm/grandline-k8s-context-badge`) is the identical single-host gate
+    /// for the context/namespace safety badge - see `Host.
+    /// kubeContextBadgeOptIn`'s doc comment. `forwardDragsToChild` is
     /// `CockpitTerminalView.forwardDragsToChild`'s own seed value - `false`
     /// (today's default) for every fresh `.shell` tab (⌘T), and only ever
     /// non-`false` when `duplicateTab` below carries an already-toggled tab's
     /// state forward.
     @discardableResult
-    func addTab(launch: TabLaunch, name: String, select: Bool, accentHex: String? = nil, isOneShotCommand: Bool = false, blockViewOptIn: Bool = false, forwardDragsToChild: Bool = false) -> TabModel {
+    func addTab(launch: TabLaunch, name: String, select: Bool, accentHex: String? = nil, isOneShotCommand: Bool = false, blockViewOptIn: Bool = false, kubeContextBadgeOptIn: Bool = false, forwardDragsToChild: Bool = false) -> TabModel {
         let term = makeTerminal()
         let tab = TabModel(name: name, launch: launch, terminal: term, accentHex: accentHex)
         tab.isOneShotCommand = isOneShotCommand
@@ -143,6 +146,38 @@ extension ConsoleController {
                 container.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -inset),
             ])
             tab.blockContainer = container
+        }
+
+        // `fm/grandline-k8s-context-badge`: only ever true for an `.ssh` tab
+        // on the one opted-in host - see `TabModel.kubeContextBadgeOptIn`'s
+        // doc comment. No feature-flag gate (unlike block view): this
+        // mechanism has none of block view's fraught rollout history (two
+        // prior app-crashing regressions), it hooks nothing into the terminal
+        // beyond typing a plain command, and it is already scoped to one
+        // captain-chosen host at a time. The bridge itself is created here so
+        // it exists for the tab's whole lifetime; its periodic refresh only
+        // actually starts once the shell looks ready
+        // (`restartTabBookkeeping` -> `startKubeContextBadgeIfSupported`).
+        if case .ssh = launch, kubeContextBadgeOptIn {
+            tab.kubeContextBadgeOptIn = true
+            let bridge = KubeContextBridge(target: tab)
+            // Cross-bridge collision guard, in both directions - see
+            // `KubeContextBridge.swift`'s header and `SRELeadBridge.
+            // isTerminalBusyElsewhere`. SRE Lead's own bridge is created
+            // later, on demand (`startSRELead(for:)`), and is wired to check
+            // `tab.kubeContextBridge?.isBusy` there.
+            bridge.isTerminalBusyElsewhere = { [weak tab] in tab?.sreLead?.bridge?.isBusy ?? false }
+            bridge.onUpdate = { [weak self, weak tab] result in
+                guard let self, let tab else { return }
+                if case .success(let info) = result {
+                    tab.kubeContextInfo = info
+                }
+                // A failure is deliberately NOT written into `kubeContextInfo`
+                // - see that property's own doc comment on why a transient
+                // refusal must not blank an already-known-good badge.
+                if tab === self.currentTab { self.updateKubeContextBadgeControls() }
+            }
+            tab.kubeContextBridge = bridge
         }
 
         let chip = TabChipView(tabID: tab.id, name: name)
@@ -233,6 +268,28 @@ extension ConsoleController {
         tab.blockTracker?.reset()
         tab.blockContainer?.clear()
         installShellIntegrationIfSupported(tab)
+        startKubeContextBadgeIfSupported(tab)
+    }
+
+    /// `fm/grandline-k8s-context-badge`: best-effort, the exact same timing
+    /// convention as `runStartupSnippet`/`installShellIntegrationIfSupported`
+    /// - there is no protocol-level "the remote shell is ready" signal, so
+    /// this waits `remoteShellReadyDelay` (long enough for `ssh` to
+    /// authenticate and the remote shell to print its prompt) before typing
+    /// the first `kubectl config` command in. A no-op unless this tab has a
+    /// badge bridge at all (`kubeContextBadgeOptIn` was true at tab-creation
+    /// time - see `addTab`) and for a one-shot provisioning command
+    /// (`isOneShotCommand`), neither of which is an interactive prompt cycle
+    /// this hook has anything to attach to. `bridge.stop()` first so a
+    /// reconnect (⌘R, or the auto-reconnect timer) never leaves the previous
+    /// connection's poll timer running alongside a freshly scheduled one.
+    func startKubeContextBadgeIfSupported(_ tab: TabModel) {
+        guard let bridge = tab.kubeContextBridge, !tab.isOneShotCommand else { return }
+        bridge.stop()
+        DispatchQueue.main.asyncAfter(deadline: .now() + ConsoleController.remoteShellReadyDelay) { [weak tab] in
+            guard let tab, !tab.isClosing, tab.kubeContextBridge === bridge else { return }
+            bridge.start()
+        }
     }
 
     /// `fm/cockpit-block-view-stage0`: best-effort, same timing convention as
@@ -300,7 +357,9 @@ extension ConsoleController {
         // session's own choice, not a fresh tab's default - on the identical
         // "duplicate means keep going, a new tab means start over" reasoning
         // `blockViewOptIn` already follows one argument earlier.
-        addTab(launch: src.launch, name: numberedName(for: src.launch), select: true, accentHex: src.accentHex, blockViewOptIn: src.blockViewOptIn, forwardDragsToChild: src.terminal.forwardDragsToChild)
+        addTab(launch: src.launch, name: numberedName(for: src.launch), select: true, accentHex: src.accentHex,
+               blockViewOptIn: src.blockViewOptIn, kubeContextBadgeOptIn: src.kubeContextBadgeOptIn,
+               forwardDragsToChild: src.terminal.forwardDragsToChild)
     }
 
     /// ⌘W: close the current tab.
@@ -328,6 +387,7 @@ extension ConsoleController {
 
         tab.isClosing = true
         cleanupSSHKeyTempFile(tab)
+        tab.kubeContextBridge?.stop()
         tab.terminal.terminate()
         tab.terminal.removeFromSuperview()
         tab.blockContainer?.removeFromSuperview()
@@ -354,6 +414,7 @@ extension ConsoleController {
                 updateComposeControls()
                 updateQuotaUsageControls()
                 updateBlockViewControls()
+                updateKubeContextBadgeControls()
             }
             return
         }
@@ -423,6 +484,7 @@ extension ConsoleController {
         updateComposeControls()
         updateQuotaUsageControls()
         updateSRELeadControls()
+        updateKubeContextBadgeControls()
         // fm/grandline-notification-center (#7): selecting a tab is exactly
         // "the captain is now looking at this tab" - clears its own SRE
         // Lead unread entry, if any, regardless of how selection happened
@@ -484,6 +546,7 @@ extension ConsoleController {
     func shutdown() {
         for tab in tabs {
             cleanupSSHKeyTempFile(tab)
+            tab.kubeContextBridge?.stop()
         }
         // Host-page disconnect (design brief Part B) - tear down every
         // tab's own SRE Lead session (`fm/grandline-sre-lead-per-tab`: each

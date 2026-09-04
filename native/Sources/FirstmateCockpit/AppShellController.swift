@@ -1325,7 +1325,7 @@ final class AppShellController: NSViewController {
         controller.connectSSHIfNeeded(
             label: host.label, args: args, accentHex: host.accentHex,
             keyID: host.keyID, startupSnippetID: host.startupSnippetID,
-            blockViewOptIn: host.blockViewOptIn
+            blockViewOptIn: host.blockViewOptIn, kubeContextBadgeOptIn: host.kubeContextBadgeOptIn
         )
 
         // `fm/grandline-session-switcher`: this host now has a live session.

@@ -124,6 +124,21 @@ final class SRELeadBridge {
     /// reason as `userActivityQuietWindow`.
     let commandTimeout: TimeInterval
 
+    /// `fm/grandline-k8s-context-badge`: read before injecting - `true` when
+    /// a sibling bridge on the same tab (`KubeContextBridge`, the context/
+    /// namespace safety badge) is already mid-command. See that file's
+    /// header for the full cross-bridge-collision reasoning: two
+    /// independently-injected commands overlapping on one real shared shell
+    /// genuinely interleave keystrokes, corrupting both. `nil` (the default)
+    /// means "no sibling bridge to worry about," which is every existing
+    /// caller/test's exact prior behavior.
+    var isTerminalBusyElsewhere: (() -> Bool)?
+
+    /// True while this bridge itself has an outstanding command - the seam
+    /// `KubeContextBridge` reads via its own `isTerminalBusyElsewhere`
+    /// closure before injecting.
+    var isBusy: Bool { inFlight != nil }
+
     /// How often to poll for the in-flight command's end marker.
     ///
     /// Kept at 5Hz because a captain is waiting on a real answer here and the
@@ -302,6 +317,13 @@ final class SRELeadBridge {
         let now = Date()
         if let last = target.lastUserActivity, now.timeIntervalSince(last) < userActivityQuietWindow {
             writeResponse(id: request.id, ok: false, error: "The connected terminal tab looks like it's actively being used right now - try again in a moment.")
+            return
+        }
+        // `fm/grandline-k8s-context-badge`: refuse rather than collide with a
+        // sibling bridge's own in-flight command on this same tab - see
+        // `isTerminalBusyElsewhere`'s doc comment.
+        if isTerminalBusyElsewhere?() == true {
+            writeResponse(id: request.id, ok: false, error: "The context/namespace badge is currently refreshing on this tab - try again in a moment.")
             return
         }
 

@@ -150,6 +150,33 @@ final class TabModel {
     /// than in a dictionary on `ConsoleController`.
     var sreLead: SRELeadTabState?
 
+    /// `fm/grandline-k8s-context-badge`: whether this tab is the one, opted-in
+    /// host's context/namespace safety badge applies to (`Host.
+    /// kubeContextBadgeOptIn`, threaded down from
+    /// `AppShellController.connectHost` through
+    /// `ConsoleController.connectSSHIfNeeded`/`openSSH`). `false` for every
+    /// other tab, including every other SSH host's tab, the Firstmate
+    /// console's own Shell tab, and any ad-hoc quick-connect (which has no
+    /// `Host` behind it at all) - narrower than every tab of a kind, per the
+    /// same one-captain-chosen-host-at-a-time convention `blockViewOptIn`
+    /// already established. Combined with `kubeContextBridge`/
+    /// `kubeContextInfo` below.
+    var kubeContextBadgeOptIn = false
+
+    /// Present only when `kubeContextBadgeOptIn` was true at tab-creation
+    /// time - keeps `kubeContextInfo` current by periodically typing two
+    /// read-only `kubectl config` commands into this tab's terminal. See
+    /// `KubeContextBridge.swift`'s header for the full mechanism.
+    var kubeContextBridge: KubeContextBridge?
+
+    /// The most recently successfully fetched context/namespace, or `nil`
+    /// before the first successful refresh. A refresh *failure* never clears
+    /// an already-known-good value here (see
+    /// `ConsoleController+Toolbar.swift`'s `updateKubeContextBadgeControls`) -
+    /// a transient refusal (busy tab, timeout) should leave the badge showing
+    /// the last real answer rather than blanking it.
+    var kubeContextInfo: KubeContextInfo?
+
     init(name: String, launch: TabLaunch, terminal: CockpitTerminalView, accentHex: String? = nil) {
         self.name = name
         self.launch = launch

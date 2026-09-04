@@ -1906,6 +1906,16 @@ if ProcessInfo.processInfo.environment["FM_RUN_TAB_FORWARD_DRAGS_TOGGLE_TESTS"] 
     exit(TabForwardDragsToggleSelfTest.run() ? 0 : 1)
 }
 
+// `fm/grandline-k8s-context-badge`: the context/namespace safety badge's
+// parsing (`KubeContextParser`) and marker-injection mechanism
+// (`KubeContextBridge`) - busy/single-flight/cross-bridge-collision guards,
+// timeout, discard-on-typing, and the busy-vs-success retry cadence. See
+// KubeContextBridgeSelfTest.swift's header for what this covers versus the
+// Python allowlist widening's own tests in `test_sre_kubectl_mcp.py`.
+if ProcessInfo.processInfo.environment["FM_RUN_KUBE_CONTEXT_BRIDGE_TESTS"] == "1" {
+    exit(KubeContextBridgeSelfTest.run() ? 0 : 1)
+}
+
 #endif
 
 // GL-05: refuse to be a second instance. This sits *after* every
