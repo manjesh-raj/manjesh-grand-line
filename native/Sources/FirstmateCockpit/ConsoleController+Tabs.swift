@@ -469,6 +469,7 @@ extension ConsoleController {
                 // it faithfully when it restored the usage button.
                 updateComposeControls()
                 updateQuotaUsageControls()
+                updateDragForwardingControls()
                 updateBlockViewControls()
                 updateKubeContextBadgeControls()
             }
@@ -526,11 +527,14 @@ extension ConsoleController {
     /// the next time `styleChips()` happened to run for an unrelated reason
     /// (select, rename, refresh) - a captain toggling this from the menu
     /// deserves to see it change immediately, not on the next incidental
-    /// repaint.
+    /// repaint. `fm/grandline-drag-forward-indicator` added the toolbar's own
+    /// indicator button as a second place to reach this same toggle - refresh
+    /// it too, but only when the toggled tab is the one it's showing.
     func toggleForwardDragsToChild(id: UUID) {
         guard let tab = tabs.first(where: { $0.id == id }) else { return }
         tab.terminal.forwardDragsToChild.toggle()
         tab.chip.refreshForwardDragsIndicator()
+        if tab === currentTab { updateDragForwardingControls() }
     }
 
     // MARK: Selection
@@ -546,6 +550,7 @@ extension ConsoleController {
         updateBlockViewControls()
         updateComposeControls()
         updateQuotaUsageControls()
+        updateDragForwardingControls()
         updateSRELeadControls()
         updateKubeContextBadgeControls()
         // fm/grandline-notification-center (#7): selecting a tab is exactly
