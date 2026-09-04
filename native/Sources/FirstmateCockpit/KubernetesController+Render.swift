@@ -71,10 +71,34 @@ extension KubernetesController {
             return
         }
         var parts = ["Feeding from \u{201C}\(name)\u{201D}."]
-        if let running = bridge.inFlightLabel { parts.append("Running \(running)\u{2026}") }
+        if let running = bridge.inFlightLabel {
+            parts.append("Running \(running)\u{2026}")
+        } else if let waiting = pendingWaitText() {
+            // The distinction this task adds: contention (a sibling bridge,
+            // or the captain typing in this exact tab) is not the same as
+            // "kubectl is slow", and must not render identically to it.
+            parts.append("\(waiting).")
+        }
         if bridge.queueDepth > 0 { parts.append("\(bridge.queueDepth) queued.") }
         parts.append("Every command it runs is visible in that tab.")
         feedStatusLabel.stringValue = parts.joined(separator: " ")
+    }
+
+    /// The honest "why hasn't this run yet" line for whichever reason the
+    /// bridge is currently blocked on - `nil` when it's genuinely running (or
+    /// nothing is queued), in which case the caller falls back to its own
+    /// "Running…"/"Refreshing…" text.
+    ///
+    /// `fm/grandline-k8s-feed-tab-stall-fix`: a request stuck behind recent
+    /// feed-tab activity or a sibling bridge used to render identically to
+    /// one genuinely in flight - a plain "Refreshing…" spinner that never
+    /// told the captain their own typing in the feed tab was what was
+    /// pausing it.
+    func pendingWaitText() -> String? {
+        guard let bridge, let reason = bridge.pendingReason else { return nil }
+        guard let since = bridge.pendingSince else { return reason.statusText }
+        let seconds = max(0, Int(Date().timeIntervalSince(since)))
+        return "\(reason.statusText) (\(seconds)s so far)"
     }
 
     // MARK: - Cluster tables
@@ -82,7 +106,10 @@ extension KubernetesController {
     func renderClusterStatus(running: Bool) {
         guard isViewLoaded else { return }
         if running {
-            clusterStatusLabel.stringValue = "Refreshing\u{2026}"
+            // `pendingWaitText()` is non-nil exactly when the sweep hasn't
+            // actually been issued yet (contention), so this distinguishes
+            // that from genuinely running - `fm/grandline-k8s-feed-tab-stall-fix`.
+            clusterStatusLabel.stringValue = pendingWaitText() ?? "Refreshing\u{2026}"
             return
         }
         var parts: [String] = []

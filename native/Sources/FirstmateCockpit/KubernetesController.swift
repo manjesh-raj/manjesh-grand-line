@@ -359,10 +359,16 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         body.alignment = .leading
         body.spacing = HelmMetrics.s3
         body.translatesAutoresizingMaskIntoConstraints = false
+        // `fm/grandline-k8s-feed-tab-stall-fix`: the second sentence is the
+        // one that matters - a captain checking on this tab by typing into it
+        // directly is exactly what pauses every automated command until it
+        // goes quiet again (`KubeBridge`'s own activity-quiet-window check).
+        // Stated up front rather than discovered by confusion.
         _ = feedCard.setHeader(symbol: "dot.radiowaves.left.and.right",
                                tint: .warn,
                                title: "Feed tab",
-                               subtitle: "A dedicated tab this page types into, so your working terminal stays clean.")
+                               subtitle: "A dedicated tab this page types into, so your working terminal stays clean. "
+                                   + "Typing into it yourself pauses automated commands until it goes quiet again.")
         feedCard.setBody(body, insets: HelmCard.contentInsets)
         feedStatusLabel.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
     }

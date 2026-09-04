@@ -69,6 +69,23 @@
 // `KubeContextBridge` already does - `isTerminalBusyElsewhere` is the seam a
 // caller wires to read the siblings' `isBusy`, and `isBusy` is what the
 // siblings read back.
+//
+// **A queued-but-not-yet-issued request must say why (`fm/grandline-k8s-feed
+// -tab-stall-fix`).** `pump()`'s two contention checks (busy elsewhere, the
+// captain typing in the feed tab) used to just `return` and leave the queued
+// command sitting there silently - a real captain hit this checking on the
+// feed tab by typing a manual login directly into it, which kept
+// `.waitingForQuietTab` true for as long as they kept typing, and the page
+// rendered a plain "Refreshing…" with no way to tell that from kubectl
+// genuinely being slow. `pendingReason`/`pendingSince` are what let a page
+// distinguish "held back by contention, here's why and for how long" from
+// "genuinely running" (`inFlightLabel`) - see `KubeBridgePendingReason`'s own
+// header. The existing `queueDeadline` (45s) already bounds the wait and
+// hands it back with `.busy`, which the page's own poll loop then retries
+// automatically a poll cycle later - that bounded-wait-then-auto-retry shape
+// is kept exactly as-is (see `KubernetesController.refreshCluster`'s own
+// note on the choice **not** to bypass the activity check and send anyway:
+// doing so would be the one thing this bridge exists to prevent).
 
 import Foundation
 
@@ -204,6 +221,46 @@ enum KubeBridgeError: Error, Equatable {
     }
 }
 
+/// Why nothing has been issued to the feed tab yet - distinct from
+/// **genuinely running** (`KubeBridge.inFlightLabel`) and from **gave up**
+/// (`KubeBridge.hasStoppedRetrying`).
+///
+/// `fm/grandline-k8s-feed-tab-stall-fix`: before this existed, a request
+/// stuck behind either reason rendered identically to a request that had
+/// genuinely been issued and was just taking a while - a plain "Refreshing…"
+/// spinner with no way to tell "kubectl is slow" from "this app is
+/// deliberately holding back". The captain's own repro was checking on the
+/// feed tab by typing a manual login directly into it: that keeps
+/// `.waitingForQuietTab` true for as long as they keep typing (see
+/// `SRELeadBridgeTerminal.lastUserActivity`), and the page gave no
+/// indication that their own typing was the thing pausing it.
+///
+/// `nil` (not a case here - see `KubeBridge.pendingReason`'s own type) means
+/// nothing is being held back: the queue is empty, something is genuinely in
+/// flight, or this bridge has given up.
+enum KubeBridgePendingReason: Equatable {
+    /// A sibling bridge (SRE Lead's, or the context badge's) already holds
+    /// the tab - `KubeBridge.isTerminalBusyElsewhere`. Costs nothing and is
+    /// retried on the very next tick once the sibling releases it.
+    case busyElsewhere
+    /// A real keystroke or paste landed in the feed tab within
+    /// `KubeBridge.userActivityQuietWindow` - the exact safety check this
+    /// bridge must never weaken (see `checkInFlight`'s own discard guard for
+    /// the in-flight half of the same rule).
+    case waitingForQuietTab
+
+    /// The line the UI actually shows, so the wording lives in one place
+    /// rather than being re-derived at every render call site.
+    var statusText: String {
+        switch self {
+        case .busyElsewhere:
+            return "Waiting for another automated action in the feed tab to finish"
+        case .waitingForQuietTab:
+            return "Waiting for the feed tab to be idle - avoid typing into it directly"
+        }
+    }
+}
+
 /// One queued or in-flight request.
 private struct KubeRequest {
     let id: UUID
@@ -280,6 +337,19 @@ final class KubeBridge {
     /// What is running right now, for a live "running `get pods`…" label.
     private(set) var inFlightLabel: String?
 
+    /// Why the front of the queue hasn't been issued yet - `nil` whenever
+    /// nothing is being held back (queue empty, something genuinely in
+    /// flight, or `hasStoppedRetrying`). Set only from `pump()`, live, so a
+    /// page rendering "Refreshing…" can show the real reason instead of a
+    /// generic spinner. See `KubeBridgePendingReason`'s own header for why
+    /// this exists at all.
+    private(set) var pendingReason: KubeBridgePendingReason?
+
+    /// When the request currently held back by `pendingReason` was first
+    /// queued - `nil` whenever `pendingReason` is `nil`. Lets the UI say how
+    /// long it's been waiting, not just that it is waiting.
+    var pendingSince: Date? { pendingReason == nil ? nil : queue.first?.queuedAt }
+
     /// True while this bridge holds the tab - the seam a sibling bridge reads.
     var isBusy: Bool { inFlight != nil }
 
@@ -337,6 +407,7 @@ final class KubeBridge {
         timer = nil
         inFlight = nil
         inFlightLabel = nil
+        pendingReason = nil
         let pending = queue
         queue.removeAll()
         for request in pending {
@@ -352,6 +423,7 @@ final class KubeBridge {
         consecutiveFailureCount = 0
         hasStoppedRetrying = false
         lastFailureMessage = nil
+        pendingReason = nil
         start()
         onStateChanged?()
     }
@@ -366,6 +438,7 @@ final class KubeBridge {
         consecutiveFailureCount = 0
         hasStoppedRetrying = false
         lastFailureMessage = nil
+        pendingReason = nil
         if newTarget != nil { start() }
         onStateChanged?()
     }
@@ -438,16 +511,25 @@ final class KubeBridge {
     private func pump() {
         guard inFlight == nil, !hasStoppedRetrying else { return }
         expireStaleQueuedRequests()
-        guard let next = queue.first else { return }
+        guard let next = queue.first else {
+            setPendingReason(nil)
+            return
+        }
 
         guard let target else {
+            setPendingReason(nil)
             failFront(.unavailable("the feed tab is no longer available"))
             return
         }
-        guard !isTerminalBusyElsewhere() else { return } // stay queued; retried next tick
-        if let last = target.lastUserActivity, Date().timeIntervalSince(last) < userActivityQuietWindow {
-            return // stay queued; the captain is typing in the feed tab
+        guard !isTerminalBusyElsewhere() else {
+            setPendingReason(.busyElsewhere) // stay queued; retried next tick
+            return
         }
+        if let last = target.lastUserActivity, Date().timeIntervalSince(last) < userActivityQuietWindow {
+            setPendingReason(.waitingForQuietTab) // stay queued; the captain is typing in the feed tab
+            return
+        }
+        setPendingReason(nil)
 
         queue.removeFirst()
         let unique = UUID().uuidString.replacingOccurrences(of: "-", with: "")
@@ -465,6 +547,16 @@ final class KubeBridge {
         inFlight = InFlight(request: next, startMarker: startMarker, endMarker: endMarker,
                             startedAt: startedAt, searchFromLine: searchFromLine, ticks: 0)
         inFlightLabel = next.command.shortLabel
+        onStateChanged?()
+    }
+
+    /// Records why `pump()` couldn't issue anything this tick, firing
+    /// `onStateChanged?()` only on an actual change - so being blocked on the
+    /// same reason tick after tick (the poll runs at `pollInterval`, 4x a
+    /// second) doesn't turn into a 4Hz UI repaint.
+    private func setPendingReason(_ reason: KubeBridgePendingReason?) {
+        guard pendingReason != reason else { return }
+        pendingReason = reason
         onStateChanged?()
     }
 
@@ -574,6 +666,7 @@ final class KubeBridge {
         timer = nil
         inFlight = nil
         inFlightLabel = nil
+        pendingReason = nil
         let pending = queue
         queue.removeAll()
         let reason = lastFailureMessage ?? "kubectl kept failing in the feed tab"
