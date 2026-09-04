@@ -110,8 +110,20 @@ extension KubernetesController {
             // actually been issued yet (contention), so this distinguishes
             // that from genuinely running - `fm/grandline-k8s-feed-tab-stall-fix`.
             clusterStatusLabel.stringValue = pendingWaitText() ?? "Refreshing\u{2026}"
+            clusterRetryButton.isHidden = true
             return
         }
+        // `fm/grandline-k8s-refresh-stuck-audit`'s hard safety net: a forced
+        // reset gets its own clear, unambiguous state and a real retry action
+        // - never folded in among the ordinary "refreshed Ns ago" status line,
+        // which would read as merely stale rather than as something that
+        // needs a click.
+        if clusterRefreshStuck {
+            clusterStatusLabel.stringValue = clusterMessage ?? "Something went wrong - no response."
+            clusterRetryButton.isHidden = false
+            return
+        }
+        clusterRetryButton.isHidden = true
         var parts: [String] = []
         if let lastRefreshedAt {
             parts.append("refreshed \(HostSession.durationText(since: lastRefreshedAt)) ago")
@@ -338,6 +350,32 @@ extension KubernetesController {
     var debugNamespace: String { namespace }
     var debugPodTint: (String) -> HelmTint { { [merger] pod in merger.tint(for: pod) } }
     var debugSubtitle: String? { drillHeaderSubtitle }
+
+    // `fm/grandline-k8s-refresh-stuck-audit`'s hard safety net.
+    var debugIsRefreshingCluster: Bool { isRefreshingCluster }
+    var debugClusterRefreshStuck: Bool { clusterRefreshStuck }
+    var debugClusterRetryVisible: Bool { isViewLoaded && !clusterRetryButton.isHidden }
+    var debugClusterRetryButton: NSButton? { isViewLoaded ? clusterRetryButton : nil }
+    var debugRefreshGeneration: Int { refreshGeneration }
+    var debugRefreshWatchdogRunning: Bool { refreshWatchdogTimer != nil }
+
+    /// Backdates `refreshStartedAt` without waiting on the wall clock, so a
+    /// self-test can prove the hard ceiling fires without a real 75s sleep -
+    /// the same "drive by hand" convention `debugTick` already uses for
+    /// `KubeBridge`'s own timer.
+    func debugBackdateRefreshStart(secondsAgo: TimeInterval) {
+        refreshStartedAt = Date().addingTimeInterval(-secondsAgo)
+    }
+    /// Drives the watchdog's own check directly rather than waiting on its
+    /// real `Timer`.
+    func debugCheckRefreshWatchdog() { checkRefreshWatchdog() }
+    /// Exercises `finishRefreshCluster`'s own generation guard directly -
+    /// see that method's own doc comment for why a real, naturally-stale
+    /// completion cannot be constructed through the bridge's normal FIFO
+    /// queue.
+    func debugFinishRefreshCluster(_ results: [(KubeCommand, Result<String, KubeBridgeError>)], generation: Int) {
+        finishRefreshCluster(results, generation: generation)
+    }
 
     /// Drives the bridge's own poll by hand - a headless suite never pumps a
     /// run loop, so the real `Timer` never fires (the same reason

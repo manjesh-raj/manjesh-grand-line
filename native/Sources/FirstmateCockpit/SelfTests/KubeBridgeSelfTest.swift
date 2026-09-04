@@ -41,6 +41,14 @@ enum KubeBridgeSelfTest {
             ("bridge_expiresARequestThatWaitedTooLongBehindContention", test_bridge_expiresARequestThatWaitedTooLongBehindContention),
             ("bridge_refusesAnUnsafeCommandWithoutInjectingAnything", test_bridge_refusesAnUnsafeCommandWithoutInjectingAnything),
 
+            // `fm/grandline-k8s-refresh-stuck-audit`: the actual root cause of
+            // the captain's second real stall - `stop()` used to drop an
+            // in-flight request's own completion.
+            ("bridge_stopResolvesAnInFlightRequestRatherThanDroppingIt", test_bridge_stopResolvesAnInFlightRequestRatherThanDroppingIt),
+            ("bridge_stopResolvesAWholeBatchEvenWithOneCommandInFlight", test_bridge_stopResolvesAWholeBatchEvenWithOneCommandInFlight),
+            ("bridge_stopWithNothingInFlightStillFailsQueuedWork", test_bridge_stopWithNothingInFlightStillFailsQueuedWork),
+            ("bridge_stopNeverCountsTowardGivingUp", test_bridge_stopNeverCountsTowardGivingUp),
+
             // `fm/grandline-k8s-feed-tab-stall-fix`: the pending-reason
             // distinction that makes "waiting on contention" tell apart from
             // "genuinely running" or "nothing queued".
@@ -355,6 +363,115 @@ enum KubeBridgeSelfTest {
         }
         guard fake.sentCommands.isEmpty else { return "an unsafe command reached the terminal" }
         guard !bridge.hasStoppedRetrying else { return "an unsafe command counted toward give-up" }
+        return nil
+    }
+
+    // MARK: `fm/grandline-k8s-refresh-stuck-audit` - stop() dropping an in-flight completion
+    //
+    // This is the actual root cause of the captain's second real stall, found
+    // by reading `KubeBridge.stop()` line by line rather than assumed: it set
+    // `inFlight = nil` without ever calling that request's own `completion`,
+    // only failing what was still sitting in `queue`. Reachable any time the
+    // captain switches the feed-tab picker or the scope strip mid-sweep
+    // (`KubernetesController.teardownFeed()` -> `bridge.stop()`) - a real
+    // discovery sweep against a real cluster easily takes long enough for a
+    // command to still be in flight at that moment.
+
+    /// The narrowest possible repro: one command, genuinely in flight
+    /// (`inFlightLabel != nil`, never answered), then `stop()`. Before the
+    /// fix this hung forever - `result` stayed `nil`.
+    private static func test_bridge_stopResolvesAnInFlightRequestRatherThanDroppingIt() -> String? {
+        let fake = FakeBridgeTerminal()
+        let bridge = KubeBridge(target: fake)
+        fake.onSendCommand = { _ in } // never answers - stays genuinely in flight
+        var result: Result<String, KubeBridgeError>?
+        bridge.enqueue(.getPods(namespace: "ns")) { result = $0 }
+        for _ in 0..<3 { bridge.tick() }
+        guard bridge.inFlightLabel != nil else { return "the command was never actually issued - test setup is wrong" }
+        guard result == nil else { return "the completion fired before stop() was even called - test setup is wrong" }
+
+        bridge.stop()
+
+        guard let result else {
+            return "stop() silently dropped the in-flight request's own completion - this is the exact bug that " +
+                   "leaves a caller's own counter (e.g. KubernetesController.isRefreshingCluster) stuck true forever, " +
+                   "with nothing queued or pending to explain why"
+        }
+        guard case .failure(.unavailable) = result else {
+            return "expected .unavailable once stopped mid-flight, got \(result)"
+        }
+        return nil
+    }
+
+    /// The shape that actually matters: `KubernetesController.refreshCluster()`
+    /// tracks its own "how many of these N commands are still outstanding"
+    /// counter via `enqueueBatch`'s single outer completion. If the ONE
+    /// command that happened to be in flight at the moment `stop()` ran is
+    /// the one whose completion gets dropped, that counter never reaches
+    /// zero and the outer completion - the thing that flips
+    /// `isRefreshingCluster` back to `false` - never fires, no matter how
+    /// many of the batch's other commands already succeeded.
+    private static func test_bridge_stopResolvesAWholeBatchEvenWithOneCommandInFlight() -> String? {
+        let fake = FakeBridgeTerminal()
+        let bridge = KubeBridge(target: fake)
+        fake.onSendCommand = { _ in } // the batch's first command never answers
+        var done: [(KubeCommand, Result<String, KubeBridgeError>)]?
+        bridge.enqueueBatch([.getPods(namespace: "ns"), .topPods(namespace: "ns")]) { done = $0 }
+        for _ in 0..<3 { bridge.tick() }
+        guard bridge.inFlightLabel != nil else { return "the batch's first command was never issued - test setup is wrong" }
+        guard bridge.queueDepth == 1 else { return "expected the second command still queued, got depth \(bridge.queueDepth)" }
+        guard done == nil else { return "the batch completed before stop() was even called - test setup is wrong" }
+
+        bridge.stop()
+
+        guard let done else {
+            return "the batch's own completion never fired after stop() - a caller like " +
+                   "KubernetesController.refreshCluster() would be left with isRefreshingCluster stuck true forever"
+        }
+        guard done.count == 2 else { return "expected 2 results even for a stopped batch, got \(done.count)" }
+        for (_, result) in done {
+            guard case .failure(.unavailable) = result else {
+                return "expected every leg of a stopped batch to fail .unavailable, got \(result)"
+            }
+        }
+        return nil
+    }
+
+    /// The half `stop()` always got right, unaffected by this fix: nothing
+    /// in flight, but something still queued behind it.
+    private static func test_bridge_stopWithNothingInFlightStillFailsQueuedWork() -> String? {
+        let fake = FakeBridgeTerminal()
+        fake.lastUserActivity = Date() // keeps the request queued, never issued
+        let bridge = KubeBridge(target: fake, userActivityQuietWindow: 30)
+        var result: Result<String, KubeBridgeError>?
+        bridge.enqueue(.getPods(namespace: "ns")) { result = $0 }
+        for _ in 0..<3 { bridge.tick() }
+        guard bridge.inFlightLabel == nil, bridge.queueDepth == 1 else {
+            return "expected the request queued but not issued - test setup is wrong"
+        }
+        bridge.stop()
+        guard case .failure(.unavailable)? = result else {
+            return "expected the queued request to fail .unavailable on stop(), got \(String(describing: result))"
+        }
+        return nil
+    }
+
+    /// `stop()` is "pause" (the feed tab changed), never "give up" - resolving
+    /// the dropped in-flight request must not itself start counting toward
+    /// the give-up threshold, exactly like the already-queued failures below
+    /// it never did.
+    private static func test_bridge_stopNeverCountsTowardGivingUp() -> String? {
+        let fake = FakeBridgeTerminal()
+        let bridge = KubeBridge(target: fake, maxConsecutiveFailures: 1)
+        fake.onSendCommand = { _ in } // never answers - stays in flight
+        bridge.enqueue(.getPods(namespace: "ns")) { _ in }
+        for _ in 0..<3 { bridge.tick() }
+        guard bridge.inFlightLabel != nil else { return "the command was never issued - test setup is wrong" }
+        bridge.stop()
+        guard !bridge.hasStoppedRetrying else { return "stopping mid-flight tripped the give-up threshold" }
+        guard bridge.consecutiveFailureCount == 0 else {
+            return "stopping mid-flight incremented the genuine-failure count to \(bridge.consecutiveFailureCount)"
+        }
         return nil
     }
 

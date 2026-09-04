@@ -49,6 +49,14 @@ enum KubernetesDestinationSelfTest {
             ("givingUpIsNeverADeadEnd", test_givingUpIsNeverADeadEnd),
             ("duplicateButtonAdoptsTheNewTabAsTheFeed", test_duplicateButtonAdoptsTheNewTabAsTheFeed),
             ("noMutatingCommandIsEverInjected", test_noMutatingCommandIsEverInjected),
+
+            // `fm/grandline-k8s-refresh-stuck-audit`: the mandatory hard
+            // safety net - a genuinely stuck refresh, of any cause, must
+            // never render as an indefinite "Refreshing…" with no escape.
+            ("refreshWatchdogDoesNotFireBeforeTheCeiling", test_refreshWatchdogDoesNotFireBeforeTheCeiling),
+            ("refreshWatchdogForcesAClearStuckStateAfterTheCeiling", test_refreshWatchdogForcesAClearStuckStateAfterTheCeiling),
+            ("stuckStateRetryButtonStartsAFreshWorkingRefresh", test_stuckStateRetryButtonStartsAFreshWorkingRefresh),
+            ("aStraggledStaleCompletionCannotClobberANewerRefresh", test_aStraggledStaleCompletionCannotClobberANewerRefresh),
         ]
 
         var failures = 0
@@ -675,6 +683,139 @@ enum KubernetesDestinationSelfTest {
                 return "a command containing \(verb) reached the tab: \(injected)"
             }
             guard injected.contains("kubectl ") else { return "a non-kubectl command reached the tab: \(injected)" }
+        }
+        return nil
+    }
+
+    // MARK: `fm/grandline-k8s-refresh-stuck-audit` - the mandatory hard safety net
+    //
+    // Independent of whatever the actual cause of a stuck refresh is (this
+    // task found and fixed one real cause - `KubeBridge.stop()` dropping an
+    // in-flight completion, covered above in `KubeBridgeSelfTest`) - the
+    // brief is explicit that this net must work "as a genuine safety net, not
+    // something that only matters once the real bug is also fixed". These
+    // cases never touch the fixed root cause at all: they drive
+    // `isRefreshingCluster` into a permanently, deliberately unresolvable
+    // in-flight state (a fake that never answers, ever) and prove the page
+    // still recovers.
+
+    /// A genuinely slow (not stuck) cluster - well under the ceiling - must
+    /// never be force-reset. A watchdog that fires early would turn a real
+    /// kubectl round trip that happens to take a while into a false "stuck"
+    /// report.
+    private static func test_refreshWatchdogDoesNotFireBeforeTheCeiling() -> String? {
+        let harness = Harness()
+        harness.fake.onSendCommand = { _ in } // genuinely never answers within this test
+        harness.goLive()
+        harness.drain(5)
+        guard harness.controller.debugIsRefreshingCluster else { return "no sweep in progress - test setup is wrong" }
+        harness.controller.debugBackdateRefreshStart(secondsAgo: KubernetesController.clusterRefreshHardCeiling - 10)
+        harness.controller.debugCheckRefreshWatchdog()
+        guard harness.controller.debugIsRefreshingCluster else {
+            return "the watchdog fired before its own ceiling - a genuinely slow cluster would be force-reset too early"
+        }
+        guard !harness.controller.debugClusterRefreshStuck else { return "the stuck state was shown before the ceiling" }
+        guard !harness.controller.debugClusterRetryVisible else { return "the retry button appeared before the ceiling" }
+        return nil
+    }
+
+    /// The mandatory deliverable itself: a refresh that never resolves - for
+    /// any reason, real or hypothetical - must force itself into a clear,
+    /// visible state rather than staying an indefinite "Refreshing…" forever.
+    private static func test_refreshWatchdogForcesAClearStuckStateAfterTheCeiling() -> String? {
+        let harness = Harness()
+        harness.fake.onSendCommand = { _ in } // genuinely never answers, ever
+        harness.goLive()
+        harness.drain(5)
+        guard harness.controller.debugIsRefreshingCluster else { return "no sweep in progress - test setup is wrong" }
+        harness.controller.debugBackdateRefreshStart(secondsAgo: KubernetesController.clusterRefreshHardCeiling + 1)
+        harness.controller.debugCheckRefreshWatchdog()
+        guard !harness.controller.debugIsRefreshingCluster else {
+            return "the hard ceiling did not force isRefreshingCluster back to false"
+        }
+        guard harness.controller.debugClusterRefreshStuck else { return "the stuck flag was never set" }
+        guard harness.controller.debugClusterRetryVisible else { return "no real Try again action was offered for the stuck state" }
+        let status = harness.controller.debugClusterStatusText.lowercased()
+        guard status != "refreshing\u{2026}" else {
+            return "the page still showed the generic indefinite \u{201C}Refreshing\u{2026}\u{201D} spinner"
+        }
+        guard status.contains("wrong") || status.contains("no response") else {
+            return "the stuck state's own status text was not a clear, distinct message: \(harness.controller.debugClusterStatusText)"
+        }
+        return nil
+    }
+
+    /// Giving up is never a dead end, exactly like `KubeBridge`'s own give-up:
+    /// the captain's own explicit retry must actually work, even when the
+    /// *original* in-flight command never resolves on its own (a bridge is
+    /// single-flight - if the original request stayed wedged forever, a
+    /// less careful retry would just queue new work behind it and stall
+    /// again identically).
+    private static func test_stuckStateRetryButtonStartsAFreshWorkingRefresh() -> String? {
+        let harness = Harness()
+        harness.fake.onSendCommand = { _ in } // the original sweep never resolves on its own, ever
+        harness.goLive()
+        harness.drain(5)
+        harness.controller.debugBackdateRefreshStart(secondsAgo: KubernetesController.clusterRefreshHardCeiling + 1)
+        harness.controller.debugCheckRefreshWatchdog()
+        guard harness.controller.debugClusterRefreshStuck else { return "the stuck state never engaged - test setup is wrong" }
+        guard let retry = harness.controller.debugClusterRetryButton, !retry.isHidden else {
+            return "no visible real retry button for the stuck state"
+        }
+
+        harness.answer([("get pods", podsWide), ("top pods", topPods)])
+        retry.performClick(nil)
+        harness.drain()
+
+        guard !harness.controller.debugClusterRefreshStuck else { return "the retry click did not clear the stuck state" }
+        guard !harness.controller.debugIsRefreshingCluster else { return "the retry click's own refresh never completed" }
+        guard harness.controller.debugPods.count == 3 else {
+            return "the retry did not produce a working refresh (\(harness.controller.debugPods.count) pods) - a " +
+                   "permanently-wedged original in-flight command must not block a captain's own explicit retry"
+        }
+        guard !harness.controller.debugClusterRetryVisible else { return "the retry button stayed up beside a healthy refresh" }
+        return nil
+    }
+
+    /// The generation guard's whole reason to exist: `KubeBridge` gives this
+    /// page no way to cancel a command already injected into the tab, so once
+    /// the watchdog forces this page past a stuck attempt, that attempt may
+    /// still straggle in later. Its stale completion must be dropped rather
+    /// than silently clobbering whatever a genuinely newer refresh has since
+    /// rendered.
+    ///
+    /// Drives `finishRefreshCluster` directly with a deliberately stale
+    /// `generation`, rather than trying to reproduce this through the real
+    /// bridge's own queue - `KubeBridge` is strictly FIFO and single-flight,
+    /// which makes a *naturally* out-of-order completion from one bridge
+    /// instance effectively unreachable today (the stale request always
+    /// finishes draining before a newer one queued behind it can even be
+    /// issued). The guard is defense-in-depth for that ordering ever
+    /// changing - in this file or in `KubeBridge` - not a scenario this
+    /// app's current call paths alone can produce.
+    private static func test_aStraggledStaleCompletionCannotClobberANewerRefresh() -> String? {
+        let harness = liveHarness() // already carries 3 real, rendered pods from its own sweep
+        let before = harness.controller.debugPods
+        guard before.count == 3 else { return "liveHarness() did not seed a real pod list - test setup is wrong" }
+        let currentGeneration = harness.controller.debugRefreshGeneration
+        guard currentGeneration > 0 else { return "expected a real generation after a real sweep, got \(currentGeneration)" }
+
+        // A distinct, unmistakably different fixture: if this is wrongly
+        // applied, the assertion below cannot be satisfied by coincidence.
+        let stragglerFixture = """
+        NAME             READY   STATUS    RESTARTS   AGE
+        zombie-pod-999   1/1     Running   0          1m
+        """
+        harness.controller.debugFinishRefreshCluster(
+            [(.getPods(namespace: harness.controller.debugNamespace), .success(stragglerFixture))],
+            generation: currentGeneration - 1) // one generation behind - genuinely stale
+
+        guard harness.controller.debugPods.map(\.name) == before.map(\.name) else {
+            return "a stale, superseded refresh completion was applied anyway - the real, already-rendered pods " +
+                   "(\(before.map(\.name))) were overwritten with \(harness.controller.debugPods.map(\.name))"
+        }
+        guard !harness.controller.debugIsRefreshingCluster else {
+            return "a stale completion's own generation mismatch must be a pure no-op, but it left isRefreshingCluster true"
         }
         return nil
     }

@@ -258,6 +258,14 @@ extension KubernetesController {
         guard let bridge, !isRefreshingCluster else { return }
         guard !bridge.hasStoppedRetrying else { return }
         isRefreshingCluster = true
+        clusterRefreshStuck = false
+        refreshStartedAt = Date()
+        refreshGeneration += 1
+        let generation = refreshGeneration
+        AppLog.ui.info("""
+            kubernetes: cluster refresh started (generation \(generation, privacy: .public), \
+            ns=\(self.namespace, privacy: .public), tab=\(self.clusterTab.rawValue, privacy: .public))
+            """)
         var commands: [KubeCommand] = [.getPods(namespace: namespace), .topPods(namespace: namespace)]
         switch clusterTab {
         case .pods: break
@@ -266,11 +274,136 @@ extension KubernetesController {
         case .events: commands.append(.getEvents(namespace: namespace))
         }
         renderClusterStatus(running: true)
+        ensureRefreshWatchdogRunning()
         bridge.enqueueBatch(commands) { [weak self] results in
-            guard let self else { return }
-            self.isRefreshingCluster = false
-            self.applySweep(results)
+            self?.finishRefreshCluster(results, generation: generation)
         }
+    }
+
+    /// The one place a genuine completion clears `isRefreshingCluster`.
+    ///
+    /// Guarded by `generation`: `KubeBridge` gives this page no way to cancel
+    /// an already-injected command, so if `checkRefreshWatchdog()` has
+    /// already forced this page out of the stuck state (or a fresh
+    /// `refreshCluster()` call has already started a newer attempt), the
+    /// original request may still straggle in later. Applying its results at
+    /// that point would silently step on whatever the newer attempt already
+    /// rendered - the generation check is what keeps the hard-ceiling
+    /// watchdog a genuine safety net rather than a second source of
+    /// out-of-order state.
+    ///
+    /// Not `private`, for the same reason `checkRefreshWatchdog()` isn't: a
+    /// self-test calls this directly with a deliberately stale `generation`
+    /// to exercise the guard on its own, since a single-flight, strictly
+    /// FIFO bridge queue makes it effectively impossible to *naturally*
+    /// reorder two real completions from the same bridge instance so a
+    /// stale one arrives after a fresher one - the guard is defense-in-depth
+    /// against a genuinely stale completion arriving by whatever means
+    /// (including a future change to this file or to `KubeBridge`), not a
+    /// scenario reachable through today's normal call paths alone.
+    func finishRefreshCluster(_ results: [(KubeCommand, Result<String, KubeBridgeError>)], generation: Int) {
+        guard generation == refreshGeneration else {
+            AppLog.ui.info("""
+                kubernetes: dropping a stale cluster refresh completion (generation \
+                \(generation, privacy: .public), current is \(self.refreshGeneration, privacy: .public)) - a newer \
+                refresh already started, or the hard-ceiling watchdog already forced past this one
+                """)
+            return
+        }
+        isRefreshingCluster = false
+        refreshStartedAt = nil
+        clusterRefreshStuck = false
+        stopRefreshWatchdogIfIdle()
+        AppLog.ui.info("kubernetes: cluster refresh (generation \(generation, privacy: .public)) completed with \(results.count, privacy: .public) result(s)")
+        applySweep(results)
+    }
+
+    // MARK: - Hard safety net (`fm/grandline-k8s-refresh-stuck-audit`)
+    //
+    // The queue/bridge plumbing above is designed so `isRefreshingCluster`
+    // always resolves on its own - and this task found and fixed one real
+    // way it did not (`KubeBridge.stop()` silently dropping an in-flight
+    // request's completion, see that file's header). But the brief is
+    // explicit that a fix for *that* cause is not the deliverable on its
+    // own: no refresh state may EVER remain "in progress" indefinitely with
+    // zero visible signal, no matter what future bug (in this file, in
+    // `KubeBridge`, or anywhere else along the chain) might otherwise cause
+    // it. This is that unconditional net - a plain wall-clock ceiling that
+    // knows nothing about *why* a refresh might be stuck, only that it has
+    // been running far longer than any real kubectl round trip plausibly
+    // takes, and forces the page into a clear, actionable state regardless.
+
+    private func ensureRefreshWatchdogRunning() {
+        guard refreshWatchdogTimer == nil else { return }
+        let t = Timer.scheduledTimer(withTimeInterval: Self.refreshWatchdogInterval, repeats: true) { [weak self] _ in
+            self?.checkRefreshWatchdog()
+        }
+        RunLoop.main.add(t, forMode: .common)
+        refreshWatchdogTimer = t
+    }
+
+    private func stopRefreshWatchdogIfIdle() {
+        guard !isRefreshingCluster else { return }
+        refreshWatchdogTimer?.invalidate()
+        refreshWatchdogTimer = nil
+    }
+
+    /// Not `private`, for the same reason every other bridge/poller's own
+    /// tick in this app is not: a self-test drives this by hand (after
+    /// backdating `refreshStartedAt`) rather than waiting on a real `Timer`,
+    /// which needs a pumped run loop the headless self-test binaries never
+    /// provide.
+    ///
+    /// Deliberately reads nothing from `bridge` - a safety net that inspects
+    /// the very mechanism it exists to distrust would share that mechanism's
+    /// blind spots. If `isRefreshingCluster` has been `true` for longer than
+    /// `clusterRefreshHardCeiling`, this forces it back to `false` and shows
+    /// a real "Something went wrong" state with a real "Try again" action,
+    /// full stop - independent of whatever the underlying cause turns out to
+    /// be, this time or the next.
+    func checkRefreshWatchdog() {
+        guard isRefreshingCluster, let refreshStartedAt else {
+            refreshWatchdogTimer?.invalidate()
+            refreshWatchdogTimer = nil
+            return
+        }
+        let age = Date().timeIntervalSince(refreshStartedAt)
+        guard age > Self.clusterRefreshHardCeiling else { return }
+        AppLog.ui.error("""
+            kubernetes: cluster refresh forced out of a stuck state after \(Int(age), privacy: .public)s with no \
+            completion (generation \(self.refreshGeneration, privacy: .public), ns=\(self.namespace, privacy: .public), \
+            tab=\(self.clusterTab.rawValue, privacy: .public)) - this is the hard safety net firing, not the expected \
+            path. Check the "ui" log category around this timestamp for the last thing this page's bridge actually did.
+            """)
+        isRefreshingCluster = false
+        self.refreshStartedAt = nil
+        clusterRefreshStuck = true
+        refreshWatchdogTimer?.invalidate()
+        refreshWatchdogTimer = nil
+        clusterMessage = "Something went wrong - no response after \(Int(age))s."
+        renderClusterTable()
+        onDrillSubtitleChanged?()
+    }
+
+    /// The stuck state's own real "Try again", distinct from `retryFeedTapped`
+    /// (which is for the bridge's own `hasStoppedRetrying` give-up): this one
+    /// clears the forced-stuck flag and starts a brand-new attempt.
+    ///
+    /// Also resets the bridge itself, not just this page's own flags:
+    /// whatever left the original request stuck may have left the bridge's
+    /// own single in-flight slot wedged behind it too (a single-flight
+    /// bridge has exactly one), so a captain's own explicit retry deserves a
+    /// genuinely fresh start rather than silently queuing new work behind a
+    /// request that may never resolve on its own. `KubeBridge.stop()` (this
+    /// task's own root-cause fix) now correctly resolves anything still
+    /// outstanding rather than leaving it dangling, which is what makes this
+    /// safe to do unconditionally.
+    @objc func retryStuckClusterRefreshTapped() {
+        clusterRefreshStuck = false
+        clusterMessage = nil
+        bridge?.stop()
+        bridge?.start()
+        refreshCluster()
     }
 
     private func applySweep(_ results: [(KubeCommand, Result<String, KubeBridgeError>)]) {
