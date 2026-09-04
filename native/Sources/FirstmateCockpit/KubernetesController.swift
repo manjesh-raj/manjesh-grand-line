@@ -131,6 +131,10 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
     var bridge: KubeBridge?
     var feedTabID: UUID?
     var feedTabName: String?
+    /// The adopted feed tab's own terminal, held so `teardownFeed()` can
+    /// release the machine-readable geometry it pinned in `adoptFeedTab`.
+    /// Weak: this page never keeps a closed tab alive.
+    weak var feedTerminal: (any SRELeadBridgeTerminal)?
 
     var namespace = "default"
 
@@ -180,6 +184,8 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
 
     let merger = KubeLogMerger()
     var selectedPods: [String] = []
+    /// What the pod picker was last built from - see `renderPodPicker`.
+    var lastPodPickerSignature: String?
     var isTailPaused = false
     var errorsOnly = false
     var tailStatus: String?
@@ -196,11 +202,16 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
     // MARK: Views
 
     var root: NSView!
-    var scopeCard: HelmCard!
+    /// `fm/grandline-k8s-ui-revamp`: one card, not two. Scope and Feed tab are
+    /// the same question - "which authenticated session am I driving, through
+    /// which tab" - and two stacked `HelmCard` headers cost ~120pt of chrome
+    /// on a page whose actual content is a table. They remain two independent
+    /// *sections* inside it, shown and hidden separately exactly as before.
+    var sessionCard: HelmCard!
     var scopeTabsHost: NSView!
     var scopeTabs: HelmSegmentedTabs?
     var scopeEmptyState: HelmEmptyState!
-    var feedCard: HelmCard!
+    var feedSection: NSView!
     var feedTabPicker: HelmPopUpButton!
     var feedStatusLabel: NSTextField!
     var retryFeedButton: HelmButton!
@@ -221,8 +232,31 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
     var clusterRetryButton: HelmButton!
     var describeDrawer: NSView!
     var describeTitleLabel: NSTextField!
+    var describeSubtitleLabel: NSTextField!
     var describeTextView: NSTextView!
     var describeScroll: NSScrollView!
+    var describeSpinner: NSProgressIndicator!
+    var describeCloseButton: HelmButton!
+    var describeCopyButton: HelmButton!
+    var describeWidthConstraint: NSLayoutConstraint!
+    /// The drawer's inner content, pinned to its **trailing** edge at a fixed
+    /// width while the drawer's own width animates from zero. See
+    /// `buildDescribeDrawer` for why the content cannot simply be pinned to
+    /// both of the drawer's edges.
+    var describeContent: NSView!
+    var describeContentWidthConstraint: NSLayoutConstraint!
+    /// Which pod the panel is showing, so a completion arriving after the
+    /// captain clicked a different row (or closed the panel) is dropped
+    /// instead of overwriting what they are now looking at.
+    var describeTarget: String?
+
+    /// How wide the drawer opens: a share of the page, floored so it stays
+    /// readable on a narrow window and capped so it never swallows the table
+    /// it is describing. `kubectl describe` wraps at nothing, so this is
+    /// genuinely about how much of a long line is visible before scrolling.
+    static let describeDrawerFraction: CGFloat = 0.46
+    static let describeDrawerMinWidth: CGFloat = 380
+    static let describeDrawerMaxWidth: CGFloat = 760
 
     var podPickerStack: NSStackView!
     var podPickerScroll: NSScrollView!
@@ -267,24 +301,34 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         root = container
         view = container
 
-        buildScopeCard()
-        buildFeedCard()
+        buildSessionCard()
         buildWorkArea()
 
-        let stack = NSStackView(views: [scopeCard, feedCard, workArea])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = HelmMetrics.s4
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(stack)
+        // **Explicit constraints, not a vertical `NSStackView`**
+        // (`fm/grandline-k8s-ui-revamp`, the layout half of the captain's
+        // report). The page used to stack card / card / work area at the
+        // stack's default `.gravityAreas` distribution, which has no defined
+        // rule for who absorbs leftover height - so the work area kept its
+        // own 320pt minimum and the rest of the window rendered as dead space
+        // below a table trapped in a small internal scroller (the captain's
+        // "tiny scrollable box on an otherwise-empty page", and the reason
+        // the page double-scrolled). Hugging priorities cannot fix that:
+        // gotcha (12) - a `HelmCard` is constraint-driven with no intrinsic
+        // content size, so content hugging on it is a no-op.
+        //
+        // Pinning the work area's own bottom to the container is what makes
+        // the table genuinely fill the page: the card above it sizes to its
+        // content, and everything left over is the table's.
+        for child in [sessionCard!, workArea!] { container.addSubview(child) }
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: HelmMetrics.pageGutter),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -HelmMetrics.pageGutter),
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: HelmMetrics.s4),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -HelmMetrics.s4),
-            scopeCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            feedCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            workArea.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            sessionCard.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: HelmMetrics.pageGutter),
+            sessionCard.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -HelmMetrics.pageGutter),
+            sessionCard.topAnchor.constraint(equalTo: container.topAnchor, constant: HelmMetrics.s4),
+
+            workArea.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: HelmMetrics.pageGutter),
+            workArea.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -HelmMetrics.pageGutter),
+            workArea.topAnchor.constraint(equalTo: sessionCard.bottomAnchor, constant: HelmMetrics.s4),
+            workArea.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -HelmMetrics.s4),
         ])
 
         refreshButton.target = self
@@ -320,8 +364,11 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
 
     // MARK: Build
 
-    func buildScopeCard() {
-        scopeCard = HelmCard()
+    /// Scope and Feed tab, one card. See `sessionCard`'s own declaration for
+    /// why they were merged; the two sections below are still shown and
+    /// hidden independently, which is what `render()` drives.
+    func buildSessionCard() {
+        sessionCard = HelmCard()
         scopeTabsHost = NSView()
         scopeTabsHost.translatesAutoresizingMaskIntoConstraints = false
         scopeEmptyState = HelmEmptyState(
@@ -339,33 +386,44 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
             hue: RailDestination.hosts.domainHue)
         scopeEmptyState.translatesAutoresizingMaskIntoConstraints = false
 
-        let body = NSStackView(views: [scopeTabsHost, scopeEmptyState])
+        buildFeedSection()
+
+        let body = NSStackView(views: [scopeTabsHost, scopeEmptyState, feedSection])
         body.orientation = .vertical
         body.alignment = .leading
         body.spacing = HelmMetrics.s3
         body.translatesAutoresizingMaskIntoConstraints = false
-        _ = scopeCard.setHeader(symbol: "point.3.connected.trianglepath.dotted",
-                                tint: .info,
-                                title: "Scope",
-                                subtitle: "Which authenticated bastion session these commands run in.")
-        scopeCard.setBody(body, insets: HelmCard.contentInsets)
+        _ = sessionCard.setHeader(symbol: "point.3.connected.trianglepath.dotted",
+                                  tint: .info,
+                                  title: "Session",
+                                  subtitle: "Which authenticated bastion session these commands run in, and which of its tabs this page types into. "
+                                      + "Typing into the feed tab yourself pauses automated commands until it goes quiet again.")
+        sessionCard.setBody(body, insets: HelmCard.contentInsets)
         NSLayoutConstraint.activate([
             scopeTabsHost.leadingAnchor.constraint(equalTo: body.leadingAnchor),
             scopeEmptyState.widthAnchor.constraint(equalTo: body.widthAnchor),
+            feedSection.widthAnchor.constraint(equalTo: body.widthAnchor),
         ])
     }
 
-    func buildFeedCard() {
-        feedCard = HelmCard()
+    private func buildFeedSection() {
+        feedSection = NSView()
+        feedSection.translatesAutoresizingMaskIntoConstraints = false
+
         feedTabPicker = HelmPopUpButton()
         feedTabPicker.target = self
         feedTabPicker.action = #selector(feedTabPicked)
 
-        let duplicate = HelmButton(title: "Duplicate a tab for the feed", variant: .secondary, size: .small)
+        let feedLabel = NSTextField(labelWithString: "Feed tab")
+        feedLabel.font = HelmType.kicker()
+        feedLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let duplicate = HelmButton(title: "Duplicate a tab", variant: .secondary, size: .small)
         duplicate.target = self
         duplicate.action = #selector(duplicateFeedTapped)
+        duplicate.toolTip = "Duplicate this host's tab and pin the copy as the feed, so your working terminal stays clean."
 
-        let openHost = HelmButton(title: "Open the host page", variant: .quiet, size: .small)
+        let openHost = HelmButton(title: "Open host page", variant: .quiet, size: .small)
         openHost.target = self
         openHost.action = #selector(revealHostTapped)
 
@@ -382,11 +440,18 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         feedStatusLabel = NSTextField(wrappingLabelWithString: "")
         feedStatusLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let controls = NSStackView(views: [feedTabPicker, duplicate, openHost, retryFeedButton!])
+        // One row, not two: the picker and its actions sit on the same line
+        // as the label they belong to, and the status wraps underneath.
+        // `fm/grandline-k8s-feed-tab-stall-fix`'s warning stays in the status
+        // copy - a captain checking on this tab by typing into it directly is
+        // exactly what pauses every automated command until it goes quiet
+        // again (`KubeBridge`'s own activity-quiet-window check).
+        let controls = NSStackView(views: [feedLabel, feedTabPicker, duplicate, openHost, retryFeedButton!])
         controls.orientation = .horizontal
         controls.alignment = .centerY
         controls.spacing = HelmMetrics.s2
         controls.distribution = .fill
+        controls.translatesAutoresizingMaskIntoConstraints = false
         // Gotcha (12): the *stack*-level priorities are the ones that bite on
         // an `NSStackView`; the content-level ones are a no-op on a view with
         // no intrinsic size. The picker is what yields.
@@ -395,25 +460,21 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
             control.setContentHuggingPriority(.required, for: .horizontal)
             control.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
+        feedLabel.setContentHuggingPriority(.required, for: .horizontal)
+        feedLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         feedTabPicker.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let body = NSStackView(views: [feedStatusLabel, controls])
-        body.orientation = .vertical
-        body.alignment = .leading
-        body.spacing = HelmMetrics.s3
-        body.translatesAutoresizingMaskIntoConstraints = false
-        // `fm/grandline-k8s-feed-tab-stall-fix`: the second sentence is the
-        // one that matters - a captain checking on this tab by typing into it
-        // directly is exactly what pauses every automated command until it
-        // goes quiet again (`KubeBridge`'s own activity-quiet-window check).
-        // Stated up front rather than discovered by confusion.
-        _ = feedCard.setHeader(symbol: "dot.radiowaves.left.and.right",
-                               tint: .warn,
-                               title: "Feed tab",
-                               subtitle: "A dedicated tab this page types into, so your working terminal stays clean. "
-                                   + "Typing into it yourself pauses automated commands until it goes quiet again.")
-        feedCard.setBody(body, insets: HelmCard.contentInsets)
-        feedStatusLabel.widthAnchor.constraint(equalTo: body.widthAnchor).isActive = true
+        feedSection.addSubview(controls)
+        feedSection.addSubview(feedStatusLabel)
+        NSLayoutConstraint.activate([
+            controls.leadingAnchor.constraint(equalTo: feedSection.leadingAnchor),
+            controls.trailingAnchor.constraint(lessThanOrEqualTo: feedSection.trailingAnchor),
+            controls.topAnchor.constraint(equalTo: feedSection.topAnchor),
+            feedStatusLabel.leadingAnchor.constraint(equalTo: feedSection.leadingAnchor),
+            feedStatusLabel.trailingAnchor.constraint(equalTo: feedSection.trailingAnchor),
+            feedStatusLabel.topAnchor.constraint(equalTo: controls.bottomAnchor, constant: HelmMetrics.s2),
+            feedStatusLabel.bottomAnchor.constraint(equalTo: feedSection.bottomAnchor),
+        ])
     }
 
     func buildWorkArea() {
@@ -429,7 +490,10 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
             self.pageTab = tab
             self.restartTimers()
             self.render()
-            if tab == .cluster, self.pods.isEmpty, self.clusterMessage == nil { self.refreshCluster() }
+            // Whichever page just became visible gets the data it shows. The
+            // Log Tail's picker is built from the pod list, which the sweep
+            // now skips while a non-Pods cluster tab is up (`sweepCommands`).
+            if self.pods.isEmpty, self.clusterMessage == nil { self.refreshCluster() }
         }
 
         namespaceField = HelmTextField(placeholder: "namespace")
@@ -466,12 +530,13 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
                 child.bottomAnchor.constraint(equalTo: workArea.bottomAnchor),
             ])
         }
-        // A page with no feed yet still needs a sensible minimum so the cards
-        // above it do not stretch to fill the window. 499, never required:
-        // a content constraint above `NSLayoutPriorityWindowSizeStayPut` (500)
-        // is a window-size cap, which is AGENTS.md gotcha (13) and has shipped
-        // here four times.
-        let minHeight = workArea.heightAnchor.constraint(greaterThanOrEqualToConstant: 320)
+        // A floor so the page still reads sensibly in a short window; the
+        // work area's *real* height now comes from being pinned to the
+        // container's bottom in `loadView`, so this is only a minimum, not
+        // the thing that sizes it. 499, never required: a content constraint
+        // above `NSLayoutPriorityWindowSizeStayPut` (500) is a window-size
+        // cap, which is AGENTS.md gotcha (13) and has shipped here four times.
+        let minHeight = workArea.heightAnchor.constraint(greaterThanOrEqualToConstant: 260)
         minHeight.priority = NSLayoutConstraint.Priority(499)
         minHeight.isActive = true
     }
@@ -492,13 +557,14 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
             self.hideDescribeDrawer()
             self.renderClusterTable()
             self.onDrillSubtitleChanged?()
-            // Services and Events are fetched only when their tab is opened
-            // (the mockup's own "each costs one more get, run only when that
-            // tab is opened") - a sweep that always fetched all five would
-            // double the visible commands for tables nobody is looking at.
-            if (tab == .services && self.services.isEmpty) || (tab == .events && self.events.isEmpty) {
-                self.refreshCluster()
-            }
+            // Fetch what the captain just asked to look at. The sweep is
+            // scoped to the visible tab (`sweepCommands`), so this is the
+            // moment the newly-visible table's own command gets run - the
+            // mockup's own "each costs one more get, run only when that tab
+            // is opened", now applied to Pods' metrics too rather than only
+            // to Services and Events. `refreshCluster` no-ops while a sweep
+            // is already in flight, so rapid tab clicks collapse into one.
+            self.refreshCluster()
         }
 
         clusterStatusLabel = NSTextField(labelWithString: "")
@@ -525,7 +591,20 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         header.translatesAutoresizingMaskIntoConstraints = false
         clusterStatusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
+        // The table fills everything under the header, and the drawer is
+        // added *last* so it overlays the table's trailing edge rather than
+        // pushing it. Both are what the captain's "tiny scrollable box on an
+        // otherwise-empty page" report is about: before this, the table was
+        // sandwiched between the header and a permanently-reserved
+        // describe area, so it never got the window's real height.
         for child in [header, clusterTable!, describeDrawer!] { clusterContainer.addSubview(child) }
+        describeWidthConstraint = describeDrawer.widthAnchor.constraint(equalToConstant: 0)
+        // The width yields to the container rather than overhanging it on a
+        // narrow window. `leading >=` is required and the width is 999, so a
+        // window too narrow for the panel shrinks it - and, crucially, the
+        // panel can never become a *floor* on the window's own width, which
+        // is gotcha (13) and has shipped in this app four times.
+        describeWidthConstraint.priority = NSLayoutConstraint.Priority(999)
         NSLayoutConstraint.activate([
             header.leadingAnchor.constraint(equalTo: clusterContainer.leadingAnchor),
             header.trailingAnchor.constraint(lessThanOrEqualTo: clusterContainer.trailingAnchor),
@@ -534,11 +613,13 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
             clusterTable.leadingAnchor.constraint(equalTo: clusterContainer.leadingAnchor),
             clusterTable.trailingAnchor.constraint(equalTo: clusterContainer.trailingAnchor),
             clusterTable.topAnchor.constraint(equalTo: header.bottomAnchor, constant: HelmMetrics.s3),
+            clusterTable.bottomAnchor.constraint(equalTo: clusterContainer.bottomAnchor),
 
-            describeDrawer.leadingAnchor.constraint(equalTo: clusterContainer.leadingAnchor),
             describeDrawer.trailingAnchor.constraint(equalTo: clusterContainer.trailingAnchor),
-            describeDrawer.topAnchor.constraint(equalTo: clusterTable.bottomAnchor, constant: HelmMetrics.s3),
+            describeDrawer.leadingAnchor.constraint(greaterThanOrEqualTo: clusterContainer.leadingAnchor),
+            describeDrawer.topAnchor.constraint(equalTo: clusterTable.topAnchor),
             describeDrawer.bottomAnchor.constraint(equalTo: clusterContainer.bottomAnchor),
+            describeWidthConstraint,
         ])
         clusterTable.setContentHuggingPriority(.defaultLow, for: .vertical)
 
@@ -548,40 +629,142 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         }
     }
 
+    /// **A real drawer, not appended text** (`fm/grandline-k8s-ui-revamp`,
+    /// bug 3). Clicking a pod used to append "Running kubectl describe…" and
+    /// then the result *below the table*, so the captain had to scroll down to
+    /// discover anything had happened, and the way out was a plain "Close"
+    /// text link.
+    ///
+    /// This is a slide-in side panel over the table's trailing edge, the same
+    /// idiom `ConsoleController`'s SRE Lead pane already uses on the host page
+    /// (a pinned container whose width constraint animates between 0 and its
+    /// open width). It carries its own header with the pod's name, a real
+    /// spinner while the command is in flight, a Copy action, and an actual
+    /// close button rather than a link - plus Escape, since a panel that
+    /// covers content has to be dismissible without aiming.
+    ///
+    /// It **overlays** rather than displacing: the table keeps its own width
+    /// and scroll position, so opening a describe never reflows the rows the
+    /// captain was reading.
     func buildDescribeDrawer() {
         describeDrawer = NSView()
         describeDrawer.translatesAutoresizingMaskIntoConstraints = false
         describeDrawer.wantsLayer = true
+        // Clipped, so the content genuinely slides out of view as the width
+        // animates to zero rather than spilling over the table.
+        describeDrawer.layer?.masksToBounds = true
 
         describeTitleLabel = NSTextField(labelWithString: "")
         describeTitleLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        let close = HelmButton(title: "Close", variant: .quiet, size: .small)
-        close.target = self
-        close.action = #selector(closeDescribeTapped)
-        close.setContentHuggingPriority(.required, for: .horizontal)
-
-        let header = NSStackView(views: [describeTitleLabel, NSView(), close])
-        header.orientation = .horizontal
-        header.alignment = .centerY
-        header.spacing = HelmMetrics.s2
-        header.distribution = .fill
-        header.translatesAutoresizingMaskIntoConstraints = false
+        describeTitleLabel.lineBreakMode = .byTruncatingMiddle
+        // Gotcha (13): a long pod name must never become a window-width floor.
         describeTitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        describeSubtitleLabel = NSTextField(labelWithString: "")
+        describeSubtitleLabel.translatesAutoresizingMaskIntoConstraints = false
+        describeSubtitleLabel.lineBreakMode = .byTruncatingTail
+        describeSubtitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        describeSpinner = NSProgressIndicator()
+        describeSpinner.style = .spinning
+        describeSpinner.controlSize = .small
+        describeSpinner.isDisplayedWhenStopped = false
+        describeSpinner.translatesAutoresizingMaskIntoConstraints = false
+
+        describeCopyButton = HelmButton(title: "Copy", variant: .quiet, size: .small)
+        describeCopyButton.target = self
+        describeCopyButton.action = #selector(copyDescribeTapped)
+        describeCopyButton.toolTip = "Copy this describe output to the clipboard"
+
+        describeCloseButton = HelmButton(symbol: "xmark", variant: .quiet, size: .small)
+        describeCloseButton.target = self
+        describeCloseButton.action = #selector(closeDescribeTapped)
+        describeCloseButton.toolTip = "Close (Esc)"
+
+        // **Explicit constraints, not nested stacks.** A vertical title
+        // column inside a horizontal `.fill` stack collapsed to zero width
+        // here - measured, and not fixable with hugging/clipping priorities
+        // (gotcha (12) again). The header is small and its shape is fixed, so
+        // pinning it directly is both deterministic and shorter.
+        let header = NSView()
+        header.translatesAutoresizingMaskIntoConstraints = false
+        for child in [describeTitleLabel!, describeSubtitleLabel!, describeSpinner!,
+                      describeCopyButton!, describeCloseButton!] {
+            // `HelmButton` does not clear this itself, and everywhere else in
+            // this app it lands in an `NSStackView`, which clears it for you.
+            // Left set, AppKit synthesises required frame constraints that
+            // silently win over every explicit one here - measured: the Copy
+            // button ignored its own width constraint and sat at x=0.
+            child.translatesAutoresizingMaskIntoConstraints = false
+            header.addSubview(child)
+        }
+        // Explicit sizes for the two trailing controls. A `HelmButton` owns
+        // its own font/title/chrome and does not promise a stable intrinsic
+        // width, and with only a right-anchored chain to size against, one of
+        // them silently absorbed the whole header - measured, with the Copy
+        // button laid out at x=0 and the title squeezed to nothing.
+        for control in [describeCopyButton!, describeCloseButton!] {
+            control.setContentHuggingPriority(.required, for: .horizontal)
+            control.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        describeSpinner.setContentHuggingPriority(.required, for: .horizontal)
+        NSLayoutConstraint.activate([
+            describeCopyButton.widthAnchor.constraint(equalToConstant: 58),
+            describeCloseButton.widthAnchor.constraint(equalToConstant: 26),
+            describeSpinner.widthAnchor.constraint(equalToConstant: 16),
+        ])
+        NSLayoutConstraint.activate([
+            describeCloseButton.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            describeCloseButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            describeCopyButton.trailingAnchor.constraint(equalTo: describeCloseButton.leadingAnchor,
+                                                         constant: -HelmMetrics.s2),
+            describeCopyButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+            describeSpinner.trailingAnchor.constraint(equalTo: describeCopyButton.leadingAnchor,
+                                                      constant: -HelmMetrics.s2),
+            describeSpinner.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+
+            describeTitleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            describeTitleLabel.topAnchor.constraint(equalTo: header.topAnchor),
+            describeTitleLabel.trailingAnchor.constraint(equalTo: describeSpinner.leadingAnchor,
+                                                         constant: -HelmMetrics.s2),
+            describeSubtitleLabel.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            describeSubtitleLabel.topAnchor.constraint(equalTo: describeTitleLabel.bottomAnchor, constant: 1),
+            describeSubtitleLabel.trailingAnchor.constraint(equalTo: describeSpinner.leadingAnchor,
+                                                            constant: -HelmMetrics.s2),
+            describeSubtitleLabel.bottomAnchor.constraint(equalTo: header.bottomAnchor),
+        ])
 
         describeTextView = NSTextView()
         describeTextView.isEditable = false
         describeTextView.isSelectable = true
+        // Plain text, so `font`/`textColor` apply to the whole document. An
+        // `NSTextView` is rich by default, where those two setters only touch
+        // the *typing* attributes - so text already in the view keeps whatever
+        // it had, which on this deliberately dark output card means near-black
+        // glyphs on a near-black background. Caught in a real render: the
+        // panel showed an empty black rectangle with the describe output
+        // genuinely present in `string`.
+        describeTextView.isRichText = false
+        describeTextView.usesFontPanel = false
         describeTextView.drawsBackground = false
-        describeTextView.textContainerInset = NSSize(width: 8, height: 8)
-        describeTextView.isHorizontallyResizable = true
-        describeTextView.textContainer?.widthTracksTextView = false
-        describeTextView.textContainer?.containerSize = NSSize(width: CGFloat.greatestFiniteMagnitude,
-                                                               height: CGFloat.greatestFiniteMagnitude)
+        describeTextView.textContainerInset = NSSize(width: 10, height: 10)
+        // **Wraps to the panel, rather than scrolling horizontally.** The
+        // previous inline version was horizontally resizable with an infinite
+        // text container, which in a zero-origin `NSTextView` inside a scroll
+        // view sizes the document to whatever the layout manager last decided
+        // - a real render showed the whole describe squeezed into a ~120pt
+        // column with the rest of the panel empty. A side panel is narrow by
+        // definition and `kubectl describe` is mostly short key/value lines,
+        // so wrapping the handful of long ones is strictly better than making
+        // the captain scroll sideways through all of them.
+        describeTextView.isHorizontallyResizable = false
+        describeTextView.isVerticallyResizable = true
+        describeTextView.autoresizingMask = [.width]
+        describeTextView.textContainer?.widthTracksTextView = true
         describeScroll = NSScrollView()
         describeScroll.documentView = describeTextView
         describeScroll.hasVerticalScroller = true
-        describeScroll.hasHorizontalScroller = true
+        describeScroll.hasHorizontalScroller = false
         describeScroll.autohidesScrollers = true
         describeScroll.drawsBackground = true
         describeScroll.borderType = .noBorder
@@ -594,17 +777,39 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         // own); this seeds it before the first render.
         HelmSelection.apply(to: describeTextView, theme: theme)
 
-        describeDrawer.addSubview(header)
-        describeDrawer.addSubview(describeScroll)
+        // **The content lives in an inner view pinned to the trailing edge at
+        // a fixed width, not stretched between both of the drawer's edges** -
+        // and this is a correctness requirement, not a style choice. The
+        // drawer's own width animates down to **zero** when closed; a child
+        // pinned to both edges would then be asked for a width of
+        // `0 - 2 * inset`, which is unsatisfiable, so AppKit breaks one of
+        // those constraints - permanently. Found in a real off-screen render:
+        // the panel opened at its full 622pt while its header and scroll view
+        // stayed laid out at 93pt, with the title collapsed to nothing.
+        //
+        // Pinning the content to the trailing edge instead is also what makes
+        // this read as a drawer: the content keeps its shape and slides out
+        // from behind the clip, rather than being squeezed and re-wrapped on
+        // every frame of the animation.
+        describeContent = NSView()
+        describeContent.translatesAutoresizingMaskIntoConstraints = false
+        describeDrawer.addSubview(describeContent)
+        describeContent.addSubview(header)
+        describeContent.addSubview(describeScroll)
+        describeContentWidthConstraint = describeContent.widthAnchor.constraint(equalToConstant: Self.describeDrawerMinWidth)
         NSLayoutConstraint.activate([
-            header.leadingAnchor.constraint(equalTo: describeDrawer.leadingAnchor),
-            header.trailingAnchor.constraint(equalTo: describeDrawer.trailingAnchor),
-            header.topAnchor.constraint(equalTo: describeDrawer.topAnchor),
-            describeScroll.leadingAnchor.constraint(equalTo: describeDrawer.leadingAnchor),
-            describeScroll.trailingAnchor.constraint(equalTo: describeDrawer.trailingAnchor),
+            describeContent.trailingAnchor.constraint(equalTo: describeDrawer.trailingAnchor),
+            describeContent.topAnchor.constraint(equalTo: describeDrawer.topAnchor),
+            describeContent.bottomAnchor.constraint(equalTo: describeDrawer.bottomAnchor),
+            describeContentWidthConstraint,
+
+            header.leadingAnchor.constraint(equalTo: describeContent.leadingAnchor, constant: HelmMetrics.s3),
+            header.trailingAnchor.constraint(equalTo: describeContent.trailingAnchor, constant: -HelmMetrics.s3),
+            header.topAnchor.constraint(equalTo: describeContent.topAnchor, constant: HelmMetrics.s3),
+            describeScroll.leadingAnchor.constraint(equalTo: describeContent.leadingAnchor, constant: HelmMetrics.s3),
+            describeScroll.trailingAnchor.constraint(equalTo: describeContent.trailingAnchor, constant: -HelmMetrics.s3),
             describeScroll.topAnchor.constraint(equalTo: header.bottomAnchor, constant: HelmMetrics.s2),
-            describeScroll.bottomAnchor.constraint(equalTo: describeDrawer.bottomAnchor),
-            describeScroll.heightAnchor.constraint(equalToConstant: 220),
+            describeScroll.bottomAnchor.constraint(equalTo: describeContent.bottomAnchor, constant: -HelmMetrics.s3),
         ])
         describeDrawer.isHidden = true
     }

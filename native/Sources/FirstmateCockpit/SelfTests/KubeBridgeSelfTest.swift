@@ -66,6 +66,21 @@ enum KubeBridgeSelfTest {
             ("backoff_successResetsTheFailureCount", test_backoff_successResetsTheFailureCount),
 
             // KubeResourceParser - kubectl's own column output.
+            // `fm/grandline-k8s-ui-revamp`, bug 4: the measured main-thread cost.
+            ("bridge_readsTheWholeBufferOncePerCommand", test_bridge_readsTheWholeBufferOncePerCommand),
+
+            // `fm/grandline-k8s-ui-revamp`, bug 2: the two mechanisms behind
+            // "one describe worked, the next timed out".
+            ("bridge_survivesScrollbackEvictionMidCommand", test_bridge_survivesScrollbackEvictionMidCommand),
+            ("bridge_interactiveWorkJumpsAheadOfBackgroundPolling", test_bridge_interactiveWorkJumpsAheadOfBackgroundPolling),
+            ("bridge_priorityInsertionIsStableWithinAPriority", test_bridge_priorityInsertionIsStableWithinAPriority),
+
+            // `fm/grandline-k8s-ui-revamp`, bug 1: the wrap that corrupted
+            // real rows, and the column floor that removes it.
+            ("parse_wideLineWrapsAndCorruptsAtANarrowTerminal", test_parse_wideLineWrapsAndCorruptsAtANarrowTerminal),
+            ("parse_wideLineSurvivesAtTheFeedTabColumnFloor", test_parse_wideLineSurvivesAtTheFeedTabColumnFloor),
+            ("parse_wrappedHeaderTailIsNeverARow", test_parse_wrappedHeaderTailIsNeverARow),
+            ("parse_wrapGuardsKeepGenuinelyShortTables", test_parse_wrapGuardsKeepGenuinelyShortTables),
             ("parse_podsWideWithMetrics", test_parse_podsWideWithMetrics),
             ("parse_podsWithoutMetricsServer", test_parse_podsWithoutMetricsServer),
             ("parse_podsReadsColumnsByNameNotPosition", test_parse_podsReadsColumnsByNameNotPosition),
@@ -702,6 +717,266 @@ enum KubeBridgeSelfTest {
     search-api-7f9c6d5b4-x2x8p        120m         512Mi
     contract-ingest-worker-0          640m         1922Mi
     """
+
+    /// Bug 4's measurable half: a full-buffer read is **107ms** on a real
+    /// `Terminal` at the interactive geometry (measured with a headless
+    /// `Terminal`, 10,000 lines x 150 columns), on the main thread, which is
+    /// the whole app's UI thread. This bridge used to do one *per command
+    /// issued* purely to record a starting index, plus one every 2.5s while a
+    /// command was in flight.
+    ///
+    /// One command must now cost exactly one full read: the one that actually
+    /// extracts the output.
+    private static func test_bridge_readsTheWholeBufferOncePerCommand() -> String? {
+        let fake = FakeBridgeTerminal()
+        let bridge = KubeBridge(target: fake)
+        answerAll(fake) { _ in "NAME  READY\napi-0 1/1" }
+        var done = false
+        bridge.enqueue(.getPods(namespace: "prod")) { _ in done = true }
+        tickUntil(bridge) { done }
+        guard done else { return "the command never completed" }
+        guard fake.bufferReads <= 1 else {
+            return "one command cost \(fake.bufferReads) whole-buffer reads - each is ~107ms of main-thread stall"
+        }
+        guard fake.viewportReads >= 1 else {
+            return "the cheap viewport probe was never used, so GL-34's cost split is gone"
+        }
+        return nil
+    }
+
+    // MARK: Bug 2 - describe reliability (`fm/grandline-k8s-ui-revamp`)
+
+    /// The captain's "one describe worked, the next timed out shortly after",
+    /// root-caused and reproduced: a feed tab's scrollback is bounded, so once
+    /// it fills, the emulator evicts from the top. `searchFromLine` was an
+    /// **absolute** index captured at injection time, so after eviction it
+    /// pointed past this request's own output - the buffer stopped growing
+    /// (`allLines.count > searchFromLine` never true again) and a perfectly
+    /// good command timed out with a bare "timed out waiting for kubectl".
+    ///
+    /// **Fails on the pre-fix behaviour**: with the index-relative search, the
+    /// end marker is never found and this reports a timeout.
+    private static func test_bridge_survivesScrollbackEvictionMidCommand() -> String? {
+        let fake = FakeBridgeTerminal()
+        fake.scrollbackCap = 40
+        // Fill the buffer so it is already at its cap before we start - the
+        // real state of a feed tab that has been polling for a while.
+        for i in 0..<80 { fake.appendRawLine("older scrollback line \(i)") }
+        let bridge = KubeBridge(target: fake, commandTimeout: 5)
+        // A long answer, like a real `describe`: enough lines to evict every
+        // one of those the injection-time index was measured against.
+        fake.onSendCommand = { injected in
+            guard let (start, end) = markers(in: injected) else { return }
+            let body = (0..<30).map { "Name: pod-detail-line-\($0)" }.joined(separator: "\n")
+            fake.appendOutput("\(start)\n\(body)\n\(end)")
+        }
+        var outcome: Result<String, KubeBridgeError>?
+        bridge.enqueue(.describePod(name: "api-0", namespace: "prod")) { outcome = $0 }
+        tickUntil(bridge) { outcome != nil }
+        guard let outcome else { return "the describe never completed at all" }
+        switch outcome {
+        case .failure(let error):
+            return "a describe whose own output evicted the scrollback failed with: \(error.message)"
+        case .success(let raw):
+            guard raw.contains("Name: pod-detail-line-29") else {
+                return "the extracted output is truncated: \(raw.suffix(80))"
+            }
+            guard !raw.contains("older scrollback line") else {
+                return "unrelated scrollback leaked into the extracted output"
+            }
+        }
+        return nil
+    }
+
+    /// A captain-initiated request jumps ahead of queued background polling,
+    /// which is the other half of why a describe could sit for seconds behind
+    /// a discovery sweep nobody asked for.
+    ///
+    /// Single-flight is untouched: whatever is already injected still runs to
+    /// completion first, and only *queued* work is reordered.
+    private static func test_bridge_interactiveWorkJumpsAheadOfBackgroundPolling() -> String? {
+        let fake = FakeBridgeTerminal()
+        let bridge = KubeBridge(target: fake)
+        // Nothing is answered, so everything stays queued and the order is
+        // observable through the one command actually injected.
+        answerNothing(fake)
+        bridge.enqueue(.getPods(namespace: "prod")) { _ in }        // issued immediately
+        bridge.enqueue(.topPods(namespace: "prod")) { _ in }        // queued
+        bridge.enqueue(.getEvents(namespace: "prod")) { _ in }      // queued
+        bridge.enqueue(.describePod(name: "api-0", namespace: "prod"), priority: .interactive) { _ in }
+
+        guard bridge.inFlightLabel == "get pods" else {
+            return "an interactive request preempted a command already in the tab: \(bridge.inFlightLabel ?? "nil")"
+        }
+        guard bridge.workAheadOfNextInteractive == 1 else {
+            return "expected only the in-flight command ahead of the describe, got \(bridge.workAheadOfNextInteractive)"
+        }
+        // Let the in-flight command finish; the describe must be next, not
+        // third behind the two background polls that were queued before it.
+        guard let (_, end) = markers(in: fake.sentCommands[0]) else { return "no markers in the first injection" }
+        fake.appendOutput(end)
+        // The start marker is missing, so this fails with `markersNotFound` -
+        // which is fine here: the point is only which command is issued next.
+        tickUntil(bridge) { bridge.inFlightLabel != "get pods" }
+        guard bridge.inFlightLabel == "describe api-0" else {
+            return "the queue did not prioritise the captain's own click: next was \(bridge.inFlightLabel ?? "nil")"
+        }
+        return nil
+    }
+
+    /// Same-priority order is preserved exactly - a Cluster sweep's own three
+    /// commands must arrive in the order they were batched, so the insertion
+    /// is stable rather than a sort.
+    private static func test_bridge_priorityInsertionIsStableWithinAPriority() -> String? {
+        let fake = FakeBridgeTerminal()
+        let bridge = KubeBridge(target: fake)
+        answerAll(fake) { _ in "ok" }
+        var order: [String] = []
+        for command: KubeCommand in [.getPods(namespace: "p"), .topPods(namespace: "p"), .getEvents(namespace: "p")] {
+            bridge.enqueue(command) { _ in order.append(command.shortLabel) }
+        }
+        bridge.enqueue(.describePod(name: "a", namespace: "p"), priority: .interactive) { _ in order.append("describe a") }
+        bridge.enqueue(.describePod(name: "b", namespace: "p"), priority: .interactive) { _ in order.append("describe b") }
+        tickUntil(bridge, maxTicks: 200) { order.count == 5 }
+        // `get pods` was already injected before anything else arrived; the
+        // two interactive requests then go ahead of the remaining background
+        // pair, in click order.
+        guard order == ["get pods", "describe a", "describe b", "top pods", "get events"] else {
+            return "unexpected issue order: \(order)"
+        }
+        return nil
+    }
+
+    // MARK: The wrap-corruption bug (`fm/grandline-k8s-ui-revamp`, bug 1)
+
+    /// A real `kubectl get pods -o wide` table at the captain's own observed
+    /// scale: a 49-character Deployment pod name and a full EKS node name.
+    ///
+    /// Built by padding rather than by hand so the widths are honest - this
+    /// is what kubectl's own `tabwriter` (padding 3) emits, and its total
+    /// width is what decides whether a window-sized terminal wraps it.
+    private static func realisticWidePodsTable() -> String {
+        let header = ["NAME", "READY", "STATUS", "RESTARTS", "AGE", "IP", "NODE", "NOMINATED NODE", "READINESS GATES"]
+        let rows = [
+            ["accounts-contracts-api-deployment-59586796f6-6b45t", "1/1", "Running", "0", "5d2h",
+             "10.20.31.117", "ip-10-20-30-40.ap-south-1.compute.internal", "<none>", "<none>"],
+            ["accounts-contracts-worker-deployment-77c4bd9f8-qm2lk", "1/1", "Running", "5", "5d2h",
+             "10.20.31.204", "ip-10-20-30-41.ap-south-1.compute.internal", "<none>", "<none>"],
+        ]
+        var widths = header.map { $0.count }
+        for row in rows {
+            for (i, value) in row.enumerated() { widths[i] = max(widths[i], value.count) }
+        }
+        func render(_ fields: [String]) -> String {
+            fields.enumerated().map { index, value in
+                index == fields.count - 1 ? value : value.padding(toLength: widths[index] + 3, withPad: " ", startingAt: 0)
+            }.joined()
+        }
+        return ([header] + rows).map(render).joined(separator: "\n")
+    }
+
+    /// The bug, reproduced: at a window-sized terminal width the emulator
+    /// hard-wraps each of these lines, `getBufferAsData()` reports the
+    /// continuation as its own line, and the parser reads it as a row.
+    ///
+    /// This case is the *proof the width matters* half of the acceptance
+    /// criterion - it asserts corruption at the narrow width, which is what
+    /// makes its twin below meaningful rather than vacuous.
+    private static func test_parse_wideLineWrapsAndCorruptsAtANarrowTerminal() -> String? {
+        let table = realisticWidePodsTable()
+        let width = table.components(separatedBy: "\n").map(\.count).max() ?? 0
+        guard width > 150 else {
+            return "the fixture is only \(width) columns wide - it no longer reproduces the captain's shape"
+        }
+        // 150 columns is a realistic window-sized terminal, and narrower than
+        // the fixture, which is the whole point.
+        let wrapped = KubeTable.simulateTerminalWrap(table, columns: 150)
+        guard wrapped.components(separatedBy: "\n").count > table.components(separatedBy: "\n").count else {
+            return "simulateTerminalWrap produced no continuation lines at 150 columns"
+        }
+        // Without the guards this would parse into fabricated rows. With them
+        // the debris is dropped and *counted*, never rendered as pods.
+        guard let parsedTable = KubeTable(raw: wrapped) else { return "expected a table" }
+        guard parsedTable.droppedLineCount > 0 else {
+            return "the wrapped continuations were parsed as real rows instead of being rejected"
+        }
+        guard case .rows(let pods) = KubeResourceParser.parsePods(getRaw: wrapped) else {
+            return "expected rows even from wrapped output"
+        }
+        // The guards stop fabricated rows; they cannot recover the truncated
+        // names, which is exactly why the width fix (not this) is the primary one.
+        guard !pods.contains(where: { $0.name == "NODE" || $0.name == "5" }) else {
+            return "wrap debris reached the pod list as a row: \(pods.map(\.name))"
+        }
+        return nil
+    }
+
+    /// The fix: at the feed tab's own column floor the identical line does
+    /// not wrap at all, so every field is exact.
+    ///
+    /// **This case fails on the unfixed column width and passes on the fixed
+    /// one** - it is driven by `CockpitTerminalView.machineReadableColumns`
+    /// itself, so lowering that constant back toward a window-sized terminal
+    /// reproduces the corruption here rather than only in production.
+    private static func test_parse_wideLineSurvivesAtTheFeedTabColumnFloor() -> String? {
+        let table = realisticWidePodsTable()
+        let floor = CockpitTerminalView.machineReadableColumns
+        let wrapped = KubeTable.simulateTerminalWrap(table, columns: floor)
+        guard wrapped == table else {
+            return "a real -o wide line still wraps at the \(floor)-column feed-tab floor"
+        }
+        guard case .rows(let pods) = KubeResourceParser.parsePods(getRaw: wrapped) else {
+            return "expected rows"
+        }
+        guard pods.count == 2 else { return "expected 2 pods, got \(pods.count): \(pods.map(\.name))" }
+        guard pods[0].name == "accounts-contracts-api-deployment-59586796f6-6b45t" else {
+            return "pod 0 name came back as \(pods[0].name)"
+        }
+        guard pods[0].ready == "1/1", pods[0].status == "Running", pods[0].restarts == 0,
+              pods[0].age == "5d2h", pods[0].node == "ip-10-20-30-40.ap-south-1.compute.internal" else {
+            return "pod 0 fields are wrong: \(pods[0])"
+        }
+        guard pods[1].restarts == 5, pods[1].node == "ip-10-20-30-41.ap-south-1.compute.internal" else {
+            return "pod 1 fields are wrong: \(pods[1])"
+        }
+        return nil
+    }
+
+    /// kubectl's own header, wrapped: the exact fake row the captain
+    /// screenshotted (`NODE` / `NOMINATED NODE` / `READINESS GATES`).
+    private static func test_parse_wrappedHeaderTailIsNeverARow() -> String? {
+        let raw = """
+        NAME                                                 READY   STATUS    RESTARTS   AGE    IP             NODE
+        NOMINATED NODE   READINESS GATES
+        accounts-contracts-api-deployment-59586796f6-6b45t   1/1     Running   0          5d2h   10.20.31.117   ip-10-20-30-40.ap-south-1.compute.internal
+        <none>           <none>
+        """
+        guard case .rows(let pods) = KubeResourceParser.parsePods(getRaw: raw) else { return "expected rows" }
+        guard pods.count == 1 else { return "expected 1 real pod, got \(pods.map(\.name))" }
+        guard pods[0].name == "accounts-contracts-api-deployment-59586796f6-6b45t" else {
+            return "the real pod was mis-parsed: \(pods[0].name)"
+        }
+        return nil
+    }
+
+    /// The guards must not eat a legitimately short table. A two-column
+    /// `top pods` output and a genuinely narrow `get` are both real.
+    private static func test_parse_wrapGuardsKeepGenuinelyShortTables() -> String? {
+        guard let metrics = KubeResourceParser.parseTopPods(topPods), metrics.count == 2 else {
+            return "the wrap guards rejected a real `top pods` table"
+        }
+        let narrow = """
+        NAME    READY   STATUS    RESTARTS   AGE
+        api-0   1/1     Running   0          9d
+        """
+        guard case .rows(let pods) = KubeResourceParser.parsePods(getRaw: narrow), pods.count == 1 else {
+            return "the wrap guards rejected a plain `get pods` table"
+        }
+        guard let table = KubeTable(raw: narrow), table.droppedLineCount == 0 else {
+            return "a healthy table reported dropped lines"
+        }
+        return nil
+    }
 
     private static func test_parse_podsWideWithMetrics() -> String? {
         guard case .rows(let pods) = KubeResourceParser.parsePods(getRaw: podsWide, topRaw: topPods) else {

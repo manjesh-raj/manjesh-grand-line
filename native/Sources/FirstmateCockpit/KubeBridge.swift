@@ -290,7 +290,35 @@ private struct KubeRequest {
     let command: KubeCommand
     let commandText: String
     let queuedAt: Date
+    let priority: KubeRequestPriority
     let completion: (Result<String, KubeBridgeError>) -> Void
+}
+
+/// Why a request was asked for - which is what decides its place in the
+/// queue (`fm/grandline-k8s-ui-revamp`, bug 2).
+///
+/// The captain reported a `describe` click timing out shortly after an
+/// identical one succeeded. A `describe` is issued the instant a row is
+/// clicked, but the queue was strictly FIFO, so it landed **behind** whatever
+/// the 30s discovery poll had just queued - and on a real cluster reached
+/// through a bastion, each of those is a real API round trip. Waiting several
+/// seconds for output the captain asked for, behind output nobody asked for,
+/// is the wrong order.
+///
+/// This changes **only the order work is issued in**. It does not weaken the
+/// single-flight constraint (still at most one command in the tab, ever), the
+/// activity guard, the busy-elsewhere guard, or the deadline: an interactive
+/// request jumps ahead of *queued* background work and never preempts
+/// anything already injected.
+enum KubeRequestPriority: Int, Comparable {
+    /// A poll nobody asked for: the discovery sweep, the log tail's cycle.
+    case background = 0
+    /// Something the captain just clicked: a `describe`, a manual Refresh.
+    case interactive = 1
+
+    static func < (lhs: KubeRequestPriority, rhs: KubeRequestPriority) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
 }
 
 /// Runs a bounded, read-only kubectl command against one dedicated terminal
@@ -309,12 +337,21 @@ final class KubeBridge {
     /// viewport on most ticks, exactly like that class does.
     static let pollInterval: TimeInterval = 0.25
 
-    /// GL-34's safety net, same value and same reasoning as
-    /// `SRELeadBridge.fullScanEvery`: the cheap viewport probe cannot see a
-    /// marker the captain has scrolled away from (scrolling is not keystroke
-    /// activity, so it never trips the input guard), so every Nth tick falls
-    /// back to a full buffer read.
-    static let fullScanEvery = 10
+    /// GL-34's safety net: the cheap viewport probe cannot see a marker the
+    /// captain has scrolled away from (scrolling is not keystroke activity,
+    /// so it never trips the input guard), so every Nth tick falls back to a
+    /// full buffer read.
+    ///
+    /// **40, not `SRELeadBridge`'s 10** (`fm/grandline-k8s-ui-revamp`, bug 4).
+    /// At `pollInterval` 0.25s that is one full read every 10s rather than
+    /// every 2.5s, and a full read is not cheap: measured at **107ms** on a
+    /// real headless `Terminal` at the interactive geometry, on the main
+    /// thread, which is the whole app's UI thread. A command is bounded by
+    /// `commandTimeout` (20s), so the safety net still fires twice inside
+    /// any command's own lifetime - it just stops costing the rest of the
+    /// app four stalls per command that the viewport probe was already
+    /// covering.
+    static let fullScanEvery = 40
 
     /// Per-command ceiling. Longer than `KubeContextBridge`'s 15s (its two
     /// `config` commands never touch the API server) and shorter than
@@ -377,6 +414,20 @@ final class KubeBridge {
     var isBusy: Bool { inFlight != nil }
 
     var queueDepth: Int { queue.count }
+
+    /// How much work has to finish before the first queued interactive
+    /// request can be issued: whatever sits ahead of it in the queue, plus
+    /// the one command already in the tab (if any).
+    ///
+    /// This is what lets the describe panel say "queued behind other
+    /// Kubernetes activity" honestly, instead of a bare spinner that looks
+    /// identical to a hang. With nothing interactive queued it reports the
+    /// whole queue plus the in-flight command, which is the same number a
+    /// request enqueued right now would face.
+    var workAheadOfNextInteractive: Int {
+        let ahead = queue.firstIndex(where: { $0.priority == .interactive }) ?? queue.count
+        return ahead + (inFlight == nil ? 0 : 1)
+    }
 
     private struct InFlight {
         let request: KubeRequest
@@ -495,7 +546,9 @@ final class KubeBridge {
     /// Queues one read-only command. The completion always fires exactly
     /// once, on the main thread, with either the command's raw text (whatever
     /// the shell printed between the markers) or a `KubeBridgeError`.
-    func enqueue(_ command: KubeCommand, completion: @escaping (Result<String, KubeBridgeError>) -> Void) {
+    func enqueue(_ command: KubeCommand,
+                 priority: KubeRequestPriority = .background,
+                 completion: @escaping (Result<String, KubeBridgeError>) -> Void) {
         guard !hasStoppedRetrying else {
             completion(.failure(.stopped(lastFailureMessage ?? "the feed stopped after repeated failures")))
             return
@@ -506,8 +559,19 @@ final class KubeBridge {
             completion(.failure(.unsafeCommand("\(command.shortLabel) contains a value this app will not type into a shell")))
             return
         }
-        queue.append(KubeRequest(id: UUID(), command: command, commandText: text,
-                                 queuedAt: Date(), completion: completion))
+        let request = KubeRequest(id: UUID(), command: command, commandText: text,
+                                  queuedAt: Date(), priority: priority, completion: completion)
+        // Stable insertion, never a sort: an interactive request goes after
+        // any interactive work already waiting (so two quick clicks stay in
+        // click order) and before the first background one. Sorting the whole
+        // queue would reorder same-priority work, and a Cluster sweep's own
+        // three commands genuinely depend on arriving in the order they were
+        // batched.
+        if let index = queue.firstIndex(where: { $0.priority < request.priority }) {
+            queue.insert(request, at: index)
+        } else {
+            queue.append(request)
+        }
         start()
         // Try immediately rather than waiting up to a whole `pollInterval`:
         // a Cluster sweep chains three commands and a Log Tail poll one per
@@ -524,6 +588,7 @@ final class KubeBridge {
     /// metrics-server, and that must not blank out the pod table that `get
     /// pods` returned perfectly well.
     func enqueueBatch(_ commands: [KubeCommand],
+                      priority: KubeRequestPriority = .background,
                       completion: @escaping ([(KubeCommand, Result<String, KubeBridgeError>)]) -> Void) {
         guard !commands.isEmpty else {
             completion([])
@@ -532,7 +597,7 @@ final class KubeBridge {
         var results: [(KubeCommand, Result<String, KubeBridgeError>)] = []
         var remaining = commands.count
         for command in commands {
-            enqueue(command) { result in
+            enqueue(command, priority: priority) { result in
                 results.append((command, result))
                 remaining -= 1
                 if remaining == 0 { completion(results) }
@@ -552,6 +617,23 @@ final class KubeBridge {
             return
         }
         pump()
+        // **Idle costs nothing** (`fm/grandline-k8s-ui-revamp`, bug 4). This
+        // is a repeating 4Hz main-thread timer, and it used to keep firing
+        // for the whole life of the app once a feed tab had ever been
+        // adopted - including while the Kubernetes page was closed, since
+        // only `stop()`/`giveUp()` ever invalidated it and the page's own
+        // `viewDidDisappear` deliberately does not call `stop()` (that would
+        // fail work still in flight). A tick with nothing to do is cheap but
+        // not free, and "cheap but forever, in the background" is precisely
+        // the shape of a slow app.
+        //
+        // `enqueue` calls `start()`, so this is a genuine idle-stop rather
+        // than a teardown: the next request restarts the timer, and no state
+        // is lost or failed on the way through.
+        if inFlight == nil, queue.isEmpty {
+            timer?.invalidate()
+            timer = nil
+        }
     }
 
     /// Issue the next queued request if the tab will have it.
@@ -582,7 +664,19 @@ final class KubeBridge {
         let unique = UUID().uuidString.replacingOccurrences(of: "-", with: "")
         let startMarker = "GL_KUBE_START_\(unique)"
         let endMarker = "GL_KUBE_END_\(unique)"
-        let searchFromLine = target.currentBufferLines().count
+        // **No full-buffer read at issue time** (`fm/grandline-k8s-ui-revamp`,
+        // bug 4). This used to be `target.currentBufferLines().count`, i.e. a
+        // whole-scrollback stringification on the main thread *per command
+        // issued*, purely to record a starting index. Measured on a real
+        // headless `Terminal` at the interactive geometry (10,000 lines x 150
+        // cols): **107ms**, and a Cluster sweep issues two or three commands.
+        //
+        // It is no longer needed for correctness either: the search below is
+        // marker-relative (see `markerIndex`), and both markers carry a fresh
+        // UUID per request, so there is nothing earlier in scrollback that
+        // could be mistaken for this request's own. `0` means "no hint",
+        // which is exactly the full-buffer search the fallback already does.
+        let searchFromLine = 0
         // `startedAt` is stamped **before** the injection, never after.
         // `checkInFlight`'s discard guard asks "did a keystroke land after we
         // started?", so a keystroke arriving *during* `sendCommand` would be
@@ -657,10 +751,34 @@ final class KubeBridge {
         }
 
         let allLines = target.currentBufferLines()
-        guard allLines.count > current.searchFromLine else { return }
-        let newLines = Array(allLines[current.searchFromLine...])
-        guard let endIdx = newLines.firstIndex(where: { isMarkerLine($0, marker: current.endMarker) }) else { return }
-        guard let startIdx = newLines[..<endIdx].firstIndex(where: { isMarkerLine($0, marker: current.startMarker) }) else {
+        // **Marker-relative, never index-relative** (`fm/grandline-k8s-ui-revamp`,
+        // bug 2). `searchFromLine` was an *absolute* index into the buffer,
+        // captured at injection time, and that is only stable while the buffer
+        // is still growing. A feed tab has a bounded scrollback, so once it
+        // saturates the emulator evicts from the top: `currentBufferLines()`
+        // stops growing (`allLines.count > searchFromLine` is false forever, so
+        // a perfectly good command times out) and every surviving line has
+        // *shifted down* by however many were evicted, so the start marker can
+        // now sit before the recorded index. Both failures land as a bare
+        // "timed out waiting for kubectl" on a describe that ran fine minutes
+        // earlier - exactly the intermittency the captain reported.
+        //
+        // Both markers carry a fresh UUID per request, so they are unique in
+        // the buffer by construction and searching the whole of it is exact.
+        // `searchFromLine` survives only as a cheap *hint*: when the start
+        // marker really is at or after it (the common, unsaturated case) the
+        // search is unchanged; when it is not, the marker still wins.
+        // Order matters and is unchanged from before this fix: the **end**
+        // marker is what says "the command finished", so its absence means
+        // "still running" (bounded by `commandTimeout` above), while an end
+        // marker with no start marker before it is a genuine
+        // `markersNotFound` - the shape a shell that swallowed our echo
+        // produces, and one the backoff cases depend on.
+        guard let endIdx = Self.markerIndex(in: allLines, marker: current.endMarker,
+                                            hint: current.searchFromLine) else { return }
+        // `lastIndex` on a slice returns an index into the *base* array.
+        guard let startIdx = allLines[..<endIdx]
+            .lastIndex(where: { isMarkerLine($0, marker: current.startMarker) }) else {
             finish(.failure(.markersNotFound))
             return
         }
@@ -672,7 +790,7 @@ final class KubeBridge {
             finish(.failure(.discarded("the feed tab received input while the command was running")))
             return
         }
-        finish(.success(newLines[(startIdx + 1)..<endIdx].joined(separator: "\n")))
+        finish(.success(allLines[(startIdx + 1)..<endIdx].joined(separator: "\n")))
     }
 
     private func finish(_ result: Result<String, KubeBridgeError>) {
@@ -733,10 +851,39 @@ final class KubeBridge {
         }
     }
 
+    #if FM_SELFTESTS
+    /// Whether the 4Hz poll timer is currently scheduled - the idle-stop
+    /// (`tick()`) is only observable through this.
+    var debugIsPolling: Bool { timer != nil }
+    #endif
+
     /// A line counts as the marker only when it is *exactly* the marker: the
     /// terminal's echo of the typed input contains it as a substring but is
     /// never equal to it (`SRELeadBridge.isMarkerLine`'s reasoning).
     private func isMarkerLine(_ line: String, marker: String) -> Bool {
         line.trimmingCharacters(in: .whitespaces) == marker
+    }
+
+    /// Locates a per-request marker in the buffer, using `hint` (the line
+    /// count recorded at injection time) only as a **fast path**.
+    ///
+    /// Not `private`, so `KubeBridgeSelfTest` can drive the eviction case
+    /// directly - a real scrollback eviction cannot be produced against
+    /// `FakeBridgeTerminal` without teaching it a whole circular buffer.
+    ///
+    /// Why the fall-back matters (`fm/grandline-k8s-ui-revamp`, bug 2): once
+    /// the feed tab's scrollback saturates, the emulator evicts from the top,
+    /// so the recorded absolute index points *past* where the marker now
+    /// lives. The hinted slice then finds nothing and the whole buffer is
+    /// searched instead. The marker carries a fresh UUID per request, so a
+    /// full-buffer search is exact rather than a guess; `lastIndex` picks the
+    /// most recent occurrence purely as belt and braces.
+    static func markerIndex(in lines: [String], marker: String, hint: Int) -> Int? {
+        func matches(_ line: String) -> Bool { line.trimmingCharacters(in: .whitespaces) == marker }
+        if hint >= 0, hint < lines.count,
+           let hinted = lines[hint...].lastIndex(where: matches) {
+            return hinted
+        }
+        return lines.lastIndex(where: matches)
     }
 }

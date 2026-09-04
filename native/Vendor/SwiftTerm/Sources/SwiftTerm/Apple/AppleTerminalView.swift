@@ -146,7 +146,10 @@ extension TerminalView {
         resetCaches()
         self.cellDimension = computeFontDimensions ()
         if (frame.width > 0) && (frame.height > 0) {
-            let newCols = Int(frame.width / cellDimension.width)
+            // Grand Line patch 5: the font-change path recomputes columns too,
+            // so it has to respect the same floor or a font change would
+            // silently undo it.
+            let newCols = max(minimumColumns, Int(frame.width / cellDimension.width))
             let newRows = Int(frame.height / cellDimension.height)
             resize(cols: newCols, rows: newRows)
         }
@@ -227,7 +230,10 @@ extension TerminalView {
             return false
         }
         let newRows = Int (newSize.height / cellDimension.height)
-        let newCols = Int (getEffectiveWidth (size: newSize) / cellDimension.width)
+        // Grand Line patch 5: `minimumColumns` is a floor, not an override -
+        // a view that never sets it (every ordinary tab) computes exactly the
+        // stock value. See `Vendor/SwiftTerm/README.md`'s "Fifth patch".
+        let newCols = max (minimumColumns, Int (getEffectiveWidth (size: newSize) / cellDimension.width))
         
         if newCols != terminal.cols || newRows != terminal.rows {
             selection.active = false

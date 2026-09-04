@@ -29,6 +29,15 @@ enum KubernetesDestinationSelfTest {
 
     static func run() -> Bool {
         let cases: [(String, () -> String?)] = [
+            // `fm/grandline-k8s-ui-revamp`: the four reported problems.
+            ("feedTabIsWidenedForMachineReadableOutput", test_feedTabIsWidenedForMachineReadableOutput),
+            ("describeDrawerIsARealPanelWithLoadingAndClose", test_describeDrawerIsARealPanelWithLoadingAndClose),
+            ("describeCompletionForAStalePodIsDropped", test_describeCompletionForAStalePodIsDropped),
+            ("sweepOnlyFetchesTheVisibleTabsData", test_sweepOnlyFetchesTheVisibleTabsData),
+            ("tableFillsTheAvailablePageHeight", test_tableFillsTheAvailablePageHeight),
+            ("anUnchangedPollDoesNotRebuildThePodPicker", test_anUnchangedPollDoesNotRebuildThePodPicker),
+            ("bridgeTimerStopsWhenThereIsNothingToDo", test_bridgeTimerStopsWhenThereIsNothingToDo),
+
             ("emptyStateWhenNoSessionIsLive", test_emptyStateWhenNoSessionIsLive),
             ("scopeStripAppearsWhenASessionGoesLive", test_scopeStripAppearsWhenASessionGoesLive),
             ("scopeIsDroppedWhenItsSessionEnds", test_scopeIsDroppedWhenItsSessionEnds),
@@ -185,6 +194,168 @@ enum KubernetesDestinationSelfTest {
         harness.goLive()
         harness.drain()
         return harness
+    }
+
+    // MARK: The revamp (`fm/grandline-k8s-ui-revamp`)
+
+    /// Bug 1's wiring: the feed tab - and only the feed tab - is pinned to the
+    /// wide, shallow geometry a parsed output needs, and gets it back when it
+    /// stops being the feed.
+    private static func test_feedTabIsWidenedForMachineReadableOutput() -> String? {
+        let harness = liveHarness()
+        guard harness.fake.machineReadableGeometryCalls.first == true else {
+            return "adopting a feed tab never pinned the machine-readable geometry: \(harness.fake.machineReadableGeometryCalls)"
+        }
+        // The measured worst case has to actually fit, or the widening is
+        // decorative - see `CockpitTerminalView.machineReadableColumns`.
+        guard CockpitTerminalView.machineReadableColumns >= 207 else {
+            return "the column floor (\(CockpitTerminalView.machineReadableColumns)) is below the measured worst-case -o wide line"
+        }
+        // Releasing it is as important as pinning it: a tab that stopped
+        // being the feed must not stay 240 columns wide forever.
+        harness.sessions.unregister(hostID: harness.hostID)
+        guard harness.fake.machineReadableGeometryCalls.last == false else {
+            return "tearing the feed down never released the geometry: \(harness.fake.machineReadableGeometryCalls)"
+        }
+        return nil
+    }
+
+    /// Bug 3: a real drawer with its own loading state, close affordance and
+    /// Escape - not text appended below the table.
+    private static func test_describeDrawerIsARealPanelWithLoadingAndClose() -> String? {
+        let harness = Harness()
+        // Nothing is answered, so the in-flight/loading state is observable.
+        harness.fake.onSendCommand = { _ in }
+        harness.goLive()
+        harness.controller.describePod("billing-cron-29471120-tzkkd")
+
+        guard harness.controller.debugDescribeVisible else { return "the drawer did not open" }
+        guard harness.controller.debugDescribeDrawerWidth >= KubernetesController.describeDrawerMinWidth else {
+            return "the drawer opened at \(harness.controller.debugDescribeDrawerWidth)pt - not a readable panel"
+        }
+        guard harness.controller.debugDescribeSpinning else { return "no loading spinner while the command is in flight" }
+        guard harness.controller.debugDescribeSubtitle.lowercased().contains("kubectl describe")
+            || harness.controller.debugDescribeSubtitle.lowercased().contains("queued") else {
+            return "the drawer gave no honest loading state: \(harness.controller.debugDescribeSubtitle)"
+        }
+        guard harness.controller.debugDescribeCopyEnabled == false else {
+            return "Copy was offered before there was anything to copy"
+        }
+        guard let close = harness.controller.debugDescribeCloseButton, !close.isHidden else {
+            return "the drawer had no real close button"
+        }
+        close.performClick(nil)
+        guard harness.controller.debugDescribeDrawerWidth == 0 else { return "the close button did not close the drawer" }
+
+        // ...and Escape does the same, without aiming at a button.
+        harness.controller.describePod("billing-cron-29471120-tzkkd")
+        guard harness.controller.debugDescribeDrawerWidth > 0 else { return "the drawer did not reopen" }
+        harness.controller.debugPressEscape()
+        guard harness.controller.debugDescribeDrawerWidth == 0 else { return "Escape did not close the drawer" }
+        return nil
+    }
+
+    /// A completion arriving after the captain moved on must never overwrite
+    /// what they are now looking at.
+    private static func test_describeCompletionForAStalePodIsDropped() -> String? {
+        let harness = liveHarness()
+        harness.controller.describePod("search-api-7f9c6d5b4-x2x8p")
+        harness.controller.hideDescribeDrawer()   // the captain closed it mid-flight
+        harness.drain()
+        guard harness.controller.debugDescribeText.isEmpty else {
+            return "a stale describe wrote into a closed drawer: \(harness.controller.debugDescribeText.prefix(60))"
+        }
+        return nil
+    }
+
+    /// Bug 2's second half, and a real part of bug 4: a poll fetches what is
+    /// on screen and nothing else.
+    private static func test_sweepOnlyFetchesTheVisibleTabsData() -> String? {
+        let harness = liveHarness()
+        guard harness.controller.debugSweepCommands == ["get pods", "top pods"] else {
+            return "the Pods tab's own sweep is wrong: \(harness.controller.debugSweepCommands)"
+        }
+        harness.controller.debugSelectClusterTab("events")
+        guard harness.controller.debugSweepCommands == ["get events"] else {
+            return "the Events tab still re-fetched pods and metrics nobody is looking at: \(harness.controller.debugSweepCommands)"
+        }
+        harness.controller.debugSelectClusterTab("deployments")
+        guard harness.controller.debugSweepCommands == ["get deployments"] else {
+            return "the Deployments tab's sweep is wrong: \(harness.controller.debugSweepCommands)"
+        }
+        // The Log Tail's pod picker is built from the pod list, so that page
+        // genuinely needs it.
+        harness.controller.debugSelectPageTab("logTail")
+        guard harness.controller.debugSweepCommands.contains("get pods") else {
+            return "the Log Tail lost the pod list its own picker is built from: \(harness.controller.debugSweepCommands)"
+        }
+        return nil
+    }
+
+    /// The layout half of the captain's report: the table gets the page, not a
+    /// small box with the rest of the window empty below it.
+    private static func test_tableFillsTheAvailablePageHeight() -> String? {
+        let harness = liveHarness()
+        harness.controller.view.layoutSubtreeIfNeeded()
+        let page = harness.controller.debugPageHeight
+        let table = harness.controller.debugClusterTableFrame
+        guard page > 400 else { return "the harness window is too small to measure: \(page)" }
+        guard table.height > page * 0.5 else {
+            return "the table is only \(Int(table.height))pt of a \(Int(page))pt page - still a box on an empty page"
+        }
+        // ...and nothing is left stranded below it. `NSView` is not flipped,
+        // so the *bottom* of the page is `minY`, and reaching it means the
+        // work area is pinned there rather than hugging its own content.
+        let workArea = harness.controller.debugWorkAreaFrame
+        guard workArea.minY <= HelmMetrics.s4 + 1 else {
+            return "the work area stops \(Int(workArea.minY))pt above the page bottom - the old dead-space shape"
+        }
+        // The content has to dominate the chrome, which is the whole
+        // complaint: one session card, then the table gets everything left.
+        let card = harness.controller.debugSessionCardFrame
+        guard table.height > card.height * 2 else {
+            return "the table (\(Int(table.height))pt) is not meaningfully bigger than the session card (\(Int(card.height))pt)"
+        }
+        return nil
+    }
+
+    /// Bug 4: a poll that changed nothing must not rebuild the view tree.
+    private static func test_anUnchangedPollDoesNotRebuildThePodPicker() -> String? {
+        let harness = liveHarness()
+        harness.controller.debugSelectPageTab("logTail")
+        let before = harness.controller.debugPodPickerViewCount
+        guard before > 0 else { return "the pod picker never rendered at all" }
+        // Two more sweeps with byte-identical output.
+        harness.controller.debugRefreshCluster()
+        harness.drain()
+        harness.controller.debugRefreshCluster()
+        harness.drain()
+        guard harness.controller.debugPodPickerViewCount == before else {
+            return "the picker's view count drifted across identical polls: \(before) -> \(harness.controller.debugPodPickerViewCount)"
+        }
+        // A real change still rebuilds it.
+        harness.controller.debugTogglePod("search-api-7f9c6d5b4-x2x8p")
+        harness.controller.debugRefreshCluster()
+        harness.drain()
+        guard harness.controller.debugSelectedPods == ["search-api-7f9c6d5b4-x2x8p"] else {
+            return "the selection did not survive: \(harness.controller.debugSelectedPods)"
+        }
+        return nil
+    }
+
+    /// Bug 4: the bridge's own 4Hz poll timer must not keep firing forever
+    /// once a feed tab has been adopted - it used to run for the life of the
+    /// app, including while this page was closed.
+    private static func test_bridgeTimerStopsWhenThereIsNothingToDo() -> String? {
+        let harness = liveHarness()
+        guard let bridge = harness.controller.debugBridge else { return "no bridge" }
+        harness.drain()
+        guard !bridge.debugIsPolling else { return "the poll timer kept running with an empty queue" }
+        // ...and a new request restarts it, so this is an idle-stop, not a
+        // teardown.
+        harness.controller.describePod("search-api-7f9c6d5b4-x2x8p")
+        guard bridge.debugIsPolling else { return "a new request did not restart the poll timer" }
+        return nil
     }
 
     // MARK: Scope
@@ -643,8 +814,11 @@ enum KubernetesDestinationSelfTest {
         harness.answer([("get pods", podsWide), ("top pods", topPods)])
         harness.goLive()
         guard harness.controller.debugFeedTabID == nil else { return "a feed was adopted before the click" }
-        guard let button = findButton(titled: "Duplicate a tab for the feed", in: harness.controller.view) else {
-            return "no duplicate button on the feed card"
+        // `fm/grandline-k8s-ui-revamp` merged Scope and Feed into one card and
+        // put the picker and its actions on a single row, so the button's own
+        // label is shorter - the behaviour asserted below is unchanged.
+        guard let button = findButton(titled: "Duplicate a tab", in: harness.controller.view) else {
+            return "no duplicate button in the session card"
         }
         button.performClick(nil)
         harness.drain()

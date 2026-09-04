@@ -496,6 +496,54 @@ final class CockpitTerminalView: LocalProcessTerminalView {
         super.mouseUp(with: event)
     }
 
+    // MARK: Machine-readable geometry (`fm/grandline-k8s-ui-revamp`)
+
+    /// The column floor a tab whose output is *parsed* rather than read runs
+    /// at. See `Vendor/SwiftTerm/README.md`'s "Fifth patch" for the mechanism
+    /// and `KubeResources.swift` for what breaks without it.
+    ///
+    /// **Where the number comes from, measured rather than picked.** kubectl
+    /// renders every table through a `tabwriter` with padding 3, so a
+    /// `get pods -o wide` line is the sum of each column's widest value plus
+    /// two spaces. Worst realistic case on the captain's own cluster:
+    /// NAME 63 (a Deployment pod name is name + `-<10>-<5>`, and 63 is the
+    /// DNS-1123 label ceiling) + READY 5 + STATUS 16 (`CrashLoopBackOff`) +
+    /// RESTARTS 13 (`4 (2m ago)` style) + AGE 5 + IP 15 + NODE 45 (a full
+    /// `ip-10-0-1-23.ap-south-1.compute.internal`) + NOMINATED NODE 14 +
+    /// READINESS GATES 15, plus 2 spaces after each of the first eight =
+    /// **207 columns**. 240 leaves headroom without paying for it forever
+    /// (a `BufferLine` preallocates `cols` cells, so width costs memory per
+    /// scrollback line - which is why `machineReadableScrollback` is smaller
+    /// than the interactive default, and why the pair together costs *less*
+    /// memory than a stock tab, not more).
+    static let machineReadableColumns = 240
+
+    /// Scrollback for a feed tab. Deliberately far below `ConsoleController`'s
+    /// interactive 10,000: this app reads a command's output within seconds
+    /// of issuing it, `SRELeadBridgeTerminal.currentBufferLines()` stringifies
+    /// the **whole** buffer on the main thread twice per request (plus once
+    /// per periodic full scan while in flight), and a captain glancing at the
+    /// feed tab needs recent history, not an hour of it. 2,000 x 240 cells is
+    /// materially less memory than 10,000 x ~150, and makes every full-buffer
+    /// read roughly 5x cheaper.
+    static let machineReadableScrollback = 2_000
+
+    /// Whether this view is currently pinned to the machine-readable
+    /// geometry, so a caller can restore the interactive defaults on the way
+    /// out without tracking it separately.
+    private(set) var usesMachineReadableGeometry = false
+
+    /// Pin (or release) the wide, shallow geometry a parsed feed tab needs.
+    /// Idempotent, and a no-op for a tab that is already in the requested
+    /// state - a `changeScrollback` call reallocates the buffer, so this must
+    /// not run on every adoption of a tab that was already the feed.
+    func applyMachineReadableGeometry(_ enabled: Bool, interactiveScrollback: Int) {
+        guard usesMachineReadableGeometry != enabled else { return }
+        usesMachineReadableGeometry = enabled
+        terminal?.changeScrollback(enabled ? Self.machineReadableScrollback : interactiveScrollback)
+        minimumColumns = enabled ? Self.machineReadableColumns : 0
+    }
+
     // MARK: Probe / self-test surface
 
     #if FM_SELFTESTS

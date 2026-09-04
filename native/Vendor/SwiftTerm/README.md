@@ -182,3 +182,51 @@ The policy (when to suspend, when to throttle) lives entirely in the app, on
 SwiftTerm is ever re-synced from upstream, re-applying this patch is two
 hunks: the property block after `pendingDisplay` in `MacTerminalView.swift`,
 and the early return plus `fpsDelay` source in `queuePendingDisplay()`.
+
+## Fifth patch: a pinned minimum column count (`fm/grandline-k8s-ui-revamp`)
+
+**Files:** `Mac/MacTerminalView.swift` and `iOS/iOSTerminalView.swift` (the new
+stored `minimumColumns` property plus `applyMinimumColumnsIfNeeded()`), and
+`Apple/AppleTerminalView.swift` (two `max(minimumColumns, …)` clamps, in
+`processSizeChange` and `resetFont`).
+
+**The bug this fixes is in the app, not in SwiftTerm.** The `.kubernetes`
+destination drives a dedicated "feed" terminal tab, injects a read-only
+`kubectl` command into it, and parses the rows that come back
+(`KubeResources.swift`). `Terminal.getBufferAsData()` emits **one newline per
+buffer row** and ignores `BufferLine.isWrapped`, so a logical line the
+emulator hard-wrapped arrives at the parser as two independent lines. A real
+`kubectl get pods -o wide` line with a ~50-character deployment pod name and a
+full EKS node name measures roughly 190-210 columns, comfortably wider than a
+window-sized terminal - so the continuation was read as its own table row.
+That produced genuinely corrupt data (a row whose `NAME` was `5`, and a fake
+row reading `NODE` / `NOMINATED NODE` / `READINESS GATES` - the wrapped tail of
+kubectl's own header). The fix has to eliminate the wrap, not detect it after
+the fact.
+
+**Why a patch was needed at all.** `AppleTerminalView.resize(cols:rows:)` is
+already public, but it does not stick: `processSizeChange` re-derives
+`terminal.cols` from the view's own pixel width on *every* `setFrameSize`, and
+`MacTerminalView.setFrameSize` calls it unconditionally - so a programmatic
+resize is undone by the next layout pass. There is no override point from
+outside the module (`processSizeChange` is internal, and `TerminalView` offers
+no size-policy hook), which is the same "no seam upstream" situation that
+justified patches 1-4.
+
+**Shape of the patch.** `minimumColumns` is a **floor**, defaulting to `0`. A
+view that never sets it computes exactly the stock column count, so every
+ordinary tab in this app is byte-for-byte unaffected. A view that does set it
+renders more columns than its frame can show and simply clips on the right;
+that is deliberate and is only ever opted into by the Kubernetes feed tab,
+whose whole purpose is to be machine-read (see
+`CockpitTerminalView.applyMachineReadableGeometry`). The floor is applied in
+both places that derive a column count - the size-change path and the
+font-change path - because a font change would otherwise silently undo it.
+
+**Re-applying it after a SwiftTerm upgrade:** re-add the stored property to
+both `TerminalView` classes and re-wrap the two `Int(... / cellDimension.width)`
+column computations in `max(minimumColumns, …)`. `KubeBridgeSelfTest`'s
+`parse_wideLineWrapsAndCorruptsAtANarrowTerminal` /
+`parse_wideLineSurvivesAtTheFeedTabColumnFloor` pair proves the width matters;
+`KubernetesDestinationSelfTest.test_feedTabIsWidenedForMachineReadableOutput`
+proves the feed tab actually asks for it.

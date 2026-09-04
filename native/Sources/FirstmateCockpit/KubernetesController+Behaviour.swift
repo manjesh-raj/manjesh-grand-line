@@ -99,6 +99,18 @@ extension KubernetesController {
         teardownFeed()
         feedTabID = tab.id
         feedTabName = tab.name
+        feedTerminal = tab.terminal
+        // `fm/grandline-k8s-ui-revamp`, bug 1. A `kubectl get pods -o wide`
+        // line is routinely ~200 columns; a window-sized terminal hard-wraps
+        // it and `getBufferAsData()` reports the continuation as its own line,
+        // which `KubeResources` then reads as a corrupt extra row (the
+        // captain's own screenshot: a row whose NAME was "5", and a fake row
+        // reading NODE / NOMINATED NODE / READINESS GATES - kubectl's own
+        // wrapped header tail). Widening the *feed* tab is what removes the
+        // wrap at the source; the parser's continuation guards are only
+        // defence in depth on top. Scoped to this tab and released in
+        // `teardownFeed()` - no other tab's geometry is ever touched.
+        tab.terminal.setMachineReadableGeometry(true)
         let newBridge = KubeBridge(target: tab.terminal)
         newBridge.isTerminalBusyElsewhere = { [access, hostID, tabID = tab.id] in
             access.isTabBusyElsewhere(hostID, tabID)
@@ -124,6 +136,11 @@ extension KubernetesController {
     func teardownFeed() {
         bridge?.stop()
         bridge = nil
+        // Hand the tab back to the captain at its ordinary geometry: a tab
+        // that stopped being the feed must not stay 240 columns wide (and
+        // 2,000 lines shallow) for the rest of its life.
+        feedTerminal?.setMachineReadableGeometry(false)
+        feedTerminal = nil
         feedTabID = nil
         feedTabName = nil
         clusterTimer?.invalidate(); clusterTimer = nil
@@ -254,6 +271,42 @@ extension KubernetesController {
     /// made it read as a hang in the first place. The existing 45s ceiling
     /// plus the 30s auto-retry means a captain who stops typing recovers
     /// within roughly a minute with no action of their own.
+    /// The commands one sweep runs - **only what the visible sub-tab actually
+    /// needs** (`fm/grandline-k8s-ui-revamp`, bug 2's second half and a real
+    /// part of bug 4).
+    ///
+    /// Before this, every cycle ran `get pods` **and** `top pods` regardless
+    /// of which table was on screen, plus the visible tab's own command. On
+    /// Deployments/Services/Events that is two of three commands nobody is
+    /// looking at, every 30 seconds, each one a real API round trip typed
+    /// visibly into the captain's bastion session - and each one more work a
+    /// `describe` click has to queue behind.
+    ///
+    /// `get pods` is kept off the Pods tab in exactly two cases, both real
+    /// rather than defensive: the Log Tail's pod picker is built from this
+    /// list, and the drill-header subtitle counts it, so the *first* sweep
+    /// after a scope or namespace change still has to populate it. Once it
+    /// is populated, a stale pod list behind a table nobody is looking at is
+    /// refreshed the moment that tab is opened (`pageTabs.onSelect` and
+    /// `clusterTabs.onSelect` both trigger one).
+    func sweepCommands() -> [KubeCommand] {
+        var commands: [KubeCommand] = []
+        let podsAreVisible = (pageTab == .cluster && clusterTab == .pods) || pageTab == .logTail
+        if podsAreVisible || pods.isEmpty {
+            commands.append(.getPods(namespace: namespace))
+            // `top pods` only feeds the Pods table's own CPU/MEM columns, so
+            // it is the one command with no reason at all to run elsewhere.
+            if podsAreVisible { commands.append(.topPods(namespace: namespace)) }
+        }
+        switch clusterTab {
+        case .pods: break
+        case .deployments: commands.append(.getDeployments(namespace: namespace))
+        case .services: commands.append(.getServices(namespace: namespace))
+        case .events: commands.append(.getEvents(namespace: namespace))
+        }
+        return commands
+    }
+
     func refreshCluster() {
         guard let bridge, !isRefreshingCluster else { return }
         guard !bridge.hasStoppedRetrying else { return }
@@ -266,13 +319,7 @@ extension KubernetesController {
             kubernetes: cluster refresh started (generation \(generation, privacy: .public), \
             ns=\(self.namespace, privacy: .public), tab=\(self.clusterTab.rawValue, privacy: .public))
             """)
-        var commands: [KubeCommand] = [.getPods(namespace: namespace), .topPods(namespace: namespace)]
-        switch clusterTab {
-        case .pods: break
-        case .deployments: commands.append(.getDeployments(namespace: namespace))
-        case .services: commands.append(.getServices(namespace: namespace))
-        case .events: commands.append(.getEvents(namespace: namespace))
-        }
+        let commands = sweepCommands()
         renderClusterStatus(running: true)
         ensureRefreshWatchdogRunning()
         bridge.enqueueBatch(commands) { [weak self] results in
@@ -461,27 +508,169 @@ extension KubernetesController {
         }
     }
 
+    // MARK: - Describe drawer (`fm/grandline-k8s-ui-revamp`, bug 3)
+
     func describePod(_ name: String) {
         guard let bridge else { return }
-        describeDrawer.isHidden = false
-        describeTitleLabel.stringValue = "describe pod \(name)"
-        describeTextView.string = "Running kubectl describe\u{2026}"
+        describeTarget = name
+        // Text first, then open: the panel's own width is derived from its
+        // content, and a label whose string arrives after the layout pass
+        // renders at zero width until something else dirties the subtree.
+        describeTitleLabel.stringValue = name
+        // An honest queued state rather than a bare spinner. The captain
+        // reported a describe that "sometimes times out": part of that was
+        // real (see `KubeBridge.markerIndex`), and part was simply waiting
+        // behind the discovery poll with no way to tell. The click is
+        // `.interactive`, so it jumps ahead of queued background work - and
+        // whatever is genuinely ahead of it is *named*.
+        let ahead = bridge.workAheadOfNextInteractive
+        describeSubtitleLabel.stringValue = ahead > 0
+            ? "Queued behind \(ahead) Kubernetes command\(ahead == 1 ? "" : "s") in the feed tab\u{2026}"
+            : "Running kubectl describe in the feed tab\u{2026}"
+        describeTextView.string = ""
+        describeCopyButton.isEnabled = false
+        describeSpinner.startAnimation(nil)
         applyDescribeTheme()
-        bridge.enqueue(.describePod(name: name, namespace: namespace)) { [weak self] result in
+        openDescribeDrawer()
+        bridge.enqueue(.describePod(name: name, namespace: namespace), priority: .interactive) { [weak self] result in
             guard let self else { return }
+            // A completion for a pod the captain has since navigated away
+            // from must never overwrite what they are looking at now.
+            guard self.describeTarget == name else { return }
+            self.describeSpinner.stopAnimation(nil)
             switch result {
-            case .success(let raw): self.describeTextView.string = raw.isEmpty ? "kubectl returned nothing." : raw
-            case .failure(let error): self.describeTextView.string = "Couldn't describe \(name): \(error.message)"
+            case .success(let raw):
+                let text = raw.isEmpty ? "kubectl returned nothing." : raw
+                self.describeTextView.string = text
+                self.describeSubtitleLabel.stringValue = "\(text.components(separatedBy: "\n").count) lines \u{00B7} ns \(self.namespace)"
+                self.describeCopyButton.isEnabled = !raw.isEmpty
+            case .failure(let error):
+                self.describeTextView.string = "Couldn't describe \(name): \(error.message)"
+                self.describeSubtitleLabel.stringValue = "Failed \u{00B7} ns \(self.namespace)"
+                self.describeCopyButton.isEnabled = false
             }
             self.applyDescribeTheme()
+            self.relayoutDescribeContent()
         }
+    }
+
+    /// Force the panel's own subtree to re-lay-out.
+    ///
+    /// **A real AppKit finding, measured rather than assumed** (this task):
+    /// changing a constraint's `constant`, or a label's `stringValue`, on a
+    /// view deep inside a subtree does **not** make an *ancestor's*
+    /// `layoutSubtreeIfNeeded()` descend into it - the ancestor's own layout
+    /// is already clean, so the call short-circuits above the change. The
+    /// panel opened at its full width with its header and scroll view still
+    /// laid out at the width they had when they were built, and no constraint
+    /// was ever reported as broken. Calling it on the view that owns the
+    /// changed constraint is what actually settles it.
+    func relayoutDescribeContent() {
+        guard isViewLoaded else { return }
+        // Every view in the panel, not just its root. `layoutSubtreeIfNeeded()`
+        // settles the views it is called on and any *dirty* descendants - it
+        // does not force-recompute a descendant whose own `needsLayout` is
+        // already false, which is precisely the state a subtree that was
+        // hidden when it was built ends up in. Measured: the panel's header
+        // was 598pt wide with its own buttons still stacked at x=0.
+        //
+        // The panel is a dozen views, so walking it is free next to the
+        // alternative (a wrong first frame every time it opens).
+        func markDirty(_ view: NSView) {
+            view.needsLayout = true
+            for child in view.subviews { markDirty(child) }
+        }
+        markDirty(describeDrawer)
+        describeDrawer.layoutSubtreeIfNeeded()
     }
 
     @objc func closeDescribeTapped() { hideDescribeDrawer() }
 
+    @objc func copyDescribeTapped() {
+        let text = describeTextView.string
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        Toast.show(in: view, message: "Copied the describe output.")
+    }
+
+    /// Escape closes the panel. A surface that covers content has to be
+    /// dismissible without aiming at a button, and `cancelOperation` is the
+    /// responder-chain hook every other dismissible surface in this app uses.
+    override func cancelOperation(_ sender: Any?) {
+        if !describeDrawer.isHidden {
+            hideDescribeDrawer()
+            return
+        }
+        super.cancelOperation(sender)
+    }
+
+    func openDescribeDrawer() {
+        describeDrawer.isHidden = false
+        setDescribeDrawerOpen(true)
+    }
+
     func hideDescribeDrawer() {
-        describeDrawer.isHidden = true
+        describeTarget = nil
+        describeSpinner.stopAnimation(nil)
+        setDescribeDrawerOpen(false)
         clusterTable.clearSelection()
+    }
+
+    /// The slide itself. Width, never `isHidden` alone: a hidden view with a
+    /// non-zero width would still reserve its space, and animating the width
+    /// is what makes this read as a drawer rather than a popup. `isHidden` is
+    /// still set once closed so nothing inside it is focusable or reachable
+    /// by VoiceOver (GL-16).
+    func setDescribeDrawerOpen(_ open: Bool) {
+        let width: CGFloat = open ? describeDrawerWidth() : 0
+        guard describeWidthConstraint.constant != width else {
+            if !open { describeDrawer.isHidden = true }
+            return
+        }
+        // A **synchronous** constant write inside the animation context, never
+        // `constraint.animator().constant` - AGENTS.md records that the
+        // animator defers the write until a run loop turn, which is invisible
+        // in the app and leaves a headless render (or self-test) reading the
+        // panel as never having moved. `allowsImplicitAnimation` is what makes
+        // the synchronous write animate.
+        // The content keeps its own (open) width for the whole animation, so
+        // it is only ever set when opening - see `buildDescribeDrawer`.
+        if open, describeContentWidthConstraint.constant != width {
+            describeContentWidthConstraint.constant = width
+        }
+        describeWidthConstraint.constant = width
+        // A hidden subtree does not get laid out, and un-hiding it does not by
+        // itself mark it dirty - so the panel's own children could still be
+        // sized for whatever width the drawer had when it was built. Caught in
+        // a real off-screen render: the drawer opened at 622pt with its header
+        // and scroll view still laid out at the 380pt build-time width, so the
+        // title had no room at all.
+        describeDrawer.needsLayout = true
+        relayoutDescribeContent()
+        HelmMotion.animate(duration: 0.18) { [weak self] in
+            guard let self else { return }
+            NSAnimationContext.current.allowsImplicitAnimation = true
+            self.clusterContainer.layoutSubtreeIfNeeded()
+        }
+        if !open {
+            // Hide only once the slide has finished, so the panel is seen
+            // leaving rather than vanishing.
+            let delay = HelmMotion.isReduced ? 0 : 0.18
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+                guard let self, self.describeWidthConstraint.constant == 0 else { return }
+                self.describeDrawer.isHidden = true
+            }
+        }
+    }
+
+    /// A share of the page, floored and capped - see
+    /// `describeDrawerFraction`'s own declaration.
+    func describeDrawerWidth() -> CGFloat {
+        let available = clusterContainer.bounds.width
+        guard available > 0 else { return Self.describeDrawerMinWidth }
+        return min(Self.describeDrawerMaxWidth,
+                   max(Self.describeDrawerMinWidth, available * Self.describeDrawerFraction))
     }
 
     // MARK: - Log tail

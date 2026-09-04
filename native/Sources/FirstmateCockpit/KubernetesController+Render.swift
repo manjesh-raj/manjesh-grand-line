@@ -17,7 +17,7 @@ extension KubernetesController {
         scopeEmptyState.isHidden = hasSession
 
         let hasScope = hasSession && scopeHostID != nil
-        feedCard.isHidden = !hasScope
+        feedSection.isHidden = !hasScope
         let ready = hasScope && feedTabID != nil
         workArea.isHidden = !ready
 
@@ -126,7 +126,10 @@ extension KubernetesController {
         clusterRetryButton.isHidden = true
         var parts: [String] = []
         if let lastRefreshedAt {
-            parts.append("refreshed \(HostSession.durationText(since: lastRefreshedAt)) ago")
+            // `durationText` already reads as a phrase ("just now", "2m"), so
+            // only the elapsed form takes an "ago".
+            let elapsed = HostSession.durationText(since: lastRefreshedAt)
+            parts.append(elapsed.first?.isNumber == true ? "refreshed \(elapsed) ago" : "refreshed \(elapsed)")
         }
         parts.append("polls every \(Int(Self.clusterPollInterval))s while open")
         if let clusterMessage { parts.insert(clusterMessage, at: 0) }
@@ -205,8 +208,21 @@ extension KubernetesController {
 
     // MARK: - Log tail
 
-    func renderPodPicker() {
+    /// Rebuilds the Log Tail's pod checkbox column.
+    ///
+    /// **Guarded on real change** (`fm/grandline-k8s-ui-revamp`, bug 4). This
+    /// tears down and recreates one `NSButton` per pod plus a width
+    /// constraint each, and it used to run on *every* completed sweep - so a
+    /// 40-pod namespace destroyed and rebuilt 40 views every 30 seconds,
+    /// forever, whether or not a single pod had changed and whether or not
+    /// the Log Tail page was even visible. `renderSignature` is the cheap
+    /// "would this produce the same views?" key: pod names, their selected
+    /// state, and the theme.
+    func renderPodPicker(force: Bool = false) {
         guard isViewLoaded else { return }
+        let signature = podPickerSignature()
+        guard force || signature != lastPodPickerSignature else { return }
+        lastPodPickerSignature = signature
         for existing in podPickerStack.arrangedSubviews {
             podPickerStack.removeArrangedSubview(existing)
             existing.removeFromSuperview()
@@ -246,6 +262,14 @@ extension KubernetesController {
         }
     }
 
+    /// Everything the picker's own views are derived from. Deliberately not
+    /// a hash of the whole `KubePod` - a pod's AGE or CPU changes on every
+    /// poll and none of it reaches this column.
+    private func podPickerSignature() -> String {
+        pods.map { "\($0.name)|\(selectedPods.contains($0.name) ? 1 : 0)" }.joined(separator: ",")
+            + "#\(namespace)#\(theme.id)"
+    }
+
     func renderLogLines(follow: Bool) {
         guard isViewLoaded else { return }
         logList.setLines(merger.visibleLines(errorsOnly: errorsOnly),
@@ -275,8 +299,7 @@ extension KubernetesController {
         guard isViewLoaded else { return }
         root.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
         root.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
-        scopeCard.applyTheme(theme)
-        feedCard.applyTheme(theme)
+        sessionCard.applyTheme(theme)
         scopeTabs?.applyTheme(theme)
         scopeEmptyState.applyTheme(theme)
         pageTabs.applyTheme(theme)
@@ -284,7 +307,7 @@ extension KubernetesController {
         clusterTable.applyTheme(theme)
         logList.applyTheme(theme)
         namespaceField.applyTheme(theme)
-        for label in [feedStatusLabel, clusterStatusLabel, tailStatusLabel, describeTitleLabel] {
+        for label in [feedStatusLabel, clusterStatusLabel, tailStatusLabel, describeSubtitleLabel] {
             label?.textColor = HelmTheme.mutedInk(theme)
             label?.font = HelmType.caption()
         }
@@ -292,12 +315,24 @@ extension KubernetesController {
         describeTitleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         applyDescribeTheme()
         renderClusterTable()
-        renderPodPicker()
+        renderPodPicker(force: true)
         renderLogLines(follow: false)
     }
 
     func applyDescribeTheme() {
         guard isViewLoaded else { return }
+        // The drawer is a real surface sitting *over* the table, so it needs
+        // the card treatment plus a leading edge and a shadow - without both,
+        // a panel overlaying content of the same colour reads as the content
+        // having changed rather than as something new having opened. This is
+        // `ConsoleController`'s own SRE Lead pane reasoning: a fill difference
+        // alone is not enough, because `chromeBackgroundHex` and
+        // `backgroundHex` are the same value in three of the fourteen themes.
+        describeDrawer.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
+        describeDrawer.layer?.borderWidth = 1
+        describeDrawer.layer?.borderColor = HelmTheme.nsColor(theme.accentHex)
+            .withAlphaComponent(0.55).cgColor
+        describeDrawer.layer?.cornerRadius = theme.isDaylight ? HelmMetrics.dSurface : HelmMetrics.rCard
         // `describe` output is a command's raw text, so it lands on the same
         // dark card the log stream uses rather than the page surface - one
         // definition (`KubeLogListView.surfaceColor`), so the two panes can
@@ -327,11 +362,36 @@ extension KubernetesController {
 extension KubernetesController {
     var debugEmptyStateVisible: Bool { isViewLoaded && !scopeEmptyState.isHidden }
     var debugScopeStripVisible: Bool { isViewLoaded && !scopeTabsHost.isHidden && scopeTabs != nil }
-    var debugFeedCardVisible: Bool { isViewLoaded && !feedCard.isHidden }
+    var debugFeedCardVisible: Bool { isViewLoaded && !feedSection.isHidden }
     var debugWorkAreaVisible: Bool { isViewLoaded && !workArea.isHidden }
     var debugClusterVisible: Bool { isViewLoaded && !clusterContainer.isHidden }
     var debugTailVisible: Bool { isViewLoaded && !tailContainer.isHidden }
     var debugDescribeVisible: Bool { isViewLoaded && !describeDrawer.isHidden }
+    /// The drawer's own animated width - `0` when closed, its open width
+    /// otherwise. `isHidden` alone is not the whole story: the panel hides
+    /// only once the slide has finished (`setDescribeDrawerOpen`).
+    var debugDescribeDrawerWidth: CGFloat { isViewLoaded ? describeWidthConstraint.constant : 0 }
+    var debugDescribeSubtitle: String { isViewLoaded ? describeSubtitleLabel.stringValue : "" }
+    var debugDescribeSpinning: Bool { isViewLoaded && describeSpinner.isHidden == false }
+    var debugDescribeCloseButton: NSButton? { isViewLoaded ? describeCloseButton : nil }
+    var debugDescribeCopyEnabled: Bool { isViewLoaded && describeCopyButton.isEnabled }
+    /// Escape, through the real responder-chain hook rather than by calling
+    /// `hideDescribeDrawer()` directly.
+    func debugPressEscape() { cancelOperation(nil) }
+    /// The commands one sweep would run right now, for the visible-tab
+    /// scoping (`sweepCommands`).
+    var debugSweepCommands: [String] { sweepCommands().map(\.shortLabel) }
+    /// Real, laid-out geometry - what the layout revamp is actually about.
+    var debugClusterTableFrame: NSRect { isViewLoaded ? clusterTable.frame : .zero }
+    var debugWorkAreaFrame: NSRect { isViewLoaded ? workArea.frame : .zero }
+    var debugSessionCardFrame: NSRect { isViewLoaded ? sessionCard.frame : .zero }
+    var debugPageHeight: CGFloat { isViewLoaded ? root.bounds.height : 0 }
+    var debugPodPickerViewCount: Int { isViewLoaded ? podPickerStack.arrangedSubviews.count : 0 }
+    func debugSelectPageTab(_ raw: String) {
+        guard let tab = PageTab(rawValue: raw) else { return }
+        pageTab = tab
+        render()
+    }
     var debugScopeHostID: UUID? { scopeHostID }
     var debugFeedTabID: UUID? { feedTabID }
     var debugPods: [KubePod] { pods }

@@ -42,6 +42,38 @@ import os.log
  * defaults, otherwise, this uses its own set of defaults colors.
  */
 open class TerminalView: NSView, NSTextInputClient, NSUserInterfaceValidations, TerminalDelegate {
+    // MARK: - Grand Line patch 5: a pinned minimum column count
+    //
+    // See `Vendor/SwiftTerm/README.md`'s "Fifth patch" section for the full
+    // writeup. In short: `processSizeChange` derives `terminal.cols` purely
+    // from the view's own pixel width on every layout pass, so a programmatic
+    // `resize(cols:rows:)` is undone by the very next `setFrameSize`. That is
+    // correct for an interactive tab and wrong for a tab whose output another
+    // program *parses*: a `kubectl get pods -o wide` line is routinely wider
+    // than a window-sized terminal, the emulator hard-wraps it, and
+    // `getBufferAsData()` then reports the continuation as its own line -
+    // which a row-per-line parser reads as a corrupt extra row.
+    //
+    // `minimumColumns` is the floor `processSizeChange`/`resetFont` clamp
+    // against. `0` (the default) is exactly the stock behaviour, so every
+    // terminal in an app that never sets it is byte-for-byte unaffected.
+    // A view whose floor exceeds what its frame can show simply clips on the
+    // right - deliberate, and only ever opted into by a tab that exists to be
+    // machine-read rather than looked at.
+    public var minimumColumns: Int = 0 {
+        didSet {
+            guard minimumColumns != oldValue else { return }
+            applyMinimumColumnsIfNeeded()
+        }
+    }
+
+    /// Re-derives the terminal size from the current frame with the floor
+    /// applied. Safe to call at any time; a no-op when nothing changes.
+    public func applyMinimumColumnsIfNeeded() {
+        guard cellDimension != nil, frame.width > 0, frame.height > 0 else { return }
+        _ = processSizeChange(newSize: frame.size)
+    }
+
 #if canImport(MetalKit)
     // Default to throttling Metal redraws during live-resize; set SWIFTTERM_METAL_LIVE_RESIZE_THROTTLE=0 to disable.
     private static let metalLiveResizeThrottleEnabled: Bool = {

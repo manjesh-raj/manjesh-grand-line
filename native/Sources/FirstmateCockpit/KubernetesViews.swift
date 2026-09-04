@@ -35,7 +35,7 @@ import AppKit
 /// replaces. `NSTableColumn` also gives the captain column resizing for free.
 final class KubeResourceTableView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
-    struct Column {
+    struct Column: Equatable {
         let title: String
         /// Fraction of the table's width. Fractions rather than points so the
         /// table reflows with the window; the sum should be 1.
@@ -52,7 +52,7 @@ final class KubeResourceTableView: NSView, NSTableViewDataSource, NSTableViewDel
     /// carries (a failing pod, a warning event). `tint == nil` means "no
     /// signal", drawn in ordinary ink - a colour with nothing to say is
     /// noise, the same rule Overview's stat tiles already follow.
-    struct Row {
+    struct Row: Equatable {
         let values: [String]
         let tint: HelmTint?
         /// Opaque caller key handed back on selection - the pod name the
@@ -123,14 +123,21 @@ final class KubeResourceTableView: NSView, NSTableViewDataSource, NSTableViewDel
     /// refresh of the same tab must not, or the captain's own column resizing
     /// would be discarded on every poll.
     func setContent(columns: [Column], rows: [Row], theme: HelmTheme) {
+        let columnsChanged = self.columns.map(\.title) != columns.map(\.title)
+        // **Reload only on a real change** (`fm/grandline-k8s-ui-revamp`,
+        // bug 4). The 30s discovery poll called this unconditionally, and it
+        // used to reload the table *twice* per call (once via `applyTheme`,
+        // once directly) whether or not a single value had moved. A pod
+        // table's rows are genuinely identical between most polls.
+        let unchanged = !columnsChanged && self.theme.id == theme.id && self.rows == rows
         self.theme = theme
-        if self.columns.map(\.title) != columns.map(\.title) {
+        guard !unchanged else { return }
+        if columnsChanged {
             self.columns = columns
             rebuildColumns()
         }
         self.rows = rows
         applyTheme(theme)
-        tableView.reloadData()
     }
 
     private func rebuildColumns() {
@@ -164,7 +171,18 @@ final class KubeResourceTableView: NSView, NSTableViewDataSource, NSTableViewDel
         let available = scroll.contentView.bounds.width - CGFloat(max(0, columns.count - 1)) * tableView.intercellSpacing.width
         guard available > 0, columns.count == tableView.tableColumns.count else { return }
         for (index, column) in columns.enumerated() {
-            tableView.tableColumns[index].width = max(44, available * column.widthFraction)
+            let width = max(44, available * column.widthFraction)
+            // Assign only on a real change. `NSTableColumn.width` invalidates
+            // the table's own layout, and this runs from `layout()` - so an
+            // unconditional assignment on every pass is a self-perpetuating
+            // relayout, which is exactly the kind of steady main-thread churn
+            // the captain reported as app-wide sluggishness
+            // (`fm/grandline-k8s-ui-revamp`, bug 4). The epsilon is a
+            // sub-pixel tolerance, not a fudge: the fraction maths produces
+            // fractional widths that AppKit rounds when it applies them.
+            if abs(tableView.tableColumns[index].width - width) > 0.5 {
+                tableView.tableColumns[index].width = width
+            }
         }
     }
 

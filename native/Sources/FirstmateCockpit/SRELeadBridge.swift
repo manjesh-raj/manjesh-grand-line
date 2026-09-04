@@ -67,6 +67,22 @@ protocol SRELeadBridgeTerminal: AnyObject {
     /// and to detect (after the fact) that the captain typed into the tab
     /// while an injected command was still running.
     var lastUserActivity: Date? { get }
+
+    /// Pin (or release) the wide, shallow terminal geometry a tab whose
+    /// output is *parsed* needs - see `CockpitTerminalView`'s own
+    /// `applyMachineReadableGeometry` for the mechanism and the measured
+    /// numbers, and `Vendor/SwiftTerm/README.md`'s "Fifth patch" for why a
+    /// vendored change was required to make it stick.
+    ///
+    /// Defaulted to a no-op so a bridge target that has no real terminal
+    /// behind it (every self-test's stand-in) needs no implementation, and so
+    /// a *future* bridge target that genuinely cannot widen degrades to
+    /// today's behaviour rather than failing to compile.
+    func setMachineReadableGeometry(_ enabled: Bool)
+}
+
+extension SRELeadBridgeTerminal {
+    func setMachineReadableGeometry(_ enabled: Bool) {}
 }
 
 /// Bridges one dedicated host page's SRE Lead session to its primary
@@ -442,4 +458,11 @@ extension TabModel: SRELeadBridgeTerminal {
     }
 
     var lastUserActivity: Date? { terminal.lastUserActivity }
+
+    /// `fm/grandline-k8s-ui-revamp`. Scoped to this one tab's own terminal
+    /// view: the brief is explicit that no other tab's column width may
+    /// change, and this is the only path that touches it.
+    func setMachineReadableGeometry(_ enabled: Bool) {
+        terminal.applyMachineReadableGeometry(enabled, interactiveScrollback: ConsoleController.interactiveScrollbackLines)
+    }
 }
