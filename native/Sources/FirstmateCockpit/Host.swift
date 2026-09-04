@@ -93,14 +93,22 @@ struct Host: Codable, Identifiable, Equatable {
     var blockViewOptIn: Bool = false
 
     /// Context/namespace safety badge opt-in (`fm/grandline-k8s-context-badge`):
-    /// this host's dedicated page shows a toolbar pill naming the current
-    /// `kubectl` context/namespace, kept current by periodically typing two
-    /// read-only `kubectl config` commands into the connected tab
-    /// (`KubeContextBridge.swift`). Defaults `false` for the same reason
-    /// `blockViewOptIn` does - not every saved host has a Kubernetes context
-    /// at all, and running `kubectl config get-contexts` against a random
-    /// non-k8s SSH host would be wasted, visibly-typed-into-the-tab noise for
-    /// no reason. The captain opts in one host at a time, deliberately.
+    /// whether a page for this host offers a toolbar TOGGLE naming the
+    /// current `kubectl` context/namespace, kept current (once the captain
+    /// turns it on for a specific tab) by periodically typing two read-only
+    /// `kubectl config` commands into that tab (`KubeContextBridge.swift`).
+    /// Defaults `false` for the same reason `blockViewOptIn` does - not every
+    /// saved host has a Kubernetes context at all. The captain opts in one
+    /// host at a time, deliberately.
+    ///
+    /// `fm/grandline-k8s-badge-fixes`: this is an AVAILABILITY signal only -
+    /// it decides whether the toggle exists on this host's tabs, not whether
+    /// it's on. A real bastion's tabs aren't uniform (a plain entry hop vs. a
+    /// second tab that reaches a `kubectl`-capable box further in), so
+    /// turning the badge on for one specific tab is now a separate, explicit
+    /// per-tab click (`TabModel.kubeContextBadgeOptIn`/
+    /// `ConsoleController.activateKubeContextBadge(for:)`) rather than
+    /// something this flag does automatically for every tab of the host.
     var kubeContextBadgeOptIn: Bool = false
 
     /// Restores the compiler-synthesized memberwise initializer, which Swift

@@ -261,10 +261,14 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// only ever shown for the current tab of the one opted-in host whose
     /// `Host.kubeContextBadgeOptIn` is set (`updateKubeContextBadgeControls`),
     /// following `blockViewToggleButton`'s exact per-tab-relevance pattern.
-    /// A plain themed pill (`ToolRowLayout.pill`), not a `HelmButton` - it
-    /// states a fact, it doesn't trigger an action.
-    var kubeContextPill: NSView!
-    var kubeContextLabel: NSTextField!
+    ///
+    /// `fm/grandline-k8s-badge-fixes` (issue 3): a real `HelmButton` now, not
+    /// a plain themed pill - activating/deactivating the badge for a specific
+    /// tab is an explicit click (`toggleKubeContextBadge`), the same shape of
+    /// per-tab toolbar control as `sreLeadButton` just below. `nil` on the
+    /// shared Firstmate console, exactly like `sreLeadButton` - that console
+    /// has no single host cluster to check a `kubectl` context against.
+    var kubeContextButton: HelmButton?
 
     /// Fired by "Analyze Logs" with an already-built capture plus this
     /// tab's label. Forwarded (never handled here) exactly like every other
