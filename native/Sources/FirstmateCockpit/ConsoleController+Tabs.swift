@@ -150,34 +150,15 @@ extension ConsoleController {
 
         // `fm/grandline-k8s-context-badge`: only ever true for an `.ssh` tab
         // on the one opted-in host - see `TabModel.kubeContextBadgeOptIn`'s
-        // doc comment. No feature-flag gate (unlike block view): this
-        // mechanism has none of block view's fraught rollout history (two
-        // prior app-crashing regressions), it hooks nothing into the terminal
-        // beyond typing a plain command, and it is already scoped to one
-        // captain-chosen host at a time. The bridge itself is created here so
-        // it exists for the tab's whole lifetime; its periodic refresh only
-        // actually starts once the shell looks ready
-        // (`restartTabBookkeeping` -> `startKubeContextBadgeIfSupported`).
+        // doc comment. `fm/grandline-k8s-badge-fixes` (issue 3): this flag
+        // alone no longer creates or starts a `KubeContextBridge` - it only
+        // makes the toolbar toggle available for this tab at all. Activating
+        // it (building the bridge and starting its refresh loop) is now an
+        // explicit captain action on one specific tab
+        // (`activateKubeContextBadge(for:)`, below), never something this
+        // method does on its own - see that method's own doc comment for why.
         if case .ssh = launch, kubeContextBadgeOptIn {
             tab.kubeContextBadgeOptIn = true
-            let bridge = KubeContextBridge(target: tab)
-            // Cross-bridge collision guard, in both directions - see
-            // `KubeContextBridge.swift`'s header and `SRELeadBridge.
-            // isTerminalBusyElsewhere`. SRE Lead's own bridge is created
-            // later, on demand (`startSRELead(for:)`), and is wired to check
-            // `tab.kubeContextBridge?.isBusy` there.
-            bridge.isTerminalBusyElsewhere = { [weak tab] in tab?.sreLead?.bridge?.isBusy ?? false }
-            bridge.onUpdate = { [weak self, weak tab] result in
-                guard let self, let tab else { return }
-                if case .success(let info) = result {
-                    tab.kubeContextInfo = info
-                }
-                // A failure is deliberately NOT written into `kubeContextInfo`
-                // - see that property's own doc comment on why a transient
-                // refusal must not blank an already-known-good badge.
-                if tab === self.currentTab { self.updateKubeContextBadgeControls() }
-            }
-            tab.kubeContextBridge = bridge
         }
 
         let chip = TabChipView(tabID: tab.id, name: name)
@@ -276,20 +257,95 @@ extension ConsoleController {
     /// - there is no protocol-level "the remote shell is ready" signal, so
     /// this waits `remoteShellReadyDelay` (long enough for `ssh` to
     /// authenticate and the remote shell to print its prompt) before typing
-    /// the first `kubectl config` command in. A no-op unless this tab has a
-    /// badge bridge at all (`kubeContextBadgeOptIn` was true at tab-creation
-    /// time - see `addTab`) and for a one-shot provisioning command
-    /// (`isOneShotCommand`), neither of which is an interactive prompt cycle
-    /// this hook has anything to attach to. `bridge.stop()` first so a
-    /// reconnect (⌘R, or the auto-reconnect timer) never leaves the previous
-    /// connection's poll timer running alongside a freshly scheduled one.
+    /// the first `kubectl config` command in.
+    ///
+    /// A no-op unless this tab already has an *activated* badge bridge
+    /// (`tab.kubeContextBridge != nil` - the captain turned it on for this
+    /// tab at some point, see `activateKubeContextBadge(for:)`) and for a
+    /// one-shot provisioning command (`isOneShotCommand`), neither of which
+    /// is an interactive prompt cycle this hook has anything to attach to.
+    /// This is purely a *resume*, never a fresh activation: a reconnect (⌘R,
+    /// the auto-reconnect timer) of a tab the captain had already turned the
+    /// badge on for should pick it back up on the new session, but a tab that
+    /// was never activated (`kubeContextBridge == nil`, whether or not it's
+    /// merely eligible via `kubeContextBadgeOptIn`) stays untouched - fixing
+    /// this timing-driven reconnect hook is not a second way in for
+    /// automatic activation. `bridge.stop()` first so a reconnect never
+    /// leaves the previous connection's poll timer running alongside a
+    /// freshly scheduled one; `bridge.start()` (not `refreshNow()`) so a
+    /// reconnect also resets any prior give-up state - a new session
+    /// deserves a fresh attempt rather than staying stuck on an old
+    /// exhaustion.
     func startKubeContextBadgeIfSupported(_ tab: TabModel) {
         guard let bridge = tab.kubeContextBridge, !tab.isOneShotCommand else { return }
         bridge.stop()
-        DispatchQueue.main.asyncAfter(deadline: .now() + ConsoleController.remoteShellReadyDelay) { [weak tab] in
-            guard let tab, !tab.isClosing, tab.kubeContextBridge === bridge else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + ConsoleController.remoteShellReadyDelay) { [weak self, weak tab] in
+            guard let self, let tab, !tab.isClosing, tab.kubeContextBridge === bridge else { return }
             bridge.start()
+            if tab === self.currentTab { self.updateKubeContextBadgeControls() }
         }
+    }
+
+    /// `fm/grandline-k8s-badge-fixes` (issue 3): the ONE place a
+    /// `KubeContextBridge` is ever created and started for a tab - the
+    /// toolbar toggle's own click handler (`ConsoleController+Toolbar.swift`'s
+    /// `toggleKubeContextBadge`) is the only caller, so activation is always
+    /// a captain click on one specific tab, never something a tab's own
+    /// creation/reconnect does automatically. Also the entry point for the
+    /// captain's own "try again" click from an `.unavailable` badge - a
+    /// bridge that already exists just gets `start()`ed again, which resets
+    /// its failure count and takes one fresh shot rather than needing a
+    /// second, parallel "retry" code path.
+    func activateKubeContextBadge(for tab: TabModel) {
+        guard tab.kubeContextBadgeOptIn else { return }
+        tab.kubeContextBadgeStatus = .checking
+        if tab === currentTab { updateKubeContextBadgeControls() }
+
+        if let bridge = tab.kubeContextBridge {
+            bridge.start()
+            return
+        }
+
+        let bridge = KubeContextBridge(target: tab)
+        // Cross-bridge collision guard, in both directions - see
+        // `KubeContextBridge.swift`'s header and `SRELeadBridge.
+        // isTerminalBusyElsewhere`. SRE Lead's own bridge, when it exists for
+        // this tab, is wired the other direction in `startSRELead(for:)`.
+        bridge.isTerminalBusyElsewhere = { [weak tab] in tab?.sreLead?.bridge?.isBusy ?? false }
+        bridge.onUpdate = { [weak self, weak tab, weak bridge] result in
+            guard let self, let tab, let bridge else { return }
+            switch result {
+            case .success(let info):
+                tab.kubeContextBadgeStatus = .active(info)
+            case .failure(.busy), .failure(.discarded):
+                break // transient - leave whatever's currently shown alone
+            case .failure(let error):
+                // `hasStoppedRetrying` is set inside `KubeContextBridge.report`
+                // *before* `onUpdate` fires, so this always reflects THIS
+                // outcome, not a stale one - see that method's own doc
+                // comment. An isolated failure below the give-up threshold
+                // leaves the current status (`.checking`, or a prior
+                // `.active`) showing, matching "never clear an
+                // already-known-good badge over a transient failure."
+                if bridge.hasStoppedRetrying {
+                    tab.kubeContextBadgeStatus = .unavailable(error.message)
+                }
+            }
+            if tab === self.currentTab { self.updateKubeContextBadgeControls() }
+        }
+        tab.kubeContextBridge = bridge
+        bridge.start()
+    }
+
+    /// The toolbar toggle's "turn it off" click, for a tab whose badge is
+    /// currently `.active`. Tears the bridge down completely (not merely
+    /// `stop()`, which is a pause) so a later re-activation of this same tab
+    /// starts genuinely fresh, exactly like SRE Lead's own `tearDownSRELead`.
+    func deactivateKubeContextBadge(for tab: TabModel) {
+        tab.kubeContextBridge?.stop()
+        tab.kubeContextBridge = nil
+        tab.kubeContextBadgeStatus = .notStarted
+        if tab === currentTab { updateKubeContextBadgeControls() }
     }
 
     /// `fm/cockpit-block-view-stage0`: best-effort, same timing convention as

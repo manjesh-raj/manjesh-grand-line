@@ -183,6 +183,35 @@ extension ConsoleController {
         guard currentTab != nil else { return nil }
         return !sreLeadEmptyStateView.isHidden
     }
+
+    // MARK: Test support (`fm/grandline-k8s-badge-fixes`)
+    //
+    // `KubeContextBridgeSelfTest`'s per-tab isolation cases need to drive
+    // this controller's *real* per-tab context-badge machinery -
+    // `toggleKubeContextBadge()`/`activateKubeContextBadge(for:)` themselves,
+    // not reimplementations of them - to prove activation genuinely lives
+    // per-tab (issue 3: activating on one tab must never touch another). No
+    // production code calls any of these.
+
+    /// Whether the tab at `id` currently has an activated
+    /// `KubeContextBridge` - `nil` if no such tab exists, `false` for an
+    /// eligible-but-never-activated (or since-deactivated) tab.
+    func debugKubeContextBridgeExists(forTabID id: UUID) -> Bool? {
+        guard let tab = tabs.first(where: { $0.id == id }) else { return nil }
+        return tab.kubeContextBridge != nil
+    }
+
+    /// The tab at `id`'s own context-badge display state - `nil` if no such
+    /// tab exists.
+    func debugKubeContextBadgeStatus(forTabID id: UUID) -> KubeContextBadgeStatus? {
+        tabs.first(where: { $0.id == id })?.kubeContextBadgeStatus
+    }
+
+    /// The real toolbar toggle's click action - operates on `currentTab`,
+    /// exactly like a captain clicking the toolbar button while looking at
+    /// that tab. Select the tab a test wants to act on first
+    /// (`debugSelectTab`).
+    func debugToggleKubeContextBadge() { toggleKubeContextBadge() }
 }
 
 #endif

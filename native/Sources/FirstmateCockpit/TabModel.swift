@@ -150,32 +150,51 @@ final class TabModel {
     /// than in a dictionary on `ConsoleController`.
     var sreLead: SRELeadTabState?
 
-    /// `fm/grandline-k8s-context-badge`: whether this tab is the one, opted-in
-    /// host's context/namespace safety badge applies to (`Host.
-    /// kubeContextBadgeOptIn`, threaded down from
-    /// `AppShellController.connectHost` through
+    /// `fm/grandline-k8s-context-badge`: whether this tab's toolbar even
+    /// OFFERS the context/namespace safety badge toggle at all - true for an
+    /// `.ssh` tab on the one host that opted in (`Host.kubeContextBadgeOptIn`,
+    /// threaded down from `AppShellController.connectHost` through
     /// `ConsoleController.connectSSHIfNeeded`/`openSSH`). `false` for every
     /// other tab, including every other SSH host's tab, the Firstmate
     /// console's own Shell tab, and any ad-hoc quick-connect (which has no
     /// `Host` behind it at all) - narrower than every tab of a kind, per the
     /// same one-captain-chosen-host-at-a-time convention `blockViewOptIn`
-    /// already established. Combined with `kubeContextBridge`/
-    /// `kubeContextInfo` below.
+    /// already established.
+    ///
+    /// `fm/grandline-k8s-badge-fixes` (issue 3): this flag alone no longer
+    /// creates or starts anything. A captain's real setup is one saved
+    /// "bastion" host whose tabs sometimes reach a `kubectl`-capable box
+    /// further in and sometimes don't (a plain entry hop, a manual `ssh`
+    /// typed by hand, a second tab reached via a startup snippet) - there is
+    /// no way for this app to tell which is which just from how the tab was
+    /// opened, so eagerly starting a bridge for every tab of an eligible host
+    /// (the original design) meant a plain entry-hop tab got one too, and
+    /// that tab's `kubectl` could never succeed - the actual cause of issue
+    /// 1's spam. This flag now only decides whether the toolbar *offers* the
+    /// toggle for this tab at all - actually creating and starting a
+    /// `KubeContextBridge` is an explicit action the captain takes on this
+    /// one specific tab (`ConsoleController.activateKubeContextBadge(for:)`),
+    /// the same way a fresh tab's SRE Lead is never auto-started either
+    /// (`sreLead` above). A duplicated tab still carries this flag forward
+    /// (it is still an eligible tab of the same host) but never inherits an
+    /// already-activated bridge - matching `sreLead`'s own "never inherited
+    /// by a duplicate" rule.
     var kubeContextBadgeOptIn = false
 
-    /// Present only when `kubeContextBadgeOptIn` was true at tab-creation
-    /// time - keeps `kubeContextInfo` current by periodically typing two
-    /// read-only `kubectl config` commands into this tab's terminal. See
-    /// `KubeContextBridge.swift`'s header for the full mechanism.
+    /// Present only once the captain has explicitly activated the badge for
+    /// this specific tab (`ConsoleController.activateKubeContextBadge(for:)`)
+    /// - `nil` for an eligible-but-never-activated tab, and set back to `nil`
+    /// again on explicit deactivation. Keeps `kubeContextBadgeStatus` below
+    /// current by periodically typing two read-only `kubectl config` commands
+    /// into this tab's terminal. See `KubeContextBridge.swift`'s header for
+    /// the full mechanism.
     var kubeContextBridge: KubeContextBridge?
 
-    /// The most recently successfully fetched context/namespace, or `nil`
-    /// before the first successful refresh. A refresh *failure* never clears
-    /// an already-known-good value here (see
-    /// `ConsoleController+Toolbar.swift`'s `updateKubeContextBadgeControls`) -
-    /// a transient refusal (busy tab, timeout) should leave the badge showing
-    /// the last real answer rather than blanking it.
-    var kubeContextInfo: KubeContextInfo?
+    /// This tab's own context/namespace badge display state - see
+    /// `KubeContextBadgeStatus.swift`. Never activated automatically; only
+    /// `ConsoleController.activateKubeContextBadge(for:)` moves it out of
+    /// `.notStarted`.
+    var kubeContextBadgeStatus: KubeContextBadgeStatus = .notStarted
 
     init(name: String, launch: TabLaunch, terminal: CockpitTerminalView, accentHex: String? = nil) {
         self.name = name

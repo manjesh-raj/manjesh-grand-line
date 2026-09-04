@@ -65,6 +65,52 @@
 // other is mid-command, without either bridge needing to know the other's
 // concrete type. See `SRELeadBridge.isBusy`/`isTerminalBusyElsewhere` for the
 // other half of this.
+//
+// **`fm/grandline-k8s-badge-fixes`: three real issues from the captain's
+// first hands-on test, fixed here rather than rebuilt from scratch.**
+//
+// (1) Backoff, and a real give-up state. A tab whose `kubectl` can never
+// succeed (the common real shape: a plain entry-hop bastion with no
+// `kubectl` on PATH at all - see issue 3 below for why that tab even had a
+// bridge in the first place) used to retry the identical failing command
+// every `busyRetryInterval` (5s) forever, spamming the tab with
+// `-bash: kubectl: command not found` lines with no end. `hasStoppedRetrying`
+// is the fix: after `maxConsecutiveFailures` **genuine** command failures in
+// a row (never a `.busy`/`.discarded` refusal, which cost nothing and say
+// nothing about whether `kubectl` itself works), the bridge stops scheduling
+// any further automatic attempt and reports one final, distinguishable
+// failure so the toolbar can show a clear "unavailable" state instead of a
+// stale/flickering one. `start()` - called both to activate the badge for a
+// tab and, again, as the captain's own explicit "try again" click from that
+// unavailable state - is what resets the count and takes one more shot.
+//
+// (2) The badge used to render `kubectl config current-context`'s raw
+// output verbatim, which for a real AWS EKS context is a whole ARN
+// (`arn:aws:eks:us-east-1:682528822458:cluster/raas-prod`) - unreadable at a
+// glance, the opposite of what a glanceable safety badge is for.
+// `KubeContextInfo.shortLabel` extracts just the `cluster/<name>` suffix for
+// that one well-known shape and falls back to the raw string verbatim for
+// anything else, so an unfamiliar context name is never mangled - the full
+// original string is still always available, as the toolbar button's own
+// tooltip.
+//
+// (3) The opt-in used to be per-HOST: `Host.kubeContextBadgeOptIn` created
+// and *started* a bridge for every `.ssh` tab that host ever opened
+// (`addTab`), including a plain entry-hop tab with no `kubectl` at all - a
+// captain's real setup is one saved "bastion" host whose tabs sometimes reach
+// a `kubectl`-capable box further in and sometimes don't, and there is no way
+// for this app to tell which tab is which just from how it was opened. That
+// mismatch is what produced issue 1's spam in the first place. The badge is
+// per-**TAB** now, following `TabModel.sreLead`/`SRELeadTabState`'s own
+// precedent exactly: `Host.kubeContextBadgeOptIn` only decides whether a
+// tab's toolbar even offers the toggle at all (an *availability* signal, one
+// captain-chosen host at a time, unchanged in that respect); actually
+// creating a `KubeContextBridge` and starting it is an explicit action the
+// captain takes on one specific tab
+// (`ConsoleController.activateKubeContextBadge(for:)`, wired to the toolbar
+// toggle), never something `addTab` does on its own. A freshly opened or
+// duplicated tab therefore always starts inactive, exactly like a fresh
+// tab's SRE Lead - see `TabModel.kubeContextBadgeOptIn`'s own doc comment.
 
 import Foundation
 
@@ -85,12 +131,25 @@ struct KubeContextInfo: Equatable {
     var looksLikeProduction: Bool {
         contextName.lowercased().contains("prod")
     }
+
+    /// `fm/grandline-k8s-badge-fixes`, issue 2: a friendly, glanceable name
+    /// for the toolbar toggle's own visible text - `contextName` itself is
+    /// still what the tooltip shows in full, so nothing is lost, only
+    /// decluttered. `KubeContextParser.shortLabel` does the actual work; this
+    /// wrapper exists so every caller reaches it the same way `looksLikeProduction`
+    /// is already reached, off the parsed value rather than the raw string.
+    var shortLabel: String {
+        KubeContextParser.shortLabel(for: contextName)
+    }
 }
 
 /// Why a refresh did not produce a fresh `KubeContextInfo`. A failure here
-/// never clears an already-known-good badge (see
-/// `ConsoleController+KubeContextBadge.swift`) - it only means "the badge
-/// might be a little stale until the next attempt."
+/// never clears an already-known-good badge on its own (see
+/// `ConsoleController+Toolbar.swift`'s `updateKubeContextBadgeControls`/
+/// `ConsoleController+Tabs.swift`'s `activateKubeContextBadge`) - it only
+/// means "the badge might be a little stale until the next attempt," unless
+/// enough of these in a row make the bridge give up entirely
+/// (`KubeContextBridge.hasStoppedRetrying`).
 enum KubeContextError: Error, Equatable {
     /// The target tab is gone (closed mid-refresh).
     case unavailable(String)
@@ -163,6 +222,30 @@ enum KubeContextParser {
         return .success(KubeContextInfo(contextName: contextName, namespace: namespace))
     }
 
+    /// `fm/grandline-k8s-badge-fixes`, issue 2: extracts a short, glanceable
+    /// name out of a context string for the toolbar toggle's own visible
+    /// text - the raw string is always still available via
+    /// `KubeContextInfo.contextName` (and shown in full as the tooltip).
+    ///
+    /// The one shape handled specially is a real AWS EKS context name (what
+    /// `aws eks update-kubeconfig` writes, and what the captain's own live
+    /// bastion actually produces): a full ARN ending in
+    /// `cluster/<cluster-name>`, e.g.
+    /// `arn:aws:eks:us-east-1:682528822458:cluster/raas-prod` ->
+    /// `raas-prod`. Deliberately conservative: only a string that actually
+    /// starts with `arn:` and contains a `cluster/` segment is shortened at
+    /// all - anything else (a friendly context name like `dev-eks`, a plain
+    /// `minikube`, or some other cluster's own ARN shape this app has never
+    /// seen) is returned completely unchanged rather than guessed at or
+    /// mangled.
+    static func shortLabel(for contextName: String) -> String {
+        guard contextName.hasPrefix("arn:"), let range = contextName.range(of: "cluster/") else {
+            return contextName
+        }
+        let suffix = contextName[range.upperBound...]
+        return suffix.isEmpty ? contextName : String(suffix)
+    }
+
     /// `kubectl config get-contexts`'s table: `CURRENT  NAME  CLUSTER
     /// AUTHINFO  NAMESPACE`, where NAMESPACE is often blank (kubectl leaves
     /// that column empty rather than omitting it when a context has no
@@ -213,7 +296,7 @@ final class KubeContextBridge {
     /// does for the life of a whole session.
     static let pollInterval: TimeInterval = 0.3
 
-    /// How often to kick off a fresh, successful refresh while idle.
+    /// How often to kick off a fresh refresh while the tab keeps succeeding.
     ///
     /// Context/namespace changes are rare and always driven by a deliberate
     /// captain action (switching context/namespace by hand) - unlike a live
@@ -221,23 +304,50 @@ final class KubeContextBridge {
     /// change within seconds. Each refresh also visibly types a command into
     /// the tab, so the goal is "feels current" without repeating that in the
     /// tab's own scrollback every few seconds the way a 5-10s log-tail
-    /// cadence would. 30s is long enough that a captain watching the tab
-    /// never sees the refresh line more often than about once a minute of
-    /// active use, and short enough that a context switch is reflected well
-    /// within the time it takes to notice and type a first real command.
+    /// cadence would.
+    ///
+    /// `fm/grandline-k8s-badge-fixes`: raised from 30s to 5 minutes. A
+    /// *successful* low-frequency background refresh costs nothing worth
+    /// worrying about and genuinely adds value (the badge stays honest
+    /// without another explicit click), but the captain's own reported bar
+    /// - issue 1 - is "every few minutes, not every 30s"; 30s repeating
+    /// visibly in a tab's own scrollback read as noisy even while succeeding.
     let refreshInterval: TimeInterval
 
     /// How soon to retry after a **busy** refusal specifically (the captain
-    /// was typing, or a sibling bridge was mid-command) - much shorter than
-    /// `refreshInterval`, since "the tab was busy a moment ago" usually
-    /// resolves within a few seconds, and there's no reason to leave the
-    /// badge stale for up to a full `refreshInterval` over a refusal that
-    /// cost nothing (no command was ever injected). An instance property
+    /// was typing, a sibling bridge was mid-command, or a refresh was already
+    /// running) - much shorter than `refreshInterval`, since "the tab was
+    /// busy a moment ago" usually resolves within a few seconds, and there's
+    /// no reason to leave the badge stale over a refusal that cost nothing
+    /// (no command was ever injected). Unlike a real command failure below,
+    /// this never counts toward `maxConsecutiveFailures` - contention says
+    /// nothing about whether `kubectl` itself works. An instance property
     /// with a default (not a `static let`), for the same reason
     /// `refreshInterval` is: a self-test needs to prove the busy-vs-hard-
     /// failure retry cadence actually differs without sleeping for real
     /// wall-clock seconds.
     let busyRetryInterval: TimeInterval
+
+    /// How soon to retry after a **genuine** command failure (e.g. `kubectl`
+    /// not on PATH, no current context set) - one of the up to
+    /// `maxConsecutiveFailures` short retries before giving up altogether.
+    /// Deliberately its own, slightly longer cadence than `busyRetryInterval`:
+    /// a real failure is less likely to resolve within moments than "the
+    /// captain was typing a second ago" is.
+    let failureRetryInterval: TimeInterval
+
+    /// `fm/grandline-k8s-badge-fixes`, issue 1: how many **genuine** command
+    /// failures in a row (never a `.busy`/`.discarded` refusal - see
+    /// `busyRetryInterval`'s own doc comment) this bridge tolerates before it
+    /// stops scheduling any further automatic attempt at all and reports
+    /// `hasStoppedRetrying`. Kept low on purpose - a tab whose `kubectl` can
+    /// never succeed (the real, reported case: a plain entry-hop bastion with
+    /// no `kubectl` on PATH) should say so quickly rather than spend minutes
+    /// quietly failing first. The captain's own click on the toolbar's
+    /// resulting "unavailable" state is what tries again (`start()` resets
+    /// this count), so giving up early costs nothing - it is never a dead
+    /// end, only a pause until asked to try again.
+    let maxConsecutiveFailures: Int
 
     /// Refused before injecting anything when a captain's real keystroke/
     /// paste landed within this many seconds of a refresh attempt - the same
@@ -255,10 +365,11 @@ final class KubeContextBridge {
     let commandTimeout: TimeInterval
 
     /// Called with every outcome - success or failure - so the caller can
-    /// update `TabModel.kubeContextInfo` (only on success; see this file's
-    /// header on never clearing an already-known-good badge over a
-    /// transient failure) and refresh the toolbar pill when this is the
-    /// current tab.
+    /// update the tab's own `kubeContextBadgeStatus` (only on success, or on
+    /// the one genuine failure that trips `hasStoppedRetrying`; see this
+    /// file's header on never clearing an already-known-good badge over a
+    /// merely transient failure) and refresh the toolbar toggle when this is
+    /// the current tab.
     var onUpdate: ((Result<KubeContextInfo, KubeContextError>) -> Void)?
 
     /// Read before injecting - `true` when a sibling bridge (SRE Lead's own,
@@ -267,6 +378,23 @@ final class KubeContextBridge {
     /// (e.g. a self-test with no SRE Lead session at all) behaves exactly as
     /// if there were no sibling to worry about.
     var isTerminalBusyElsewhere: () -> Bool = { false }
+
+    /// How many **genuine** command failures have happened in a row since the
+    /// last success (or the last `start()`) - reset to 0 by either. Never
+    /// incremented by a `.busy`/`.discarded` refusal.
+    private var consecutiveFailureCount = 0
+
+    /// `fm/grandline-k8s-badge-fixes`, issue 1: `true` once
+    /// `consecutiveFailureCount` has reached `maxConsecutiveFailures` and
+    /// this bridge has stopped scheduling any further automatic attempt.
+    /// `start()` is the only thing that clears it (both first activation and
+    /// the captain's own explicit "try again" click go through `start()`).
+    private(set) var hasStoppedRetrying = false
+
+    /// The most recent failure's own message, kept so a caller building the
+    /// "unavailable" tooltip doesn't need to have captured the last
+    /// `onUpdate` result itself. `nil` after a success.
+    private(set) var lastFailureMessage: String?
 
     private struct InFlight {
         let startMarker: String
@@ -282,12 +410,15 @@ final class KubeContextBridge {
     }
 
     init(
-        target: SRELeadBridgeTerminal, refreshInterval: TimeInterval = 30, busyRetryInterval: TimeInterval = 5,
+        target: SRELeadBridgeTerminal, refreshInterval: TimeInterval = 300, busyRetryInterval: TimeInterval = 5,
+        failureRetryInterval: TimeInterval = 10, maxConsecutiveFailures: Int = 3,
         userActivityQuietWindow: TimeInterval = 0.5, commandTimeout: TimeInterval = 15
     ) {
         self.target = target
         self.refreshInterval = refreshInterval
         self.busyRetryInterval = busyRetryInterval
+        self.failureRetryInterval = failureRetryInterval
+        self.maxConsecutiveFailures = max(1, maxConsecutiveFailures)
         self.userActivityQuietWindow = userActivityQuietWindow
         self.commandTimeout = commandTimeout
     }
@@ -297,12 +428,25 @@ final class KubeContextBridge {
     /// injecting its own command. See this file's header.
     var isBusy: Bool { inFlight != nil }
 
-    /// Start the periodic refresh cycle: an immediate first attempt (so the
-    /// badge isn't blank until a full `refreshInterval` elapses), then a
-    /// repeating poll that both watches an in-flight command and decides
-    /// when it's time for the next one.
+    /// Start (or restart) the refresh cycle: an immediate first attempt (so
+    /// the badge isn't blank until a full `refreshInterval` elapses), then a
+    /// repeating poll that both watches an in-flight command and decides when
+    /// it's time for the next one.
+    ///
+    /// `fm/grandline-k8s-badge-fixes`: this is now the **one** entry point for
+    /// two distinct things a caller wants, deliberately unified rather than
+    /// given two names - both are "start trying, from a clean slate":
+    /// activating the badge for a tab for the first time, and the captain's
+    /// own explicit "try again" click on an already-`hasStoppedRetrying`
+    /// badge. Either way, `consecutiveFailureCount`/`hasStoppedRetrying`/
+    /// `lastFailureMessage` reset here, so a stale give-up from a previous
+    /// run can never suppress a fresh attempt.
     func start() {
         stop()
+        consecutiveFailureCount = 0
+        hasStoppedRetrying = false
+        lastFailureMessage = nil
+        nextAttemptAt = nil
         refreshNow()
         let t = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
             self?.tick()
@@ -311,6 +455,11 @@ final class KubeContextBridge {
         timer = t
     }
 
+    /// Stops the poll timer and forgets any in-flight command. Deliberately
+    /// leaves `consecutiveFailureCount`/`hasStoppedRetrying`/
+    /// `lastFailureMessage` untouched - this is "pause" (deactivation, a tab
+    /// closing, a reconnect about to restart), not "give up", and only
+    /// `start()` resets that state.
     func stop() {
         timer?.invalidate()
         timer = nil
@@ -318,12 +467,14 @@ final class KubeContextBridge {
     }
 
     /// Attempt a refresh right now, bypassing the `refreshInterval`/
-    /// `busyRetryInterval` cooldown (though not the busy/quiet-window
-    /// guards) - `start()`'s own first call, and the entry point a self-test
-    /// drives directly rather than waiting on the real `Timer` `start()`
-    /// schedules (which needs a pumped run loop this codebase's headless
-    /// self-test binaries never provide - see `SRELeadBridgeSelfTest`'s own
-    /// convention of calling `tick()` by hand for the identical reason).
+    /// `busyRetryInterval`/`failureRetryInterval` cooldown AND the give-up
+    /// state (though not the busy/quiet-window guards, which are genuine
+    /// "not right now" refusals rather than exhaustion) - `start()`'s own
+    /// first call, and the entry point a self-test drives directly rather
+    /// than waiting on the real `Timer` `start()` schedules (which needs a
+    /// pumped run loop this codebase's headless self-test binaries never
+    /// provide - see `SRELeadBridgeSelfTest`'s own convention of calling
+    /// `tick()` by hand for the identical reason).
     func refreshNow() {
         beginRefreshIfDue(force: true)
     }
@@ -342,7 +493,16 @@ final class KubeContextBridge {
     }
 
     private func beginRefreshIfDue(force: Bool) {
-        if !force, let nextAttemptAt, Date() < nextAttemptAt { return }
+        if !force {
+            // `fm/grandline-k8s-badge-fixes`, issue 1: once this bridge has
+            // given up, an ordinary tick (the periodic poll's own idle check)
+            // must never quietly try again on its own - that would be exactly
+            // the "stop retrying automatically" contract violated the moment
+            // the captain looks away. Only a *forced* call (`start()`, i.e.
+            // activation or an explicit retry click) may proceed here.
+            guard !hasStoppedRetrying else { return }
+            if let nextAttemptAt, Date() < nextAttemptAt { return }
+        }
         beginRefresh()
     }
 
@@ -428,14 +588,42 @@ final class KubeContextBridge {
         report(result)
     }
 
+    /// `fm/grandline-k8s-badge-fixes`, issue 1: this is where the give-up
+    /// decision actually happens, and every field it touches is set *before*
+    /// `onUpdate?(result)` fires - so a caller reading `hasStoppedRetrying`/
+    /// `lastFailureMessage` from inside its own `onUpdate` closure always sees
+    /// this outcome's own effect, never a stale one from before it.
     private func report(_ result: Result<KubeContextInfo, KubeContextError>) {
         switch result {
         case .success:
+            consecutiveFailureCount = 0
+            hasStoppedRetrying = false
+            lastFailureMessage = nil
             nextAttemptAt = Date().addingTimeInterval(refreshInterval)
-        case .failure(.busy):
+        case .failure(.busy(let message)), .failure(.discarded(let message)):
+            // Transient contention (the captain was typing, a sibling bridge
+            // was mid-command, or a refresh was already running) - never a
+            // real `kubectl` failure, so it never counts toward the give-up
+            // threshold below and can never trip `hasStoppedRetrying` on its
+            // own.
+            lastFailureMessage = message
             nextAttemptAt = Date().addingTimeInterval(busyRetryInterval)
-        case .failure:
-            nextAttemptAt = Date().addingTimeInterval(refreshInterval)
+        case .failure(let error):
+            lastFailureMessage = error.message
+            consecutiveFailureCount += 1
+            if consecutiveFailureCount >= maxConsecutiveFailures {
+                // Give up: stop the poll timer outright rather than merely
+                // leaving `nextAttemptAt` far in the future - there is
+                // nothing left for it to watch, and no reason to keep waking
+                // up every `pollInterval` to find that out again. `start()`
+                // is the only way back in.
+                hasStoppedRetrying = true
+                nextAttemptAt = nil
+                timer?.invalidate()
+                timer = nil
+            } else {
+                nextAttemptAt = Date().addingTimeInterval(failureRetryInterval)
+            }
         }
         onUpdate?(result)
     }

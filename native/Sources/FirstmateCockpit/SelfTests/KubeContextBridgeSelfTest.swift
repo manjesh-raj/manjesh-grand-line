@@ -24,13 +24,36 @@
 // a faked `kubectl` shim - this sandbox has neither a real Kubernetes host
 // nor a real `kubectl` binary on PATH - and is not part of this permanent
 // suite; see this task's PR description for that transcript.
+//
+// `fm/grandline-k8s-badge-fixes` extended this file rather than replacing it,
+// per that task's own instruction, with three more groups of cases for the
+// captain's three reported issues:
+//
+//   - `bridge_*GiveUp*`/`bridge_*Retry*`/`bridge_busyRefusalsNeverCountTowardGiveUp`
+//     (issue 1, backoff/stop-retrying) - still `FakeBridgeTerminal`-driven,
+//     same shape as the existing `bridge_*` cases above.
+//   - `parser_shortLabel*`/`kubeContextInfo_shortLabelMatchesParser`
+//     (issue 2, short-label extraction) - pure logic, no terminal at all.
+//   - `perTab_*` (issue 3, per-tab-not-per-host activation) - the one group
+//     that needs more than `FakeBridgeTerminal`: proving the toolbar toggle
+//     genuinely activates only the tab a captain is looking at needs a real
+//     `ConsoleController`/`TabModel`, so these drive the real
+//     `toggleKubeContextBadge()`/`activateKubeContextBadge(for:)` through a
+//     real (if unreachable, per this file's own existing convention -
+//     127.0.0.1 with a 1s connect timeout) `.ssh` tab, exactly the way
+//     `SRELeadPerTabSelfTest.swift` proves SRE Lead's own per-tab isolation.
+//     No real `kubectl` round trip is needed for this: the isolation claim
+//     is "did activating tab A ever construct/start a bridge object for tab
+//     B" - a synchronous, object-level fact checked immediately after the
+//     real toggle click, not something a completed command result is needed
+//     to observe.
 
 // GL-27: compiled into debug builds only - see `SRELeadBridgeSelfTest.swift`'s
 // header for the full reasoning. Do not remove this guard: `Phase3PolishSelfTest`
 // asserts that every file in this directory carries it.
 #if FM_SELFTESTS
 
-import Foundation
+import AppKit
 
 enum KubeContextBridgeSelfTest {
 
@@ -45,6 +68,12 @@ enum KubeContextBridgeSelfTest {
             ("parser_looksLikeProductionMatchesCaseInsensitiveSubstring", test_parser_looksLikeProductionMatchesCaseInsensitiveSubstring),
             ("parser_preprodAlsoFlagsAsLooksLikeProduction", test_parser_preprodAlsoFlagsAsLooksLikeProduction),
 
+            // Issue 2: short-label extraction - pure logic, no terminal at all.
+            ("parser_shortLabelExtractsEksArnClusterName", test_parser_shortLabelExtractsEksArnClusterName),
+            ("parser_shortLabelFallsBackVerbatimForNonArnShapes", test_parser_shortLabelFallsBackVerbatimForNonArnShapes),
+            ("parser_shortLabelFallsBackForArnWithNoClusterSegment", test_parser_shortLabelFallsBackForArnWithNoClusterSegment),
+            ("kubeContextInfo_shortLabelMatchesParser", test_kubeContextInfo_shortLabelMatchesParser),
+
             // KubeContextBridge - the marker-injection mechanism, via FakeBridgeTerminal.
             ("bridge_refreshInjectsOneCombinedCommandAndParsesResult", test_bridge_refreshInjectsOneCombinedCommandAndParsesResult),
             ("bridge_refusesWhenCaptainRecentlyTyped", test_bridge_refusesWhenCaptainRecentlyTyped),
@@ -56,6 +85,18 @@ enum KubeContextBridgeSelfTest {
             ("bridge_errorsCleanlyWhenTargetTabIsGone", test_bridge_errorsCleanlyWhenTargetTabIsGone),
             ("bridge_doesNotRetryImmediatelyAfterASuccess", test_bridge_doesNotRetryImmediatelyAfterASuccess),
             ("bridge_retriesSoonerAfterABusyRefusalThanAfterSuccess", test_bridge_retriesSoonerAfterABusyRefusalThanAfterSuccess),
+
+            // Issue 1: backoff and a real give-up state.
+            ("bridge_stopsRetryingAfterConsecutiveGenuineFailures", test_bridge_stopsRetryingAfterConsecutiveGenuineFailures),
+            ("bridge_manualRetryAfterGivingUpResetsAndTriesAgain", test_bridge_manualRetryAfterGivingUpResetsAndTriesAgain),
+            ("bridge_busyRefusalsNeverCountTowardGiveUp", test_bridge_busyRefusalsNeverCountTowardGiveUp),
+            ("bridge_successResetsFailureCount", test_bridge_successResetsFailureCount),
+
+            // Issue 3: per-tab, not per-host, activation - drives a real
+            // ConsoleController/TabModel, not FakeBridgeTerminal.
+            ("perTab_activatingOnOneTabNeverActivatesAnother", test_perTab_activatingOnOneTabNeverActivatesAnother),
+            ("perTab_closingOneActivatedTabLeavesSiblingUntouched", test_perTab_closingOneActivatedTabLeavesSiblingUntouched),
+            ("perTab_duplicateNeverInheritsAnAlreadyActivatedBridge", test_perTab_duplicateNeverInheritsAnAlreadyActivatedBridge),
         ]
 
         var failures = 0
@@ -191,6 +232,44 @@ enum KubeContextBridgeSelfTest {
         // without someone noticing.
         let preprod = KubeContextInfo(contextName: "preprod-eks", namespace: "raas-uat")
         guard preprod.looksLikeProduction else { return "expected 'preprod-eks' to also match the heuristic" }
+        return nil
+    }
+
+    // MARK: Issue 2 - short-label extraction
+
+    private static func test_parser_shortLabelExtractsEksArnClusterName() -> String? {
+        // The captain's own real, reported shape.
+        let arn = "arn:aws:eks:us-east-1:682528822458:cluster/raas-prod"
+        let got = KubeContextParser.shortLabel(for: arn)
+        guard got == "raas-prod" else { return "expected 'raas-prod', got '\(got)'" }
+        return nil
+    }
+
+    private static func test_parser_shortLabelFallsBackVerbatimForNonArnShapes() -> String? {
+        // None of these are the ARN shape - every one must come back
+        // byte-for-byte unchanged rather than being mangled or guessed at.
+        let names = ["dev-eks", "minikube", "preprod-eks", "docker-desktop", ""]
+        for name in names {
+            let got = KubeContextParser.shortLabel(for: name)
+            guard got == name else { return "expected '\(name)' unchanged, got '\(got)'" }
+        }
+        return nil
+    }
+
+    private static func test_parser_shortLabelFallsBackForArnWithNoClusterSegment() -> String? {
+        // A real ARN this app has never seen (no "cluster/" segment at all) -
+        // starting with "arn:" alone must not be enough to trigger shortening.
+        let arn = "arn:aws:iam::682528822458:role/some-role"
+        let got = KubeContextParser.shortLabel(for: arn)
+        guard got == arn else { return "expected the raw ARN unchanged, got '\(got)'" }
+        return nil
+    }
+
+    private static func test_kubeContextInfo_shortLabelMatchesParser() -> String? {
+        let info = KubeContextInfo(contextName: "arn:aws:eks:us-east-1:682528822458:cluster/raas-prod", namespace: "default")
+        guard info.shortLabel == "raas-prod" else {
+            return "expected KubeContextInfo.shortLabel to match the parser, got '\(info.shortLabel)'"
+        }
         return nil
     }
 
@@ -381,6 +460,291 @@ enum KubeContextBridgeSelfTest {
 
         guard fake.sentCommands.count == 1 else {
             return "expected a retry after the busy window elapsed, got \(fake.sentCommands.count) injected command(s)"
+        }
+        return nil
+    }
+
+    // MARK: Issue 1 - backoff and a real give-up state
+
+    private static func kubectlNotFoundOutput(start: String, sep: String, end: String) -> String {
+        // Matches `test_parser_failsCleanlyWhenKubectlIsNotFound`'s own
+        // shape - a real, common failure with no `kubectl` on PATH at all,
+        // which is exactly the captain's own reported case (a plain
+        // entry-hop bastion) - see `KubeContextBridge.swift`'s header, issue 3.
+        "\(start)\nzsh: command not found: kubectl\n\(sep)\nzsh: command not found: kubectl\n\(end)"
+    }
+
+    private static func test_bridge_stopsRetryingAfterConsecutiveGenuineFailures() -> String? {
+        let fake = FakeBridgeTerminal()
+        let bridge = KubeContextBridge(target: fake, failureRetryInterval: 0.05, maxConsecutiveFailures: 2)
+        var results: [Result<KubeContextInfo, KubeContextError>] = []
+        bridge.onUpdate = { results.append($0) }
+        fake.onSendCommand = { injected in
+            guard let (start, end, sep) = markers(in: injected) else { return }
+            fake.appendOutput(kubectlNotFoundOutput(start: start, sep: sep, end: end))
+        }
+
+        bridge.start()
+        tickUntil(bridge) { results.count >= 1 }
+        guard results.count == 1, case .failure(.commandFailed) = results[0] else {
+            return "expected the first attempt to be a genuine command failure, got \(results)"
+        }
+        guard !bridge.hasStoppedRetrying else { return "should not give up after only 1 of 2 allowed failures" }
+        guard fake.sentCommands.count == 1 else { return "expected exactly 1 injected command so far, got \(fake.sentCommands.count)" }
+
+        // Let the short failure-retry cooldown elapse and drive the poll
+        // loop by hand, per this suite's own convention.
+        Thread.sleep(forTimeInterval: 0.1)
+        bridge.tick()
+        tickUntil(bridge) { results.count >= 2 }
+        guard fake.sentCommands.count == 2 else { return "expected a second attempt after the retry cooldown elapsed, got \(fake.sentCommands.count) injected command(s)" }
+        guard bridge.hasStoppedRetrying else { return "expected the bridge to give up after 2 consecutive genuine failures" }
+        guard let last = bridge.lastFailureMessage, last.contains("kubectl") else {
+            return "expected lastFailureMessage to carry the real failure text, got \(String(describing: bridge.lastFailureMessage))"
+        }
+
+        // Issue 1's own acceptance bar: no further automatic retry, ever -
+        // not even once the retry cooldown would ordinarily have elapsed
+        // again, and not even across a dozen further idle ticks.
+        Thread.sleep(forTimeInterval: 0.1)
+        for _ in 0..<10 { bridge.tick() }
+        guard fake.sentCommands.count == 2, results.count == 2 else {
+            return "the bridge kept retrying after giving up - sentCommands=\(fake.sentCommands.count) results=\(results.count)"
+        }
+        return nil
+    }
+
+    private static func test_bridge_manualRetryAfterGivingUpResetsAndTriesAgain() -> String? {
+        let fake = FakeBridgeTerminal()
+        let bridge = KubeContextBridge(target: fake, failureRetryInterval: 0.05, maxConsecutiveFailures: 1)
+        var results: [Result<KubeContextInfo, KubeContextError>] = []
+        bridge.onUpdate = { results.append($0) }
+        var succeed = false
+        fake.onSendCommand = { injected in
+            guard let (start, end, sep) = markers(in: injected) else { return }
+            if succeed {
+                fake.appendOutput("\(start)\nmy-ctx\n\(sep)\n\(end)")
+            } else {
+                fake.appendOutput(kubectlNotFoundOutput(start: start, sep: sep, end: end))
+            }
+        }
+
+        bridge.start()
+        tickUntil(bridge) { results.count >= 1 }
+        guard bridge.hasStoppedRetrying else { return "expected the bridge to give up after the one allowed failure (maxConsecutiveFailures=1)" }
+        guard fake.sentCommands.count == 1 else { return "expected exactly 1 injected command before the retry click" }
+
+        // Even a long wait with several idle ticks must never retry on its
+        // own once given up.
+        Thread.sleep(forTimeInterval: 0.1)
+        for _ in 0..<5 { bridge.tick() }
+        guard fake.sentCommands.count == 1 else { return "the bridge retried automatically after giving up" }
+
+        // The captain's own explicit "try again" click -
+        // `ConsoleController.activateKubeContextBadge` calls exactly this
+        // (`bridge.start()`) on an already-`hasStoppedRetrying` badge.
+        succeed = true
+        bridge.start()
+        guard !bridge.hasStoppedRetrying else { return "start() should clear hasStoppedRetrying immediately, before any result comes back" }
+        tickUntil(bridge) { results.count >= 2 }
+        guard fake.sentCommands.count == 2 else { return "the manual retry should have injected a fresh command, got \(fake.sentCommands.count)" }
+        guard case .success(let info) = results[1], info.contextName == "my-ctx" else {
+            return "expected the manual retry to succeed this time, got \(results[1])"
+        }
+        guard !bridge.hasStoppedRetrying else { return "a successful manual retry should leave hasStoppedRetrying cleared" }
+        return nil
+    }
+
+    private static func test_bridge_busyRefusalsNeverCountTowardGiveUp() -> String? {
+        let fake = FakeBridgeTerminal()
+        fake.lastUserActivity = Date() // "busy" for the whole test - never actually injected
+        let bridge = KubeContextBridge(target: fake, busyRetryInterval: 0.02, maxConsecutiveFailures: 2, userActivityQuietWindow: 1000)
+        var results: [Result<KubeContextInfo, KubeContextError>] = []
+        bridge.onUpdate = { results.append($0) }
+
+        bridge.start()
+        for _ in 0..<10 {
+            Thread.sleep(forTimeInterval: 0.03)
+            bridge.tick()
+        }
+        guard fake.sentCommands.isEmpty else { return "a persistently busy tab should never have a command injected, got \(fake.sentCommands.count)" }
+        guard results.count >= 5 else { return "expected several .busy refusals to have been reported, got \(results.count)" }
+        for result in results {
+            guard case .failure(.busy) = result else { return "expected every result to be .busy, got \(result)" }
+        }
+        guard !bridge.hasStoppedRetrying else { return "repeated .busy refusals (maxConsecutiveFailures=2) must never trip give-up on their own" }
+        return nil
+    }
+
+    private static func test_bridge_successResetsFailureCount() -> String? {
+        let fake = FakeBridgeTerminal()
+        let bridge = KubeContextBridge(target: fake, failureRetryInterval: 0.05, maxConsecutiveFailures: 2)
+        var results: [Result<KubeContextInfo, KubeContextError>] = []
+        bridge.onUpdate = { results.append($0) }
+        // Fails once, then succeeds forever after - one failure alone must
+        // never linger and contribute to a LATER, unrelated run of failures.
+        var attempt = 0
+        fake.onSendCommand = { injected in
+            guard let (start, end, sep) = markers(in: injected) else { return }
+            attempt += 1
+            if attempt == 1 {
+                fake.appendOutput(kubectlNotFoundOutput(start: start, sep: sep, end: end))
+            } else {
+                fake.appendOutput("\(start)\nmy-ctx\n\(sep)\n\(end)")
+            }
+        }
+
+        bridge.start()
+        tickUntil(bridge) { results.count >= 1 }
+        guard !bridge.hasStoppedRetrying else { return "a single failure alone (below maxConsecutiveFailures=2) should not give up" }
+
+        Thread.sleep(forTimeInterval: 0.1)
+        bridge.tick()
+        tickUntil(bridge) { results.count >= 2 }
+        guard case .success = results[1] else { return "expected the second attempt to succeed, got \(results[1])" }
+        guard !bridge.hasStoppedRetrying else { return "a success must clear any prior failure count" }
+        return nil
+    }
+
+    // MARK: Issue 3 - per-tab, not per-host, activation
+    //
+    // Drives a real `ConsoleController`/`TabModel` through the real
+    // `openSSH`/`toggleKubeContextBadge()` machinery - not `FakeBridgeTerminal`
+    // - the same way `SRELeadPerTabSelfTest.swift` proves SRE Lead's own
+    // per-tab isolation. No real Kubernetes host or `kubectl` binary is
+    // needed: the claim under test is purely structural (did activating one
+    // tab ever construct/start a bridge object for another), which is a
+    // synchronous, object-level fact right after the real toggle click - see
+    // this file's own header for why that's sufficient, concrete proof
+    // rather than an assumption.
+
+    /// A real, non-Firstmate `ConsoleController` (a dedicated host page)
+    /// mounted in a real `NSWindow`, with `tabCount` real `.ssh` tabs opened
+    /// via the real `openSSH` path, every one of them eligible for the badge
+    /// toggle (`kubeContextBadgeOptIn: true`) - mirrors
+    /// `SRELeadPerTabSelfTest.makeStartedTestConsole()`.
+    private static func makeStartedKubeContextTestConsole(tabCount: Int) -> (window: NSWindow, controller: ConsoleController, tabIDs: [UUID]) {
+        let controller = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(), isFirstmateConsole: false)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentViewController = controller
+        controller.view.layoutSubtreeIfNeeded()
+
+        for i in 0..<tabCount {
+            controller.openSSH(
+                label: "Kube Badge Test Host \(i + 1)",
+                args: ["-o", "ConnectTimeout=1", "-o", "BatchMode=yes", "127.0.0.1"],
+                accentHex: nil, keyID: nil, startupSnippetID: nil, kubeContextBadgeOptIn: true
+            )
+        }
+        controller.viewDidAppear()
+        controller.view.layoutSubtreeIfNeeded()
+        return (window, controller, controller.debugAllTabIDs())
+    }
+
+    private static func test_perTab_activatingOnOneTabNeverActivatesAnother() -> String? {
+        let (window, controller, ids) = makeStartedKubeContextTestConsole(tabCount: 2)
+        _ = window
+        guard ids.count == 2 else { return "expected 2 tabs, got \(ids.count)" }
+        let (tabA, tabB) = (ids[0], ids[1])
+
+        controller.debugSelectTab(tabA)
+        guard controller.debugKubeContextBridgeExists(forTabID: tabA) == false else { return "tab A should start unactivated" }
+        guard controller.debugKubeContextBridgeExists(forTabID: tabB) == false else { return "tab B should start unactivated" }
+        guard controller.debugKubeContextBadgeStatus(forTabID: tabA) == .notStarted else { return "tab A should start .notStarted" }
+        guard controller.debugKubeContextBadgeStatus(forTabID: tabB) == .notStarted else { return "tab B should start .notStarted" }
+
+        // The real toolbar toggle's own click path - operates on whichever
+        // tab is `currentTab`, exactly like a captain clicking the toolbar
+        // button while looking at tab A. Only tab A is ever selected here.
+        controller.debugToggleKubeContextBadge()
+
+        guard controller.debugKubeContextBridgeExists(forTabID: tabA) == true else {
+            return "activating the toggle while tab A is current should create tab A's own bridge"
+        }
+        guard controller.debugKubeContextBadgeStatus(forTabID: tabA) != .notStarted else {
+            return "tab A's status should have moved out of .notStarted"
+        }
+        guard controller.debugKubeContextBridgeExists(forTabID: tabB) == false else {
+            return "activating tab A's badge incorrectly created a bridge for tab B too - per-tab activation is broken"
+        }
+        guard controller.debugKubeContextBadgeStatus(forTabID: tabB) == .notStarted else {
+            return "tab B's status should be completely untouched, got \(String(describing: controller.debugKubeContextBadgeStatus(forTabID: tabB)))"
+        }
+
+        // Switching to tab B and activating IT must, symmetrically, never
+        // disturb tab A's already-active bridge - two independently
+        // activated tabs must coexist without sharing any state.
+        controller.debugSelectTab(tabB)
+        controller.debugToggleKubeContextBadge()
+        guard controller.debugKubeContextBridgeExists(forTabID: tabB) == true else {
+            return "activating the toggle while tab B is current should create tab B's own bridge"
+        }
+        guard controller.debugKubeContextBridgeExists(forTabID: tabA) == true else {
+            return "activating tab B's badge must not tear down tab A's already-active bridge"
+        }
+        return nil
+    }
+
+    private static func test_perTab_closingOneActivatedTabLeavesSiblingUntouched() -> String? {
+        let (window, controller, ids) = makeStartedKubeContextTestConsole(tabCount: 2)
+        _ = window
+        guard ids.count == 2 else { return "expected 2 tabs, got \(ids.count)" }
+        let (tabA, tabB) = (ids[0], ids[1])
+
+        controller.debugSelectTab(tabA)
+        controller.debugToggleKubeContextBadge() // activates A
+        controller.debugSelectTab(tabB)
+        controller.debugToggleKubeContextBadge() // activates B
+
+        guard controller.debugKubeContextBridgeExists(forTabID: tabA) == true, controller.debugKubeContextBridgeExists(forTabID: tabB) == true else {
+            return "both tabs should be activated before this test closes one of them"
+        }
+
+        controller.debugCloseTab(id: tabA)
+
+        guard controller.debugKubeContextBridgeExists(forTabID: tabA) == nil else {
+            return "tab A no longer exists after being closed, so it should report no bridge at all"
+        }
+        guard controller.debugKubeContextBridgeExists(forTabID: tabB) == true else {
+            return "closing tab A must not disturb tab B's own still-active bridge"
+        }
+        guard controller.debugKubeContextBadgeStatus(forTabID: tabB) != .notStarted else {
+            return "closing tab A reset tab B's own badge status"
+        }
+        return nil
+    }
+
+    private static func test_perTab_duplicateNeverInheritsAnAlreadyActivatedBridge() -> String? {
+        let (window, controller, ids) = makeStartedKubeContextTestConsole(tabCount: 1)
+        _ = window
+        guard let source = ids.first else { return "expected 1 tab, got \(ids.count)" }
+
+        controller.debugSelectTab(source)
+        controller.debugToggleKubeContextBadge() // activates the source tab
+        guard controller.debugKubeContextBridgeExists(forTabID: source) == true else {
+            return "the source tab should be activated before duplicating it"
+        }
+
+        controller.duplicateTab(id: source)
+        let allIDs = controller.debugAllTabIDs()
+        guard let duplicate = allIDs.first(where: { $0 != source }) else { return "duplicateTab did not add a new tab" }
+
+        // Eligibility (the toggle being offered at all) IS carried forward -
+        // it's still a tab of the same opted-in host - but activation is
+        // not, matching `sreLead`'s own "never inherited by a duplicate" rule.
+        guard controller.debugKubeContextBridgeExists(forTabID: duplicate) == false else {
+            return "a freshly duplicated tab must start unactivated, even though its source tab was already active"
+        }
+        guard controller.debugKubeContextBadgeStatus(forTabID: duplicate) == .notStarted else {
+            return "a freshly duplicated tab's badge status should be .notStarted, got \(String(describing: controller.debugKubeContextBadgeStatus(forTabID: duplicate)))"
+        }
+        guard controller.debugKubeContextBridgeExists(forTabID: source) == true else {
+            return "duplicating the source tab must not disturb its own already-active bridge"
         }
         return nil
     }

@@ -120,8 +120,8 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     /// Context/namespace safety badge opt-in (`fm/grandline-k8s-context-badge`)
     /// - see `Host.kubeContextBadgeOptIn`'s doc comment.
     private lazy var kubeContextBadgeRow = HelmToggleRow(
-        title: "Show Kubernetes context badge",
-        subtitle: "Only for a host with a kubectl context - shows the current context/namespace in the toolbar."
+        title: "Offer Kubernetes context badge",
+        subtitle: "Only for a host with a kubectl context - adds a toolbar toggle so the captain can check the current context/namespace on any tab from this host, one tab at a time."
     )
     private let jumpViaField = HelmTextField(placeholder: "Host label or user@bastion")
     private let portForwardingButton = HelmButton(title: "", variant: .secondary)
