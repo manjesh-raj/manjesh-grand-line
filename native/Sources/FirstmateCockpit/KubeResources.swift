@@ -113,11 +113,56 @@ struct KubeTable {
         guard let headerIndex = lines.firstIndex(where: { Self.looksLikeHeader(Self.split($0)) }) else { return nil }
         let header = Self.split(lines[headerIndex])
         columns = header
-        rows = lines[(headerIndex + 1)...].compactMap { line in
+        var kept: [[String]] = []
+        var dropped = 0
+        for line in lines[(headerIndex + 1)...] {
             let fields = Self.split(line, limit: lastColumnIsFreeText ? header.count : nil)
-            guard !fields.isEmpty else { return nil }
-            return fields
+            guard !fields.isEmpty else { continue }
+            if Self.isProbableWrapContinuation(fields, header: header) {
+                dropped += 1
+                continue
+            }
+            kept.append(fields)
         }
+        rows = kept
+        droppedLineCount = dropped
+    }
+
+    /// How many post-header lines were rejected as wrap debris rather than
+    /// parsed. Zero in every healthy case; a caller can surface a non-zero
+    /// count instead of silently showing a short table.
+    private(set) var droppedLineCount = 0
+
+    /// **Defence in depth against a terminal-wrapped row, never the primary
+    /// fix** (`fm/grandline-k8s-ui-revamp`, bug 1).
+    ///
+    /// The real fix is upstream of this file: the feed tab now runs at a
+    /// column floor wide enough that a `kubectl get pods -o wide` line cannot
+    /// wrap at all (`CockpitTerminalView.applyMachineReadableGeometry`, and
+    /// `Vendor/SwiftTerm/README.md`'s "Fifth patch" for why that needed a
+    /// vendored change). This is the second line of defence for the cases
+    /// that fix cannot cover - a pod name past the measured worst case, a
+    /// kubectl that grows another column, a feed tab adopted before the
+    /// widening lands - so that the failure degrades to *one missing row*
+    /// rather than to a fabricated one.
+    ///
+    /// Both tests key off the header, which is why this is not the "fragile
+    /// continuation-line detection" the brief rules out as a primary fix:
+    ///
+    ///  - A line that is itself a header is kubectl's own wrapped header tail
+    ///    (`NOMINATED NODE   READINESS GATES` - literally what the captain's
+    ///    screenshot showed as a fake pod) or a repeated header. Real data
+    ///    never renders as two-or-more all-uppercase, letter-initial fields.
+    ///  - A data row from a `tabwriter` always carries every column, so a row
+    ///    materially short of the header's column count is the tail of a
+    ///    wrapped one (the captain's other fake row: `5` plus a node IP,
+    ///    where `5` was the tail of `RESTARTS`). One field of slack is
+    ///    allowed for a kubectl that leaves a trailing column empty.
+    static func isProbableWrapContinuation(_ fields: [String], header: [String]) -> Bool {
+        if looksLikeHeader(fields) { return true }
+        // Never applied to a two-column table: the slack would swallow real rows.
+        guard header.count >= 4 else { return false }
+        return fields.count < header.count - 1
     }
 
     /// A real kubectl table header is at least two column names, every one of
@@ -138,6 +183,26 @@ struct KubeTable {
     init(columns: [String], rows: [[String]]) {
         self.columns = columns
         self.rows = rows
+    }
+
+    /// Hard-wraps `text` at `columns`, exactly as a terminal emulator does -
+    /// one buffer row per wrapped segment, which is what
+    /// `Terminal.getBufferAsData()` then reports as separate lines. Used by
+    /// the self-tests to reproduce the captain's corruption at a narrow width
+    /// and prove it is gone at the feed tab's own floor.
+    static func simulateTerminalWrap(_ text: String, columns: Int) -> String {
+        guard columns > 0 else { return text }
+        return text.components(separatedBy: "\n").flatMap { line -> [String] in
+            guard line.count > columns else { return [line] }
+            var out: [String] = []
+            var rest = Substring(line)
+            while rest.count > columns {
+                out.append(String(rest.prefix(columns)))
+                rest = rest.dropFirst(columns)
+            }
+            if !rest.isEmpty { out.append(String(rest)) }
+            return out
+        }.joined(separator: "\n")
     }
 
     /// One row's value for a named column, or `nil` when that column doesn't

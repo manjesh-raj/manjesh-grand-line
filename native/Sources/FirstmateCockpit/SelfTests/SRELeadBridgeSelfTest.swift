@@ -71,6 +71,7 @@ final class FakeBridgeTerminal: SRELeadBridgeTerminal {
         sentCommands.append(text)
         let typed = text.hasSuffix("\n") ? String(text.dropLast()) : text
         lines.append(typed) // the terminal's own echo of what was typed
+        trimToCap()
         onSendCommand?(text)
     }
 
@@ -97,12 +98,37 @@ final class FakeBridgeTerminal: SRELeadBridgeTerminal {
         return Array(lines.suffix(viewportRows))
     }
 
+    /// Every `setMachineReadableGeometry` call this stand-in received, in
+    /// order - so a test can prove the Kubernetes page pins the feed tab's
+    /// wide geometry and releases it again, without a real terminal
+    /// (`fm/grandline-k8s-ui-revamp`, bug 1).
+    private(set) var machineReadableGeometryCalls: [Bool] = []
+
+    func setMachineReadableGeometry(_ enabled: Bool) {
+        machineReadableGeometryCalls.append(enabled)
+    }
+
+    /// A bounded scrollback, off by default (`0`). A real terminal evicts
+    /// from the top once its scrollback fills, which shifts every surviving
+    /// line's index down - the mechanism behind
+    /// `fm/grandline-k8s-ui-revamp`'s bug 2, where an absolute
+    /// `searchFromLine` recorded at injection time silently stopped pointing
+    /// at this request's own output. Set this to reproduce it.
+    var scrollbackCap = 0
+
+    private func trimToCap() {
+        guard scrollbackCap > 0, lines.count > scrollbackCap else { return }
+        lines.removeFirst(lines.count - scrollbackCap)
+    }
+
     func appendOutput(_ text: String) {
         lines.append(contentsOf: text.components(separatedBy: "\n"))
+        trimToCap()
     }
 
     func appendRawLine(_ line: String) {
         lines.append(line)
+        trimToCap()
     }
 }
 

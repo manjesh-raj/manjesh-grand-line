@@ -52,6 +52,26 @@ public extension Notification.Name {
  * defaults, otherwise, this uses its own set of defaults colors.
  */
 open class TerminalView: UIScrollView, UITextInputTraits, UIKeyInput, UIScrollViewDelegate, TerminalDelegate, UIPointerInteractionDelegate {
+
+    // MARK: - Grand Line patch 5: a pinned minimum column count
+    //
+    // The iOS mirror of the macOS property (see `Mac/MacTerminalView.swift`
+    // and `Vendor/SwiftTerm/README.md`'s "Fifth patch"). This app is macOS
+    // only; the property exists here so the shared `Apple/AppleTerminalView`
+    // half compiles for both, exactly as patches 1 and 2 mirror their own
+    // helpers into `iOS/iOSExtensions.swift`.
+    public var minimumColumns: Int = 0 {
+        didSet {
+            guard minimumColumns != oldValue else { return }
+            applyMinimumColumnsIfNeeded()
+        }
+    }
+
+    public func applyMinimumColumnsIfNeeded() {
+        guard cellDimension != nil, frame.width > 0, frame.height > 0 else { return }
+        _ = processSizeChange(newSize: frame.size)
+    }
+
     private enum PendingKoreanResyllabificationResult {
         case none
         case prefixReinserted

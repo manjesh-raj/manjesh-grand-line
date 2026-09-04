@@ -121,7 +121,11 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// Scrollback retained per normal-screen terminal. SwiftTerm defaults to 500
     /// lines; a shell session wants much more so history that scrolls off the top
     /// stays reachable.
-    let scrollbackLines = 10_000
+    /// Static so a `TabModel` can restore it after a stint as the
+    /// Kubernetes feed tab (`CockpitTerminalView.applyMachineReadableGeometry`)
+    /// without needing a reference to whichever console owns it.
+    static let interactiveScrollbackLines = 10_000
+    let scrollbackLines = ConsoleController.interactiveScrollbackLines
 
     /// GL-36: lives here rather than in `ConsoleController+LogCapture.swift`
     /// with the rest of Block View, because a Swift extension cannot declare
