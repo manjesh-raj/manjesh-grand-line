@@ -1227,6 +1227,23 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     if (ProcessInfo.processInfo.environment["FM_SCHEDULE_HISTORY_DIR"] ?? "").isEmpty {
         setenv("FM_SCHEDULE_HISTORY_DIR", scratchRoot.appendingPathComponent("schedule-history", isDirectory: true).path, 1)
     }
+    // `fm/grandline-sticky-board`: the same lesson, caught live during this
+    // task's own verification rather than in a later follow-up. Any suite -
+    // including this feature's own `StickyBoardViewSelfTest` - that
+    // constructs a real `StickyBoardController()`/`StickyBoardStore()` via
+    // their production `init()` (no explicit `FM_STICKY_BOARD_DIR`/
+    // `FM_SHIFT_DIR` override of its own) would otherwise reach
+    // `StickyBoardGitSync.shared`, which shares `ShiftGitSync.shared`'s real
+    // production working tree - a real local clone of the captain's actual
+    // `manjesh-config` on this machine. Running `FM_RUN_STICKY_BOARD_VIEW_TESTS`
+    // once, unprotected, left a stray untracked `GrandLineDocs/sticky-board/`
+    // folder sitting in that real clone (never committed or pushed, since the
+    // 3s debounce never fires before a headless suite process exits - but a
+    // real hazard regardless, and the exact class of bug this whole block
+    // exists to close for every present and future suite at once).
+    if (ProcessInfo.processInfo.environment["FM_STICKY_BOARD_DIR"] ?? "").isEmpty {
+        setenv("FM_STICKY_BOARD_DIR", scratchRoot.appendingPathComponent("sticky-board", isDirectory: true).path, 1)
+    }
 }
 
 // `fm/cockpit-sre-lead-shared-terminal`: `swift build && FM_RUN_SRE_LEAD_BRIDGE_TESTS=1
@@ -1952,6 +1969,24 @@ if ProcessInfo.processInfo.environment["FM_RUN_KUBERNETES_DESTINATION_TESTS"] ==
 // pipeline against a scratch file. See HerdrThemeSyncSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_HERDR_THEME_SYNC_TESTS"] == "1" {
     exit(HerdrThemeSyncSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-sticky-board`: the Sticky Board's own persistence/parsing
+// layer - color contrast, the YAML round trip, the GL-01 refuse-to-overwrite
+// guard, the `FM_SHIFT_DIR` fallback, and a real commit+push against a
+// disposable local bare repo landing notes under the new
+// `GrandLineDocs/sticky-board/` folder. See StickyBoardSelfTest.swift's
+// header.
+if ProcessInfo.processInfo.environment["FM_RUN_STICKY_BOARD_TESTS"] == "1" {
+    exit(StickyBoardSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-sticky-board`: the window-backed half - the real destination
+// in a real window, a theme sweep proving the board/chrome (never the
+// notes) tracks the active theme, real synthesized drag mechanics, and a
+// real Toast Undo button click. See StickyBoardViewSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_STICKY_BOARD_VIEW_TESTS"] == "1" {
+    exit(StickyBoardViewSelfTest.run() ? 0 : 1)
 }
 
 #endif

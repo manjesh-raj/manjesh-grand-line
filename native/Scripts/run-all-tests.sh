@@ -144,6 +144,11 @@ NEEDS_SESSION=(
   # and touches the real pasteboard - window-backed for the same reason as
   # FM_RUN_APPKIT_AUDIT_TESTS' own M5/M6 cases.
   "FM_RUN_SCHEDULE_RUN_HISTORY_STATUS_LOG_TESTS"
+  # `fm/grandline-sticky-board`: mounts a real StickyBoardController in a real
+  # window and synthesizes real mouse drag events - window-backed for the
+  # same reason as its Whiteboard/Kubernetes peers above. Its pure-logic half
+  # (FM_RUN_STICKY_BOARD_TESTS) is deliberately not here - that one runs in CI.
+  "FM_RUN_STICKY_BOARD_VIEW_TESTS"
 )
 
 if [ "$CI_MODE" -eq 1 ]; then

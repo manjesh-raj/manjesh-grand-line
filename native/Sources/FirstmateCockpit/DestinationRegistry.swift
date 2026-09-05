@@ -108,7 +108,7 @@ enum DestinationSlotID: String, CaseIterable {
     /// launch landing and the target of every drill page's back button.
     case homeCanvas
     case overview, console, hosts, shift, review, logAnalyzer, kubernetes
-    case tools, whiteboard, vault, dictation, schedules, health, docs, runbooks, postmortems, setup, settings
+    case tools, whiteboard, stickyBoard, vault, dictation, schedules, health, docs, runbooks, postmortems, setup, settings
 }
 
 extension RailDestination {
@@ -125,6 +125,7 @@ extension RailDestination {
         case .kubernetes: return .kubernetes
         case .tools: return .tools
         case .whiteboard: return .whiteboard
+        case .stickyBoard: return .stickyBoard
         case .vault: return .vault
         case .dictation: return .dictation
         case .schedules: return .schedules
@@ -162,6 +163,7 @@ extension RailDestination {
         case .kubernetes: return "Read-only cluster browsing and multi-pod log tailing"
         case .tools: return "Nine offline utilities"
         case .whiteboard: return "An Excalidraw canvas, offline, with AI diagrams"
+        case .stickyBoard: return "A freeform corkboard of quick sticky notes"
         case .vault: return "Secrets and verified launchers - names only"
         case .dictation: return "Speech to text, on this machine"
         case .schedules: return "Unattended runs of actions this app already has"

@@ -522,6 +522,7 @@ final class HomeCanvasController: NSViewController {
         case .dictation: fillDictation(&content)
         case .tools: fillTools(&content)
         case .whiteboard: fillWhiteboard(&content)
+        case .stickyBoard: fillStickyBoard(&content)
         case .settings: fillSettings(&content)
         }
         return content
@@ -974,6 +975,16 @@ final class HomeCanvasController: NSViewController {
     private func fillWhiteboard(_ content: inout HelmModuleCard.Content) {
         content.subtitle = "Excalidraw, offline"
         content.body = .note("Sketch by hand, or describe a diagram and have Claude draw it.")
+    }
+
+    /// Static, like Whiteboard's card right above and for the exact same
+    /// reason: a live note count would mean constructing a `StickyBoardStore`
+    /// from the canvas, which `checkCanvasConstructsNoStores` exists to
+    /// forbid - the canvas never fires a fetch, and a store construction here
+    /// is one, not just a read.
+    private func fillStickyBoard(_ content: inout HelmModuleCard.Content) {
+        content.subtitle = "quick notes"
+        content.body = .note("Jot down a thought on a colored sticky note, anywhere on the board.")
     }
 
     private func fillSettings(_ content: inout HelmModuleCard.Content) {

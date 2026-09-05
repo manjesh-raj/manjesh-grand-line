@@ -109,6 +109,14 @@ import AppKit
 /// (`DaylightSpace.stores`) alongside `.docs`, `.vault` and `.tools` -
 /// `.docs` itself is now the Playbook viewer only. Both are utilities
 /// (`isDailyUse == false`), matching their Stores siblings.
+/// `.stickyBoard` (`fm/grandline-sticky-board`) is a freeform corkboard of
+/// draggable, colored sticky notes for quick thoughts - the captain's own
+/// request. It sits in the Stores space alongside Docs/Tools/Vault/
+/// Dictation/Whiteboard (a quick-notes surface belongs on the same shelf as
+/// the reference material and thinking surfaces it gets used next to), and
+/// is a utility (`isDailyUse == false`) for the same reason those siblings
+/// are: a surface a captain opens when a thought needs somewhere to go, not
+/// one they check in on daily.
 ///
 /// `isDailyUse` (fm/grandline-sidebar-labeled-nav) marks the 6
 /// `navStack` members (Overview, Console, Hosts, Shift, Review, Log
@@ -147,7 +155,7 @@ enum RailDestination: CaseIterable {
     /// reachable through `show(_:)`), so nothing about routing needed a
     /// second concept.
     case homeCanvas
-    case overview, console, hosts, shift, review, logAnalyzer, kubernetes, tools, whiteboard, vault, dictation, schedules, health, docs, runbooks, postmortems, updates, bootstrap, automation, githubSync, settings
+    case overview, console, hosts, shift, review, logAnalyzer, kubernetes, tools, whiteboard, stickyBoard, vault, dictation, schedules, health, docs, runbooks, postmortems, updates, bootstrap, automation, githubSync, settings
 
     var symbol: String {
         switch self {
@@ -185,6 +193,10 @@ enum RailDestination: CaseIterable {
         // canvas is. Verified to resolve (`NSImage(systemSymbolName:)` returns
         // nil silently, and this app has shipped an invisible icon that way).
         case .whiteboard: return "scribble.variable"
+        // `fm/grandline-sticky-board`: a note glyph reads as "a quick thought
+        // written down", distinct from `.docs`' closed book (reference
+        // material) and `.whiteboard`'s scribble (a drawing surface).
+        case .stickyBoard: return "note.text"
         case .vault: return "lock.shield"
         case .dictation: return "waveform"
         // `fm/grandline-schedules-sidebar-move`: a calendar - matches
@@ -221,6 +233,7 @@ enum RailDestination: CaseIterable {
         case .kubernetes: return "Kubernetes"
         case .tools: return "Tools"
         case .whiteboard: return "Whiteboard"
+        case .stickyBoard: return "Sticky Board"
         case .vault: return "Vault"
         case .dictation: return "Dictation"
         case .schedules: return "Schedules"
@@ -277,7 +290,7 @@ enum RailDestination: CaseIterable {
         case .automation: return .accent
         case .githubSync: return .violet
         case .homeCanvas, .overview, .console, .hosts, .shift, .review, .logAnalyzer, .kubernetes,
-             .tools, .whiteboard, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems, .settings: return .accent
+             .tools, .whiteboard, .stickyBoard, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems, .settings: return .accent
         }
     }
 
@@ -290,7 +303,7 @@ enum RailDestination: CaseIterable {
         // (`DaylightModule.kubernetes`), beside Log Analyzer, per the scout
         // report's own placement note.
         case .kubernetes,
-             .tools, .whiteboard, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems,
+             .tools, .whiteboard, .stickyBoard, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems,
              .updates, .bootstrap, .automation, .githubSync, .settings: return false
         }
     }

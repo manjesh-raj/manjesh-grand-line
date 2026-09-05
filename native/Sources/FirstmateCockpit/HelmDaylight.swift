@@ -531,6 +531,11 @@ extension RailDestination {
         // clean-up card), and the Whiteboard's headline capability is the
         // Claude-generated diagram.
         case .whiteboard: return .violet
+        // `fm/grandline-sticky-board`: amber - the warm, paper-note-adjacent
+        // hue this app has not yet given a Stores-space destination of its
+        // own, distinct from Whiteboard's AI-feature violet (Sticky Board has
+        // no AI in it at all).
+        case .stickyBoard: return .amber
         }
     }
 }
