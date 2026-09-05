@@ -58,6 +58,23 @@ final class ShiftMenuBarController: NSObject, NSPopoverDelegate {
             self?.popover.performClose(nil)
             self?.refreshCounts()
         }
+
+        // A theme change while the popover is already open has to reach it
+        // too: `prepareToShow()` sets the appearance, and an already-shown
+        // popover never goes back through there. In practice this popover is
+        // `.transient` and the theme control lives in the main window (so
+        // reaching it dismisses this), which is exactly why the open-time
+        // set is the load-bearing half - but "in practice it cannot happen"
+        // is how the original omission was justified, so this closes it
+        // rather than reasoning about it.
+        //
+        // `ThemeManager.observe` fires synchronously at registration, which
+        // is safe here: `popover` and `contentController` are both stored
+        // `let`s initialised inline, so they exist by the time `init` runs a
+        // single line of its own body.
+        ThemeManager.shared.observe { [weak self] theme in
+            self?.applyTheme(theme)
+        }
         refreshCounts()
     }
 
@@ -75,10 +92,46 @@ final class ShiftMenuBarController: NSObject, NSPopoverDelegate {
             NSSound.beep()
             return
         }
-        refreshCounts()
-        contentController.focusQuickAdd()
+        prepareToShow()
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
     }
+
+    /// Everything an open does before the popover is actually put on screen.
+    /// Split out of `iconClicked` so a self-test can drive the real path
+    /// without needing a live `statusItem.button` (which a headless process
+    /// may not have) and without actually showing a popover.
+    private func prepareToShow() {
+        refreshCounts()
+        contentController.focusQuickAdd()
+        // `ThemeManager.swift`'s checklist item 2, applied to a popover.
+        //
+        // This was the ONE popover in the app that never forced its own
+        // appearance - the avatar popover (`DaylightBarController`), the
+        // notification centre, Claude usage, the Console composer, Recents
+        // and the Whiteboard composer have all done it for years. Without it
+        // every system-semantic colour in this content (`.labelColor` on the
+        // header and both stat rows, the field editor AppKit lends the
+        // quick-add field, the focus ring) resolves against the *OS's* own
+        // light/dark setting rather than the in-app theme - so on a Mac in
+        // system Dark with a light Helm theme selected this popover rendered
+        // near-white text on AppKit's own light vibrant material, and vice
+        // versa. Set on every open rather than once, because the theme can
+        // change between two opens and an `NSPopover` reads its appearance
+        // when it is shown.
+        applyTheme(ThemeManager.shared.theme)
+    }
+
+    /// The one place this popover's appearance and its theme-derived colours
+    /// are set, called both on open and on a live theme change.
+    private func applyTheme(_ theme: HelmTheme) {
+        popover.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+        contentController.applyTheme(theme)
+    }
+
+    #if FM_SELFTESTS
+    var debugPopover: NSPopover { popover }
+    func debugPrepareToShow() { prepareToShow() }
+    #endif
 
     private func createQuickTask(title: String) {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -138,9 +191,15 @@ final class ShiftMenuBarController: NSObject, NSPopoverDelegate {
 
 /// The popover's content: two stat rows + the next follow-up's title + a
 /// quick-add field - built as a plain `NSViewController` rather than a shared
-/// destination controller, since this content never needs theme-following
-/// `NSVisualEffectView` tricks (a popover already gets its own vibrant
-/// background from AppKit for free).
+/// destination controller, since a popover already gets its own vibrant
+/// background from AppKit and needs no `NSVisualEffectView` of its own.
+///
+/// That is where this file's own reasoning used to stop, and it was the bug:
+/// AppKit supplying the *material* says nothing about which side of
+/// light/dark it resolves against. The labels below are deliberately plain
+/// `.labelColor` system-semantic text, so they are correct only once the
+/// popover's appearance is forced to the active theme's mode - which
+/// `ShiftMenuBarController.prepareToShow()` now does on every open.
 private final class ShiftMenuBarPopoverController: NSViewController {
     private let headerLabel = NSTextField(labelWithString: "Tasks")
     private let tasksRow = ShiftMenuBarStatRow(label: "Tasks today")
@@ -189,11 +248,15 @@ private final class ShiftMenuBarPopoverController: NSViewController {
         ])
     }
 
+    /// This controller has no `ThemeManager` observation of its own - the menu
+    /// bar item owns one and calls this, so there is a single place the
+    /// popover's appearance and its content's colours move together.
+    func applyTheme(_ theme: HelmTheme) {
+        nextFollowUpTitle.textColor = HelmTheme.mutedInk(theme)
+    }
+
     func update(tasksToday: Int, nextFollowUp: ShiftFollowUp?, nextFollowUpDate: Date?) {
-        // This popover has no `ThemeManager.observe` of its own (it is rebuilt
-        // from the menu bar item on every open, and `NSPopover` supplies its
-        // own chrome), so its one theme-derived colour is refreshed here.
-        nextFollowUpTitle.textColor = HelmTheme.mutedInk(ThemeManager.shared.theme)
+        applyTheme(ThemeManager.shared.theme)
         tasksRow.setValue("\(tasksToday)")
         if let nextFollowUp, let nextFollowUpDate {
             let f = DateFormatter()

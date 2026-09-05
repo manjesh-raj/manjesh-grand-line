@@ -67,13 +67,24 @@ final class KubeResourceTableView: NSView, NSTableViewDataSource, NSTableViewDel
 
     static let rowHeight: CGFloat = 26
 
-    private let tableView = NSTableView()
+    /// The app's shared table (`HelmTableView`), not a bare `NSTableView`.
+    /// This page was built with a raw one and was the last table in the app
+    /// still drifting from that convention; the shared subclass is what makes
+    /// a selected row activatable from the keyboard the moment a
+    /// `doubleAction` is ever wired here, and it changes nothing today (with
+    /// no `doubleAction` set its `keyDown` falls straight through to
+    /// `NSTableView`'s own). Arrow-key selection already reaches
+    /// `tableViewSelectionDidChange` below, so the describe drawer is already
+    /// keyboard-openable - the swap is about not leaving new code as the one
+    /// exception.
+    private let tableView = HelmTableView()
     private let scroll = NSScrollView()
     private var columns: [Column] = []
     private var rows: [Row] = []
     #if FM_SELFTESTS
     var rowsForTests: [Row] { rows }
     var columnsForTests: [Column] { columns }
+    var tableViewForTests: NSTableView { tableView }
     #endif
     private var theme: HelmTheme = ThemeManager.shared.theme
 
@@ -262,7 +273,11 @@ final class KubeLogListView: NSView, NSTableViewDataSource, NSTableViewDelegate 
 
     static let rowHeight: CGFloat = 17
 
-    private let tableView = NSTableView()
+    /// `HelmTableView` for the same reason the resource table above uses it -
+    /// one table component across the app. This one takes no selection at all
+    /// (`selectionHighlightStyle = .none`), so the shared subclass is purely
+    /// a consistency change here.
+    private let tableView = HelmTableView()
     private let scroll = NSScrollView()
     private var lines: [KubeLogLine] = []
     private var tintForPod: (String) -> HelmTint = { _ in .accent }
@@ -270,6 +285,10 @@ final class KubeLogListView: NSView, NSTableViewDataSource, NSTableViewDelegate 
 
     private static let columnID = NSUserInterfaceItemIdentifier("kubeLogColumn")
     private static let cellID = NSUserInterfaceItemIdentifier("kubeLogCell")
+
+    #if FM_SELFTESTS
+    var tableViewForTests: NSTableView { tableView }
+    #endif
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
