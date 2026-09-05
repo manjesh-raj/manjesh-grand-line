@@ -107,7 +107,10 @@ final class HomeCanvasController: NSViewController {
     private let stack = NSStackView()
     private let greetingLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
-    private let refreshButton = HelmButton(title: "Refresh", variant: .quiet, symbol: "arrow.clockwise")
+    /// A filled accent pill, matching Setup > Updates' own "Refresh" - one
+    /// real, shared, theme-aware definition rather than a page-local muted
+    /// `.quiet` look.
+    private let refreshButton = HelmButton(title: "Refresh", variant: .primary, symbol: "arrow.clockwise")
     private let gridStack = NSStackView()
 
     private var cards: [HelmModuleCard] = []

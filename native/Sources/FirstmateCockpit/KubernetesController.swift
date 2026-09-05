@@ -265,7 +265,10 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
     var pauseButton: HelmButton!
     var errorsOnlyButton: HelmButton!
 
-    let refreshButton = HelmButton(title: "Refresh", variant: .quiet, symbol: "arrow.clockwise")
+    /// A filled accent pill, matching Setup > Updates' own "Refresh" - one
+    /// real, shared, theme-aware definition rather than a page-local muted
+    /// `.quiet` look.
+    let refreshButton = HelmButton(title: "Refresh", variant: .primary, symbol: "arrow.clockwise")
 
     var onDrillSubtitleChanged: (() -> Void)?
 
