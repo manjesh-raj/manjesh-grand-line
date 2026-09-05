@@ -87,9 +87,22 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     // Health were each corrected for exactly this duplication). The captain
     // asked for it explicitly and by name: the board is meant to read as a
     // detective's case file, and the typewriter title plus the "ACTIVE" pill
-    // ARE that identity. It is deliberately well under the 20pt hero floor
-    // `DaylightDrillPageSelfTest` polices, so it reads as a label stuck on
-    // the board rather than a second page title competing with the real one.
+    // ARE that identity. This one *was* deliberately kept well under the 20pt
+    // hero floor `DaylightDrillPageSelfTest` polices - `fm/grandline-sticky-
+    // board-header-size-3x` is the captain's own explicit, second exception
+    // on top of the first: he reviewed the smaller header live and asked for
+    // it at roughly 3x its point size, since a case-file header this small
+    // read as an afterthought next to the board rather than the identity it
+    // is meant to be. `DaylightDrillPageSelfTest`'s general hero-floor sweep
+    // never covered Sticky Board to begin with (it only visits Review and
+    // Tasks); the guard this page actually had to answer to was its own,
+    // narrower one in `StickyBoardViewSelfTest.checkBoardHeader` - updated in
+    // the same commit to assert the new, sanctioned size instead of quietly
+    // widening or deleting it. `buildBoardHeader()`'s own constraints changed
+    // to match: the title now drives the header's own height (it used to be
+    // the other way around, with the small "ACTIVE" pill's fixed 16pt height
+    // setting the header's height and the title merely centred inside it,
+    // which only worked because the title was smaller than the pill's box).
     private let boardHeader = NSView()
     private let boardTitle = NSTextField(labelWithString: "CASE: MY THOUGHTS")
     private let statusPill = NSView()
@@ -205,6 +218,13 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         onDrillSubtitleChanged?()
     }
 
+    /// The title's designed point size, and the multiplier the captain asked
+    /// for live (roughly 3x the original 15pt). Kept as named constants
+    /// rather than an inline `45` so the "roughly 3x" relationship the
+    /// self-test checks for is legible at both ends, not just asserted.
+    private static let boardTitleBasePointSize: CGFloat = 15
+    private static let boardTitleScale: CGFloat = 3
+
     /// The case-file header: a typewriter title and a live status pill. See
     /// the property declarations above for why a second in-page title is a
     /// sanctioned exception here specifically.
@@ -213,42 +233,59 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         boardHeader.wantsLayer = true
 
         boardTitle.translatesAutoresizingMaskIntoConstraints = false
-        boardTitle.font = StickyFont.typewriter(HelmType.scaled(15))
+        boardTitle.font = StickyFont.typewriter(HelmType.scaled(Self.boardTitleBasePointSize * Self.boardTitleScale))
         boardHeader.addSubview(boardTitle)
 
         statusPill.translatesAutoresizingMaskIntoConstraints = false
         statusPill.wantsLayer = true
-        statusPill.layer?.cornerRadius = 8
+        statusPill.layer?.cornerRadius = 13
         statusPill.layer?.borderWidth = 1
         boardHeader.addSubview(statusPill)
 
         statusDot.translatesAutoresizingMaskIntoConstraints = false
         statusDot.wantsLayer = true
-        statusDot.layer?.cornerRadius = 3
+        statusDot.layer?.cornerRadius = 4.5
         statusPill.addSubview(statusDot)
 
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         statusPill.addSubview(statusLabel)
 
         NSLayoutConstraint.activate([
+            // The title now drives `boardHeader`'s own height with a required
+            // top+bottom pin, rather than a `>=` against a header whose
+            // height a small, fixed-size pill used to set. A `>=` here (the
+            // pre-3x shape) only worked because the title's natural height
+            // was already smaller than the pill's fixed box; at 3x the title
+            // is by far the taller element, and a `>=` paired with a
+            // required `centerYAnchor` would have left AutoLayout resolving
+            // the conflict by silently compressing the title's own frame
+            // below its real line height (this app's AppKit gotcha
+            // catalogue's own "vertical compression, not a visible warning"
+            // failure mode) rather than growing the header to fit it.
             boardTitle.leadingAnchor.constraint(equalTo: boardHeader.leadingAnchor),
-            boardTitle.centerYAnchor.constraint(equalTo: boardHeader.centerYAnchor),
-            boardTitle.topAnchor.constraint(greaterThanOrEqualTo: boardHeader.topAnchor),
+            boardTitle.topAnchor.constraint(equalTo: boardHeader.topAnchor),
+            boardTitle.bottomAnchor.constraint(equalTo: boardHeader.bottomAnchor),
 
-            statusPill.leadingAnchor.constraint(equalTo: boardTitle.trailingAnchor, constant: HelmMetrics.s2),
+            // The pill stays a compact badge - scaled up a little for
+            // proportion against the much taller title (16 -> 26pt, its
+            // corner radius kept at exactly half its height for the same
+            // capsule shape), not tripled itself, which would read as a
+            // second oversized element competing with the title rather than
+            // a small status badge beside it. Centred on the title's own
+            // vertical midpoint, since the header's height is the title's
+            // now.
+            statusPill.leadingAnchor.constraint(equalTo: boardTitle.trailingAnchor, constant: HelmMetrics.s3),
             statusPill.trailingAnchor.constraint(equalTo: boardHeader.trailingAnchor),
-            statusPill.centerYAnchor.constraint(equalTo: boardHeader.centerYAnchor),
-            statusPill.topAnchor.constraint(equalTo: boardHeader.topAnchor),
-            statusPill.bottomAnchor.constraint(equalTo: boardHeader.bottomAnchor),
-            statusPill.heightAnchor.constraint(equalToConstant: 16),
+            statusPill.centerYAnchor.constraint(equalTo: boardTitle.centerYAnchor),
+            statusPill.heightAnchor.constraint(equalToConstant: 26),
 
-            statusDot.leadingAnchor.constraint(equalTo: statusPill.leadingAnchor, constant: 6),
+            statusDot.leadingAnchor.constraint(equalTo: statusPill.leadingAnchor, constant: 9),
             statusDot.centerYAnchor.constraint(equalTo: statusPill.centerYAnchor),
-            statusDot.widthAnchor.constraint(equalToConstant: 6),
-            statusDot.heightAnchor.constraint(equalToConstant: 6),
+            statusDot.widthAnchor.constraint(equalToConstant: 9),
+            statusDot.heightAnchor.constraint(equalToConstant: 9),
 
-            statusLabel.leadingAnchor.constraint(equalTo: statusDot.trailingAnchor, constant: 4),
-            statusLabel.trailingAnchor.constraint(equalTo: statusPill.trailingAnchor, constant: -7),
+            statusLabel.leadingAnchor.constraint(equalTo: statusDot.trailingAnchor, constant: 6),
+            statusLabel.trailingAnchor.constraint(equalTo: statusPill.trailingAnchor, constant: -10),
             statusLabel.centerYAnchor.constraint(equalTo: statusPill.centerYAnchor),
         ])
     }
@@ -451,7 +488,7 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         let dark = theme.mode == .dark
         let cork = HelmTheme.nsColor(StickyBoardCork.baseHex(dark: dark))
         let ink = HelmContrast.legibleOn(fill: cork, preferring: dark ? .white : .black)
-        boardTitle.font = StickyFont.typewriter(HelmType.scaled(15))
+        boardTitle.font = StickyFont.typewriter(HelmType.scaled(Self.boardTitleBasePointSize * Self.boardTitleScale))
         boardTitle.textColor = ink
 
         let tintHex = statusTint.hex(in: theme)
