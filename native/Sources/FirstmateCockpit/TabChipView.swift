@@ -126,7 +126,7 @@ final class TabChipView: NSView, NSTextFieldDelegate {
         label.drawsBackground = false
         label.backgroundColor = .clear
         label.focusRingType = .none
-        label.font = .systemFont(ofSize: 13)
+        label.font = .systemFont(ofSize: HelmType.scaled(13))
         label.lineBreakMode = .byTruncatingTail
         label.cell?.truncatesLastVisibleLine = true
         label.delegate = self
@@ -318,7 +318,7 @@ final class TabChipView: NSView, NSTextFieldDelegate {
             let size = HelmType.scaled(13)
             label.font = daylight
                 ? HelmType.rounded(size, selected ? .semibold : .medium)
-                : .systemFont(ofSize: 13, weight: selected ? .semibold : .regular)
+                : .systemFont(ofSize: HelmType.scaled(13), weight: selected ? .semibold : .regular)
         }
         closeButton.contentTintColor = selected ? selectedInk : muted
         refreshForwardDragsIndicator()

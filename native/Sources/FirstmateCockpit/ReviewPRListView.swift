@@ -221,7 +221,9 @@ final class ReviewPRListView: NSView {
     /// this file only - `HelmAccentRow`'s own padding constants are shared
     /// by Shift's task/follow-up lists, the notification panel, and the
     /// Hosts/Keys/Snippets lists, so they were deliberately left untouched.
-    static let rowHeight: CGFloat = 64
+    /// Measured at chrome text scale 1.0 - see `HelmType.scaledRowHeight`.
+    static let baseRowHeight: CGFloat = 64
+    static var rowHeight: CGFloat { HelmType.scaledRowHeight(baseRowHeight) }
     static let rowSpacing: CGFloat = 8
     static let emptyRowHeight: CGFloat = 140
 
@@ -315,6 +317,14 @@ final class ReviewPRListView: NSView {
     /// PRs are shown, so this only reloads (never recomputes height).
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
+        // GL-32 (audit §6.1): a chrome-text-scale change arrives as an
+        // app-wide theme re-fire, so re-deriving the row height here is what
+        // makes a fixed-height list actually grow with the setting instead of
+        // clipping its descenders at "Larger".
+        tableView.rowHeight = Self.rowHeight
+        // The table is sized to its whole content (the page's own scroll view
+        // does the scrolling), so a taller row means a taller table.
+        recomputeHeight()
         tableView.reloadData()
     }
 

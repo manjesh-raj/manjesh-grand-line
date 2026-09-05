@@ -287,7 +287,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
     }
 
     private func attentionBannerView() -> NSView {
-        attentionLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        attentionLabel.font = .systemFont(ofSize: HelmType.scaled(12), weight: .medium)
         attentionLabel.translatesAutoresizingMaskIntoConstraints = false
 
         attentionIcon.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)?
@@ -395,7 +395,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
             actions: [buttonsRow]
         )
 
-        recipeDetailLabel.font = .systemFont(ofSize: 11.5)
+        recipeDetailLabel.font = HelmType.caption()
         recipeDetailLabel.preferredMaxLayoutWidth = 700
         // A neutral placeholder - `refreshRecipeStatusFromDisk()` replaces
         // this with a real "Last exported to <repo> N days ago" (read from
@@ -970,15 +970,15 @@ final class VaultSaveSecretSheetController: NSViewController {
         }
 
         let title = NSTextField(labelWithString: "Save a new secret")
-        title.font = .systemFont(ofSize: 14, weight: .semibold)
+        title.font = .systemFont(ofSize: HelmType.scaled(14), weight: .semibold)
 
         let help = NSTextField(wrappingLabelWithString: "Only the name is sent here. Automic Vault will prompt for the value directly in a real terminal - Grand Line never sees it.")
-        help.font = .systemFont(ofSize: 11)
+        help.font = .systemFont(ofSize: HelmType.scaled(11))
         help.textColor = HelmTheme.mutedInk(ThemeManager.shared.theme)
         help.preferredMaxLayoutWidth = 320
 
 
-        errorLabel.font = .systemFont(ofSize: 10.5)
+        errorLabel.font = HelmType.captionSmall()
         errorLabel.textColor = .systemRed
         errorLabel.isHidden = true
 
@@ -1085,10 +1085,10 @@ final class VaultRecipeChecklistSheetController: NSViewController {
         }
 
         let title = NSTextField(labelWithString: "Replay Checklist")
-        title.font = .systemFont(ofSize: 15, weight: .semibold)
+        title.font = HelmType.sectionTitle()
 
         let help = NSTextField(wrappingLabelWithString: "Compared against the recipe backup from \(generatedAt). \u{201c}Missing\u{201d} items were recorded before but aren\u{2019}t true right now - re-save the secret or re-harden the tool from its real source; this app never invents a value.")
-        help.font = .systemFont(ofSize: 11)
+        help.font = .systemFont(ofSize: HelmType.scaled(11))
         help.textColor = HelmTheme.mutedInk(ThemeManager.shared.theme)
         help.preferredMaxLayoutWidth = 440
 
@@ -1100,7 +1100,7 @@ final class VaultRecipeChecklistSheetController: NSViewController {
 
         if items.isEmpty {
             let empty = NSTextField(labelWithString: "No secrets or hardened tools recorded in the backup or right now.")
-            empty.font = .systemFont(ofSize: 11.5)
+            empty.font = HelmType.caption()
             empty.textColor = HelmTheme.mutedInk(ThemeManager.shared.theme)
             listStack.addArrangedSubview(empty)
         } else {
@@ -1169,15 +1169,15 @@ final class VaultRecipeChecklistSheetController: NSViewController {
 
     private func checklistRow(_ item: VaultRecipeChecklistItem) -> NSView {
         let kindLabel = NSTextField(labelWithString: item.kind == .secret ? "Secret" : "Tool")
-        kindLabel.font = .systemFont(ofSize: 9.5, weight: .medium)
+        kindLabel.font = .systemFont(ofSize: HelmType.scaled(9.5), weight: .medium)
         kindLabel.textColor = HelmTheme.mutedInk(theme)
 
         let nameLabel = NSTextField(labelWithString: item.name)
-        nameLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        nameLabel.font = .systemFont(ofSize: HelmType.scaled(12), weight: .medium)
 
         let (statusText, statusColorHex) = statusVisuals(item.status)
         let statusLabel = NSTextField(labelWithString: statusText)
-        statusLabel.font = .systemFont(ofSize: 11, weight: .semibold)
+        statusLabel.font = .systemFont(ofSize: HelmType.scaled(11), weight: .semibold)
         statusLabel.textColor = HelmTheme.nsColor(statusColorHex)
 
         let topRow = NSStackView(views: [kindLabel, nameLabel])
@@ -1188,7 +1188,7 @@ final class VaultRecipeChecklistSheetController: NSViewController {
         var rowViews: [NSView] = [topRow]
         if let detail = item.detail {
             let detailLabel = NSTextField(labelWithString: "Launchers: \(detail)")
-            detailLabel.font = .systemFont(ofSize: 10.5)
+            detailLabel.font = HelmType.captionSmall()
             detailLabel.textColor = HelmTheme.mutedInk(theme)
             rowViews.append(detailLabel)
         }
@@ -1263,10 +1263,10 @@ final class VaultInjectSheetController: NSViewController {
         }
 
         let title = NSTextField(labelWithString: "Run with a secret injected")
-        title.font = .systemFont(ofSize: 14, weight: .semibold)
+        title.font = .systemFont(ofSize: HelmType.scaled(14), weight: .semibold)
 
         let help = NSTextField(wrappingLabelWithString: "Runs \u{201c}av inject +SECRET -- command\u{201d} in a Console tab, so any output or approval prompt is visible directly - never captured by this app.")
-        help.font = .systemFont(ofSize: 11)
+        help.font = .systemFont(ofSize: HelmType.scaled(11))
         help.textColor = HelmTheme.mutedInk(ThemeManager.shared.theme)
         help.preferredMaxLayoutWidth = 340
 
@@ -1279,7 +1279,7 @@ final class VaultInjectSheetController: NSViewController {
         secretPopup.translatesAutoresizingMaskIntoConstraints = false
 
 
-        errorLabel.font = .systemFont(ofSize: 10.5)
+        errorLabel.font = HelmType.captionSmall()
         errorLabel.textColor = .systemRed
         errorLabel.isHidden = true
         if secretNames.isEmpty {

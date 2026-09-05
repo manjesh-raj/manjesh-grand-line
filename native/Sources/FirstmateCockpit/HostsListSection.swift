@@ -99,7 +99,9 @@ final class HostsListSection: NSObject, NSTableViewDataSource, NSTableViewDelega
     /// app's shared type scale (measured for `ShiftListViews`, same three text
     /// lines); the cell insets it by 1pt top and bottom, and `intercellSpacing`
     /// below supplies the gap *between* cards rather than padding inside them.
-    static let recordRowHeight: CGFloat = 78
+    /// Measured at chrome text scale 1.0 - see `HelmType.scaledRowHeight`.
+    static let baseRecordRowHeight: CGFloat = 78
+    static var recordRowHeight: CGFloat { HelmType.scaledRowHeight(baseRecordRowHeight) }
     static let groupRowHeight: CGFloat = 26
     /// The floor for an empty state; it otherwise grows to fill whatever is
     /// left of the card body, so "nothing here yet" is centred in the space it
@@ -172,6 +174,11 @@ final class HostsListSection: NSObject, NSTableViewDataSource, NSTableViewDelega
         // Every cell carries theme-derived colours that do not re-derive
         // themselves, so the list is rebuilt rather than relying on system
         // semantic colours re-resolving against a forced appearance.
+        // GL-32 (audit §6.1): a chrome-text-scale change arrives as an
+        // app-wide theme re-fire, so re-deriving the row height here is what
+        // makes a fixed-height list actually grow with the setting instead of
+        // clipping its descenders at "Larger".
+        table.rowHeight = Self.recordRowHeight
         table.reloadData()
     }
 

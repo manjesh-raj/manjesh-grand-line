@@ -43,7 +43,9 @@ final class DictationHistoryListView: NSObject {
     /// carries a kicker line over the transcript and its own card insets.
     /// Measured from `HelmAccentRow`'s own fitting height plus the 2pt the row
     /// view insets it by, the same way Shift's two lists arrived at 78.
-    static let rowHeight: CGFloat = 78
+    /// Measured at chrome text scale 1.0 - see `HelmType.scaledRowHeight`.
+    static let baseRowHeight: CGFloat = 78
+    static var rowHeight: CGFloat { HelmType.scaledRowHeight(baseRowHeight) }
 
     private static let columnID = NSUserInterfaceItemIdentifier("dictationHistoryCol")
     private static let rowViewID = NSUserInterfaceItemIdentifier("dictationHistoryRow")
@@ -71,6 +73,11 @@ final class DictationHistoryListView: NSObject {
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
+        // GL-32 (audit §6.1): a chrome-text-scale change arrives as an
+        // app-wide theme re-fire, so re-deriving the row height here is what
+        // makes a fixed-height list actually grow with the setting instead of
+        // clipping its descenders at "Larger".
+        tableView.rowHeight = Self.rowHeight
         tableView.reloadData()
     }
 }
@@ -250,7 +257,7 @@ final class VocabularyChipView: NSView {
         layer?.cornerRadius = 11
 
         label.stringValue = word
-        label.font = .systemFont(ofSize: 11.5, weight: .medium)
+        label.font = .systemFont(ofSize: HelmType.scaled(11.5), weight: .medium)
         label.translatesAutoresizingMaskIntoConstraints = false
 
         removeButton.title = ""

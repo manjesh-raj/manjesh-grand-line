@@ -308,6 +308,33 @@ enum HelmType {
     /// `ChromeTextScale` a real setting rather than a stored number nothing
     /// reads - and what makes the floor impossible to bypass by adding a new
     /// role here.
+    /// A fixed table `rowHeight` that grows with the chrome text scale
+    /// (GL-32's second remaining half, audit §6.1).
+    ///
+    /// Every list in this app that renders `HelmAccentRow`-style cards uses a
+    /// fixed row height rather than `usesAutomaticRowHeights` - deliberately,
+    /// for the demand-driven-table reasons those files document. But those
+    /// heights were all measured at scale 1.0, so at "Larger" the text inside
+    /// grows and the row does not: descenders clip, exactly the way the
+    /// 74 -> 78pt Shift fix already proved once at a *fixed* scale.
+    ///
+    /// `base` is the height measured at scale 1.0. Multiplying the whole row
+    /// - rather than only the text's share of it - over-estimates slightly,
+    /// because a row's fixed insets do not actually need to grow. That is the
+    /// safe direction: the cost is a few points of extra padding at the two
+    /// larger steps, and the alternative (splitting each row's height into
+    /// text and chrome) would need a per-caller constant that could drift
+    /// from the layout it describes.
+    ///
+    /// A caller must re-read this whenever the scale can have changed. Every
+    /// list here does that from its own `applyTheme(_:)`, because a scale
+    /// change already fires an app-wide theme re-fire - the same fan-out
+    /// `ChromeTextScale`'s own header describes, rather than a second
+    /// observation per list.
+    static func scaledRowHeight(_ base: CGFloat) -> CGFloat {
+        base * ChromeTextScale.shared.scale
+    }
+
     static func scaled(_ points: CGFloat) -> CGFloat {
         let scale = ChromeTextScale.shared.scale
         return max(minimumUIPointSize * scale, points * scale)

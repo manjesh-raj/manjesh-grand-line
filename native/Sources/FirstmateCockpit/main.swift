@@ -1932,6 +1932,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_INCIDENT_RESUME_TESTS"] == "1" {
     exit(IncidentResumeSelfTest.run() ? 0 : 1)
 }
 
+// GL-32's row-height half (audit §6.1). Pure measurement - no window - so it
+// runs in CI alongside the other arithmetic suites.
+if ProcessInfo.processInfo.environment["FM_RUN_TEXT_SCALE_ROW_HEIGHT_TESTS"] == "1" {
+    exit(TextScaleRowHeightSelfTest.run() ? 0 : 1)
+}
+
 // F5's command-palette providers: every domain's matching, the grouping the
 // mockup shows, the "never send a half-substituted command" rule, and the
 // source guards that keep the destructive-command gate a single definition the
