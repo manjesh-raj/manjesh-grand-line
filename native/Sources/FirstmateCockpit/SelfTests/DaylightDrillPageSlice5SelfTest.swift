@@ -597,35 +597,64 @@ enum DaylightDrillPageSlice5SelfTest {
             ok = false
             return
         }
-        row.applyTheme(daylight)
         rowView.frame = NSRect(x: 0, y: 0, width: 520, height: DictationHistoryListView.rowHeight)
-        rowView.layoutSubtreeIfNeeded()
 
-        let geometry = row.debugGeometry()
-        // The load-bearing assertion: neutral, not a semantic hue. `.critical`
-        // or `.warn` here would paint an alert bar on every row of a benign
-        // list in the twelve palettes that resolve those tints literally.
-        let neutral = HelmTheme.nsColor(HelmTint.neutral.hex(in: daylight))
-        if !sameColor(geometry.barColor, neutral) {
-            print("  FAIL a history row's accent bar is not the neutral tint "
-                  + "(\(String(describing: geometry.barColor)) vs \(neutral)) - a past "
-                  + "transcription has no state to signal, and a semantic hue here reads as "
-                  + "an alert on every row of a benign list")
-            ok = false
-        }
-        for badHue in [HelmTint.critical, .warn, .good] {
-            let bad = HelmTheme.nsColor(badHue.hex(in: daylight))
-            if sameColor(bad, neutral) { continue }
-            if sameColor(geometry.barColor, bad) {
-                print("  FAIL a history row paints its accent bar with the \(badHue) tint")
+        // Audit §6.9: the row carries an *identity* hue now, so the contract
+        // has two halves and only both together are worth asserting.
+        //
+        //   Daylight - the bar is this page's own rose. Before `domainHue`
+        //   existed the row passed `.neutral` outright and lost its hue here.
+        //
+        //   Any legacy palette - the bar is `.neutral`. This is the load-
+        //   bearing safety half: resolving a domain hue through
+        //   `HelmDomainHue.fallbackTint` maps rose to `.critical`, which would
+        //   paint a red alert bar on every row of a benign history list on all
+        //   twelve pre-Daylight palettes.
+        //
+        // Neither half alone catches both regressions: asserting only Daylight
+        // passes with an alarming legacy fallback, and asserting only legacy is
+        // what the pre-`domainHue` code already did.
+        // Both expectations come from somewhere *other* than the function
+        // under test. Deriving the Daylight one from `identityHex` itself made
+        // this check vacuous - reverting `identityHex` to the pre-fix "always
+        // neutral" body moved expected and actual together and the assertion
+        // still passed. `daylightH1ForTests` is the §2.2 table value verbatim,
+        // which is exactly what that accessor exists for.
+        let roseIdentity = HelmDomainHue.rose.daylightH1ForTests
+        for (theme, expectedHex, why) in [
+            (daylight, roseIdentity, "Dictation's own rose (§2.2 identity)"),
+            (otherTheme, HelmTint.neutral.hex(in: otherTheme), "neutral (no identity vocabulary here)"),
+        ] {
+            row.applyTheme(theme)
+            rowView.layoutSubtreeIfNeeded()
+            let geometry = row.debugGeometry()
+            let expected = HelmTheme.nsColor(expectedHex)
+            if !sameColor(geometry.barColor, expected) {
+                print("  FAIL on \(theme.id) a history row's accent bar is "
+                      + "\(String(describing: geometry.barColor)), want \(expected) - \(why)")
+                ok = false
+            }
+            // A past transcription has no state, so no semantic slot may ever
+            // be what the bar resolves to - on either register.
+            for badHue in [HelmTint.critical, .warn, .good] {
+                let bad = HelmTheme.nsColor(badHue.hex(in: theme))
+                if sameColor(bad, expected) { continue }
+                if sameColor(geometry.barColor, bad) {
+                    print("  FAIL on \(theme.id) a history row paints its accent bar with the "
+                          + "\(badHue) tint - a benign list must not signal an alert")
+                    ok = false
+                }
+            }
+            if geometry.barFrame.height <= 0 || row.frame.width <= 0 {
+                print("  FAIL on \(theme.id) the history row resolved to an empty frame "
+                      + "(row \(row.frame), bar \(geometry.barFrame))")
                 ok = false
             }
         }
-        if geometry.barFrame.height <= 0 || row.frame.width <= 0 {
-            print("  FAIL the history row resolved to an empty frame "
-                  + "(row \(row.frame), bar \(geometry.barFrame))")
-            ok = false
-        }
+
+        // Back to Daylight for the geometry assertions below.
+        row.applyTheme(daylight)
+        rowView.layoutSubtreeIfNeeded()
         // The row must fit the height the table gives it, or the card clips.
         let fitting = row.fittingSize.height
         if fitting > DictationHistoryListView.rowHeight {
@@ -639,7 +668,7 @@ enum DaylightDrillPageSlice5SelfTest {
             print("  FAIL the restyled history row lost its delete action")
             ok = false
         }
-        if ok { print("  OK - history rows are §6.5 rows, neutral-tinted, delete intact") }
+        if ok { print("  OK - history rows carry Dictation's rose on Daylight and stay neutral elsewhere") }
     }
 
     // MARK: 7. The playbook web view, untouched inside its card (§7)

@@ -1530,6 +1530,31 @@ final class HelmAccentRow: NSView {
         /// Drives the accent bar, the badge and the card border: the row's
         /// single "what kind of thing is this" signal.
         var tint: HelmTint
+
+        /// An **identity** hue for the bar / badge / border: "this row belongs
+        /// to that area of the app", as opposed to `tint`'s "this row is in
+        /// that state".
+        ///
+        /// Audit §6.9's "the documented shape that would fix it properly". A
+        /// row that wants to carry its page's Daylight hue had no clean way to
+        /// say so: `Content` deals in `HelmTint`, and routing a domain hue
+        /// through `HelmDomainHue.fallbackTint` paints the theme's *semantic*
+        /// slot on the twelve pre-Daylight palettes - so Dictation's `.rose`
+        /// became `.critical` and put a red alert bar on every row of a benign
+        /// history list. Dictation settled for `.neutral` everywhere to avoid
+        /// that, losing its hue on Daylight too; this field is what lets it
+        /// keep both.
+        ///
+        /// Resolution is `HelmDomainHue.identityHex(in:)` - the §2.2 hue on
+        /// Daylight, `.neutral` elsewhere - see that method for why the legacy
+        /// fallback is uniformly neutral rather than selectively semantic.
+        ///
+        /// Precedence, most specific first: `tintHex` (a literal the *captain*
+        /// chose) beats `domainHue` (an identity the *app* assigns) beats
+        /// `tint` (a state the row is in). A caller sets exactly one; the order
+        /// only exists so the combination is defined rather than surprising.
+        var domainHue: HelmDomainHue? = nil
+
         /// Rendered uppercase and kern'd in `mutedInk`. Never tinted.
         var kicker: String
         /// The row's headline. Ignored when the row was built with a
@@ -1593,9 +1618,21 @@ final class HelmAccentRow: NSView {
         /// that opted in on all thirteen themes at once.
         var isSignal: Bool = false
 
-        /// The hue actually painted: the literal override when set, else the
-        /// semantic tint resolved against `theme`.
-        func resolvedTintHex(in theme: HelmTheme) -> String { tintHex ?? tint.hex(in: theme) }
+        /// The hue actually painted: the literal override when set, then an
+        /// identity hue, else the semantic tint resolved against `theme`.
+        func resolvedTintHex(in theme: HelmTheme) -> String {
+            if let tintHex { return tintHex }
+            if let domainHue { return domainHue.identityHex(in: theme) }
+            return tint.hex(in: theme)
+        }
+
+        /// The `HelmTint` the flat (non-Daylight) `IconTileView` badge takes.
+        ///
+        /// A badge is tinted by `HelmTint`, not by a hex, so a row carrying a
+        /// `domainHue` needs the same "identity has no semantic slot here"
+        /// answer `identityHex` gives the bar - otherwise the bar would go
+        /// neutral while the badge beside it stayed alarming.
+        var resolvedBadgeTint: HelmTint { domainHue == nil ? tint : .neutral }
     }
 
     // MARK: Geometry - `NotificationRowView`'s, promoted
@@ -1966,7 +2003,7 @@ final class HelmAccentRow: NSView {
         if let badge {
             badge.isHidden = content.badgeSymbol == nil
             if let symbol = content.badgeSymbol {
-                badge.configure(symbol: symbol, tint: content.tint, pointSize: 11)
+                badge.configure(symbol: symbol, tint: content.resolvedBadgeTint, pointSize: 11)
             }
         }
         if let gradientBadge, let symbol = content.badgeSymbol {
@@ -1975,6 +2012,10 @@ final class HelmAccentRow: NSView {
             // to the matching §2.2 hue.
             if let hex = content.tintHex {
                 gradientBadge.configure(symbol: symbol, literalHex: hex)
+            } else if let hue = content.domainHue {
+                // An identity hue is already a `HelmDomainHue`; this path is
+                // Daylight-only, so it needs no `identityHex` fallback.
+                gradientBadge.configure(symbol: symbol, hue: hue)
             } else {
                 gradientBadge.configure(symbol: symbol, hue: HelmDomainHue(tint: content.tint))
             }

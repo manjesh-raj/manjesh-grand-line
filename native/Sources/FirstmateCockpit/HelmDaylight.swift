@@ -474,6 +474,35 @@ enum HelmDomainHue: String, CaseIterable {
     /// or a primary button uses when it wants this hue without a gradient.
     func baseColor(in theme: HelmTheme) -> NSColor { pair(in: theme).h1 }
 
+    /// This hue as a row's **identity** colour: the §2.2 hue on Daylight, and
+    /// `HelmTint.neutral` on every pre-Daylight palette.
+    ///
+    /// Deliberately *not* `pair(in:)`/`baseColor(in:)`, and the difference is
+    /// the whole reason this exists. Those resolve a hue for a surface the
+    /// caller wants *coloured* - a gradient tile, a ribbon, a primary button -
+    /// so borrowing the theme's own `fallbackTint` slot is right there. A row's
+    /// accent bar is different: on a pre-Daylight palette that bar's vocabulary
+    /// is purely semantic, so borrowing the slot turns an identity into a
+    /// claim. Dictation is the worked example - its domain hue is `.rose`,
+    /// whose `fallbackTint` is `.critical`, so a benign list of past
+    /// transcriptions would render a red alert bar on every row in the twelve
+    /// legacy palettes.
+    ///
+    /// **Why uniformly neutral rather than "keep the benign ones."** It is
+    /// tempting to fall back to `fallbackTint` for hues whose slot reads
+    /// harmlessly (`.teal` -> `.accent`, `.blue` -> `.info`) and only divert
+    /// `.amber`/`.rose`. That rule cannot be stated honestly: `.good` says
+    /// healthy and `.info` says noteworthy, and a row carrying an identity is
+    /// asserting neither. A palette with no identity vocabulary has exactly one
+    /// slot that claims nothing, and this returns it - so the fallback is
+    /// quieter than today's colour rather than differently wrong.
+    ///
+    /// The result is monotone: adopting this can only ever remove a false
+    /// signal from a legacy palette, never add one.
+    func identityHex(in theme: HelmTheme) -> String {
+        theme.isDaylight ? daylightPair.h1 : HelmTint.neutral.hex(in: theme)
+    }
+
     /// Direction for a ribbon: left to right (`90deg` in the prototype's CSS).
     static let ribbonStart = CGPoint(x: 0, y: 0.5)
     static let ribbonEnd = CGPoint(x: 1, y: 0.5)

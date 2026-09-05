@@ -158,13 +158,19 @@ private final class DictationHistoryRowView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     func configure(entry: DictationHistoryEntry, theme: HelmTheme) {
-        // `.neutral` rather than a semantic hue: a past transcription is not a
-        // state - nothing about it is healthy, failing or overdue - and a red
-        // or amber bar on every history row would read as an alert on the
-        // twelve palettes that resolve those tints literally. Under Daylight
-        // `HelmDomainHue(tint: .neutral)` is slate, which is the honest
-        // "carries no signal" plate for the same reason.
+        // An *identity* hue, not a semantic one: a past transcription is not a
+        // state - nothing about it is healthy, failing or overdue - so no
+        // `HelmTint` describes it honestly. `domainHue` (audit §6.9) resolves
+        // to this page's own rose under Daylight and to `.neutral` on the
+        // twelve legacy palettes, which is what lets the row read as
+        // Dictation's without a red alert bar on every entry there.
+        //
+        // Before that field existed this row passed `.neutral` outright and
+        // lost its hue on Daylight too; `tint` below is now only the value
+        // `domainHue` overrides, kept as the honest answer for any future
+        // palette that resolves neither.
         row.configure(.init(tint: .neutral,
+                            domainHue: RailDestination.dictation.domainHue,
                             kicker: DictationRelativeTime.string(from: entry.date),
                             title: entry.text,
                             meta: DictationRelativeTime.duration(entry.durationSeconds),

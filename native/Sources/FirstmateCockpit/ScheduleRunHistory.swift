@@ -105,7 +105,44 @@ struct ScheduleRunHistoryEntry: Codable, Equatable, Identifiable {
         self.verdict = verdict
         self.summary = summary
         self.actionTitle = actionTitle
-        self.log = Self.truncated(log)
+        self.log = Self.sanitized(log)
+    }
+
+    /// The one place a run's log is prepared for disk: redact first, then
+    /// bound. Both halves are here, in the single initializer every entry is
+    /// constructed through, so no `ScheduleActions` call site can produce an
+    /// entry that skipped either - the same "make the boundary structural, not
+    /// a convention" posture `IncidentStore` takes for its own artifacts.
+    ///
+    /// **Redaction (audit 5.7).** A scheduled run's log is real `brew`/`gh`/
+    /// `git` output, captured unattended and then rendered in the history
+    /// sheet's "View Log" - a surface built to be read and screen-shared. That
+    /// output can carry a token in a remote URL, an `Authorization:` header
+    /// echoed by a verbose client, or a `password=` in a connection string, so
+    /// it goes through `LogRedactor` - the app's single raw-text boundary
+    /// (Log Analyzer evidence and `IncidentStore`'s transcripts already use
+    /// it) - rather than a second redaction pass invented here.
+    ///
+    /// **Order is deliberate: redact, then truncate.** Truncating first would
+    /// bound the string at an arbitrary character, and a credential straddling
+    /// that cut can survive as a partial value the patterns no longer match.
+    /// Redacting the whole input first cannot leave a half-masked secret
+    /// behind, and the cost is a handful of pre-compiled regexes over one
+    /// subprocess's output a few times a day.
+    ///
+    /// `LogRedactor.redact` is idempotent (it skips anything already carrying
+    /// `placeholder`), so an entry re-encoded through this path is stable.
+    ///
+    /// Deliberately *not* also hooked into `Decodable`: an entry an older
+    /// build already wrote unredacted stays as it is on disk (including
+    /// through a trim's rewrite) rather than being rewritten under the
+    /// reader's feet. `retentionWindow` ages every such line out within a
+    /// week, and a synthesized decoder keeps this struct free of the
+    /// hand-written-`init(from:)` maintenance the audit's 4.8 landmine is
+    /// about.
+    private static func sanitized(_ log: String?) -> String? {
+        guard let log, !log.isEmpty else { return log }
+        return truncated(LogRedactor.redact(log).text)
     }
 
     /// A run's real command output can run to tens of KB across a dozen
