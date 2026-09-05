@@ -136,6 +136,11 @@ NEEDS_SESSION=(
   # live web content process. FM_RUN_WHITEBOARD_TESTS covers the logic half and
   # does run in CI.
   "FM_RUN_WHITEBOARD_VIEW_TESTS"
+  # Mounts a real WKWebView loading the vendored Monaco bundle, reads Monaco's
+  # own tokenizer output back and measures the hidden-view gating - needs a
+  # window server and a live web content process. FM_RUN_CODE_PREVIEW_TESTS
+  # covers the logic half and does run in CI.
+  "FM_RUN_CODE_PREVIEW_VIEW_TESTS"
   "FM_RUN_CONTRAST_TESTS"
   # Reads and writes the machine's real Keychain (and can prompt), which a
   # runner has no unlocked login keychain for.

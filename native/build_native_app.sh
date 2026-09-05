@@ -71,6 +71,16 @@ else
   echo "    \"no bundle\" empty state. Run Scripts/build-excalidraw-web.sh to build it."
 fi
 
+# The Code Preview destination's vendored Monaco bundle - same three-step
+# resolution (CodePreviewAssets.swift), same reason, same copy-wholesale rule:
+# the page loads index.html with read access scoped to this directory.
+if [ -d "Vendor/Monaco/web" ]; then
+  cp -R "Vendor/Monaco/web" "$APP_DIR/Contents/Resources/MonacoWeb"
+else
+  echo "⚠️  No Vendor/Monaco/web - the Code Preview destination will show its"
+  echo "    \"no bundle\" empty state. Run Scripts/build-monaco-web.sh to build it."
+fi
+
 cat > "$APP_DIR/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

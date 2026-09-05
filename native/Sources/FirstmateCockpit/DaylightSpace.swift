@@ -125,6 +125,7 @@ enum DaylightModule: String, CaseIterable {
     case tools
     case whiteboard
     case stickyBoard
+    case codePreview
     case settings
 
     /// Which space this module belongs to, or `nil` for the two that appear
@@ -143,7 +144,7 @@ enum DaylightModule: String, CaseIterable {
         // their own destinations - see `DaylightModuleSelfTest.checkSpaceTable`,
         // updated alongside this per this file's own "change it here and in
         // that test together" rule.
-        case .vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard: return .stores
+        case .vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview: return .stores
         case .updates, .bootstrap, .automation, .githubSync, .settings: return .engineering
         }
     }
@@ -170,7 +171,7 @@ enum DaylightModule: String, CaseIterable {
     var appearsOnOverview: Bool {
         switch self {
         case .tasks, .hosts, .updates, .bootstrap, .automation, .githubSync,
-             .logAnalyzer, .kubernetes, .vault, .docs, .runbooks, .postmortems, .dictation, .tools, .whiteboard, .stickyBoard, .settings:
+             .logAnalyzer, .kubernetes, .vault, .docs, .runbooks, .postmortems, .dictation, .tools, .whiteboard, .stickyBoard, .codePreview, .settings:
             return false
         default:
             return true
@@ -232,6 +233,7 @@ enum DaylightModule: String, CaseIterable {
         case .tools: return .tools
         case .whiteboard: return .whiteboard
         case .stickyBoard: return .stickyBoard
+        case .codePreview: return .codePreview
         case .settings: return .settings
         }
     }
@@ -276,6 +278,7 @@ enum DaylightModule: String, CaseIterable {
         case .tools: return "wrench.and.screwdriver.fill"
         case .whiteboard: return "scribble.variable"
         case .stickyBoard: return "note.text"
+        case .codePreview: return "chevron.left.forwardslash.chevron.right"
         case .settings: return "slider.horizontal.3"
         }
     }
@@ -320,6 +323,7 @@ enum DaylightModule: String, CaseIterable {
         case .tools: return "Tools"
         case .whiteboard: return "Whiteboard"
         case .stickyBoard: return "Sticky Board"
+        case .codePreview: return "Code Preview"
         case .settings: return "Settings"
         }
     }

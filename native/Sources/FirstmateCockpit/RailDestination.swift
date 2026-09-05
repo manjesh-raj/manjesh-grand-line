@@ -103,6 +103,12 @@ import AppKit
 /// alongside Docs, Tools, Vault and Dictation - a whiteboard is a thinking
 /// surface, which is the same shelf as the reference material it gets used
 /// next to.
+/// `.codePreview` (`fm/grandline-monaco-code-preview`) is a utility on the
+/// same criterion as `.whiteboard`: a surface a captain opens when they have
+/// something to look at, not one they check in on. It sits in the Stores
+/// space beside Docs, Tools, Vault, Dictation and the Whiteboard - a place to
+/// read a snippet properly is the same shelf as the reference material it
+/// gets read next to.
 /// `.runbooks`/`.postmortems` (`fm/grandline-docs-split-runbooks-postmortems`)
 /// are the Runbooks and Postmortems tabs `DocsController` used to hold,
 /// promoted into their own top-level destinations in the Stores space
@@ -155,7 +161,7 @@ enum RailDestination: CaseIterable {
     /// reachable through `show(_:)`), so nothing about routing needed a
     /// second concept.
     case homeCanvas
-    case overview, console, hosts, shift, review, logAnalyzer, kubernetes, tools, whiteboard, stickyBoard, vault, dictation, schedules, health, docs, runbooks, postmortems, updates, bootstrap, automation, githubSync, settings
+    case overview, console, hosts, shift, review, logAnalyzer, kubernetes, tools, whiteboard, codePreview, stickyBoard, vault, dictation, schedules, health, docs, runbooks, postmortems, updates, bootstrap, automation, githubSync, settings
 
     var symbol: String {
         switch self {
@@ -197,6 +203,12 @@ enum RailDestination: CaseIterable {
         // written down", distinct from `.docs`' closed book (reference
         // material) and `.whiteboard`'s scribble (a drawing surface).
         case .stickyBoard: return "note.text"
+        // `fm/grandline-monaco-code-preview`: the angle-brackets glyph - the
+        // one symbol in this family that reads as "source code" rather than
+        // as a document (`.docs`), a terminal (`.console`) or a tool. Verified
+        // to resolve (`NSImage(systemSymbolName:)` returns nil silently, and
+        // this app has shipped an invisible icon that way).
+        case .codePreview: return "chevron.left.forwardslash.chevron.right"
         case .vault: return "lock.shield"
         case .dictation: return "waveform"
         // `fm/grandline-schedules-sidebar-move`: a calendar - matches
@@ -234,6 +246,7 @@ enum RailDestination: CaseIterable {
         case .tools: return "Tools"
         case .whiteboard: return "Whiteboard"
         case .stickyBoard: return "Sticky Board"
+        case .codePreview: return "Code Preview"
         case .vault: return "Vault"
         case .dictation: return "Dictation"
         case .schedules: return "Schedules"
@@ -290,7 +303,7 @@ enum RailDestination: CaseIterable {
         case .automation: return .accent
         case .githubSync: return .violet
         case .homeCanvas, .overview, .console, .hosts, .shift, .review, .logAnalyzer, .kubernetes,
-             .tools, .whiteboard, .stickyBoard, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems, .settings: return .accent
+             .tools, .whiteboard, .stickyBoard, .codePreview, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems, .settings: return .accent
         }
     }
 
@@ -303,7 +316,7 @@ enum RailDestination: CaseIterable {
         // (`DaylightModule.kubernetes`), beside Log Analyzer, per the scout
         // report's own placement note.
         case .kubernetes,
-             .tools, .whiteboard, .stickyBoard, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems,
+             .tools, .whiteboard, .codePreview, .stickyBoard, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems,
              .updates, .bootstrap, .automation, .githubSync, .settings: return false
         }
     }
