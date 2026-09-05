@@ -212,6 +212,26 @@ extension ConsoleController {
     /// that tab. Select the tab a test wants to act on first
     /// (`debugSelectTab`).
     func debugToggleKubeContextBadge() { toggleKubeContextBadge() }
+
+    /// What a tab's context badge itself concludes about whether its page is
+    /// out of sight - i.e. the closure `activateKubeContextBadge` wired, read
+    /// through the bridge exactly as `beginRefreshIfDue` reads it. `nil` when
+    /// that tab has no bridge.
+    ///
+    /// 3.2 of `data/grandline-full-app-audit/report.md`: the bridge's own
+    /// suite proves it obeys this verdict; this is the seam that proves the
+    /// console *produces* the right one.
+    func debugKubeContextShouldPauseRefreshes(forTabID id: UUID) -> Bool? {
+        guard let tab = tabs.first(where: { $0.id == id }), let bridge = tab.kubeContextBridge else { return nil }
+        return bridge.shouldPauseRefreshes()
+    }
+
+    /// The console's own on-screen test, for a suite that needs to know
+    /// whether the *page-level* half of the verdict is establishable in a
+    /// headless process at all.
+    func debugIsConsolePageOnScreenForPeriodicWork() -> Bool {
+        isConsolePageOnScreenForPeriodicWork()
+    }
 }
 
 #endif

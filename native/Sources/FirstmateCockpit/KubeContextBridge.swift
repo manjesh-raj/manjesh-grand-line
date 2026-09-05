@@ -288,6 +288,45 @@ final class KubeContextBridge {
     /// success or failure, so a run of refusals can't retry every single
     /// tick.
     private var nextAttemptAt: Date?
+    /// The cadence `timer` is currently scheduled at, so
+    /// `rescheduleTimerIfNeeded` can leave an already-correct timer alone.
+    private var scheduledCadence: Cadence = .none
+
+    /// "Is the page that owns this badge out of sight right now?" - 3.2 of
+    /// `data/grandline-full-app-audit/report.md`.
+    ///
+    /// **This is the correctness half of that fix, and it is a pull rather
+    /// than a push on purpose.** A periodic refresh does not merely burn a
+    /// wake-up: it *types a visible `kubectl config ...` command into the
+    /// captain's own live bastion session*, and it used to do that every
+    /// `refreshInterval` whether or not anyone could see the tab - the only
+    /// gates were the typing quiet-window and the sibling-bridge busy check,
+    /// neither of which knows anything about visibility. Consulting this at
+    /// the moment of the attempt (`beginRefreshIfDue`) is what makes "no
+    /// command is ever injected into an unseen session" true even if every
+    /// visibility *notification* is missed; `refreshGating()`'s push is only
+    /// the energy half, killing the timer promptly rather than at the next
+    /// scheduled attempt.
+    ///
+    /// Derived rather than tracked, for the reason
+    /// `CockpitTerminalView.refreshDisplayGating` states: a missed signal
+    /// then costs at most one stale reading that the next evaluation
+    /// corrects, instead of latching a visible badge into a paused state.
+    ///
+    /// Defaults to "never paused", which is exactly every existing caller's
+    /// and self-test's prior behaviour.
+    var shouldPauseRefreshes: () -> Bool = { false }
+
+    /// What the timer should be doing. `.dueAt` is a **one-shot** at the
+    /// moment the next attempt is actually allowed - the fix for the audit's
+    /// other half of 3.2, which is that a fixed 0.3s repeating poll spent
+    /// ~1000 wake-ups spinning through each healthy 300s `refreshInterval`
+    /// window just to re-read one `Date` comparison.
+    private enum Cadence: Equatable {
+        case none
+        case inFlight
+        case dueAt(Date)
+    }
 
     /// How often to poll the terminal buffer while a refresh is in flight -
     /// this only runs for the brief window between injecting the command and
@@ -447,12 +486,9 @@ final class KubeContextBridge {
         hasStoppedRetrying = false
         lastFailureMessage = nil
         nextAttemptAt = nil
+        isStopped = false
         refreshNow()
-        let t = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
-            self?.tick()
-        }
-        RunLoop.main.add(t, forMode: .common)
-        timer = t
+        rescheduleTimerIfNeeded()
     }
 
     /// Stops the poll timer and forgets any in-flight command. Deliberately
@@ -463,8 +499,108 @@ final class KubeContextBridge {
     func stop() {
         timer?.invalidate()
         timer = nil
+        scheduledCadence = .none
+        isStopped = true
         inFlight = nil
     }
+
+    /// Matches `KubeBridge`/`SRELeadBridge`. Every teardown path in
+    /// `ConsoleController+Tabs` already calls `stop()` first, so this is
+    /// insurance rather than a fix: a `Timer` is retained by the run loop, so
+    /// a bridge dropped without stopping would leave its `.inFlight` timer
+    /// firing into a `nil` `self` forever. (A `.dueAt` timer is
+    /// non-repeating, so it expires on its own either way.)
+    deinit { timer?.invalidate() }
+
+    /// `true` between a `stop()` and the next `start()`. Distinct from
+    /// "paused": a stopped bridge is deactivated (the badge was turned off,
+    /// the tab closed, a reconnect is about to restart it) and only `start()`
+    /// brings it back, whereas a paused one is merely out of sight and
+    /// resumes on its own with its give-up state and `nextAttemptAt`
+    /// untouched.
+    private var isStopped = true
+
+    /// Re-evaluate what the timer should be doing, now.
+    ///
+    /// The energy half of the visibility fix: `shouldPauseRefreshes` is
+    /// already consulted at the moment of every attempt, so calling this is
+    /// never required for *correctness* - it just means a page that has just
+    /// gone out of sight stops waking up immediately, rather than at its next
+    /// scheduled attempt (up to a whole `refreshInterval` later).
+    func refreshGating() {
+        rescheduleTimerIfNeeded()
+    }
+
+    // MARK: Timer cadence
+
+    private func desiredCadence() -> Cadence {
+        // An in-flight command is always watched to completion, even while
+        // paused: it has already been typed into the real shell, so its
+        // output is coming either way - and abandoning it would leave
+        // `inFlight` (and therefore `isBusy`, the seam `SRELeadBridge` reads
+        // before injecting its own command) stuck set forever.
+        if inFlight != nil { return .inFlight }
+        if isStopped || hasStoppedRetrying { return .none }
+        if shouldPauseRefreshes() { return .none }
+        return .dueAt(nextAttemptAt ?? Date())
+    }
+
+    private func rescheduleTimerIfNeeded() {
+        let want = desiredCadence()
+        if timer != nil, scheduledCadence == want { return }
+        timer?.invalidate()
+        timer = nil
+        scheduledCadence = want
+
+        switch want {
+        case .none:
+            return
+        case .inFlight:
+            let t = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
+                self?.tick()
+            }
+            // 3.4: let the kernel coalesce this with nearby work.
+            t.tolerance = Self.pollInterval * 0.1
+            RunLoop.main.add(t, forMode: .common)
+            timer = t
+        case .dueAt(let due):
+            // A one-shot, not a repeat: `tick()` reschedules from whatever
+            // state it leaves behind, so there is nothing for a repeating
+            // timer to do between two attempts. Floored just above zero so a
+            // clock adjustment that puts `due` in the past cannot turn this
+            // into a busy loop; `Timer.tolerance` only ever delays a fire, so
+            // the timer can never arrive before `due`.
+            let delay = max(0.05, due.timeIntervalSinceNow)
+            let t = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] _ in
+                self?.tick()
+            }
+            // Proportional, and generous for the long healthy wait: a badge
+            // that reads the same cluster it read five minutes ago does not
+            // care about a few seconds either way.
+            t.tolerance = min(30, max(0.05, delay * 0.1))
+            RunLoop.main.add(t, forMode: .common)
+            timer = t
+        }
+    }
+
+    #if FM_SELFTESTS
+    /// How long until the next scheduled wake-up, or `nil` when nothing is
+    /// scheduled - the seam a self-test reads to prove the idle badge is
+    /// genuinely asleep rather than spinning at `pollInterval`.
+    var debugSecondsUntilNextWake: TimeInterval? {
+        guard let timer, timer.isValid else { return nil }
+        return timer.fireDate.timeIntervalSinceNow
+    }
+
+    /// `true` while a repeating in-flight-cadence timer is scheduled.
+    var debugIsPollingInFlight: Bool {
+        if case .inFlight = scheduledCadence, timer != nil { return true }
+        return false
+    }
+
+    /// `true` while no timer is scheduled at all.
+    var debugIsIdleStopped: Bool { timer == nil }
+    #endif
 
     /// Attempt a refresh right now, bypassing the `refreshInterval`/
     /// `busyRetryInterval`/`failureRetryInterval` cooldown AND the give-up
@@ -477,6 +613,10 @@ final class KubeContextBridge {
     /// `tick()` by hand for the identical reason).
     func refreshNow() {
         beginRefreshIfDue(force: true)
+        // Keeps "every state change reschedules" true for this entry point
+        // too, not just for `tick()`. `start()` happens to reschedule right
+        // after its own call; a future caller should not have to know that.
+        if !isStopped { rescheduleTimerIfNeeded() }
     }
 
     // MARK: Polling
@@ -485,6 +625,12 @@ final class KubeContextBridge {
     /// self-test drives this directly instead of relying on `start()`'s
     /// timer.
     func tick() {
+        // Whatever this tick does, the cadence the *next* wake-up runs at is
+        // decided from the state this one leaves behind. Guarded on the
+        // bridge actually being started so a self-test driving `tick()` by
+        // hand on a never-started bridge does not get a real `Timer`
+        // scheduled behind its back.
+        defer { if !isStopped { rescheduleTimerIfNeeded() } }
         if let current = inFlight {
             checkInFlight(current)
             return
@@ -494,6 +640,19 @@ final class KubeContextBridge {
 
     private func beginRefreshIfDue(force: Bool) {
         if !force {
+            // 3.2's correctness half. A periodic refresh visibly types into
+            // the captain's live session, so an unseen page must not fire one
+            // - checked here, at the attempt, rather than relying on the
+            // timer having been torn down, so a missed visibility signal
+            // cannot leak a command into a hidden session. Deliberately
+            // leaves `nextAttemptAt` alone: this is "not now", not an
+            // outcome, so the badge picks straight up where it left off when
+            // the page comes back.
+            //
+            // `force` still bypasses it - that path is activation and the
+            // captain's own explicit retry click, neither of which happens on
+            // a page nobody is looking at.
+            guard !shouldPauseRefreshes() else { return }
             // `fm/grandline-k8s-badge-fixes`, issue 1: once this bridge has
             // given up, an ordinary tick (the periodic poll's own idle check)
             // must never quietly try again on its own - that would be exactly
@@ -621,6 +780,7 @@ final class KubeContextBridge {
                 nextAttemptAt = nil
                 timer?.invalidate()
                 timer = nil
+                scheduledCadence = .none
             } else {
                 nextAttemptAt = Date().addingTimeInterval(failureRetryInterval)
             }

@@ -86,17 +86,66 @@ extension SRELeadBridgeTerminal {
 }
 
 /// Bridges one dedicated host page's SRE Lead session to its primary
-/// interactive tab. Owns a repeating main-thread timer that polls
-/// `bridgeDir` for request files - a plain poll, not a `DispatchSource`
-/// file-system-object watcher, since every step of handling a request
-/// (`sendCommand`, reading the terminal buffer) must happen on the main
-/// thread anyway (AppKit/SwiftTerm), and this codebase already favors a
-/// `Timer` for this shape of "check on something periodically" work
-/// (`UpdatesController`'s self-ticking relative-time label).
+/// interactive tab.
+///
+/// **How this class learns there is work to do (3.1 of
+/// `data/grandline-full-app-audit/report.md`).** A request arrives as a
+/// `request-<id>.json` file that a *different process*
+/// (`sre_kubectl_mcp.py`, itself a subprocess of `claude`) writes into
+/// `bridgeDir` - so unlike `KubeBridge`, nothing in this process knows when
+/// to look. This class used to answer that with one always-running 5Hz
+/// `Timer` whose idle half did two `FileManager` directory enumerations a
+/// second, per SRE-Lead-active tab, up to the 5-tab cap, for the life of the
+/// session - including with Console hidden and the app backgrounded. That is
+/// the cost the audit measured: invisible, but real and permanent.
+///
+/// It is now event-driven, with a timer in two roles rather than one:
+///
+///   - **A `DispatchSource` vnode watcher on `bridgeDir`** (`.write`, plus
+///     `.delete`/`.rename` so a dir that goes away is noticed) is the real
+///     "there is something to claim" signal. It costs nothing while idle and
+///     is *more* responsive than the old poll - a request is claimed the
+///     moment the file lands rather than up to `idlePollInterval` later.
+///     The handler runs on `.main` because every step of handling a request
+///     (`sendCommand`, reading the terminal buffer) must happen there anyway
+///     (AppKit/SwiftTerm).
+///   - **The `Timer` is now scheduled per state** (`rescheduleTimerIfNeeded`):
+///     `pollInterval` (5Hz) only while a command is genuinely in flight, and
+///     otherwise a slow `idleSafetyNetInterval` sweep.
+///
+/// **Why the idle sweep is kept at all**, rather than stopping the timer
+/// outright the way `KubeBridge.tick()` does: `KubeBridge`'s own requests are
+/// enqueued *in-process* (`enqueue` calls `start()`), so a full idle-stop
+/// there can never miss one. Here the producer is another process and the
+/// wake-up is a kernel event, so a dropped event (a stale fd after the
+/// directory is replaced, a watcher this class failed to install at all)
+/// would mean SRE Lead silently hangs waiting on a tool call that was never
+/// claimed. The sweep is the cheap re-derivation that bounds that failure to
+/// one interval instead of forever - the same "don't fully trust the event,
+/// keep a cheap re-check" posture this codebase already takes for a required
+/// constraint tie (AGENTS.md gotcha 14) and for the scrolled-away end marker
+/// (`fullScanEvery`). At 30s idle it is ~60x less work than the 2 scans a
+/// second it replaces, and 4x less again while backgrounded.
+///
+/// **There is deliberately no visibility pause here**, unlike
+/// `KubeContextBridge` (audit 3.2). An SRE Lead investigation is
+/// asynchronous: the captain asks a question, navigates away, and the agent's
+/// tool call must still be served. The watcher already makes an unseen tab
+/// cost nothing while idle, so pausing would buy no energy and would strand a
+/// real request.
 final class SRELeadBridge {
     private let bridgeDir: URL
     private weak var target: SRELeadBridgeTerminal?
     private var timer: Timer?
+    /// The interval `timer` is currently scheduled at, so
+    /// `rescheduleTimerIfNeeded` can leave an already-correct timer alone
+    /// rather than tearing one down and building an identical one on every
+    /// tick.
+    private var scheduledTimerInterval: TimeInterval?
+    /// The vnode watcher on `bridgeDir`, and the descriptor it owns. The
+    /// descriptor is closed by the source's own cancel handler, which is the
+    /// only safe place to close it (cancelling is asynchronous).
+    private var dirWatcher: DispatchSourceFileSystemObject?
     private var inFlight: InFlight?
     /// GL-34 throttles: when the idle request scan last ran, and how many
     /// ticks the current in-flight command has been checked for.
@@ -178,6 +227,29 @@ final class SRELeadBridge {
     /// between two requests.
     let idlePollInterval: TimeInterval
 
+    /// How often the *timer* sweeps `bridgeDir` while nothing is running -
+    /// the safety net behind the vnode watcher, not the primary mechanism.
+    /// See this class's header for why it exists rather than idle-stopping
+    /// outright.
+    ///
+    /// An instance property with a default, for the same reason
+    /// `idlePollInterval` is: a self-test asserts which cadence the timer is
+    /// scheduled at and must be able to tell the two apart by value.
+    let idleSafetyNetInterval: TimeInterval
+
+    /// The idle sweep once the app has been inactive for
+    /// `AppActivityState.backgroundThreshold`. The watcher still delivers a
+    /// real request immediately, so stretching the *net* costs no
+    /// responsiveness at all - it only removes wake-ups nobody is waiting on.
+    let backgroundedIdleSafetyNetInterval: TimeInterval
+
+    /// Reads the shared "has the captain been away a while?" answer
+    /// (`AppActivityState`). A closure rather than a direct call so a
+    /// self-test can reach the backgrounded branch without waiting five real
+    /// minutes - the production default is exactly what the three pollers E3
+    /// already gates read.
+    var isBackgrounded: () -> Bool = { AppActivityState.shared.isBackgrounded }
+
     /// While a command is in flight, do a full-scrollback check this often
     /// even though the viewport probe found nothing - the scrolled-away case
     /// described on `currentViewportLines`.
@@ -199,39 +271,168 @@ final class SRELeadBridge {
     init(
         bridgeDir: URL, target: SRELeadBridgeTerminal,
         userActivityQuietWindow: TimeInterval = 0.5, commandTimeout: TimeInterval = 25,
-        idlePollInterval: TimeInterval = 1.0
+        idlePollInterval: TimeInterval = 1.0,
+        idleSafetyNetInterval: TimeInterval = 30,
+        backgroundedIdleSafetyNetInterval: TimeInterval = 120
     ) {
         self.bridgeDir = bridgeDir
         self.target = target
         self.userActivityQuietWindow = userActivityQuietWindow
         self.commandTimeout = commandTimeout
         self.idlePollInterval = idlePollInterval
+        self.idleSafetyNetInterval = idleSafetyNetInterval
+        self.backgroundedIdleSafetyNetInterval = backgroundedIdleSafetyNetInterval
+    }
+
+    deinit {
+        timer?.invalidate()
+        dirWatcher?.cancel()
     }
 
     func start() {
         stop()
-        // One timer at the fast rate, with the idle path throttled inside
-        // `tick` (rather than two timers, or re-scheduling on every state
-        // change): the in-flight check has to be responsive the instant a
-        // request lands, and a single timer cannot be in two cadences at once.
-        let t = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
-            self?.tick()
-        }
-        RunLoop.main.add(t, forMode: .common)
-        timer = t
+        startWatchingBridgeDir()
+        rescheduleTimerIfNeeded()
+        // A request written between `SRELead.setUp()` finishing and the
+        // watcher being installed would otherwise wait for the first idle
+        // sweep. Cheap, and it makes "activation claims anything already
+        // waiting" true rather than probable.
+        directoryChanged()
     }
 
     func stop() {
         timer?.invalidate()
         timer = nil
+        scheduledTimerInterval = nil
+        stopWatchingBridgeDir()
         inFlight = nil
         lastIdleScan = nil
         inFlightTicks = 0
     }
 
+    // MARK: Timer cadence
+
+    /// The cadence the current state wants: fast only while a command is
+    /// genuinely running, otherwise the slow watcher-safety-net sweep.
+    private func desiredTimerInterval() -> TimeInterval {
+        if inFlight != nil { return Self.pollInterval }
+        return isBackgrounded() ? backgroundedIdleSafetyNetInterval : idleSafetyNetInterval
+    }
+
+    /// Rebuild `timer` only when the interval the state wants has actually
+    /// changed. Called at the end of every `tick()`, so entering and leaving
+    /// an in-flight command switches cadence on its own with no caller
+    /// having to remember to.
+    private func rescheduleTimerIfNeeded() {
+        let want = desiredTimerInterval()
+        if timer != nil, scheduledTimerInterval == want { return }
+        timer?.invalidate()
+        let t = Timer.scheduledTimer(withTimeInterval: want, repeats: true) { [weak self] _ in
+            self?.tick()
+        }
+        // 3.4: let the kernel coalesce this wake-up with nearby work rather
+        // than demanding an exact one. Apple's own battery guidance.
+        t.tolerance = want * 0.1
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
+        scheduledTimerInterval = want
+    }
+
+    #if FM_SELFTESTS
+    /// Which interval the timer is scheduled at right now, or `nil` when no
+    /// timer is scheduled - the seam the self-test reads to prove the idle
+    /// cadence is genuinely slow rather than that a tick happened to be
+    /// cheap.
+    var debugScheduledTimerInterval: TimeInterval? { scheduledTimerInterval }
+
+    /// Whether the vnode watcher is installed - the other half of that proof:
+    /// a slow idle timer with no watcher behind it would be a responsiveness
+    /// regression, not a fix.
+    var debugIsWatchingBridgeDir: Bool { dirWatcher != nil }
+    #endif
+
+    // MARK: Watching `bridgeDir` for a request another process wrote
+
+    private func startWatchingBridgeDir() {
+        stopWatchingBridgeDir()
+        let fd = open(bridgeDir.path, O_EVTONLY)
+        guard fd >= 0 else {
+            // Not fatal, and deliberately not an error the captain sees: the
+            // idle sweep still claims every request, just up to one interval
+            // later. Logged because a bridge running on the sweep alone is a
+            // real (if bounded) responsiveness change worth being able to see
+            // in `log show` (GL-11).
+            let code = errno
+            AppLog.ui.info("SRELeadBridge: could not watch \(self.bridgeDir.path, privacy: .public) for requests (errno \(code, privacy: .public)); falling back to the periodic sweep alone.")
+            return
+        }
+        let src = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd, eventMask: [.write, .delete, .rename], queue: .main
+        )
+        src.setEventHandler { [weak self] in
+            guard let self, let current = self.dirWatcher else { return }
+            // `.delete`/`.rename` mean this descriptor now refers to
+            // something that is no longer the bridge directory, so the
+            // watcher has to be rebuilt against whatever is at that path now
+            // (or give up to the sweep if nothing is). Read before the scan,
+            // since the scan may itself write a response file.
+            let stale = !current.data.intersection([.delete, .rename]).isEmpty
+            self.directoryChanged()
+            if stale { self.startWatchingBridgeDir() }
+        }
+        // The only correct place to close the descriptor: cancellation is
+        // asynchronous, so closing it anywhere else can close an fd the
+        // source is still using (and, worse, one a later `open` has reused).
+        src.setCancelHandler { close(fd) }
+        dirWatcher = src
+        src.resume()
+    }
+
+    private func stopWatchingBridgeDir() {
+        dirWatcher?.cancel()
+        dirWatcher = nil
+    }
+
+    /// A real file-system event is the authoritative "there is something to
+    /// claim" signal, so it must not be dropped by `tick()`'s own idle
+    /// throttle - clearing `lastIdleScan` is what makes the very next scan
+    /// run regardless of how recently one did.
+    private func directoryChanged() {
+        lastIdleScan = nil
+        tick()
+    }
+
+    /// Records one real `bridgeDir` enumeration. Compiled away entirely
+    /// outside a self-test build - this exists only so 3.1's own suite can
+    /// assert the audit's stated cost in the audit's own unit (directory
+    /// scans per unit time) rather than only asserting the timer cadence
+    /// that produces them.
+    private func noteDirectoryScan() {
+        #if FM_SELFTESTS
+        directoryScanCount += 1
+        #endif
+    }
+
+    #if FM_SELFTESTS
+    /// How many times this bridge has enumerated `bridgeDir`. The idle half
+    /// of the old 5Hz poll did two of these a second, per SRE-Lead-active
+    /// tab, forever.
+    private(set) var directoryScanCount = 0
+
+    /// Drives the exact path the real vnode handler calls. A headless
+    /// self-test binary never pumps a run loop, so the kernel event itself
+    /// cannot be awaited - the same reason every case in
+    /// `SRELeadBridgeSelfTest` calls `tick()` by hand rather than relying on
+    /// `start()`'s timer.
+    func debugSimulateDirectoryChange() { directoryChanged() }
+    #endif
+
     // MARK: Polling
 
     func tick() {
+        // Whatever this tick does, the cadence the *next* one runs at is
+        // decided from the state this one leaves behind.
+        defer { if timer != nil || scheduledTimerInterval != nil { rescheduleTimerIfNeeded() } }
         if let current = inFlight {
             checkInFlight(current)
         }
@@ -266,6 +467,7 @@ final class SRELeadBridge {
     private func drainEvents() {
         guard onRunbookRun != nil else { return }
         let fm = FileManager.default
+        noteDirectoryScan()
         guard let files = try? fm.contentsOfDirectory(at: bridgeDir, includingPropertiesForKeys: nil) else { return }
         for file in files.sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
         where file.lastPathComponent.hasPrefix("event-") && file.pathExtension == "json" {
@@ -292,6 +494,7 @@ final class SRELeadBridge {
     /// twice, even if a tick runs slowly.
     private func nextPendingRequest() -> PendingRequest? {
         let fm = FileManager.default
+        noteDirectoryScan()
         guard let files = try? fm.contentsOfDirectory(at: bridgeDir, includingPropertiesForKeys: nil) else {
             return nil
         }

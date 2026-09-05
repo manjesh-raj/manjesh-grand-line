@@ -48,7 +48,11 @@ final class FleetNotifier {
     private var seenReadyPRs: Set<String> = []
     private var acknowledgedFinishedIDs: Set<String> = []
     private var osBannersEnabled = false
-    private let pollInterval: TimeInterval = 30
+    /// `static` (and not `private`) so 3.5's own self-test can assert the
+    /// load-bearing relationship between this and `FleetTaskCache.ttl`: the
+    /// coalescing window must stay comfortably shorter than this poll, or it
+    /// stops being a coalescer and becomes a staleness cache.
+    static let pollInterval: TimeInterval = 30
 
     /// E3: while the app has been backgrounded for >5 minutes, only every 4th
     /// tick does work - an effective 120s cadence, the report's own suggested
@@ -90,7 +94,7 @@ final class FleetNotifier {
                 self.acknowledgedFinishedIDs = finishedIDs
             }
         }
-        let t = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in self?.poll() }
+        let t = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in self?.poll() }
         t.tolerance = 5
         timer = t
     }

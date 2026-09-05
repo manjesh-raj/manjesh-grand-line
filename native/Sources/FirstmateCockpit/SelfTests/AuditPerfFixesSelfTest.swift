@@ -200,8 +200,12 @@ enum AuditPerfFixesSelfTest {
 
     private static func test_p6_sources() -> String? {
         guard let text = source("FleetData.swift") else { return nil }
-        guard let range = text.range(of: "static func parseTasks()") else {
-            return "parseTasks is gone"
+        // Anchored on the function that actually performs the fan-out.
+        // `parseTasks()` itself is now the thin `FleetTaskCache` wrapper in
+        // front of it (3.5 of `data/grandline-full-app-audit/report.md`); the
+        // bounded-concurrency contract P6 established lives here.
+        guard let range = text.range(of: "static func parseTasksUncached()") else {
+            return "parseTasks' bounded fan-out is gone"
         }
         let body = String(text[range.lowerBound...].prefix(3000))
         guard body.contains("DispatchSemaphore"), body.contains("attributes: .concurrent") else {

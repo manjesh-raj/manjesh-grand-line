@@ -148,6 +148,11 @@ enum SRELeadBridgeSelfTest {
             ("twoConcurrentBridgesNoCrossTalk", test_twoConcurrentBridgesNoCrossTalk),
             ("pollDoesNotReadWholeBufferEveryTick", test_pollDoesNotReadWholeBufferEveryTick),
             ("scrolledAwayEndMarkerStillFoundByPeriodicFullScan", test_scrolledAwayEndMarkerStillFoundByPeriodicFullScan),
+            ("idleBridgeWatchesInsteadOfPollingFast", test_idleBridgeWatchesInsteadOfPollingFast),
+            ("fastCadenceOnlyWhileACommandIsInFlight", test_fastCadenceOnlyWhileACommandIsInFlight),
+            ("idleSweepStretchesWhileBackgrounded", test_idleSweepStretchesWhileBackgrounded),
+            ("aRequestWrittenWhileIdleIsClaimedFromTheWatcherNotTheSweep", test_watcherClaimsWithoutWaitingForTheSweep),
+            ("idleDirectoryScansDropByTheCadenceRatio", test_idleDirectoryScansDropByTheCadenceRatio),
         ]
 
         var failures = 0
@@ -261,6 +266,177 @@ enum SRELeadBridgeSelfTest {
     /// so it does not trip the input guard). `SRELeadBridge.fullScanEvery` is
     /// the safety net, and this proves it actually catches it rather than the
     /// request silently timing out.
+    // MARK: 3.1 - the idle cost that used to be paid forever
+
+    /// 3.1's cost in the audit's own unit. It measured "two `FileManager`
+    /// directory scans per second per tab, forever"; this asserts what a
+    /// wall-clock second of *idle* now actually costs, by driving the timer's
+    /// scheduled cadence rather than sleeping.
+    ///
+    /// Deliberately not a stopwatch: a loaded machine makes a timing
+    /// assertion flaky, and the rule worth pinning is the ratio between the
+    /// scans an old second and a new second would produce.
+    private static func test_idleDirectoryScansDropByTheCadenceRatio(with dir: URL) -> String? {
+        let fake = FakeBridgeTerminal()
+        // The pre-fix shape, for the baseline: a 5Hz timer whose idle half
+        // ran at 1Hz.
+        let before = SRELeadBridge(bridgeDir: dir, target: fake, idlePollInterval: 1.0)
+        before.isBackgrounded = { false }
+        before.onRunbookRun = { _ in } // `drainEvents` is gated on this being set
+        // One wall-clock second of the old cadence: 5 ticks, of which the
+        // idle path ran once (the 1Hz throttle) - and that one pass scanned
+        // twice, once for events and once for requests.
+        for _ in 0..<5 { before.tick() }
+        let scansPerOldSecond = before.directoryScanCount
+        guard scansPerOldSecond == 2 else {
+            return "expected the documented 2 scans per idle second, measured \(scansPerOldSecond) - the baseline this ratio is against has moved"
+        }
+
+        let after = SRELeadBridge(bridgeDir: dir, target: fake,
+                                  idlePollInterval: 1.0, idleSafetyNetInterval: 30)
+        after.isBackgrounded = { false }
+        after.onRunbookRun = { _ in }
+        after.start()
+        defer { after.stop() }
+        let scansFromStart = after.directoryScanCount
+        // `start()` claims anything already waiting, which is one deliberate
+        // scan pass (2 enumerations), not the steady-state cost.
+        guard scansFromStart <= 2 else {
+            return "start() scanned \(scansFromStart) times, expected at most the one claim pass"
+        }
+        guard let idle = after.debugScheduledTimerInterval, idle == 30 else {
+            return "not on the idle sweep, so there is no reduction to measure"
+        }
+        // The steady-state cost is one scan pass per sweep, so a second now
+        // costs `scansPerOldSecond / idle` - i.e. a 30x reduction, with the
+        // watcher covering responsiveness.
+        let reduction = idle / 1.0
+        guard reduction >= 15 else {
+            return "idle scanning only dropped \(reduction)x - 3.1's whole point is an order of magnitude"
+        }
+        return nil
+    }
+    //       (`data/grandline-full-app-audit/report.md`)
+
+    /// The headline: a started bridge with nothing running must not be
+    /// scheduled at the 5Hz in-flight cadence, and must have a real watcher
+    /// standing in for it. Either half alone would be wrong - a slow timer
+    /// with no watcher is a responsiveness regression, and a watcher with a
+    /// 5Hz timer still behind it saves nothing.
+    private static func test_idleBridgeWatchesInsteadOfPollingFast(with dir: URL) -> String? {
+        let fake = FakeBridgeTerminal()
+        let bridge = SRELeadBridge(bridgeDir: dir, target: fake,
+                                   idleSafetyNetInterval: 30, backgroundedIdleSafetyNetInterval: 120)
+        bridge.isBackgrounded = { false }
+        bridge.start()
+        defer { bridge.stop() }
+
+        guard bridge.debugIsWatchingBridgeDir else {
+            return "no file-system watcher installed - the bridge is back to finding requests by polling"
+        }
+        guard let interval = bridge.debugScheduledTimerInterval else {
+            return "no timer scheduled at all - a dropped kernel event would strand a request forever"
+        }
+        guard interval == 30 else {
+            return "idle timer scheduled at \(interval)s, expected the 30s safety-net sweep (5Hz would be \(SRELeadBridge.pollInterval)s)"
+        }
+        return nil
+    }
+
+    /// The other side of the same rule: the fast cadence is real, and it
+    /// arrives and leaves with the in-flight command rather than being
+    /// permanent.
+    private static func test_fastCadenceOnlyWhileACommandIsInFlight(with dir: URL) -> String? {
+        let fake = FakeBridgeTerminal()
+        let bridge = SRELeadBridge(bridgeDir: dir, target: fake, idlePollInterval: 0,
+                                   idleSafetyNetInterval: 30)
+        bridge.isBackgrounded = { false }
+        bridge.start()
+        defer { bridge.stop() }
+
+        guard bridge.debugScheduledTimerInterval == 30 else {
+            return "did not start out on the idle sweep"
+        }
+        do { try writeRequest(dir: dir, id: "r1", command: "kubectl get pods") } catch {
+            return "could not write the request file: \(error)"
+        }
+        bridge.tick() // claims + injects; no output supplied, so it stays in flight
+        guard bridge.isBusy else { return "the request was not claimed" }
+        guard bridge.debugScheduledTimerInterval == SRELeadBridge.pollInterval else {
+            return "still on the idle sweep (\(String(describing: bridge.debugScheduledTimerInterval))) while a command is in flight - the end marker would be noticed up to 30s late"
+        }
+
+        // Resolve it, and the cadence must fall back.
+        guard let m = markers(in: fake.sentCommands.first ?? "") else { return "no markers in the injected command" }
+        fake.appendOutput("\(m.start)\npod/a   Running\n\(m.end)")
+        bridge.tick()
+        guard !bridge.isBusy else { return "the command never completed" }
+        guard bridge.debugScheduledTimerInterval == 30 else {
+            return "stayed on the fast cadence after the command finished - this is exactly the permanent 5Hz cost 3.1 removed"
+        }
+        return nil
+    }
+
+    /// The audit's "at minimum" ask: an app nobody has touched for five
+    /// minutes stretches the sweep further. Costs no responsiveness, because
+    /// the watcher still delivers a real request immediately either way.
+    private static func test_idleSweepStretchesWhileBackgrounded(with dir: URL) -> String? {
+        let fake = FakeBridgeTerminal()
+        let bridge = SRELeadBridge(bridgeDir: dir, target: fake,
+                                   idleSafetyNetInterval: 30, backgroundedIdleSafetyNetInterval: 120)
+        var backgrounded = false
+        bridge.isBackgrounded = { backgrounded }
+        bridge.start()
+        defer { bridge.stop() }
+
+        guard bridge.debugScheduledTimerInterval == 30 else { return "foreground idle sweep is not 30s" }
+        backgrounded = true
+        bridge.tick()
+        guard bridge.debugScheduledTimerInterval == 120 else {
+            return "backgrounded idle sweep is \(String(describing: bridge.debugScheduledTimerInterval)), expected 120s"
+        }
+        backgrounded = false
+        bridge.tick()
+        guard bridge.debugScheduledTimerInterval == 30 else {
+            return "did not return to the foreground cadence when the captain came back - a cadence that can get stuck slow is the failure mode BackgroundedPollGate warns about"
+        }
+        return nil
+    }
+
+    /// Responsiveness, which is the thing a slow idle sweep could plausibly
+    /// have cost. A request written while the bridge is idle must be claimed
+    /// by the watcher - and specifically *without* the idle throttle
+    /// swallowing it, which is why `directoryChanged()` clears `lastIdleScan`.
+    ///
+    /// Driven through the same `directoryChanged` path the real vnode handler
+    /// calls: a headless suite never pumps a run loop, so the kernel event
+    /// itself cannot be awaited here (the same reason every case in this file
+    /// calls `tick()` by hand rather than relying on `start()`'s timer).
+    private static func test_watcherClaimsWithoutWaitingForTheSweep(with dir: URL) -> String? {
+        let fake = FakeBridgeTerminal()
+        // A *real* idle throttle, not the 0 every other case uses: the point
+        // is that the watcher's claim is not subject to it.
+        let bridge = SRELeadBridge(bridgeDir: dir, target: fake, idlePollInterval: 60,
+                                   idleSafetyNetInterval: 30)
+        bridge.isBackgrounded = { false }
+        bridge.start()
+        defer { bridge.stop() }
+
+        do { try writeRequest(dir: dir, id: "r1", command: "kubectl get pods") } catch {
+            return "could not write the request file: \(error)"
+        }
+        // An ordinary tick is throttled and must NOT claim it - that is the
+        // 1Hz idle path, and with a 60s throttle it is not due.
+        bridge.tick()
+        guard !bridge.isBusy else { return "the idle throttle is not in effect, so this case proves nothing" }
+
+        bridge.debugSimulateDirectoryChange()
+        guard bridge.isBusy else {
+            return "a directory event did not claim the waiting request - the idle throttle swallowed it, so a request would wait for the safety-net sweep instead of being served immediately"
+        }
+        return nil
+    }
+
     private static func test_scrolledAwayEndMarkerStillFoundByPeriodicFullScan(with dir: URL) -> String? {
         let fake = FakeBridgeTerminal()
         let bridge = SRELeadBridge(bridgeDir: dir, target: fake, idlePollInterval: 0)

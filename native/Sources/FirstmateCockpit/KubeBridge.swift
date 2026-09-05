@@ -466,6 +466,10 @@ final class KubeBridge {
         let t = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
             self?.tick()
         }
+        // 3.4: coalescable. This timer already idle-stops (see `tick()`), so
+        // it only runs while a command is genuinely in flight - the tolerance
+        // is what stops each of those ticks being a hard wake-up.
+        t.tolerance = Self.pollInterval * 0.1
         RunLoop.main.add(t, forMode: .common)
         timer = t
     }

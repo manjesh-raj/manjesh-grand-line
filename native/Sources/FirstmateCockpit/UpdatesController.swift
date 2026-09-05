@@ -221,9 +221,14 @@ final class UpdatesController: NSViewController, SetupPageSummary {
         scrollToTop()
         renderStats()
         lastCheckedTimer?.invalidate()
-        lastCheckedTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+        let ticker = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             self?.renderStats()
         }
+        // 3.4: this only re-renders a relative-time label ("checked 2m ago"),
+        // so it is the most tolerant timer in the app - a few seconds of
+        // coalescing slack is invisible in that string.
+        ticker.tolerance = 10
+        lastCheckedTimer = ticker
         if !hasCheckedOnce {
             hasCheckedOnce = true
             checkAll()

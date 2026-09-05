@@ -193,12 +193,19 @@ extension KubernetesController {
             let t = Timer.scheduledTimer(withTimeInterval: Self.clusterPollInterval, repeats: true) { [weak self] _ in
                 self?.refreshCluster()
             }
+            // 3.4: coalescable. Every one of these sweeps types a command
+            // into a real session, so a second either way changes nothing.
+            t.tolerance = Self.clusterPollInterval * 0.1
             RunLoop.main.add(t, forMode: .common)
             clusterTimer = t
         case .logTail:
             let t = Timer.scheduledTimer(withTimeInterval: KubeLogTailSession.pollInterval, repeats: true) { [weak self] _ in
                 self?.pollTail()
             }
+            // 3.4. The `--since` window is deliberately wider than this
+            // interval (`overlapFactor`), so a coalesced tick cannot drop a
+            // log line - it is already designed to tolerate a variable gap.
+            t.tolerance = KubeLogTailSession.pollInterval * 0.1
             RunLoop.main.add(t, forMode: .common)
             tailTimer = t
             pollTail()
@@ -385,6 +392,10 @@ extension KubernetesController {
         let t = Timer.scheduledTimer(withTimeInterval: Self.refreshWatchdogInterval, repeats: true) { [weak self] _ in
             self?.checkRefreshWatchdog()
         }
+        // 3.4: a watchdog compares wall-clock elapsed time against a hard
+        // ceiling, so *when* it happens to run is immaterial - only that it
+        // eventually does.
+        t.tolerance = Self.refreshWatchdogInterval * 0.1
         RunLoop.main.add(t, forMode: .common)
         refreshWatchdogTimer = t
     }

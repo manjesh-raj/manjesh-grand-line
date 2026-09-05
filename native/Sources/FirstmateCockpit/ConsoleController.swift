@@ -565,15 +565,65 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
             let f = self.currentFont()
             for tab in self.tabs { tab.terminal.font = f }
         }
+
+        activityObservation = AppActivityState.shared.observe { [weak self] _ in
+            self?.refreshPeriodicWorkGating()
+        }
     }
 
     var themeObservation: ThemeObservation?
     var fontSizeObservation: FontSizeObservation?
+    /// 3.2's push half for the *backgrounded* half of the condition. The
+    /// crossing into "away" happens `AppActivityState.backgroundThreshold`
+    /// after the app resigns active, not at that moment, so
+    /// `didResignActiveNotification` is the wrong signal and this callback -
+    /// which `AppActivityState` has advertised with no adopter until now - is
+    /// the right one. Kept and unregistered in `shutdown()`, exactly like the
+    /// theme and font tokens, because a per-host console can be torn down
+    /// mid-session.
+    var activityObservation: UUID?
 
     override func viewDidAppear() {
         super.viewDidAppear()
         hasAppeared = true
         for tab in tabs where !tab.started { startTab(tab) }
         if let tab = currentTab { view.window?.makeFirstResponder(tab.terminal) }
+        refreshPeriodicWorkGating()
+    }
+
+    override func viewDidDisappear() {
+        super.viewDidDisappear()
+        refreshPeriodicWorkGating()
+    }
+
+    // MARK: Visibility gating for this page's own periodic work
+    //       (3.2 of `data/grandline-full-app-audit/report.md`)
+
+    /// Whether this console page is on screen enough to justify *periodic*
+    /// work that reaches into the captain's live session.
+    ///
+    /// Scoped deliberately narrowly: this answers only "should a cadenced
+    /// background refresh run?", never anything about drawing. The terminal's
+    /// own repaint gating is `CockpitTerminalView.refreshDisplayGating`,
+    /// which is a different (and finer) question - it tracks window
+    /// occlusion from a notification and throttles rather than stops. A
+    /// five-minute `kubectl` refresh has no use for that resolution.
+    ///
+    /// `AppActivityState` is in the condition because a *backgrounded* app is
+    /// as unwatched as a hidden page, and this is exactly the tier the three
+    /// pollers E3 already gates consult.
+    func isConsolePageOnScreenForPeriodicWork() -> Bool {
+        guard let window = view.window, window.isVisible, !window.isMiniaturized else { return false }
+        guard !view.isHiddenOrHasHiddenAncestor else { return false }
+        return !AppActivityState.shared.isBackgrounded
+    }
+
+    /// Tell this page's cadenced workers to re-evaluate their schedule now.
+    ///
+    /// Purely the energy half of the fix - `shouldPauseRefreshes` is consulted
+    /// at every attempt regardless, so a signal missed here delays a bridge
+    /// going to sleep but can never let it inject into an unseen session.
+    func refreshPeriodicWorkGating() {
+        for tab in tabs { tab.kubeContextBridge?.refreshGating() }
     }
 }

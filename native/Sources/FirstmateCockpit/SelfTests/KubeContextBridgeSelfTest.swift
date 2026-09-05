@@ -97,6 +97,12 @@ enum KubeContextBridgeSelfTest {
             ("perTab_activatingOnOneTabNeverActivatesAnother", test_perTab_activatingOnOneTabNeverActivatesAnother),
             ("perTab_closingOneActivatedTabLeavesSiblingUntouched", test_perTab_closingOneActivatedTabLeavesSiblingUntouched),
             ("perTab_duplicateNeverInheritsAnAlreadyActivatedBridge", test_perTab_duplicateNeverInheritsAnAlreadyActivatedBridge),
+            ("hidden_neverInjectsIntoAnUnseenSession", test_hidden_neverInjectsIntoAnUnseenSession),
+            ("hidden_idleBridgeSleepsEntirelyWhileThePageIsHidden", test_hidden_idleBridgeSleepsEntirely),
+            ("hidden_resumingNeverResetsTheGiveUpState", test_hidden_resumingNeverResetsGiveUp),
+            ("hidden_inFlightCommandIsStillWatchedToCompletion", test_hidden_inFlightStillWatched),
+            ("idle_waitsOneShotForTheNextAttemptInsteadOfSpinning", test_idle_oneShotNotSpinning),
+            ("hidden_consoleReportsItsOwnPageAndTabVisibility", test_hidden_consoleReportsVisibility),
         ]
 
         var failures = 0
@@ -274,6 +280,229 @@ enum KubeContextBridgeSelfTest {
     }
 
     // MARK: KubeContextBridge cases
+
+    // MARK: 3.2 - never refresh, and never wake, for a page nobody sees
+
+    /// The other end of 3.2's wiring: the bridge's own suite proves it obeys
+    /// `shouldPauseRefreshes`, and this proves the **console produces the
+    /// right verdict** - the seam a source guard can only see the shape of.
+    ///
+    /// Driven through the real toolbar toggle on a real mounted
+    /// `ConsoleController` with real `.ssh` tabs, then reading the verdict
+    /// back through the bridge exactly as `beginRefreshIfDue` reads it.
+    private static func test_hidden_consoleReportsVisibility() -> String? {
+        let (window, controller, ids) = makeStartedKubeContextTestConsole(tabCount: 2, orderFront: true)
+        defer { window.orderOut(nil) }
+        guard ids.count == 2 else { return "expected 2 tabs, got \(ids.count)" }
+        let (tabA, tabB) = (ids[0], ids[1])
+
+        controller.debugSelectTab(tabA)
+        controller.debugToggleKubeContextBadge()
+        guard controller.debugKubeContextBridgeExists(forTabID: tabA) == true else {
+            return "tab A's badge did not activate"
+        }
+
+        // A background tab is as invisible as a hidden page - the console
+        // shows exactly one terminal at a time. This half needs no window
+        // visibility at all, so it is asserted unconditionally.
+        controller.debugSelectTab(tabB)
+        guard controller.debugKubeContextShouldPauseRefreshes(forTabID: tabA) == true else {
+            return "tab A's badge does not consider itself paused while tab B is the selected tab - it would keep typing into a terminal nobody is showing"
+        }
+        controller.debugSelectTab(tabA)
+
+        // The page-level half needs a window the window server genuinely
+        // considers visible, which a non-composited `.accessory` process
+        // cannot always establish (the same limitation
+        // `WhiteboardViewSelfTest` records for its own visible-state check).
+        // So: the direction a regression would break is asserted
+        // unconditionally, and the other only when the environment can
+        // actually reach it.
+        controller.view.isHidden = true
+        guard controller.debugKubeContextShouldPauseRefreshes(forTabID: tabA) == true else {
+            return "tab A's badge does not consider itself paused with the whole console page hidden - this is exactly 3.2's reported defect"
+        }
+        controller.view.isHidden = false
+
+        if controller.debugIsConsolePageOnScreenForPeriodicWork() {
+            guard controller.debugKubeContextShouldPauseRefreshes(forTabID: tabA) == false else {
+                return "tab A's badge still considers itself paused while its page is genuinely on screen and its tab is selected - it would never refresh"
+            }
+        } else {
+            print("  NOTE: this process cannot establish a genuinely visible window (headless/.accessory), so only the pause direction is asserted")
+        }
+        return nil
+    }
+    //       (`data/grandline-full-app-audit/report.md`)
+
+    /// The one that matters. A periodic refresh **types a visible
+    /// `kubectl config ...` command into the captain's own live bastion
+    /// session**, and before this fix it did so every `refreshInterval`
+    /// whether or not anyone could see the tab. Asserted on the real injected
+    /// commands, not on a flag: what regressed would be a command appearing
+    /// in a session nobody is watching.
+    private static func test_hidden_neverInjectsIntoAnUnseenSession() -> String? {
+        let fake = FakeBridgeTerminal()
+        // `refreshInterval: 0` makes every tick due, so a missing gate shows
+        // up immediately rather than five minutes from now.
+        let bridge = KubeContextBridge(target: fake, refreshInterval: 0)
+        var hidden = true
+        bridge.shouldPauseRefreshes = { hidden }
+        // Not `start()`: that forces an immediate first refresh by design
+        // (activation is the captain turning the badge on, which only happens
+        // on a page they are looking at). The subject here is the *periodic*
+        // path.
+        for _ in 0..<10 { bridge.tick() }
+        guard fake.sentCommands.isEmpty else {
+            return "injected \(fake.sentCommands.count) command(s) into a hidden session - 3.2's whole point is that this must never happen"
+        }
+
+        hidden = false
+        bridge.tick()
+        guard fake.sentCommands.count == 1 else {
+            return "the badge did not resume when the page came back: expected 1 injected command, got \(fake.sentCommands.count)"
+        }
+        return nil
+    }
+
+    /// The energy half: a paused, idle badge should have no timer scheduled
+    /// at all, rather than a 3.3Hz one finding out each tick that it is
+    /// paused.
+    private static func test_hidden_idleBridgeSleepsEntirely() -> String? {
+        let fake = FakeBridgeTerminal()
+        let bridge = KubeContextBridge(target: fake, refreshInterval: 300)
+        var hidden = false
+        bridge.shouldPauseRefreshes = { hidden }
+        // `start()` forces an immediate first refresh by design, and an
+        // in-flight command is watched to completion even while paused
+        // (deliberately - see `hidden_inFlightCommandIsStillWatched...`), so
+        // it has to resolve before "is the *idle* badge asleep?" means
+        // anything.
+        fake.onSendCommand = { injected in
+            guard let (start, end, sep) = markers(in: injected) else { return }
+            fake.appendOutput("\(start)\npreprod-eks\n\(sep)\nCURRENT   NAME          CLUSTER   AUTHINFO   NAMESPACE\n*         preprod-eks   x         aws        raas-uat\n\(end)")
+        }
+        bridge.start()
+        defer { bridge.stop() }
+        tickUntil(bridge) { !bridge.isBusy }
+        guard !bridge.isBusy else { return "the first refresh never resolved" }
+        guard !bridge.debugIsIdleStopped else {
+            return "a visible badge has no timer scheduled - it would never refresh again"
+        }
+
+        hidden = true
+        bridge.refreshGating()
+        guard bridge.debugIsIdleStopped else {
+            return "still waking up on a timer while the page is hidden - this is the cost 3.2 removed"
+        }
+
+        hidden = false
+        bridge.refreshGating()
+        guard !bridge.debugIsIdleStopped else {
+            return "did not re-arm when the page came back - a pause that can get stuck is worse than none"
+        }
+        return nil
+    }
+
+    /// Pausing must not be a disguised `start()`. `start()` deliberately
+    /// resets `consecutiveFailureCount`/`hasStoppedRetrying` (activation and
+    /// the captain's explicit retry click both mean "from a clean slate"), so
+    /// a hide/show cycle that went through it would silently re-arm a badge
+    /// that had already given up - breaking the "stop retrying automatically"
+    /// contract `fm/grandline-k8s-badge-fixes` established.
+    private static func test_hidden_resumingNeverResetsGiveUp() -> String? {
+        let fake = FakeBridgeTerminal()
+        let bridge = KubeContextBridge(target: fake, refreshInterval: 0, failureRetryInterval: 0,
+                                       maxConsecutiveFailures: 1)
+        var hidden = false
+        bridge.shouldPauseRefreshes = { hidden }
+        // A real `kubectl: command not found` - a genuine command failure,
+        // which is what counts toward the give-up threshold (a busy/discarded
+        // refusal deliberately never does). Same fixture the existing
+        // give-up case uses.
+        fake.onSendCommand = { injected in
+            guard let (start, end, sep) = markers(in: injected) else { return }
+            fake.appendOutput(kubectlNotFoundOutput(start: start, sep: sep, end: end))
+        }
+        bridge.start()
+        tickUntil(bridge) { bridge.hasStoppedRetrying }
+        guard bridge.hasStoppedRetrying else { return "could not reach the given-up state" }
+        let injectedBefore = fake.sentCommands.count
+
+        hidden = true
+        bridge.refreshGating()
+        hidden = false
+        bridge.refreshGating()
+        for _ in 0..<10 { bridge.tick() }
+
+        guard bridge.hasStoppedRetrying else {
+            return "a hide/show cycle reset the give-up state - the badge is retrying automatically again"
+        }
+        guard fake.sentCommands.count == injectedBefore else {
+            return "a hide/show cycle made a given-up badge inject \(fake.sentCommands.count - injectedBefore) more command(s)"
+        }
+        return nil
+    }
+
+    /// An in-flight command has already been typed into the real shell, so
+    /// its output is coming either way. Abandoning it on a pause would leave
+    /// `inFlight` - and therefore `isBusy`, the seam `SRELeadBridge` reads
+    /// before injecting its own command - stuck set for the life of the tab.
+    private static func test_hidden_inFlightStillWatched() -> String? {
+        let fake = FakeBridgeTerminal()
+        let bridge = KubeContextBridge(target: fake, refreshInterval: 300)
+        var hidden = false
+        bridge.shouldPauseRefreshes = { hidden }
+        bridge.start()
+        defer { bridge.stop() }
+        guard bridge.isBusy else { return "start() did not leave a refresh in flight" }
+
+        // The page goes away mid-command.
+        hidden = true
+        bridge.refreshGating()
+        guard bridge.debugIsPollingInFlight else {
+            return "stopped watching a command that is already running in the captain's shell - isBusy would never clear"
+        }
+
+        guard let m = markers(in: fake.sentCommands.first ?? "") else { return "no markers in the injected command" }
+        fake.appendOutput("\(m.0)\npreprod-eks\n\(m.2)\nCURRENT   NAME          CLUSTER   AUTHINFO   NAMESPACE\n*         preprod-eks   x         aws        raas-uat\n\(m.1)")
+        tickUntil(bridge) { !bridge.isBusy }
+        guard !bridge.isBusy else { return "the in-flight command never resolved" }
+        guard bridge.debugIsIdleStopped else {
+            return "kept a timer after resolving, while still hidden"
+        }
+        return nil
+    }
+
+    /// The other half of 3.2: between two healthy refreshes the badge used to
+    /// spin at `pollInterval` (0.3s) for the whole `refreshInterval` (300s) -
+    /// ~1000 wake-ups to re-read one `Date` comparison. It must now wait
+    /// one-shot for the moment the next attempt is actually due.
+    private static func test_idle_oneShotNotSpinning() -> String? {
+        let fake = FakeBridgeTerminal()
+        let bridge = KubeContextBridge(target: fake, refreshInterval: 300)
+        bridge.shouldPauseRefreshes = { false }
+        fake.onSendCommand = { injected in
+            guard let (start, end, sep) = markers(in: injected) else { return }
+            fake.appendOutput("\(start)\npreprod-eks\n\(sep)\nCURRENT   NAME          CLUSTER   AUTHINFO   NAMESPACE\n*         preprod-eks   x         aws        raas-uat\n\(end)")
+        }
+        bridge.start()
+        defer { bridge.stop() }
+        tickUntil(bridge) { !bridge.isBusy }
+        guard !bridge.isBusy else { return "the first refresh never resolved" }
+
+        guard !bridge.debugIsPollingInFlight else {
+            return "still on the fast in-flight cadence with nothing running"
+        }
+        guard let wake = bridge.debugSecondsUntilNextWake else {
+            return "no next wake-up scheduled at all after a success - the badge would never refresh again"
+        }
+        // Due in ~refreshInterval, not in ~pollInterval.
+        guard wake > 200 else {
+            return "next wake-up is in \(wake)s after a healthy refresh - expected ~300s (one-shot at the next attempt), so this is still the 0.3s spin"
+        }
+        return nil
+    }
 
     private static func test_bridge_refreshInjectsOneCombinedCommandAndParsesResult() -> String? {
         let fake = FakeBridgeTerminal()
@@ -623,7 +852,12 @@ enum KubeContextBridgeSelfTest {
     /// via the real `openSSH` path, every one of them eligible for the badge
     /// toggle (`kubeContextBadgeOptIn: true`) - mirrors
     /// `SRELeadPerTabSelfTest.makeStartedTestConsole()`.
-    private static func makeStartedKubeContextTestConsole(tabCount: Int) -> (window: NSWindow, controller: ConsoleController, tabIDs: [UUID]) {
+    /// `orderFront` is opt-in: `window.isVisible` is `false` for a window
+    /// that was never ordered in, which the page-level half of 3.2's
+    /// on-screen test reads. Ordered far off-screen so nothing appears on the
+    /// captain's own display, and never `makeKeyAndOrderFront`/`activate` -
+    /// this machine runs their real instance.
+    private static func makeStartedKubeContextTestConsole(tabCount: Int, orderFront: Bool = false) -> (window: NSWindow, controller: ConsoleController, tabIDs: [UUID]) {
         let controller = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(), isFirstmateConsole: false)
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
@@ -632,6 +866,10 @@ enum KubeContextBridgeSelfTest {
             defer: false
         )
         window.contentViewController = controller
+        if orderFront {
+            window.setFrameOrigin(NSPoint(x: -20_000, y: 0))
+            window.orderFront(nil)
+        }
         controller.view.layoutSubtreeIfNeeded()
 
         for i in 0..<tabCount {

@@ -315,6 +315,19 @@ extension ConsoleController {
             guard let self, let tab else { return false }
             return self.isTabBusy(tab.id, excluding: .kubeContext)
         }
+        // 3.2 of `data/grandline-full-app-audit/report.md`: a periodic
+        // refresh types a visible command into the captain's live bastion
+        // session, so it must not fire for a page nobody is looking at. See
+        // `KubeContextBridge.shouldPauseRefreshes` for why this is read at
+        // the moment of every attempt rather than only when a visibility
+        // notification arrives.
+        bridge.shouldPauseRefreshes = { [weak self, weak tab] in
+            guard let self, let tab, !tab.isClosing else { return true }
+            // A tab that isn't the one on screen is as invisible as a hidden
+            // page: the console shows exactly one tab's terminal at a time.
+            if tab !== self.currentTab { return true }
+            return !self.isConsolePageOnScreenForPeriodicWork()
+        }
         bridge.onUpdate = { [weak self, weak tab, weak bridge] result in
             guard let self, let tab, let bridge else { return }
             switch result {
@@ -561,6 +574,11 @@ extension ConsoleController {
         // Lead unread entry, if any, regardless of how selection happened
         // (a chip click, ⌘1-9, or a notification's own navigate closure).
         NotificationSources.clearSRELeadReply(tabID: tab.id)
+        // 3.2: which tab is current is half of "is this badge's tab
+        // visible?" - the console shows exactly one terminal at a time, so a
+        // background tab's badge should be asleep even while the page itself
+        // is on screen.
+        refreshPeriodicWorkGating()
         if focus { view.window?.makeFirstResponder(tab.terminal) }
     }
 
@@ -581,6 +599,10 @@ extension ConsoleController {
     func markCurrentTabAsRead() {
         guard let tab = currentTab else { return }
         NotificationSources.clearSRELeadReply(tabID: tab.id)
+        // Same reasoning as `select`'s own call: this is the "the page came
+        // back on screen with no selection change" path, which is exactly
+        // when a paused badge should wake up again.
+        refreshPeriodicWorkGating()
     }
 
     // MARK: Reconnect / restart
@@ -637,6 +659,10 @@ extension ConsoleController {
         if let themeObservation {
             ThemeManager.shared.unobserve(themeObservation)
             self.themeObservation = nil
+        }
+        if let activityObservation {
+            AppActivityState.shared.unobserve(activityObservation)
+            self.activityObservation = nil
         }
         if let fontSizeObservation {
             FontSizeManager.shared.unobserve(fontSizeObservation)

@@ -190,7 +190,20 @@ enum FleetDataSource {
         return (state, source, detailParts.joined(separator: " \u{00B7} "))
     }
 
-    static func parseTasks() -> [FleetTask] {
+    /// The fleet's current tasks, with every task's authoritative crew state.
+    ///
+    /// Goes through `FleetTaskCache`'s short coalescing window (3.5 of
+    /// `data/grandline-full-app-audit/report.md`) - see that file for why the
+    /// window is deliberately much shorter than `FleetNotifier`'s own poll,
+    /// and why the audit's `.meta`-mtime mechanism is not what shipped.
+    ///
+    /// `forceRefresh` is passed by the captain's own Refresh clicks, which
+    /// must always run the real sweep.
+    static func parseTasks(forceRefresh: Bool = false) -> [FleetTask] {
+        FleetTaskCache.tasks(forceRefresh: forceRefresh) { parseTasksUncached() }
+    }
+
+    private static func parseTasksUncached() -> [FleetTask] {
         let stateDir = FirstmateHome.state
         guard let files = try? FileManager.default.contentsOfDirectory(at: stateDir, includingPropertiesForKeys: nil) else {
             return []
@@ -268,8 +281,8 @@ enum FleetDataSource {
 
     // MARK: Snapshot
 
-    static func snapshot() -> FleetSnapshot {
-        let tasks = parseTasks()
+    static func snapshot(forceRefresh: Bool = false) -> FleetSnapshot {
+        let tasks = parseTasks(forceRefresh: forceRefresh)
         let (queued, done) = parseBacklogCounts()
         return FleetSnapshot(
             homeOk: FirstmateHome.homeOk(),
