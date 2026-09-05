@@ -12,7 +12,7 @@ import Foundation
 final class AppSettings {
     static let shared = AppSettings()
 
-    private let defaults = UserDefaults.standard
+    private let defaults: UserDefaults
 
     private enum Keys {
         static let fontSize = "fm.fontSize"
@@ -29,7 +29,24 @@ final class AppSettings {
         static let didSeedDailyGitHubSyncSchedule = "fm.didSeedDailyGitHubSyncSchedule"
     }
 
-    private init() {}
+    /// GL-P3 (audit §6.10): the defaults store is injectable.
+    ///
+    /// `shared` is still the only instance the app ever builds, and still
+    /// reads `UserDefaults.standard`. What this buys is a self-test that
+    /// wants to exercise a settings-shaped behaviour without writing through
+    /// to the captain's real preferences - the non-hermetic hazard this
+    /// repo's own suites have been bitten by more than once (see
+    /// `Phase3PolishSelfTest`'s theme-restore source guard, and every suite
+    /// that saves and restores `AppSettings.uiTextScale` by hand around a
+    /// `ChromeTextScale.setScale` call).
+    ///
+    /// Deliberately not adopted by those suites here: they save and restore
+    /// the real value, which is the honest thing to do for a *singleton*'s
+    /// behaviour, and switching them to an injected store would change what
+    /// they prove. This is the seam, not a migration.
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
 
     /// Terminal font size in points. Settings > Terminal's +/- steppers and
     /// `ConsoleController.zoomIn/zoomOut` both read and write this so the

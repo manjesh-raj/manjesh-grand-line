@@ -10,8 +10,17 @@
 // saved-key reference (`keyID`, into `SSHKeyStore` / `KeychainKeyStore`) - the
 // only thing persisted here is a `UUID`, never key material. With no key
 // chosen, `ssh` falls back to the system agent / `known_hosts` and prompts
-// interactively on the PTY, same as Phase 1. A typed-in `password` is held in
-// memory for the session and is deliberately excluded from `Codable`.
+// interactively on the PTY, same as Phase 1.
+//
+// GL-P3 (audit §6.10): this used to also carry a session-only `password`,
+// typed into the host editor and excluded from `Codable`. It is **gone**, and
+// should not come back without a real mechanism behind it: nothing ever read
+// it. `connectSSH` builds argv and never consulted it, so `ssh` prompted on
+// the PTY exactly as it does now - the field's only effect was to invite the
+// captain to type a real password into a control that did nothing and then
+// hold it in process memory for the rest of the session. Removing it is a
+// small strengthening of the same posture the rest of this file documents,
+// not a loss of capability.
 //
 // Phase 3 (design report Section B1/B4/B5, Section D Phase 3) adds the
 // "power features" that make this usable against real infra, all as extra
@@ -23,8 +32,10 @@
 
 import Foundation
 
-/// A saved SSH host. `Codable` for JSON persistence, but `password` is left out
-/// of the coding keys so it never touches disk (see `CodingKeys`).
+/// A saved SSH host. `Codable` for JSON persistence; every secret this record
+/// can reference lives elsewhere (`keyID` points into `SSHKeyStore` /
+/// `KeychainKeyStore`, and a bastion's own password is prompted by `ssh` on
+/// the PTY and never stored anywhere).
 struct Host: Codable, Identifiable, Equatable {
     var id = UUID()
 
@@ -77,11 +88,6 @@ struct Host: Codable, Identifiable, Equatable {
     /// only ever carries the id, never the command text.
     var startupSnippetID: UUID?
 
-    /// A typed-in password. **Session-only** - excluded from `CodingKeys`, so it
-    /// is never written to disk (Phase 2 owns secure secret storage). Plain
-    /// `ssh` prompts for it interactively on the PTY regardless.
-    var password: String?
-
     /// Block view Stage 0 opt-in (`fm/cockpit-block-view-stage0`): this host's
     /// dedicated page renders parsed OSC-133 command blocks instead of raw
     /// scrollback, but only when `FM_BLOCK_VIEW_ENABLED` is also set - see
@@ -130,7 +136,6 @@ struct Host: Codable, Identifiable, Equatable {
         jumpVia: String? = nil,
         portForwards: [PortForwardRule] = [],
         startupSnippetID: UUID? = nil,
-        password: String? = nil,
         blockViewOptIn: Bool = false,
         kubeContextBadgeOptIn: Bool = false
     ) {
@@ -148,12 +153,11 @@ struct Host: Codable, Identifiable, Equatable {
         self.jumpVia = jumpVia
         self.portForwards = portForwards
         self.startupSnippetID = startupSnippetID
-        self.password = password
         self.blockViewOptIn = blockViewOptIn
         self.kubeContextBadgeOptIn = kubeContextBadgeOptIn
     }
 
-    /// Everything persisted - note `password` is intentionally absent.
+    /// Everything persisted.
     private enum CodingKeys: String, CodingKey {
         case id, label, address, port, username, keyID, iconSymbol, accentHex, group, tags,
              agentForward, jumpVia, portForwards, startupSnippetID, blockViewOptIn, kubeContextBadgeOptIn

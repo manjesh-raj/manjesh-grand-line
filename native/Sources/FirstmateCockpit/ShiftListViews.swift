@@ -493,10 +493,17 @@ enum ShiftDateFormatting {
         if cal.isDateInToday(date) { return "Today" }
         if cal.isDateInTomorrow(date) { return "Tomorrow" }
         if cal.isDateInYesterday(date) { return "Yesterday" }
+        return monthDayFormatter.string(from: date)
+    }
+
+    // GL-P3: built once. `DateFormatter` construction is measurably
+    // expensive and this carries no per-call state - the same treatment
+    // `FleetLogFeed`/`HealthCardView` already give theirs.
+    private static let monthDayFormatter: DateFormatter = {
         let f = DateFormatter()
         f.setLocalizedDateFormatFromTemplate("MMMd")
-        return f.string(from: date)
-    }
+        return f
+    }()
 
     /// "Today at 3:00 PM" / "Aug 12" (no time shown when `hhmm` is nil).
     static func friendly(_ yyyyMMdd: String, time hhmmStr: String?) -> String {

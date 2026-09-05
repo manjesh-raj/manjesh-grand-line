@@ -98,7 +98,6 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     private let addressField = HelmTextField(placeholder: "hostname or IP")
     private let portField = HelmTextField(placeholder: "22")
     private let usernameField = HelmTextField(placeholder: "Username")
-    private let passwordField = HelmSecureTextField(placeholder: "Session only")
     private let keyIconTile = IconTileView(size: 30, cornerRadius: HelmMetrics.rChip)
     private lazy var keyCard = HelmFieldCard(label: "SSH Key", accessory: keyIconTile)
     private let environmentPicker = HostEnvironmentPicker()
@@ -193,8 +192,6 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         portField.formatter = intFormatter()
         usernameField.stringValue = editing?.username ?? ""
         form.addFieldColumns([("Port", portField), ("Username", usernameField)])
-        passwordField.stringValue = editing?.password ?? ""
-        form.addField("Password", passwordField)
         environmentPicker.onSelect = { [weak self] title in self?.groupField.stringValue = title }
         environmentPicker.select(editing?.group)
         form.addField("Environment", environmentPicker)
@@ -535,8 +532,6 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         host.address = address
         host.port = port
         host.username = usernameField.stringValue.trimmingCharacters(in: .whitespaces)
-        let pw = passwordField.stringValue
-        host.password = pw.isEmpty ? nil : pw
         host.keyID = selectedKeyID
         let group = groupField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         host.group = group.isEmpty ? nil : group

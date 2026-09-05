@@ -843,10 +843,17 @@ final class StickyNoteView: NSView {
         if let yesterday = calendar.date(byAdding: .day, value: -1, to: now), calendar.isDate(date, inSameDayAs: yesterday) {
             return "Yesterday"
         }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "MMM d"
-        return formatter.string(from: date)
+        return Self.monthDayFormatter.string(from: date)
     }
+
+    // GL-P3: built once. `DateFormatter` construction is measurably
+    // expensive and this carries no per-call state - the same treatment
+    // `FleetLogFeed`/`HealthCardView` already give theirs.
+    private static let monthDayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "MMM d"
+        return f
+    }()
 
     @objc private func overflowClicked(_ sender: NSButton) {
         let menu = NSMenu()

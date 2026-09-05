@@ -1938,6 +1938,11 @@ if ProcessInfo.processInfo.environment["FM_RUN_TEXT_SCALE_ROW_HEIGHT_TESTS"] == 
     exit(TextScaleRowHeightSelfTest.run() ? 0 : 1)
 }
 
+// Audit §6.10's P3 leftovers. Pure logic - runs in CI.
+if ProcessInfo.processInfo.environment["FM_RUN_P3_LEFTOVERS_TESTS"] == "1" {
+    exit(Phase4P3LeftoversSelfTest.run() ? 0 : 1)
+}
+
 // F5's command-palette providers: every domain's matching, the grouping the
 // mockup shows, the "never send a half-substituted command" rule, and the
 // source guards that keep the destructive-command gate a single definition the
