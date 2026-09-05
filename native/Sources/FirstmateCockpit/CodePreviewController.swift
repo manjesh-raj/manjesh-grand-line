@@ -697,6 +697,23 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
 
     // MARK: Actions
 
+    /// Open (or reveal) one saved snippet by name - ⌘K's landing action
+    /// (audit §6.6b).
+    ///
+    /// A snippet's filename *is* its identity here (see `CodePreviewStore`'s
+    /// header), so the name is the whole key. An already-open tab is selected
+    /// rather than duplicated; anything else is loaded from the store into a
+    /// new tab. A name the store no longer holds does nothing rather than
+    /// opening an empty tab under a dead name.
+    func openSnippet(named name: String) {
+        if let existing = open.first(where: { $0.name == name }) {
+            select(key: existing.key)
+            return
+        }
+        guard let snippet = store.list().first(where: { $0.id == name }) else { return }
+        _ = addTab(name: snippet.id, content: snippet.content, persisted: true, select: true)
+    }
+
     @objc private func newSnippetTapped() {
         addTab(name: nextUntitledName(), content: "", persisted: false, select: true)
         onDrillSubtitleChanged?()

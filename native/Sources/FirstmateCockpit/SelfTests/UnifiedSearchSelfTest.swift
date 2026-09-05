@@ -313,6 +313,86 @@ enum UnifiedSearchSelfTest {
                   "a postmortem's meta should carry its root cause, got \(pmRow.meta)")
         }
 
+        // MARK: Sticky notes and code snippets (audit §6.5b / §6.6b)
+        //
+        // Both stores are pointed at scratch roots explicitly rather than
+        // relying on the global self-test redirect: `FM_STICKY_BOARD_DIR` and
+        // `FM_CODE_PREVIEW_DIR` are in `main.swift`'s block, but an explicit
+        // root is the seam these stores were given for exactly this and
+        // cannot be undone by a later change to that block.
+
+        let stickyRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("unified-sticky-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: stickyRoot) }
+        let stickyStore = StickyBoardStore(root: stickyRoot)
+        let titled = stickyStore.addNote(title: "Bastion rotation",
+                                         text: "Ask about the prod bastion key rotation window",
+                                         color: .yellow, x: 40, y: 40, rotationDegrees: 1)
+        // A note with no title at all - the fastest thing to jot, and the row
+        // that would render blank if the provider only ever read `title`.
+        let untitled = stickyStore.addNote(title: "",
+                                           text: "renew the grafana cert before March",
+                                           color: .blue, x: 200, y: 40, rotationDegrees: -2)
+
+        var openedNotes: [String] = []
+        let stickyProvider = UnifiedSearchStickyNoteProvider(
+            store: stickyStore, onOpen: { openedNotes.append($0) })
+
+        let byTitle = stickyProvider.items(query: "bastion")
+        check(byTitle.count == 1 && byTitle.first?.id == titled.id,
+              "a sticky note must be findable by its title, got \(byTitle.map(\.title))")
+        check(byTitle.first?.kind == .stickyNote, "a sticky note row must carry the sticky-note kind")
+
+        // Body matching is the point: a captain searches for what they wrote,
+        // and most notes are body-only.
+        let byBody = stickyProvider.items(query: "grafana")
+        check(byBody.count == 1 && byBody.first?.id == untitled.id,
+              "a sticky note must be findable by its body text, got \(byBody.map(\.title))")
+        check(byBody.first?.title.contains("grafana") == true,
+              "an untitled note must fall back to its body for the row title, got "
+              + "\(String(describing: byBody.first?.title))")
+
+        check(stickyProvider.items(query: "").isEmpty,
+              "an empty query must return no sticky notes - a whole board would be a wall of noise")
+        check(stickyProvider.items(query: "BASTION").count == 1,
+              "sticky-note matching must be case-insensitive like every other provider")
+
+        byTitle.first?.activate()
+        check(openedNotes == [titled.id],
+              "activating a sticky-note row must open that note, got \(openedNotes)")
+
+        let snippetRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("unified-snippets-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: snippetRoot) }
+        let snippetStore = CodePreviewStore(root: snippetRoot)
+        _ = snippetStore.create(name: "drain-node.sh", content: "kubectl drain \"$1\" --ignore-daemonsets\n")
+        _ = snippetStore.create(name: "notes.txt", content: "the bastion hop is password gated\n")
+
+        var openedSnippets: [String] = []
+        let snippetProvider = UnifiedSearchSnippetProvider(
+            store: snippetStore, onOpen: { openedSnippets.append($0) })
+
+        let byName = snippetProvider.items(query: "drain")
+        check(byName.count == 1 && byName.first?.id == "drain-node.sh",
+              "a snippet must be findable by its filename, got \(byName.map(\.title))")
+        check(byName.first?.kind == .snippet, "a snippet row must carry the snippet kind")
+        check(byName.first?.meta == CodePreviewLanguage.forFilename("drain-node.sh").displayName,
+              "a snippet's meta should name its language, got \(String(describing: byName.first?.meta))")
+
+        let byContent = snippetProvider.items(query: "password gated")
+        check(byContent.count == 1 && byContent.first?.id == "notes.txt",
+              "a snippet must be findable by its contents, got \(byContent.map(\.title))")
+
+        byName.first?.activate()
+        check(openedSnippets == ["drain-node.sh"],
+              "activating a snippet row must open that snippet by name, got \(openedSnippets)")
+
+        // Both groups have to be orderable, or the palette drops their rows.
+        for kind in [UnifiedSearchKind.stickyNote, .snippet] {
+            check(UnifiedSearchKind.groupOrder.contains(kind.groupTitle),
+                  "\(kind.groupTitle) is missing from groupOrder - the palette would not render it")
+        }
+
         // MARK: App actions and destinations
 
         // Built without an `AppShellController` (which needs a real view

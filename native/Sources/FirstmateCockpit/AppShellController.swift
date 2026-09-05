@@ -128,6 +128,15 @@ final class AppShellController: NSViewController {
     /// gating note: a session that never opens it never starts a web content
     /// process, never loads the 4MB bundle and never builds an editor.
     private let codePreview: CodePreviewController
+
+    /// The same `CodePreviewStore` instance the page uses, exposed so ⌘K's
+    /// provider searches what the page shows rather than a second reader
+    /// (audit §6.6b).
+    let codePreviewStore: CodePreviewStore
+
+    /// The Sticky Board's own store - one instance, for the reason its own
+    /// declaration gives.
+    var stickyBoardStore: StickyBoardStore { stickyBoard.store }
     private let vault = VaultController()
     private let dictation: DictationController
     /// `fm/grandline-schedules-sidebar-move`: F11's Schedules card, promoted
@@ -353,6 +362,7 @@ final class AppShellController: NSViewController {
         // the two `CommandLibraryStore`s once did - but one is still the
         // cheaper and more obviously-correct answer.
         let codePreviewStore = CodePreviewStore()
+        self.codePreviewStore = codePreviewStore
         self.codePreview = CodePreviewController(store: codePreviewStore)
         self.homeCanvas = HomeCanvasController(sources: .init(
             shiftStore: shiftStore,
@@ -1981,6 +1991,22 @@ final class AppShellController: NSViewController {
     func openPostmortem(id: String) {
         show(.postmortems)
         postmortems.openPostmortem(id: id)
+    }
+
+    /// ⌘K landing actions for the two newest stores (audit §6.5b / §6.6b).
+    ///
+    /// Same shape as the two above: select the destination, then reveal the
+    /// record. Selecting alone would leave the captain to hunt for the note
+    /// or snippet they just searched for, which is the dead-end shape bug 4.3
+    /// already corrected once for Recents.
+    func openStickyNote(id: String) {
+        show(.stickyBoard)
+        stickyBoard.revealNote(id: id)
+    }
+
+    func openCodeSnippet(named name: String) {
+        show(.codePreview)
+        codePreview.openSnippet(named: name)
     }
 
     // MARK: Command palette navigation (F5)

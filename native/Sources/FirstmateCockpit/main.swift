@@ -853,6 +853,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onOpenPostmortem: { [weak self] id in self?.appShell.openPostmortem(id: id) }
         ))
 
+        // The two newest stores (audit §6.5b / §6.6b). Both read the *live*
+        // instance the page itself uses - `StickyBoardStore` caches and
+        // writes, so a second one would serve stale rows and become a second
+        // writer to one file (GL-23).
+        index.register(UnifiedSearchStickyNoteProvider(
+            store: appShell.stickyBoardStore,
+            onOpen: { [weak self] id in self?.appShell.openStickyNote(id: id) }
+        ))
+        index.register(UnifiedSearchSnippetProvider(
+            store: appShell.codePreviewStore,
+            onOpen: { [weak self] name in self?.appShell.openCodeSnippet(named: name) }
+        ))
+
         // App actions + destinations - every entry an existing menu action.
         index.register(UnifiedSearchActionProvider.standard(shell: appShell))
 
