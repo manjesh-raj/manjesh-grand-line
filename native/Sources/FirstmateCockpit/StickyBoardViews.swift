@@ -294,7 +294,12 @@ final class StickyNoteResizeHandleView: NSView {
 
     override func resetCursorRects() {
         // A real cursor change is most of what makes the affordance
-        // discoverable at this size.
+        // discoverable at this size. `.crosshair` rather than a diagonal
+        // resize arrow because AppKit exposes no public NW-SE resize cursor -
+        // the one macOS itself uses on a window corner is private, and this
+        // app's own standing rule is that a private API stays unused however
+        // convenient (the same call `HelmButton` records for `NSSwitch`'s
+        // private `trackColor`).
         addCursorRect(bounds, cursor: .crosshair)
     }
 
