@@ -48,7 +48,7 @@ enum DaylightModuleSelfTest {
         for check in [checkSpaceTable, checkSymbolsResolve, checkUniformCardSizing,
                       checkUniformCardHeight, checkNoCardIsAWindowFloor,
                       checkModuleAnatomy, checkCanvasConstructsNoStores,
-                      checkBarAnatomy, checkBarDoesNotCapWindow,
+                      checkBarAnatomy, checkBarDestinationIcons, checkBarDoesNotCapWindow,
                       checkCanvasAndDrillHeader, checkLiveModuleWiring,
                       checkNoNewPolling] {
             var ok = true
@@ -822,6 +822,98 @@ enum DaylightModuleSelfTest {
         if bar.selectedSpaceForTests != .stores { fail("setSelectedSpace did not move the selection", &ok) }
 
         if ok { print("  OK - geometry, shadow, no vibrancy, 5 radio pills, click and silent-select") }
+    }
+
+    // MARK: 6b - the two quick-access destination icons
+    //
+    // `fm/grandline-sticky-code-preview-polish`: the captain reaches Sticky
+    // Board and Code Preview often enough that a space switch plus a card
+    // click is friction, so both get a bar icon. Both remain full Stores
+    // destinations - this is a shortcut, not a relocation.
+
+    private static func checkBarDestinationIcons(_ ok: inout Bool) {
+        print("\n-- bar quick-access icons: Sticky Board and Code Preview --")
+        let bar = DaylightBarController()
+        bar.loadView()
+        bar.view.frame = NSRect(x: 0, y: 0, width: 1200, height: DaylightBarController.height + DaylightBarController.topMargin)
+        bar.view.layoutSubtreeIfNeeded()
+
+        let buttons = bar.debugDestinationButtons()
+        guard buttons.count == 2 else {
+            fail("expected 2 quick-access icons, found \(buttons.count)", &ok)
+            return
+        }
+        if buttons.map(\.destination) != [.stickyBoard, .codePreview] {
+            fail("quick-access icons are \(buttons.map { $0.destination.title }), expected [stickyBoard, codePreview]", &ok)
+        }
+
+        // The glyph is each destination's OWN symbol, so the bar icon and the
+        // card it opens can never drift apart - and a symbol name that does
+        // not resolve renders as an invisible button with no error anywhere,
+        // which this app has shipped before ("anchor", which is not an SF
+        // Symbol at all).
+        for button in buttons {
+            if !button.debugHasIcon {
+                fail("\(button.destination.title): its SF Symbol '\(button.destination.symbol)' did not resolve - the icon is invisible", &ok)
+            }
+            if button.accessibilityLabel() != button.destination.title {
+                fail("\(button.destination.title): accessibility label is \(button.accessibilityLabel() ?? "nil"), expected the destination title", &ok)
+            }
+        }
+
+        // Order, measured rather than assumed: the captain's own reviewed
+        // layout is search -> Sticky Board -> Code Preview -> theme toggle ->
+        // bell -> avatar.
+        let searchMaxX = bar.debugSearchPill().frame.maxX
+        let toggleMinX = bar.debugThemeToggleButton().frame.minX
+        let bellMinX = bar.notificationCenter.bell.frame.minX
+        for button in buttons where button.frame.width > 0 {
+            if button.frame.minX < searchMaxX {
+                fail("\(button.destination.title) sits before the search pill", &ok)
+            }
+            if button.frame.maxX > toggleMinX {
+                fail("\(button.destination.title) sits after the theme toggle - it must come immediately before it", &ok)
+            }
+        }
+        if buttons[0].frame.minX >= buttons[1].frame.minX {
+            fail("Sticky Board should sit left of Code Preview", &ok)
+        }
+        if toggleMinX >= bellMinX {
+            fail("the theme toggle should still sit before the bell", &ok)
+        }
+        // Square, and the same side as the toggle and bell beside them - three
+        // icon squares of different sizes in one row is exactly the "two icon
+        // button languages" finding this app's own UI audit spent a phase
+        // undoing.
+        for button in buttons {
+            if abs(button.frame.width - DaylightBarIconButton.side) > 0.5
+                || abs(button.frame.height - DaylightBarIconButton.side) > 0.5 {
+                fail("\(button.destination.title) is \(button.frame.size), expected \(DaylightBarIconButton.side)pt square", &ok)
+            }
+        }
+
+        // A real click through the button's own target/action reports the
+        // destination - a button wired to nothing renders identically.
+        var picked: [RailDestination] = []
+        bar.onSelectDestination = { picked.append($0) }
+        buttons[0].performClick(nil)
+        buttons[1].performClick(nil)
+        if picked != [.stickyBoard, .codePreview] {
+            fail("clicking both icons reported \(picked.map(\.title)), expected [stickyBoard, codePreview]", &ok)
+        }
+
+        // Both icons re-tint with the theme like every other control on the
+        // bar - they share `DaylightBarIconButton.applyTheme` with the toggle,
+        // so this catches a caller that forgot to include them in the sweep.
+        for id in ["helm-light", "helm-dark"] {
+            guard let theme = HelmTheme.theme(id: id) else { continue }
+            bar.applyThemeForTests(theme)
+            for button in buttons where button.debugIconBackground.layer?.backgroundColor == nil {
+                fail("\(id): \(button.destination.title) has no icon-square fill after a theme change", &ok)
+            }
+        }
+
+        if ok { print("  OK - 2 icons, right order, right glyphs, real clicks, themed") }
     }
 
     // MARK: 5 - the bar cannot cap the window

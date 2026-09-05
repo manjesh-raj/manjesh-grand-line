@@ -388,6 +388,11 @@ final class AppShellController: NSViewController {
         // and filters it. That two-step is here rather than in the bar for
         // §5.3's reason: the bar must not know what a canvas is.
         bar.onSelectSpace = { [weak self] space in self?.selectSpace(space) }
+        // The bar's two quick-access icons (Sticky Board, Code Preview) - one
+        // click from anywhere in the app, straight to the destination, using
+        // the same `show(_:)` every other entry point uses rather than a
+        // second navigation path (`fm/grandline-sticky-code-preview-polish`).
+        bar.onSelectDestination = { [weak self] destination in self?.show(destination) }
         bar.onSelectSettings = { [weak self] in self?.show(.settings) }
         bar.onLogoutRequested = { [weak self] in self?.onLogoutRequested?() }
 

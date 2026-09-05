@@ -88,6 +88,17 @@ final class DaylightBarController: NSViewController {
     /// rather than a per-destination toolbar. Sits between the search pill
     /// and the bell, matching the captain's own reviewed layout.
     private let themeToggleButton = DaylightThemeToggleButton()
+    /// Quick-access jumps to two Stores destinations the captain reaches often
+    /// (`fm/grandline-sticky-code-preview-polish`). Both remain full
+    /// destinations under Stores - this is a shortcut, not a relocation - and
+    /// they sit immediately before the theme toggle, matching the captain's
+    /// own reviewed order: search -> Sticky Board -> Code Preview -> theme ->
+    /// bell -> avatar.
+    private let stickyBoardButton = DaylightDestinationButton(destination: .stickyBoard)
+    private let codePreviewButton = DaylightDestinationButton(destination: .codePreview)
+    /// Forwarded, never owned - the bar has no idea what a destination *is*,
+    /// exactly as it has no idea what a space means (`onSelectSpace`).
+    var onSelectDestination: ((RailDestination) -> Void)?
     private let avatar = HoverTrackingButton()
     private let avatarGradient = CAGradientLayer()
     private let avatarPopover = NSPopover()
@@ -147,11 +158,18 @@ final class DaylightBarController: NSViewController {
         themeToggleButton.target = self
         themeToggleButton.action = #selector(themeToggleClicked)
 
+        for button in [stickyBoardButton, codePreviewButton] {
+            button.target = self
+            button.action = #selector(destinationButtonClicked(_:))
+        }
+
         buildAvatar()
 
         bar.addSubview(logoRow)
         bar.addSubview(pillRow)
         bar.addSubview(searchPill)
+        bar.addSubview(stickyBoardButton)
+        bar.addSubview(codePreviewButton)
         bar.addSubview(themeToggleButton)
         bar.addSubview(notificationCenter.bell)
         bar.addSubview(avatar)
@@ -181,8 +199,18 @@ final class DaylightBarController: NSViewController {
             pillRow.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
 
             pillsToSearch,
-            searchPill.trailingAnchor.constraint(equalTo: themeToggleButton.leadingAnchor, constant: -HelmMetrics.s2),
+            searchPill.trailingAnchor.constraint(equalTo: stickyBoardButton.leadingAnchor, constant: -HelmMetrics.s2),
             searchPill.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+
+            stickyBoardButton.trailingAnchor.constraint(equalTo: codePreviewButton.leadingAnchor, constant: -HelmMetrics.s2),
+            stickyBoardButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            stickyBoardButton.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
+            stickyBoardButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
+
+            codePreviewButton.trailingAnchor.constraint(equalTo: themeToggleButton.leadingAnchor, constant: -HelmMetrics.s2),
+            codePreviewButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            codePreviewButton.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
+            codePreviewButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
 
             themeToggleButton.trailingAnchor.constraint(equalTo: notificationCenter.bell.leadingAnchor, constant: -HelmMetrics.s2),
             themeToggleButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
@@ -308,6 +336,8 @@ final class DaylightBarController: NSViewController {
     var keyViewChain: [NSView] {
         var chain: [NSView] = pills.map { $0.container }
         chain.append(searchPill)
+        chain.append(stickyBoardButton)
+        chain.append(codePreviewButton)
         chain.append(themeToggleButton)
         chain.append(notificationCenter.bell)
         chain.append(avatar)
@@ -430,6 +460,11 @@ final class DaylightBarController: NSViewController {
     /// the full 13-theme picker (`ThemeMenu.swift`/Settings' Appearance
     /// grid). `applyTheme()` runs via the `observe` callback registered in
     /// `loadView`, so nothing else is needed here.
+    @objc private func destinationButtonClicked(_ sender: NSButton) {
+        guard let button = sender as? DaylightDestinationButton else { return }
+        onSelectDestination?(button.destination)
+    }
+
     @objc private func themeToggleClicked() {
         ThemeManager.shared.toggle()
     }
@@ -487,8 +522,10 @@ final class DaylightBarController: NSViewController {
         }
 
         searchPill.applyTheme(theme)
-        themeToggleButton.applyTheme(ink: muted, line: line, surface: theme.isDaylight
-            ? HelmTheme.nsColor(theme.daylightTokens.inset) : surface)
+        let iconSurface = theme.isDaylight ? HelmTheme.nsColor(theme.daylightTokens.inset) : surface
+        themeToggleButton.applyTheme(ink: muted, line: line, surface: iconSurface)
+        stickyBoardButton.applyTheme(ink: muted, line: line, surface: iconSurface)
+        codePreviewButton.applyTheme(ink: muted, line: line, surface: iconSurface)
         notificationCenter.bell.applyTheme(ink: muted, line: line, surface: theme.isDaylight
             ? HelmTheme.nsColor(theme.daylightTokens.inset) : surface)
 
@@ -530,6 +567,22 @@ final class DaylightBarController: NSViewController {
 
     /// The pill views, so a test can drive a real click/press through the
     /// same recognizer a captain's mouse would.
+    /// The bar's two quick-access destination icons, in visual order
+    /// (leading -> trailing).
+    func debugDestinationButtons() -> [DaylightDestinationButton] {
+        [stickyBoardButton, codePreviewButton]
+    }
+
+    func debugThemeToggleButton() -> DaylightThemeToggleButton { themeToggleButton }
+
+    func debugSearchPill() -> NSView { searchPill }
+
+    /// Re-themes this instance directly, bypassing `ThemeManager.setTheme` -
+    /// which persists to the real `UserDefaults` domain this process shares
+    /// with the captain's own app. AGENTS.md records several suites that
+    /// leaked a theme this way and made unrelated ones fail.
+    func applyThemeForTests(_ theme: HelmTheme) { applyTheme(theme) }
+
     func debugPills() -> [HoverHighlightView] { pills.map { $0.container } }
 
     /// B4: every pill's label frame, in bar coordinates, so a test can measure
@@ -707,20 +760,32 @@ final class DaylightSearchPill: HoverHighlightView {
 /// full 13-theme picker, which stays on `ThemeMenu.swift`/Settings'
 /// Appearance grid), so it belongs on the app-wide floating bar rather than
 /// a per-destination toolbar that only exists on Console.
-final class DaylightThemeToggleButton: NSButton {
+/// The bar's plain icon-square button: a bordered, theme-filled 34x34 tile
+/// with one SF Symbol centred in it.
+///
+/// This started life as `DaylightThemeToggleButton`'s own body and was lifted
+/// into a base class when `fm/grandline-sticky-code-preview-polish` added the
+/// Sticky Board / Code Preview quick-access icons - three near-identical
+/// copies of the same chrome is how this app ends up with the "five card
+/// recipes"/"two icon-button languages" findings its own UI audit spent a
+/// phase undoing. `NotificationBellButton` deliberately stays separate: it
+/// carries a badge and therefore a wider control frame (see its own note on
+/// why the badge sits beside the square rather than overlapping its rounded
+/// corner).
+class DaylightBarIconButton: NSButton {
     /// Matches `NotificationBellButton.iconSize` exactly.
     static let side: CGFloat = NotificationBellButton.iconSize
 
     private let iconBackground = NSView()
     private let iconImageView = NSImageView()
 
-    override init(frame frameRect: NSRect) {
-        super.init(frame: frameRect)
+    init(symbol: String, tooltip: String, accessibilityLabel: String) {
+        super.init(frame: .zero)
         title = ""
         isBordered = false
         image = nil
-        toolTip = "Toggle Light/Dark (⌘⌥T)"
-        setAccessibilityLabel("Toggle Light/Dark")
+        toolTip = tooltip
+        setAccessibilityLabel(accessibilityLabel)
         translatesAutoresizingMaskIntoConstraints = false
 
         iconBackground.wantsLayer = true
@@ -730,7 +795,13 @@ final class DaylightThemeToggleButton: NSButton {
         // as `NotificationBellButton.iconBackground` is.
         addSubview(iconBackground)
 
-        iconImageView.image = NSImage(systemSymbolName: "circle.lefthalf.filled", accessibilityDescription: nil)?
+        // A symbol name that does not resolve returns nil and renders as an
+        // invisible button with no error anywhere - this app has shipped that
+        // exact bug before (the Hosts list's "anchor", which is not an SF
+        // Symbol at all). Every caller's symbol is a `RailDestination.symbol`
+        // already rendering elsewhere in the app, and
+        // `DaylightBarDestinationButtonSelfTest` asserts each one resolves.
+        iconImageView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 14, weight: .regular))
         iconImageView.imageScaling = .scaleProportionallyDown
         iconImageView.translatesAutoresizingMaskIntoConstraints = false
@@ -755,6 +826,43 @@ final class DaylightThemeToggleButton: NSButton {
         iconBackground.layer?.borderWidth = 1
         iconBackground.layer?.borderColor = line.withAlphaComponent(0.5).cgColor
     }
+
+    #if FM_SELFTESTS
+    var debugHasIcon: Bool { iconImageView.image != nil }
+    var debugIconBackground: NSView { iconBackground }
+    #endif
+}
+
+final class DaylightThemeToggleButton: DaylightBarIconButton {
+    init() {
+        super.init(symbol: "circle.lefthalf.filled",
+                   tooltip: "Toggle Light/Dark (⌘⌥T)",
+                   accessibilityLabel: "Toggle Light/Dark")
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+}
+
+/// A one-click jump to a destination, sitting in the bar next to the theme
+/// toggle (`fm/grandline-sticky-code-preview-polish`).
+///
+/// The captain's ask was for Sticky Board and Code Preview specifically: both
+/// stay full destinations in the Stores space, this is purely a shortcut for
+/// two pages reached often enough that a space switch plus a card click is
+/// friction. The glyph is each destination's **own** `RailDestination.symbol`
+/// rather than new iconography, so the bar icon and the card it opens can
+/// never drift apart.
+final class DaylightDestinationButton: DaylightBarIconButton {
+    let destination: RailDestination
+
+    init(destination: RailDestination) {
+        self.destination = destination
+        super.init(symbol: destination.symbol,
+                   tooltip: "Open \(destination.title)",
+                   accessibilityLabel: destination.title)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 }
 
 // MARK: - Hover tracking (moved from the rail)

@@ -11,14 +11,27 @@
 // since that one hosts a mature library rather than a from-scratch UI):
 //
 //   - A "detective corkboard" mockup (dark wood, red pushpins, red string,
-//     torn/rotated cards, a typewriter header font) - explicitly NOT the
-//     direction taken. No pushpins, no string, no wood texture anywhere in
-//     this file.
+//     torn/rotated cards, a typewriter header font).
 //   - A cleaner "Sticky Board" mockup (a toolbar, a dotted-grid board,
 //     draggable colored cards with a small header + "\u{2022}\u{2022}\u{2022}"
 //     menu, an editable body, free positioning, a slight per-note rotation, a
-//     footer note count) - this is the interaction model this build actually
-//     follows, built natively rather than as embedded web content.
+//     footer note count) - this is the interaction model this build follows,
+//     built natively rather than as embedded web content.
+//
+// **v1 took the second one and explicitly refused the first's decoration;
+// `fm/grandline-sticky-code-preview-polish` reversed half of that**, after
+// the captain reviewed v1 live and asked for the detective board's own
+// identity back: the typewriter case-file header, the red pins, and a real
+// cork surface in a wooden frame in place of the dotted grid. So this file's
+// former "no pushpins, no wood texture anywhere" note is gone, deliberately.
+// What is still NOT built from that mockup: the red string between cards,
+// and torn/ragged card edges.
+//
+// A third reference arrived with that pass and outranks both: a plain photo
+// of a real corkboard in a wooden picture frame. It is the authoritative
+// colour/material direction for the board surface - tan/brown flecked cork,
+// **not** the detective mockup's green felt (see `StickyBoardModels.swift`'s
+// `StickyBoardCork` for the contradiction that resolved and how).
 //
 // ## What v1 deliberately does not build
 //
@@ -36,9 +49,18 @@
 // See `StickyBoardStore.swift`'s header for the git-sync story (a genuinely
 // new, dedicated `GrandLineDocs/sticky-board/` folder, sharing
 // `ShiftGitSync.shared`'s clone the same way `DocsRunbookGitSync` already
-// does). Note paper colors are a deliberate, literal exception to this app's
-// theme-token rule (see `StickyBoardModels.swift`'s header) - only the
-// board's own background/toolbar chrome follows the active `HelmTheme`.
+// does). Colour here is **three** categories, not two - board chrome follows
+// the active `HelmTheme`, the cork and its wood frame are literal hues chosen
+// by light/dark *mode*, and a note's paper is one literal value in all 14
+// themes. `StickyBoardModels.swift`'s header is the authority on which is
+// which; conflating any two of them is how this feature breaks.
+//
+// `applyTheme()` also forces `view.appearance`, which is not optional
+// decoration: without it every system-semantic colour in this subtree
+// (scrollers, the title field's editor, the overflow menu) follows the OS's
+// light/dark rather than the app's, and the page re-themes only halfway. That
+// omission was the captain's own "Sticky Board doesn't re-theme properly"
+// report; see `ThemeManager.swift`'s checklist item 2.
 
 import AppKit
 
@@ -56,6 +78,23 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     private let canvas = StickyBoardCanvasView(frame: NSRect(origin: .zero, size: StickyBoardMetrics.canvasSize))
 
     private let footer = NSTextField(labelWithString: "")
+
+    // MARK: The board's own case-file header
+    //
+    // **A deliberate, documented exception to this app's "a page never
+    // repeats its own destination name" convention** (Daylight §6.4 - the
+    // shared drill header already names the destination, and Review/Docs/
+    // Health were each corrected for exactly this duplication). The captain
+    // asked for it explicitly and by name: the board is meant to read as a
+    // detective's case file, and the typewriter title plus the "ACTIVE" pill
+    // ARE that identity. It is deliberately well under the 20pt hero floor
+    // `DaylightDrillPageSelfTest` polices, so it reads as a label stuck on
+    // the board rather than a second page title competing with the real one.
+    private let boardHeader = NSView()
+    private let boardTitle = NSTextField(labelWithString: "CASE: MY THOUGHTS")
+    private let statusPill = NSView()
+    private let statusDot = NSView()
+    private let statusLabel = NSTextField(labelWithString: "")
 
     private var overlay: HelmEmptyState?
     private let overlayContainer = NSView()
@@ -101,10 +140,18 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
-        scrollView.drawsBackground = false
+        // Opaque, and filled with the cork base: the canvas is larger than
+        // any realistic viewport so it normally covers this entirely, but a
+        // window wider than the canvas (or the frame between a resize and the
+        // next redraw) would otherwise show a strip of page background
+        // through the middle of a corkboard.
+        scrollView.drawsBackground = true
         scrollView.borderType = .noBorder
         scrollView.documentView = canvas
         boardCard.addSubview(scrollView)
+
+        buildBoardHeader()
+        boardCard.addSubview(boardHeader)
 
         overlayContainer.translatesAutoresizingMaskIntoConstraints = false
         overlayContainer.isHidden = true
@@ -119,10 +166,18 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
             footer.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.cardInset + HelmMetrics.s1),
             footer.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -HelmMetrics.s2),
 
-            scrollView.leadingAnchor.constraint(equalTo: boardCard.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: boardCard.trailingAnchor),
-            scrollView.topAnchor.constraint(equalTo: boardCard.topAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: boardCard.bottomAnchor),
+            // Inset on all four sides by the frame width, so `boardCard`'s own
+            // fill shows as a wood picture-frame band around the cork. The
+            // frame belongs on the CARD, not the canvas: the canvas scrolls,
+            // and a frame that scrolled away with it would not be a frame.
+            scrollView.leadingAnchor.constraint(equalTo: boardCard.leadingAnchor, constant: StickyBoardCork.frameWidth),
+            scrollView.trailingAnchor.constraint(equalTo: boardCard.trailingAnchor, constant: -StickyBoardCork.frameWidth),
+            scrollView.topAnchor.constraint(equalTo: boardCard.topAnchor, constant: StickyBoardCork.frameWidth),
+            scrollView.bottomAnchor.constraint(equalTo: boardCard.bottomAnchor, constant: -StickyBoardCork.frameWidth),
+
+            // Pinned over the cork's top-left, inside the frame band.
+            boardHeader.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: HelmMetrics.s3),
+            boardHeader.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: HelmMetrics.s3),
 
             overlayContainer.leadingAnchor.constraint(equalTo: boardCard.leadingAnchor),
             overlayContainer.trailingAnchor.constraint(equalTo: boardCard.trailingAnchor),
@@ -150,6 +205,68 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         onDrillSubtitleChanged?()
     }
 
+    /// The case-file header: a typewriter title and a live status pill. See
+    /// the property declarations above for why a second in-page title is a
+    /// sanctioned exception here specifically.
+    private func buildBoardHeader() {
+        boardHeader.translatesAutoresizingMaskIntoConstraints = false
+        boardHeader.wantsLayer = true
+
+        boardTitle.translatesAutoresizingMaskIntoConstraints = false
+        boardTitle.font = StickyFont.typewriter(HelmType.scaled(15))
+        boardHeader.addSubview(boardTitle)
+
+        statusPill.translatesAutoresizingMaskIntoConstraints = false
+        statusPill.wantsLayer = true
+        statusPill.layer?.cornerRadius = 8
+        statusPill.layer?.borderWidth = 1
+        boardHeader.addSubview(statusPill)
+
+        statusDot.translatesAutoresizingMaskIntoConstraints = false
+        statusDot.wantsLayer = true
+        statusDot.layer?.cornerRadius = 3
+        statusPill.addSubview(statusDot)
+
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusPill.addSubview(statusLabel)
+
+        NSLayoutConstraint.activate([
+            boardTitle.leadingAnchor.constraint(equalTo: boardHeader.leadingAnchor),
+            boardTitle.centerYAnchor.constraint(equalTo: boardHeader.centerYAnchor),
+            boardTitle.topAnchor.constraint(greaterThanOrEqualTo: boardHeader.topAnchor),
+
+            statusPill.leadingAnchor.constraint(equalTo: boardTitle.trailingAnchor, constant: HelmMetrics.s2),
+            statusPill.trailingAnchor.constraint(equalTo: boardHeader.trailingAnchor),
+            statusPill.centerYAnchor.constraint(equalTo: boardHeader.centerYAnchor),
+            statusPill.topAnchor.constraint(equalTo: boardHeader.topAnchor),
+            statusPill.bottomAnchor.constraint(equalTo: boardHeader.bottomAnchor),
+            statusPill.heightAnchor.constraint(equalToConstant: 16),
+
+            statusDot.leadingAnchor.constraint(equalTo: statusPill.leadingAnchor, constant: 6),
+            statusDot.centerYAnchor.constraint(equalTo: statusPill.centerYAnchor),
+            statusDot.widthAnchor.constraint(equalToConstant: 6),
+            statusDot.heightAnchor.constraint(equalToConstant: 6),
+
+            statusLabel.leadingAnchor.constraint(equalTo: statusDot.trailingAnchor, constant: 4),
+            statusLabel.trailingAnchor.constraint(equalTo: statusPill.trailingAnchor, constant: -7),
+            statusLabel.centerYAnchor.constraint(equalTo: statusPill.centerYAnchor),
+        ])
+    }
+
+    /// The pill says something true about the board rather than a permanent
+    /// "ACTIVE" sticker: an empty board is genuinely idle, and a board this
+    /// app could not read is not a state to dress up (GL-14's rule - an
+    /// unreadable file and an empty one must never render the same).
+    private var statusText: String {
+        if store.isInFailedLoadState { return "UNREADABLE" }
+        return store.notes.isEmpty ? "EMPTY" : "ACTIVE"
+    }
+
+    private var statusTint: HelmTint {
+        if store.isInFailedLoadState { return .critical }
+        return store.notes.isEmpty ? .neutral : .good
+    }
+
     // MARK: Notes
 
     private func rebuildNoteViews() {
@@ -170,8 +287,14 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         noteView.onTextChanged = { [weak self, id = note.id] text in
             self?.store.updateText(id: id, text: text)
         }
+        noteView.onTitleChanged = { [weak self, id = note.id] title in
+            self?.store.updateTitle(id: id, title: title)
+        }
         noteView.onMoved = { [weak self, id = note.id] origin in
             self?.store.updatePosition(id: id, x: Double(origin.x), y: Double(origin.y))
+        }
+        noteView.onResized = { [weak self, id = note.id] size in
+            self?.store.updateSize(id: id, width: Double(size.width), height: Double(size.height))
         }
         noteView.onDeleteRequested = { [weak self, id = note.id] in
             self?.deleteNote(id: id)
@@ -203,6 +326,7 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     private func updateFooter() {
         let count = store.notes.count
         footer.stringValue = count == 1 ? "1 note" : "\(count) notes"
+        applyBoardHeaderTheme()
     }
 
     private func updateOverlay() {
@@ -242,9 +366,11 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         updateFooter()
         updateOverlay()
         onDrillSubtitleChanged?()
-        // A fresh note is worth typing into right away.
+        // A fresh note is worth naming right away - the reference photo's
+        // cards all carry a label, and the title is the field a captain is
+        // least likely to discover on their own.
         if let noteView = noteViews[note.id] {
-            view.window?.makeFirstResponder(noteView.textViewForFocus)
+            view.window?.makeFirstResponder(noteView.titleFieldForFocus)
         }
     }
 
@@ -272,15 +398,73 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     // MARK: Theme
 
     private func applyTheme() {
+        // **`ThemeManager.swift`'s checklist item 2, and the actual root cause
+        // of the captain's "Sticky Board only half re-themes" report.**
+        //
+        // Layer-backed fills (this page's root, card, canvas) already tracked
+        // the theme and were already asserted by the self-test - which is
+        // exactly why the bug survived review. What did NOT track it is
+        // everything in the subtree that resolves a *system semantic* colour:
+        // the scroll view's scroller track and knob, the field editor AppKit
+        // lends `titleField`, the note overflow button's `NSMenu`, focus
+        // rings. Those resolve against the OS's own light/dark setting, not
+        // the in-app theme - so on a Mac in system Dark with a light Helm
+        // theme selected, this page rendered dark scrollbars and dark control
+        // chrome on a light board, and vice versa. Every other destination in
+        // this app has forced this for years (Docs, Review, Hosts, Settings,
+        // Updates, Shift, Log Analyzer, Kubernetes, ...); the two newest ones
+        // never did.
+        view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
+        // The card is the wood picture frame the cork sits inside - its fill
+        // shows only as the band `scrollView`'s inset leaves around the
+        // board. It is a literal wood tone chosen by light/dark mode, not a
+        // theme token, for the same reason the cork is (see
+        // `StickyBoardModels.swift`'s header); `applyCardSurface` still owns
+        // the radius/shadow so the board keeps the app's own card geometry.
         HelmCard.applyCardSurface(to: boardCard, theme: theme,
                                   cornerRadius: HelmMetrics.rCard,
                                   daylightRadius: HelmMetrics.dSurface)
+        let dark = theme.mode == .dark
+        boardCard.layer?.backgroundColor = HelmTheme.nsColor(StickyBoardCork.frameHex(dark: dark)).cgColor
+        boardCard.layer?.borderColor = HelmTheme.nsColor(StickyBoardCork.frameHex(dark: dark))
+            .blended(withFraction: dark ? 0.25 : 0.18, of: .black)?.cgColor
+            ?? boardCard.layer?.borderColor
+        scrollView.backgroundColor = HelmTheme.nsColor(StickyBoardCork.baseHex(dark: dark))
         canvas.applyTheme(theme)
+        applyBoardHeaderTheme()
         overlayContainer.wantsLayer = true
         overlayContainer.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         overlay?.applyTheme(theme)
         footer.textColor = HelmTheme.mutedInk(theme)
+    }
+
+    /// The case-file header sits **on the cork**, not on a theme surface, so
+    /// its ink is derived from the cork rather than from `chromeInkHex` - the
+    /// theme's own ink is chosen against the theme's own background and would
+    /// be measurably illegible on tan (a light theme's near-black ink is fine,
+    /// a dark theme's near-white ink on light cork is not).
+    /// `HelmContrast.legibleOn(fill:preferring:)` is the app's own guaranteed
+    /// correction for exactly this "I chose this opaque fill myself" case.
+    private func applyBoardHeaderTheme() {
+        let dark = theme.mode == .dark
+        let cork = HelmTheme.nsColor(StickyBoardCork.baseHex(dark: dark))
+        let ink = HelmContrast.legibleOn(fill: cork, preferring: dark ? .white : .black)
+        boardTitle.font = StickyFont.typewriter(HelmType.scaled(15))
+        boardTitle.textColor = ink
+
+        let tintHex = statusTint.hex(in: theme)
+        let tint = HelmTheme.nsColor(tintHex)
+        statusPill.layer?.backgroundColor = cork.blended(withFraction: dark ? 0.22 : 0.30, of: .white)?.cgColor
+        statusPill.layer?.borderColor = ink.withAlphaComponent(0.30).cgColor
+        statusDot.layer?.backgroundColor = tint.cgColor
+        // `kickerAttributes` is the app's one uppercase/tracked label recipe -
+        // hand-rolling `.kern:` anywhere outside `HelmType` is a build failure
+        // (`HelmContrastSelfTest.checkNoHandRolledKickers`).
+        statusLabel.attributedStringValue = NSAttributedString(
+            string: statusText,
+            attributes: HelmType.kickerAttributes(color: ink))
     }
 
     // MARK: Probe / self-test surface
@@ -292,6 +476,11 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     var debugNoteViews: [String: StickyNoteView] { noteViews }
     var debugOverlayVisible: Bool { !overlayContainer.isHidden }
     var debugFooterText: String { footer.stringValue }
+    var debugBoardHeader: NSView { boardHeader }
+    var debugBoardTitle: NSTextField { boardTitle }
+    var debugStatusLabel: NSTextField { statusLabel }
+    var debugStatusDot: NSView { statusDot }
+    var debugScrollView: NSScrollView { scrollView }
     func debugNewNote() { newNoteTapped() }
     func debugDeleteNote(id: String) { deleteNote(id: id) }
     /// Re-themes this instance directly, bypassing `ThemeManager.shared.

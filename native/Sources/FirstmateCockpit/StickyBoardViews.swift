@@ -1,7 +1,8 @@
 // Manjesh Grand Line - native macOS app.
 //
 // The Sticky Board's canvas + note card views. Real AppKit event handling for
-// drag-to-reposition - no web content, no gesture recognizer, matching the
+// drag-to-reposition and drag-to-resize - no web content, no gesture
+// recognizer, matching the
 // "no `NSClickGestureRecognizer` on an ancestor competing with a real
 // control inside it" hazard AGENTS.md's AppKit gotcha catalogue calls out
 // repeatedly. See `StickyBoardMetrics` for why plain `frame` positioning (not
@@ -18,9 +19,25 @@ enum StickyBoardMetrics {
     /// a dragged note is clamped to stay inside it (see
     /// `StickyBoardCanvasView.clamp(_:)`).
     static let canvasSize = CGSize(width: 2200, height: 1500)
-    static let noteSize = CGSize(width: 190, height: 172)
+    /// The size a brand-new note starts at. No longer the size every note
+    /// *is*: a note carries its own persisted `width`/`height` since
+    /// `fm/grandline-sticky-code-preview-polish`, and the resize handle in
+    /// the bottom-right corner is what changes them.
+    static let noteSize = CGSize(width: 200, height: 196)
     static let noteMargin: CGFloat = 28
     static let noteCascadeStep: CGFloat = 26
+
+    /// Resize bounds. The minimum is what still fits the title line, the pin,
+    /// the overflow button and one line of body text without clipping; the
+    /// maximum keeps one note from becoming the whole board (and keeps
+    /// `clamp(_:)`'s arithmetic meaningful).
+    static let minNoteSize = CGSize(width: 150, height: 130)
+    static let maxNoteSize = CGSize(width: 620, height: 560)
+
+    static func clampSize(_ size: CGSize) -> CGSize {
+        CGSize(width: min(max(minNoteSize.width, size.width), maxNoteSize.width),
+               height: min(max(minNoteSize.height, size.height), maxNoteSize.height))
+    }
 }
 
 /// The board's document view - a fixed-size, non-Auto-Layout canvas holding
@@ -33,16 +50,33 @@ enum StickyBoardMetrics {
 /// A flipped view (y grows downward, matching every persisted `StickyNote.y`
 /// and the reference mockup's own top/left CSS positioning model, same idea
 /// as this app's own `FlippedView` - which is `final`, so this repeats its
-/// one-line override rather than subclassing it) drawing a dotted grid in
-/// its own layer - the "cleaner" reference mockup's board look, never the
-/// first "detective corkboard" mockup's wood grain/pushpins/string, which was
-/// inspiration only.
+/// one-line override rather than subclassing it).
+///
+/// **The surface is drawn cork, not a photo and not a flat fill**
+/// (`fm/grandline-sticky-code-preview-polish`). The captain's reference is a
+/// real corkboard, and a flat brown rectangle does not read as one - the
+/// grain is what sells it. The technique is a small, tiled, procedurally
+/// drawn `NSImage` used as a pattern colour, which the brief explicitly
+/// sanctions and which is the only shape that stays cheap here: filling a
+/// 2200x1500 canvas by drawing several thousand individual specks on every
+/// `draw(_:)` would put real work on the main thread every time a note is
+/// dragged over the board, whereas a pattern fill is one `NSRectFill`
+/// regardless of canvas size. The tile is built at most once per light/dark
+/// mode and cached.
+///
+/// The speck layout is **seeded, not random**: a fresh `Int.random` per tile
+/// would give the board a different grain on every relaunch and, worse, make
+/// an off-screen render impossible to compare against a baseline. A tiny
+/// deterministic PRNG (see `seededSpecks`) gives the same grain forever.
 final class StickyBoardCanvasView: NSView {
     override var isFlipped: Bool { true }
 
-    private var dotColor: NSColor = .lightGray {
-        didSet { needsDisplay = true }
-    }
+    /// The cork tone follows the app's light/dark **mode**, never the
+    /// individual palette - see `StickyBoardModels.swift`'s header for why
+    /// this is a deliberate third colour category.
+    private var isDarkMode = false
+    private var corkBase: NSColor = .brown
+    private static var tileCache: [Bool: NSImage] = [:]
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -52,41 +86,100 @@ final class StickyBoardCanvasView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     func applyTheme(_ theme: HelmTheme) {
-        layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
-        dotColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.5)
+        let dark = theme.mode == .dark
+        // A theme switch inside the same mode (helm-light -> gruvbox-light)
+        // legitimately changes nothing here, so redraw only on a real change.
+        let changed = dark != isDarkMode || layer?.backgroundColor == nil
+        isDarkMode = dark
+        corkBase = HelmTheme.nsColor(StickyBoardCork.baseHex(dark: dark))
+        // The layer fill is what shows through anywhere the pattern has not
+        // painted yet (the first frame, and the moment a resize outruns a
+        // redraw), so it is the cork base rather than a theme token - a flash
+        // of page-background grey in the middle of a corkboard reads as a
+        // rendering bug.
+        layer?.backgroundColor = corkBase.cgColor
+        if changed { needsDisplay = true }
     }
 
-    /// A plain dotted grid, drawn once per `needsDisplay` - cheap (a handful
-    /// of `NSBezierPath.fill` calls per visible tile-sized region) and needs
-    /// no per-theme asset.
+    /// The cork itself: a base fill plus a tiled speck pattern.
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
-        let spacing: CGFloat = 24
-        let dotSize: CGFloat = 1.6
-        dotColor.setFill()
-        var y = spacing - (spacing.truncatingRemainder(dividingBy: spacing))
-        while y < dirtyRect.maxY {
-            if y >= dirtyRect.minY - spacing {
-                var x = spacing - (spacing.truncatingRemainder(dividingBy: spacing))
-                while x < dirtyRect.maxX {
-                    if x >= dirtyRect.minX - spacing {
-                        let dot = NSRect(x: x - dotSize / 2, y: y - dotSize / 2, width: dotSize, height: dotSize)
-                        NSBezierPath(ovalIn: dot).fill()
-                    }
-                    x += spacing
-                }
-            }
-            y += spacing
+        corkBase.setFill()
+        dirtyRect.fill()
+        NSColor(patternImage: Self.tile(dark: isDarkMode)).setFill()
+        dirtyRect.fill()
+    }
+
+    /// One tile of cork grain, drawn once per mode and cached. Transparent
+    /// apart from the specks, so it composites straight over the base fill.
+    static func tile(dark: Bool) -> NSImage {
+        if let cached = tileCache[dark] { return cached }
+        let side: CGFloat = 84
+        let image = NSImage(size: NSSize(width: side, height: side))
+        image.lockFocus()
+        let darkFleck = HelmTheme.nsColor(StickyBoardCork.fleckDarkHex(dark: dark))
+        let lightFleck = HelmTheme.nsColor(StickyBoardCork.fleckLightHex(dark: dark))
+        for speck in seededSpecks(side: side) {
+            (speck.isDark ? darkFleck : lightFleck).withAlphaComponent(speck.alpha).setFill()
+            // Cork's grain is granular rather than circular, so a squashed,
+            // rotated oval reads far closer than a dot at the same cost.
+            let path = NSBezierPath(ovalIn: NSRect(x: 0, y: 0, width: speck.length, height: speck.thickness))
+            var transform = AffineTransform(translationByX: speck.x, byY: speck.y)
+            transform.rotate(byDegrees: speck.angle)
+            path.transform(using: transform)
+            path.fill()
+        }
+        image.unlockFocus()
+        tileCache[dark] = image
+        return image
+    }
+
+    struct Speck {
+        let x, y, length, thickness, angle, alpha: CGFloat
+        let isDark: Bool
+    }
+
+    /// A deterministic speck layout. The generator is a plain 64-bit LCG
+    /// seeded with a fixed constant - it needs to be reproducible and
+    /// uniform-ish, not cryptographic, and `Int.random` is explicitly the
+    /// wrong tool here (`AGENTS.md` records the same reasoning for a note's
+    /// own rotation, which is rolled once and then persisted).
+    static func seededSpecks(side: CGFloat) -> [Speck] {
+        var state: UInt64 = 0x5DEECE66D
+        func next() -> CGFloat {
+            state = state &* 6364136223846793005 &+ 1442695040888963407
+            return CGFloat((state >> 33) % 100_000) / 100_000
+        }
+        return (0..<170).map { i in
+            Speck(x: next() * side,
+                  y: next() * side,
+                  length: 1.6 + next() * 4.4,
+                  thickness: 0.9 + next() * 1.5,
+                  angle: next() * 180,
+                  alpha: 0.16 + next() * 0.30,
+                  isDark: i % 3 != 0)
         }
     }
 
-    /// Keeps a dragged note's top-left inside the fixed canvas - the whole
-    /// reason the canvas is a fixed size rather than genuinely infinite (v1
-    /// scope; see `StickyBoardController.swift`'s header).
-    func clamp(_ point: CGPoint) -> CGPoint {
-        let maxX = max(0, StickyBoardMetrics.canvasSize.width - StickyBoardMetrics.noteSize.width)
-        let maxY = max(0, StickyBoardMetrics.canvasSize.height - StickyBoardMetrics.noteSize.height)
+    /// Keeps a dragged or resized note fully inside the fixed canvas. Takes
+    /// the note's own size rather than assuming one: since notes are
+    /// resizable, a single shared constant would let a grown note's
+    /// bottom-right corner fall off the board.
+    func clamp(_ point: CGPoint, size: CGSize = StickyBoardMetrics.noteSize) -> CGPoint {
+        let maxX = max(0, StickyBoardMetrics.canvasSize.width - size.width)
+        let maxY = max(0, StickyBoardMetrics.canvasSize.height - size.height)
         return CGPoint(x: min(max(0, point.x), maxX), y: min(max(0, point.y), maxY))
+    }
+
+    /// The resize counterpart of `clamp(_:size:)`: bounds a proposed size to
+    /// the metric limits *and* to whatever room is left between the note's
+    /// own origin and the canvas edge.
+    func clampSize(_ size: CGSize, at origin: CGPoint) -> CGSize {
+        let bounded = StickyBoardMetrics.clampSize(size)
+        return CGSize(width: min(bounded.width, max(StickyBoardMetrics.minNoteSize.width,
+                                                   StickyBoardMetrics.canvasSize.width - origin.x)),
+                      height: min(bounded.height, max(StickyBoardMetrics.minNoteSize.height,
+                                                      StickyBoardMetrics.canvasSize.height - origin.y)))
     }
 }
 
@@ -132,7 +225,11 @@ final class StickyNoteHeaderView: NSView {
             isDragging = true
         }
         let proposed = CGPoint(x: originAtPress.x + dx, y: originAtPress.y - dy)
-        let clamped = (note.superview as? StickyBoardCanvasView)?.clamp(proposed) ?? proposed
+        // Clamp against this note's OWN size: notes are resizable now, so a
+        // shared constant would let a grown note's bottom-right corner be
+        // dragged off the board.
+        let clamped = (note.superview as? StickyBoardCanvasView)?
+            .clamp(proposed, size: note.frame.size) ?? proposed
         note.setFrameOrigin(clamped)
         onDragUpdate?(clamped)
     }
@@ -143,33 +240,147 @@ final class StickyNoteHeaderView: NSView {
     }
 }
 
-/// One sticky note card: a fixed paper color, a slight fixed rotation, a
-/// header (timestamp + "\u{2022}\u{2022}\u{2022}" overflow menu) that doubles
-/// as the drag handle, and an editable plain-text body.
+/// The note's bottom-right resize grip.
+///
+/// Deliberately its own tiny view rather than a hit-test region inside
+/// `StickyNoteView`, for the same reason the drag handle is its own view: a
+/// note's body is a live `NSTextView`, and any "was this mousedown near the
+/// corner?" test done on the card itself has to reason about which subview
+/// would otherwise have taken the event. A real 16x16 view in the corner
+/// takes its own mouse events and nothing else changes.
+///
+/// It carries the same minimum-movement threshold the drag handle does, so a
+/// click that merely lands on the corner never writes a (identical) size to
+/// the store and never wakes the git debounce.
+final class StickyNoteResizeHandleView: NSView {
+    var onResizeUpdate: ((CGSize) -> Void)?
+    var onResizeEnd: (() -> Void)?
+
+    static let side: CGFloat = 16
+    private static let threshold: CGFloat = 3
+
+    private var pressLocation: CGPoint = .zero
+    private var sizeAtPress: CGSize = .zero
+    private var isResizing = false
+    private var gripColor: NSColor = .darkGray
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    func applyInk(_ ink: NSColor) {
+        gripColor = ink.withAlphaComponent(0.45)
+        needsDisplay = true
+    }
+
+    /// Three short diagonal strokes - the platform's own visual shorthand for
+    /// "drag me to resize", drawn rather than an SF Symbol so it inherits the
+    /// note's ink and stays legible on all six paper colours.
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        gripColor.setStroke()
+        let path = NSBezierPath()
+        path.lineWidth = 1.4
+        path.lineCapStyle = .round
+        for inset in [CGFloat(3), 7, 11] {
+            path.move(to: NSPoint(x: bounds.maxX - 3, y: bounds.minY + inset))
+            path.line(to: NSPoint(x: bounds.maxX - inset, y: bounds.minY + 3))
+        }
+        path.stroke()
+    }
+
+    override func resetCursorRects() {
+        // A real cursor change is most of what makes the affordance
+        // discoverable at this size. `.crosshair` rather than a diagonal
+        // resize arrow because AppKit exposes no public NW-SE resize cursor -
+        // the one macOS itself uses on a window corner is private, and this
+        // app's own standing rule is that a private API stays unused however
+        // convenient (the same call `HelmButton` records for `NSSwitch`'s
+        // private `trackColor`).
+        addCursorRect(bounds, cursor: .crosshair)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        pressLocation = event.locationInWindow
+        sizeAtPress = superview?.frame.size ?? .zero
+        isResizing = false
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let note = superview else { return }
+        let now = event.locationInWindow
+        let dx = now.x - pressLocation.x
+        // The canvas is flipped and the window is not, so growing the note
+        // downward on screen is a NEGATIVE window dy - the same sign flip the
+        // drag handle documents.
+        let dy = pressLocation.y - now.y
+        if !isResizing {
+            guard abs(dx) > Self.threshold || abs(dy) > Self.threshold else { return }
+            isResizing = true
+        }
+        let proposed = CGSize(width: sizeAtPress.width + dx, height: sizeAtPress.height + dy)
+        let clamped = (note.superview as? StickyBoardCanvasView)?
+            .clampSize(proposed, at: note.frame.origin) ?? StickyBoardMetrics.clampSize(proposed)
+        note.setFrameSize(clamped)
+        onResizeUpdate?(clamped)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if isResizing { onResizeEnd?() }
+        isResizing = false
+    }
+}
+
+/// One sticky note card, redesigned in `fm/grandline-sticky-code-preview-polish`
+/// against the captain's own reference photo of pinned index cards:
+///
+///   - a small red **pin** at the top (decorative - the note is dragged by its
+///     header row, not by the pin, so making the pin the handle would move
+///     the affordance somewhere smaller and less discoverable),
+///   - an editable **title** line in a bold hand ("IDEA #01", "QUESTION",
+///     "CLUE"),
+///   - a **handwriting** body face rather than the system font,
+///   - and a **resize grip** in the bottom-right corner.
+///
+/// The header row (timestamp + overflow menu) is still the drag handle, and
+/// still the only draggable region - see `StickyNoteHeaderView`.
 final class StickyNoteView: NSView {
     let noteID: String
     private var color: StickyNoteColor
 
+    private let pin = NSView()
     private let header = StickyNoteHeaderView()
     private let timestampLabel = NSTextField(labelWithString: "")
     private let menuButton = NSButton(title: "\u{2022}\u{2022}\u{2022}", target: nil, action: nil)
+    private let titleField = NSTextField(string: "")
     private let textView: NSTextView
     private let textScroll = NSScrollView()
+    private let resizeHandle = StickyNoteResizeHandleView()
 
+    var onTitleChanged: ((String) -> Void)?
     var onTextChanged: ((String) -> Void)?
     var onMoved: ((CGPoint) -> Void)?
+    var onResized: ((CGSize) -> Void)?
     var onDeleteRequested: (() -> Void)?
+
+    /// The reference photo's cards are labelled; an unlabelled note should
+    /// still say where the label goes rather than hiding the field.
+    static let titlePlaceholder = "Title"
 
     init(note: StickyNote) {
         self.noteID = note.id
         self.color = note.color
-        let container = NSTextContainer(size: NSSize(width: StickyBoardMetrics.noteSize.width - 16, height: .greatestFiniteMagnitude))
+        let startSize = StickyBoardMetrics.clampSize(note.size)
+        let container = NSTextContainer(size: NSSize(width: startSize.width - 16, height: .greatestFiniteMagnitude))
         let layoutManager = NSLayoutManager()
         layoutManager.addTextContainer(container)
         let storage = NSTextStorage()
         storage.addLayoutManager(layoutManager)
         textView = NSTextView(frame: .zero, textContainer: container)
-        super.init(frame: NSRect(origin: CGPoint(x: note.x, y: note.y), size: StickyBoardMetrics.noteSize))
+        super.init(frame: NSRect(origin: CGPoint(x: note.x, y: note.y), size: startSize))
 
         wantsLayer = true
         layer?.cornerRadius = 4
@@ -177,6 +388,14 @@ final class StickyNoteView: NSView {
         layer?.shadowRadius = 5
         layer?.shadowOffset = CGSize(width: 0, height: -2)
         layer?.shadowColor = NSColor.black.cgColor
+
+        pin.translatesAutoresizingMaskIntoConstraints = false
+        pin.wantsLayer = true
+        pin.layer?.cornerRadius = Self.pinSide / 2
+        // A real pushpin catches light at the top - one inner highlight layer
+        // is the whole 3D effect, and costs nothing.
+        pin.layer?.borderWidth = 1
+        addSubview(pin)
 
         header.translatesAutoresizingMaskIntoConstraints = false
         header.wantsLayer = true
@@ -193,7 +412,29 @@ final class StickyNoteView: NSView {
         menuButton.action = #selector(overflowClicked(_:))
         header.addSubview(menuButton)
 
+        // The title is a plain, chrome-less `NSTextField` rather than a
+        // `HelmTextField`: this sits on a note's own literal paper colour, so
+        // the app's sunken-well recipe (a theme-derived fill and border) would
+        // be the one piece of the design system that genuinely does not
+        // belong here. `HelmContrastSelfTest.checkNoRawTextInputs` bans the
+        // bare `NSTextField()` *initializer*; `NSTextField(string:)` is a
+        // different one and is what the app's own label-style fields use.
+        titleField.translatesAutoresizingMaskIntoConstraints = false
+        titleField.isBordered = false
+        titleField.drawsBackground = false
+        titleField.focusRingType = .none
+        titleField.lineBreakMode = .byTruncatingTail
+        titleField.cell?.usesSingleLineMode = true
+        titleField.delegate = self
+        titleField.stringValue = note.title
+        addSubview(titleField)
+
         NSLayoutConstraint.activate([
+            pin.centerXAnchor.constraint(equalTo: centerXAnchor),
+            pin.topAnchor.constraint(equalTo: topAnchor, constant: 5),
+            pin.widthAnchor.constraint(equalToConstant: Self.pinSide),
+            pin.heightAnchor.constraint(equalToConstant: Self.pinSide),
+
             header.leadingAnchor.constraint(equalTo: leadingAnchor),
             header.trailingAnchor.constraint(equalTo: trailingAnchor),
             header.topAnchor.constraint(equalTo: topAnchor),
@@ -204,6 +445,10 @@ final class StickyNoteView: NSView {
 
             menuButton.trailingAnchor.constraint(equalTo: header.trailingAnchor, constant: -4),
             menuButton.centerYAnchor.constraint(equalTo: header.centerYAnchor),
+
+            titleField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            titleField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            titleField.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 1),
         ])
 
         textScroll.translatesAutoresizingMaskIntoConstraints = false
@@ -212,11 +457,20 @@ final class StickyNoteView: NSView {
         textScroll.drawsBackground = false
         textScroll.borderType = .noBorder
         addSubview(textScroll)
+
+        resizeHandle.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(resizeHandle)
+
         NSLayoutConstraint.activate([
             textScroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             textScroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
-            textScroll.topAnchor.constraint(equalTo: header.bottomAnchor),
+            textScroll.topAnchor.constraint(equalTo: titleField.bottomAnchor, constant: 2),
             textScroll.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+
+            resizeHandle.trailingAnchor.constraint(equalTo: trailingAnchor),
+            resizeHandle.bottomAnchor.constraint(equalTo: bottomAnchor),
+            resizeHandle.widthAnchor.constraint(equalToConstant: StickyNoteResizeHandleView.side),
+            resizeHandle.heightAnchor.constraint(equalToConstant: StickyNoteResizeHandleView.side),
         ])
 
         textView.string = note.text
@@ -224,7 +478,7 @@ final class StickyNoteView: NSView {
         textView.isSelectable = true
         textView.isRichText = false
         textView.drawsBackground = false
-        textView.font = .systemFont(ofSize: 13)
+        textView.font = StickyFont.hand(HelmType.scaled(14))
         textView.textContainerInset = NSSize(width: 0, height: 2)
         textView.delegate = self
         // Every app-owned `NSTextView` paints its own selection through this
@@ -244,10 +498,15 @@ final class StickyNoteView: NSView {
         // drag update (see `StickyNoteHeaderView.mouseDragged`) - that is
         // purely visual and needs no store write. Only the drag's END is
         // persisted, so dragging a note across the board costs one YAML
-        // write and one debounced git commit, not dozens.
+        // write and one debounced git commit, not dozens. The resize grip
+        // follows exactly the same rule.
         header.onDragEnd = { [weak self] in
             guard let self else { return }
             self.onMoved?(self.frame.origin)
+        }
+        resizeHandle.onResizeEnd = { [weak self] in
+            guard let self else { return }
+            self.onResized?(self.frame.size)
         }
 
         applyColor()
@@ -257,12 +516,32 @@ final class StickyNoteView: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
+    static let pinSide: CGFloat = 9
+
+    /// The pin is the one thing on a note that is NOT drawn from the note's
+    /// own ink: the reference photo's pushpins are red on every card colour,
+    /// and a pin tinted to match its paper would disappear into it. It is
+    /// purely decorative (it carries no state and takes no clicks), so it has
+    /// no contrast obligation of its own - the note's meaning is entirely in
+    /// its title and body text.
+    private static let pinFill = "D6453F"
+    private static let pinEdge = "8E241F"
+
     private func applyColor() {
         layer?.backgroundColor = HelmTheme.nsColor(color.paperHex).cgColor
         let ink = HelmTheme.nsColor(color.inkHex)
         timestampLabel.textColor = ink
+        titleField.textColor = ink
+        titleField.font = StickyFont.handBold(HelmType.scaled(14))
+        titleField.placeholderAttributedString = NSAttributedString(
+            string: Self.titlePlaceholder,
+            attributes: [.font: StickyFont.handBold(HelmType.scaled(14)),
+                         .foregroundColor: ink.withAlphaComponent(0.42)])
         textView.textColor = ink
         textView.insertionPointColor = ink
+        resizeHandle.applyInk(ink)
+        pin.layer?.backgroundColor = HelmTheme.nsColor(Self.pinFill).cgColor
+        pin.layer?.borderColor = HelmTheme.nsColor(Self.pinEdge).cgColor
         menuButton.attributedTitle = NSAttributedString(
             string: "\u{2022}\u{2022}\u{2022}",
             attributes: [.foregroundColor: ink, .font: NSFont.systemFont(ofSize: 13, weight: .bold)])
@@ -308,12 +587,18 @@ final class StickyNoteView: NSView {
     }
 
     /// So a freshly created note can be focused for immediate typing
-    /// (`StickyBoardController.newNoteTapped`).
+    /// (`StickyBoardController.newNoteTapped`). The **title** is what a new
+    /// note focuses, matching the reference photo's labelled cards - the
+    /// captain names the thought, then writes it.
+    var titleFieldForFocus: NSTextField { titleField }
     var textViewForFocus: NSTextView { textView }
 
     #if FM_SELFTESTS
     var debugHeader: StickyNoteHeaderView { header }
+    var debugResizeHandle: StickyNoteResizeHandleView { resizeHandle }
     var debugTextView: NSTextView { textView }
+    var debugTitleField: NSTextField { titleField }
+    var debugPin: NSView { pin }
     var debugTimestampText: String { timestampLabel.stringValue }
     #endif
 }
@@ -321,5 +606,12 @@ final class StickyNoteView: NSView {
 extension StickyNoteView: NSTextViewDelegate {
     func textDidChange(_ notification: Notification) {
         onTextChanged?(textView.string)
+    }
+}
+
+extension StickyNoteView: NSTextFieldDelegate {
+    func controlTextDidChange(_ obj: Notification) {
+        guard (obj.object as? NSTextField) === titleField else { return }
+        onTitleChanged?(titleField.stringValue)
     }
 }

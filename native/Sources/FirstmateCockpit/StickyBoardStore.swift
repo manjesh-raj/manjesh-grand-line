@@ -43,6 +43,7 @@
 // tasks that had to hunt down and patch every harness individually to add
 // `FM_DOCS_RUNBOOKS_DIR`).
 
+import CoreGraphics
 import Foundation
 import Yaml
 
@@ -322,10 +323,14 @@ final class StickyBoardStore {
     // MARK: Writing
 
     @discardableResult
-    func addNote(text: String, color: StickyNoteColor, x: Double, y: Double,
+    func addNote(title: String = "", text: String, color: StickyNoteColor, x: Double, y: Double,
+                size: CGSize = StickyBoardMetrics.noteSize,
                 rotationDegrees: Double, now: Date = Date()) -> StickyNote {
-        let note = StickyNote(id: UUID().uuidString, text: text, color: color,
-                              x: x, y: y, rotationDegrees: rotationDegrees, createdAt: now)
+        let bounded = StickyBoardMetrics.clampSize(size)
+        let note = StickyNote(id: UUID().uuidString, title: title, text: text, color: color,
+                              x: x, y: y,
+                              width: Double(bounded.width), height: Double(bounded.height),
+                              rotationDegrees: rotationDegrees, createdAt: now)
         notes.append(note)
         persist()
         return note
@@ -334,6 +339,25 @@ final class StickyBoardStore {
     func updateText(id: String, text: String) {
         guard let index = notes.firstIndex(where: { $0.id == id }) else { return }
         notes[index].text = text
+        persist()
+    }
+
+    /// The note's own short label (the reference photo's index-card header).
+    func updateTitle(id: String, title: String) {
+        guard let index = notes.firstIndex(where: { $0.id == id }) else { return }
+        notes[index].title = title
+        persist()
+    }
+
+    /// Persisted on the resize drag's END only, exactly like `updatePosition`
+    /// - see the resize grip's own note in `StickyBoardViews.swift`. Clamped
+    /// here as well as in the view so a size can never reach the file outside
+    /// the metric bounds, whatever wrote it.
+    func updateSize(id: String, width: Double, height: Double) {
+        guard let index = notes.firstIndex(where: { $0.id == id }) else { return }
+        let bounded = StickyBoardMetrics.clampSize(CGSize(width: width, height: height))
+        notes[index].width = Double(bounded.width)
+        notes[index].height = Double(bounded.height)
         persist()
     }
 
@@ -397,10 +421,13 @@ final class StickyBoardStore {
     private static func yaml(_ n: StickyNote) -> Yaml {
         var m = YamlOrderedMap()
         m[ShiftYamlBridge.key("id")] = ShiftYamlBridge.str(n.id)
+        m[ShiftYamlBridge.key("title")] = ShiftYamlBridge.str(n.title)
         m[ShiftYamlBridge.key("text")] = ShiftYamlBridge.str(n.text)
         m[ShiftYamlBridge.key("color")] = ShiftYamlBridge.str(n.color.rawValue)
         m[ShiftYamlBridge.key("x")] = .double(n.x)
         m[ShiftYamlBridge.key("y")] = .double(n.y)
+        m[ShiftYamlBridge.key("width")] = .double(n.width)
+        m[ShiftYamlBridge.key("height")] = .double(n.height)
         m[ShiftYamlBridge.key("rotation")] = .double(n.rotationDegrees)
         m[ShiftYamlBridge.key("created_at")] = ShiftYamlBridge.str(ShiftYamlBridge.isoString(n.createdAt))
         return .dictionary(m)
@@ -416,6 +443,22 @@ final class StickyBoardStore {
         let y2 = dict[ShiftYamlBridge.key("y")]?.double ?? 0
         let rotation = dict[ShiftYamlBridge.key("rotation")]?.double ?? 0
         let createdAt = ShiftYamlBridge.date(dict[ShiftYamlBridge.key("created_at")]) ?? Date()
-        return StickyNote(id: id, text: text, color: color, x: x, y: y2, rotationDegrees: rotation, createdAt: createdAt)
+        // `title`/`width`/`height` arrived in
+        // `fm/grandline-sticky-code-preview-polish`, after notes had already
+        // been written to the captain's own repo. **Every new field needs a
+        // real fallback on the way in, never just a Swift-side default** -
+        // AGENTS.md records this app losing a whole `hosts.json` to exactly
+        // that mistake. This decoder is hand-written (not synthesised
+        // `Decodable`, which is where that bug actually lives), so the `??`
+        // below is the fallback - but the rule is the same, and
+        // `StickyBoardSelfTest.checkLegacyNoteDecode` pins it against a real
+        // pre-upgrade file rather than trusting the reading.
+        let title = ShiftYamlBridge.string(dict[ShiftYamlBridge.key("title")]) ?? ""
+        let size = StickyBoardMetrics.clampSize(CGSize(
+            width: dict[ShiftYamlBridge.key("width")]?.double ?? Double(StickyBoardMetrics.noteSize.width),
+            height: dict[ShiftYamlBridge.key("height")]?.double ?? Double(StickyBoardMetrics.noteSize.height)))
+        return StickyNote(id: id, title: title, text: text, color: color, x: x, y: y2,
+                          width: Double(size.width), height: Double(size.height),
+                          rotationDegrees: rotation, createdAt: createdAt)
     }
 }

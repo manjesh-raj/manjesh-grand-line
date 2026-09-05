@@ -35,7 +35,15 @@ import AppKit
 //      semantic color used anywhere in the view's subtree (`.labelColor`,
 //      `.secondaryLabelColor`, `.windowBackgroundColor`, etc.) resolves
 //      against the OS's actual light/dark setting instead of the in-app
-//      theme. Do NOT use `NSVisualEffectView` + `.behindWindow` blending for
+//      theme.
+//      **A layer-colour self-test cannot catch a violation of this rule** -
+//      the fills keep tracking the theme perfectly while the scrollers, field
+//      editors and menus around them do not, which is exactly how Sticky
+//      Board and Code Preview shipped half-themed with a green suite
+//      (`fm/grandline-sticky-code-preview-polish`). Assert
+//      `view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])` against
+//      the theme's mode instead. Do NOT use `NSVisualEffectView` +
+//      `.behindWindow` blending for
 //      a full-size destination or window's root: that material blends
 //      against whatever is behind the *window* (desktop/other apps), not
 //      other content inside it, and has been the direct cause of every
