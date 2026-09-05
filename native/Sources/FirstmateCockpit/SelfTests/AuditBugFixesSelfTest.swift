@@ -302,7 +302,7 @@ enum AuditBugFixesSelfTest {
         let fm = FileManager.default
         let root = scratch.appendingPathComponent("code-preview", isDirectory: true)
         let store = CodePreviewStore(root: root)
-        _ = store.save(name: "notes.txt", content: "hello")
+        store.save(name: "notes.txt", content: "hello")
         check(fm.fileExists(atPath: root.appendingPathComponent("notes.txt").path),
               "4.10: the fixture snippet was not written")
 
@@ -330,7 +330,7 @@ enum AuditBugFixesSelfTest {
         // A delete that genuinely cannot happen must be reported, not
         // swallowed: the panel has already closed the tab, so this is the only
         // signal that the snippet is still on disk and still synced.
-        _ = store.save(name: "locked.txt", content: "cannot go")
+        store.save(name: "locked.txt", content: "cannot go")
         drainMainQueue()
         PersistenceFailureReporter.resetForTests()
         try? fm.setAttributes([.posixPermissions: 0o500], ofItemAtPath: root.path)
