@@ -27,6 +27,7 @@
 // directory carries it.
 #if FM_SELFTESTS
 
+import AppKit
 import Foundation
 import Yaml
 
@@ -340,6 +341,125 @@ enum StickyBoardSelfTest {
                 check(reloaded.notes.first(where: { $0.id == note.id })?.rotationDegrees == 1.25,
                       "rotation must survive repeated reloads unchanged")
             }
+        }
+
+        // MARK: 8. Title + size persist exactly like text and position do
+        // (`fm/grandline-sticky-code-preview-polish`).
+        do {
+            let root = scratch.appendingPathComponent("title-size-store", isDirectory: true)
+            let store = StickyBoardStore(root: root)
+            let note = store.addNote(title: "IDEA #01", text: "body", color: .yellow,
+                                     x: 40, y: 60, rotationDegrees: 0)
+            check(note.width == Double(StickyBoardMetrics.noteSize.width),
+                  "a new note should start at the default width")
+
+            store.updateTitle(id: note.id, title: "QUESTION")
+            store.updateSize(id: note.id, width: 320, height: 260)
+
+            // A genuinely fresh instance over the same directory - the only
+            // reading that proves the FILE carries the value rather than the
+            // in-memory array.
+            let reloaded = StickyBoardStore(root: root).notes.first { $0.id == note.id }
+            check(reloaded?.title == "QUESTION", "an edited title must survive a reload, got \(reloaded?.title ?? "nil")")
+            check(reloaded?.width == 320 && reloaded?.height == 260,
+                  "a resized note must survive a reload, got \(reloaded?.width ?? -1)x\(reloaded?.height ?? -1)")
+
+            // Clamped on the way in, so a size outside the metric bounds can
+            // never reach the file whatever wrote it.
+            store.updateSize(id: note.id, width: 5, height: 99_999)
+            let clamped = StickyBoardStore(root: root).notes.first { $0.id == note.id }
+            check(clamped?.width == Double(StickyBoardMetrics.minNoteSize.width),
+                  "an undersized note should clamp to the minimum width")
+            check(clamped?.height == Double(StickyBoardMetrics.maxNoteSize.height),
+                  "an oversized note should clamp to the maximum height")
+        }
+
+        // MARK: 9. A note written BEFORE title/width/height existed still
+        // loads, with sane defaults and nothing dropped.
+        //
+        // This is the "a new field needs a real fallback, not just a
+        // Swift-side default" lesson AGENTS.md records this app losing a whole
+        // `hosts.json` to. This decoder is hand-written rather than synthesised
+        // `Decodable` (which is where that bug actually lives), but the rule is
+        // the same and is worth pinning against a real pre-upgrade file rather
+        // than trusting the reading of the code.
+        do {
+            let root = scratch.appendingPathComponent("legacy-store", isDirectory: true)
+            try? fm.createDirectory(at: root, withIntermediateDirectories: true)
+            let legacy = """
+            notes:
+              - id: "legacy-1"
+                text: "written before this feature existed"
+                color: "blue"
+                x: 12.0
+                y: 34.0
+                rotation: 2.5
+                created_at: "2026-01-02T03:04:05Z"
+            """
+            try? legacy.write(to: root.appendingPathComponent("notes.yaml"), atomically: true, encoding: .utf8)
+
+            let store = StickyBoardStore(root: root)
+            check(store.notes.count == 1, "a pre-upgrade notes.yaml should still load, got \(store.notes.count) note(s)")
+            let note = store.notes.first
+            check(note?.title == "", "a note with no stored title should default to empty, got \(note?.title ?? "nil")")
+            check(note?.width == Double(StickyBoardMetrics.noteSize.width)
+                    && note?.height == Double(StickyBoardMetrics.noteSize.height),
+                  "a note with no stored size should default to the standard note size")
+            // Everything that WAS in the old file has to survive untouched -
+            // the failure mode worth guarding is a decoder that starts
+            // returning nil (or a fresh note) rather than one that mis-defaults.
+            check(note?.text == "written before this feature existed", "the legacy text must be preserved")
+            check(note?.color == .blue && note?.x == 12 && note?.y == 34 && note?.rotationDegrees == 2.5,
+                  "every pre-existing field must survive the upgrade unchanged")
+        }
+
+        // MARK: 10. The fonts genuinely resolve.
+        //
+        // `NSFont(name:size:)` returns nil for a name macOS does not have and
+        // the usual `?? .systemFont` then hides it completely - a typo ships
+        // as "the handwriting font silently didn't apply". So this asserts the
+        // resolved face is NOT the system font rather than merely that a font
+        // came back.
+        do {
+            let system = NSFont.systemFont(ofSize: 14).fontName
+            for (role, font) in [("hand", StickyFont.hand(14)),
+                                 ("handBold", StickyFont.handBold(14)),
+                                 ("typewriter", StickyFont.typewriter(14))] {
+                check(font.fontName != system,
+                      "StickyFont.\(role) fell back to the system font (\(font.fontName)) - none of its candidates resolved")
+                check(abs(font.pointSize - 14) < 0.01, "StickyFont.\(role) should honour the requested size")
+            }
+            // The fallback chain itself works when nothing resolves, rather
+            // than crashing or returning a zero-size font.
+            let missing = StickyFont.resolve(["NoSuchFace-Regular", "AlsoNotAFont"], size: 12)
+            check(missing.fontName == NSFont.systemFont(ofSize: 12, weight: .semibold).fontName,
+                  "an all-missing chain should fall back to the system font")
+        }
+
+        // MARK: 11. The cork surface: a real drawn texture whose tone follows
+        // light/dark mode, and a deterministic grain.
+        do {
+            let light = StickyBoardCork.baseHex(dark: false)
+            let dark = StickyBoardCork.baseHex(dark: true)
+            check(light != dark, "the cork base must differ between light and dark mode")
+            check(StickyBoardCork.frameHex(dark: false) != StickyBoardCork.frameHex(dark: true),
+                  "the wood frame must differ between light and dark mode")
+            let lum: (String) -> Double = { HelmContrast.relativeLuminance(HelmContrast.components(HelmTheme.nsColor($0))) }
+            check(lum(light) > lum(dark), "light mode's cork should be the lighter of the two")
+
+            // Cork reads as cork because of the grain; a flat fill does not.
+            // Two calls must give byte-identical specks - a `Int.random` grain
+            // would re-roll on every relaunch and make an off-screen render
+            // impossible to compare against a baseline.
+            let a = StickyBoardCanvasView.seededSpecks(side: 84)
+            let b = StickyBoardCanvasView.seededSpecks(side: 84)
+            check(!a.isEmpty, "the cork tile should draw some grain")
+            check(a.count == b.count && zip(a, b).allSatisfy { $0.x == $1.x && $0.y == $1.y && $0.angle == $1.angle },
+                  "the cork grain must be deterministic across calls")
+            check(a.contains(where: { $0.isDark }) && a.contains(where: { !$0.isDark }),
+                  "cork grain needs both darker pits and lighter raised flecks")
+            check(a.allSatisfy { $0.x >= 0 && $0.x <= 84 && $0.y >= 0 && $0.y <= 84 },
+                  "every speck should land inside the tile")
         }
 
         // MARK: Report

@@ -124,6 +124,20 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     private lazy var wrapButton = HelmPageToolbar.iconButton(
         symbol: "text.alignleft", tooltip: "Toggle soft wrap",
         target: self, action: #selector(toggleWrapTapped))
+    // Font size is the app's own shared monospace size, not a Code Preview
+    // setting: this page already *observed* `FontSizeManager` (that is how the
+    // editor picks up a change made in Settings), it simply had no way to
+    // change it from here. So the two buttons below are the same one-line
+    // action `ConsoleController.zoomIn`/`zoomOut` already use, and persistence
+    // comes free via `AppSettings.fontSize` - a second per-feature preference
+    // would mean the terminals and the editor could disagree about "the
+    // monospace size", which is exactly what `FontSizeManager` exists to stop.
+    private lazy var zoomOutButton = HelmPageToolbar.iconButton(
+        symbol: "minus.magnifyingglass", tooltip: "Smaller text (⌘−)",
+        target: self, action: #selector(zoomOutTapped))
+    private lazy var zoomInButton = HelmPageToolbar.iconButton(
+        symbol: "plus.magnifyingglass", tooltip: "Larger text (⌘+)",
+        target: self, action: #selector(zoomInTapped))
     private lazy var copyButton = HelmPageToolbar.labeledButton(
         symbol: "doc.on.doc", title: "Copy",
         tooltip: "Copy this snippet to the clipboard",
@@ -241,7 +255,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
             showOverlay(symbol: "exclamationmark.triangle",
                         title: "No editor bundle",
                         body: CodePreviewAssets.missingBundleMessage)
-            for control in [plusButton, findButton, wrapButton, copyButton, clearButton] {
+            for control in [plusButton, findButton, wrapButton, zoomOutButton, zoomInButton, copyButton, clearButton] {
                 control.isEnabled = false
             }
             languagePicker.isEnabled = false
@@ -299,7 +313,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         languagePicker.widthAnchor.constraint(equalToConstant: 150).isActive = true
 
         toolbar.setTrailing(HelmPageToolbar.group([
-            languagePicker, findButton, wrapButton, copyButton, clearButton,
+            languagePicker, findButton, wrapButton, zoomOutButton, zoomInButton, copyButton, clearButton,
         ]))
 
         NSLayoutConstraint.activate([
@@ -691,6 +705,14 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         webView.call("find")
     }
 
+    /// Both zoom actions go straight through `FontSizeManager`, which clamps
+    /// to its own `minSize...maxSize`, persists to `AppSettings.fontSize` and
+    /// notifies every observer - including this page's own, which is what
+    /// actually pushes the new size into Monaco. Nothing here tracks a size of
+    /// its own.
+    @objc private func zoomInTapped() { FontSizeManager.shared.step(by: 1) }
+    @objc private func zoomOutTapped() { FontSizeManager.shared.step(by: -1) }
+
     @objc private func toggleWrapTapped() {
         wrapOn.toggle()
         wrapButton.tint = wrapOn ? .accent : nil
@@ -802,6 +824,18 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     // MARK: Theme
 
     private func applyTheme() {
+        // **`ThemeManager.swift`'s checklist item 2 - the root cause of the
+        // captain's "Code Preview only half re-themes" report**, and the same
+        // one-line omission `StickyBoardController` had. Without it, every
+        // system-semantic colour in this subtree resolves against the OS's own
+        // light/dark rather than the active Helm theme: the language popup's
+        // menu, the find widget's field editor, focus rings, and - most
+        // visibly on this page - the scroller chrome. The layer-backed fills
+        // below always tracked the theme, which is why the page looked
+        // half-right rather than plainly wrong. Every other destination in the
+        // app has done this for years.
+        view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
         toolbar.applyTheme(theme)
         HelmCard.applyCardSurface(to: editorCard, theme: theme,
@@ -860,6 +894,8 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     var debugCurrentLanguage: String? { currentSnippet?.language.id }
     var debugStatusLine: String { "\(cursorLabel.stringValue) | \(languageLabel.stringValue) | \(encodingLabel.stringValue) | \(syncLabel.stringValue)" }
     var debugEditorCard: NSView { editorCard }
+    var debugZoomInButton: NSButton { zoomInButton }
+    var debugZoomOutButton: NSButton { zoomOutButton }
     func debugRestore() { restoreSnippetsIfNeeded() }
     func debugNewSnippet() { newSnippetTapped() }
     func debugSimulateEdit(name: String, content: String) {

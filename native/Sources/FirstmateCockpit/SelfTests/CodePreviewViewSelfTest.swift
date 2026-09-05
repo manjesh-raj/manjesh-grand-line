@@ -107,6 +107,7 @@ enum CodePreviewViewSelfTest {
         checkLateCloneRetry(check)
         checkTabsAreIndependent(controller, webView, check)
         checkThemeSweep(controller, webView, check)
+        checkFontZoom(controller, webView, check)
         checkGating(controller, webView, check)
         checkNoLeakedBridgeCalls(webView, check)
 
@@ -656,7 +657,73 @@ enum CodePreviewViewSelfTest {
             // is what a captain sees around the code.
             let fill = controller.debugEditorCard.layer?.backgroundColor
             check(fill != nil, "\(id): the editor card has no fill")
+
+            // **The captain's "Code Preview only half re-themes" report, and
+            // the assertion that would have caught it.** The layer fills
+            // above always tracked the theme - which is why the page looked
+            // half-right rather than plainly wrong - but everything resolving
+            // a *system semantic* colour (the language popup's menu, the find
+            // widget's field editor, focus rings, and most visibly the
+            // scroller chrome) follows `effectiveAppearance`, which stays the
+            // OS's own light/dark until a view forces it. That is
+            // `ThemeManager.swift`'s checklist item 2.
+            let wantAqua: NSAppearance.Name = theme.mode == .dark ? .darkAqua : .aqua
+            let effective = controller.view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
+            check(effective == wantAqua,
+                  "\(id): the page's effectiveAppearance should be \(wantAqua.rawValue), was \(effective?.rawValue ?? "nil")")
         }
+    }
+
+    // MARK: Font zoom
+
+    /// The editor's font size follows the app's own shared monospace size
+    /// (`FontSizeManager`), which this page already observed - the zoom
+    /// buttons added in `fm/grandline-sticky-code-preview-polish` are simply
+    /// the missing way to *change* it from here. This drives the real buttons
+    /// through their own target/action, so a button wired to nothing fails.
+    private static func checkFontZoom(
+        _ controller: CodePreviewController, _ webView: CodePreviewWebView, _ check: (Bool, String) -> Void
+    ) {
+        // `FontSizeManager` persists to the real `AppSettings.fontSize`, so
+        // the captain's own size is saved and restored around this - the same
+        // discipline `checkThemeSweep` above applies to the theme.
+        let original = FontSizeManager.shared.size
+        defer { FontSizeManager.shared.setSize(original) }
+
+        FontSizeManager.shared.setSize(14)
+        controller.debugZoomInButton.performClick(nil)
+        check(FontSizeManager.shared.size == 15,
+              "zoom in should step the shared monospace size 14 -> 15, got \(FontSizeManager.shared.size)")
+        controller.debugZoomOutButton.performClick(nil)
+        controller.debugZoomOutButton.performClick(nil)
+        check(FontSizeManager.shared.size == 13,
+              "zoom out should step back down, got \(FontSizeManager.shared.size)")
+
+        // Persisted, without a second per-feature preference: the size the
+        // buttons set is the one `AppSettings` already stores for every
+        // monospace surface in the app.
+        check(abs(AppSettings.shared.fontSize - 13) < 0.01,
+              "the chosen size should persist through AppSettings.fontSize, got \(AppSettings.shared.fontSize)")
+
+        // Clamped at the shared bounds rather than growing without limit.
+        for _ in 0..<40 { controller.debugZoomInButton.performClick(nil) }
+        check(FontSizeManager.shared.size == FontSizeManager.maxSize,
+              "zooming in past the ceiling should clamp to \(FontSizeManager.maxSize), got \(FontSizeManager.shared.size)")
+        for _ in 0..<60 { controller.debugZoomOutButton.performClick(nil) }
+        check(FontSizeManager.shared.size == FontSizeManager.minSize,
+              "zooming out past the floor should clamp to \(FontSizeManager.minSize), got \(FontSizeManager.shared.size)")
+
+        // And the editor is still answering afterwards - a size push that
+        // threw inside the page would leave a live-looking but dead editor.
+        FontSizeManager.shared.setSize(14)
+        var done = false
+        var answered = false
+        webView.call("stats") { result in
+            if case .success = result { answered = true }
+            done = true
+        }
+        _ = waitFor(timeout: 10, until: { done })
+        check(answered, "the editor stopped answering after a font-size change")
     }
 
     // MARK: Gating
