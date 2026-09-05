@@ -136,6 +136,19 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
     /// Weak: this page never keeps a closed tab alive.
     weak var feedTerminal: (any SRELeadBridgeTerminal)?
 
+    /// Whether this page's feed bridge is mid-command on `tabID`.
+    ///
+    /// The Kubernetes half of the cross-bridge collision guard's third
+    /// direction (full-app audit, finding 4.1). `KubeBridge` already refuses
+    /// to inject while SRE Lead or the context badge holds the tab; this is
+    /// what lets those two refuse back. Answers `false` for any tab that is
+    /// not the current feed tab, so a console with several tabs only ever
+    /// blocks the one this page is genuinely typing into.
+    func isFeedBridgeBusy(onTab tabID: UUID) -> Bool {
+        guard feedTabID == tabID else { return false }
+        return bridge?.isBusy == true
+    }
+
     var namespace = "default"
 
     var pods: [KubePod] = []

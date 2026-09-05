@@ -280,6 +280,23 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// nothing about the Log Analyzer destination.
     var onAnalyzeLogs: ((LogTerminalCapture, String) -> Void)?
 
+    /// Whether the `.kubernetes` destination's own feed bridge is mid-command
+    /// on the named tab of this console.
+    ///
+    /// The third direction of the cross-bridge collision guard (full-app
+    /// audit, finding 4.1). SRE Lead's bridge and the context badge's both
+    /// live on the `TabModel`, so `isTabBusy` can read them directly; the
+    /// Kubernetes feed bridge lives on a different destination entirely and
+    /// this controller has - correctly - no idea that destination exists.
+    /// Forward-don't-own, the same convention `onAnalyzeLogs` above and
+    /// `KubeSessionAccess` in the other direction already use: the shell owns
+    /// both objects and is the one place that can answer.
+    ///
+    /// `nil` means "no Kubernetes destination is wired to this console", which
+    /// is the correct answer for the shared Firstmate console and for every
+    /// console in a self-test that never built one.
+    var isKubernetesFeedBridgeBusy: ((UUID) -> Bool)?
+
     /// `fm/grandline-k8s-cluster-tail`: the "Tail Logs" toolbar button, a
     /// dedicated-host-page affordance only.
     ///

@@ -151,6 +151,11 @@ extension ConsoleController {
             showIncidentCard()
         case .failure(.couldNotWrite):
             Toast.show(in: view, message: "Couldn't write the incident record")
+        case .failure(.couldNotRead):
+            // GL-21: the store refused rather than issuing an id it could not
+            // prove was free. Says so plainly - a silently-not-started
+            // incident would leave every later attach going nowhere.
+            Toast.show(in: view, message: "Couldn't read the incident records - not starting one")
         }
     }
 

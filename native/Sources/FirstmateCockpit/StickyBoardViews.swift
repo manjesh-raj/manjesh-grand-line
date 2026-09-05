@@ -602,6 +602,10 @@ final class StickyNoteView: NSView {
     var onMoved: ((CGPoint) -> Void)?
     var onResized: ((CGSize) -> Void)?
     var onDeleteRequested: (() -> Void)?
+    /// Fired when the title field or the body text view gives up focus - the
+    /// store's debounced write flushes on it. See `StickyBoardStore.
+    /// persistDebounce`.
+    var onEditingEnded: (() -> Void)?
 
     /// The reference photo's cards are labelled; an unlabelled note should
     /// still say where the label goes rather than hiding the field.
@@ -879,6 +883,13 @@ extension StickyNoteView: NSTextViewDelegate {
         onTextChanged?(textView.string)
         refreshHandleDescriptions()
     }
+
+    /// Findings 3.3/4.6: the store's text write is debounced, so giving up
+    /// focus is one of its flush points - clicking straight from a note into
+    /// another app must not be able to lose the last characters typed.
+    func textDidEndEditing(_ notification: Notification) {
+        onEditingEnded?()
+    }
 }
 
 extension StickyNoteView: NSTextFieldDelegate {
@@ -886,5 +897,11 @@ extension StickyNoteView: NSTextFieldDelegate {
         guard (obj.object as? NSTextField) === titleField else { return }
         onTitleChanged?(titleField.stringValue)
         refreshHandleDescriptions()
+    }
+
+    /// The title field's half of the same flush point as `textDidEndEditing`.
+    func controlTextDidEndEditing(_ obj: Notification) {
+        guard (obj.object as? NSTextField) === titleField else { return }
+        onEditingEnded?()
     }
 }

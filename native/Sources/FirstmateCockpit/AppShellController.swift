@@ -620,6 +620,15 @@ final class AppShellController: NSViewController {
             },
             revealHost: { [weak self] hostID in self?.switchToSession(hostID: hostID) },
             openHosts: { [weak self] in self?.show(.hosts) }))
+        // The reverse direction of that same guard (full-app audit, finding
+        // 4.1). `isTabBusyElsewhere` above lets the Kubernetes feed bridge see
+        // the two console-side bridges; this lets them see it. Both halves are
+        // wired here because this is the only object that holds both a
+        // `ConsoleController` and the `.kubernetes` destination - neither of
+        // them knows the other exists, and neither should.
+        console.isKubernetesFeedBridgeBusy = { [weak self] tabID in
+            self?.kubernetes.isFeedBridgeBusy(onTab: tabID) ?? false
+        }
         // GL-31: Overview's unconfigured banner leads straight into the
         // Bootstrap stepper, which is where firstmate home is actually set.
         overview.onNavigateToSetup = { [weak self] in self?.show(.bootstrap) }
@@ -1126,6 +1135,14 @@ final class AppShellController: NSViewController {
         controller.view.isHidden = true
     }
 
+    /// Drives the real Recents click handler (finding 4.3), which is
+    /// `private` because the bar's own popover is its only production caller.
+    /// A test that reimplemented its switch-vs-reconnect decision would be
+    /// asserting its own copy of the logic rather than the shipped one.
+    func debugNavigateToRecent(_ kind: RecentDestinationKind) {
+        navigateToRecentDestination(kind)
+    }
+
     /// Simulates the exact failure this task's scout report captured live:
     /// AppKit (for whatever internal reason - a transient required-
     /// constraint conflict elsewhere, or simply a resize that happened with
@@ -1416,6 +1433,16 @@ final class AppShellController: NSViewController {
             addChild(controller)
             embed(controller.view)
             controller.view.isHidden = true
+            // The cross-bridge collision guard's third direction (full-app
+            // audit, finding 4.1), and the console this one actually matters
+            // for: the `.kubernetes` destination scopes to a *saved host*, so
+            // its feed tab is always one of these pages' tabs, never the
+            // shared Firstmate console's. Set once at creation - unlike the
+            // per-connect closures below it depends on nothing about the host
+            // record, only on which two objects the shell holds.
+            controller.isKubernetesFeedBridgeBusy = { [weak self] tabID in
+                self?.kubernetes.isFeedBridgeBusy(onTab: tabID) ?? false
+            }
         }
         controller.connectSSHIfNeeded(
             label: host.label, args: args, accentHex: host.accentHex,
@@ -1562,6 +1589,27 @@ final class AppShellController: NSViewController {
     /// (if it was ever connected to) so a stale, unreachable-from-the-rail
     /// destination can't linger. Navigates back to the Firstmate console if
     /// the deleted host's page happened to be the one showing.
+    /// Flush anything the Sticky Board's debounced local write is still
+    /// holding, on the way to quitting (findings 3.3/4.6).
+    ///
+    /// The store owns the debounce; this is only the shell's forward, needed
+    /// because `stickyBoard` is `private` and the app delegate is where
+    /// `applicationWillTerminate` lives. It is safe to call on a destination
+    /// that was never mounted: the controller is constructed eagerly, its
+    /// store with it, and a store with nothing queued flushes nothing.
+    /// Drop a deleted host's Recents row (finding 4.3). Called by the app
+    /// delegate's own host-delete diffing, which is the one place that knows
+    /// a host has genuinely left the store - `removeHostConsole` cannot be
+    /// that place, because it is also what "End session" calls, and an ended
+    /// session's row must stay listed and reconnect.
+    func forgetRecentHost(id: UUID) {
+        recentDestinations.forget(.host(id: id, label: ""))
+    }
+
+    func shutdownStickyBoard() {
+        stickyBoard.shutdown()
+    }
+
     func removeHostConsole(id: UUID) {
         guard let controller = hostConsoles.removeValue(forKey: id) else { return }
         let wasActive = activeHostID == id
@@ -1637,10 +1685,46 @@ final class AppShellController: NSViewController {
 
     /// A Recents row was clicked - dispatched to whichever navigation
     /// primitive already handles that kind, never a third path.
+    /// Open whatever a Recents row names.
+    ///
+    /// **A `.host` row whose session has since ended reconnects rather than
+    /// doing nothing** (full-app audit, finding 4.3). `RecentDestinations`'
+    /// own header is explicit that a host page the captain closed deliberately
+    /// stays listed until it ages out of the cap - which made
+    /// `switchToSession`'s "no-op for a host with no live session" guard
+    /// (correct for the strip and the shortcuts, which only ever name live
+    /// ones) reachable here as a silently dead click: the row is still there,
+    /// looks exactly like every other row, and does nothing. The three ways a
+    /// session ends - the strip's ✕, the Hosts row's "End session", deleting
+    /// the host - all clear `hostConsoles`, so all three produced it.
+    ///
+    /// Reconnecting is the honest reading of what the row means: "take me back
+    /// to that host page". A host that is no longer saved at all cannot be
+    /// reconnected, so its row is dropped instead of pretending - see
+    /// `onReconnectHost`.
+    /// Reconnect a saved host that no longer has a live session, by id.
+    /// Returns whether the host still exists to be reconnected to.
+    ///
+    /// Forward-don't-own (`onSearchTapped`'s convention): this controller has
+    /// no `HostStore` and does not know how a host's `ssh` argv is built -
+    /// `connectHost` needs both, which is exactly why `switchToSession` was
+    /// written to need neither. The app delegate owns the store and already
+    /// has the one `connectToHost` path every other reconnect goes through.
+    var onReconnectHost: ((UUID) -> Bool)?
+
     private func navigateToRecentDestination(_ kind: RecentDestinationKind) {
         switch kind {
-        case .rail(let dest): show(dest)
-        case .host(let id, _): switchToSession(hostID: id)
+        case .rail(let dest):
+            show(dest)
+        case .host(let id, _):
+            if sessions.session(for: id) != nil {
+                switchToSession(hostID: id)
+            } else if onReconnectHost?(id) != true {
+                // The host is gone from the store entirely - nothing to
+                // reconnect to, so stop listing it rather than leaving a row
+                // that can only ever do nothing.
+                recentDestinations.forget(.host(id: id, label: ""))
+            }
         }
     }
 

@@ -411,8 +411,28 @@ final class CodePreviewStore {
         return unique
     }
 
+    /// GL-10: never a bare `try?`, for the same reason `write(name:content:)`
+    /// below spells out - and it matters more here than for a write. A delete
+    /// this store swallowed leaves a snippet the panel has already closed
+    /// still on disk, so it comes back on the next launch *and* stays synced
+    /// to GitHub, with nothing anywhere saying the delete failed. "The file is
+    /// already gone" is the one failure that genuinely is success, so it is
+    /// the one case that reports nothing (a `markDirty` on it is harmless and
+    /// keeps a stale committed copy from lingering).
     func delete(name: String) {
-        try? fm.removeItem(at: root.appendingPathComponent(name))
+        let url = root.appendingPathComponent(name)
+        do {
+            try fm.removeItem(at: url)
+            PersistenceFailureReporter.reportSuccess()
+        } catch CocoaError.fileNoSuchFile {
+            // Nothing to remove - the caller's intent is already satisfied.
+        } catch let error as NSError where error.domain == NSCocoaErrorDomain
+            && error.code == CocoaError.fileNoSuchFile.rawValue {
+            // Same case, reported through the bridged `NSError` shape.
+        } catch {
+            PersistenceFailureReporter.report(what: "code snippet \"\(name)\"", path: url.path, error: error)
+            return
+        }
         gitSync?.markDirty()
     }
 

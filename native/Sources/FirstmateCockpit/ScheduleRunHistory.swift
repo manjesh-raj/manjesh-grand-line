@@ -144,7 +144,7 @@ final class ScheduleRunHistoryStore {
     private let fileURL: URL
     private let lock = NSLock()
     /// Loaded lazily on first read/append, file order (oldest-first).
-    private var cache: [ScheduleRunHistoryEntry]?
+    private var cache: [Line]?
 
     init(directory: URL) {
         fileURL = directory.appendingPathComponent("runs.jsonl")
@@ -180,7 +180,10 @@ final class ScheduleRunHistoryStore {
         lock.lock()
         defer { lock.unlock() }
         let cutoff = now.addingTimeInterval(-Self.retentionWindow)
-        return loadedLocked().filter { $0.at >= cutoff }.sorted { $0.at > $1.at }
+        return loadedLocked()
+            .compactMap { if case .entry(let e) = $0 { return e } else { return nil } }
+            .filter { $0.at >= cutoff }
+            .sorted { $0.at > $1.at }
     }
 
     // MARK: Appending
@@ -191,12 +194,18 @@ final class ScheduleRunHistoryStore {
     func append(_ entry: ScheduleRunHistoryEntry) {
         lock.lock()
         defer { lock.unlock() }
-        var entries = loadedLocked()
-        entries.append(entry)
+        var lines = loadedLocked()
+        lines.append(.entry(entry))
         let cutoff = entry.at.addingTimeInterval(-Self.retentionWindow)
-        let pruned = entries.filter { $0.at >= cutoff }
+        // Ages out entries only. An opaque line has no readable timestamp to
+        // age out *by*, so guessing one would be inventing a fact about data
+        // this build cannot read - it is carried through instead (4.5).
+        let pruned = lines.filter { line in
+            if case .entry(let e) = line { return e.at >= cutoff }
+            return true
+        }
         cache = pruned
-        if pruned.count != entries.count {
+        if pruned.count != lines.count {
             // Something aged out - a full rewrite is the only way to drop a
             // line from the middle of the file. Cheap in practice: a schedule
             // fires at most a handful of times a day, so this happens at most
@@ -223,16 +232,44 @@ final class ScheduleRunHistoryStore {
         return d
     }()
 
-    private func loadedLocked() -> [ScheduleRunHistoryEntry] {
+    /// One line of the file - see `FleetLogStore.Line`, whose header carries
+    /// the full reasoning. Same store shape, same finding (4.5), same fix: the
+    /// prune path rewrites the file, so rewriting it from *decoded* entries
+    /// silently deletes every line this build could not read. Lower stakes
+    /// here than in the fleet log (a 7-day retention window means far less is
+    /// ever at risk) but the same bug, and leaving one of two identical
+    /// shapes unfixed is how it comes back.
+    enum Line {
+        case entry(ScheduleRunHistoryEntry)
+        case opaque(String)
+    }
+
+    private func loadedLocked() -> [Line] {
         if let cache { return cache }
         let loaded = readFromDisk()
         cache = loaded
         return loaded
     }
 
-    private func readFromDisk() -> [ScheduleRunHistoryEntry] {
+    private func readFromDisk() -> [Line] {
         guard let text = try? String(contentsOf: fileURL, encoding: .utf8) else { return [] }
-        return Self.decodeLines(text)
+        return Self.parseLines(text)
+    }
+
+    /// Every line, in file order, decoded where possible and preserved
+    /// verbatim where not.
+    static func parseLines(_ text: String) -> [Line] {
+        var out: [Line] = []
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+            if let entry = try? decoder.decode(ScheduleRunHistoryEntry.self, from: Data(trimmed.utf8)) {
+                out.append(.entry(entry))
+            } else {
+                out.append(.opaque(trimmed))
+            }
+        }
+        return out
     }
 
     /// Skips a line that will not decode rather than failing the whole read -
@@ -241,16 +278,7 @@ final class ScheduleRunHistoryStore {
     /// gives: the very next write is an append that touches no existing line,
     /// so one bad line can only ever cost itself.
     static func decodeLines(_ text: String) -> [ScheduleRunHistoryEntry] {
-        var out: [ScheduleRunHistoryEntry] = []
-        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else { continue }
-            guard let entry = try? decoder.decode(ScheduleRunHistoryEntry.self, from: Data(trimmed.utf8)) else {
-                continue
-            }
-            out.append(entry)
-        }
-        return out
+        parseLines(text).compactMap { if case .entry(let e) = $0 { return e } else { return nil } }
     }
 
     private func line(for entry: ScheduleRunHistoryEntry) -> Data? {
@@ -280,11 +308,19 @@ final class ScheduleRunHistoryStore {
         }
     }
 
-    private func rewriteLocked(_ entries: [ScheduleRunHistoryEntry]) {
+    private func rewriteLocked(_ lines: [Line]) {
         var out = Data()
-        for entry in entries {
-            guard let data = line(for: entry) else { continue }
-            out.append(data)
+        for line in lines {
+            switch line {
+            case .entry(let entry):
+                guard let data = self.line(for: entry) else { continue }
+                out.append(data)
+            case .opaque(let raw):
+                // Verbatim - this build does not understand it, so it does
+                // not get to reshape it either.
+                out.append(Data(raw.utf8))
+                out.append(0x0A)
+            }
         }
         do {
             try FileManager.default.createDirectory(

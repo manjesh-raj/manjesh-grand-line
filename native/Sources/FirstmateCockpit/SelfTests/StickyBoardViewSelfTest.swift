@@ -65,11 +65,92 @@ enum StickyBoardViewSelfTest {
         checkHandleKeyboardAndAccessibility(controller, window, check)
         checkBoardHeader(controller, check)
         checkDeleteAndUndo(controller, check)
+        checkCorkGrainIsDocumentAnchored(check)
 
         if ok {
             print("[sticky-board-view] OK - all window-backed StickyBoard checks passed")
         }
         return ok
+    }
+
+    // MARK: Finding 4.9 - the cork grain must not slide against the notes
+
+    /// The full-app audit's finding 4.9, kept as a permanent guard even though
+    /// it **did not reproduce**.
+    ///
+    /// The suspicion was reasonable and the mechanism is real in general:
+    /// `StickyBoardCanvasView.draw` fills with `NSColor(patternImage:)` and
+    /// sets no `patternPhase`, and a pattern fill anchors to the *window*
+    /// rather than to a scrolling document unless something compensates - so
+    /// on a 2200x1500 canvas inside a real `NSScrollView` the grain would
+    /// visibly slide under the notes on every scroll. Measured on the real
+    /// canvas in a real scroll view, it does not: AppKit sets the phase from
+    /// the view's own origin while drawing a view, and a document view's
+    /// origin scrolls with its content, so the grain is already
+    /// document-anchored.
+    ///
+    /// **The sensitivity half is the reason this is worth keeping.** A check
+    /// that only asserts "the pixels matched" is worthless if it could never
+    /// have seen them differ, so this deliberately injects the window-anchored
+    /// phase - the exact defect - and requires that to be detected before it
+    /// trusts the clean result. Measured: 0 differing pixels as shipped, 2665
+    /// of 10000 with the phase forced.
+    private static func checkCorkGrainIsDocumentAnchored(_ check: (Bool, String) -> Void) {
+        let theme = ThemeManager.shared.theme
+        let canvas = StickyBoardCanvasView(frame: NSRect(origin: .zero, size: StickyBoardMetrics.canvasSize))
+        canvas.applyTheme(theme)
+
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+        scroll.hasVerticalScroller = true
+        scroll.hasHorizontalScroller = true
+        scroll.documentView = canvas
+        let window = NSWindow(contentRect: NSRect(x: -20_000, y: -20_000, width: 600, height: 400),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = scroll
+        window.contentView?.layoutSubtreeIfNeeded()
+
+        // Rendered through the CLIP view, never the canvas: `cacheDisplay` on
+        // the canvas itself starts a fresh context at the canvas's own origin,
+        // which resets the pattern phase and hides the very effect under test.
+        let clip = scroll.contentView
+
+        func sample(scrolledTo offset: NSPoint) -> [String] {
+            clip.scroll(to: offset)
+            scroll.reflectScrolledClipView(clip)
+            window.contentView?.layoutSubtreeIfNeeded()
+            window.contentView?.display()
+            guard let rep = clip.bitmapImageRepForCachingDisplay(in: clip.bounds) else { return [] }
+            clip.cacheDisplay(in: clip.bounds, to: rep)
+            // Clip-local [20..220]^2 is the same *document* rect in both
+            // passes, because the clip's own origin moves with the offset.
+            var out: [String] = []
+            for x in stride(from: 20, to: 220, by: 2) {
+                for y in stride(from: 20, to: 220, by: 2) {
+                    guard let c = rep.colorAt(x: x, y: y) else { continue }
+                    out.append(String(format: "%.3f,%.3f,%.3f",
+                                      c.redComponent, c.greenComponent, c.blueComponent))
+                }
+            }
+            return out
+        }
+
+        let unscrolled = sample(scrolledTo: .zero)
+        let scrolled = sample(scrolledTo: NSPoint(x: 137, y: 211))
+
+        guard !unscrolled.isEmpty, unscrolled.count == scrolled.count else {
+            check(false, "4.9: could not sample the cork canvas")
+            return
+        }
+        // The sample must contain real grain, or "identical" is vacuous - a
+        // flat fill matches itself at any offset.
+        check(Set(unscrolled).count > 5,
+              "4.9: the sampled patch has only \(Set(unscrolled).count) distinct tone(s) - it is "
+              + "flat cork with no grain in it, so this check would pass on a sliding pattern too")
+
+        let differing = zip(unscrolled, scrolled).filter { $0 != $1 }.count
+        check(differing == 0,
+              "4.9: \(differing)/\(unscrolled.count) pixels changed at the same DOCUMENT point "
+              + "after scrolling - the cork grain is window-anchored and slides against the notes")
     }
 
     // MARK: 1. Theme sweep - chrome tracks the theme, notes never do

@@ -207,6 +207,27 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         applyTheme()
     }
 
+    override func viewWillDisappear() {
+        super.viewWillDisappear()
+        // Findings 3.3/4.6: the store's text/title writes are debounced, so
+        // the way out of the destination is one of the three places anything
+        // still queued has to reach disk (the others are a field giving up
+        // focus, and app termination). Without this, navigating away within
+        // `StickyBoardStore.persistDebounce` of the last keystroke would lose
+        // it - which is the trade a debounce always makes, and the reason it
+        // is only ever paired with real flush points.
+        store.flushPendingWrite()
+    }
+
+    /// Called by the app delegate on quit, so the last few characters typed
+    /// before ⌘Q are written and committed like every other edit - the same
+    /// contract `CodePreviewController.shutdown()` carries for the same
+    /// reason.
+    func shutdown() {
+        store.flushPendingWrite()
+        _ = store.gitSync?.commitAndPushNow()
+    }
+
     override func viewWillAppear() {
         super.viewWillAppear()
         // A relaunch or a git pull elsewhere in the app could have changed
@@ -330,6 +351,7 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         noteView.onMoved = { [weak self, id = note.id] origin in
             self?.store.updatePosition(id: id, x: Double(origin.x), y: Double(origin.y))
         }
+        noteView.onEditingEnded = { [weak self] in self?.store.flushPendingWrite() }
         noteView.onResized = { [weak self, id = note.id] size in
             self?.store.updateSize(id: id, width: Double(size.width), height: Double(size.height))
         }

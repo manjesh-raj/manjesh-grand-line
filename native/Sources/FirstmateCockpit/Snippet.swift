@@ -19,4 +19,25 @@ struct Snippet: Codable, Identifiable, Equatable {
         let short = command.count > 60 ? String(command.prefix(60)) + "\u{2026}" : command
         return short.replacingOccurrences(of: "\n", with: " \u{23ce} ")
     }
+
+    init(id: UUID = UUID(), label: String, command: String) {
+        self.id = id
+        self.label = label
+        self.command = command
+    }
+
+    /// **Hand-written on purpose - do not delete it back to the synthesised
+    /// one** (full-app audit, finding 4.8). Same reasoning, verbatim, as
+    /// `SSHKey.init(from:)` - see that decoder's own comment for the full
+    /// account of how a Swift-side default does *not* make a key optional to
+    /// the synthesised decoder, and what that cost this app once already.
+    /// Nothing here is broken today; this is the preventive half, so the next
+    /// field added to `Snippet` cannot silently take every existing
+    /// `snippets.json` with it.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        label = try c.decodeIfPresent(String.self, forKey: .label) ?? ""
+        command = try c.decodeIfPresent(String.self, forKey: .command) ?? ""
+    }
 }

@@ -99,9 +99,35 @@ final class IncidentStore {
     /// Every incident, newest first.
     func all() -> [Incident] {
         if let cache { return cache }
-        let loaded = scan()
-        cache = loaded
-        return loaded
+        let outcome = scan()
+        // GL-21: only a scan that genuinely read every directory may be
+        // cached. Caching a partial read would freeze "there are no
+        // incidents" in memory for the rest of the session, and the retry a
+        // later call would otherwise get is the whole point of not caching.
+        if outcome.complete { cache = outcome.incidents }
+        lastScanWasComplete = outcome.complete
+        return outcome.incidents
+    }
+
+    /// Whether the last directory scan actually read everything it tried to.
+    ///
+    /// GL-14's rule, applied to a filesystem read: "there are no incidents"
+    /// and "I could not tell you what incidents there are" are different
+    /// answers, and folding the second into the first is what let
+    /// `nextIncidentID()` reissue a live id. Only the paths where getting it
+    /// wrong *corrupts* something consult this - a list that renders one
+    /// incident short is a display problem; an id collision merges two
+    /// captains' incidents into one folder.
+    private(set) var lastScanWasComplete = true
+
+    /// Forces a fresh scan and reports whether it could read the whole tree.
+    /// `all()` alone cannot answer that for a caller, because a cached result
+    /// is by construction from a complete scan.
+    @discardableResult
+    func rescanIsComplete() -> Bool {
+        invalidateCache()
+        _ = all()
+        return lastScanWasComplete
     }
 
     func load(id: String) -> Incident? {
@@ -131,17 +157,28 @@ final class IncidentStore {
         /// holds even if a UI path ever forgets to check first.
         case alreadyActive(existingID: String)
         case couldNotWrite(String)
+        /// The incident directory could not be read, so neither "does this
+        /// host already have an active incident?" nor "which ids are taken?"
+        /// has a trustworthy answer. Refusing is the only safe move: issuing
+        /// an id from a partial read can reuse a live one, and `directory(
+        /// forID:)`'s prefix scan would then resolve the *older* incident's
+        /// folder - two incidents writing into one record. GL-21.
+        case couldNotRead
     }
 
     /// Creates and immediately persists a new active incident.
     @discardableResult
     func start(title: String, hostID: String, hostLabel: String,
                now: Date = Date()) -> Result<Incident, StartFailure> {
+        // Read the tree once, up front, and refuse outright if it could not
+        // be read in full - both of the checks below are derived from it.
+        guard rescanIsComplete() else { return .failure(.couldNotRead) }
         if let existing = activeIncident(hostID: hostID) {
             return .failure(.alreadyActive(existingID: existing.id))
         }
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        let incident = Incident(id: nextIncidentID(),
+        guard let newID = nextIncidentID() else { return .failure(.couldNotRead) }
+        let incident = Incident(id: newID,
                                 title: IncidentTimelineEntry.sanitize(trimmed.isEmpty ? "Untitled incident" : trimmed),
                                 hostID: hostID,
                                 hostLabel: hostLabel,
@@ -334,21 +371,50 @@ final class IncidentStore {
         return .dictionary(m)
     }
 
-    private func scan() -> [Incident] {
-        guard let years = try? fm.contentsOfDirectory(at: incidentsDir,
-                                                      includingPropertiesForKeys: [.isDirectoryKey],
-                                                      options: [.skipsHiddenFiles]) else { return [] }
+    /// A directory tree that does not exist yet genuinely holds no incidents;
+    /// one that exists but cannot be enumerated is a *failure*, and the two
+    /// must not produce the same answer - see `lastScanWasComplete`.
+    private func scan() -> (incidents: [Incident], complete: Bool) {
+        var complete = true
+        let years: [URL]
+        do {
+            years = try fm.contentsOfDirectory(at: incidentsDir,
+                                               includingPropertiesForKeys: [.isDirectoryKey],
+                                               options: [.skipsHiddenFiles])
+        } catch {
+            // "No such directory" is the honest empty case - nothing has ever
+            // written an incident here. Anything else (permissions, an I/O
+            // fault, a path that is not a directory) is a read we could not
+            // make, and saying "no incidents" about it is a lie.
+            let ns = error as NSError
+            let missing = ns.domain == NSCocoaErrorDomain
+                && (ns.code == CocoaError.fileReadNoSuchFile.rawValue
+                    || ns.code == CocoaError.fileNoSuchFile.rawValue)
+            if !missing {
+                AppLog.store.error("""
+                    Incidents: could not read \(self.incidentsDir.path, privacy: .public) - \
+                    \(error.localizedDescription, privacy: .public). Treating this as UNKNOWN, \
+                    not as "no incidents" (GL-21).
+                    """)
+            }
+            return ([], missing)
+        }
         var out: [Incident] = []
         for year in years {
             guard (try? year.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else { continue }
             guard let folders = try? fm.contentsOfDirectory(at: year,
                                                             includingPropertiesForKeys: [.isDirectoryKey],
-                                                            options: [.skipsHiddenFiles]) else { continue }
+                                                            options: [.skipsHiddenFiles]) else {
+                // One unreadable year is still a hole in the answer: an id
+                // issued from what is left could collide with one inside it.
+                complete = false
+                continue
+            }
             for folder in folders where (try? folder.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
                 if let incident = read(in: folder) { out.append(incident) }
             }
         }
-        return out.sorted { $0.startedAt > $1.startedAt }
+        return (out.sorted { $0.startedAt > $1.startedAt }, complete)
     }
 
     private func read(in folder: URL) -> Incident? {
@@ -422,8 +488,15 @@ final class IncidentStore {
     /// which would be a second source of truth to keep in sync.
     static let idPrefix = "INC-"
 
-    func nextIncidentID() -> String {
-        let highest = all().compactMap { Int($0.id.dropFirst(Self.idPrefix.count)) }.max() ?? 0
+    /// `nil` when the directory could not be read in full: an id derived from
+    /// a partial scan can collide with one already on disk, which
+    /// `directory(forID:)`'s prefix scan then resolves to the *older*
+    /// incident's folder - the corruption GL-21 is about. Callers refuse
+    /// rather than guessing (`start` returns `.couldNotRead`).
+    func nextIncidentID() -> String? {
+        let incidents = all()
+        guard lastScanWasComplete else { return nil }
+        let highest = incidents.compactMap { Int($0.id.dropFirst(Self.idPrefix.count)) }.max() ?? 0
         return String(format: "\(Self.idPrefix)%03d", highest + 1)
     }
 }
