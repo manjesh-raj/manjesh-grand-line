@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Grand Line Code Preview</title>
+    <!-- Offline by construction, not by convention - the same posture, and the
+         same mechanism, as the Whiteboard's own page shell (see
+         ../../Excalidraw/src/index.html). This app's whole claim is
+         "everything stays on this machine", and a code panel that could
+         quietly fetch a font, a language definition or a language server from
+         a CDN would be a regression from it.
+
+         `default-src 'self'` plus the explicit data:/blob: allowances covers
+         everything this bundle genuinely needs and nothing that leaves the
+         machine:
+
+           - `style-src 'unsafe-inline'`: Monaco writes its theme rules into a
+             dynamically-created <style> element on every theme change, and
+             sets inline styles on nearly every rendered line.
+           - `font-src data:`: the codicon glyph font is inlined into the CSS
+             as a data: URI at build time, so there is no font file to fetch
+             and no font path to get wrong.
+           - `img-src data:`: Monaco's cursors and a handful of decorations
+             are data: SVGs.
+           - `worker-src blob:`: the editor worker is embedded in the bundle
+             as source text and started from a Blob URL (see code-preview.js's
+             own "The worker" section for why that, and not a sibling file).
+           - `connect-src 'self'` is what makes all of the above a hard
+             guarantee rather than a claim: nothing in this page can open a
+             connection to anywhere.
+
+         `frame-src` is deliberately absent, so it falls back to `default-src`
+         - there is nothing in a code viewer that should ever load an iframe.
+         `object-src 'none'` forbids plugins outright. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' blob: data:; worker-src 'self' blob:; media-src 'none'; object-src 'none'; base-uri 'none'"
+    />
+    <link rel="stylesheet" href="./code-preview.css" />
+    <style>
+      html,
+      body,
+      #editor {
+        margin: 0;
+        padding: 0;
+        height: 100%;
+        width: 100%;
+        overflow: hidden;
+        background: transparent;
+      }
+      /* Set by the bridge's `suspend()` while the destination is hidden. The
+         editor is already not being composited by then (WebKit stops painting
+         a hidden WKWebView), so this covers only the part it cannot know
+         about: Monaco's own CSS transitions, and the caret, whose blink is a
+         CSS animation that would otherwise keep a timer alive. */
+      html.gl-suspended *,
+      html.gl-suspended *::before,
+      html.gl-suspended *::after {
+        animation-play-state: paused !important;
+        transition: none !important;
+      }
+      html.gl-suspended .monaco-editor .cursors-layer > .cursor {
+        display: none !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="editor"></div>
+    <!-- A classic script, not `type="module"`: a module graph loaded from a
+         file:// origin is a needless portability question (opaque origins,
+         per-engine behaviour), and the bundle is a single self-contained IIFE
+         precisely so there is no graph to load. Same call as the Whiteboard's. -->
+    <script src="./code-preview.js"></script>
+  </body>
+</html>

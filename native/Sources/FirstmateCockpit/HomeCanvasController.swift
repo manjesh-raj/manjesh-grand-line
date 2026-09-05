@@ -60,6 +60,7 @@ final class HomeCanvasController: NSViewController {
         let scheduleStore: ScheduleStore
         let logAnalyzerStore: LogAnalyzerStore
         let docsRunbookStore: DocsRunbookStore
+        let codePreviewStore: CodePreviewStore
     }
 
     /// §6.1's grid: minimum column width 255, gap 16.
@@ -523,6 +524,7 @@ final class HomeCanvasController: NSViewController {
         case .tools: fillTools(&content)
         case .whiteboard: fillWhiteboard(&content)
         case .stickyBoard: fillStickyBoard(&content)
+        case .codePreview: fillCodePreview(&content)
         case .settings: fillSettings(&content)
         }
         return content
@@ -985,6 +987,24 @@ final class HomeCanvasController: NSViewController {
     private func fillStickyBoard(_ content: inout HelmModuleCard.Content) {
         content.subtitle = "quick notes"
         content.body = .note("Jot down a thought on a colored sticky note, anywhere on the board.")
+    }
+
+    /// `names()` rather than `list()`: this needs "how many, and what are they
+    /// called", and a snippet's content can be large - reading every one of
+    /// them on every return to the hub would be a real cost for a subtitle.
+    private func fillCodePreview(_ content: inout HelmModuleCard.Content) {
+        let names = sources.codePreviewStore.names()
+        content.subtitle = "Monaco, offline"
+        guard !names.isEmpty else {
+            content.body = .note("Paste code here to read it with real syntax highlighting.")
+            return
+        }
+        content.chip = .mute(names.count == 1 ? "1 snippet" : "\(names.count) snippets")
+        content.body = .peekRows(names.prefix(HelmModuleCard.maxPeekRows).map {
+            HelmModulePeekRow(state: .idle,
+                              text: $0,
+                              value: CodePreviewLanguage.forFilename($0).displayName)
+        })
     }
 
     private func fillSettings(_ content: inout HelmModuleCard.Content) {

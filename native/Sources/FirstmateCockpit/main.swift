@@ -1244,6 +1244,18 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     if (ProcessInfo.processInfo.environment["FM_STICKY_BOARD_DIR"] ?? "").isEmpty {
         setenv("FM_STICKY_BOARD_DIR", scratchRoot.appendingPathComponent("sticky-board", isDirectory: true).path, 1)
     }
+    // `fm/grandline-monaco-code-preview`: `CodePreviewStore()` is another store
+    // reachable from a bare, no-argument production constructor, so it gets an
+    // entry here for the reason the Sticky Board note above spells out - not
+    // because a suite is known to reach it today. Every harness that mounts an
+    // `AppShellController` (which builds one) already sets `FM_SHIFT_DIR`,
+    // which this store honours, and both of its own suites use the explicit
+    // `CodePreviewStore(root:)` seam. This closes the case those two do not:
+    // a future suite constructing `CodePreviewController(store: CodePreviewStore())`
+    // with no override of its own.
+    if (ProcessInfo.processInfo.environment["FM_CODE_PREVIEW_DIR"] ?? "").isEmpty {
+        setenv("FM_CODE_PREVIEW_DIR", scratchRoot.appendingPathComponent("code-snippets", isDirectory: true).path, 1)
+    }
 }
 
 // `fm/cockpit-sre-lead-shared-terminal`: `swift build && FM_RUN_SRE_LEAD_BRIDGE_TESTS=1
@@ -1713,6 +1725,21 @@ if ProcessInfo.processInfo.environment["FM_RUN_WHITEBOARD_VIEW_TESTS"] == "1" {
 // `fm/grandline-quota-percent-fix`: same convention, for `QuotaSource.parse`
 // against `quota-axi`'s real `percentRemaining`-keyed output - see
 // QuotaDataSelfTest.swift's header.
+// `fm/grandline-monaco-code-preview`: the Code Preview destination. Two
+// suites, split the same way the Whiteboard's are and for the same reason -
+// `CodePreviewSelfTest` is pure logic (asset resolution, the page's offline
+// CSP, the language table, paste-time detection, the store's disk round trip,
+// the syntax palette's measured contrast) and runs in CI; `CodePreviewViewSelfTest`
+// mounts a real `WKWebView`, loads the real vendored Monaco bundle and reads
+// Monaco's own tokenizer output back, so it is window-backed and lives in
+// `run-all-tests.sh`'s NEEDS_SESSION list.
+if ProcessInfo.processInfo.environment["FM_RUN_CODE_PREVIEW_TESTS"] == "1" {
+    exit(CodePreviewSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_CODE_PREVIEW_VIEW_TESTS"] == "1" {
+    exit(CodePreviewViewSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_QUOTA_DATA_TESTS"] == "1" {
     exit(QuotaDataSelfTest.run() ? 0 : 1)
 }

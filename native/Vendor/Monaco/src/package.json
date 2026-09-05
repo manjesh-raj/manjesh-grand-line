@@ -1,0 +1,11 @@
+{
+  "name": "grandline-monaco-web",
+  "private": true,
+  "description": "Pinned manifest for native/Scripts/build-monaco-web.sh. Not installed by the app - see ../README.md.",
+  "dependencies": {
+    "monaco-editor": "0.54.0"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.9"
+  }
+}

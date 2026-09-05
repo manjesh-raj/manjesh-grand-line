@@ -536,6 +536,12 @@ extension RailDestination {
         // own, distinct from Whiteboard's AI-feature violet (Sticky Board has
         // no AI in it at all).
         case .stickyBoard: return .amber
+        // `fm/grandline-monaco-code-preview`: blue is the "reading material"
+        // hue in §2.2's table (Docs, Runbooks, the Fleet overview), and a
+        // panel whose whole job is reading a snippet properly belongs there.
+        // Deliberately not the Whiteboard's violet - that is this app's AI
+        // hue, and there is no AI anywhere in this destination.
+        case .codePreview: return .blue
         }
     }
 }

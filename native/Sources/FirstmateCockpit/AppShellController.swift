@@ -123,6 +123,11 @@ final class AppShellController: NSViewController {
     /// sticky notes. Lazy like every other utility destination - see
     /// `StickyBoardController.swift`'s header.
     private let stickyBoard = StickyBoardController()
+    /// `fm/grandline-monaco-code-preview`: the embedded Monaco editor. Lazy
+    /// for the same reason the Whiteboard is - see `CodePreviewWebView`'s
+    /// gating note: a session that never opens it never starts a web content
+    /// process, never loads the 4MB bundle and never builds an editor.
+    private let codePreview: CodePreviewController
     private let vault = VaultController()
     private let dictation: DictationController
     /// `fm/grandline-schedules-sidebar-move`: F11's Schedules card, promoted
@@ -321,12 +326,23 @@ final class AppShellController: NSViewController {
         // own dependencies rather than inside the canvas - each store re-reads
         // its git-synced folder per call, which is the same "an independent
         // instance is fine and cheap" pattern `UnifiedSearch` already uses.
+        // One more store the shell did not already hold, on the same terms as
+        // the two below: it re-reads its own git-synced folder per call, and
+        // it honours `FM_CODE_PREVIEW_DIR`/`FM_SHIFT_DIR` so a self-test never
+        // reaches the captain's real clone.
+        // GL-23's lesson: **one** store instance shared by both consumers on
+        // this page, not two. Neither caches, so two would not diverge the way
+        // the two `CommandLibraryStore`s once did - but one is still the
+        // cheaper and more obviously-correct answer.
+        let codePreviewStore = CodePreviewStore()
+        self.codePreview = CodePreviewController(store: codePreviewStore)
         self.homeCanvas = HomeCanvasController(sources: .init(
             shiftStore: shiftStore,
             hostStore: hostStore,
             scheduleStore: scheduleStore,
             logAnalyzerStore: LogAnalyzerStore(),
-            docsRunbookStore: DocsRunbookStore()))
+            docsRunbookStore: DocsRunbookStore(),
+            codePreviewStore: codePreviewStore))
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -427,6 +443,7 @@ final class AppShellController: NSViewController {
         mounter.register(DestinationSlot(id: .tools, title: RailDestination.tools.bodyTitle, mountsEagerly: false, controller: tools))
         mounter.register(DestinationSlot(id: .whiteboard, title: RailDestination.whiteboard.bodyTitle, mountsEagerly: false, controller: whiteboard))
         mounter.register(DestinationSlot(id: .stickyBoard, title: RailDestination.stickyBoard.bodyTitle, mountsEagerly: false, controller: stickyBoard))
+        mounter.register(DestinationSlot(id: .codePreview, title: RailDestination.codePreview.bodyTitle, mountsEagerly: false, controller: codePreview))
         mounter.register(DestinationSlot(id: .vault, title: RailDestination.vault.bodyTitle, mountsEagerly: false, controller: vault))
         mounter.register(DestinationSlot(id: .dictation, title: RailDestination.dictation.bodyTitle, mountsEagerly: false, controller: dictation))
         mounter.register(DestinationSlot(id: .schedules, title: RailDestination.schedules.bodyTitle, mountsEagerly: false, controller: schedules))
@@ -722,6 +739,7 @@ final class AppShellController: NSViewController {
         // cluster for it) moved to `.runbooks`.
         docs.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         whiteboard.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        codePreview.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Runbooks inherited Docs' old per-editor-state cluster: "New
         // Runbook" beside a form already creating one is a second, competing
         // action, so its cluster empties while the editor is open.

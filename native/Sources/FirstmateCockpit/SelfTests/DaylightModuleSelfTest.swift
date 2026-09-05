@@ -89,8 +89,11 @@ enum DaylightModuleSelfTest {
         // the same reason and by the same rule: a whiteboard is a thinking
         // surface, which belongs on the same shelf as the reference material
         // it gets used next to. `fm/grandline-sticky-board` added
-        // `.stickyBoard` for the identical reason - a quick-notes corkboard.
-        .stores: [.vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard],
+        // `.stickyBoard` for the identical reason - a quick-notes corkboard -
+        // and `fm/grandline-monaco-code-preview` added `.codePreview` by that
+        // same rule: a place to read a pasted snippet properly is reference
+        // material, on the same shelf as the docs and runbooks it sits beside.
+        .stores: [.vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview],
         .engineering: [.updates, .bootstrap, .automation, .githubSync, .settings],
     ]
 
@@ -146,14 +149,22 @@ enum DaylightModuleSelfTest {
         // 12 from the original trim, plus Runbooks, Postmortems
         // (`fm/grandline-docs-split-runbooks-postmortems`), Whiteboard
         // (`fm/grand-line-whiteboard-excalidraw`), Kubernetes
-        // (`fm/grandline-k8s-cluster-tail`) and Sticky Board
-        // (`fm/grandline-sticky-board`) - all five new modules with
+        // (`fm/grandline-k8s-cluster-tail`), Sticky Board
+        // (`fm/grandline-sticky-board`) and Code Preview
+        // (`fm/grandline-monaco-code-preview`) - all six new modules with
         // `appearsOnOverview == false`, matching their space siblings. The
         // Kubernetes card in particular has nothing to show without a live
         // session and a chosen feed tab, so it belongs on Operations beside
-        // Log Analyzer rather than on the pulse-check hub.
-        if trimmed.count != 17 {
-            fail("expected exactly 17 modules trimmed from Overview, got \(trimmed.count): "
+        // Log Analyzer rather than on the pulse-check hub; Sticky Board and
+        // Code Preview are Stores utilities like every one of their
+        // neighbours there.
+        //
+        // The literal is deliberate: the captain's own trim decision names the
+        // six that *stay*, so a module quietly gaining an Overview card is the
+        // regression this catches. Adding a module means bumping this by one
+        // and saying why, which is what every line above did.
+        if trimmed.count != 18 {
+            fail("expected exactly 18 modules trimmed from Overview, got \(trimmed.count): "
                  + "\(trimmed.map(\.rawValue).sorted())", &ok)
         }
         for module in trimmed {
