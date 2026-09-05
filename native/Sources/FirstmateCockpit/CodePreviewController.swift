@@ -132,11 +132,17 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     // comes free via `AppSettings.fontSize` - a second per-feature preference
     // would mean the terminals and the editor could disagree about "the
     // monospace size", which is exactly what `FontSizeManager` exists to stop.
+    //
+    // The tooltips name no keyboard shortcut, deliberately: the zoom keys
+    // were View-menu items, and `fm/grandline-console-tabs-restore-tabmenu-fix`
+    // removed that whole menu - nothing in `main.swift` binds either key any
+    // more. (Console's own two zoom tooltips still promise them and are stale
+    // for the same reason; left alone here rather than edited in passing.)
     private lazy var zoomOutButton = HelmPageToolbar.iconButton(
-        symbol: "minus.magnifyingglass", tooltip: "Smaller text (⌘−)",
+        symbol: "minus.magnifyingglass", tooltip: "Smaller editor text",
         target: self, action: #selector(zoomOutTapped))
     private lazy var zoomInButton = HelmPageToolbar.iconButton(
-        symbol: "plus.magnifyingglass", tooltip: "Larger text (⌘+)",
+        symbol: "plus.magnifyingglass", tooltip: "Larger editor text",
         target: self, action: #selector(zoomInTapped))
     private lazy var copyButton = HelmPageToolbar.labeledButton(
         symbol: "doc.on.doc", title: "Copy",
