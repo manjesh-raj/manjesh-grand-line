@@ -124,6 +124,7 @@ enum DaylightModule: String, CaseIterable {
     case dictation
     case tools
     case whiteboard
+    case stickyBoard
     case settings
 
     /// Which space this module belongs to, or `nil` for the two that appear
@@ -142,7 +143,7 @@ enum DaylightModule: String, CaseIterable {
         // their own destinations - see `DaylightModuleSelfTest.checkSpaceTable`,
         // updated alongside this per this file's own "change it here and in
         // that test together" rule.
-        case .vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard: return .stores
+        case .vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard: return .stores
         case .updates, .bootstrap, .automation, .githubSync, .settings: return .engineering
         }
     }
@@ -169,7 +170,7 @@ enum DaylightModule: String, CaseIterable {
     var appearsOnOverview: Bool {
         switch self {
         case .tasks, .hosts, .updates, .bootstrap, .automation, .githubSync,
-             .logAnalyzer, .kubernetes, .vault, .docs, .runbooks, .postmortems, .dictation, .tools, .whiteboard, .settings:
+             .logAnalyzer, .kubernetes, .vault, .docs, .runbooks, .postmortems, .dictation, .tools, .whiteboard, .stickyBoard, .settings:
             return false
         default:
             return true
@@ -230,6 +231,7 @@ enum DaylightModule: String, CaseIterable {
         case .dictation: return .dictation
         case .tools: return .tools
         case .whiteboard: return .whiteboard
+        case .stickyBoard: return .stickyBoard
         case .settings: return .settings
         }
     }
@@ -273,6 +275,7 @@ enum DaylightModule: String, CaseIterable {
         case .dictation: return "mic.fill"
         case .tools: return "wrench.and.screwdriver.fill"
         case .whiteboard: return "scribble.variable"
+        case .stickyBoard: return "note.text"
         case .settings: return "slider.horizontal.3"
         }
     }
@@ -316,6 +319,7 @@ enum DaylightModule: String, CaseIterable {
         case .dictation: return "Dictation"
         case .tools: return "Tools"
         case .whiteboard: return "Whiteboard"
+        case .stickyBoard: return "Sticky Board"
         case .settings: return "Settings"
         }
     }

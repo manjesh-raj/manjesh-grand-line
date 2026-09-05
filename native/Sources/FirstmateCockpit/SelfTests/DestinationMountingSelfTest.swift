@@ -136,7 +136,7 @@ enum DestinationMountingSelfTest {
             // mounting it eagerly would start a WebKit content process at
             // launch for a page the captain may never open
             // (`fm/grand-line-whiteboard-excalidraw`).
-            let mustBeLazy: Set<DestinationSlotID> = [.docs, .runbooks, .postmortems, .tools, .whiteboard, .logAnalyzer, .vault, .dictation, .schedules, .health, .hosts, .shift, .settings]
+            let mustBeLazy: Set<DestinationSlotID> = [.docs, .runbooks, .postmortems, .tools, .whiteboard, .stickyBoard, .logAnalyzer, .vault, .dictation, .schedules, .health, .hosts, .shift, .settings]
             let eagerlyBuilt = mounted.intersection(mustBeLazy)
             guard eagerlyBuilt.isEmpty else {
                 return "these should not be built at launch: \(eagerlyBuilt.map(\.rawValue).sorted())"
@@ -293,6 +293,12 @@ enum DestinationMountingSelfTest {
         .docs: 3,
         .postmortems: 1,
         .whiteboard: 2,
+        // `fm/grandline-sticky-board`: a genuinely empty board's own body is
+        // an empty-state title + body sentence plus a "0 notes" footer count
+        // - the same honest "no create/edit control inline; the page action
+        // lives in the shell's drill header" shape `.whiteboard` already
+        // established, just one label richer for the footer.
+        .stickyBoard: 3,
         // Pr1 pointed `FM_SCHEDULES_FILE` at a scratch path for the whole of a
         // self-test process, so this page now renders its genuine empty state
         // (card header, subtitle, one empty-state line) instead of the

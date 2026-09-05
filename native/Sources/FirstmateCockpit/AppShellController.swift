@@ -119,6 +119,10 @@ final class AppShellController: NSViewController {
     /// `WhiteboardWebView`'s gating note: a session that never opens it never
     /// starts a web content process.
     private let whiteboard = WhiteboardController()
+    /// `fm/grandline-sticky-board`: a freeform corkboard of draggable, colored
+    /// sticky notes. Lazy like every other utility destination - see
+    /// `StickyBoardController.swift`'s header.
+    private let stickyBoard = StickyBoardController()
     private let vault = VaultController()
     private let dictation: DictationController
     /// `fm/grandline-schedules-sidebar-move`: F11's Schedules card, promoted
@@ -422,6 +426,7 @@ final class AppShellController: NSViewController {
         mounter.register(DestinationSlot(id: .kubernetes, title: RailDestination.kubernetes.bodyTitle, mountsEagerly: false, controller: kubernetes))
         mounter.register(DestinationSlot(id: .tools, title: RailDestination.tools.bodyTitle, mountsEagerly: false, controller: tools))
         mounter.register(DestinationSlot(id: .whiteboard, title: RailDestination.whiteboard.bodyTitle, mountsEagerly: false, controller: whiteboard))
+        mounter.register(DestinationSlot(id: .stickyBoard, title: RailDestination.stickyBoard.bodyTitle, mountsEagerly: false, controller: stickyBoard))
         mounter.register(DestinationSlot(id: .vault, title: RailDestination.vault.bodyTitle, mountsEagerly: false, controller: vault))
         mounter.register(DestinationSlot(id: .dictation, title: RailDestination.dictation.bodyTitle, mountsEagerly: false, controller: dictation))
         mounter.register(DestinationSlot(id: .schedules, title: RailDestination.schedules.bodyTitle, mountsEagerly: false, controller: schedules))

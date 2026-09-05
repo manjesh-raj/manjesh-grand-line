@@ -88,8 +88,9 @@ enum DaylightModuleSelfTest {
         // `fm/grand-line-whiteboard-excalidraw` added `.whiteboard` here for
         // the same reason and by the same rule: a whiteboard is a thinking
         // surface, which belongs on the same shelf as the reference material
-        // it gets used next to.
-        .stores: [.vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard],
+        // it gets used next to. `fm/grandline-sticky-board` added
+        // `.stickyBoard` for the identical reason - a quick-notes corkboard.
+        .stores: [.vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard],
         .engineering: [.updates, .bootstrap, .automation, .githubSync, .settings],
     ]
 
@@ -144,14 +145,15 @@ enum DaylightModuleSelfTest {
         let trimmed = DaylightModule.allCases.filter { !overviewVisibleModules.contains($0) }
         // 12 from the original trim, plus Runbooks, Postmortems
         // (`fm/grandline-docs-split-runbooks-postmortems`), Whiteboard
-        // (`fm/grand-line-whiteboard-excalidraw`) and Kubernetes
-        // (`fm/grandline-k8s-cluster-tail`) - all four new modules with
+        // (`fm/grand-line-whiteboard-excalidraw`), Kubernetes
+        // (`fm/grandline-k8s-cluster-tail`) and Sticky Board
+        // (`fm/grandline-sticky-board`) - all five new modules with
         // `appearsOnOverview == false`, matching their space siblings. The
         // Kubernetes card in particular has nothing to show without a live
         // session and a chosen feed tab, so it belongs on Operations beside
         // Log Analyzer rather than on the pulse-check hub.
-        if trimmed.count != 16 {
-            fail("expected exactly 16 modules trimmed from Overview, got \(trimmed.count): "
+        if trimmed.count != 17 {
+            fail("expected exactly 17 modules trimmed from Overview, got \(trimmed.count): "
                  + "\(trimmed.map(\.rawValue).sorted())", &ok)
         }
         for module in trimmed {
