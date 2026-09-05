@@ -427,7 +427,9 @@ final class ReviewController: NSViewController, DaylightDrillActions {
 
     // MARK: Refresh
 
-    @objc private func refreshTapped() { refresh() }
+    /// The captain's own Refresh click always runs a real sweep - never
+    /// answered from `FleetTaskCache`'s coalescing window (3.5).
+    @objc private func refreshTapped() { refresh(forceRefresh: true) }
 
     /// fm/grandline-sidebar-badges: lets `AppShellController` trigger this
     /// page's own existing refresh at app launch, so the rail's Review badge
@@ -437,12 +439,15 @@ final class ReviewController: NSViewController, DaylightDrillActions {
     /// manual refresh button, unchanged).
     func refreshIfNeeded() { refresh() }
 
-    private func refresh() {
+    /// `forceRefresh` bypasses `FleetTaskCache`'s coalescing window (3.5) -
+    /// the captain's own Refresh click always runs a real sweep, an automatic
+    /// page-visit refresh is exactly what the window is for.
+    private func refresh(forceRefresh: Bool = false) {
         guard !isLoading else { return }
         isLoading = true
         refreshButton.isEnabled = false
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let tasks = FleetDataSource.parseTasks()
+            let tasks = FleetDataSource.parseTasks(forceRefresh: forceRefresh)
             let fetched = OpenPRsSource.fetchDetailed()
             let merged = FleetDataSource.mergedPRs(openPRs: fetched.prs, tasks: tasks)
             DispatchQueue.main.async {

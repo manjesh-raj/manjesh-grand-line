@@ -1592,6 +1592,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_APPKIT_AUDIT_TESTS"] == "1" {
     exit(AppKitAuditSelfTest.run() ? 0 : 1)
 }
 
+// Section 3 of `data/grandline-full-app-audit/report.md`: the standing
+// per-session energy costs - see AuditEnergyFixesSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT_ENERGY_FIXES_TESTS"] == "1" {
+    exit(AuditEnergyFixesSelfTest.run() ? 0 : 1)
+}
+
 // B3-B9 (`data/grand-line-e2e-audit/report.md`): the Section 2 UI bugs, one
 // case per finding id - see AuditUIFixesSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_AUDIT_UI_FIXES_TESTS"] == "1" {

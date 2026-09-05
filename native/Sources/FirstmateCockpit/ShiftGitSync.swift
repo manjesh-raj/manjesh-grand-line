@@ -241,7 +241,7 @@ final class ShiftGitSync {
         }
         DispatchQueue.main.async { [weak self] in
             guard let self, self.pullTimer == nil else { return }
-            self.pullTimer = Timer.scheduledTimer(withTimeInterval: self.periodicPullInterval, repeats: true) { [weak self] _ in
+            let pull = Timer.scheduledTimer(withTimeInterval: self.periodicPullInterval, repeats: true) { [weak self] _ in
                 guard let self else { return }
                 // E3: paused while the app has been backgrounded for >5
                 // minutes. This is the one poller in that table that reaches
@@ -260,6 +260,14 @@ final class ShiftGitSync {
                     if self.pullNow() == .diverged { _ = self.detectAndResolveConflicts() }
                 }
             }
+            // 3.4 (`data/grandline-full-app-audit/report.md`): this is the
+            // app's slowest repeating timer *and* the only one whose work
+            // wakes the radio, so it is the one with the most to gain from
+            // being coalesced with whatever else the machine is already doing.
+            // A prefetch that lands 30s late is indistinguishable from one
+            // that lands on time.
+            pull.tolerance = 30
+            self.pullTimer = pull
         }
     }
 

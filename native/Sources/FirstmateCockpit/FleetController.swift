@@ -210,7 +210,9 @@ final class FleetController: NSViewController {
     /// accumulate orphaned rows across those re-lays.
     var needsAccentRows: [HelmAccentRow] = []
     func applyThemeFromReply() { applyTheme() }
-    func refreshAfterReply() { refresh() }
+    /// F7: a reply the captain just sent may have resolved a decision, so
+    /// this re-reads for real rather than from the coalescing window.
+    func refreshAfterReply() { refresh(forceRefresh: true) }
 
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 940, height: 720))
@@ -589,7 +591,9 @@ final class FleetController: NSViewController {
 
     // MARK: Refresh
 
-    @objc private func refreshTapped() { refresh() }
+    /// The captain's own Refresh click always runs a real sweep - never
+    /// answered from `FleetTaskCache`'s coalescing window (3.5).
+    @objc private func refreshTapped() { refresh(forceRefresh: true) }
 
     /// fm/grandline-sidebar-badges: lets `AppShellController` trigger this
     /// page's own existing refresh at app launch, so the rail's Overview
@@ -599,11 +603,18 @@ final class FleetController: NSViewController {
     /// and the manual refresh button, unchanged).
     func refreshIfNeeded() { refresh() }
 
-    private func refresh() { refresh(forceBriefing: false) }
+    private func refresh(forceRefresh: Bool = false) {
+        refresh(forceBriefing: false, forceRefresh: forceRefresh)
+    }
 
     /// `forceBriefing` is the briefing card's own clock affordance: regenerate
     /// from a fresh scan rather than waiting for tomorrow's first activation.
-    private func refresh(forceBriefing: Bool) {
+    ///
+    /// `forceRefresh` bypasses `FleetTaskCache`'s coalescing window (3.5) -
+    /// set for the captain's own Refresh click and the post-reply re-read,
+    /// left `false` for an ordinary automatic refresh (a page visit), which is
+    /// exactly the case the window exists to collapse.
+    private func refresh(forceBriefing: Bool, forceRefresh: Bool = false) {
         // F6: the log is a cheap local read (a JSONL file plus a bounded
         // window of Shift's activity YAML), so Refresh re-reads it too rather
         // than the Log tab having a refresh action of its own.
@@ -619,7 +630,7 @@ final class FleetController: NSViewController {
         // re-render once the PR list itself lands. The "Ready to merge"
         // section/stat tile shows its own loading state in between.
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let snapshot = FleetDataSource.snapshot()
+            let snapshot = FleetDataSource.snapshot(forceRefresh: forceRefresh)
             DispatchQueue.main.async {
                 guard let self else { return }
                 self.render(snapshot: snapshot, mergedPRs: nil)
