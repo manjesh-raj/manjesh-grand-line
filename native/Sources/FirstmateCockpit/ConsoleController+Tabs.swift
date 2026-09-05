@@ -311,7 +311,10 @@ extension ConsoleController {
         // `KubeContextBridge.swift`'s header and `SRELeadBridge.
         // isTerminalBusyElsewhere`. SRE Lead's own bridge, when it exists for
         // this tab, is wired the other direction in `startSRELead(for:)`.
-        bridge.isTerminalBusyElsewhere = { [weak tab] in tab?.sreLead?.bridge?.isBusy ?? false }
+        bridge.isTerminalBusyElsewhere = { [weak self, weak tab] in
+            guard let self, let tab else { return false }
+            return self.isTabBusy(tab.id, excluding: .kubeContext)
+        }
         bridge.onUpdate = { [weak self, weak tab, weak bridge] result in
             guard let self, let tab, let bridge else { return }
             switch result {
@@ -746,12 +749,49 @@ extension ConsoleController {
         return KubeFeedTab(id: tab.id, name: tab.name, terminal: tab)
     }
 
-    /// Whether a sibling bridge already holds that tab - `KubeBridge`'s
-    /// `isTerminalBusyElsewhere` seam. Two independently-injected commands on
-    /// one real shell interleave keystrokes and corrupt both outputs, which is
-    /// the hazard `KubeContextBridge`'s own header documents at length.
-    func isTabBusyForKubeFeed(_ tabID: UUID) -> Bool {
+    /// Which of the three bridges that can hold one tab is asking.
+    ///
+    /// Three, not two: SRE Lead's and the context badge's both live on the
+    /// `TabModel`, and the Kubernetes destination's feed bridge can hold the
+    /// *same* tab from a different destination entirely.
+    enum TabBridgeKind {
+        case sreLead
+        case kubeContext
+        case kubernetesFeed
+    }
+
+    /// Whether any bridge **other than** `kind` is mid-command on that tab.
+    ///
+    /// **The one symmetric answer, and the whole of the full-app audit's
+    /// finding 4.1.** Two independently-injected commands on one real shell
+    /// interleave keystrokes and corrupt both outputs - the hazard
+    /// `KubeContextBridge`'s own header documents at length - and the guard
+    /// against it used to be one-directional in the one case that matters
+    /// most. `KubeBridge` correctly checked both console-side bridges before
+    /// injecting, but neither of those two checked back: SRE Lead's
+    /// `isTerminalBusyElsewhere` read only the context badge's `isBusy`, the
+    /// context badge's read only SRE Lead's, and *neither* consulted the
+    /// Kubernetes feed bridge - which is reachable in entirely ordinary use
+    /// (adopt tab X as the k8s feed, start SRE Lead on tab X, ask a question
+    /// during a 30s cluster sweep). The typing quiet-window does not save it:
+    /// `lastUserActivity` comes from an `NSEvent` monitor, and a bridge's own
+    /// programmatic `send(txt:)` produces no `NSEvent`.
+    ///
+    /// Written as "everyone except me" rather than as three hand-maintained
+    /// pairs, so a fourth bridge is one `case` plus one line here instead of
+    /// three call sites that can each be forgotten separately.
+    func isTabBusy(_ tabID: UUID, excluding kind: TabBridgeKind) -> Bool {
         guard let tab = tabs.first(where: { $0.id == tabID }) else { return false }
-        return tab.sreLead?.bridge?.isBusy == true || tab.kubeContextBridge?.isBusy == true
+        if kind != .sreLead, tab.sreLead?.bridge?.isBusy == true { return true }
+        if kind != .kubeContext, tab.kubeContextBridge?.isBusy == true { return true }
+        if kind != .kubernetesFeed, isKubernetesFeedBridgeBusy?(tabID) == true { return true }
+        return false
+    }
+
+    /// `KubeBridge`'s own `isTerminalBusyElsewhere` seam - unchanged in
+    /// meaning, now expressed through the symmetric answer above so it can
+    /// never drift from the other two directions.
+    func isTabBusyForKubeFeed(_ tabID: UUID) -> Bool {
+        isTabBusy(tabID, excluding: .kubernetesFeed)
     }
 }

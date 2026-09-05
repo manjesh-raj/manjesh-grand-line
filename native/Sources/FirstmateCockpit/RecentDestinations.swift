@@ -170,6 +170,26 @@ final class RecentDestinations {
         notify()
     }
 
+    /// Drop one destination from the trail.
+    ///
+    /// The one case that needs it (full-app audit, finding 4.3): a `.host`
+    /// row whose host has been deleted from the store outright. Such a row
+    /// can neither switch to a live session nor reconnect - it is the only
+    /// kind of entry here that is genuinely unreachable rather than merely
+    /// not-currently-open - so it stops being listed rather than staying as a
+    /// row that can only ever do nothing. Matched by `identityKey`, so a
+    /// caller that has only the id need not reproduce the label.
+    ///
+    /// Deliberately narrow: a host page the captain simply *closed* still
+    /// belongs here, exactly as this file's header says, and now reconnects
+    /// when clicked.
+    func forget(_ kind: RecentDestinationKind) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let before = entries.count
+        entries.removeAll { $0.kind.identityKey == kind.identityKey }
+        if entries.count != before { notify() }
+    }
+
     // MARK: Observation
 
     /// Token-based, matching `HostSessionRegistry.observe`/`ThemeManager.

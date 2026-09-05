@@ -66,6 +66,14 @@ enum KubernetesDestinationSelfTest {
             ("refreshWatchdogForcesAClearStuckStateAfterTheCeiling", test_refreshWatchdogForcesAClearStuckStateAfterTheCeiling),
             ("stuckStateRetryButtonStartsAFreshWorkingRefresh", test_stuckStateRetryButtonStartsAFreshWorkingRefresh),
             ("aStraggledStaleCompletionCannotClobberANewerRefresh", test_aStraggledStaleCompletionCannotClobberANewerRefresh),
+
+            // Full-app audit, finding 4.1: the cross-bridge collision guard
+            // was one-directional, so SRE Lead / the context badge could
+            // interleave keystrokes into a tab the Kubernetes feed bridge was
+            // mid-command on.
+            ("feedBridgeReportsBusyForItsOwnTabOnly", test_feedBridgeReportsBusyForItsOwnTabOnly),
+            ("consoleBridgesRefuseWhileTheKubernetesFeedHoldsTheTab", test_consoleBridgesRefuseWhileTheKubernetesFeedHoldsTheTab),
+            ("bothDirectionsOfTheCrossBridgeGuardAreWired", test_bothDirectionsOfTheCrossBridgeGuardAreWired),
         ]
 
         var failures = 0
@@ -495,6 +503,133 @@ enum KubernetesDestinationSelfTest {
     /// tab by typing into it directly used to render as an indistinguishable
     /// "Refreshing…" spinner, with no indication that the captain's own
     /// typing was what was pausing it.
+    // MARK: Finding 4.1 - the cross-bridge busy guard, in both directions
+
+    /// The Kubernetes half of the answer: this page reports its feed bridge
+    /// busy for the tab it actually holds, and only that one.
+    ///
+    /// Scoped to the feed tab on purpose - a host page can have several tabs,
+    /// and blocking SRE Lead on a tab the Kubernetes page is not typing into
+    /// would be a needless refusal.
+    private static func test_feedBridgeReportsBusyForItsOwnTabOnly() -> String? {
+        let harness = liveHarness()
+        guard let bridge = harness.controller.debugBridge else { return "no bridge" }
+
+        guard !harness.controller.isFeedBridgeBusy(onTab: harness.feedTabID) else {
+            return "the feed bridge reports busy with nothing in flight"
+        }
+
+        // Hold the tab: stop scripting answers, so the sweep's first command
+        // is injected and never completes - which is exactly "in flight".
+        harness.fake.onSendCommand = nil
+        harness.controller.debugRefreshCluster()
+        harness.drain(2)
+        guard bridge.isBusy else {
+            return "could not get the feed bridge in flight for the test"
+        }
+        guard harness.controller.isFeedBridgeBusy(onTab: harness.feedTabID) else {
+            return "the feed bridge is in flight but the page does not say so - this is what "
+                + "lets SRE Lead inject into the same tab mid-command"
+        }
+        guard !harness.controller.isFeedBridgeBusy(onTab: UUID()) else {
+            return "a tab this page does not hold must never be reported busy"
+        }
+
+        return nil
+    }
+
+    /// The console half: `ConsoleController.isTabBusy(_:excluding:)` consults
+    /// the Kubernetes feed bridge as well as the two bridges that live on the
+    /// tab itself, and every bridge sees the other two but not itself.
+    ///
+    /// Driven against a real `ConsoleController` with a real `.shell` tab -
+    /// an `.ssh` tab would fork a real `/usr/bin/ssh`, which is the boundary
+    /// `TabForwardDragsToggleSelfTest` already draws for the same reason. The
+    /// feed bridge's own answer is stubbed here precisely because the case
+    /// above drives the real one; between them both sides are real.
+    private static func test_consoleBridgesRefuseWhileTheKubernetesFeedHoldsTheTab() -> String? {
+        let console = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(),
+                                        isFirstmateConsole: false)
+        _ = console.view
+        console.newShellTab()
+        guard let tabID = console.debugAllTabIDs().first else { return "no tab" }
+
+        var feedBusy = false
+        console.isKubernetesFeedBridgeBusy = { id in feedBusy && id == tabID }
+
+        // Nothing in flight anywhere.
+        for kind in [ConsoleController.TabBridgeKind.sreLead, .kubeContext, .kubernetesFeed] {
+            guard !console.isTabBusy(tabID, excluding: kind) else {
+                return "an idle tab reported busy to \(kind)"
+            }
+        }
+
+        // The Kubernetes feed bridge takes the tab. Both console-side bridges
+        // must now refuse; the feed bridge itself must not block on itself.
+        feedBusy = true
+        guard console.isTabBusy(tabID, excluding: .sreLead) else {
+            return "SRE Lead did not see the Kubernetes feed bridge holding the tab - this is "
+                + "finding 4.1: two commands interleaving keystrokes on one real shell"
+        }
+        guard console.isTabBusy(tabID, excluding: .kubeContext) else {
+            return "the context badge did not see the Kubernetes feed bridge holding the tab"
+        }
+        guard !console.isTabBusy(tabID, excluding: .kubernetesFeed) else {
+            return "the feed bridge blocked on its own in-flight command"
+        }
+        // `isTabBusyForKubeFeed` is the seam `KubeBridge` actually reads, and
+        // must stay the same answer.
+        guard !console.isTabBusyForKubeFeed(tabID) else {
+            return "isTabBusyForKubeFeed disagrees with isTabBusy(_:excluding: .kubernetesFeed)"
+        }
+        // A tab the feed bridge does not hold is unaffected.
+        guard !console.isTabBusy(UUID(), excluding: .sreLead) else {
+            return "an unrelated tab id reported busy"
+        }
+
+        console.shutdown()
+        return nil
+    }
+
+    /// A source guard, because the wiring is what makes the two cases above
+    /// mean anything in the shipped app: an `isTerminalBusyElsewhere` closure
+    /// that still reads one sibling directly, rather than routing through the
+    /// symmetric `isTabBusy`, would pass every behavioural check above while
+    /// leaving the real app exactly as broken.
+    private static func test_bothDirectionsOfTheCrossBridgeGuardAreWired() -> String? {
+        guard let dir = SelfTestSources.appSourceDirectory() else { return "no source directory" }
+        func read(_ name: String) -> String? {
+            try? String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8)
+        }
+        guard let tabs = read("ConsoleController+Tabs.swift"),
+              let sreLead = read("ConsoleController+SRELead.swift"),
+              let shell = read("AppShellController.swift") else { return "could not read sources" }
+
+        guard sreLead.contains("isTabBusy(tab.id, excluding: .sreLead)") else {
+            return "SRE Lead's bridge does not route through the symmetric guard"
+        }
+        guard tabs.contains("isTabBusy(tab.id, excluding: .kubeContext)") else {
+            return "the context badge's bridge does not route through the symmetric guard"
+        }
+        guard tabs.contains("isTabBusy(tabID, excluding: .kubernetesFeed)") else {
+            return "the Kubernetes feed seam does not route through the symmetric guard"
+        }
+        // The pre-fix shape: reading one named sibling directly.
+        for (name, text) in [("ConsoleController+Tabs.swift", tabs),
+                             ("ConsoleController+SRELead.swift", sreLead)] {
+            guard !text.contains("isTerminalBusyElsewhere = { [weak tab] in tab?.") else {
+                return "\(name) still reads a single sibling bridge directly - the one-directional "
+                    + "shape finding 4.1 is about"
+            }
+        }
+        // And the shell wires the third direction for a *host* console, which
+        // is the only console the Kubernetes page can ever scope to.
+        guard shell.contains("controller.isKubernetesFeedBridgeBusy = { [weak self] tabID in") else {
+            return "AppShellController does not wire a host console's Kubernetes-feed seam"
+        }
+        return nil
+    }
+
     private static func test_clusterRefreshShowsWhyItIsWaitingOnFeedTabActivity() -> String? {
         let harness = liveHarness()
         // `liveHarness()` already ran one successful sweep to get here -

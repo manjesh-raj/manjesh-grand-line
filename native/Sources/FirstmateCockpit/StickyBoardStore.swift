@@ -268,6 +268,55 @@ final class StickyBoardStore {
     /// unreadable is propagated off-machine.
     private(set) var isInFailedLoadState = false
 
+    /// Records read from `notes.yaml` that this build could not decode, kept
+    /// verbatim so `persist()` can write them straight back.
+    ///
+    /// **This is the whole of the full-app audit's finding 4.2.** `note(from:)`
+    /// returns nil for a record it cannot make sense of - most realistically a
+    /// `color` whose rawValue is a `StickyNoteColor` case a *newer* build
+    /// added - and `reloadAll()` used to `compactMap` it away, at which point
+    /// the very next `persist()` rewrote the file without it and
+    /// `gitSync.markDirty()` committed and pushed the deletion. Whole-file
+    /// parse failure was already GL-01-guarded (`isInFailedLoadState`);
+    /// per-record failure was not, and the trigger is exactly the cross-
+    /// machine version skew this store's git sync exists to serve: a note
+    /// written on a newer build is destroyed by any edit made on an older one.
+    ///
+    /// Carrying the raw `Yaml` through is what makes an unreadable record cost
+    /// only its own visibility rather than its existence. The note does not
+    /// render on this build - it cannot, nothing here knows what it is - but
+    /// it survives every write, and the build that *does* understand it still
+    /// finds it. Same principle as `FleetLogStore.Line.opaque`.
+    ///
+    /// `sortKey` is that record's own `created_at` when it has a readable one,
+    /// so a preserved note keeps its position in the file rather than being
+    /// shuffled to the end on every rewrite.
+    private var unreadableRecords: [(sortKey: Date, raw: Yaml)] = []
+
+    /// How many records the last successful read could not decode. Zero on a
+    /// healthy board; a self-test asserts it, and it is worth knowing about.
+    var unreadableRecordCount: Int { unreadableRecords.count }
+
+    /// How long a text edit waits before it reaches disk (full-app audit,
+    /// findings 3.3/4.6).
+    ///
+    /// Every `persist()` re-serialises **every** note through
+    /// `YamlBeautify.dump` and writes the whole `notes.yaml` synchronously on
+    /// the main thread. That used to happen once per *character typed*: only
+    /// the git commit was debounced (3s), never the local write, so the cost
+    /// was O(board size) at keystroke rate. Position and size were already
+    /// drag-**end** only, so text and title were the whole of it.
+    ///
+    /// 1.5s is the same shape `CodePreviewController` already uses one
+    /// destination over - debounce the write, flush on the way out - just
+    /// slower, because this write is whole-file where Monaco's is one file.
+    /// Anything structural (a note added, deleted, restored, recoloured)
+    /// still writes immediately: those are rare, and losing one to a crash
+    /// costs a whole note rather than a few characters.
+    static let persistDebounce: TimeInterval = 1.5
+
+    private var pendingPersist: DispatchWorkItem?
+
     /// `nil` when `FM_STICKY_BOARD_DIR` overrides `root` and the notes
     /// themselves are unset (every self-test, plain local-only use).
     init() {
@@ -300,10 +349,31 @@ final class StickyBoardStore {
     }
 
     func reloadAll() {
+        // A queued write holds edits that are only in memory; re-reading the
+        // file first would silently discard them.
+        flushPendingWrite()
         switch ShiftYaml.readListChecked(path: notesPath, key: "notes") {
         case .ok(let items):
             isInFailedLoadState = false
-            notes = items.compactMap(Self.note(from:)).sorted { $0.createdAt < $1.createdAt }
+            var decoded: [StickyNote] = []
+            var unreadable: [(sortKey: Date, raw: Yaml)] = []
+            for item in items {
+                if let note = Self.note(from: item) {
+                    decoded.append(note)
+                } else {
+                    // Preserved, not dropped - see `unreadableRecords`.
+                    unreadable.append((Self.createdAtOrDistantFuture(item), item))
+                }
+            }
+            if !unreadable.isEmpty {
+                AppLog.store.info("""
+                    Sticky Board: \(unreadable.count, privacy: .public) note record(s) in \
+                    \(self.notesPath, privacy: .public) could not be decoded by this build - \
+                    preserving them verbatim rather than dropping them on the next write.
+                    """)
+            }
+            unreadableRecords = unreadable
+            notes = decoded.sorted { $0.createdAt < $1.createdAt }
         case .missing:
             isInFailedLoadState = false
             notes = []
@@ -336,17 +406,21 @@ final class StickyBoardStore {
         return note
     }
 
+    /// Debounced - this is called once per character typed. See
+    /// `persistDebounce`.
     func updateText(id: String, text: String) {
         guard let index = notes.firstIndex(where: { $0.id == id }) else { return }
         notes[index].text = text
-        persist()
+        schedulePersist()
     }
 
     /// The note's own short label (the reference photo's index-card header).
+    /// Debounced, for the same reason `updateText` is - a title is typed a
+    /// character at a time too.
     func updateTitle(id: String, title: String) {
         guard let index = notes.firstIndex(where: { $0.id == id }) else { return }
         notes[index].title = title
-        persist()
+        schedulePersist()
     }
 
     /// Persisted on the resize drag's END only, exactly like `updatePosition`
@@ -393,10 +467,57 @@ final class StickyBoardStore {
         persist()
     }
 
+    /// Queue a write for `persistDebounce` from now, replacing any already
+    /// queued. For the high-frequency callers only (text, title).
+    private func schedulePersist() {
+        pendingPersist?.cancel()
+        let item = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingPersist = nil
+            self.persist()
+        }
+        pendingPersist = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.persistDebounce, execute: item)
+    }
+
+    /// Write anything the debounce is still holding, now.
+    ///
+    /// Called on the way out of the destination, when a field gives up focus,
+    /// and on app termination. `persist()` always writes the *whole* in-memory
+    /// array, so an immediate write for an unrelated reason (a note deleted
+    /// while a text edit is pending) already carries the pending edit with it -
+    /// which is why every immediate path simply cancels the timer rather than
+    /// having to order two writes against each other.
+    func flushPendingWrite() {
+        guard pendingPersist != nil else { return }
+        pendingPersist?.cancel()
+        pendingPersist = nil
+        persist()
+    }
+
+    /// Whether a debounced write is still outstanding - for a self-test that
+    /// needs to prove the debounce is real rather than that a write happened.
+    var hasPendingWrite: Bool { pendingPersist != nil }
+
+    deinit {
+        // A store torn down with an edit still queued must not lose it.
+        if pendingPersist != nil {
+            pendingPersist?.cancel()
+            pendingPersist = nil
+            persist()
+        }
+    }
+
     /// The one write choke point - refuses to write a file this store could
     /// not read (GL-01), and reports a genuine write failure (GL-10) rather
     /// than swallowing it.
+    ///
+    /// Immediate. A queued debounced write is cancelled first, since this one
+    /// writes the same in-memory array and would otherwise fire again for
+    /// nothing.
     private func persist() {
+        pendingPersist?.cancel()
+        pendingPersist = nil
         guard !isInFailedLoadState else {
             AppLog.store.error("""
                 Sticky Board: refusing to write \(self.notesPath, privacy: .public) - its last read \
@@ -404,9 +525,16 @@ final class StickyBoardStore {
                 """)
             return
         }
-        let sorted = notes.sorted { $0.createdAt < $1.createdAt }
+        // Decoded notes and preserved-but-unreadable records are merged back
+        // into one `created_at`-ordered list, so a record this build cannot
+        // read keeps its place in the file instead of drifting to the end on
+        // every single write (which would make `git diff` unreadable for the
+        // build that *can* read it).
+        var merged: [(sortKey: Date, raw: Yaml)] =
+            notes.map { ($0.createdAt, Self.yaml($0)) } + unreadableRecords
+        merged.sort { $0.sortKey < $1.sortKey }
         do {
-            try ShiftYaml.writeList(path: notesPath, key: "notes", items: sorted.map(Self.yaml(_:)))
+            try ShiftYaml.writeList(path: notesPath, key: "notes", items: merged.map(\.raw))
             PersistenceFailureReporter.reportSuccess()
         } catch {
             PersistenceFailureReporter.report(what: "Sticky Board notes", path: notesPath, error: error)
@@ -431,6 +559,15 @@ final class StickyBoardStore {
         m[ShiftYamlBridge.key("rotation")] = .double(n.rotationDegrees)
         m[ShiftYamlBridge.key("created_at")] = ShiftYamlBridge.str(ShiftYamlBridge.isoString(n.createdAt))
         return .dictionary(m)
+    }
+
+    /// A preserved record's own `created_at`, so it keeps its position in the
+    /// file. `.distantFuture` when even that is unreadable - such a record
+    /// sorts last, deterministically, rather than jumping around between
+    /// writes.
+    private static func createdAtOrDistantFuture(_ y: Yaml) -> Date {
+        guard let dict = y.dictionary else { return .distantFuture }
+        return ShiftYamlBridge.date(dict[ShiftYamlBridge.key("created_at")]) ?? .distantFuture
     }
 
     private static func note(from y: Yaml) -> StickyNote? {

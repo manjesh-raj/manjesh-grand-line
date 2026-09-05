@@ -26,7 +26,7 @@
 // is no second notion of liveness here to drift.
 import AppKit
 
-final class SessionStripView: NSView {
+final class SessionStripView: NSView, NSGestureRecognizerDelegate {
 
     /// Matches the bar's own side margin so the strip reads as docked to it
     /// rather than as an unrelated floating element.
@@ -62,8 +62,10 @@ final class SessionStripView: NSView {
         let dot: NSView
         let label: NSTextField
         let shortcut: NSTextField
-        let close: HoverHighlightView?
-        let closeGlyph: NSImageView?
+        /// A real `NSButton`, deliberately - never a second
+        /// `NSClickGestureRecognizer` nested inside the pill's own. See
+        /// `makePill`'s note on the full-app audit's finding 4.7.
+        let close: NSButton?
         let isActive: Bool
         let accent: NSColor
     }
@@ -209,33 +211,50 @@ final class SessionStripView: NSView {
         shortcutLabel.isHidden = shortcut == nil
         shortcutLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        var closeButton: HoverHighlightView?
-        var closeGlyph: NSImageView?
+        var closeButton: NSButton?
         // Mockup callout c: the ✕ deliberately does not appear on the active
         // pill, so a mis-click cannot close the session currently being read.
         // Ending the one you are looking at goes through the Hosts row's own
         // "End session" overflow item instead.
+        //
+        // **A real `NSButton`, never a second `NSClickGestureRecognizer`** -
+        // the full-app audit's finding 4.7. This shipped as a nested
+        // `HoverHighlightView` carrying its own click recognizer *inside* the
+        // pill container, which carries `pillClicked`'s: AppKit defines no
+        // automatic ancestor/descendant exclusivity between two recognizers on
+        // one hit-test chain, so nothing stopped a ✕ click from also firing
+        // switch-to-session. Measured on the real rendered strip before this
+        // fix: the pill container held one click recognizer of its own and
+        // exactly one more was nested inside it. An `NSButton` runs its own
+        // `mouseDown` tracking loop instead, which is why every other row in
+        // this app that mixes a real action into a recognizer-bearing
+        // container (`HelmAccentRow.trailingAccessory`, `TabChipView`'s own
+        // ✕) uses one - this is that same shape, not a new idiom.
+        // `SessionStripView`'s own self-test pins "no click recognizer nested
+        // inside a pill" so the shape cannot come back.
         if !isActive {
-            let close = HoverHighlightView()
-            close.cornerRadius = 7
+            let close = NSButton()
+            close.isBordered = false
+            close.imagePosition = .imageOnly
+            close.imageScaling = .scaleProportionallyDown
+            close.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "End session")
+            close.symbolConfiguration = .init(pointSize: 7, weight: .bold)
+            close.target = self
+            close.action = #selector(closeClicked(_:))
             close.identifier = NSUserInterfaceItemIdentifier(session.hostID.uuidString)
-            let glyph = NSImageView()
-            glyph.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: nil)
-            glyph.symbolConfiguration = .init(pointSize: 7, weight: .bold)
-            glyph.translatesAutoresizingMaskIntoConstraints = false
-            close.addSubview(glyph)
+            close.translatesAutoresizingMaskIntoConstraints = false
+            // `NSButton` constrains its *alignment rect*, whose insets are not
+            // zero - the mechanism `HelmPageToolbar.iconButton` documents at
+            // length. A 14pt visible square is what the pill's proportions
+            // want, so the constraint compensates rather than hardcoding it.
+            let insets = close.alignmentRectInsets
             NSLayoutConstraint.activate([
-                glyph.centerXAnchor.constraint(equalTo: close.centerXAnchor),
-                glyph.centerYAnchor.constraint(equalTo: close.centerYAnchor),
-                close.widthAnchor.constraint(equalToConstant: 14),
-                close.heightAnchor.constraint(equalToConstant: 14),
+                close.widthAnchor.constraint(equalToConstant: 14 - insets.left - insets.right),
+                close.heightAnchor.constraint(equalToConstant: 14 - insets.top - insets.bottom),
             ])
-            close.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(closeClicked(_:))))
-            close.accessibilityRoleOverride = .button
-            close.accessibilityLabelOverride = "End session on \(session.label)"
+            close.setAccessibilityLabel("End session on \(session.label)")
             close.toolTip = "End this session"
             closeButton = close
-            closeGlyph = glyph
         }
 
         var row: [NSView] = [dot, label, shortcutLabel]
@@ -257,7 +276,18 @@ final class SessionStripView: NSView {
             stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -5),
         ])
 
-        container.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(pillClicked(_:))))
+        let pillRecognizer = NSClickGestureRecognizer(target: self, action: #selector(pillClicked(_:)))
+        // The other half of finding 4.7, and the half that makes the outcome
+        // deterministic rather than dependent on AppKit's own arbitration
+        // between a control and an ancestor recognizer: this recognizer
+        // explicitly declines any click that lands on a real control inside
+        // the pill. Making the ✕ an `NSButton` (above) removes the *competing
+        // recognizer*; this removes the remaining ambiguity about whether an
+        // ancestor recognizer also fires for a click the button handled.
+        // Measured on the real strip: without it, a click at the ✕'s own
+        // centre still reached `pillClicked`.
+        pillRecognizer.delegate = self
+        container.addGestureRecognizer(pillRecognizer)
         // The strip is a one-of-many choice over the live sessions, exactly
         // like the bar's space pills - same `radioButton` + group treatment
         // (GL-16/§8 Phase 6), not a new accessibility idiom.
@@ -269,7 +299,7 @@ final class SessionStripView: NSView {
             ?? "Switch to \(session.label)"
 
         return Pill(hostID: session.hostID, container: container, dot: dot, label: label,
-                    shortcut: shortcutLabel, close: closeButton, closeGlyph: closeGlyph,
+                    shortcut: shortcutLabel, close: closeButton,
                     isActive: isActive, accent: accent)
     }
 
@@ -280,8 +310,8 @@ final class SessionStripView: NSView {
         onSelect?(id)
     }
 
-    @objc private func closeClicked(_ sender: NSGestureRecognizer) {
-        guard let raw = sender.view?.identifier?.rawValue, let id = UUID(uuidString: raw) else { return }
+    @objc private func closeClicked(_ sender: NSButton) {
+        guard let raw = sender.identifier?.rawValue, let id = UUID(uuidString: raw) else { return }
         onClose?(id)
     }
 
@@ -375,14 +405,43 @@ final class SessionStripView: NSView {
                 ? labelColor.withAlphaComponent(0.7)
                 : muted
 
-            if let close = pill.close, let glyph = pill.closeGlyph {
-                close.normalColor = .clear
-                close.hoverColor = pill.isActive
-                    ? NSColor.white.withAlphaComponent(0.18)
-                    : line.withAlphaComponent(0.5)
-                glyph.contentTintColor = muted
-            }
+            // An `NSButton` tints its own template image - `contentTintColor`
+            // does nothing to a *string* title (Phase 2's finding) but is
+            // exactly right for an image-only one.
+            pill.close?.contentTintColor = muted
         }
+    }
+
+    // MARK: Gesture arbitration (full-app audit, finding 4.7)
+
+    /// Declines a pill click that landed on a real control inside the pill.
+    ///
+    /// The pill container carries `pillClicked`'s recognizer and encloses the
+    /// ✕ button; AppKit defines no automatic exclusivity between an ancestor
+    /// recognizer and a descendant control, so without this a ✕ click could
+    /// switch to the very session it was ending. Written against `NSControl`
+    /// generally rather than "is this the ✕", so a future control added to a
+    /// pill is covered the day it lands rather than the day someone notices.
+    func gestureRecognizer(_ recognizer: NSGestureRecognizer,
+                           shouldAttemptToRecognizeWith event: NSEvent) -> Bool {
+        guard let container = recognizer.view else { return true }
+        let point = container.convert(event.locationInWindow, from: nil)
+        guard let hit = container.hitTest(container.convert(point, to: container.superview)) else { return true }
+        var view: NSView? = hit
+        while let current = view, current !== container {
+            // An *actionable* control, not merely any `NSControl`: a pill's
+            // own label is an `NSTextField`, which is an `NSControl` with no
+            // action, and declining for it would stop the label - most of the
+            // pill's own surface - from switching sessions. `action != nil`
+            // is what separates "this view does something of its own when
+            // clicked" from "this view is a control class that happens to be
+            // drawing text".
+            if let control = current as? NSControl, control.action != nil, control.isEnabled {
+                return false
+            }
+            view = current.superview
+        }
+        return true
     }
 
     // MARK: Probe / self-test surface
@@ -402,7 +461,10 @@ final class SessionStripView: NSView {
     func debugPillView(_ hostID: UUID) -> HoverHighlightView? {
         pills.first { $0.hostID == hostID }?.container
     }
-    func debugCloseView(_ hostID: UUID) -> HoverHighlightView? {
+    func debugPillLabelView(_ hostID: UUID) -> NSTextField? {
+        pills.first { $0.hostID == hostID }?.label
+    }
+    func debugCloseView(_ hostID: UUID) -> NSButton? {
         pills.first { $0.hostID == hostID }?.close
     }
     func debugAddButton() -> HoverHighlightView { addButton }

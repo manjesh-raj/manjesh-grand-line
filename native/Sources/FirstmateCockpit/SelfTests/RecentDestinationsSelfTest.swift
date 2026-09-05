@@ -62,6 +62,8 @@ enum RecentDestinationsSelfTest {
             ("barButtonSitsBeforeStickyBoardAfterSearch", test_barButtonSitsBeforeStickyBoardAfterSearch),
             ("barButtonThemesAcrossLightAndDark", test_barButtonThemesAcrossLightAndDark),
             ("recordNavigationIsTheOnlyWriter", test_recordNavigationIsTheOnlyWriter),
+            ("endedSessionRowReconnectsInsteadOfDoingNothing", test_endedSessionRowReconnectsInsteadOfDoingNothing),
+            ("deletedHostRowIsDroppedRatherThanLeftDead", test_deletedHostRowIsDroppedRatherThanLeftDead),
         ]
         for (name, check) in cases {
             if let failure = check() { failures.append("\(name): \(failure)") }
@@ -342,6 +344,128 @@ enum RecentDestinationsSelfTest {
             // Docs (now current) must not appear in its own list.
             guard !shell.recentDestinations.entries.contains(where: { $0.kind.title == "Docs" }) else {
                 return "the currently-showing destination (Docs) appeared in Recents"
+            }
+            return nil
+        }
+    }
+
+    // MARK: Finding 4.3 - a `.host` row for an ended session
+
+    /// Clicking a Recents row for a host whose session has since ended must
+    /// reconnect, not silently do nothing.
+    ///
+    /// `RecentDestinations`' own header is explicit that a host page the
+    /// captain closed deliberately stays listed until it ages out - and
+    /// `navigateToRecentDestination` routed every `.host` row through
+    /// `switchToSession`, whose "no-op for a host with no live session" guard
+    /// is correct for the strip and the ⌘⌃ shortcuts (which only ever name
+    /// live sessions) but made this row a silently dead click. All three ways
+    /// a session ends - the strip's ✕, "End session", deleting the host -
+    /// clear `hostConsoles`, so all three produced it.
+    private static func test_endedSessionRowReconnectsInsteadOfDoingNothing() -> String? {
+        withScratchEnv {
+            let (_, shell, keyStore, snippetStore) = makeMountedShell()
+            shell.show(.console)
+
+            let hostID = UUID()
+            let hostConsole = ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false)
+            shell.debugSeedHostConsole(hostConsole, hostID: hostID)
+            shell.sessions.register(hostID: hostID, label: "DEV Bastion", accentHex: "#e8a23d")
+            shell.switchToSession(hostID: hostID)
+            shell.show(.docs)   // leave it, so it lands in Recents
+
+            guard shell.recentDestinations.entries.contains(where: { $0.kind.title == "DEV Bastion" }) else {
+                return "setup: the host page was never recorded in Recents"
+            }
+
+            // The captain ends the session (the strip's ✕ / "End session" /
+            // a host delete all reach the same teardown).
+            shell.removeHostConsole(id: hostID)
+            guard shell.sessions.session(for: hostID) == nil else {
+                return "setup: the session should be gone after removeHostConsole"
+            }
+            // The row deliberately stays - that is this store's documented
+            // behaviour and is not what the finding is about.
+            guard shell.recentDestinations.entries.contains(where: { $0.kind.title == "DEV Bastion" }) else {
+                return "the Recents row should still be listed after the session ended"
+            }
+
+            // The shell asks for a reconnect rather than no-op'ing. The real
+            // `onReconnectHost` is wired by the app delegate to the one
+            // `connectToHost` path (which forks a real `ssh`), so the seam
+            // itself is what is driven here - the same boundary
+            // `SessionSwitcherSelfTest` draws for the same reason.
+            var reconnectRequests: [UUID] = []
+            shell.onReconnectHost = { id in
+                reconnectRequests.append(id)
+                return true    // the host is still saved
+            }
+            shell.show(.console)   // somewhere other than the host page
+            shell.debugNavigateToRecent(.host(id: hostID, label: "DEV Bastion"))
+
+            guard reconnectRequests == [hostID] else {
+                return "clicking a Recents row for an ended session did nothing - expected one "
+                    + "reconnect request for \(hostID), got \(reconnectRequests)"
+            }
+            // A host that is still saved keeps its row: it is reachable again.
+            guard shell.recentDestinations.entries.contains(where: { $0.kind.title == "DEV Bastion" }) else {
+                return "a reconnectable host's row should not be dropped"
+            }
+
+            // A LIVE session still takes the switch path, untouched.
+            reconnectRequests.removeAll()
+            let liveID = UUID()
+            let liveConsole = ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false)
+            shell.debugSeedHostConsole(liveConsole, hostID: liveID)
+            shell.sessions.register(hostID: liveID, label: "Prod Bastion", accentHex: "#22b3a6")
+            shell.show(.docs)
+            shell.debugNavigateToRecent(.host(id: liveID, label: "Prod Bastion"))
+            guard reconnectRequests.isEmpty else {
+                return "a live session must switch, not reconnect - got \(reconnectRequests)"
+            }
+            guard shell.activeHostIDForTests == liveID else {
+                return "a live session's row did not switch to its page"
+            }
+            return nil
+        }
+    }
+
+    /// A host deleted from the store outright cannot be reconnected to, so its
+    /// row stops being listed rather than staying as one that can only ever do
+    /// nothing. The narrow half of 4.3 - a host merely *closed* keeps its row.
+    private static func test_deletedHostRowIsDroppedRatherThanLeftDead() -> String? {
+        withScratchEnv {
+            let (_, shell, keyStore, snippetStore) = makeMountedShell()
+            shell.show(.console)
+
+            let hostID = UUID()
+            let hostConsole = ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false)
+            shell.debugSeedHostConsole(hostConsole, hostID: hostID)
+            shell.sessions.register(hostID: hostID, label: "Gone Bastion", accentHex: nil)
+            shell.switchToSession(hostID: hostID)
+            shell.show(.docs)
+            shell.removeHostConsole(id: hostID)
+
+            // The app delegate's own host-delete diffing calls this; nothing
+            // else does, deliberately - `removeHostConsole` is also what "End
+            // session" calls, and an ended session's row must stay.
+            shell.forgetRecentHost(id: hostID)
+            guard !shell.recentDestinations.entries.contains(where: { $0.kind.title == "Gone Bastion" }) else {
+                return "a deleted host's row is still listed: \(shell.recentDestinations.entries.map(\.kind.title))"
+            }
+
+            // And a click on a row for a host that is gone (one that outlived
+            // the prune, e.g. deleted while the app was not diffing) drops it
+            // rather than doing nothing forever.
+            shell.recentDestinations.recordNavigation(leaving: .host(id: hostID, label: "Gone Bastion"),
+                                                      arriving: .rail(.docs))
+            guard shell.recentDestinations.entries.contains(where: { $0.kind.title == "Gone Bastion" }) else {
+                return "setup: could not re-seed the stale row"
+            }
+            shell.onReconnectHost = { _ in false }   // no such host any more
+            shell.debugNavigateToRecent(.host(id: hostID, label: "Gone Bastion"))
+            guard !shell.recentDestinations.entries.contains(where: { $0.kind.title == "Gone Bastion" }) else {
+                return "clicking an unreachable host's row left it listed - it can only ever do nothing"
             }
             return nil
         }

@@ -224,7 +224,10 @@ extension ConsoleController {
                     // collide with the context/namespace badge's own
                     // in-flight command on this same tab - see
                     // `SRELeadBridge.isTerminalBusyElsewhere`'s doc comment.
-                    state.bridge?.isTerminalBusyElsewhere = { [weak tab] in tab?.kubeContextBridge?.isBusy ?? false }
+                    state.bridge?.isTerminalBusyElsewhere = { [weak self, weak tab] in
+                        guard let self, let tab else { return false }
+                        return self.isTabBusy(tab.id, excluding: .sreLead)
+                    }
                     // F8: a runbook that runs through this tab's bridge
                     // attaches itself to an active incident on this host. The
                     // bridge only *observes* the run - see its

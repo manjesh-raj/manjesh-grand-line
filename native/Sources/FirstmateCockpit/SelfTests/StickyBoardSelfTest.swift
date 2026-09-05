@@ -462,6 +462,182 @@ enum StickyBoardSelfTest {
                   "every speck should land inside the tile")
         }
 
+        // MARK: 12. Finding 4.2 - a record this build cannot decode is
+        // PRESERVED, never silently deleted and pushed.
+        //
+        // The realistic trigger is cross-machine version skew through the very
+        // git sync this store exists for: a note whose `color` is a
+        // `StickyNoteColor` case a *newer* build added cannot be decoded here,
+        // and before this fix `reloadAll()` compactMapped it away, the next
+        // `persist()` rewrote `notes.yaml` without it, and `markDirty()`
+        // committed and pushed the loss. Whole-file parse failure was already
+        // GL-01-guarded; per-record failure was not.
+        //
+        // Note what this cannot be tested with: a *malformed* record. It has to
+        // be a well-formed one carrying a value this build does not know, which
+        // is exactly the shape a newer build writes.
+        do {
+            let root = scratch.appendingPathComponent("preserve-unreadable", isDirectory: true)
+            try? fm.createDirectory(at: root, withIntermediateDirectories: true)
+            let notesPath = root.appendingPathComponent("notes.yaml").path
+
+            // Two notes this build reads, one it does not - and the unreadable
+            // one sits in the MIDDLE, so a fix that merely appended survivors
+            // to the end would be visible.
+            let seeded = """
+            notes:
+              - id: "aaa"
+                title: "First"
+                text: "readable"
+                color: "yellow"
+                x: 10.0
+                y: 20.0
+                width: 200.0
+                height: 180.0
+                rotation: 1.0
+                created_at: "2026-01-01T00:00:00Z"
+              - id: "bbb"
+                title: "From a newer build"
+                text: "teal is not a case this build knows"
+                color: "teal"
+                x: 30.0
+                y: 40.0
+                width: 200.0
+                height: 180.0
+                rotation: -1.0
+                created_at: "2026-01-02T00:00:00Z"
+              - id: "ccc"
+                title: "Third"
+                text: "also readable"
+                color: "pink"
+                x: 50.0
+                y: 60.0
+                width: 200.0
+                height: 180.0
+                rotation: 2.0
+                created_at: "2026-01-03T00:00:00Z"
+
+            """
+            try? seeded.write(toFile: notesPath, atomically: true, encoding: .utf8)
+
+            let store = StickyBoardStore(root: root)
+            check(store.notes.count == 2,
+                  "4.2: the two decodable notes should load, got \(store.notes.count)")
+            check(store.unreadableRecordCount == 1,
+                  "4.2: the unknown-colour record should be counted as preserved, "
+                  + "got \(store.unreadableRecordCount)")
+            check(!store.isInFailedLoadState,
+                  "4.2: one bad record is not a whole-file parse failure")
+
+            // Any edit at all rewrites the file - this is the write that used
+            // to destroy the record.
+            store.updateText(id: "aaa", text: "edited on the older build")
+            store.flushPendingWrite()
+
+            let after = (try? String(contentsOfFile: notesPath, encoding: .utf8)) ?? ""
+            check(after.contains("teal"),
+                  "4.2: the unreadable record's own colour is gone from the file - it was deleted "
+                  + "by an edit made on a build that could not read it, and markDirty() would "
+                  + "have pushed that deletion")
+            check(after.contains("From a newer build"),
+                  "4.2: the unreadable record's content did not survive the rewrite")
+            check(after.contains("edited on the older build"),
+                  "4.2: the edit that triggered the rewrite was itself lost")
+
+            // Order is preserved by `created_at`, so the record does not drift
+            // to the end of the file on every write.
+            let firstIdx = after.range(of: "\"aaa\"")?.lowerBound
+            let midIdx = after.range(of: "\"bbb\"")?.lowerBound
+            let lastIdx = after.range(of: "\"ccc\"")?.lowerBound
+            if let firstIdx, let midIdx, let lastIdx {
+                check(firstIdx < midIdx && midIdx < lastIdx,
+                      "4.2: a preserved record should keep its created_at position, not drift")
+            } else {
+                check(false, "4.2: expected all three record ids to still be in the file")
+            }
+
+            // And it is still there after a reload - i.e. genuinely on disk,
+            // not merely still in this instance's memory.
+            let reopened = StickyBoardStore(root: root)
+            check(reopened.unreadableRecordCount == 1,
+                  "4.2: the preserved record did not survive a reload")
+            check(reopened.notes.first(where: { $0.id == "aaa" })?.text == "edited on the older build",
+                  "4.2: the edit did not survive a reload")
+        }
+
+        // MARK: 13. Findings 3.3/4.6 - the local write is debounced, and every
+        // flush point genuinely flushes.
+        //
+        // `persist()` re-serialises every note and writes the whole file
+        // synchronously on the main thread; that used to happen once per
+        // character typed. A debounce is only safe paired with real flush
+        // points, so both halves are pinned: that a text edit does NOT reach
+        // disk immediately, and that each of the ways out does write it.
+        do {
+            let root = scratch.appendingPathComponent("debounce", isDirectory: true)
+            let store = StickyBoardStore(root: root)
+            let note = store.addNote(text: "start", color: .yellow, x: 10, y: 10, rotationDegrees: 0)
+            store.flushPendingWrite()
+
+            // A structural change is immediate - losing a whole note to a
+            // crash is a different order of cost from losing a few characters.
+            check(!store.hasPendingWrite,
+                  "4.6: adding a note should write immediately, not queue")
+            let afterAdd = (try? String(contentsOfFile: root.appendingPathComponent("notes.yaml").path,
+                                        encoding: .utf8)) ?? ""
+            check(afterAdd.contains("start"), "4.6: the added note did not reach disk")
+
+            // A keystroke does not.
+            store.updateText(id: note.id, text: "typed one character at a time")
+            check(store.hasPendingWrite,
+                  "4.6: a text edit should be debounced, not written per keystroke")
+            let midEdit = (try? String(contentsOfFile: root.appendingPathComponent("notes.yaml").path,
+                                       encoding: .utf8)) ?? ""
+            check(!midEdit.contains("typed one character"),
+                  "4.6: the text edit reached disk synchronously - the debounce is not in effect")
+
+            // The flush point does.
+            store.flushPendingWrite()
+            check(!store.hasPendingWrite, "4.6: flushing should clear the queued write")
+            let afterFlush = (try? String(contentsOfFile: root.appendingPathComponent("notes.yaml").path,
+                                          encoding: .utf8)) ?? ""
+            check(afterFlush.contains("typed one character at a time"),
+                  "4.6: flushing did not write the pending edit")
+
+            // A title edit is debounced the same way.
+            store.updateTitle(id: note.id, title: "A title")
+            check(store.hasPendingWrite, "4.6: a title edit should be debounced too")
+
+            // An immediate write carries the pending edit with it - `persist()`
+            // always writes the whole in-memory array, which is why the
+            // immediate paths only have to cancel the timer rather than order
+            // two writes against each other.
+            _ = store.addNote(text: "second", color: .blue, x: 40, y: 40, rotationDegrees: 0)
+            check(!store.hasPendingWrite,
+                  "4.6: an immediate write should cancel the queued one")
+            let afterBoth = (try? String(contentsOfFile: root.appendingPathComponent("notes.yaml").path,
+                                         encoding: .utf8)) ?? ""
+            check(afterBoth.contains("A title") && afterBoth.contains("second"),
+                  "4.6: an immediate write must carry the pending debounced edit with it")
+
+            // `reloadAll()` must flush first, or a queued edit is read over.
+            store.updateText(id: note.id, text: "not yet on disk")
+            check(store.hasPendingWrite, "4.6: expected a queued write before the reload")
+            store.reloadAll()
+            check(store.notes.first(where: { $0.id == note.id })?.text == "not yet on disk",
+                  "4.6: reloadAll() read the file over a queued edit and lost it")
+
+            // The debounce genuinely fires on its own, too - not only when
+            // something flushes it.
+            store.updateText(id: note.id, text: "left to the timer")
+            RunLoop.current.run(until: Date().addingTimeInterval(StickyBoardStore.persistDebounce + 0.6))
+            check(!store.hasPendingWrite, "4.6: the debounced write never fired on its own")
+            let afterTimer = (try? String(contentsOfFile: root.appendingPathComponent("notes.yaml").path,
+                                          encoding: .utf8)) ?? ""
+            check(afterTimer.contains("left to the timer"),
+                  "4.6: the debounce fired but wrote nothing")
+        }
+
         // MARK: Report
 
         if failures.isEmpty {

@@ -44,7 +44,7 @@ final class FleetLogStore {
     private let fileURL: URL
     private let lock = NSLock()
     /// Loaded lazily on first read/append, oldest-first (file order).
-    private var cache: [FleetLogEvent]?
+    private var cache: [Line]?
 
     init(directory: URL) {
         fileURL = directory.appendingPathComponent("events.jsonl")
@@ -77,7 +77,7 @@ final class FleetLogStore {
     func events() -> [FleetLogEvent] {
         lock.lock()
         defer { lock.unlock() }
-        return loadedLocked().reversed()
+        return loadedLocked().compactMap { if case .event(let e) = $0 { return e } else { return nil } }.reversed()
     }
 
     // MARK: Appending
@@ -87,17 +87,31 @@ final class FleetLogStore {
     func append(_ event: FleetLogEvent) {
         lock.lock()
         defer { lock.unlock() }
-        var events = loadedLocked()
-        events.append(event)
+        var lines = loadedLocked()
+        lines.append(.event(event))
 
-        if events.count >= Self.maxEvents + Self.trimSlack {
-            events.removeFirst(events.count - Self.maxEvents)
-            cache = events
-            rewriteLocked(events)
+        // The cap counts *events*, and the trim drops only events - an opaque
+        // line is data this build cannot read, so it is also data this build
+        // must not decide is expendable (finding 4.5). The bound that matters
+        // is still real: every line this app writes is an event, so the
+        // opaque set can only ever be as large as whatever a schema change or
+        // an outside edit left behind, and it stops growing the moment the
+        // log is readable again.
+        let eventCount = lines.reduce(into: 0) { n, line in if case .event = line { n += 1 } }
+        if eventCount >= Self.maxEvents + Self.trimSlack {
+            var toDrop = eventCount - Self.maxEvents
+            var kept: [Line] = []
+            kept.reserveCapacity(lines.count)
+            for line in lines {
+                if toDrop > 0, case .event = line { toDrop -= 1; continue }
+                kept.append(line)
+            }
+            cache = kept
+            rewriteLocked(kept)
             return
         }
 
-        cache = events
+        cache = lines
         appendLineLocked(event)
     }
 
@@ -117,16 +131,50 @@ final class FleetLogStore {
         return d
     }()
 
-    private func loadedLocked() -> [FleetLogEvent] {
+    /// One line of the file: either an event this build understands, or the
+    /// raw text of one it does not.
+    ///
+    /// **The `.opaque` case is the whole of finding 4.5's fix.** The trim path
+    /// rewrites the file, and it used to rewrite it from *decoded* events - so
+    /// every line `decodeLines` had skipped (an old line a future schema
+    /// change made unreadable, a line a hand edit corrupted) was silently
+    /// deleted the next time the log crossed its cap, potentially months of
+    /// history at once. That directly contradicted this file's own stated
+    /// contract, three paragraphs up: "one bad line can only ever cost
+    /// itself". Carrying the raw text through the rewrite is what makes that
+    /// sentence true, and is what lets a later build that *can* read those
+    /// lines still find them.
+    enum Line {
+        case event(FleetLogEvent)
+        case opaque(String)
+    }
+
+    private func loadedLocked() -> [Line] {
         if let cache { return cache }
         let loaded = readFromDisk()
         cache = loaded
         return loaded
     }
 
-    private func readFromDisk() -> [FleetLogEvent] {
+    private func readFromDisk() -> [Line] {
         guard let text = try? String(contentsOf: fileURL, encoding: .utf8) else { return [] }
-        return Self.decodeLines(text)
+        return Self.parseLines(text)
+    }
+
+    /// Every line, in file order, decoded where possible and preserved
+    /// verbatim where not.
+    static func parseLines(_ text: String) -> [Line] {
+        var out: [Line] = []
+        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            guard !trimmed.isEmpty else { continue }
+            if let event = try? decoder.decode(FleetLogEvent.self, from: Data(trimmed.utf8)) {
+                out.append(.event(event))
+            } else {
+                out.append(.opaque(trimmed))
+            }
+        }
+        return out
     }
 
     /// Skips a line that will not decode rather than failing the whole read -
@@ -136,16 +184,7 @@ final class FleetLogStore {
     /// overwritten wholesale. Here the very next write is an append that
     /// touches no existing line, so one bad line can only ever cost itself.
     static func decodeLines(_ text: String) -> [FleetLogEvent] {
-        var out: [FleetLogEvent] = []
-        for line in text.split(separator: "\n", omittingEmptySubsequences: true) {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            guard !trimmed.isEmpty else { continue }
-            guard let event = try? decoder.decode(FleetLogEvent.self, from: Data(trimmed.utf8)) else {
-                continue
-            }
-            out.append(event)
-        }
-        return out
+        parseLines(text).compactMap { if case .event(let e) = $0 { return e } else { return nil } }
     }
 
     private func line(for event: FleetLogEvent) -> Data? {
@@ -175,11 +214,19 @@ final class FleetLogStore {
         }
     }
 
-    private func rewriteLocked(_ events: [FleetLogEvent]) {
+    private func rewriteLocked(_ lines: [Line]) {
         var out = Data()
-        for event in events {
-            guard let data = line(for: event) else { continue }
-            out.append(data)
+        for line in lines {
+            switch line {
+            case .event(let event):
+                guard let data = self.line(for: event) else { continue }
+                out.append(data)
+            case .opaque(let raw):
+                // Verbatim, byte for byte - the point is that this build does
+                // not understand it and therefore must not reshape it.
+                out.append(Data(raw.utf8))
+                out.append(0x0A)
+            }
         }
         do {
             try AtomicWrite.data(out, to: fileURL)

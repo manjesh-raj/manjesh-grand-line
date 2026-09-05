@@ -93,4 +93,45 @@ struct SSHKey: Codable, Identifiable, Equatable {
         let short = fingerprint.count > 28 ? String(fingerprint.prefix(28)) + "…" : fingerprint
         return "\(type.displayName) · \(short)"
     }
+
+    init(id: UUID = UUID(), label: String, type: SSHKeyType, publicKey: String,
+         fingerprint: String, certificate: String? = nil, hasPassphrase: Bool = false) {
+        self.id = id
+        self.label = label
+        self.type = type
+        self.publicKey = publicKey
+        self.fingerprint = fingerprint
+        self.certificate = certificate
+        self.hasPassphrase = hasPassphrase
+    }
+
+    /// **Hand-written on purpose - do not delete it back to the synthesised
+    /// one** (full-app audit, finding 4.8).
+    ///
+    /// Swift's compiler-synthesised `Decodable` requires every key its
+    /// `CodingKeys` lists to be *present* in the JSON, whatever Swift-side
+    /// default the property carries: a default only applies to Swift-side
+    /// construction, never to key lookup. That is exactly how adding
+    /// `blockViewOptIn` to `Host` once made every already-saved `hosts.json`
+    /// undecodable - which `HostStore.load()` then correctly read as a
+    /// corrupt file, backed up, and replaced with an empty list (see
+    /// `Host.init(from:)`, and `HostStoreSelfTest` for the regression).
+    ///
+    /// `SSHKey` carried the identical landmine: `hasPassphrase` and
+    /// `certificate` both have defaults, and the next field added here would
+    /// have taken every existing `keys.json` with it. Nothing was broken when
+    /// this was written - this is the preventive half, added before the field
+    /// that would have triggered it. **Every field with a Swift-side default
+    /// must use `decodeIfPresent(_:forKey:) ?? <default>`**; only genuinely
+    /// required fields use `decode`.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        label = try c.decode(String.self, forKey: .label)
+        type = try c.decodeIfPresent(SSHKeyType.self, forKey: .type) ?? .other
+        publicKey = try c.decodeIfPresent(String.self, forKey: .publicKey) ?? ""
+        fingerprint = try c.decodeIfPresent(String.self, forKey: .fingerprint) ?? ""
+        certificate = try c.decodeIfPresent(String.self, forKey: .certificate)
+        hasPassphrase = try c.decodeIfPresent(Bool.self, forKey: .hasPassphrase) ?? false
+    }
 }

@@ -213,6 +213,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.appShell.showToast(notice)
             }
         }
+        // Finding 4.3: a Recents `.host` row whose session has since ended
+        // reconnects instead of doing nothing. Forward-don't-own - the shell
+        // has no `HostStore`, so it asks here, and this routes through the
+        // same `connectToHost` every other reconnect in the app uses. Returns
+        // false only when the host is no longer saved at all, which is what
+        // tells the shell to drop the row.
+        appShell.onReconnectHost = { [weak self] hostID in
+            guard let self, let host = self.hostStore.hosts.first(where: { $0.id == hostID }) else { return false }
+            self.connectToHost(host)
+            return true
+        }
         hostStore.observe { [weak self] in
             guard let self else { return }
             let currentIDs = Set(self.hostStore.hosts.map { $0.id })
@@ -221,6 +232,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // lost that host's icon) can't leave it stranded.
             for removedID in self.knownHostIDs.subtracting(currentIDs) {
                 self.appShell.removeHostConsole(id: removedID)
+                // Finding 4.3: a deleted host's page is the one Recents row
+                // that is genuinely unreachable - it can neither switch to a
+                // live session nor reconnect - so it stops being listed here
+                // rather than waiting to be clicked and found dead. A host
+                // page merely *closed* is untouched: that one reconnects.
+                self.appShell.forgetRecentHost(id: removedID)
             }
             self.knownHostIDs = currentIDs
         }
@@ -525,6 +542,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         console.shutdown()
         appShell.shutdownAllHostConsoles()
+        // Findings 3.3/4.6: the Sticky Board's text/title writes are debounced
+        // now, so quitting is one of the three points anything still queued
+        // has to reach disk (the other two are leaving the destination and a
+        // field giving up focus). Without this, ⌘Q within
+        // `StickyBoardStore.persistDebounce` of the last keystroke would lose
+        // it.
+        appShell.shutdownStickyBoard()
         shiftHotkey.stop()
         shiftNotifications.stop()
         BackgroundSignalsPoller.shared.stop()
@@ -1922,6 +1946,15 @@ if ProcessInfo.processInfo.environment["FM_RUN_TOPNAV_PILL_PRESSED_STATE_TESTS"]
 // group and the ⌘⌃1…9 / ⌘] / ⌘[ shortcut arithmetic. Window-backed (it mounts
 // a real `AppShellController`), so it sits in `run-all-tests.sh`'s
 // `NEEDS_SESSION` list.
+// The pure-logic half of the full-app audit's "Bugs" section (§4), fixed in
+// `fm/grandline-audit-bug-fixes`: IncidentStore's GL-21 read-failure class, the
+// two JSONL stores' trim paths deleting lines they could not decode, the
+// `SSHKey`/`Snippet` synthesized-`Decodable` landmine, and CodePreviewStore's
+// swallowed delete. No views, so it runs in CI.
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT_BUG_FIXES_TESTS"] == "1" {
+    exit(AuditBugFixesSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_SESSION_SWITCHER_TESTS"] == "1" {
     exit(SessionSwitcherSelfTest.run() ? 0 : 1)
 }
