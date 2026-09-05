@@ -228,6 +228,24 @@ final class AppShellController: NSViewController {
     private var bodyTopConstraint: NSLayoutConstraint!
     private var sessionsToken: UUID?
 
+    // MARK: Recent destinations (`fm/grandline-recents-navigation`)
+
+    /// The app's one recency tracker across every destination - rail or host
+    /// page alike. Written only from the moments this controller already
+    /// owns "what's on screen changed" (`show(_:)`, `revealHostConsole`, and
+    /// the one narrow bypass that jumps straight to a host's tab from a
+    /// background SRE Lead reply notification) via `updateRecentDestinations
+    /// (arriving:)`. Read by `DaylightBarController`'s own Recents popover,
+    /// wired once in `loadView()`.
+    let recentDestinations = RecentDestinations()
+
+    /// Whatever `updateRecentDestinations(arriving:)` last recorded as
+    /// current - the one piece of state that lets it know what was "on
+    /// screen" a moment ago, so the *next* navigation can record the right
+    /// outgoing destination. `nil` only before the app's very first
+    /// navigation.
+    private var currentDestinationKind: RecentDestinationKind?
+
     /// Add/Edit Host, requested from the Hosts panel - forwarded to whoever
     /// owns the host store (the app delegate), since this controller only
     /// arranges views and knows nothing about persistence.
@@ -395,6 +413,13 @@ final class AppShellController: NSViewController {
         bar.onSelectDestination = { [weak self] destination in self?.show(destination) }
         bar.onSelectSettings = { [weak self] in self?.show(.settings) }
         bar.onLogoutRequested = { [weak self] in self?.onLogoutRequested?() }
+        // `fm/grandline-recents-navigation`: the Recents popover reads this
+        // controller's own registry and dispatches a click back through
+        // whichever navigation primitive already handles that kind - never a
+        // third path.
+        bar.recentDestinations.configure(registry: recentDestinations) { [weak self] kind in
+            self?.navigateToRecentDestination(kind)
+        }
 
         bodyContainer.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(bodyContainer)
@@ -1086,6 +1111,21 @@ final class AppShellController: NSViewController {
     var bodyTopInsetForTests: CGFloat { bodyTopConstraint.constant }
     var activeHostIDForTests: UUID? { activeHostID }
 
+    // MARK: Recents probe surface (`fm/grandline-recents-navigation`)
+
+    /// Seeds `hostConsoles` directly with an already-built controller,
+    /// bypassing `connectHost`'s real `ssh` fork - the host-page half of
+    /// `SessionSwitcherSelfTest`'s own `sessions.register(...)` trick, which
+    /// only covers the registry; a Recents test additionally needs
+    /// `switchToSession`/`revealHostConsole` to actually run, and both require
+    /// a real entry in `hostConsoles`.
+    func debugSeedHostConsole(_ controller: ConsoleController, hostID: UUID) {
+        hostConsoles[hostID] = controller
+        addChild(controller)
+        embed(controller.view)
+        controller.view.isHidden = true
+    }
+
     /// Simulates the exact failure this task's scout report captured live:
     /// AppKit (for whatever internal reason - a transient required-
     /// constraint conflict elsewhere, or simply a resize that happened with
@@ -1141,6 +1181,12 @@ final class AppShellController: NSViewController {
         // `hideAllDestinations`). The slot is mounted here if this is its
         // first visit - see `DestinationRegistry.swift`.
         guard let slot = mounter.show(dest.slot) else { return }
+
+        // `fm/grandline-recents-navigation`: records whatever was showing a
+        // moment ago and removes `dest` itself from the list - see
+        // `RecentDestinations`'s own recording method's doc comment for why a
+        // captain never sees "where I already am" in the dropdown.
+        updateRecentDestinations(arriving: .rail(dest))
 
         // The one destination-specific step left: four rail destinations
         // share the Setup slot, and which of them the captain asked for
@@ -1396,6 +1442,12 @@ final class AppShellController: NSViewController {
                 guard let self, let controller else { return }
                 self.hideAllDestinations()
                 controller.view.isHidden = false
+                // `fm/grandline-recents-navigation`: this bypasses `revealHost
+                // Console` (it also needs to focus one specific tab), but it
+                // is a real navigation like any other - and skipping this
+                // would leave `currentDestinationKind` stale for whatever the
+                // *next* real navigation tries to record as "outgoing".
+                self.updateRecentDestinations(arriving: .host(id: hostID, label: hostLabel))
                 self.applyDrillHeader(title: hostLabel, subtitle: "Dedicated host page",
                                       symbol: RailDestination.hosts.symbol,
                                       hue: RailDestination.hosts.domainHue, isCanvas: false,
@@ -1558,6 +1610,11 @@ final class AppShellController: NSViewController {
     private func revealHostConsole(_ controller: ConsoleController, hostID: UUID, label: String) {
         hideAllDestinations()
         controller.view.isHidden = false
+        // `fm/grandline-recents-navigation`: a saved host's own page is one of
+        // the destinations the captain explicitly wants tracked - this is the
+        // one place both a fresh connect and switching back into a live
+        // session reach, so it needs no separate hook at either call site.
+        updateRecentDestinations(arriving: .host(id: hostID, label: label))
         applyDrillHeader(title: label, subtitle: "Dedicated host page",
                          symbol: RailDestination.hosts.symbol,
                          hue: RailDestination.hosts.domainHue, isCanvas: false,
@@ -1567,6 +1624,24 @@ final class AppShellController: NSViewController {
         controller.focusCurrentTab()
         controller.markCurrentTabAsRead()
         updateKeyViewLoop()
+    }
+
+    /// Records the navigation into `recentDestinations` and remembers
+    /// `kind` as the new "current" - the one call site both `show(_:)` and
+    /// `revealHostConsole` (and the SRE Lead reply-jump bypass) make, so the
+    /// leaving/arriving bookkeeping can never drift between them.
+    private func updateRecentDestinations(arriving kind: RecentDestinationKind) {
+        recentDestinations.recordNavigation(leaving: currentDestinationKind, arriving: kind)
+        currentDestinationKind = kind
+    }
+
+    /// A Recents row was clicked - dispatched to whichever navigation
+    /// primitive already handles that kind, never a third path.
+    private func navigateToRecentDestination(_ kind: RecentDestinationKind) {
+        switch kind {
+        case .rail(let dest): show(dest)
+        case .host(let id, _): switchToSession(hostID: id)
+        }
     }
 
     /// End a live session, after a confirm.
