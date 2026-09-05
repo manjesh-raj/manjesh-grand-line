@@ -264,7 +264,24 @@ enum E2ETestingPolicySelfTest {
         let required = ["FM_FLEET_LOG_DIR", "FM_SCHEDULES_FILE", "FM_SCHEDULE_HISTORY_DIR",
                         "FM_STICKY_BOARD_DIR", "FM_CODE_PREVIEW_DIR", "FM_SHIFT_DIR"]
         let env = ProcessInfo.processInfo.environment
-        let disposable = FileManager.default.temporaryDirectory.resolvingSymlinksInPath().path
+
+        // The property is "not the captain's real data", **not** "under this
+        // process's own temporary directory".
+        //
+        // The first draft asserted the latter and CI caught it - correctly.
+        // The workflow points every override at `${{ runner.temp }}`, which is
+        // as disposable as a directory gets and is deliberately *not* the
+        // runner's `TMPDIR`. A caller choosing a different scratch location is
+        // legitimate; the only thing that must never happen is an override
+        // resolving into the real store directory, which is where
+        // `ShiftGitSync`'s clone of the captain's private config repo lives.
+        //
+        // Derived the same way every store derives it, so this cannot drift
+        // from where the real data actually is.
+        let realStoreRoot = (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support", isDirectory: true))
+            .appendingPathComponent("FirstmateCockpit", isDirectory: true)
+            .resolvingSymlinksInPath().path
 
         for key in required {
             guard let value = env[key], !value.isEmpty else {
@@ -272,13 +289,17 @@ enum E2ETestingPolicySelfTest {
                      + "or a store reached from a bare init() writes to the captain's real data", &ok)
                 continue
             }
+            // Component-wise, never a string prefix: `…/FirstmateCockpit-scratch`
+            // is a genuine string prefix of `…/FirstmateCockpit` without being
+            // inside it (the same trap §5.4's containment check records).
             let resolved = URL(fileURLWithPath: value).resolvingSymlinksInPath().path
-            if !resolved.hasPrefix(disposable) {
-                fail("\(key) points at \(value), which is not under \(disposable) - a self-test "
-                     + "process must only ever read and write disposable paths", &ok)
+            if resolved == realStoreRoot || resolved.hasPrefix(realStoreRoot + "/") {
+                fail("\(key) points at \(value), which is inside the real store directory "
+                     + "(\(realStoreRoot)) - a self-test process must never read or write the captain's "
+                     + "own data, and that directory holds a real clone of their private config repo", &ok)
             }
         }
-        print("  \(required.count) store override(s) confirmed pointed at scratch")
+        print("  \(required.count) store override(s) confirmed set and clear of \(realStoreRoot)")
     }
 
     /// The two modes the CI workflow depends on still exist.
