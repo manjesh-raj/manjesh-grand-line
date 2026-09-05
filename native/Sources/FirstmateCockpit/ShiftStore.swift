@@ -723,13 +723,29 @@ final class ShiftStore {
     }
 
     static func iso8601(_ date: Date) -> String {
-        let f = ISO8601DateFormatter()
-        return f.string(from: date)
+        isoFormatter.string(from: date)
     }
 
     private static func iso8601Date(_ s: String) -> Date? {
-        ISO8601DateFormatter().date(from: s)
+        isoFormatter.date(from: s)
     }
+
+    // GL-P3: built once. `DateFormatter`/`ISO8601DateFormatter` construction
+    // is measurably expensive and none of these carry per-call state - the
+    // same treatment `FleetLogFeed`/`HealthCardView` already give theirs.
+    private static let isoFormatter = ISO8601DateFormatter()
+
+    private static let monthDayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.setLocalizedDateFormatFromTemplate("MMMd")
+        return f
+    }()
+
+    private static let isoDayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
 
     // MARK: Weekly review (phase 5, cockpit-shift-power-features)
 
@@ -832,8 +848,7 @@ final class ShiftStore {
             return due >= weekEnd && due < nextWeekEnd
         }.count
 
-        let df = DateFormatter()
-        df.setLocalizedDateFormatFromTemplate("MMMd")
+        let df = Self.monthDayFormatter
         let weekEndInclusive = cal.date(byAdding: .day, value: -1, to: weekEnd) ?? weekEnd
         let weekLabel = "Week of \(df.string(from: weekStart)) \u{2013} \(df.string(from: weekEndInclusive))"
 
@@ -855,9 +870,7 @@ final class ShiftStore {
     func seedIfEmpty(now: Date = Date()) {
         guard !FileManager.default.fileExists(atPath: activeTasksPath) else { return }
         let iso = ShiftStore.iso8601(now)
-        let df = DateFormatter()
-        df.dateFormat = "yyyy-MM-dd"
-        let today = df.string(from: now)
+        let today = Self.isoDayFormatter.string(from: now)
 
         let project = ShiftProject(
             id: UUID().uuidString, name: "Shift", description: "Building the Shift feature itself.",

@@ -26,6 +26,7 @@ extension KubernetesController {
 
         renderFeedPicker()
         renderFeedStatus()
+        renderNamespacePicker()
         renderClusterTable()
         renderPodPicker()
         renderLogLines(follow: true)
@@ -49,6 +50,48 @@ extension KubernetesController {
                 feedTabPicker.selectItem(at: index)
             }
         }
+    }
+
+    /// Audit §6.7b: the namespace picker, fed from a real `kubectl get
+    /// namespaces` rather than from anything this app guessed.
+    ///
+    /// Three honest states, per GL-14 - "nothing here" and "I could not look"
+    /// must never render the same:
+    ///
+    ///   * not read yet - "Checking…", disabled;
+    ///   * read and empty (the RBAC case) - says so, disabled, and the typed
+    ///     field beside it is still the way in;
+    ///   * a real list - enabled, with the current namespace selected even
+    ///     when the captain typed one the cluster did not report.
+    func renderNamespacePicker() {
+        guard isViewLoaded else { return }
+        namespacePicker.removeAllItems()
+
+        guard let names = knownNamespaces else {
+            namespacePicker.addItem(withTitle: "Checking\u{2026}")
+            namespacePicker.isEnabled = false
+            namespacePicker.toolTip = "Reading this cluster's namespaces."
+            return
+        }
+        guard !names.isEmpty else {
+            namespacePicker.addItem(withTitle: "Not listable")
+            namespacePicker.isEnabled = false
+            namespacePicker.toolTip =
+                "This cluster did not return a namespace list - a scoped account often cannot "
+                + "list namespaces even when it can read inside one. Type the namespace instead."
+            return
+        }
+
+        // The typed namespace may legitimately not be in the list (the
+        // captain knows a namespace their account cannot enumerate). Showing
+        // it selected, rather than silently selecting someone else's, is what
+        // keeps the picker honest about what is actually being queried.
+        var titles = names
+        if !titles.contains(namespace) { titles.insert(namespace, at: 0) }
+        for title in titles { namespacePicker.addItem(withTitle: title) }
+        namespacePicker.isEnabled = true
+        namespacePicker.selectItem(withTitle: namespace)
+        namespacePicker.toolTip = "\(names.count) namespace\(names.count == 1 ? "" : "s") on this cluster."
     }
 
     func renderFeedStatus() {
@@ -307,6 +350,9 @@ extension KubernetesController {
         clusterTable.applyTheme(theme)
         logList.applyTheme(theme)
         namespaceField.applyTheme(theme)
+        // `namespacePicker` is a `HelmPopUpButton`, which owns its own
+        // `ThemeManager` observation - re-render only its *contents*.
+        renderNamespacePicker()
         for label in [feedStatusLabel, clusterStatusLabel, tailStatusLabel, describeSubtitleLabel] {
             label?.textColor = HelmTheme.mutedInk(theme)
             label?.font = HelmType.caption()
@@ -381,6 +427,26 @@ extension KubernetesController {
     /// The commands one sweep would run right now, for the visible-tab
     /// scoping (`sweepCommands`).
     var debugSweepCommands: [String] { sweepCommands().map(\.shortLabel) }
+
+    // Audit §6.7b: the namespace picker's own real, rendered state - the
+    // titles a captain can actually choose, not the array behind them.
+    var debugNamespacePickerTitles: [String] {
+        isViewLoaded ? namespacePicker.itemTitles : []
+    }
+    var debugNamespacePickerEnabled: Bool { isViewLoaded && namespacePicker.isEnabled }
+    var debugNamespacePickerSelection: String? {
+        isViewLoaded ? namespacePicker.titleOfSelectedItem : nil
+    }
+    var debugNamespacePickerTooltip: String? { isViewLoaded ? namespacePicker.toolTip : nil }
+    var debugNamespaceFieldValue: String { isViewLoaded ? namespaceField.stringValue : "" }
+
+    /// Choose a namespace the way a real click on the picker does - through
+    /// its own target/action, so a picker wired to nothing fails this.
+    func debugPickNamespace(_ name: String) {
+        guard isViewLoaded, namespacePicker.isEnabled else { return }
+        namespacePicker.selectItem(withTitle: name)
+        _ = namespacePicker.target?.perform(namespacePicker.action, with: namespacePicker)
+    }
     /// Real, laid-out geometry - what the layout revamp is actually about.
     var debugClusterTableFrame: NSRect { isViewLoaded ? clusterTable.frame : .zero }
     var debugWorkAreaFrame: NSRect { isViewLoaded ? workArea.frame : .zero }

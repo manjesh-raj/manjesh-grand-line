@@ -667,7 +667,16 @@ final class DictationController: NSViewController, DaylightDrillActions {
     /// `NSTableView.intercellSpacing`'s vertical component, as set by
     /// `DictationHistoryListView` - named here so the scroll height below and
     /// that setting cannot drift apart.
-    private let tableRowGap: CGFloat = 2
+    private static let tableRowGap: CGFloat = 2
+
+    /// The history list's own scroll height - three §6.5 row cards plus their
+    /// gaps. Re-derived on every theme re-fire (GL-32) rather than captured
+    /// once, since `rowHeight` follows the chrome text scale now.
+    private var historyScrollHeight: NSLayoutConstraint!
+
+    private static func historyScrollHeight() -> CGFloat {
+        DictationHistoryListView.rowHeight * 3 + tableRowGap * 3
+    }
 
     private func buildHistorySection() -> NSView {
         let sectionLabel = NSTextField(labelWithString: "Recent Dictations")
@@ -702,9 +711,14 @@ final class DictationController: NSViewController, DaylightDrillActions {
         // this replaces showed ~4.8 of the 46pt label rows the cards replaced;
         // keeping it would have shown 2.8 cards, i.e. a clipped third row that
         // reads as a rendering bug rather than as "scroll for more".
-        historyListScroll.heightAnchor.constraint(
-            equalToConstant: DictationHistoryListView.rowHeight * 3
-                + tableRowGap * 3).isActive = true
+        // GL-32 (audit §6.1): stored and re-derived on every theme re-fire,
+        // because the row height it is built from now grows with the chrome
+        // text scale - a constant captured once here would show 2.3 cards at
+        // "Larger", i.e. the clipped-third-row look this height exists to
+        // avoid.
+        historyScrollHeight = historyListScroll.heightAnchor.constraint(
+            equalToConstant: Self.historyScrollHeight())
+        historyScrollHeight.isActive = true
 
         historyPanel.setBody(historyListScroll)
         return historyPanel
@@ -751,6 +765,10 @@ final class DictationController: NSViewController, DaylightDrillActions {
     }
 
     private func applyTheme() {
+
+        // GL-32 (audit §6.1): the history rows grow with the chrome text
+        // scale, so the box that shows three of them has to follow.
+        historyScrollHeight?.constant = Self.historyScrollHeight()
         // Bug fix (fm/grandline-dictation-global-hotkey-and-theme-fixes):
         // the root view had `wantsLayer = true` (`loadView`) but this method
         // never gave that layer an explicit background color, unlike every

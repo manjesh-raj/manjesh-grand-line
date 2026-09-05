@@ -67,7 +67,15 @@ import AppKit
 final class StickyBoardController: NSViewController, DaylightDrillActions {
 
     private var theme: HelmTheme = ThemeManager.shared.theme
-    private let store = StickyBoardStore()
+    /// This page's store.
+    ///
+    /// Internal rather than private so ⌘K's provider can read the **same**
+    /// instance (audit §6.5b). GL-23's lesson applies directly here: this
+    /// store caches its notes *and* writes them, so a second instance would
+    /// both serve stale rows to the palette and become a second writer to one
+    /// file - unlike the read-through-on-demand stores (`DocsRunbookStore`)
+    /// where an independent copy is genuinely free.
+    let store = StickyBoardStore()
 
     /// Daylight §7's card around a scrollable content surface - the same
     /// treatment `WhiteboardController.canvasCard`/Docs' playbook card use.
@@ -431,6 +439,22 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         if let noteView = noteViews[note.id] {
             view.window?.makeFirstResponder(noteView.titleFieldForFocus)
         }
+    }
+
+    /// Reveal one note by id - ⌘K's landing action (audit §6.5b).
+    ///
+    /// Scrolls it into view and gives it focus. The board is a freeform
+    /// canvas, so a note the captain searched for can easily be off-screen;
+    /// selecting the destination without moving to the note would be the same
+    /// dead end a Recents row for an ended session used to be.
+    func revealNote(id: String) {
+        // The board only builds note views once its store has loaded, which
+        // `viewWillAppear` drives - so a deep link arriving before the page
+        // has ever appeared has to build them first.
+        rebuildNoteViews()
+        guard let noteView = noteViews[id] else { return }
+        noteView.scrollToVisible(noteView.bounds.insetBy(dx: -40, dy: -40))
+        view.window?.makeFirstResponder(noteView.titleFieldForFocus)
     }
 
     /// Cascades new notes through a simple grid, wrapping diagonally once a

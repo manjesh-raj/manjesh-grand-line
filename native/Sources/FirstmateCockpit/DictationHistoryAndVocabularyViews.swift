@@ -43,7 +43,9 @@ final class DictationHistoryListView: NSObject {
     /// carries a kicker line over the transcript and its own card insets.
     /// Measured from `HelmAccentRow`'s own fitting height plus the 2pt the row
     /// view insets it by, the same way Shift's two lists arrived at 78.
-    static let rowHeight: CGFloat = 78
+    /// Measured at chrome text scale 1.0 - see `HelmType.scaledRowHeight`.
+    static let baseRowHeight: CGFloat = 78
+    static var rowHeight: CGFloat { HelmType.scaledRowHeight(baseRowHeight) }
 
     private static let columnID = NSUserInterfaceItemIdentifier("dictationHistoryCol")
     private static let rowViewID = NSUserInterfaceItemIdentifier("dictationHistoryRow")
@@ -71,6 +73,11 @@ final class DictationHistoryListView: NSObject {
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
+        // GL-32 (audit §6.1): a chrome-text-scale change arrives as an
+        // app-wide theme re-fire, so re-deriving the row height here is what
+        // makes a fixed-height list actually grow with the setting instead of
+        // clipping its descenders at "Larger".
+        tableView.rowHeight = Self.rowHeight
         tableView.reloadData()
     }
 }
@@ -158,13 +165,19 @@ private final class DictationHistoryRowView: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     func configure(entry: DictationHistoryEntry, theme: HelmTheme) {
-        // `.neutral` rather than a semantic hue: a past transcription is not a
-        // state - nothing about it is healthy, failing or overdue - and a red
-        // or amber bar on every history row would read as an alert on the
-        // twelve palettes that resolve those tints literally. Under Daylight
-        // `HelmDomainHue(tint: .neutral)` is slate, which is the honest
-        // "carries no signal" plate for the same reason.
+        // An *identity* hue, not a semantic one: a past transcription is not a
+        // state - nothing about it is healthy, failing or overdue - so no
+        // `HelmTint` describes it honestly. `domainHue` (audit §6.9) resolves
+        // to this page's own rose under Daylight and to `.neutral` on the
+        // twelve legacy palettes, which is what lets the row read as
+        // Dictation's without a red alert bar on every entry there.
+        //
+        // Before that field existed this row passed `.neutral` outright and
+        // lost its hue on Daylight too; `tint` below is now only the value
+        // `domainHue` overrides, kept as the honest answer for any future
+        // palette that resolves neither.
         row.configure(.init(tint: .neutral,
+                            domainHue: RailDestination.dictation.domainHue,
                             kicker: DictationRelativeTime.string(from: entry.date),
                             title: entry.text,
                             meta: DictationRelativeTime.duration(entry.durationSeconds),
@@ -244,7 +257,7 @@ final class VocabularyChipView: NSView {
         layer?.cornerRadius = 11
 
         label.stringValue = word
-        label.font = .systemFont(ofSize: 11.5, weight: .medium)
+        label.font = .systemFont(ofSize: HelmType.scaled(11.5), weight: .medium)
         label.translatesAutoresizingMaskIntoConstraints = false
 
         removeButton.title = ""

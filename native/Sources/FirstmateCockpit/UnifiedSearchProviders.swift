@@ -70,6 +70,8 @@ enum UnifiedSearchKind {
     case project
     case runbook
     case postmortem
+    case stickyNote
+    case snippet
     case action
 
     var groupTitle: String {
@@ -80,6 +82,8 @@ enum UnifiedSearchKind {
         case .task, .followUp, .project: return "Tasks & follow-ups"
         case .runbook: return "Runbooks"
         case .postmortem: return "Postmortems"
+        case .stickyNote: return "Sticky notes"
+        case .snippet: return "Snippets"
         case .action: return "Actions"
         }
     }
@@ -91,7 +95,8 @@ enum UnifiedSearchKind {
     /// back into it" is more likely than anything else a query could mean, and
     /// landing on a host's *detail* page when the captain meant its live shell
     /// is exactly the confusion the session switcher exists to remove.
-    static let groupOrder = ["Active sessions", "Hosts", "Commands", "Tasks & follow-ups", "Runbooks", "Postmortems", "Actions"]
+    static let groupOrder = ["Active sessions", "Hosts", "Commands", "Tasks & follow-ups",
+                             "Runbooks", "Postmortems", "Sticky notes", "Snippets", "Actions"]
 
     var symbol: String {
         switch self {
@@ -103,6 +108,8 @@ enum UnifiedSearchKind {
         case .project: return "folder"
         case .runbook: return "doc.text"
         case .postmortem: return "doc.badge.clock"
+        case .stickyNote: return "note.text"
+        case .snippet: return "chevron.left.forwardslash.chevron.right"
         case .action: return "bolt.fill"
         }
     }
@@ -119,6 +126,10 @@ enum UnifiedSearchKind {
         case .command: return .violet
         case .task, .followUp, .project: return .warn
         case .runbook, .postmortem: return .good
+        // Both are scratch surfaces the captain writes into, not signals -
+        // `.neutral` says exactly that, and is the same call Dictation's
+        // history rows make for the same reason.
+        case .stickyNote, .snippet: return .neutral
         case .action: return .accent
         }
     }
@@ -513,6 +524,103 @@ struct UnifiedSearchDocsProvider: UnifiedSearchProvider {
                     activate: { onOpenPostmortem(result.runbook.id) }
                 )
             }
+        }
+    }
+}
+
+// MARK: - Sticky notes and code snippets
+
+/// The Sticky Board's notes (audit §6.5b).
+///
+/// The board is a freeform canvas with no list view, so a note that scrolled
+/// out of sight is genuinely hard to find again - which is what makes ⌘K worth
+/// more here than on a page that already lists its records.
+///
+/// Matching is a plain case-insensitive substring over title and body, the
+/// same shape `UnifiedSearchHostProvider` uses. Deliberately not a fuzzy
+/// matcher: nothing else in this palette is one, and one domain scoring
+/// differently from its neighbours reads as a bug.
+struct UnifiedSearchStickyNoteProvider: UnifiedSearchProvider {
+    let store: StickyBoardStore
+    let onOpen: (String) -> Void
+
+    /// A note's title is optional by design (the view renders a placeholder),
+    /// so the row falls back to the body - a title-only row would render blank
+    /// for exactly the notes a captain jots fastest.
+    static func displayTitle(for note: StickyNote) -> String {
+        let title = note.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !title.isEmpty { return title }
+        let firstLine = note.text
+            .components(separatedBy: .newlines)
+            .first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }?
+            .trimmingCharacters(in: .whitespaces)
+        return (firstLine?.isEmpty == false ? firstLine! : "Untitled note")
+    }
+
+    func items(query: String) -> [UnifiedSearchItem] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        // Empty query returns nothing, like every content provider except
+        // sessions and actions - a board of notes would be a wall of noise.
+        guard !needle.isEmpty else { return [] }
+        return store.notes.filter {
+            $0.title.lowercased().contains(needle) || $0.text.lowercased().contains(needle)
+        }.map { note in
+            UnifiedSearchItem(
+                kind: .stickyNote,
+                id: note.id,
+                title: Self.displayTitle(for: note),
+                meta: "Sticky note",
+                actionHint: "Open \u{21B5}",
+                activate: { onOpen(note.id) }
+            )
+        }
+    }
+}
+
+/// Code Preview's saved snippets (audit §6.6b).
+///
+/// A snippet's filename is its identity (see `CodePreviewStore`'s header), so
+/// that is both what the row shows and what the action carries.
+///
+/// Reads through the same short-TTL corpus idea as the docs provider, and for
+/// the same measured reason: `list()` enumerates the directory and reads every
+/// file's contents, which on a per-keystroke path is real synchronous work on
+/// the main thread.
+struct UnifiedSearchSnippetProvider: UnifiedSearchProvider {
+    let store: CodePreviewStore
+    let onOpen: (String) -> Void
+
+    private final class Corpus {
+        static let ttl: TimeInterval = 2
+        var loadedAt = Date.distantPast
+        var snippets: [CodePreviewSnippet] = []
+    }
+
+    private static let corpus = Corpus()
+
+    private func loadedSnippets() -> [CodePreviewSnippet] {
+        let corpus = Self.corpus
+        if Date().timeIntervalSince(corpus.loadedAt) >= Corpus.ttl {
+            corpus.snippets = store.list()
+            corpus.loadedAt = Date()
+        }
+        return corpus.snippets
+    }
+
+    func items(query: String) -> [UnifiedSearchItem] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !needle.isEmpty else { return [] }
+        return loadedSnippets().filter {
+            $0.id.lowercased().contains(needle) || $0.content.lowercased().contains(needle)
+        }.map { snippet in
+            UnifiedSearchItem(
+                kind: .snippet,
+                id: snippet.id,
+                title: snippet.id,
+                meta: snippet.language.displayName,
+                actionHint: "Open \u{21B5}",
+                activate: { onOpen(snippet.id) }
+            )
         }
     }
 }

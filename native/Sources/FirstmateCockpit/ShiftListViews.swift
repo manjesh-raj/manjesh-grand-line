@@ -85,7 +85,10 @@ final class ShiftTaskListView: NSObject {
     /// real render once the shared component brought the row onto the app's
     /// one type scale (`HelmType.rowTitle`/`caption`, a touch larger than
     /// this list's own former 13/10.5 pair).
-    static let rowHeight: CGFloat = 78
+    /// Measured at chrome text scale 1.0; `scaledRowHeight` grows it with
+    /// the captain's own text-size setting (GL-32, audit §6.1).
+    static let baseRowHeight: CGFloat = 78
+    static var rowHeight: CGFloat { HelmType.scaledRowHeight(baseRowHeight) }
 
     @objc private func rowDoubleClicked() {
         let row = tableView.clickedRow
@@ -101,6 +104,11 @@ final class ShiftTaskListView: NSObject {
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
+        // GL-32 (audit §6.1): a chrome-text-scale change arrives as an
+        // app-wide theme re-fire, so re-deriving the row height here is what
+        // makes a fixed-height list actually grow with the setting instead of
+        // clipping its descenders at "Larger".
+        tableView.rowHeight = Self.rowHeight
         tableView.reloadData()
     }
 }
@@ -310,7 +318,7 @@ final class ShiftFollowUpListView: NSObject {
     /// Matches `ShiftTaskListView.rowHeight` - both lists share the same card
     /// treatment, so their rows are the same height for a consistent
     /// side-by-side look (`fm/grandline-shift-side-by-side-composer-height`).
-    static let rowHeight: CGFloat = ShiftTaskListView.rowHeight
+    static var rowHeight: CGFloat { ShiftTaskListView.rowHeight }
 
     func setItems(_ items: [ShiftFollowUp]) {
         self.items = items
@@ -319,6 +327,11 @@ final class ShiftFollowUpListView: NSObject {
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
+        // GL-32 (audit §6.1): a chrome-text-scale change arrives as an
+        // app-wide theme re-fire, so re-deriving the row height here is what
+        // makes a fixed-height list actually grow with the setting instead of
+        // clipping its descenders at "Larger".
+        tableView.rowHeight = Self.rowHeight
         tableView.reloadData()
     }
 
@@ -480,10 +493,17 @@ enum ShiftDateFormatting {
         if cal.isDateInToday(date) { return "Today" }
         if cal.isDateInTomorrow(date) { return "Tomorrow" }
         if cal.isDateInYesterday(date) { return "Yesterday" }
+        return monthDayFormatter.string(from: date)
+    }
+
+    // GL-P3: built once. `DateFormatter` construction is measurably
+    // expensive and this carries no per-call state - the same treatment
+    // `FleetLogFeed`/`HealthCardView` already give theirs.
+    private static let monthDayFormatter: DateFormatter = {
         let f = DateFormatter()
         f.setLocalizedDateFormatFromTemplate("MMMd")
-        return f.string(from: date)
-    }
+        return f
+    }()
 
     /// "Today at 3:00 PM" / "Aug 12" (no time shown when `hhmm` is nil).
     static func friendly(_ yyyyMMdd: String, time hhmmStr: String?) -> String {

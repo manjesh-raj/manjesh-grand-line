@@ -187,6 +187,17 @@ extension ConsoleController {
             chip.forwardDragsEnabled = { [weak term] in term?.forwardDragsToChild ?? false }
             chip.onToggleForwardDrags = { [weak self] in self?.toggleForwardDragsToChild(id: id) }
         }
+        // Audit §6.7a. Every tab kind can be adopted as the Kubernetes page's
+        // Log Tail feed, so unlike the `.shell`-only toggle above this is
+        // wired unconditionally. `usesMachineReadableGeometry` lives on the
+        // terminal - which survives a reconnect of this tab - so, like
+        // `forwardDragsToChild`, there is nothing mirrored onto `tab` to keep
+        // in sync. The change hook is what makes the chip update the moment
+        // the *Kubernetes* page adopts or releases the tab: the console is not
+        // the thing that flipped it, so nothing else here would ever know.
+        chip.machineReadableEnabled = { [weak term] in term?.usesMachineReadableGeometry ?? false }
+        term.onMachineReadableGeometryChanged = { [weak chip] in chip?.refreshMachineReadableIndicator() }
+
         tab.chip = chip
 
         tabs.append(tab)

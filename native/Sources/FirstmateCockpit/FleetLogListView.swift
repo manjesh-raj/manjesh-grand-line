@@ -78,7 +78,9 @@ final class FleetLogListView: NSView {
     /// Fixed heights - an event row's title never wraps
     /// (`Content.titleWraps` stays false), so nothing here needs
     /// `usesAutomaticRowHeights`.
-    static let eventRowHeight: CGFloat = 60
+    /// Measured at chrome text scale 1.0 - see `HelmType.scaledRowHeight`.
+    static let baseEventRowHeight: CGFloat = 60
+    static var eventRowHeight: CGFloat { HelmType.scaledRowHeight(baseEventRowHeight) }
     static let headerRowHeight: CGFloat = 34
     static let rowSpacing: CGFloat = 6
     static let emptyRowHeight: CGFloat = 180
@@ -159,6 +161,11 @@ final class FleetLogListView: NSView {
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
+        // GL-32 (audit §6.1): a chrome-text-scale change arrives as an
+        // app-wide theme re-fire, so re-deriving the row height here is what
+        // makes a fixed-height list actually grow with the setting instead of
+        // clipping its descenders at "Larger".
+        tableView.rowHeight = Self.eventRowHeight
         tableView.reloadData()
     }
 

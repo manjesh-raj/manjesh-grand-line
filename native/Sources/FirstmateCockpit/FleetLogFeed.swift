@@ -60,7 +60,7 @@ enum FleetLogFeed {
     /// An entry whose timestamp will not parse is dropped rather than dated
     /// "now", which would float ancient history to the top of the feed.
     static func taskEvent(from entry: ShiftActivityEntry) -> FleetLogEvent? {
-        guard let date = ISO8601DateFormatter().date(from: entry.timestamp) else { return nil }
+        guard let date = Self.isoFormatter.date(from: entry.timestamp) else { return nil }
         return FleetLogEvent(id: entry.id, date: date, kind: .task,
                              title: entry.summary, reference: entry.targetID)
     }
@@ -125,6 +125,10 @@ enum FleetLogFeed {
 
     // GL-P3: static formatters - constructing a `DateFormatter` per row is a
     // measurable cost in a list, and these carry no per-call state.
+    /// GL-P3: `taskEvent(from:)` runs once per Shift activity entry when the
+    /// log is assembled, so this cannot be per-call.
+    private static let isoFormatter = ISO8601DateFormatter()
+
     private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.setLocalizedDateFormatFromTemplate("j:mm")

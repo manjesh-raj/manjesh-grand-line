@@ -43,6 +43,7 @@ enum CodePreviewSelfTest {
         checkDetection(check)
         checkStoreRoundTrip(check)
         checkStoreHonoursShiftDirOverride(check)
+        checkTabOrderSidecar(check)
         checkNameSanitising(check)
         checkThemePalette(check)
         checkDestinationWiring(check)
@@ -460,6 +461,79 @@ enum CodePreviewSelfTest {
     /// this directory already does - must not leave this one store still
     /// reaching into production. `IncidentStore` relies on exactly this
     /// fallback and proves it exactly this way.
+    /// Audit §6.6a: the regenerable order sidecar, which buys back the one
+    /// stated cost of "the filename is the identity" - that renaming a tab
+    /// moved it.
+    private static func checkTabOrderSidecar(_ check: (Bool, String) -> Void) {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("code-preview-order-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let store = CodePreviewStore(root: dir)
+
+        // Deliberately created so that alphabetical order and the captain's
+        // order disagree - otherwise every assertion below passes vacuously.
+        _ = store.create(name: "zebra.txt", content: "z\n")
+        _ = store.create(name: "alpha.txt", content: "a\n")
+        _ = store.create(name: "middle.txt", content: "m\n")
+
+        check(store.list().map(\.id) == ["alpha.txt", "middle.txt", "zebra.txt"],
+              "list() is still alphabetical, got \(store.list().map(\.id))")
+        check(store.listInTabOrder().map(\.id) == store.list().map(\.id),
+              "with no order file, tab order must fall back to exactly today's behaviour")
+
+        store.saveOrder(["zebra.txt", "alpha.txt", "middle.txt"])
+        check(store.listInTabOrder().map(\.id) == ["zebra.txt", "alpha.txt", "middle.txt"],
+              "the saved order must win, got \(store.listInTabOrder().map(\.id))")
+
+        // A *fresh* store over the same directory - the file, not a cache.
+        let reread = CodePreviewStore(root: dir)
+        check(reread.listInTabOrder().map(\.id) == ["zebra.txt", "alpha.txt", "middle.txt"],
+              "the order must survive a relaunch, got \(reread.listInTabOrder().map(\.id))")
+
+        // Hidden, so the enumerations that skip hidden files never read it
+        // back as a snippet named ".tab-order".
+        check(CodePreviewStore.orderFileName.hasPrefix("."),
+              "the order file must be hidden or it shows up in the panel as a tab")
+        check(!store.list().contains { $0.id == CodePreviewStore.orderFileName },
+              "the order file leaked into the snippet list")
+        check(!store.names().contains(CodePreviewStore.orderFileName),
+              "the order file leaked into names()")
+
+        // Never the source of truth for what exists: a name with no file is
+        // ignored, and a file the order never heard of still appears.
+        store.saveOrder(["deleted.txt", "zebra.txt"])
+        let mixed = store.listInTabOrder().map(\.id)
+        check(!mixed.contains("deleted.txt"), "an order entry with no file behind it must be ignored")
+        check(mixed.first == "zebra.txt", "a known name must still lead, got \(mixed)")
+        check(Set(mixed) == Set(["zebra.txt", "alpha.txt", "middle.txt"]),
+              "every real snippet must still be listed, got \(mixed)")
+        check(Array(mixed.dropFirst()) == ["alpha.txt", "middle.txt"],
+              "snippets the order file never knew about keep alphabetical order, got \(mixed)")
+
+        // The whole point: renaming keeps the slot.
+        store.saveOrder(["zebra.txt", "alpha.txt", "middle.txt"])
+        let landed = store.rename(from: "zebra.txt", to: "aaa-renamed.txt")
+        store.saveOrder(["aaa-renamed.txt", "alpha.txt", "middle.txt"])
+        check(landed == "aaa-renamed.txt", "rename should land the requested name, got \(landed)")
+        check(store.listInTabOrder().map(\.id).first == "aaa-renamed.txt",
+              "a renamed tab must keep its slot rather than jumping to where its new name sorts, got "
+              + "\(store.listInTabOrder().map(\.id))")
+
+        // A no-op save must not rewrite the file (which would dirty the git
+        // subtree on every select).
+        let path = dir.appendingPathComponent(CodePreviewStore.orderFileName)
+        let before = try? FileManager.default.attributesOfItem(atPath: path.path)[.modificationDate] as? Date
+        store.saveOrder(["aaa-renamed.txt", "alpha.txt", "middle.txt"])
+        let after = try? FileManager.default.attributesOfItem(atPath: path.path)[.modificationDate] as? Date
+        check(before == after, "saving an unchanged order rewrote the file")
+
+        // Deleting it degrades to alphabetical rather than to nothing.
+        try? FileManager.default.removeItem(at: path)
+        check(store.listInTabOrder().map(\.id) == store.list().map(\.id),
+              "with the order file gone the panel must fall back to alphabetical, got "
+              + "\(store.listInTabOrder().map(\.id))")
+    }
+
     private static func checkStoreHonoursShiftDirOverride(_ check: (Bool, String) -> Void) {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("code-preview-shiftdir-\(UUID().uuidString)", isDirectory: true)

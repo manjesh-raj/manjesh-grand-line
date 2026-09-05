@@ -438,6 +438,11 @@ extension ConsoleController {
             let chipAccent = tab.accentHex.map(HelmTheme.nsColor) ?? accent
             let chipTint = chipAccent.withAlphaComponent(theme.mode == .dark ? 0.20 : 0.14)
             tab.chip.applyStyle(selected: tab === currentTab, accent: chipAccent, muted: muted, tint: chipTint)
+            // Both chip indicators own their own tinted fill, so a theme
+            // change has to re-resolve them here rather than inheriting
+            // `applyStyle`'s ink.
+            tab.chip.refreshForwardDragsIndicator()
+            tab.chip.refreshMachineReadableIndicator()
         }
         // §6.4's live subtitle. This method is the one choke point every tab
         // add / close / rename / selection already passes through, so hooking

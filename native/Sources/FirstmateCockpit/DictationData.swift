@@ -50,8 +50,19 @@ final class DictationStore {
     /// observes while visible, matching `HostStore.observe`'s "list of
     /// closures" shape (not a single overwritable `onChange`) in case a
     /// future caller needs to hear it too.
-    private var changeHandlers: [() -> Void] = []
-    func observe(_ handler: @escaping () -> Void) { changeHandlers.append(handler) }
+    private var changeHandlers: [(token: StoreObservation, fn: () -> Void)] = []
+
+    /// GL-P3: token-based, for the reason `HostStore.observe` documents.
+    @discardableResult
+    func observe(_ handler: @escaping () -> Void) -> StoreObservation {
+        let token = StoreObservation()
+        changeHandlers.append((token, handler))
+        return token
+    }
+
+    func unobserve(_ token: StoreObservation) {
+        changeHandlers.removeAll { $0.token === token }
+    }
 
     private let historyURL: URL
     private let vocabularyURL: URL
@@ -209,7 +220,7 @@ final class DictationStore {
         } catch {
             PersistenceFailureReporter.report(what: url.lastPathComponent == "vocabulary.json" ? "dictation vocabulary" : "dictation history", path: url.path, error: error)
         }
-        changeHandlers.forEach { $0() }
+        changeHandlers.forEach { $0.fn() }
     }
 }
 

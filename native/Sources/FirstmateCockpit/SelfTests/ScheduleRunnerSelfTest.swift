@@ -48,6 +48,7 @@ enum ScheduleRunnerSelfTest {
         checkDailyUpdatesSeeding(&ok)
         checkRunHistoryPersistsAndFilters(&ok)
         checkHealthSeedingFromHistory(&ok)
+        checkRunLogIsRedactedOnPersist(&ok)
         print(ok ? "ScheduleRunnerSelfTest: all checks passed" : "ScheduleRunnerSelfTest: FAILED")
         return ok
     }
@@ -657,6 +658,76 @@ enum ScheduleRunnerSelfTest {
     }
 
     // MARK: Health-seeding from history (pure logic, no registry, no store)
+
+    /// Audit 5.7 / §6.8: a scheduled run's log is real `brew`/`gh`/`git`
+    /// output captured unattended, and "View Log" exists to be read and
+    /// screen-shared - so it goes through `LogRedactor` before it reaches
+    /// disk.
+    ///
+    /// The assertion that matters is a byte-level grep of the **real file**,
+    /// not of the in-memory entry: the point of putting redaction in the one
+    /// initializer is that nothing can persist a raw secret, and only reading
+    /// the bytes back proves that end to end. (This is the same shape
+    /// `LogAnalyzerSelfTest` uses for its own three redaction greps.)
+    private static func checkRunLogIsRedactedOnPersist(_ ok: inout Bool) {
+        print("\n-- run history: a run's log is redacted before it is persisted (5.7) --")
+        guard let dir = scratchDir() else {
+            fail("could not create a scratch directory", &ok)
+            return
+        }
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // Credential shapes a real unattended run can genuinely echo: a token
+        // in a git remote, a bearer header from a verbose client, and a
+        // password in a connection string.
+        let secrets = [
+            "ghp_ThisIsAFakeTokenForTheSelfTest01",
+            "Bearer-fake-jwt-value-for-the-self-test",
+            "hunter2SelfTestPassword",
+        ]
+        let rawLog = """
+        $ git push https://x-access-token:\(secrets[0])@github.com/manjesh-raj/manjesh-config
+        > Authorization: \(secrets[1])
+        > psql postgres://svc:\(secrets[2])@db.internal:5432/app
+        Everything up-to-date.
+        """
+
+        let store = ScheduleRunHistoryStore(directory: dir)
+        let scheduleID = UUID()
+        store.append(ScheduleRunHistoryEntry(scheduleID: scheduleID, at: Date(), verdict: .changed,
+                                             summary: "1 fork fast-forwarded.",
+                                             actionTitle: "Fork sync", log: rawLog))
+
+        guard let raw = try? String(contentsOf: store.debugFileURL, encoding: .utf8) else {
+            fail("expected a real runs.jsonl file on disk", &ok)
+            return
+        }
+        for secret in secrets where raw.contains(secret) {
+            fail("the literal secret \"\(secret)\" reached runs.jsonl unredacted", &ok)
+        }
+        if !raw.contains(LogRedactor.placeholder) {
+            fail("the persisted log carries no \(LogRedactor.placeholder) marker - redaction did not run",
+                 &ok)
+        }
+        // The log must still be a usable transcript, not blanked wholesale.
+        guard let stored = ScheduleRunHistoryStore(directory: dir)
+            .entries(for: scheduleID).first?.log else {
+            fail("the entry came back with no log at all", &ok)
+            return
+        }
+        if !stored.contains("Everything up-to-date.") {
+            fail("redaction destroyed the surrounding transcript - \"View Log\" needs the real output",
+                 &ok)
+        }
+        // Re-encoding an already-redacted log must be a no-op, or every
+        // rewrite would stack placeholders.
+        let reEncoded = ScheduleRunHistoryEntry(scheduleID: scheduleID, at: Date(), verdict: .clean,
+                                                summary: "s", actionTitle: "a", log: stored).log
+        if reEncoded != stored {
+            fail("redaction is not idempotent: re-encoding a stored log changed it", &ok)
+        }
+        if ok { print("  OK - secrets never reach runs.jsonl; the transcript survives; idempotent") }
+    }
 
     private static func checkHealthSeedingFromHistory(_ ok: inout Bool) {
         print("\n-- ServiceHealthRegistry seeds correctly from persisted run history --")

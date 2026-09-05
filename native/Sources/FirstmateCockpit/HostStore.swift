@@ -30,10 +30,25 @@ final class HostStore {
     /// icons (Fix 3, fixes4) both need to hear about every add/rename/delete,
     /// so this is a list of observers rather than a single overwritable
     /// closure (matching `ThemeManager.observe`'s shape).
-    private var changeHandlers: [() -> Void] = []
+    private var changeHandlers: [(token: StoreObservation, fn: () -> Void)] = []
 
-    func observe(_ handler: @escaping () -> Void) {
-        changeHandlers.append(handler)
+    /// GL-P3: returns a token, matching `ThemeManager.observe`'s convention.
+    ///
+    /// Every observer today is app-lifetime, so nothing leaks right now - but
+    /// an `observe` with no way back is a store that cannot safely be watched
+    /// by anything that can be deallocated, which is exactly the shape
+    /// `ConsoleController` had to unpick for `ThemeManager` once a page
+    /// became destroyable. `@discardableResult` keeps every existing call
+    /// site unchanged.
+    @discardableResult
+    func observe(_ handler: @escaping () -> Void) -> StoreObservation {
+        let token = StoreObservation()
+        changeHandlers.append((token, handler))
+        return token
+    }
+
+    func unobserve(_ token: StoreObservation) {
+        changeHandlers.removeAll { $0.token === token }
     }
 
     private let fileURL: URL
@@ -123,6 +138,6 @@ final class HostStore {
         } catch {
             PersistenceFailureReporter.report(what: "saved hosts", path: fileURL.path, error: error)
         }
-        changeHandlers.forEach { $0() }
+        changeHandlers.forEach { $0.fn() }
     }
 }

@@ -853,6 +853,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             onOpenPostmortem: { [weak self] id in self?.appShell.openPostmortem(id: id) }
         ))
 
+        // The two newest stores (audit §6.5b / §6.6b). Both read the *live*
+        // instance the page itself uses - `StickyBoardStore` caches and
+        // writes, so a second one would serve stale rows and become a second
+        // writer to one file (GL-23).
+        index.register(UnifiedSearchStickyNoteProvider(
+            store: appShell.stickyBoardStore,
+            onOpen: { [weak self] id in self?.appShell.openStickyNote(id: id) }
+        ))
+        index.register(UnifiedSearchSnippetProvider(
+            store: appShell.codePreviewStore,
+            onOpen: { [weak self] name in self?.appShell.openCodeSnippet(named: name) }
+        ))
+
         // App actions + destinations - every entry an existing menu action.
         index.register(UnifiedSearchActionProvider.standard(shell: appShell))
 
@@ -1910,6 +1923,24 @@ if ProcessInfo.processInfo.environment["FM_RUN_FLEET_LOG_TESTS"] == "1" {
 // and the F6 log wiring. See IncidentStoreSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_INCIDENT_TESTS"] == "1" {
     exit(IncidentStoreSelfTest.run() ? 0 : 1)
+}
+
+// Audit §6.2's relaunch-continuity half. Window-backed (it mounts a real
+// `ConsoleController`), so it belongs in `run-all-tests.sh`'s NEEDS_SESSION
+// list rather than beside the pure-logic store suite above.
+if ProcessInfo.processInfo.environment["FM_RUN_INCIDENT_RESUME_TESTS"] == "1" {
+    exit(IncidentResumeSelfTest.run() ? 0 : 1)
+}
+
+// GL-32's row-height half (audit §6.1). Pure measurement - no window - so it
+// runs in CI alongside the other arithmetic suites.
+if ProcessInfo.processInfo.environment["FM_RUN_TEXT_SCALE_ROW_HEIGHT_TESTS"] == "1" {
+    exit(TextScaleRowHeightSelfTest.run() ? 0 : 1)
+}
+
+// Audit §6.10's P3 leftovers. Pure logic - runs in CI.
+if ProcessInfo.processInfo.environment["FM_RUN_P3_LEFTOVERS_TESTS"] == "1" {
+    exit(Phase4P3LeftoversSelfTest.run() ? 0 : 1)
 }
 
 // F5's command-palette providers: every domain's matching, the grouping the

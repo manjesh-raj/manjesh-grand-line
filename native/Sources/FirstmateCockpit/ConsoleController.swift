@@ -339,6 +339,27 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// indicator - see `IncidentCardView`'s header for why the card itself is
     /// a popover rather than an inline strip.
     var incidentButton: HelmButton?
+
+    /// Incident ids this page has already announced during **this app run**
+    /// (audit §6.2).
+    ///
+    /// Not persisted, on purpose: the whole point is to announce an incident
+    /// that outlived a relaunch, so a flag surviving the relaunch with it
+    /// would defeat the feature. It only stops the announcement repeating on
+    /// every navigation back to this page within one run.
+    var announcedIncidentIDs: Set<String> = []
+
+    #if FM_SELFTESTS
+    /// Every incident id `resumeActiveIncidentIfNeeded` actually announced,
+    /// in order - so a suite can prove the once-per-run guard by *count*,
+    /// which is the only thing a second `viewDidAppear` would change.
+    var debugResumeAnnouncements: [String] = []
+
+    /// Mark an incident as already announced, the way `startIncident` does
+    /// for one begun in this run - so a suite can set that state up without
+    /// driving a real `NSAlert` prompt.
+    func debugMarkIncidentAnnounced(_ id: String) { announcedIncidentIDs.insert(id) }
+    #endif
     let incidentPopover = NSPopover()
     let incidentCard = IncidentCardView()
 
@@ -589,6 +610,7 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
         for tab in tabs where !tab.started { startTab(tab) }
         if let tab = currentTab { view.window?.makeFirstResponder(tab.terminal) }
         refreshPeriodicWorkGating()
+        resumeActiveIncidentIfNeeded()
     }
 
     override func viewDidDisappear() {

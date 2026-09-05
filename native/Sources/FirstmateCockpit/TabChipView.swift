@@ -65,9 +65,12 @@ final class TabChipView: NSView, NSTextFieldDelegate {
     /// chip glyph alone wasn't enough.
     private let forwardDragsIndicator = NSImageView()
     private var forwardDragsIndicatorWidth: NSLayoutConstraint!
+    private let machineReadableIndicator = NSImageView()
+    private var machineReadableIndicatorWidth: NSLayoutConstraint!
     /// The badge's fixed size while shown - up from the pre-existing 12pt,
     /// per the same "make it bigger" ask this task carries.
     private static let forwardDragsIndicatorSize: CGFloat = 16
+    private static let machineReadableIndicatorSize: CGFloat = 16
 
     var onSelect: (() -> Void)?
     var onClose: (() -> Void)?
@@ -88,6 +91,17 @@ final class TabChipView: NSView, NSTextFieldDelegate {
     /// conditional, mirroring `onReconnect`'s own "optional means hidden"
     /// convention above.
     var forwardDragsEnabled: (() -> Bool)?
+
+    /// Whether this tab is currently pinned to the machine-readable geometry
+    /// (`CockpitTerminalView.usesMachineReadableGeometry`) - i.e. the
+    /// Kubernetes page has adopted it as its Log Tail feed.
+    ///
+    /// Audit §6.7a. That pinning makes the tab render more columns than its
+    /// frame shows, so its right edge is genuinely clipped - by design, and
+    /// indistinguishable from a rendering bug without something on the chip
+    /// saying so. Same optional-closure shape as `forwardDragsEnabled` above:
+    /// the chip owns no state, it reads the terminal's.
+    var machineReadableEnabled: (() -> Bool)?
     /// Flips the "Forward Drags to This Tab's Program" toggle. Shown only
     /// alongside `forwardDragsEnabled`.
     var onToggleForwardDrags: (() -> Void)?
@@ -112,7 +126,7 @@ final class TabChipView: NSView, NSTextFieldDelegate {
         label.drawsBackground = false
         label.backgroundColor = .clear
         label.focusRingType = .none
-        label.font = .systemFont(ofSize: 13)
+        label.font = .systemFont(ofSize: HelmType.scaled(13))
         label.lineBreakMode = .byTruncatingTail
         label.cell?.truncatesLastVisibleLine = true
         label.delegate = self
@@ -159,6 +173,23 @@ final class TabChipView: NSView, NSTextFieldDelegate {
         // lesson this app has hit before for a reserved-but-empty column).
         forwardDragsIndicatorWidth = forwardDragsIndicator.widthAnchor.constraint(equalToConstant: 0)
 
+        // Same badge recipe as the indicator above - an opaque tinted fill of
+        // its own so the glyph clears contrast whether or not the chip is
+        // selected - and the same collapsible width so a tab that is not the
+        // feed reclaims the space instead of leaving a gap.
+        machineReadableIndicator.wantsLayer = true
+        machineReadableIndicator.layer?.cornerRadius = Self.machineReadableIndicatorSize / 2
+        machineReadableIndicator.image = NSImage(
+            systemSymbolName: "arrow.left.and.right",
+            accessibilityDescription: "This tab is width-pinned so the Kubernetes page can parse its output"
+        )?.withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 9, weight: .semibold))
+        machineReadableIndicator.imageScaling = .scaleProportionallyDown
+        machineReadableIndicator.toolTip = CockpitTerminalView.machineReadableTooltip
+        machineReadableIndicator.isHidden = true
+        machineReadableIndicator.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(machineReadableIndicator)
+        machineReadableIndicatorWidth = machineReadableIndicator.widthAnchor.constraint(equalToConstant: 0)
+
         NSLayoutConstraint.activate([
             heightAnchor.constraint(equalToConstant: 28),
             widthAnchor.constraint(lessThanOrEqualToConstant: 240),
@@ -171,7 +202,12 @@ final class TabChipView: NSView, NSTextFieldDelegate {
             forwardDragsIndicatorWidth,
             forwardDragsIndicator.heightAnchor.constraint(equalToConstant: Self.forwardDragsIndicatorSize),
 
-            closeButton.leadingAnchor.constraint(equalTo: forwardDragsIndicator.trailingAnchor, constant: 6),
+            machineReadableIndicator.leadingAnchor.constraint(equalTo: forwardDragsIndicator.trailingAnchor, constant: 4),
+            machineReadableIndicator.centerYAnchor.constraint(equalTo: centerYAnchor),
+            machineReadableIndicatorWidth,
+            machineReadableIndicator.heightAnchor.constraint(equalToConstant: Self.machineReadableIndicatorSize),
+
+            closeButton.leadingAnchor.constraint(equalTo: machineReadableIndicator.trailingAnchor, constant: 6),
             closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
             closeButton.widthAnchor.constraint(equalToConstant: 15),
@@ -282,7 +318,7 @@ final class TabChipView: NSView, NSTextFieldDelegate {
             let size = HelmType.scaled(13)
             label.font = daylight
                 ? HelmType.rounded(size, selected ? .semibold : .medium)
-                : .systemFont(ofSize: 13, weight: selected ? .semibold : .regular)
+                : .systemFont(ofSize: HelmType.scaled(13), weight: selected ? .semibold : .regular)
         }
         closeButton.contentTintColor = selected ? selectedInk : muted
         refreshForwardDragsIndicator()
@@ -313,6 +349,38 @@ final class TabChipView: NSView, NSTextFieldDelegate {
         forwardDragsIndicator.layer?.backgroundColor = resolved.fill.cgColor
         forwardDragsIndicator.contentTintColor = resolved.foreground
     }
+
+    /// Audit §6.7a: mark a tab the Kubernetes page has width-pinned.
+    ///
+    /// Tinted `.info` rather than `refreshForwardDragsIndicator`'s `.warn`:
+    /// these two indicators can be on at once, and they say different things.
+    /// Forwarded drags change what a gesture *does* and are the captain's own
+    /// deliberate toggle; this one only explains why the tab looks clipped,
+    /// which is informational, not a caution.
+    func refreshMachineReadableIndicator() {
+        let pinned = machineReadableEnabled?() ?? false
+        machineReadableIndicator.isHidden = !pinned
+        machineReadableIndicatorWidth.constant = pinned ? Self.machineReadableIndicatorSize : 0
+        guard pinned else { return }
+        machineReadableIndicator.toolTip = CockpitTerminalView.machineReadableTooltip
+        let theme = ThemeManager.shared.theme
+        let resolved = HelmContrast.tintedSurface(tintHex: HelmTint.info.hex(in: theme),
+                                                  theme: theme,
+                                                  target: HelmContrast.nonTextTarget)
+        machineReadableIndicator.layer?.backgroundColor = resolved.fill.cgColor
+        machineReadableIndicator.contentTintColor = resolved.foreground
+    }
+
+    #if FM_SELFTESTS
+    /// Whether the width-pinned indicator is actually visible right now -
+    /// both halves, for the same reason its sibling below checks both.
+    var debugMachineReadableIndicatorVisible: Bool {
+        !machineReadableIndicator.isHidden && machineReadableIndicatorWidth.constant > 0
+    }
+
+    /// The caption a captain actually reads on hover.
+    var debugMachineReadableTooltip: String? { machineReadableIndicator.toolTip }
+    #endif
 
     #if FM_SELFTESTS
     /// Whether the "drags forwarded" indicator is actually visible right now

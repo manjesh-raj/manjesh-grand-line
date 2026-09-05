@@ -703,7 +703,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
 
     private func buildWeeklyReviewSection() -> NSView {
         reviewGreeting.font = HelmType.pageTitle(.serif)
-        reviewSubtitle.font = .systemFont(ofSize: 12)
+        reviewSubtitle.font = HelmType.body()
         let textStack = NSStackView(views: [reviewGreeting, reviewSubtitle])
         textStack.orientation = .vertical
         textStack.alignment = .leading
@@ -789,14 +789,14 @@ final class ShiftController: NSViewController, DaylightDrillActions {
 
     private func reviewPushedBackRow(_ item: ShiftPushedBackItem) -> NSView {
         let titleLabel = NSTextField(labelWithString: item.title)
-        titleLabel.font = .systemFont(ofSize: 12.5, weight: .medium)
+        titleLabel.font = .systemFont(ofSize: HelmType.scaled(12.5), weight: .medium)
         titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         titleLabel.lineBreakMode = .byTruncatingTail
 
         var metaText = "Pushed back \(item.count) times"
         if let projectName = item.projectName { metaText += " \u{00B7} \(projectName)" }
         let metaLabel = NSTextField(labelWithString: metaText)
-        metaLabel.font = .systemFont(ofSize: 10.5)
+        metaLabel.font = HelmType.captionSmall()
         metaLabel.textColor = HelmTheme.mutedInk(theme)
 
         let textStack = NSStackView(views: [titleLabel, metaLabel])
@@ -1078,7 +1078,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         detailBackButton.contentTintColor = nil
         detailBackButton.target = self
         detailBackButton.action = #selector(detailBackClicked)
-        detailBackButton.font = .systemFont(ofSize: 12, weight: .medium)
+        detailBackButton.font = .systemFont(ofSize: HelmType.scaled(12), weight: .medium)
         detailBackButton.translatesAutoresizingMaskIntoConstraints = false
 
         let header = buildDetailHeader()
@@ -1155,7 +1155,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         ])
         detailStatusPill.setContentHuggingPriority(.required, for: .horizontal)
 
-        detailMetaLabel.font = .systemFont(ofSize: 11)
+        detailMetaLabel.font = .systemFont(ofSize: HelmType.scaled(11))
 
         let metaRow = NSStackView(views: [detailStatusPill, detailMetaLabel])
         metaRow.orientation = .horizontal
@@ -1163,7 +1163,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         metaRow.spacing = 10
         metaRow.translatesAutoresizingMaskIntoConstraints = false
 
-        detailDescriptionLabel.font = .systemFont(ofSize: 12.5)
+        detailDescriptionLabel.font = .systemFont(ofSize: HelmType.scaled(12.5))
         detailDescriptionLabel.preferredMaxLayoutWidth = 640
         detailDescriptionLabel.lineBreakMode = .byWordWrapping
 
@@ -1228,7 +1228,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
 
     private func gridLabel(_ text: String) -> NSTextField {
         let label = NSTextField(labelWithString: text)
-        label.font = .systemFont(ofSize: 12)
+        label.font = HelmType.body()
         return label
     }
 

@@ -533,6 +533,15 @@ final class HomeCanvasController: NSViewController {
     /// F12's record, read straight out of `AppSettings` - already generated,
     /// never regenerated here. A canvas that could trigger a `claude -p` call
     /// would be a new cost on every visit.
+    // GL-P3: built once. `DateFormatter` construction is measurably
+    // expensive and this carries no per-call state - the same treatment
+    // `FleetLogFeed`/`HealthCardView` already give theirs.
+    private static let briefingTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.timeStyle = .short
+        f.dateStyle = .none
+        return f
+    }()
     private func fillBriefing(_ content: inout HelmModuleCard.Content, cardWidth: CGFloat) {
         guard let record = AppSettings.shared.morningBriefingRecord, !record.clauses.isEmpty else {
             content.subtitle = AppSettings.shared.morningBriefingEnabled
@@ -543,10 +552,7 @@ final class HomeCanvasController: NSViewController {
                 : "Turn on Morning briefing in Settings to get one short summary each morning.")
             return
         }
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        formatter.dateStyle = .none
-        content.subtitle = "generated \(formatter.string(from: record.generatedAt))"
+        content.subtitle = "generated \(Self.briefingTimeFormatter.string(from: record.generatedAt))"
         content.chip = record.isDegraded ? .warn("offline") : .mute("\(record.sources.count) sources")
 
         // Two columns wide again, and still bounded - see

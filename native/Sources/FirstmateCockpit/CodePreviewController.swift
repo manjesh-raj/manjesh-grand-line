@@ -106,6 +106,9 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     /// Loaded from disk exactly once, on the destination's first mount. A
     /// later re-read would fight whatever the captain has open.
     private var hasRestored = false
+    /// True only while `restoreSnippetsIfNeeded` is building the strip, so
+    /// its per-snippet `addTab` calls do not each write a partial tab order.
+    private var isRestoring = false
     /// How many snippets the first restore found. Zero is the one reading that
     /// can legitimately be stale - see `retryRestoreIfCloneArrivedLate`.
     private var restoredCount = 0
@@ -430,8 +433,12 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     private func restoreSnippetsIfNeeded() {
         guard !hasRestored else { return }
         hasRestored = true
+        isRestoring = true
+        defer { isRestoring = false }
 
-        let saved = store.list()
+        // Audit §6.6a: the captain's own tab order, not filename order - so
+        // renaming a tab no longer moves it on the next launch.
+        let saved = store.listInTabOrder()
         restoredCount = saved.count
         for snippet in saved {
             addTab(name: snippet.id, content: snippet.content, persisted: true, select: false)
@@ -498,6 +505,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         ])
         if shouldSelect { select(key: key) }
         refreshTabBar()
+        persistTabOrder()
         return snippet
     }
 
@@ -537,6 +545,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
             select(key: first.key)
         }
         refreshTabBar()
+        persistTabOrder()
         onDrillSubtitleChanged?()
 
         guard wasPersisted, !content.isEmpty else { return }
@@ -570,6 +579,10 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
             : uniqueName(target, excluding: key)
         snippet.name = landed
         snippet.chip.setName(landed)
+        // The order file holds names, so a rename has to update it - and this
+        // is the whole point of §6.6a: the tab keeps its slot instead of
+        // jumping to wherever its new name sorts.
+        persistTabOrder()
         // A rename can change the extension, which is what decides the
         // language - so re-push it, and stop auto-detecting for this snippet:
         // naming a file `.py` by hand is as deliberate a choice as picking
@@ -579,6 +592,20 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         rebuildLanguagePicker()
         refreshStatusBar()
         onDrillSubtitleChanged?()
+    }
+
+    /// Record the current tab order (audit §6.6a).
+    ///
+    /// Only *persisted* snippets: a brand-new empty tab has no file yet, so
+    /// naming it here would record an entry with nothing behind it - and,
+    /// because `saveOrder` is a no-op when nothing changed, that also means
+    /// opening a scratch tab never dirties the git subtree.
+    ///
+    /// Not called during restore: `addTab` runs once per snippet there, and
+    /// each intermediate call would write a partial order.
+    private func persistTabOrder() {
+        guard !isRestoring else { return }
+        store.saveOrder(open.filter(\.persisted).map(\.name))
     }
 
     private func refreshTabBar() {
@@ -657,7 +684,14 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
 
         autoDetectLanguageIfNeeded(for: snippet)
         store.save(name: snippet.name, content: content)
+        let wasPersisted = snippet.persisted
         snippet.persisted = true
+        // A scratch tab that just earned a file joins the order for the first
+        // time (and auto-detection above may have renamed it). Guarded on the
+        // transition so ordinary typing does not re-write the sidecar on
+        // every keystroke - `saveOrder` would no-op anyway, but not reading
+        // the file at all is cheaper still.
+        if !wasPersisted { persistTabOrder() }
         refreshStatusBar()
         onDrillSubtitleChanged?()
     }
@@ -688,6 +722,10 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
                 : uniqueName(target, excluding: snippet.key)
             snippet.name = landed
             snippet.chip.setName(landed)
+            // Picking a language renames the file (the extension *is* the
+            // language here), so the order sidecar has to follow or the tab
+            // moves on the next launch - the exact thing §6.6a is about.
+            persistTabOrder()
         }
         if overridden { snippet.languageOverridden = true }
         webView.call("setLanguage", payload: ["id": snippet.key, "language": language.id])
@@ -696,6 +734,23 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     }
 
     // MARK: Actions
+
+    /// Open (or reveal) one saved snippet by name - ⌘K's landing action
+    /// (audit §6.6b).
+    ///
+    /// A snippet's filename *is* its identity here (see `CodePreviewStore`'s
+    /// header), so the name is the whole key. An already-open tab is selected
+    /// rather than duplicated; anything else is loaded from the store into a
+    /// new tab. A name the store no longer holds does nothing rather than
+    /// opening an empty tab under a dead name.
+    func openSnippet(named name: String) {
+        if let existing = open.first(where: { $0.name == name }) {
+            select(key: existing.key)
+            return
+        }
+        guard let snippet = store.list().first(where: { $0.id == name }) else { return }
+        _ = addTab(name: snippet.id, content: snippet.content, persisted: true, select: true)
+    }
 
     @objc private func newSnippetTapped() {
         addTab(name: nextUntitledName(), content: "", persisted: false, select: true)
