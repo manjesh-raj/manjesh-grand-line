@@ -183,6 +183,193 @@ final class StickyBoardCanvasView: NSView {
     }
 }
 
+/// Shared scaffolding for a sticky note's two handles - the header (move) and
+/// the bottom-right grip (resize).
+///
+/// **Why this exists at all.** Both handles shipped as plain `NSView`s with
+/// nothing but raw mouse event handlers: no accessibility markup, no role, no
+/// label, and no keyboard path. Everything else about a note was already
+/// mouse-free (the title and body are real text controls, and delete is a
+/// real menu item on a real `NSButton`), so position and size were the one
+/// complete VoiceOver dead end on this page - a captain using the keyboard
+/// could write a note and never place it.
+///
+/// The fix is the two halves AppKit wants for a control like this, and this
+/// app's own GL-16 accessibility pass already established both on
+/// `HoverHighlightView`:
+///
+///   - **Keyboard**: the handle takes focus (`acceptsFirstResponder` +
+///     `canBecomeKeyView`), shows a real system focus ring rather than
+///     `focusRingType = .none` (a view that is a control by role has to show
+///     where the keyboard is), and arrow keys nudge it. Shift+arrow takes the
+///     larger step, matching how every canvas app treats a nudge.
+///   - **VoiceOver**: the handle is a real accessibility element with the
+///     `.handle` role, a label naming *which* note it belongs to (a board of
+///     eight notes reading "handle" eight times is not an improvement), and
+///     four `NSAccessibilityCustomAction`s so the four directions are
+///     reachable straight from the rotor without knowing the arrow-key
+///     binding exists.
+///
+/// **Nudges are coalesced before they are persisted**, deliberately, because
+/// this file's own rule for the mouse is that only a drag's *end* is written
+/// (see `StickyNoteView`'s wiring comment). A held arrow key repeats at
+/// roughly 25Hz, and persisting each repeat would turn one gesture into
+/// dozens of YAML writes for exactly the reason the mouse path avoids. The
+/// visual move happens on every keypress; the write happens once the keypress
+/// run stops.
+class StickyNoteHandleView: NSView {
+    /// The note this handle belongs to, in the words a captain would use -
+    /// its title, or a fallback when the note has none yet. Kept current by
+    /// `StickyNoteView`, which owns the title field.
+    var noteDescription: String = ""
+
+    /// One arrow press. Small enough to place a note precisely, large enough
+    /// that crossing the board does not take a hundred presses - which is
+    /// what Shift is for.
+    static let nudgeStep: CGFloat = 8
+    static let coarseNudgeStep: CGFloat = 40
+
+    /// How long a run of keypresses has to stop for before the result is
+    /// written. Comfortably longer than the ~40ms key-repeat interval, and
+    /// short enough that a captain who nudges once and tabs away has already
+    /// been saved by the time they get anywhere.
+    static let commitDelay: TimeInterval = 0.35
+
+    private var commitWorkItem: DispatchWorkItem?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        // GL-16: a real system focus ring, drawn from this view's own bounds
+        // (`drawFocusRingMask`). Without it a keyboard captain can focus a
+        // handle and have no idea they have.
+        focusRingType = .exterior
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    // MARK: Subclass hooks
+
+    /// Apply one step. `dx`/`dy` are in arrow-key direction terms - right and
+    /// **down** positive - which is also the canvas's own flipped coordinate
+    /// sense, so no sign flip is needed here (unlike the mouse paths, which
+    /// receive unflipped window coordinates).
+    /// Returns whether anything actually changed, so a nudge into a wall does
+    /// not schedule a pointless write or report success to VoiceOver.
+    @discardableResult
+    func applyNudge(dx: CGFloat, dy: CGFloat) -> Bool { false }
+
+    /// Persist whatever `applyNudge` has been moving. Called once, after a
+    /// run of nudges settles.
+    func commitNudges() {}
+
+    /// "Move" / "Resize" - the verb this handle's label and custom actions
+    /// are built from.
+    var handleVerb: String { "" }
+
+    /// The four rotor actions, in the order VoiceOver will read them.
+    var directionalActionNames: [(name: String, dx: CGFloat, dy: CGFloat)] { [] }
+
+    // MARK: Keyboard
+
+    override var acceptsFirstResponder: Bool { true }
+    override var canBecomeKeyView: Bool { !isHiddenOrHasHiddenAncestor }
+
+    override func becomeFirstResponder() -> Bool {
+        noteFocusRingMaskChanged()
+        return super.becomeFirstResponder()
+    }
+
+    override func resignFirstResponder() -> Bool {
+        // A run of nudges that ends because focus left is still a finished
+        // run - never leave the last one unwritten.
+        flushPendingCommit()
+        noteFocusRingMaskChanged()
+        return super.resignFirstResponder()
+    }
+
+    override var focusRingMaskBounds: NSRect { bounds }
+
+    override func drawFocusRingMask() {
+        NSBezierPath(roundedRect: bounds, xRadius: 3, yRadius: 3).fill()
+    }
+
+    override func keyDown(with event: NSEvent) {
+        let step = event.modifierFlags.contains(.shift) ? Self.coarseNudgeStep : Self.nudgeStep
+        // 123/124/126/125 = left/right/up/down, the four `kVK_*Arrow` codes.
+        let delta: (CGFloat, CGFloat)?
+        switch event.keyCode {
+        case 123: delta = (-step, 0)
+        case 124: delta = (step, 0)
+        case 126: delta = (0, -step)
+        case 125: delta = (0, step)
+        default: delta = nil
+        }
+        guard let delta else {
+            super.keyDown(with: event)
+            return
+        }
+        nudgeAndScheduleCommit(dx: delta.0, dy: delta.1)
+    }
+
+    /// The one path both the keyboard and the rotor actions go through.
+    @discardableResult
+    func nudgeAndScheduleCommit(dx: CGFloat, dy: CGFloat) -> Bool {
+        let moved = applyNudge(dx: dx, dy: dy)
+        guard moved else { return false }
+        commitWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.commitWorkItem = nil
+            self?.commitNudges()
+        }
+        commitWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.commitDelay, execute: work)
+        return true
+    }
+
+    /// Write immediately rather than waiting out the coalescing delay.
+    func flushPendingCommit() {
+        guard let pending = commitWorkItem else { return }
+        pending.cancel()
+        commitWorkItem = nil
+        commitNudges()
+    }
+
+    // MARK: Accessibility (GL-16)
+
+    override func isAccessibilityElement() -> Bool { true }
+
+    override func accessibilityRole() -> NSAccessibility.Role? { .handle }
+
+    override func accessibilityLabel() -> String? {
+        noteDescription.isEmpty ? handleVerb : "\(handleVerb) note: \(noteDescription)"
+    }
+
+    override func accessibilityHelp() -> String? {
+        "Use the arrow keys to \(handleVerb.lowercased()) this note. Hold Shift for a bigger step."
+    }
+
+    override func accessibilityCustomActions() -> [NSAccessibilityCustomAction]? {
+        directionalActionNames.map { entry in
+            NSAccessibilityCustomAction(name: entry.name) { [weak self] in
+                guard let self else { return false }
+                let moved = self.nudgeAndScheduleCommit(dx: entry.dx, dy: entry.dy)
+                // A rotor action is a discrete, deliberate act rather than one
+                // repeat of a held key, so there is nothing to coalesce with -
+                // write it straight away.
+                if moved { self.flushPendingCommit() }
+                return moved
+            }
+        }
+    }
+
+    /// Focus follows a real click too, so the keyboard path is discoverable
+    /// the moment a captain has dragged a note once - and so a VoiceOver
+    /// cursor landing here matches where the keyboard is.
+    func takeFocus() {
+        window?.makeFirstResponder(self)
+    }
+}
+
 /// The note card's header row - the drag handle. Deliberately the ONLY
 /// draggable region of a note: scoping the drag to this narrow strip (rather
 /// than the whole card, or hijacking the body `NSTextView`'s own
@@ -193,7 +380,7 @@ final class StickyBoardCanvasView: NSView {
 /// exactly this class of bug - AGENTS.md's "no minimum-movement threshold"
 /// gotcha) is what stops an ordinary click-to-select-this-note from being
 /// read as a drag on the first sub-pixel of trackpad jitter.
-final class StickyNoteHeaderView: NSView {
+final class StickyNoteHeaderView: StickyNoteHandleView {
     /// Called with the new top-left origin (already clamped by the canvas)
     /// on every drag update past the threshold.
     var onDragUpdate: ((CGPoint) -> Void)?
@@ -205,7 +392,31 @@ final class StickyNoteHeaderView: NSView {
     private var originAtPress: CGPoint = .zero
     private var isDragging = false
 
+    // MARK: Keyboard / VoiceOver (see `StickyNoteHandleView`)
+
+    override var handleVerb: String { "Move" }
+
+    override var directionalActionNames: [(name: String, dx: CGFloat, dy: CGFloat)] {
+        let step = Self.nudgeStep
+        return [("Move Left", -step, 0), ("Move Right", step, 0),
+                ("Move Up", 0, -step), ("Move Down", 0, step)]
+    }
+
+    override func applyNudge(dx: CGFloat, dy: CGFloat) -> Bool {
+        guard let note = superview else { return false }
+        let proposed = CGPoint(x: note.frame.origin.x + dx, y: note.frame.origin.y + dy)
+        let clamped = (note.superview as? StickyBoardCanvasView)?
+            .clamp(proposed, size: note.frame.size) ?? proposed
+        guard clamped != note.frame.origin else { return false }
+        note.setFrameOrigin(clamped)
+        onDragUpdate?(clamped)
+        return true
+    }
+
+    override func commitNudges() { onDragEnd?() }
+
     override func mouseDown(with event: NSEvent) {
+        takeFocus()
         pressLocation = event.locationInWindow
         originAtPress = superview?.frame.origin ?? .zero
         isDragging = false
@@ -252,7 +463,7 @@ final class StickyNoteHeaderView: NSView {
 /// It carries the same minimum-movement threshold the drag handle does, so a
 /// click that merely lands on the corner never writes a (identical) size to
 /// the store and never wakes the git debounce.
-final class StickyNoteResizeHandleView: NSView {
+final class StickyNoteResizeHandleView: StickyNoteHandleView {
     var onResizeUpdate: ((CGSize) -> Void)?
     var onResizeEnd: (() -> Void)?
 
@@ -270,6 +481,31 @@ final class StickyNoteResizeHandleView: NSView {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    // MARK: Keyboard / VoiceOver (see `StickyNoteHandleView`)
+
+    override var handleVerb: String { "Resize" }
+
+    override var directionalActionNames: [(name: String, dx: CGFloat, dy: CGFloat)] {
+        let step = Self.nudgeStep
+        return [("Increase Width", step, 0), ("Decrease Width", -step, 0),
+                ("Increase Height", 0, step), ("Decrease Height", 0, -step)]
+    }
+
+    /// Right/down grow, matching where the grip sits and which way a mouse
+    /// drag on it moves.
+    override func applyNudge(dx: CGFloat, dy: CGFloat) -> Bool {
+        guard let note = superview else { return false }
+        let proposed = CGSize(width: note.frame.size.width + dx, height: note.frame.size.height + dy)
+        let clamped = (note.superview as? StickyBoardCanvasView)?
+            .clampSize(proposed, at: note.frame.origin) ?? StickyBoardMetrics.clampSize(proposed)
+        guard clamped != note.frame.size else { return false }
+        note.setFrameSize(clamped)
+        onResizeUpdate?(clamped)
+        return true
+    }
+
+    override func commitNudges() { onResizeEnd?() }
 
     func applyInk(_ ink: NSColor) {
         gripColor = ink.withAlphaComponent(0.45)
@@ -304,6 +540,7 @@ final class StickyNoteResizeHandleView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
+        takeFocus()
         pressLocation = event.locationInWindow
         sizeAtPress = superview?.frame.size ?? .zero
         isResizing = false
@@ -402,12 +639,13 @@ final class StickyNoteView: NSView {
         addSubview(header)
 
         timestampLabel.translatesAutoresizingMaskIntoConstraints = false
-        timestampLabel.font = .systemFont(ofSize: 10.5, weight: .bold)
         header.addSubview(timestampLabel)
 
         menuButton.translatesAutoresizingMaskIntoConstraints = false
         menuButton.isBordered = false
-        menuButton.font = .systemFont(ofSize: 13, weight: .bold)
+        // Overwritten by `applyColor()`'s `attributedTitle`; set here so the
+        // button has a sensible intrinsic width before its first colour pass.
+        menuButton.font = .systemFont(ofSize: HelmType.scaled(13), weight: .bold)
         menuButton.target = self
         menuButton.action = #selector(overflowClicked(_:))
         header.addSubview(menuButton)
@@ -512,6 +750,26 @@ final class StickyNoteView: NSView {
         applyColor()
         applyRotation(note.rotationDegrees)
         applyRelativeTimestamp(note.createdAt)
+        refreshHandleDescriptions()
+    }
+
+    /// Names *which* note each handle belongs to, so a board of eight notes
+    /// does not read as eight identical "handle"s under VoiceOver. The title
+    /// is what a captain named the thought; a note that has none yet borrows
+    /// the opening of its body rather than announcing nothing.
+    private func refreshHandleDescriptions() {
+        let title = titleField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = textView.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        let description: String
+        if !title.isEmpty {
+            description = title
+        } else if !body.isEmpty {
+            description = String(body.prefix(40))
+        } else {
+            description = "untitled"
+        }
+        header.noteDescription = description
+        resizeHandle.noteDescription = description
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -531,6 +789,16 @@ final class StickyNoteView: NSView {
         layer?.backgroundColor = HelmTheme.nsColor(color.paperHex).cgColor
         let ink = HelmTheme.nsColor(color.inkHex)
         timestampLabel.textColor = ink
+        // GL-32: a raw `.systemFont(ofSize: 10.5, weight: .bold)` here was
+        // the one piece of text on this page below the app's own readable
+        // floor - `HelmType.chip()` is that exact designed size and weight,
+        // routed through `HelmType.scaled` so it is clamped to
+        // `HelmType.minimumUIPointSize` (11) and follows the captain's chrome
+        // text scale. Set here rather than in `init` so it sits beside the
+        // title's own scaled font: this is the one method that re-derives a
+        // note's type and colour, so a future live re-theme of a note has a
+        // single place to call.
+        timestampLabel.font = HelmType.chip()
         titleField.textColor = ink
         titleField.font = StickyFont.handBold(HelmType.scaled(14))
         titleField.placeholderAttributedString = NSAttributedString(
@@ -544,7 +812,8 @@ final class StickyNoteView: NSView {
         pin.layer?.borderColor = HelmTheme.nsColor(Self.pinEdge).cgColor
         menuButton.attributedTitle = NSAttributedString(
             string: "\u{2022}\u{2022}\u{2022}",
-            attributes: [.foregroundColor: ink, .font: NSFont.systemFont(ofSize: 13, weight: .bold)])
+            attributes: [.foregroundColor: ink,
+                         .font: NSFont.systemFont(ofSize: HelmType.scaled(13), weight: .bold)])
     }
 
     /// A small fixed tilt, applied once at construction from the note's own
@@ -600,12 +869,15 @@ final class StickyNoteView: NSView {
     var debugTitleField: NSTextField { titleField }
     var debugPin: NSView { pin }
     var debugTimestampText: String { timestampLabel.stringValue }
+    var debugTimestampFont: NSFont? { timestampLabel.font }
+    var debugMenuButtonFont: NSFont? { menuButton.font }
     #endif
 }
 
 extension StickyNoteView: NSTextViewDelegate {
     func textDidChange(_ notification: Notification) {
         onTextChanged?(textView.string)
+        refreshHandleDescriptions()
     }
 }
 
@@ -613,5 +885,6 @@ extension StickyNoteView: NSTextFieldDelegate {
     func controlTextDidChange(_ obj: Notification) {
         guard (obj.object as? NSTextField) === titleField else { return }
         onTitleChanged?(titleField.stringValue)
+        refreshHandleDescriptions()
     }
 }

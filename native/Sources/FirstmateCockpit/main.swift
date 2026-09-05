@@ -1574,6 +1574,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_AUDIT_UI_FIXES_TESTS"] == "1" {
     exit(AuditUIFixesSelfTest.run() ? 0 : 1)
 }
 
+// The UI-section findings from `data/grandline-full-app-audit/report.md`
+// (`fm/grandline-audit-ui-fixes`), one case per finding - see
+// FullAppAuditUISelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_FULL_APP_AUDIT_UI_TESTS"] == "1" {
+    exit(FullAppAuditUISelfTest.run() ? 0 : 1)
+}
+
 // B1 (`data/grand-line-e2e-audit/report.md`): same convention, for the Vault
 // page's failed/pending read states - see VaultLoadingStateSelfTest.swift.
 if ProcessInfo.processInfo.environment["FM_RUN_VAULT_LOADING_STATE_TESTS"] == "1" {

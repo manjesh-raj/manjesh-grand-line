@@ -341,7 +341,14 @@ extension ConsoleController {
         updateKubeContextBadgeControls()
         updateIncidentControls()
         incidentCard.applyTheme(theme)
-        if incidentPopover.isShown { renderIncidentCard() }
+        if incidentPopover.isShown {
+            // A theme change while the card is already open has to reach the
+            // popover's own appearance too, not only the card's colours -
+            // `showIncidentCard()` sets it, and an already-shown popover
+            // never goes back through there.
+            incidentPopover.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+            renderIncidentCard()
+        }
 
         // The pane is a distinct surface/card, not a continuation of the
         // terminal - filled with `chromeBackgroundHex` (this app's "surface"

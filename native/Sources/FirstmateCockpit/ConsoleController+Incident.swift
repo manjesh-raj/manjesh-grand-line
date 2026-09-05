@@ -160,6 +160,18 @@ extension ConsoleController {
         guard let button = incidentButton, !button.isHidden else { return }
         renderIncidentCard()
         if !incidentPopover.isShown {
+            // `ThemeManager.swift`'s checklist item 2, the same line the
+            // avatar / notification / Claude-usage / Console-composer /
+            // Recents / Whiteboard popovers have all carried for years, and
+            // the one this newer popover was built without. `IncidentCardView`
+            // derives every colour it paints itself from `theme`, so the card
+            // body was already right - what was not is everything AppKit
+            // resolves semantically inside it (the notes field's editor, the
+            // evidence list's scroller chrome, focus rings), which follows the
+            // OS's own light/dark setting until the popover's appearance says
+            // otherwise. Set on every open, not once at build time: an
+            // incident card outlives several theme changes.
+            incidentPopover.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
             incidentPopover.show(relativeTo: button.bounds, of: button, preferredEdge: .maxY)
         }
     }

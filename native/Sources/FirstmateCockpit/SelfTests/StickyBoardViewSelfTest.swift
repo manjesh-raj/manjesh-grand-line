@@ -61,6 +61,8 @@ enum StickyBoardViewSelfTest {
         checkCorkRenders(controller, check)
         checkDragMechanics(controller, window, check)
         checkResizeMechanics(controller, window, check)
+        checkTypeFloor(controller, check)
+        checkHandleKeyboardAndAccessibility(controller, window, check)
         checkBoardHeader(controller, check)
         checkDeleteAndUndo(controller, check)
 
@@ -385,6 +387,222 @@ enum StickyBoardViewSelfTest {
         NotificationCenter.default.post(name: NSControl.textDidChangeNotification, object: field)
         check(controller.debugStore.notes.first { $0.id == note.noteID }?.title == "CLUE",
               "editing the title field should persist the title")
+    }
+
+
+    // MARK: 2d. GL-32 - no text on a note renders below the readable floor
+    //
+    // The timestamp used to be a raw `.systemFont(ofSize: 10.5, weight: .bold)`
+    // set once in `init`, i.e. below `HelmType.minimumUIPointSize` (11) and
+    // deaf to the captain's chrome text scale. It is `HelmType.chip()` now -
+    // the same designed size and weight, routed through `HelmType.scaled`.
+    // Asserting the *resolved point size* rather than grepping for the call
+    // is what makes this catch a regression to any other raw literal, not
+    // just to the one that was there.
+
+    private static func checkTypeFloor(_ controller: StickyBoardController, _ check: (Bool, String) -> Void) {
+        guard let note = controller.debugNoteViews.values.first else {
+            check(false, "no note view to measure type on")
+            return
+        }
+        let floor = HelmType.minimumUIPointSize * ChromeTextScale.shared.scale
+        guard let stamp = note.debugTimestampFont else {
+            check(false, "the note's timestamp label should carry an explicit font")
+            return
+        }
+        check(stamp.pointSize >= floor - 0.001,
+              "the note timestamp renders at \(stamp.pointSize)pt, below the app's own "
+              + "\(floor)pt readable floor (GL-32)")
+        check(abs(stamp.pointSize - HelmType.chip().pointSize) < 0.001,
+              "the note timestamp should be the shared `HelmType.chip()` role, "
+              + "was \(stamp.pointSize)pt against \(HelmType.chip().pointSize)pt")
+        if let menu = note.debugMenuButtonFont {
+            check(menu.pointSize >= floor - 0.001,
+                  "the note overflow glyph renders at \(menu.pointSize)pt, below the "
+                  + "\(floor)pt floor")
+        }
+    }
+
+    // MARK: 2e. The handles are reachable without a mouse
+    //
+    // Before this, a note's position and size were the one thing on this page
+    // that needed a mouse: the header and the corner grip were plain
+    // `NSView`s with raw mouse handlers, no accessibility markup at all, and
+    // no keyboard path - so a VoiceOver captain could write a note and never
+    // place it. Everything asserted here drives the REAL views (a real
+    // `NSEvent` through `keyDown`, a real `NSAccessibilityCustomAction`
+    // handler), never a reimplementation.
+
+    private static func checkHandleKeyboardAndAccessibility(_ controller: StickyBoardController,
+                                                            _ window: NSWindow,
+                                                            _ check: (Bool, String) -> Void) {
+        // Take the note this case creates, by id difference - NOT
+        // `debugNoteViews.values.first`/`.last`, which is a dictionary order
+        // and picks an arbitrary note. An earlier case in this file resizes
+        // one to the metric maximum, so grabbing the wrong one makes every
+        // "the grip widened it" assertion pass or fail by luck.
+        let idsBefore = Set(controller.debugNoteViews.keys)
+        controller.debugNewNote()
+        guard let newID = controller.debugNoteViews.keys.first(where: { !idsBefore.contains($0) }),
+              let note = controller.debugNoteViews[newID] else {
+            check(false, "expected a fresh note view for the keyboard checks")
+            return
+        }
+        let header = note.debugHeader
+        let grip = note.debugResizeHandle
+
+        // Give the note a real title through the same delegate callback
+        // AppKit itself invokes, so the handle labels are built the way they
+        // are in production rather than by poking a private property.
+        note.debugTitleField.stringValue = "Renew the cert"
+        note.controlTextDidChange(Notification(name: NSControl.textDidChangeNotification,
+                                               object: note.debugTitleField))
+
+        // Park it well inside the canvas so every direction has room - a
+        // nudge into a wall is its own case below.
+        note.setFrameOrigin(CGPoint(x: 400, y: 300))
+
+        // --- Focus and focus ring -------------------------------------
+        for (label, handle) in [("header", header as StickyNoteHandleView), ("resize grip", grip)] {
+            check(handle.acceptsFirstResponder, "the \(label) should be focusable from the keyboard")
+            check(handle.canBecomeKeyView, "the \(label) should be in the key view loop")
+            check(handle.focusRingType != .none,
+                  "the \(label) must show a focus ring - a control the keyboard can reach has to "
+                  + "say where the keyboard is (GL-16)")
+        }
+
+        // --- VoiceOver markup ------------------------------------------
+        check(header.isAccessibilityElement(), "the drag header should be a VoiceOver element")
+        check(header.accessibilityRole() == .handle,
+              "the drag header should announce as a handle, was \(String(describing: header.accessibilityRole()))")
+        let headerLabel = header.accessibilityLabel() ?? ""
+        check(headerLabel.contains("Move") && headerLabel.contains("Renew the cert"),
+              "the drag header's label should say what it does AND which note, was '\(headerLabel)'")
+        check((header.accessibilityHelp() ?? "").lowercased().contains("arrow"),
+              "the drag header's help should mention the arrow keys")
+
+        // ...and they are genuinely IN the accessibility tree, not merely
+        // answering the right things when asked. A view whose
+        // `isAccessibilityElement()` is false is *ignored*, and AppKit hoists
+        // its children in its place - so "the override returns true" and "an
+        // assistive client can actually reach it" are two different claims,
+        // and only the second one is the fix.
+        let exposed = (note.accessibilityChildren() ?? []).compactMap { $0 as? NSObject }
+        check(exposed.contains(where: { $0 === header }),
+              "the drag header should appear in the note's own accessibility children, "
+              + "so a VoiceOver cursor can actually land on it")
+        check(exposed.contains(where: { $0 === grip }),
+              "the resize grip should appear in the note's own accessibility children")
+
+        check(grip.isAccessibilityElement(), "the resize grip should be a VoiceOver element")
+        check(grip.accessibilityRole() == .handle,
+              "the resize grip should announce as a handle, was \(String(describing: grip.accessibilityRole()))")
+        let gripLabel = grip.accessibilityLabel() ?? ""
+        check(gripLabel.contains("Resize") && gripLabel.contains("Renew the cert"),
+              "the resize grip's label should say what it does AND which note, was '\(gripLabel)'")
+
+        // --- Arrow keys move the note ----------------------------------
+        let before = note.frame.origin
+        header.keyDown(with: arrowEvent(keyCode: 124, window: window))
+        let afterRight = note.frame.origin
+        check(abs(afterRight.x - (before.x + StickyNoteHandleView.nudgeStep)) < 0.001
+              && afterRight.y == before.y,
+              "right arrow on the header should move the note one nudge right, "
+              + "went \(before) -> \(afterRight)")
+
+        header.keyDown(with: arrowEvent(keyCode: 125, window: window, shift: true))
+        let afterShiftDown = note.frame.origin
+        check(abs(afterShiftDown.y - (afterRight.y + StickyNoteHandleView.coarseNudgeStep)) < 0.001,
+              "shift+down should take the coarse step, went \(afterRight) -> \(afterShiftDown)")
+
+        // --- ...and the move is persisted, once, after the run settles ---
+        let storeBeforeCommit = controller.debugStore.notes.first { $0.id == note.noteID }
+        check(storeBeforeCommit.map { abs($0.x - Double(afterShiftDown.x)) > 0.5 } ?? false,
+              "a nudge should not have been written yet - this file's own rule is that only the "
+              + "END of a move is persisted, and a held arrow key repeats at ~25Hz")
+        drainMainQueue(for: StickyNoteHandleView.commitDelay + 0.3)
+        let storeAfterCommit = controller.debugStore.notes.first { $0.id == note.noteID }
+        check(storeAfterCommit != nil, "the nudged note should still exist in the store")
+        if let storeAfterCommit {
+            check(abs(storeAfterCommit.x - Double(afterShiftDown.x)) < 0.5
+                  && abs(storeAfterCommit.y - Double(afterShiftDown.y)) < 0.5,
+                  "once the nudge run settles the store should hold where the note actually is, "
+                  + "store=(\(storeAfterCommit.x), \(storeAfterCommit.y)) "
+                  + "view=(\(afterShiftDown.x), \(afterShiftDown.y))")
+        }
+
+        // --- The rotor actions are real, and they act -------------------
+        let moveActions = header.accessibilityCustomActions() ?? []
+        let moveNames = moveActions.map(\.name)
+        check(Set(moveNames) == Set(["Move Left", "Move Right", "Move Up", "Move Down"]),
+              "the drag header should offer all four directions to VoiceOver, offered \(moveNames)")
+        guard let moveUp = moveActions.first(where: { $0.name == "Move Up" }) else {
+            check(false, "no 'Move Up' custom action")
+            return
+        }
+        let beforeRotor = note.frame.origin
+        let performed = moveUp.handler?() ?? false
+        check(performed, "performing the 'Move Up' rotor action should report success")
+        check(abs(note.frame.origin.y - (beforeRotor.y - StickyNoteHandleView.nudgeStep)) < 0.001,
+              "the 'Move Up' rotor action should actually move the note, "
+              + "went \(beforeRotor) -> \(note.frame.origin)")
+        // A rotor action is a discrete, deliberate act - it writes straight
+        // away rather than waiting out the coalescing delay a held key needs.
+        let storeAfterRotor = controller.debugStore.notes.first { $0.id == note.noteID }
+        check(storeAfterRotor.map { abs($0.y - Double(note.frame.origin.y)) < 0.5 } ?? false,
+              "a rotor action should persist immediately, without the key-repeat coalescing delay")
+
+        // --- Resizing from the keyboard ---------------------------------
+        let sizeBefore = note.frame.size
+        grip.keyDown(with: arrowEvent(keyCode: 124, window: window))
+        let sizeAfter = note.frame.size
+        check(abs(sizeAfter.width - (sizeBefore.width + StickyNoteHandleView.nudgeStep)) < 0.001,
+              "right arrow on the grip should widen the note, went \(sizeBefore) -> \(sizeAfter)")
+        grip.keyDown(with: arrowEvent(keyCode: 125, window: window))
+        check(abs(note.frame.size.height - (sizeAfter.height + StickyNoteHandleView.nudgeStep)) < 0.001,
+              "down arrow on the grip should make the note taller")
+        let resizeNames = (grip.accessibilityCustomActions() ?? []).map(\.name)
+        check(Set(resizeNames) == Set(["Increase Width", "Decrease Width", "Increase Height", "Decrease Height"]),
+              "the resize grip should offer all four size actions to VoiceOver, offered \(resizeNames)")
+        drainMainQueue(for: StickyNoteHandleView.commitDelay + 0.3)
+        let sizedNote = controller.debugStore.notes.first { $0.id == note.noteID }
+        check(sizedNote.map { abs($0.width - Double(note.frame.size.width)) < 0.5 } ?? false,
+              "a keyboard resize should persist once the run settles")
+
+        // --- A nudge into a wall changes nothing -------------------------
+        note.setFrameOrigin(.zero)
+        header.keyDown(with: arrowEvent(keyCode: 123, window: window))
+        check(note.frame.origin == .zero,
+              "a nudge into the canvas edge must not move the note, went to \(note.frame.origin)")
+        guard let leftAction = (header.accessibilityCustomActions() ?? [])
+            .first(where: { $0.name == "Move Left" }) else {
+            check(false, "no 'Move Left' custom action")
+            return
+        }
+        check(leftAction.handler?() == false,
+              "a rotor action that cannot move the note must report failure, so VoiceOver says so "
+              + "rather than announcing a move that did not happen")
+    }
+
+    /// A real arrow-key `NSEvent`. 123/124/125/126 are left/right/down/up.
+    private static func arrowEvent(keyCode: UInt16, window: NSWindow, shift: Bool = false) -> NSEvent {
+        NSEvent.keyEvent(with: .keyDown,
+                         location: .zero,
+                         modifierFlags: shift ? [.shift] : [],
+                         timestamp: 0,
+                         windowNumber: window.windowNumber,
+                         context: nil,
+                         characters: "",
+                         charactersIgnoringModifiers: "",
+                         isARepeat: false,
+                         keyCode: keyCode)!
+    }
+
+    /// Turns the main run loop for real, so a `DispatchQueue.main.asyncAfter`
+    /// the production code scheduled actually fires. A `sleep` would not run
+    /// it at all.
+    private static func drainMainQueue(for seconds: TimeInterval) {
+        RunLoop.main.run(until: Date().addingTimeInterval(seconds))
     }
 
     // MARK: 2c. The board's own case-file header

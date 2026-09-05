@@ -126,6 +126,9 @@ NEEDS_SESSION=(
   "FM_RUN_VAULT_LOADING_STATE_TESTS"
   "FM_RUN_AUDIT_UI_FIXES_TESTS"
   "FM_RUN_AUDIT_PERF_FIXES_TESTS"
+  # The full-app audit's UI findings: mounts a real host-page `ConsoleController`
+  # and creates a real `NSStatusItem`, both of which need a window server.
+  "FM_RUN_FULL_APP_AUDIT_UI_TESTS"
   # Visibility/occlusion has no meaning without a real, ordered-front window.
   "FM_RUN_TERMINAL_DISPLAY_GATING_TESTS"
   # Renders a real terminal and reads its pixels back: a SwiftTerm view never
