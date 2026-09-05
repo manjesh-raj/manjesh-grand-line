@@ -43,7 +43,7 @@
 // tasks that had to hunt down and patch every harness individually to add
 // `FM_DOCS_RUNBOOKS_DIR`).
 
-import AppKit
+import CoreGraphics
 import Foundation
 import Yaml
 
