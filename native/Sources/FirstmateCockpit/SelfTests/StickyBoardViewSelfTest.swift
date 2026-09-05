@@ -394,11 +394,24 @@ enum StickyBoardViewSelfTest {
         check(!title.stringValue.isEmpty, "the board should carry its own case-file title")
         check(title.font?.fontName != NSFont.systemFont(ofSize: 15).fontName,
               "the board title should render in the typewriter voice, got \(title.font?.fontName ?? "nil")")
-        // Deliberately below the hero floor `DaylightDrillPageSelfTest`
-        // polices: this is a label stuck on the board, not a second page title
-        // competing with the drill header's own.
-        check((title.font?.pointSize ?? 99) < 20,
-              "the board title must stay under the 20pt hero floor, was \(title.font?.pointSize ?? -1)")
+        // `fm/grandline-sticky-board-header-size-3x`: the captain reviewed
+        // the original, deliberately-under-20pt header live and asked for it
+        // at roughly 3x its point size instead - a second, sanctioned
+        // exception on top of the first (this header stays exempt from
+        // `DaylightDrillPageSelfTest`'s general hero-floor sweep regardless,
+        // since that check never covered Sticky Board to begin with; it only
+        // visits Review and Tasks). What this guards now is that the *new*
+        // sanctioned size actually shipped and stays roughly 3x the
+        // documented original 15pt (i.e. ~45pt) rather than silently
+        // drifting back down toward the old floor, or ballooning well past
+        // what "roughly 3x" was ever meant to cover.
+        let originalPointSize: CGFloat = 15
+        let expectedScale: CGFloat = 3
+        let expected = originalPointSize * expectedScale
+        let actual = title.font?.pointSize ?? -1
+        check(actual >= expected - 5 && actual <= expected + 5,
+              "the board title should render at roughly \(expectedScale)x its original "
+              + "\(originalPointSize)pt (~\(expected)pt), was \(actual)")
 
         // The pill states something true rather than a permanent sticker: a
         // board with notes is ACTIVE, an empty one is not (GL-14's rule - an
