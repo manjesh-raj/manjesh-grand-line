@@ -60,10 +60,11 @@ final class FleetController: NSViewController {
 
     private let greetingLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
-    /// A labeled `HelmButton(.quiet)`, matching the prototype's own page
-    /// header (and every other page's refresh action) rather than the bare
-    /// borderless glyph tucked beside the greeting this page used to have.
-    private let refreshButton = HelmButton(title: "Refresh", variant: .quiet, symbol: "arrow.clockwise")
+    /// A labeled `HelmButton(.primary)` - a filled accent pill matching Setup
+    /// > Updates' own "Refresh" action, so every refresh-style button in the
+    /// app now shares one real, theme-aware definition rather than each page
+    /// picking its own muted `.quiet` look.
+    private let refreshButton = HelmButton(title: "Refresh", variant: .primary, symbol: "arrow.clockwise")
 
     /// The answer banner is the app's shared `HelmAccentRow` now, not a
     /// hand-rolled tinted slab with a text glyph in it. The prototype renders

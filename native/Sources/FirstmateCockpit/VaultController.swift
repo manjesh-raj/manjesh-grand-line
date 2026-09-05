@@ -69,12 +69,11 @@ final class VaultController: NSViewController, DaylightDrillActions {
     // Daylight §6.4: the page's own standing subtitle row is gone - the drill
     // header carries that line now (`drillHeaderSubtitle`), computed from the
     // same counts, and Refresh moved into its action cluster.
-    // A labeled quiet button ("Refresh" + icon), not a bare icon-only one -
-    // matches this page's own reviewed design pass and the labeled toolbar
-    // controls Console already established (`HelmPageToolbar.labeledButton`'s
-    // own doc comment names this exact "named feature, not a bare glyph"
-    // treatment).
-    private let refreshButton = HelmButton(title: "Refresh", variant: .quiet, symbol: "arrow.clockwise")
+    // A filled accent pill, matching Setup > Updates' own "Refresh" - one
+    // real, shared, theme-aware definition (`FleetController`,
+    // `ReviewController`, `HomeCanvasController`, `KubernetesController`
+    // follow the same recipe) rather than a page-local muted `.quiet` look.
+    private let refreshButton = HelmButton(title: "Refresh", variant: .primary, symbol: "arrow.clockwise")
 
     // Whether `av` itself is installed - checked in the background (reusing
     // the same `UpdatesSource`/`DependencyCatalog` "automic-vault" entry the
