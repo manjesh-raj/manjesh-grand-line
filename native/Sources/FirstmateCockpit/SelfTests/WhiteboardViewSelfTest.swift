@@ -92,6 +92,7 @@ enum WhiteboardViewSelfTest {
         }
         check(!controller.debugOverlayVisible, "the overlay should be gone once the canvas is ready")
 
+        checkThemeAppearance(controller, check)
         checkSceneLoading(controller, check)
         checkFrameChildrenSafetyNet(controller, check)
         checkComposerDrawsOntoTheCanvas(controller, check)
@@ -132,6 +133,43 @@ enum WhiteboardViewSelfTest {
         view.onPageError = { reported = $0 }
         view.debugHandle(message: ["type": "error", "message": "boom"])
         check(reported == "boom", "a page error should surface with its own message")
+    }
+
+    // MARK: Theme correctness of the native chrome (not the embedded canvas)
+
+    /// `ThemeManager.swift`'s checklist item 2, and the same gap Sticky Board
+    /// and Code Preview shipped and were fixed for
+    /// (`fm/grandline-sticky-code-preview-polish`): a `wantsLayer`-backed root
+    /// view can track a theme's own layer-fill colours perfectly while every
+    /// *system-semantic* colour in its subtree - the composer popover's
+    /// scroller/field-editor/checkbox chrome, focus rings, any `NSMenu` -
+    /// keeps resolving against the OS's own light/dark setting instead,
+    /// because nothing ever forced `view.appearance`. That is a distinct
+    /// defect from anything the embedded Excalidraw canvas paints (its own
+    /// light/dark concept is pushed separately via `pushTheme()`'s
+    /// `setTheme` bridge call) - this checks the native AppKit shell only.
+    ///
+    /// Sweeps a Daylight-family pair (`daylight`/`dusk`) and a legacy pair
+    /// (`helm-light`/`helm-dark`) via `debugApplyTheme` - never
+    /// `ThemeManager.shared.setTheme`, which persists to real `UserDefaults`
+    /// and would clobber the captain's own saved preference on a shared dev
+    /// machine (`StickyBoardViewSelfTest`'s own `checkThemeSweep` established
+    /// this exact pattern).
+    private static func checkThemeAppearance(_ controller: WhiteboardController, _ check: (Bool, String) -> Void) {
+        let themeIDs = ["daylight", "dusk", "helm-light", "helm-dark"]
+        for id in themeIDs {
+            guard let theme = HelmTheme.theme(id: id) else {
+                check(false, "no HelmTheme registered for id \(id)")
+                continue
+            }
+            controller.debugApplyTheme(theme)
+            let dark = theme.mode == .dark
+            let wantAqua: NSAppearance.Name = dark ? .darkAqua : .aqua
+            let effective = controller.view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
+            check(effective == wantAqua,
+                  "\(id): the page's effectiveAppearance should be \(wantAqua.rawValue), was \(effective?.rawValue ?? "nil") "
+                  + "- system-semantic colours (scrollers, field editors, menus) follow this, not the layer fills")
+        }
     }
 
     // MARK: Scene loading

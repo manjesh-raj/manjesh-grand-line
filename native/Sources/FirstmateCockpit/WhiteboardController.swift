@@ -301,6 +301,16 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
     // MARK: Theme
 
     private func applyTheme() {
+        // `ThemeManager.swift`'s checklist item 2 - Sticky Board and Code
+        // Preview shipped this same gap and it produced the identical "half
+        // themed" report: layer-backed fills (this page's root, card,
+        // overlay) already tracked the theme, so a self-test asserting only
+        // those colours would still pass, while every system-semantic colour
+        // in this subtree (the composer's scroller/field editor/checkbox
+        // chrome, focus rings) followed the OS's own light/dark instead of
+        // the in-app one. Force it here too.
+        view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
         HelmCard.applyCardSurface(to: canvasCard, theme: theme,
                                   cornerRadius: HelmMetrics.rCard,
@@ -335,6 +345,15 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
     }
     func debugSnapshotBoard(completion: @escaping (Result<[[String: Any]], WhiteboardBridgeError>) -> Void) {
         snapshotBoard(completion: completion)
+    }
+    /// Re-themes this instance directly, bypassing `ThemeManager.shared.
+    /// setTheme` - which persists to real `UserDefaults` - so a self-test
+    /// theme sweep never clobbers the captain's own saved preference on a
+    /// shared dev machine (`StickyBoardController.debugApplyTheme`/
+    /// `UnifiedSearch.swift`'s own `debugApplyTheme` establish this pattern).
+    func debugApplyTheme(_ theme: HelmTheme) {
+        self.theme = theme
+        applyTheme()
     }
     #endif
 }
