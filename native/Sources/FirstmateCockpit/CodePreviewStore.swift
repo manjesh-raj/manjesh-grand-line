@@ -333,6 +333,77 @@ final class CodePreviewStore {
             .sorted { $0.id.localizedStandardCompare($1.id) == .orderedAscending }
     }
 
+    /// The snippets in the captain's own tab order (audit §6.6a).
+    ///
+    /// **The cost this pays back.** A snippet's filename is its identity here,
+    /// with no metadata sidecar - which is what makes the repo on GitHub show
+    /// exactly the tabs that are open, and what keeps a snippet's payload a
+    /// real file rather than one escaped line of YAML. The stated price was
+    /// that tab order is filename order, so renaming a tab moves it.
+    ///
+    /// The order file buys that back without giving up any of it: it is
+    /// **hidden, tiny and regenerable**, holds nothing but names, and is
+    /// never the source of truth for what exists - the directory still is.
+    /// Anything on disk but missing from the file is appended in the same
+    /// alphabetical order as before, and anything in the file with no file
+    /// behind it is ignored. Delete it and the panel simply falls back to
+    /// exactly today's behaviour.
+    func listInTabOrder() -> [CodePreviewSnippet] {
+        let snippets = list()
+        let saved = savedOrder()
+        guard !saved.isEmpty else { return snippets }
+
+        var byName = Dictionary(uniqueKeysWithValues: snippets.map { ($0.id, $0) })
+        var ordered: [CodePreviewSnippet] = []
+        for name in saved {
+            if let snippet = byName.removeValue(forKey: name) { ordered.append(snippet) }
+        }
+        // Whatever the order file did not know about keeps `list()`'s own
+        // alphabetical order, so a snippet added on another machine lands
+        // predictably rather than wherever a dictionary happened to put it.
+        ordered.append(contentsOf: snippets.filter { byName[$0.id] != nil })
+        return ordered
+    }
+
+    /// The order sidecar's filename.
+    ///
+    /// Dot-prefixed deliberately: both `list()` and `names()` enumerate with
+    /// `.skipsHiddenFiles`, so a hidden file is excluded from being read back
+    /// as a snippet for free. A visible `order.txt` would show up in the panel
+    /// as a tab named "order.txt".
+    static let orderFileName = ".tab-order"
+
+    private var orderFileURL: URL { root.appendingPathComponent(Self.orderFileName) }
+
+    /// The saved order, or `[]` when there is no file (a first run, or a
+    /// captain who deleted it).
+    func savedOrder() -> [String] {
+        guard let text = try? String(contentsOf: orderFileURL, encoding: .utf8) else { return [] }
+        return text
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// Record the tab order. A no-op when nothing changed, so an ordinary
+    /// select or a content edit never dirties the git subtree.
+    func saveOrder(_ names: [String]) {
+        guard names != savedOrder() else { return }
+        let text = names.joined(separator: "\n") + "\n"
+        do {
+            try AtomicWrite.text(text, to: orderFileURL)
+            PersistenceFailureReporter.reportSuccess()
+        } catch {
+            // GL-10: never a bare `try?`. Losing the order is cosmetic - the
+            // panel falls back to alphabetical - so this reports and carries
+            // on rather than refusing anything.
+            PersistenceFailureReporter.report(what: "code snippet tab order",
+                                              path: orderFileURL.path, error: error)
+            return
+        }
+        gitSync?.markDirty()
+    }
+
     /// Just the filenames, in the same order `list()` returns them, without
     /// reading a single file's contents.
     ///
