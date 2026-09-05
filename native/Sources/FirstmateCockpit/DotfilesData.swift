@@ -238,6 +238,7 @@ enum DotfilesSource {
 
     // MARK: Process plumbing (mirrors UpdatesData.swift's `run`)
 
+
     private typealias RunResult = SubprocessResult
 
     /// This file's `git fetch origin <branch>` is a real network round trip
@@ -246,7 +247,32 @@ enum DotfilesSource {
     private static let gitTimeout: TimeInterval = 180
 
     private static func run(_ executable: String, _ args: [String], cwd: URL? = nil) -> RunResult {
-        Subprocess.run(executable: executable, arguments: args, cwd: cwd,
-                       timeout: gitTimeout, log: AppLog.gitSync)
+        // The same interception point `UpdatesData` carries, for the same
+        // reason - see `UpdatesDataTestSeam`'s own doc comment. Every git read
+        // in this file goes through here, so a suite can drive the real
+        // parsing (branch/remote/ahead-behind/dirty-file handling) against
+        // canned `git` output without needing a real repository, and without
+        // the network round trip `git fetch` performs.
+        #if FM_SELFTESTS
+        DotfilesDataTestSeam.invocations.append((executable, args))
+        if let override = DotfilesDataTestSeam.run { return override(executable, args, cwd) }
+        #endif
+        return Subprocess.run(executable: executable, arguments: args, cwd: cwd,
+                              timeout: gitTimeout, log: AppLog.gitSync)
     }
 }
+
+#if FM_SELFTESTS
+/// `DotfilesData`'s half of the §7 test seam - see `UpdatesDataTestSeam` for
+/// the full reasoning. Compiled out of release entirely (GL-27).
+enum DotfilesDataTestSeam {
+    /// `(executable, args, cwd) -> result`. `nil` means "really run it".
+    static var run: ((String, [String], URL?) -> SubprocessResult)?
+    static var invocations: [(executable: String, args: [String])] = []
+
+    static func reset() {
+        run = nil
+        invocations = []
+    }
+}
+#endif

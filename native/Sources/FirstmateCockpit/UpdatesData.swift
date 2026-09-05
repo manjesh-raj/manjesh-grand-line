@@ -138,8 +138,55 @@ struct UpdateOutcome {
 // `npm -g`/`brew` output). All three now come from `Subprocess`, which drains
 // both streams concurrently and bounds every run.
 
+#if FM_SELFTESTS
+/// The one interception point for every subprocess this file runs.
+///
+/// The full-app audit's §7 found the whole Setup/Bootstrap data layer had
+/// **zero** coverage, for a straightforward reason: `UpdatesSource.check`/
+/// `.update` shell out to real `brew`, `npm`, `git` and `av`, so a suite that
+/// drove them would depend on - and mutate - whatever that machine happens to
+/// have installed. Not a hazard worth taking for a test.
+///
+/// The parsing and status-mapping underneath those calls is where the real
+/// defects have been, though, and it is pure. Two shipped bugs this file's own
+/// comments record: `no-mistakes --version` printing a decoy "v" inside the
+/// word "version" before the real token, and `brew list --versions --cask`
+/// failing outright for a fully-qualified `owner/tap/cask` token. Both were
+/// found live, by hand, with nothing to stop them coming back.
+///
+/// So this seam replaces the *transport* only, exactly where every call
+/// already funnels through, following the `claudePathOverrideForTests`
+/// convention this codebase uses for `claude`. It is compiled out of release
+/// entirely (GL-27), which CI proves separately by asserting the shipped
+/// binary carries no self-test symbols.
+///
+/// Set both closures together: a fake `run` with real `resolveExecutable`
+/// would still depend on what is installed.
+enum UpdatesDataTestSeam {
+    /// `(executable, args, cwd) -> result`. `nil` means "really run it".
+    static var run: ((String, [String], URL?) -> SubprocessResult)?
+    /// `name -> absolute path`, or `nil` to report the tool as missing.
+    static var resolveExecutable: ((String) -> String?)?
+
+    /// Every `(executable, args)` pair the seam saw, in order - so a test can
+    /// assert what was *asked of the tool*, not only what was made of the
+    /// reply. That is the half that catches the fully-qualified-cask bug,
+    /// whose whole symptom is the wrong argument being sent.
+    static var invocations: [(executable: String, args: [String])] = []
+
+    static func reset() {
+        run = nil
+        resolveExecutable = nil
+        invocations = []
+    }
+}
+#endif
+
 private func resolveExecutable(_ name: String) -> String? {
-    Subprocess.resolveExecutable(name)
+    #if FM_SELFTESTS
+    if let override = UpdatesDataTestSeam.resolveExecutable { return override(name) }
+    #endif
+    return Subprocess.resolveExecutable(name)
 }
 
 private typealias RunResult = SubprocessResult
@@ -153,8 +200,12 @@ private typealias RunResult = SubprocessResult
 private let updatesRunTimeout: TimeInterval = 300
 
 private func run(_ executable: String, _ args: [String], cwd: URL? = nil) -> RunResult {
-    Subprocess.run(executable: executable, arguments: args, cwd: cwd,
-                   timeout: updatesRunTimeout, log: AppLog.subprocess)
+    #if FM_SELFTESTS
+    UpdatesDataTestSeam.invocations.append((executable, args))
+    if let override = UpdatesDataTestSeam.run { return override(executable, args, cwd) }
+    #endif
+    return Subprocess.run(executable: executable, arguments: args, cwd: cwd,
+                          timeout: updatesRunTimeout, log: AppLog.subprocess)
 }
 
 private func missingToolOutcome(_ tool: String) -> CheckOutcome {

@@ -13,6 +13,24 @@
 #           the suites that need a real login session or the machine's own
 #           Keychain; that list lives in the script, with a reason per entry,
 #           so CI and local runs can never disagree about what "the tests" are.
+#   test-windowed - the exact complement of the above (`--session-only`): the
+#           ~50 suites that mount real `NSWindow`s and drive real AppKit
+#           layout, accessibility presses, contrast measurement, terminal
+#           rendering and WebKit visibility gating.
+#
+# The full-app audit's §7.1 finding is why the third job exists: before it, a
+# PR merge exercised *none* of that coverage. Every one of those suites was
+# local-run-only, and nothing enforced a local full run before merge - so the
+# app's most painstakingly-built regression guards (the layout gotchas, the
+# contrast floors, the AppKit-cell quirks) were, in practice, opt-in.
+#
+# It is deliberately NON-BLOCKING (`continue-on-error: true`) to start.
+# These suites need a window server, and a GitHub-hosted macOS runner has one
+# only for the primary user - an environment property, not a property of this
+# app. Going red on that would train everyone to ignore a red X, which is
+# worse than the gap it closes. The intent is to flip it to blocking once it
+# has a track record of being green; until then it is real, readable signal on
+# every PR rather than nothing at all.
 #
 # The app itself is never launched. Every `FM_RUN_*` flag is handled before
 # `NSApplication.shared` is touched, so the binary runs headless and exits -
@@ -119,3 +137,45 @@ jobs:
           FM_WHISPER_MODEL_DIR: ${{ runner.temp }}/ci-stores/whisper
           FM_INSTANCE_LOCK_FILE: ${{ runner.temp }}/ci-stores/instance.lock
         run: ./Scripts/run-all-tests.sh --ci --no-build
+
+  test-windowed:
+    name: self-test suites (window-backed)
+    runs-on: macos-14
+    # Non-blocking on purpose - see this file's header for the full reasoning.
+    # In short: these suites need a window server, which is a property of the
+    # runner rather than of this app, and a red X nobody can act on is worse
+    # than the coverage gap it replaces. Flip this to `false` once the job has
+    # a track record of being green.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build
+        run: swift build
+
+      # Deliberately identical to the `test` job's block above. GitHub Actions
+      # supports neither YAML anchors nor a workflow-level `env` that can see
+      # `runner.temp`, so this is duplicated rather than shared - keep the two
+      # in sync. (The app's own `main.swift` self-test redirect block is the
+      # real backstop: it points every store reachable from a bare production
+      # constructor at a scratch directory for any `FM_RUN_*` process, so a
+      # suite cannot reach real data even if a line here is ever missed.)
+      - name: Run the window-backed suites
+        env:
+          FM_HOSTS_FILE: ${{ runner.temp }}/ci-stores/hosts.json
+          FM_KEYS_FILE: ${{ runner.temp }}/ci-stores/keys.json
+          FM_SNIPPETS_FILE: ${{ runner.temp }}/ci-stores/snippets.json
+          FM_SCHEDULES_FILE: ${{ runner.temp }}/ci-stores/schedules.json
+          FM_SHIFT_DIR: ${{ runner.temp }}/ci-stores/tasks
+          FM_DICTATION_DIR: ${{ runner.temp }}/ci-stores/dictation
+          FM_DOCS_DIR: ${{ runner.temp }}/ci-stores/docs
+          FM_DOCS_RUNBOOKS_DIR: ${{ runner.temp }}/ci-stores/runbooks
+          FM_COMMAND_LIBRARY_DIR: ${{ runner.temp }}/ci-stores/commands
+          FM_LOG_ANALYZER_DIR: ${{ runner.temp }}/ci-stores/investigations
+          FM_FLEET_LOG_DIR: ${{ runner.temp }}/ci-stores/fleet-log
+          FM_INCIDENTS_DIR: ${{ runner.temp }}/ci-stores/incidents
+          FM_WHISPER_MODEL_DIR: ${{ runner.temp }}/ci-stores/whisper
+          FM_INSTANCE_LOCK_FILE: ${{ runner.temp }}/ci-stores/instance.lock
+        run: ./Scripts/run-all-tests.sh --session-only --no-build
