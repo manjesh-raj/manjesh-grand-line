@@ -74,6 +74,14 @@ enum KubernetesDestinationSelfTest {
             ("feedBridgeReportsBusyForItsOwnTabOnly", test_feedBridgeReportsBusyForItsOwnTabOnly),
             ("consoleBridgesRefuseWhileTheKubernetesFeedHoldsTheTab", test_consoleBridgesRefuseWhileTheKubernetesFeedHoldsTheTab),
             ("bothDirectionsOfTheCrossBridgeGuardAreWired", test_bothDirectionsOfTheCrossBridgeGuardAreWired),
+
+            // Full-app audit §6.7: the feed tab's deliberate right-clip is
+            // marked on its chip, and the namespace is picked from a real
+            // list instead of typed blind.
+            ("widthPinnedFeedTabIsMarkedOnItsChip", test_widthPinnedFeedTabIsMarkedOnItsChip),
+            ("namespacePickerOffersTheClustersRealNamespaces", test_namespacePickerOffersTheClustersRealNamespaces),
+            ("namespacePickerStaysHonestWhenTheClusterWillNotListThem", test_namespacePickerStaysHonestWhenTheClusterWillNotListThem),
+            ("namespacePickerAndFieldShareOneCommitPath", test_namespacePickerAndFieldShareOneCommitPath),
         ]
 
         var failures = 0
@@ -106,6 +114,14 @@ enum KubernetesDestinationSelfTest {
     NAME                              CPU(CORES)   MEMORY(BYTES)
     search-api-7f9c6d5b4-x2x8p        120m         512Mi
     contract-ingest-worker-0          640m         1922Mi
+    """
+
+    /// Real `kubectl get namespaces` output shape (audit §6.7b).
+    private static let namespacesTable = """
+    NAME              STATUS   AGE
+    default           Active   214d
+    kube-system       Active   214d
+    raas-uat          Active   96d
     """
 
     private static let eventsTable = """
@@ -197,7 +213,8 @@ enum KubernetesDestinationSelfTest {
         // auto-adopted as the feed the moment its session registers, and that
         // fires a real sweep - so an unscripted fake would leave that first
         // batch outstanding for the bridge's full 20s ceiling.
-        harness.answer([("get pods", podsWide), ("top pods", topPods),
+        harness.answer([("get namespaces", namespacesTable),
+                        ("get pods", podsWide), ("top pods", topPods),
                         ("get events", eventsTable), ("describe pod", describeOutput)])
         harness.goLive()
         harness.drain()
@@ -511,6 +528,126 @@ enum KubernetesDestinationSelfTest {
     /// Scoped to the feed tab on purpose - a host page can have several tabs,
     /// and blocking SRE Lead on a tab the Kubernetes page is not typing into
     /// would be a needless refusal.
+    // MARK: Full-app audit §6.7 - feed-tab caption and namespace picker
+
+    /// §6.7a. A tab adopted as the Log Tail feed is pinned to 240 columns, so
+    /// it genuinely renders wider than its frame and its right edge is
+    /// clipped. That is by design and indistinguishable from a rendering bug
+    /// unless the chip says so - and it has to *stop* saying so when the tab
+    /// is handed back.
+    private static func test_widthPinnedFeedTabIsMarkedOnItsChip() -> String? {
+        let chip = TabChipView(tabID: UUID(), name: "eks-feed")
+        var pinned = false
+        chip.machineReadableEnabled = { pinned }
+
+        chip.refreshMachineReadableIndicator()
+        if chip.debugMachineReadableIndicatorVisible {
+            return "an ordinary tab's chip already shows the width-pinned marker"
+        }
+        pinned = true
+        chip.refreshMachineReadableIndicator()
+        guard chip.debugMachineReadableIndicatorVisible else {
+            return "a width-pinned feed tab's chip shows no marker at all - the deliberate right-clip reads as a rendering bug"
+        }
+        // The caption is the whole point of the marker: an icon nobody can
+        // interpret is no better than no icon.
+        guard let tooltip = chip.debugMachineReadableTooltip, !tooltip.isEmpty else {
+            return "the width-pinned marker carries no caption"
+        }
+        guard tooltip.contains("\(CockpitTerminalView.machineReadableColumns)") else {
+            return "the caption does not state the real column count it is explaining: \(tooltip)"
+        }
+        guard tooltip.lowercased().contains("clip") else {
+            return "the caption never mentions the clipping it exists to explain: \(tooltip)"
+        }
+        pinned = false
+        chip.refreshMachineReadableIndicator()
+        if chip.debugMachineReadableIndicatorVisible {
+            return "a tab handed back at its normal geometry still claims to be width-pinned"
+        }
+        return nil
+    }
+
+    /// §6.7b. The picker offers the namespaces the cluster actually reported.
+    ///
+    /// Note what this asserts: the *rendered* menu titles, not the array
+    /// behind them - a list parsed correctly but never rendered is exactly
+    /// the defect worth catching.
+    private static func test_namespacePickerOffersTheClustersRealNamespaces() -> String? {
+        let harness = liveHarness()
+        let titles = harness.controller.debugNamespacePickerTitles
+        for expected in ["default", "kube-system", "raas-uat"] where !titles.contains(expected) {
+            return "the picker never offered \"\(expected)\" from the cluster's own list: \(titles)"
+        }
+        guard harness.controller.debugNamespacePickerEnabled else {
+            return "the picker is disabled even though the cluster returned a real list"
+        }
+        guard harness.controller.debugNamespacePickerSelection == harness.controller.debugNamespace else {
+            return "the picker shows \(String(describing: harness.controller.debugNamespacePickerSelection)) "
+                 + "while the page is querying \(harness.controller.debugNamespace)"
+        }
+        // One extra command, once - a cluster's namespaces do not churn, and
+        // every command here is typed into the captain's own session.
+        guard !harness.controller.debugSweepCommands.contains("get namespaces") else {
+            return "the namespace list is being re-fetched on every sweep: \(harness.controller.debugSweepCommands)"
+        }
+        return nil
+    }
+
+    /// §6.7b's honest failure state, and the reason the typed field was kept.
+    ///
+    /// A scoped bastion account very often cannot list a cluster's namespaces
+    /// even though it can read inside one. That must read as "the picker has
+    /// nothing to offer", never as "this cluster has no namespaces" (GL-14),
+    /// and must never make a namespace the captain can genuinely use
+    /// unreachable.
+    private static func test_namespacePickerStaysHonestWhenTheClusterWillNotListThem() -> String? {
+        let harness = Harness()
+        harness.answer([("get namespaces", "Error from server (Forbidden): namespaces is forbidden"),
+                        ("get pods", podsWide), ("top pods", topPods)])
+        harness.goLive()
+        harness.drain()
+
+        if harness.controller.debugNamespacePickerEnabled {
+            return "the picker is enabled with nothing real to offer"
+        }
+        guard let tooltip = harness.controller.debugNamespacePickerTooltip,
+              tooltip.lowercased().contains("type") else {
+            return "a picker that cannot offer anything does not point at the way in: "
+                 + "\(String(describing: harness.controller.debugNamespacePickerTooltip))"
+        }
+        // The page itself must not be broken by a forbidden namespace list.
+        guard !harness.controller.debugPods.isEmpty else {
+            return "a forbidden namespace list broke the pod table it has nothing to do with"
+        }
+        // The typed field is still the way in, and still works.
+        harness.controller.debugSetNamespace("raas-prod")
+        guard harness.controller.debugNamespace == "raas-prod" else {
+            return "typing a namespace stopped working once the picker could not list them"
+        }
+        return nil
+    }
+
+    /// §6.7b. Both ways of choosing a namespace go through one commit path,
+    /// so validation and the state reset cannot diverge between them.
+    private static func test_namespacePickerAndFieldShareOneCommitPath() -> String? {
+        let harness = liveHarness()
+        harness.controller.debugPickNamespace("raas-uat")
+        guard harness.controller.debugNamespace == "raas-uat" else {
+            return "picking a namespace did not change the one being queried (got \(harness.controller.debugNamespace))"
+        }
+        guard harness.controller.debugNamespaceFieldValue == "raas-uat" else {
+            return "the typed field disagrees with the picker: \(harness.controller.debugNamespaceFieldValue)"
+        }
+        // The commit path clears the previous namespace's data - a picker that
+        // skipped it would leave the old namespace's pods on screen under the
+        // new namespace's name.
+        guard harness.controller.debugSweepCommands.contains("get pods") else {
+            return "picking a namespace did not queue a refresh for it"
+        }
+        return nil
+    }
+
     private static func test_feedBridgeReportsBusyForItsOwnTabOnly() -> String? {
         let harness = liveHarness()
         guard let bridge = harness.controller.debugBridge else { return "no bridge" }

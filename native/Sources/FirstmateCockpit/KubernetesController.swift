@@ -151,6 +151,16 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
 
     var namespace = "default"
 
+    /// Namespaces this cluster actually reported, newest read wins - the
+    /// picker's source (audit §6.7b). `nil` until a read has been attempted;
+    /// empty after one that came back with nothing usable.
+    ///
+    /// Kept deliberately separate from `clusterMessage`: a cluster that
+    /// forbids `get namespaces` (a scoped service account is the common case
+    /// on a bastion) is not a failed *page*, only a picker with nothing to
+    /// offer - which is exactly why the typed field below stays.
+    var knownNamespaces: [String]?
+
     var pods: [KubePod] = []
     var deployments: [KubeDeployment] = []
     var services: [KubeService] = []
@@ -234,6 +244,7 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
     var tailContainer: NSView!
 
     var namespaceField: HelmTextField!
+    var namespacePicker: HelmPopUpButton!
     var clusterTabs: HelmSegmentedTabs!
     var clusterTable: KubeResourceTableView!
     var clusterStatusLabel: NSTextField!
@@ -518,10 +529,25 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         namespaceField.action = #selector(namespaceCommitted)
         namespaceField.widthAnchor.constraint(equalToConstant: 190).isActive = true
 
+        // Audit §6.7b asked to *replace* typed entry with a picker. The field
+        // stays, and that is a deliberate correction rather than a half-done
+        // change: listing namespaces is a cluster-scoped read, and a bastion
+        // service account that can list pods in its own namespace very often
+        // cannot list the cluster's namespaces at all. A picker-only control
+        // would make a namespace the captain can genuinely use unreachable the
+        // moment RBAC says no - so the picker is additive, and disabled with a
+        // reason when there is nothing real to offer (GL-14: never an empty
+        // menu that reads like an empty cluster).
+        namespacePicker = HelmPopUpButton()
+        namespacePicker.target = self
+        namespacePicker.action = #selector(namespacePicked)
+        namespacePicker.translatesAutoresizingMaskIntoConstraints = false
+        namespacePicker.widthAnchor.constraint(equalToConstant: 150).isActive = true
+
         let nsLabel = NSTextField(labelWithString: "Namespace")
         nsLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let topRow = NSStackView(views: [pageTabs, nsLabel, namespaceField])
+        let topRow = NSStackView(views: [pageTabs, nsLabel, namespaceField, namespacePicker])
         topRow.orientation = .horizontal
         topRow.alignment = .centerY
         topRow.spacing = HelmMetrics.s3

@@ -138,6 +138,15 @@ enum KubeCommand: Equatable {
     case describePod(name: String, namespace: String)
     /// `kubectl logs <pod> -n <ns> --since=<n>s --timestamps`
     case podLogs(pod: String, namespace: String, sinceSeconds: Int)
+    /// `kubectl get namespaces`
+    ///
+    /// The only case that interpolates **nothing**, which makes it the safest
+    /// member of this closed enum by construction: there is no token to
+    /// sanitize, so `commandText` cannot refuse and cannot be made to run a
+    /// different query. Added for audit §6.7b - the namespace picker needs a
+    /// real list, and before this the sweep only ever fetched objects *inside*
+    /// one namespace, never the namespaces themselves.
+    case getNamespaces
 
     /// A conservative allowlist for anything that reaches a real shell as a
     /// bare word: DNS-1123 label characters plus the dot a namespaced or
@@ -181,6 +190,8 @@ enum KubeCommand: Equatable {
         case .podLogs(let pod, let ns, let since):
             guard Self.isSafeToken(pod), Self.isSafeToken(ns), since > 0, since <= 3600 else { return nil }
             return "kubectl logs \(pod) -n \(ns) --since=\(since)s --timestamps"
+        case .getNamespaces:
+            return "kubectl get namespaces"
         }
     }
 
@@ -194,6 +205,7 @@ enum KubeCommand: Equatable {
         case .getEvents: return "get events"
         case .describePod(let name, _): return "describe \(name)"
         case .podLogs(let pod, _, _): return "logs \(pod)"
+        case .getNamespaces: return "get namespaces"
         }
     }
 }

@@ -533,6 +533,30 @@ final class CockpitTerminalView: LocalProcessTerminalView {
     /// out without tracking it separately.
     private(set) var usesMachineReadableGeometry = false
 
+    /// Fires whenever `usesMachineReadableGeometry` actually changes.
+    ///
+    /// `ConsoleController` wires this to refresh the tab's chip: the width
+    /// pinning is applied by a *different* destination (the Kubernetes page
+    /// adopting this tab as its Log Tail feed), so nothing in the console
+    /// would otherwise know the chip's indicator went stale.
+    var onMachineReadableGeometryChanged: (() -> Void)?
+
+    /// The one-line explanation of what the pinned geometry does to this tab,
+    /// shown on the chip indicator that marks it (audit §6.7a).
+    ///
+    /// Lives next to `machineReadableColumns` on purpose: the caption states
+    /// the number, and a caption that drifts from the constant it describes is
+    /// worse than none. The clipping it explains is real and by design - the
+    /// tab renders more columns than its frame shows, so its right edge is cut
+    /// - and without a marker that reads as a rendering bug rather than as a
+    /// deliberate trade the captain opted into by adopting the tab as a feed.
+    static var machineReadableTooltip: String {
+        "Width-pinned for parsing: this tab renders \(machineReadableColumns) columns so "
+        + "`kubectl` output is never wrapped, which the Kubernetes page needs to read it "
+        + "correctly. The right edge is clipped on purpose. It returns to normal when the "
+        + "page stops using this tab as its Log Tail feed."
+    }
+
     /// Pin (or release) the wide, shallow geometry a parsed feed tab needs.
     /// Idempotent, and a no-op for a tab that is already in the requested
     /// state - a `changeScrollback` call reallocates the buffer, so this must
@@ -542,6 +566,7 @@ final class CockpitTerminalView: LocalProcessTerminalView {
         usesMachineReadableGeometry = enabled
         terminal?.changeScrollback(enabled ? Self.machineReadableScrollback : interactiveScrollback)
         minimumColumns = enabled ? Self.machineReadableColumns : 0
+        onMachineReadableGeometryChanged?()
     }
 
     // MARK: Probe / self-test surface

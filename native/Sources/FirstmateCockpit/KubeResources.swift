@@ -414,6 +414,25 @@ enum KubeResourceParser {
         }
     }
 
+    /// `kubectl get namespaces` - the NAME column only (audit §6.7b).
+    ///
+    /// Every name is put through `KubeCommand.isSafeToken` here rather than at
+    /// the point of use: a namespace this app would refuse to type is one it
+    /// must not offer in a picker either, and dropping it at the parse
+    /// boundary means the list handed to the UI is, by construction, entirely
+    /// selectable. In practice `isSafeToken` already accepts every DNS-1123
+    /// name Kubernetes itself permits, so this drops nothing real - it just
+    /// means a picker can never present a dead entry.
+    static func parseNamespaces(_ raw: String) -> Outcome<String> {
+        outcome(raw: raw, table: KubeTable(raw: raw)) { table in
+            table.rows.compactMap { row in
+                guard let name = table.value("NAME", in: row),
+                      KubeCommand.isSafeToken(name) else { return nil }
+                return name
+            }
+        }
+    }
+
     /// `kubectl get events --sort-by=.lastTimestamp`. `MESSAGE` is the
     /// trailing free-text column, so the table is parsed with
     /// `lastColumnIsFreeText` - without it, "Failed to pull image" would be

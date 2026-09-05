@@ -227,6 +227,17 @@ extension KubernetesController {
         }
     }
 
+    /// The picker's own action. Routes through exactly the same commit path
+    /// as the text field - `namespaceField` is set and `namespaceCommitted()`
+    /// runs - so validation, the state reset and the refresh can never differ
+    /// between the two ways of choosing a namespace.
+    @objc func namespacePicked() {
+        guard let chosen = namespacePicker.titleOfSelectedItem,
+              !chosen.isEmpty, chosen != namespace else { return }
+        namespaceField.stringValue = chosen
+        namespaceCommitted()
+    }
+
     @objc func namespaceCommitted() {
         let candidate = namespaceField.stringValue.trimmingCharacters(in: .whitespaces)
         guard !candidate.isEmpty else {
@@ -298,6 +309,15 @@ extension KubernetesController {
     /// `clusterTabs.onSelect` both trigger one).
     func sweepCommands() -> [KubeCommand] {
         var commands: [KubeCommand] = []
+        // Audit §6.7b. One extra command, and only until the picker has a
+        // list: a cluster's namespaces do not churn the way its pods do, and
+        // every command this page issues is *typed into the captain's own
+        // bastion session*, so re-listing them on a 30s cadence would be
+        // visible noise for no new information. A failed read leaves
+        // `knownNamespaces` non-nil-and-empty, which is what stops it
+        // retrying forever on a cluster whose RBAC simply forbids it - the
+        // manual Refresh is the way to ask again.
+        if knownNamespaces == nil { commands.append(.getNamespaces) }
         let podsAreVisible = (pageTab == .cluster && clusterTab == .pods) || pageTab == .logTail
         if podsAreVisible || pods.isEmpty {
             commands.append(.getPods(namespace: namespace))
@@ -479,6 +499,17 @@ extension KubernetesController {
             case (.getDeployments, .success(let raw)): apply(KubeResourceParser.parseDeployments(raw), to: &deployments)
             case (.getServices, .success(let raw)): apply(KubeResourceParser.parseServices(raw), to: &services)
             case (.getEvents, .success(let raw)): apply(KubeResourceParser.parseEvents(raw), to: &events)
+            // Deliberately not folded into `hardFailure`: a cluster that
+            // forbids listing namespaces is a picker with nothing to offer,
+            // not a broken page. Recording an empty list (rather than leaving
+            // it nil) is what marks the read as *attempted*, so the picker can
+            // say "this cluster won't list them" instead of "checking…".
+            case (.getNamespaces, .success(let raw)):
+                switch KubeResourceParser.parseNamespaces(raw) {
+                case .rows(let names): knownNamespaces = names
+                case .empty, .failed: knownNamespaces = []
+                }
+            case (.getNamespaces, .failure): knownNamespaces = []
             case (_, .failure(let error)): hardFailure = hardFailure ?? error.message
             default: break
             }
@@ -504,6 +535,10 @@ extension KubernetesController {
         }
         renderClusterTable()
         renderPodPicker()
+        // The sweep is the only thing that ever learns the namespace list, so
+        // it is what has to re-render the picker - without this the picker
+        // sits on "Checking…" forever even after a successful read.
+        renderNamespacePicker()
         renderFeedStatus()
         onDrillSubtitleChanged?()
     }
