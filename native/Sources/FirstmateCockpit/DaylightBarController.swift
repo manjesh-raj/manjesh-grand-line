@@ -96,6 +96,14 @@ final class DaylightBarController: NSViewController {
     /// bell -> avatar.
     private let stickyBoardButton = DaylightDestinationButton(destination: .stickyBoard)
     private let codePreviewButton = DaylightDestinationButton(destination: .codePreview)
+    /// The "Recents" dropdown (`fm/grandline-recents-navigation`) - a captain
+    /// review of four back/forward-style approaches chose this one, and gave
+    /// an explicit placement correction: it sits right after the space pills,
+    /// never next to the logo the reviewed mockup originally showed it beside.
+    /// The bar owns only the button and the popover chrome, never what a
+    /// `RecentDestinations` is - see `RecentDestinationsPopover.swift`'s own
+    /// header for the forward-don't-own wiring.
+    let recentDestinations = RecentDestinationsController()
     /// Forwarded, never owned - the bar has no idea what a destination *is*,
     /// exactly as it has no idea what a space means (`onSelectSpace`).
     var onSelectDestination: ((RailDestination) -> Void)?
@@ -167,6 +175,7 @@ final class DaylightBarController: NSViewController {
 
         bar.addSubview(logoRow)
         bar.addSubview(pillRow)
+        bar.addSubview(recentDestinations.button)
         bar.addSubview(searchPill)
         bar.addSubview(stickyBoardButton)
         bar.addSubview(codePreviewButton)
@@ -181,8 +190,16 @@ final class DaylightBarController: NSViewController {
         // trailing-anchored, and the gap between them is an inequality - so a
         // narrow window compresses the gap to nothing before anything is asked
         // to truncate, and nothing here can push the window wider.
+        //
+        // The Recents button sits between those two groups - a fixed-size
+        // control positioned right after the pills with a plain required
+        // constant gap (it needs no window-cap protection of its own, since
+        // its own width is fixed at `DaylightBarIconButton.side`), with the
+        // one compressible joint moved to sit right after it instead of right
+        // after the pills - still exactly one squeeze point in the whole
+        // chain, per AGENTS.md gotcha (13).
         let pillsToSearch = searchPill.leadingAnchor.constraint(
-            greaterThanOrEqualTo: pillRow.trailingAnchor, constant: HelmMetrics.s3)
+            greaterThanOrEqualTo: recentDestinations.button.trailingAnchor, constant: HelmMetrics.s3)
         pillsToSearch.priority = HelmDaylightPriority.contentTie
 
         NSLayoutConstraint.activate([
@@ -197,6 +214,11 @@ final class DaylightBarController: NSViewController {
 
             pillRow.leadingAnchor.constraint(equalTo: logoRow.trailingAnchor, constant: HelmMetrics.s5),
             pillRow.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+
+            recentDestinations.button.leadingAnchor.constraint(equalTo: pillRow.trailingAnchor, constant: HelmMetrics.s3),
+            recentDestinations.button.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            recentDestinations.button.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
+            recentDestinations.button.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
 
             pillsToSearch,
             searchPill.trailingAnchor.constraint(equalTo: stickyBoardButton.leadingAnchor, constant: -HelmMetrics.s2),
@@ -335,6 +357,7 @@ final class DaylightBarController: NSViewController {
     /// hierarchy states their relative order.
     var keyViewChain: [NSView] {
         var chain: [NSView] = pills.map { $0.container }
+        chain.append(recentDestinations.button)
         chain.append(searchPill)
         chain.append(stickyBoardButton)
         chain.append(codePreviewButton)
@@ -524,6 +547,7 @@ final class DaylightBarController: NSViewController {
         searchPill.applyTheme(theme)
         let iconSurface = theme.isDaylight ? HelmTheme.nsColor(theme.daylightTokens.inset) : surface
         themeToggleButton.applyTheme(ink: muted, line: line, surface: iconSurface)
+        recentDestinations.button.applyTheme(ink: muted, line: line, surface: iconSurface)
         stickyBoardButton.applyTheme(ink: muted, line: line, surface: iconSurface)
         codePreviewButton.applyTheme(ink: muted, line: line, surface: iconSurface)
         notificationCenter.bell.applyTheme(ink: muted, line: line, surface: theme.isDaylight

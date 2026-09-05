@@ -2016,6 +2016,18 @@ if ProcessInfo.processInfo.environment["FM_RUN_STICKY_BOARD_VIEW_TESTS"] == "1" 
     exit(StickyBoardViewSelfTest.run() ? 0 : 1)
 }
 
+// `fm/grandline-recents-navigation`: the "Recents" dropdown on the top bar -
+// `RecentDestinations`'s own dedup/reorder/cap logic (pure Swift), a real
+// `AppShellController`'s `show(_:)`/`switchToSession` navigation recording
+// the destination being left (never the one being entered), the popover's
+// real rows and click-to-navigate, and the bar button's own placement (after
+// the space pills, before the search pill - the captain's explicit
+// correction) and theming across a real light and dark theme. See
+// RecentDestinationsSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_RECENT_DESTINATIONS_TESTS"] == "1" {
+    exit(RecentDestinationsSelfTest.run() ? 0 : 1)
+}
+
 #endif
 
 // GL-05: refuse to be a second instance. This sits *after* every
