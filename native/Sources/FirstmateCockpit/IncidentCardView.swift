@@ -61,7 +61,7 @@ final class IncidentCardView: NSView {
     // MARK: Views
 
     private let headerIcon = IconTileView(size: HelmMetrics.tileBase, cornerRadius: 9)
-    private let titleLabel = NSTextField(labelWithString: "")
+    fileprivate let titleLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
     private let statusPill = NSView()
     private let statusLabel = NSTextField(labelWithString: "")
@@ -388,3 +388,12 @@ final class IncidentCardView: NSView {
         noteField.applyTheme(theme)
     }
 }
+
+#if FM_SELFTESTS
+extension IncidentCardView {
+    /// What the card is currently showing - real rendered text, not the model
+    /// behind it, so a card configured but never rendered fails a check that
+    /// reads this.
+    var debugRenderedTitle: String { titleLabel.stringValue }
+}
+#endif

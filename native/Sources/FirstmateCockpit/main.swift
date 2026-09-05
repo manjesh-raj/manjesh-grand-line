@@ -1912,6 +1912,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_INCIDENT_TESTS"] == "1" {
     exit(IncidentStoreSelfTest.run() ? 0 : 1)
 }
 
+// Audit §6.2's relaunch-continuity half. Window-backed (it mounts a real
+// `ConsoleController`), so it belongs in `run-all-tests.sh`'s NEEDS_SESSION
+// list rather than beside the pure-logic store suite above.
+if ProcessInfo.processInfo.environment["FM_RUN_INCIDENT_RESUME_TESTS"] == "1" {
+    exit(IncidentResumeSelfTest.run() ? 0 : 1)
+}
+
 // F5's command-palette providers: every domain's matching, the grouping the
 // mockup shows, the "never send a half-substituted command" rule, and the
 // source guards that keep the destructive-command gate a single definition the

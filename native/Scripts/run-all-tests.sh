@@ -95,6 +95,9 @@ NEEDS_SESSION=(
   # in a real window. Its pure-logic half (FM_RUN_KUBE_BRIDGE_TESTS) is
   # deliberately not here - that one runs in CI.
   "FM_RUN_KUBERNETES_DESTINATION_TESTS"
+  # Audit §6.2: mounts a real host-page `ConsoleController` and drives its
+  # real `viewDidAppear`.
+  "FM_RUN_INCIDENT_RESUME_TESTS"
   "FM_RUN_DRILL_HEADER_TITLE_TESTS"
   "FM_RUN_DAYLIGHT_MODULE_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_TESTS"

@@ -94,6 +94,52 @@ extension ConsoleController {
         }
     }
 
+    // MARK: Relaunch continuity (audit §6.2)
+
+    /// Announce an incident that was already running when this page opened.
+    ///
+    /// **The gap this closes.** `IncidentStore` persists everything as it
+    /// happens, and `activeIncident()` reads the record rather than a cached
+    /// flag - so after a relaunch the incident is still active and everything
+    /// the captain does on this host still attaches to it. What is missing is
+    /// purely *awareness*: nothing said so. The toolbar button does show the
+    /// id, but it is a small control on a busy strip, and a captain who does
+    /// not already know to look at it has no reason to.
+    ///
+    /// **Why an auto-opened card and not a banner.** The audit says "banner",
+    /// but an inline strip between the toolbar and the terminal would change
+    /// every `TerminalView`'s frame, which reflows the buffer and can garble
+    /// scrollback - the exact bug `ConsoleController.terminalInset` is
+    /// permanent to avoid, and the reason the incident card is a popover in
+    /// the first place (see `IncidentCardView`'s header). Reopening the card
+    /// this page already has costs no geometry at all and shows strictly more:
+    /// the incident, its timeline so far, and "End Incident".
+    ///
+    /// **Once per run per incident.** `announcedIncidentIDs` is what keeps
+    /// this from firing on every navigation back to the page, and
+    /// `startIncident` marks its own new incident as announced - one started
+    /// in this run already opened its card, and should not open it again.
+    ///
+    /// This is deliberately short of F2 (session restoration): the app still
+    /// will not *reopen* the host page on its own. It only makes an incident
+    /// impossible to miss once that page is open.
+    func resumeActiveIncidentIfNeeded() {
+        guard let hostIdentity, let incident = activeIncident() else { return }
+        guard !announcedIncidentIDs.contains(incident.id) else { return }
+        announcedIncidentIDs.insert(incident.id)
+
+        Toast.show(in: view,
+                   message: "\(incident.id) is still active on \(hostIdentity.label)")
+        showIncidentCard()
+        #if FM_SELFTESTS
+        debugResumeAnnouncements.append(incident.id)
+        #endif
+        AppLog.ui.info("""
+            incident: resumed \(incident.id, privacy: .public) on reopening \
+            its host page - the record outlived the page
+            """)
+    }
+
     // MARK: Starting
 
     /// One short prompt for a title, then a real record. Deliberately an
@@ -134,6 +180,10 @@ extension ConsoleController {
             // answered six questions during the last incident starts this
             // one's timeline at "turn 1" again.
             sreLeadTurnCounts.removeAll()
+            // An incident started here has just had its card opened by this
+            // very call - `resumeActiveIncidentIfNeeded` must not open it
+            // again the next time this page is navigated back to.
+            announcedIncidentIDs.insert(incident.id)
             // F6 (fleet history / captain's log): appended here, from the one
             // code path that starts an incident, after the record genuinely
             // reached disk. Only the id, the title and the host label cross
