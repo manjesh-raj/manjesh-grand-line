@@ -349,11 +349,45 @@ private final class CodePreviewMessageProxy: NSObject, WKScriptMessageHandler {
 // MARK: - Page-loss recovery
 
 extension CodePreviewWebView: WKNavigationDelegate {
+
+    /// Audit §5.3: the bundle's CSP does not - and cannot - stop a *top-level
+    /// navigation*. WebKit implements no `navigate-to` directive, so a
+    /// `window.location = "https://…"` from a compromised or newly-updated
+    /// vendored bundle would go straight out. This is the gate Docs has always
+    /// had (`DocsController`'s own delegate) applied to the two AI-adjacent
+    /// surfaces, through the one shared `WebNavigationPolicy` definition.
+    ///
+    /// Refusals are dropped silently unless they are a real web URL - see
+    /// `WebNavigationPolicy.opensExternally` for why a fixed local bundle's
+    /// non-web navigation is never handed to `NSWorkspace`.
+    func webView(_ webView: WKWebView,
+                 decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard let url = navigationAction.request.url else {
+            decisionHandler(.cancel)
+            return
+        }
+        if let dir = CodePreviewAssets.webDirectory(),
+           WebNavigationPolicy.allowsFileURL(url, under: dir) {
+            decisionHandler(.allow)
+            return
+        }
+        decisionHandler(.cancel)
+        AppLog.lifecycle.info("code preview: refused a navigation leaving the bundle (\(url.scheme ?? "?", privacy: .public))")
+        if WebNavigationPolicy.opensExternally(url) { NSWorkspace.shared.open(url) }
+    }
+
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         resetAfterPageLoss("the web content process was terminated")
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        // A navigation *we* just cancelled surfaces here as an error too
+        // (`NSURLErrorCancelled`). Treating that as page loss would call
+        // `activate()`, which reloads, which the policy above refuses again -
+        // an unbounded reload loop pegging a web content process. A deliberate
+        // refusal is not a lost page.
+        if (error as NSError).code == NSURLErrorCancelled { return }
         resetAfterPageLoss("the page failed to load (\(error.localizedDescription))")
     }
 }

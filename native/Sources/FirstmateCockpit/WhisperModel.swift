@@ -9,6 +9,7 @@
 // `~/Library/Application Support/FirstmateCockpit/...` on demand rather than
 // shipping it in the bundle.
 
+import CryptoKit
 import Foundation
 
 /// A plain-message error - `String` itself can't conform to `Error` directly.
@@ -49,6 +50,45 @@ final class WhisperModelManager: NSObject {
     /// accuracy win" framing calls for, without the picker UI a choice of
     /// quantization level would otherwise imply.
     static let modelURL = URL(string: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/\(modelFileName)")!
+
+    /// The exact SHA-256 of the bytes `modelURL` serves, and the exact byte
+    /// count that goes with it (audit §5.6).
+    ///
+    /// **Verified, not transcribed from one place.** Four independent sources
+    /// agreed before this was written down: Hugging Face's Git-LFS pointer
+    /// (`.../raw/main/<file>`, `oid sha256:`), the model API's own
+    /// `siblings[].lfs.sha256`, the `x-linked-etag` header on the resolve URL
+    /// (which for an LFS file *is* the content SHA-256), and - the one that
+    /// settles it - `shasum -a 256` over a real ~547MB copy this very code
+    /// path had already downloaded onto a machine.
+    ///
+    /// **What this buys.** Before it, a downloaded model was accepted on a
+    /// size floor plus four magic bytes, so anything at least 10MB starting
+    /// `0x67676d6c` was loaded into a process and handed to whisper.cpp's own
+    /// C++ tensor parser. That is a large, memory-unsafe attack surface behind
+    /// a TLS connection this app does not pin, reached over whatever network
+    /// the captain is on. Now the bytes either hash to this value or they are
+    /// never moved into place at all - the same "verify before use" discipline
+    /// `AppUpdateInstaller` applies to a downloaded `.app`.
+    ///
+    /// **Known operational cost, stated rather than hidden.** `modelURL` points
+    /// at `main`, a mutable ref, so if upstream ever re-uploads this file the
+    /// download starts failing this check instead of silently installing
+    /// different bytes - which is the correct direction, but it does mean the
+    /// local-engine download stops working until someone re-verifies and
+    /// updates this constant. The failure message says exactly that. If it ever
+    /// happens, pinning `modelURL` to a specific commit (Hugging Face serves
+    /// `resolve/<sha>/<file>`) makes both halves immutable together; that is
+    /// deliberately not done pre-emptively here, since it changes a download
+    /// URL that works.
+    static let expectedSHA256 = "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2"
+
+    /// The pinned file's exact size. Redundant against the hash for
+    /// *correctness*, kept for *diagnosis*: a truncated transfer is the common
+    /// failure by far, and checking this first turns it into "the download did
+    /// not finish" in milliseconds instead of a bare hash mismatch half a
+    /// gigabyte of reading later.
+    static let expectedByteCount: Int64 = 574_041_195
 
     /// `~/Library/Application Support/FirstmateCockpit/whisper/`, overridable
     /// via `FM_WHISPER_MODEL_DIR` - the same `FM_*_DIR` convention
@@ -212,6 +252,85 @@ final class WhisperModelManager: NSObject {
         return .success(())
     }
 
+    /// The full check a *downloaded* file must pass before it is treated as a
+    /// model: the cheap structural pass above, then the pinned SHA-256.
+    ///
+    /// Ordered cheap-first purely for the error message - a half-written
+    /// transfer should say so, rather than reporting a hash mismatch that
+    /// reads like tampering. Correctness comes from the checksum alone.
+    ///
+    /// This is the one function `didFinishDownloadingTo` calls, so no download
+    /// path can reach disk having run only the structural half.
+    ///
+    /// **Cost, measured rather than assumed:** hashing the real 547MB model
+    /// takes ~1s. That is on `URLSession`'s own delegate queue, never the main
+    /// thread, and it lands after a multi-minute download - and it has to be
+    /// synchronous regardless, because the temp file `location` points at is
+    /// deleted the moment this returns.
+    /// `validate(fileAt:)` stays separate and content-agnostic because it is
+    /// also the honest answer to "does this look like a ggml model at all",
+    /// which is a different question from "is it the exact file we pinned".
+    static func validateDownload(fileAt url: URL) -> Result<Void, WhisperModelValidationError> {
+        if case .failure(let structural) = validate(fileAt: url) { return .failure(structural) }
+        return verifyPinnedContents(fileAt: url)
+    }
+
+    /// Byte-count then SHA-256, both against the pins. Split out with explicit
+    /// parameters so a self-test can drive the real comparison against a small
+    /// fixture instead of needing a real 547MB transfer.
+    static func verifyPinnedContents(fileAt url: URL,
+                                     expectedSHA256 expected: String = WhisperModelManager.expectedSHA256,
+                                     expectedByteCount expectedSize: Int64 = WhisperModelManager.expectedByteCount)
+        -> Result<Void, WhisperModelValidationError> {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let size = (attrs?[.size] as? NSNumber)?.int64Value
+        guard let size else {
+            return .failure(WhisperModelValidationError(message: "Downloaded file could not be read back."))
+        }
+        guard size == expectedSize else {
+            return .failure(WhisperModelValidationError(
+                message: "The download is \(size) bytes but the expected model is \(expectedSize) - it did not finish. It will not be used."))
+        }
+        guard let actual = sha256Hex(ofFileAt: url) else {
+            return .failure(WhisperModelValidationError(message: "Downloaded file could not be read back."))
+        }
+        guard actual.caseInsensitiveCompare(expected) == .orderedSame else {
+            AppLog.store.error("whisper model checksum mismatch: expected \(expected, privacy: .public), got \(actual, privacy: .public)")
+            return .failure(WhisperModelValidationError(
+                message: "The downloaded model does not match its expected checksum, so it will not be used. Try again - if it keeps happening, the file published upstream has changed and the app needs updating."))
+        }
+        return .success(())
+    }
+
+    /// Streaming SHA-256 of a file, lowercase hex. `nil` only when the file
+    /// cannot be read.
+    ///
+    /// Chunked deliberately: the file this exists for is ~547MB, and
+    /// `Data(contentsOf:)` would mean holding all of it in memory to hash it.
+    /// Bounded at `hashChunkSize` regardless of file size.
+    static func sha256Hex(ofFileAt url: URL) -> String? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while true {
+            // Explicit do/catch rather than `try?`: `try?` flattens the
+            // `Data?` this returns into one optional, which would make a read
+            // *error* and a clean EOF indistinguishable - and silently hashing
+            // a partial file to a "valid" digest is the one outcome this
+            // function must never produce.
+            let chunk: Data?
+            do { chunk = try handle.read(upToCount: hashChunkSize) } catch { return nil }
+            guard let chunk, !chunk.isEmpty else { break }
+            hasher.update(data: chunk)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// 4 MiB - large enough that hashing half a gigabyte is a few hundred
+    /// reads rather than tens of thousands, small enough that peak memory is
+    /// irrelevant.
+    private static let hashChunkSize = 4 * 1024 * 1024
+
     private func notify() {
         let current = state
         DispatchQueue.main.async { [weak self] in
@@ -241,7 +360,7 @@ extension WhisperModelManager: URLSessionDownloadDelegate {
     /// where `URLSession`'s own temp-file lifecycle discards it, so a failed
     /// download can never be mistaken for a valid model later.
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
-        switch Self.validate(fileAt: location) {
+        switch Self.validateDownload(fileAt: location) {
         case .failure(let validationError):
             DispatchQueue.main.async { [weak self] in
                 self?.state = .failed(validationError.message)

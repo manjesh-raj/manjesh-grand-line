@@ -186,13 +186,24 @@ enum VaultSource {
         return "av inject +\(secretName) -- \(command)"
     }
 
-    /// A conservative allowlist (letters, digits, underscore, dash) matching
-    /// the shape of every real secret name `av list` returned on this
-    /// machine - deliberately stricter than whatever `av save` itself
+    /// A conservative allowlist (ASCII letters, ASCII digits, underscore,
+    /// dash) matching the shape of every real secret name `av list` returned
+    /// on this machine - deliberately stricter than whatever `av save` itself
     /// accepts, since the only purpose here is "safe to splice into a shell
     /// command with no quoting."
+    ///
+    /// Audit §5.5: the `.isASCII` half is new. `Character.isLetter`/`isNumber`
+    /// are true for the *whole* Unicode letter and number categories, so this
+    /// previously accepted a name carrying Cyrillic, a fullwidth digit, or a
+    /// Unicode digit from any script. None of those is a shell metacharacter,
+    /// so this was never exploitable - but the claim this function exists to
+    /// make is "trivially auditable as safe unquoted", and a reader cannot
+    /// check that against all of Unicode. `KubeCommand.isSafeToken` already
+    /// required ASCII for exactly this reason; the two now agree.
     static func isSafeToken(_ s: String) -> Bool {
-        !s.isEmpty && s.allSatisfy { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" }
+        !s.isEmpty && s.allSatisfy {
+            $0.isASCII && ($0.isLetter || $0.isNumber || $0 == "_" || $0 == "-")
+        }
     }
 
     // MARK: App-level password lock (fm/grandline-app-lock)

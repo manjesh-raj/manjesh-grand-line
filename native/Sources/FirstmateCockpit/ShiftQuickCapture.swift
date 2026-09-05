@@ -51,6 +51,13 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
         buildUI(in: panel)
         _ = panel.followHelmTheme()
         ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
+        // Audit §5.1: gating `present()` only covers *opening* while locked.
+        // This panel is `.floating`, so one already open when the lock fires
+        // stayed up over the lock screen with a live capture field behind it -
+        // the idle lock implies nobody was typing, but the 12h session-expiry
+        // lock can fire mid-use. Registered once, here, where the window is
+        // created; the gate orders it out on every lock.
+        AppLockGate.shared.registerSecondaryWindow { [weak self] in self?.window }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }

@@ -43,8 +43,8 @@
 import AppKit
 
 /// The out-of-window surfaces the lock has to cover. Not a general capability
-/// system - these are exactly the four the review found, plus the two windows
-/// that need ordering out.
+/// system - these are exactly the ones a review found, each added the one way
+/// this file's header allows: its own case, never a reused neighbour.
 enum AppLockedSurface {
     /// The menu-bar status item's own title/tooltip content (the due count).
     case menuBarContent
@@ -52,6 +52,16 @@ enum AppLockedSurface {
     case menuBarPopover
     /// ⌥Space global quick capture.
     case quickCapture
+    /// ⌘K unified search.
+    ///
+    /// Audit §5.2: this used to reuse `.quickCapture`, directly against this
+    /// file's own header rule. The two are genuinely different surfaces - one
+    /// writes a task, the other discloses host/task/runbook titles and (since
+    /// F5) offers every one of the app's verbs as a live action - and sharing
+    /// a case means a self-test asserting ⌥Space is gated passes just as
+    /// happily with the palette's own gate deleted. Its own case is what makes
+    /// each surface's coverage independently assertable.
+    case unifiedSearch
     /// Recording, transcribing, pasting and logging a dictation.
     case dictation
     /// F4: a tapped `UNNotification` action button (Merge / Open task /
@@ -124,6 +134,20 @@ final class AppLockGate {
         secondaryWindows.append(provider)
         if isLocked { provider()?.orderOut(nil) }
     }
+
+    // MARK: Probe / self-test surface
+
+    #if FM_SELFTESTS
+    /// The windows currently registered, resolved through their providers.
+    ///
+    /// Audit §5.1's behavioural check needs to answer "did this surface
+    /// actually register?", and a bare count cannot - it would pass with the
+    /// wrong window registered twice. Resolving them is also the only way to
+    /// check registration without ordering a real panel onto the captain's
+    /// screen (`orderOutSecondaryWindows` skips anything not `isVisible`, so
+    /// a never-shown panel leaves no trace).
+    var debugRegisteredWindows: [NSWindow] { secondaryWindows.compactMap { $0() } }
+    #endif
 
     private func orderOutSecondaryWindows() {
         for provider in secondaryWindows {

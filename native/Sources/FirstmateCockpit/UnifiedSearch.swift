@@ -145,6 +145,15 @@ final class UnifiedSearchController: NSWindowController {
         buildUI(in: panel)
         _ = panel.followHelmTheme()
         ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
+        // Audit §5.1: gating `present()` only covers *opening* while locked.
+        // This panel is `.floating`, so it renders above the lock overlay -
+        // which is a subview of the main window, not a screen-level shield -
+        // and the 12h session-expiry lock can fire mid-use, with the palette
+        // already up and showing real host/task/runbook titles plus F5's live
+        // action rows. Registered once, here, where the window is created;
+        // the gate orders it out on every lock. Same shape as the Host Editor's
+        // own registration in `main.swift`.
+        AppLockGate.shared.registerSecondaryWindow { [weak self] in self?.window }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -216,7 +225,7 @@ final class UnifiedSearchController: NSWindowController {
         // gave every row a real action, so a locked app opening this would
         // hand out the app's whole verb surface. A locked app does not open
         // it.
-        guard AppLockGate.shared.allows(.quickCapture) else {
+        guard AppLockGate.shared.allows(.unifiedSearch) else {
             AppLog.lifecycle.info("search palette refused - app is locked (GL-09)")
             return
         }

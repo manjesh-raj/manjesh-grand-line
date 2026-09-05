@@ -321,13 +321,19 @@ extension DocsController: WKNavigationDelegate {
             decisionHandler(.allow)
             return
         }
-        if url.isFileURL {
-            let docsPath = DocsStore.folderURL.standardizedFileURL.path
-            if url.standardizedFileURL.path.hasPrefix(docsPath) {
-                decisionHandler(.allow)
-                return
-            }
+        // Audit §5.4: this was `path.hasPrefix(docsPath)` - a *string* prefix,
+        // so a sibling directory named `…/docs-evil/` matched `…/docs` and was
+        // treated as inside the synced folder. `WebNavigationPolicy` compares
+        // path components instead, which a longer sibling name cannot defeat.
+        // Shared with the Whiteboard and Code Preview bundles so the check has
+        // one definition rather than three that can drift.
+        if WebNavigationPolicy.allowsFileURL(url, under: DocsStore.folderURL) {
+            decisionHandler(.allow)
+            return
         }
+        // Unchanged: Docs hosts a browsable site, so anything it refuses is
+        // handed to the system browser. (The two vendored-bundle hosts are
+        // deliberately stricter - see `WebNavigationPolicy.opensExternally`.)
         decisionHandler(.cancel)
         NSWorkspace.shared.open(url)
     }
