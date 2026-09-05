@@ -1624,6 +1624,20 @@ if ProcessInfo.processInfo.environment["FM_RUN_FULL_APP_AUDIT_UI_TESTS"] == "1" 
     exit(FullAppAuditUISelfTest.run() ? 0 : 1)
 }
 
+// Section 5 of `data/grandline-full-app-audit/report.md`: the security
+// findings, one case per finding id - see AuditSecurityFixesSelfTest.swift's
+// header. Pure logic, so it runs in CI; §5.1's window-backed half is the
+// separate suite below.
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT_SECURITY_FIXES_TESTS"] == "1" {
+    exit(AuditSecurityFixesSelfTest.run() ? 0 : 1)
+}
+
+// §5.1's behavioural half: builds the two real palettes and reads their
+// registration back off the lock gate - see AuditSecurityLockSelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT_SECURITY_LOCK_TESTS"] == "1" {
+    exit(AuditSecurityLockSelfTest.run() ? 0 : 1)
+}
+
 // B1 (`data/grand-line-e2e-audit/report.md`): same convention, for the Vault
 // page's failed/pending read states - see VaultLoadingStateSelfTest.swift.
 if ProcessInfo.processInfo.environment["FM_RUN_VAULT_LOADING_STATE_TESTS"] == "1" {

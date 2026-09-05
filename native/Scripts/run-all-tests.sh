@@ -122,6 +122,11 @@ NEEDS_SESSION=(
   "FM_RUN_REVIEW_PR_LIST_VOLUME_TESTS"
   "FM_RUN_REVIEW_PR_ROW_BUTTON_LAYOUT_TESTS"
   "FM_RUN_UNIFIED_SEARCH_LAYOUT_TESTS"
+  # Audit §5.1: builds the two real palettes (a real `NSPanel` plus a real
+  # `HelmSearchField`) to read their lock-gate registration back. The §5
+  # pure-logic suite - FM_RUN_AUDIT_SECURITY_FIXES_TESTS - is deliberately not
+  # here and does run in CI.
+  "FM_RUN_AUDIT_SECURITY_LOCK_TESTS"
   "FM_RUN_SRE_LEAD_PER_TAB_TESTS"
   "FM_RUN_NOTIFICATION_CENTER_SRE_LEAD_TESTS"
   "FM_RUN_SHIFT_ATTACHMENT_WELL_TESTS"
