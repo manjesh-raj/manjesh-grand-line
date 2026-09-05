@@ -457,6 +457,24 @@ const bridge = {
     }
   },
 
+  /// Reads back what `applyTheme` actually did to the page, rather than
+  /// merely whether the bridge call that requested it succeeded - the two
+  /// diverged for real once (`CodePreviewTheme.Key.operatorToken`'s wire-name
+  /// mismatch made `monaco.editor.defineTheme` throw on every push, silently,
+  /// since the native side sent `setTheme` with no completion handler at the
+  /// time). `.monaco-editor-background`'s own computed colour is Monaco's
+  /// literal rendered editor surface, not a value this app handed over -
+  /// exactly the same "read the tokenizer's own output" standard `tokensAt`
+  /// already holds this feature to for highlighting.
+  readThemeProbe(callID) {
+    const el = document.querySelector(".monaco-editor-background");
+    reply(callID, {
+      ok: true,
+      theme: document.documentElement.dataset.theme || null,
+      background: el ? getComputedStyle(el).backgroundColor : null,
+    });
+  },
+
   setFontSize(callID, payload) {
     try {
       const size = Number(payload.size);

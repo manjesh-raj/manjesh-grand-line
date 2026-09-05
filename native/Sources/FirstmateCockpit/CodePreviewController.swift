@@ -880,9 +880,22 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     /// the OS's - the whole point of the destination is that pasted code reads
     /// as part of the app. See `CodePreviewTheme` for where the colours come
     /// from and why they are the theme's own ANSI set.
+    ///
+    /// GL-11: log before degrading. A JS-side `setTheme` failure (the
+    /// `Key.operatorToken` wire-name mismatch this exact call site once hit,
+    /// see `CodePreviewTheme.Key`'s own doc comment) replies `{ok: false}`
+    /// rather than crashing the page, so a fire-and-forget call here would
+    /// leave Monaco silently stuck on whatever theme it last had - which is
+    /// precisely what shipped undetected before. This is not fatal (the
+    /// editor stays usable, just visually out of sync with the app), so it is
+    /// logged rather than surfaced as an error banner.
     private func pushTheme() {
         guard webView.isReady else { return }
-        webView.call("setTheme", payload: ["theme": CodePreviewTheme.palette(for: theme)])
+        webView.call("setTheme", payload: ["theme": CodePreviewTheme.palette(for: theme)]) { result in
+            if case .failure(let error) = result {
+                AppLog.lifecycle.error("code preview: theme push failed: \(error.message, privacy: .public)")
+            }
+        }
     }
 
     private func pushFontSize(_ size: CGFloat) {

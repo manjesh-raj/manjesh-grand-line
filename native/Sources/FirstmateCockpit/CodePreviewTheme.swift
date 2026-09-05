@@ -52,11 +52,39 @@ enum CodePreviewTheme {
 
     /// Monaco's own key names, so a caller (and the self-test) can name a
     /// colour without a string literal per call site.
+    ///
+    /// `operatorToken`'s raw value is pinned to `"operator"` explicitly -
+    /// **this was the actual root cause of the captain's "Code Preview never
+    /// re-themes" report** (`fm/grandline-recents-position-and-codepreview-
+    /// theme`), and it shipped silently for the same reason every case here
+    /// has to keep matching `Vendor/Monaco/src/code-preview.js`'s
+    /// `applyTheme(t)` exactly: `operator` is a Swift keyword, so this case
+    /// cannot be named after it directly, and every *other* case's
+    /// auto-synthesised raw value already happens to equal the JS property
+    /// name it feeds (`t.ink`, `t.comment`, `t.keyword`, ...) - so it is easy
+    /// to assume the whole enum "just matches" without checking each one.
+    /// Without this override the wire key was `"operatorToken"`, the JS side
+    /// read `t.operator` (`undefined`), `strip(undefined)` produced an empty
+    /// string, and `monaco.editor.defineTheme()` throws
+    /// `"Illegal value for token color: "` on an empty rule foreground -
+    /// synchronously, before its own `monaco.editor.setTheme(THEME_ID)` call
+    /// ever runs. `CodePreviewController.pushTheme()` sent this bridge call
+    /// with **no completion handler**, so that thrown-and-caught failure
+    /// (the JS side replies `{ok: false, message: ...}` rather than crashing)
+    /// was silently dropped on every single theme push since this feature
+    /// shipped - Monaco therefore never once left its initial default `vs`
+    /// (light) base theme, regardless of the app's own theme toggle, which is
+    /// exactly the captain's screenshots. `pushTheme()` now logs a failure
+    /// instead of swallowing it, so this class of regression cannot go silent
+    /// again. Confirmed live via a bridge call that isolated the JS handler
+    /// from the controller's own wiring: the reply was literally
+    /// `"failure: Illegal value for token color: "` before this fix.
     enum Key: String, CaseIterable {
         case mode, background, chrome, ink, line
         case accent, selection, selectionInactive, currentLine, lineNumber
         case scrollbar, scrollbarHover
-        case comment, keyword, string, constant, type, function, operatorToken, invalid
+        case comment, keyword, string, constant, type, function, invalid
+        case operatorToken = "operator"
     }
 
     /// Every colour the page's `applyTheme` reads, resolved from `theme`.
