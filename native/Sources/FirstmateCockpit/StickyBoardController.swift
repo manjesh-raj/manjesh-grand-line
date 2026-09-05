@@ -11,14 +11,27 @@
 // since that one hosts a mature library rather than a from-scratch UI):
 //
 //   - A "detective corkboard" mockup (dark wood, red pushpins, red string,
-//     torn/rotated cards, a typewriter header font) - explicitly NOT the
-//     direction taken. No pushpins, no string, no wood texture anywhere in
-//     this file.
+//     torn/rotated cards, a typewriter header font).
 //   - A cleaner "Sticky Board" mockup (a toolbar, a dotted-grid board,
 //     draggable colored cards with a small header + "\u{2022}\u{2022}\u{2022}"
 //     menu, an editable body, free positioning, a slight per-note rotation, a
-//     footer note count) - this is the interaction model this build actually
-//     follows, built natively rather than as embedded web content.
+//     footer note count) - this is the interaction model this build follows,
+//     built natively rather than as embedded web content.
+//
+// **v1 took the second one and explicitly refused the first's decoration;
+// `fm/grandline-sticky-code-preview-polish` reversed half of that**, after
+// the captain reviewed v1 live and asked for the detective board's own
+// identity back: the typewriter case-file header, the red pins, and a real
+// cork surface in a wooden frame in place of the dotted grid. So this file's
+// former "no pushpins, no wood texture anywhere" note is gone, deliberately.
+// What is still NOT built from that mockup: the red string between cards,
+// and torn/ragged card edges.
+//
+// A third reference arrived with that pass and outranks both: a plain photo
+// of a real corkboard in a wooden picture frame. It is the authoritative
+// colour/material direction for the board surface - tan/brown flecked cork,
+// **not** the detective mockup's green felt (see `StickyBoardModels.swift`'s
+// `StickyBoardCork` for the contradiction that resolved and how).
 //
 // ## What v1 deliberately does not build
 //
@@ -36,9 +49,18 @@
 // See `StickyBoardStore.swift`'s header for the git-sync story (a genuinely
 // new, dedicated `GrandLineDocs/sticky-board/` folder, sharing
 // `ShiftGitSync.shared`'s clone the same way `DocsRunbookGitSync` already
-// does). Note paper colors are a deliberate, literal exception to this app's
-// theme-token rule (see `StickyBoardModels.swift`'s header) - only the
-// board's own background/toolbar chrome follows the active `HelmTheme`.
+// does). Colour here is **three** categories, not two - board chrome follows
+// the active `HelmTheme`, the cork and its wood frame are literal hues chosen
+// by light/dark *mode*, and a note's paper is one literal value in all 14
+// themes. `StickyBoardModels.swift`'s header is the authority on which is
+// which; conflating any two of them is how this feature breaks.
+//
+// `applyTheme()` also forces `view.appearance`, which is not optional
+// decoration: without it every system-semantic colour in this subtree
+// (scrollers, the title field's editor, the overflow menu) follows the OS's
+// light/dark rather than the app's, and the page re-themes only halfway. That
+// omission was the captain's own "Sticky Board doesn't re-theme properly"
+// report; see `ThemeManager.swift`'s checklist item 2.
 
 import AppKit
 
