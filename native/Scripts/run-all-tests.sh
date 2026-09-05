@@ -19,6 +19,12 @@
 #   ./Scripts/run-all-tests.sh --list       # print the discovered suites and exit
 #   ./Scripts/run-all-tests.sh --ci         # skip suites that need a real login
 #                                           # session (see NEEDS_SESSION below)
+#   ./Scripts/run-all-tests.sh --session-only
+#                                           # run ONLY those suites - the exact
+#                                           # complement of --ci. This is what
+#                                           # CI's windowed job runs, so the
+#                                           # list has one home and the two can
+#                                           # never disagree.
 #   ./Scripts/run-all-tests.sh FM_RUN_SHIFT_STORE_TESTS FM_RUN_BACKUP_TESTS
 #                                           # run only the named suites
 #
@@ -47,6 +53,7 @@ cd "$(dirname "$0")/.."
 BUILD=1
 LIST_ONLY=0
 CI_MODE=0
+SESSION_ONLY=0
 REQUESTED=()
 
 for arg in "$@"; do
@@ -54,6 +61,7 @@ for arg in "$@"; do
     --no-build) BUILD=0 ;;
     --list) LIST_ONLY=1 ;;
     --ci) CI_MODE=1 ;;
+    --session-only) SESSION_ONLY=1 ;;
     -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     FM_RUN_*) REQUESTED+=("$arg") ;;
     *) echo "unknown argument: $arg (see --help)" >&2; exit 2 ;;
@@ -165,7 +173,41 @@ NEEDS_SESSION=(
   # same reason as its Whiteboard/Kubernetes peers above. Its pure-logic half
   # (FM_RUN_STICKY_BOARD_TESTS) is deliberately not here - that one runs in CI.
   "FM_RUN_STICKY_BOARD_VIEW_TESTS"
+  # ---------------------------------------------------------------------
+  # The full-app audit's §7.1 finding: these eight all create real
+  # `NSWindow`s and drive real AppKit layout, exactly like every entry
+  # above, but had drifted out of this list - so `--ci` ran them on the
+  # blocking job purely because a GitHub-hosted runner happens to have a
+  # window server. That is not a property this list is allowed to assume:
+  # its whole contract is "needs a real login session", and a self-hosted
+  # or headless runner would hang or fail on them with no explanation.
+  #
+  # They are not skipped in CI as a result - they moved to the windowed
+  # job below (`--session-only`), which runs exactly this list. See the
+  # workflow's own comment for the blocking/non-blocking reasoning.
+  "FM_RUN_LOCK_SCREEN_TESTS"
+  "FM_RUN_RECENT_DESTINATIONS_TESTS"
+  "FM_RUN_TOPNAV_PILL_PRESSED_STATE_TESTS"
+  "FM_RUN_SETTINGS_THEME_LAYOUT_PARITY_TESTS"
+  "FM_RUN_UPDATES_REFRESH_BUTTON_THEME_TESTS"
+  "FM_RUN_CONSOLE_CLAUDE_USAGE_TESTS"
+  "FM_RUN_TAB_FORWARD_DRAGS_TOGGLE_TESTS"
+  "FM_RUN_KUBE_CONTEXT_BRIDGE_TESTS"
+  # Mounts a real `DocsController` and loads a real scratch Playbook into its
+  # WKWebView to prove the subresource-cache fix - a live web content process,
+  # like its Whiteboard/Code Preview peers above.
+  "FM_RUN_DOCS_PLAYBOOK_RELOAD_TESTS"
+  # Mounts real `ConsoleController`s (both the Firstmate and host-page kinds)
+  # in real windows and forks real `.shell` children, like its
+  # FM_RUN_TAB_FORWARD_DRAGS_TOGGLE_TESTS / FM_RUN_CONSOLE_CLAUDE_USAGE_TESTS
+  # peers.
+  "FM_RUN_CONSOLE_TAB_LIFECYCLE_TESTS"
 )
+
+if [ "$CI_MODE" -eq 1 ] && [ "$SESSION_ONLY" -eq 1 ]; then
+  echo "error: --ci and --session-only are complements; passing both runs nothing." >&2
+  exit 2
+fi
 
 if [ "$CI_MODE" -eq 1 ]; then
   SKIP_FLAGS+=("${NEEDS_SESSION[@]}")
@@ -193,8 +235,38 @@ if [ ${#ALL_FLAGS[@]} -eq 0 ]; then
   exit 1
 fi
 
+# Every NEEDS_SESSION entry must name a suite that actually exists. This is the
+# other half of §7.1's drift: the list going stale by naming a suite that was
+# renamed or deleted is silent, and would quietly shrink the windowed job's
+# coverage with nothing to notice it. (The first half - a window-backed suite
+# missing FROM the list - is guarded on the Swift side by
+# `E2ETestingPolicySelfTest`, which greps for `NSWindow(` and compares.)
+STALE=()
+for want in "${NEEDS_SESSION[@]}"; do
+  found=0
+  for have in "${ALL_FLAGS[@]}"; do
+    [ "$want" = "$have" ] && found=1 && break
+  done
+  [ "$found" -eq 0 ] && STALE+=("$want")
+done
+if [ ${#STALE[@]} -gt 0 ]; then
+  echo "error: NEEDS_SESSION names ${#STALE[@]} suite(s) that no longer exist in $MAIN:" >&2
+  printf '  %s\n' "${STALE[@]}" >&2
+  echo "Remove them from the list, or fix the rename." >&2
+  exit 1
+fi
+
 if [ ${#REQUESTED[@]} -gt 0 ]; then
   FLAGS=("${REQUESTED[@]}")
+elif [ "$SESSION_ONLY" -eq 1 ]; then
+  # Preserve main.swift's source order rather than the list's own, so the
+  # windowed job's output reads the same way a full local run does.
+  FLAGS=()
+  for have in "${ALL_FLAGS[@]}"; do
+    for want in "${NEEDS_SESSION[@]}"; do
+      if [ "$have" = "$want" ]; then FLAGS+=("$have"); break; fi
+    done
+  done
 else
   FLAGS=("${ALL_FLAGS[@]}")
 fi

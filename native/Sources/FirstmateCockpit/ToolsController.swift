@@ -588,8 +588,8 @@ final class ToolsController: NSViewController, DaylightDrillActions {
     /// closing "Diff 2" and opening a new Diff tab reuses the name "Diff 2"
     /// rather than climbing to "Diff 3".
     private func defaultName(for kind: ToolKind) -> String {
-        let existing = tabs.filter { $0.kind == kind }.count
-        return existing == 0 ? kind.shortName : "\(kind.shortName) \(existing + 1)"
+        TabNaming.nextName(bare: kind.shortName,
+                           taken: tabs.filter { $0.kind == kind }.map { $0.name })
     }
 
     /// The tab bar's "+": show the picker so the captain can choose which
