@@ -628,7 +628,26 @@ enum CodePreviewViewSelfTest {
     /// like is `CodePreviewSelfTest.checkThemePalette`'s job (it measures every
     /// token's contrast against the editor background in all fourteen themes,
     /// which a screenshot cannot do). What this adds is that the push itself
-    /// works against a real page, in a light theme and a dark one.
+    /// works against a real page, in a light theme and a dark one - both that
+    /// the native chrome switches (`effectiveAppearance`) *and* that Monaco's
+    /// own rendered editor surface actually changed colour, via
+    /// `readThemeProbe` reading back `.monaco-editor-background`'s real
+    /// computed style rather than trusting that the bridge call succeeded.
+    ///
+    /// This second half is not belt-and-braces: `fm/grandline-recents-
+    /// position-and-codepreview-theme` found the native chrome fix
+    /// (`view.appearance`) from the earlier "half-themed" pass was correct,
+    /// but `CodePreviewTheme.Key.operatorToken`'s wire name did not match what
+    /// the vendored JS read (`t.operator`), so `monaco.editor.defineTheme`
+    /// threw on every single push - caught by the JS side's own try/catch and
+    /// replied as `{ok: false}`, which `pushTheme()` sent with no completion
+    /// handler and therefore never saw. Monaco stayed on its initial default
+    /// (`vs`, light) forever, regardless of the app's theme, and a check that
+    /// only asked "did the bridge call not crash the page" (`stats`, still
+    /// answered `ok` throughout) could never have caught it - confirmed live:
+    /// reverting the `operatorToken` fix and re-running this exact loop
+    /// reproduces `theme=light` on every iteration including the ones set to
+    /// a dark `HelmTheme`.
     private static func checkThemeSweep(
         _ controller: CodePreviewController, _ webView: CodePreviewWebView, _ check: (Bool, String) -> Void
     ) {
@@ -638,6 +657,9 @@ enum CodePreviewViewSelfTest {
         // that leaked a theme and made unrelated ones fail.
         let original = ThemeManager.shared.theme
         defer { ThemeManager.shared.setTheme(original) }
+
+        var renderedThemes: Set<String> = []
+        var renderedBackgrounds: Set<String> = []
 
         for id in ["helm-dark", "daylight", "helm-light"] {
             guard let theme = HelmTheme.allThemes.first(where: { $0.id == id }) else {
@@ -671,7 +693,44 @@ enum CodePreviewViewSelfTest {
             let effective = controller.view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
             check(effective == wantAqua,
                   "\(id): the page's effectiveAppearance should be \(wantAqua.rawValue), was \(effective?.rawValue ?? "nil")")
+
+            // **The embedded Monaco editor's own rendered colour, read back
+            // out of the page - not the payload sent to it.** This is the
+            // half `effectiveAppearance` cannot see: a `WKWebView`'s own web
+            // content follows Monaco's independent theme concept, not AppKit
+            // appearance, so this is the one assertion that actually proves
+            // the editor's colours changed rather than just the chrome around
+            // it.
+            var probeTheme: String?
+            var probeBackground: String?
+            var probeDone = false
+            webView.call("readThemeProbe") { result in
+                if case .success(let body) = result {
+                    probeTheme = body["theme"] as? String
+                    probeBackground = body["background"] as? String
+                }
+                probeDone = true
+            }
+            _ = waitFor(timeout: 10, until: { probeDone })
+            let wantMode = theme.mode == .dark ? "dark" : "light"
+            check(probeTheme == wantMode,
+                  "\(id): Monaco's own rendered dataset.theme should be \(wantMode), was \(probeTheme ?? "nil")")
+            guard let background = probeBackground else {
+                check(false, "\(id): readThemeProbe returned no background - is the editor mounted?")
+                continue
+            }
+            renderedThemes.insert(probeTheme ?? "?")
+            renderedBackgrounds.insert(background)
         }
+
+        // Both real states were reached, and the editor's *rendered* surface
+        // genuinely differed between them - the one property a stuck-on-`vs`
+        // Monaco cannot fake, since every `HelmTheme.backgroundHex` in this
+        // sweep differs.
+        check(renderedThemes == ["dark", "light"],
+              "expected Monaco to render both light and dark across the sweep, saw \(renderedThemes.sorted())")
+        check(renderedBackgrounds.count == 3,
+              "expected 3 distinct rendered editor backgrounds across 3 themes, saw \(renderedBackgrounds.count): \(renderedBackgrounds)")
     }
 
     // MARK: Font zoom

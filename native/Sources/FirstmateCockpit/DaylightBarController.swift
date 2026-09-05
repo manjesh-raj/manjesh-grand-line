@@ -97,12 +97,18 @@ final class DaylightBarController: NSViewController {
     private let stickyBoardButton = DaylightDestinationButton(destination: .stickyBoard)
     private let codePreviewButton = DaylightDestinationButton(destination: .codePreview)
     /// The "Recents" dropdown (`fm/grandline-recents-navigation`) - a captain
-    /// review of four back/forward-style approaches chose this one, and gave
-    /// an explicit placement correction: it sits right after the space pills,
-    /// never next to the logo the reviewed mockup originally showed it beside.
-    /// The bar owns only the button and the popover chrome, never what a
-    /// `RecentDestinations` is - see `RecentDestinationsPopover.swift`'s own
-    /// header for the forward-don't-own wiring.
+    /// review of four back/forward-style approaches chose this one. It first
+    /// shipped right after the space pills (never next to the logo the
+    /// reviewed mockup originally showed it beside), then the captain
+    /// corrected that placement a second time (`fm/grandline-recents-
+    /// position-and-codepreview-theme`): sitting right after Engineering
+    /// "doesn't make much sense" as a stray extra space pill, so it now sits
+    /// on the *other* side of the search field, grouped with the Sticky
+    /// Board/Code Preview quick-access icons - search -> Recents -> Sticky
+    /// Board -> Code Preview -> theme -> bell -> avatar. The bar owns only
+    /// the button and the popover chrome, never what a `RecentDestinations`
+    /// is - see `RecentDestinationsPopover.swift`'s own header for the
+    /// forward-don't-own wiring.
     let recentDestinations = RecentDestinationsController()
     /// Forwarded, never owned - the bar has no idea what a destination *is*,
     /// exactly as it has no idea what a space means (`onSelectSpace`).
@@ -175,8 +181,8 @@ final class DaylightBarController: NSViewController {
 
         bar.addSubview(logoRow)
         bar.addSubview(pillRow)
-        bar.addSubview(recentDestinations.button)
         bar.addSubview(searchPill)
+        bar.addSubview(recentDestinations.button)
         bar.addSubview(stickyBoardButton)
         bar.addSubview(codePreviewButton)
         bar.addSubview(themeToggleButton)
@@ -191,15 +197,18 @@ final class DaylightBarController: NSViewController {
         // narrow window compresses the gap to nothing before anything is asked
         // to truncate, and nothing here can push the window wider.
         //
-        // The Recents button sits between those two groups - a fixed-size
-        // control positioned right after the pills with a plain required
-        // constant gap (it needs no window-cap protection of its own, since
-        // its own width is fixed at `DaylightBarIconButton.side`), with the
-        // one compressible joint moved to sit right after it instead of right
-        // after the pills - still exactly one squeeze point in the whole
-        // chain, per AGENTS.md gotcha (13).
+        // The Recents button now sits *inside* the trailing cluster - right
+        // after the search pill, right before the Sticky Board icon - rather
+        // than between the pills and the search pill: a fixed-size control
+        // with a plain required constant gap on both sides (it needs no
+        // window-cap protection of its own, since its own width is fixed at
+        // `DaylightBarIconButton.side`, matching the sticky-board/code-preview
+        // icons it now sits beside). The one compressible joint is the gap
+        // between the pills and the search pill, unchanged in kind - still
+        // exactly one squeeze point in the whole chain, per AGENTS.md gotcha
+        // (13).
         let pillsToSearch = searchPill.leadingAnchor.constraint(
-            greaterThanOrEqualTo: recentDestinations.button.trailingAnchor, constant: HelmMetrics.s3)
+            greaterThanOrEqualTo: pillRow.trailingAnchor, constant: HelmMetrics.s3)
         pillsToSearch.priority = HelmDaylightPriority.contentTie
 
         NSLayoutConstraint.activate([
@@ -215,14 +224,14 @@ final class DaylightBarController: NSViewController {
             pillRow.leadingAnchor.constraint(equalTo: logoRow.trailingAnchor, constant: HelmMetrics.s5),
             pillRow.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
 
-            recentDestinations.button.leadingAnchor.constraint(equalTo: pillRow.trailingAnchor, constant: HelmMetrics.s3),
+            pillsToSearch,
+            searchPill.trailingAnchor.constraint(equalTo: recentDestinations.button.leadingAnchor, constant: -HelmMetrics.s2),
+            searchPill.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+
+            recentDestinations.button.trailingAnchor.constraint(equalTo: stickyBoardButton.leadingAnchor, constant: -HelmMetrics.s2),
             recentDestinations.button.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             recentDestinations.button.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
             recentDestinations.button.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
-
-            pillsToSearch,
-            searchPill.trailingAnchor.constraint(equalTo: stickyBoardButton.leadingAnchor, constant: -HelmMetrics.s2),
-            searchPill.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
 
             stickyBoardButton.trailingAnchor.constraint(equalTo: codePreviewButton.leadingAnchor, constant: -HelmMetrics.s2),
             stickyBoardButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
@@ -357,8 +366,8 @@ final class DaylightBarController: NSViewController {
     /// hierarchy states their relative order.
     var keyViewChain: [NSView] {
         var chain: [NSView] = pills.map { $0.container }
-        chain.append(recentDestinations.button)
         chain.append(searchPill)
+        chain.append(recentDestinations.button)
         chain.append(stickyBoardButton)
         chain.append(codePreviewButton)
         chain.append(themeToggleButton)

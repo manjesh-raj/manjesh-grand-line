@@ -8,6 +8,13 @@
 // an explicit placement correction - it sits after the space pills, not next
 // to the logo.
 //
+// A second placement correction landed in `fm/grandline-recents-position-and-
+// codepreview-theme`: sitting right after Engineering "doesn't make much
+// sense" as a stray extra space pill, so it moved to the *other* side of the
+// search field, grouped with the Sticky Board/Code Preview quick-access icons
+// (search -> Recents -> Sticky Board -> Code Preview -> theme -> bell ->
+// avatar).
+//
 // **What this drives for real, and what it deliberately does not.**
 // `RecentDestinations`'s own dedup/reorder/cap logic is pure Swift, tested
 // directly with no AppKit at all. The navigation half is driven through a
@@ -52,7 +59,7 @@ enum RecentDestinationsSelfTest {
             ("hostPageNavigationIsTracked", test_hostPageNavigationIsTracked),
             ("panelRendersRowsAndClickNavigates", test_panelRendersRowsAndClickNavigates),
             ("panelShowsEmptyStateWithNothingRecorded", test_panelShowsEmptyStateWithNothingRecorded),
-            ("barButtonSitsAfterThePillsBeforeSearch", test_barButtonSitsAfterThePillsBeforeSearch),
+            ("barButtonSitsBeforeStickyBoardAfterSearch", test_barButtonSitsBeforeStickyBoardAfterSearch),
             ("barButtonThemesAcrossLightAndDark", test_barButtonThemesAcrossLightAndDark),
             ("recordNavigationIsTheOnlyWriter", test_recordNavigationIsTheOnlyWriter),
         ]
@@ -398,7 +405,7 @@ enum RecentDestinationsSelfTest {
 
     // MARK: Bar placement + theming
 
-    private static func test_barButtonSitsAfterThePillsBeforeSearch() -> String? {
+    private static func test_barButtonSitsBeforeStickyBoardAfterSearch() -> String? {
         let bar = DaylightBarController()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 80),
                               styleMask: [.titled], backing: .buffered, defer: false)
@@ -410,18 +417,29 @@ enum RecentDestinationsSelfTest {
         let lastPillMaxX = pills.map { $0.frame.maxX }.max() ?? 0
         let button = bar.recentDestinations.button
         let search = bar.debugSearchPill()
+        guard let stickyBoard = bar.debugDestinationButtons().first else {
+            return "no destination quick-access buttons built"
+        }
 
         guard button.frame.width > 1, button.frame.height > 1 else {
             return "the Recents button resolved a zero-size frame"
         }
-        guard button.frame.minX >= lastPillMaxX - 0.5 else {
-            return "the Recents button (minX=\(button.frame.minX)) starts before the space pills end (maxX=\(lastPillMaxX))"
+        // The second captain correction (`fm/grandline-recents-position-and-
+        // codepreview-theme`): the Recents button now sits after the search
+        // pill, not right after the space pills - it must clear the pills by
+        // more than a token gap, i.e. genuinely be on the far side of the
+        // search field.
+        guard search.frame.minX >= lastPillMaxX - 0.5 else {
+            return "the search pill (minX=\(search.frame.minX)) starts before the space pills end (maxX=\(lastPillMaxX))"
         }
-        guard button.frame.maxX <= search.frame.minX + 0.5 else {
-            return "the Recents button (maxX=\(button.frame.maxX)) overlaps the search pill (minX=\(search.frame.minX))"
+        guard button.frame.minX >= search.frame.maxX - 0.5 else {
+            return "the Recents button (minX=\(button.frame.minX)) starts before the search pill ends (maxX=\(search.frame.maxX))"
         }
-        // The explicit captain correction: not next to the logo, i.e. not at
-        // the bar's own leading inset.
+        guard button.frame.maxX <= stickyBoard.frame.minX + 0.5 else {
+            return "the Recents button (maxX=\(button.frame.maxX)) overlaps the Sticky Board icon (minX=\(stickyBoard.frame.minX))"
+        }
+        // The explicit first captain correction still holds: not next to the
+        // logo, i.e. not at the bar's own leading inset.
         guard button.frame.minX > 40 else {
             return "the Recents button sits right at the bar's leading edge, next to the logo"
         }
