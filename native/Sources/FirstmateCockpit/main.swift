@@ -1390,12 +1390,62 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     if (ProcessInfo.processInfo.environment["FM_CODE_PREVIEW_DIR"] ?? "").isEmpty {
         setenv("FM_CODE_PREVIEW_DIR", scratchRoot.appendingPathComponent("code-snippets", isDirectory: true).path, 1)
     }
+    // The SECOND full-app audit's §7.1: `DocsRunbookStore` is the one store in
+    // the `GrandLineDocs/` family that honoured only its own narrow override
+    // and NOT `FM_SHIFT_DIR`, so the entry below - which the block's own
+    // comment (and AGENTS.md) claimed covered it - genuinely did not. Two
+    // windowed suites reached the real clone machinery on every *local* run
+    // because of it; CI was safe only because `ci.yml`'s env block happens to
+    // set this variable directly. `DocsRunbookStore.init()` has the fallback
+    // now, so this line is the belt to that brace: it also covers a suite that
+    // sets neither, and it keeps the override explicit at the one place a
+    // reader looks for the full list.
+    if (ProcessInfo.processInfo.environment["FM_DOCS_RUNBOOKS_DIR"] ?? "").isEmpty {
+        setenv("FM_DOCS_RUNBOOKS_DIR", scratchRoot.appendingPathComponent("runbooks", isDirectory: true).path, 1)
+    }
+    // The Playbook's own local copy. Not a git-sync store - `DocsStore` only
+    // resolves a folder under Application Support and `DocsSyncSource` fetches
+    // on demand - so the exposure is a stray directory (and, if a suite ever
+    // drove a sync, a real network fetch) in the captain's real profile rather
+    // than a write into their repo. Same shape, same cost, no reason to leave
+    // it as the one member of the family without an entry.
+    if (ProcessInfo.processInfo.environment["FM_DOCS_DIR"] ?? "").isEmpty {
+        setenv("FM_DOCS_DIR", scratchRoot.appendingPathComponent("docs", isDirectory: true).path, 1)
+    }
+    // The second audit's §7.3, the long-standing gap this block's own rule
+    // ("every store reachable from a bare production constructor") always
+    // implied but never covered. ~10 windowed suites construct a bare
+    // `SSHKeyStore()`/`SnippetStore()` purely to satisfy `ConsoleController`'s
+    // parameter list (`ConsoleTabLifecycleSelfTest`, `SRELeadPerTabSelfTest`,
+    // `TabKeyboardShortcutsSelfTest`, BlockViewRestart, ConsoleClaudeUsage,
+    // IncidentResume, KubeContextBridge, KubernetesDestination,
+    // NotificationCenterSRELead, TabForwardDragsToggle), so locally each of
+    // them *reads* the captain's real `keys.json`/`snippets.json` at
+    // construction. Read-only in practice today - GL-01's load-failure path
+    // makes a backup copy rather than overwriting - but the whole point of
+    // this block is that the *next* suite to reach one of these is the one
+    // that writes. `FM_HOSTS_FILE` and `FM_DICTATION_DIR` are the same class
+    // and get the same treatment rather than waiting for their own incident.
+    if (ProcessInfo.processInfo.environment["FM_KEYS_FILE"] ?? "").isEmpty {
+        setenv("FM_KEYS_FILE", scratchRoot.appendingPathComponent("keys.json").path, 1)
+    }
+    if (ProcessInfo.processInfo.environment["FM_SNIPPETS_FILE"] ?? "").isEmpty {
+        setenv("FM_SNIPPETS_FILE", scratchRoot.appendingPathComponent("snippets.json").path, 1)
+    }
+    if (ProcessInfo.processInfo.environment["FM_HOSTS_FILE"] ?? "").isEmpty {
+        setenv("FM_HOSTS_FILE", scratchRoot.appendingPathComponent("hosts.json").path, 1)
+    }
+    if (ProcessInfo.processInfo.environment["FM_DICTATION_DIR"] ?? "").isEmpty {
+        setenv("FM_DICTATION_DIR", scratchRoot.appendingPathComponent("dictation", isDirectory: true).path, 1)
+    }
     // The full-app audit's §7.2, and the entry that generalises every one
     // above: `FM_SHIFT_DIR` is the *root* override the whole
     // `GrandLineDocs/` family resolves through.
     //
-    // `ShiftStore`, `IncidentStore`, `DocsRunbookStore`, `CommandLibraryStore`,
-    // `LogAnalyzerStore`, `StickyBoardStore` and `CodePreviewStore` all have a
+    // `ShiftStore`, `IncidentStore`, `DocsRunbookStore` (only since the second
+    // audit's §7.1 - it was the outlier that ignored this variable entirely),
+    // `CommandLibraryStore`, `LogAnalyzerStore`, `StickyBoardStore` and
+    // `CodePreviewStore` all have a
     // no-argument production `init()` that, with no override set, resolves to
     // `ShiftGitSync.shared`'s working tree - a real local clone of the
     // captain's actual private `manjesh-config` repo. Every suite that

@@ -44,6 +44,49 @@ enum DocsRunbookDataSelfTest {
         check(DocsRunbookStore.titleFromContent("# My Runbook\n\nBody text", fallback: "x") == "My Runbook", "titleFromContent should read a leading '# ' heading")
         check(DocsRunbookStore.titleFromContent("No heading here", fallback: "fallback-slug") == "fallback-slug", "titleFromContent should fall back when there's no leading heading")
 
+        // MARK: 1b. The `FM_SHIFT_DIR` fallback (second full-app audit, §7.1)
+
+        // Behavioural, not a source read: the thing that was broken is which
+        // branch `init()` takes. With `FM_SHIFT_DIR` set and its own narrow
+        // override absent, this store must resolve into that scratch root and
+        // report `gitSync == nil` - the latter being the definitive proof that
+        // `DocsRunbookGitSync.shared.start()` was never called, since that call
+        // and the non-nil `gitSync` live on the same branch. Before the fix,
+        // both assertions failed and the store instead reached
+        // `ShiftGitSync.shared`'s real clone of the captain's private
+        // `manjesh-config` repo.
+        do {
+            let shiftRoot = scratch.appendingPathComponent("shift-dir-fallback", isDirectory: true)
+            let hadOwnOverride = ProcessInfo.processInfo.environment["FM_DOCS_RUNBOOKS_DIR"]
+            unsetenv("FM_DOCS_RUNBOOKS_DIR")
+            let previousShift = ProcessInfo.processInfo.environment["FM_SHIFT_DIR"]
+            setenv("FM_SHIFT_DIR", shiftRoot.path, 1)
+            defer {
+                if let previousShift { setenv("FM_SHIFT_DIR", previousShift, 1) } else { unsetenv("FM_SHIFT_DIR") }
+                if let hadOwnOverride { setenv("FM_DOCS_RUNBOOKS_DIR", hadOwnOverride, 1) }
+            }
+
+            let store = DocsRunbookStore()
+            check(store.gitSync == nil,
+                  "FM_SHIFT_DIR must put DocsRunbookStore in its git-free mode - a non-nil gitSync means "
+                  + "init() called DocsRunbookGitSync.shared.start(), i.e. reached the real manjesh-config clone")
+            let resolved = store.root.resolvingSymlinksInPath().path
+            let expected = shiftRoot.appendingPathComponent("runbooks", isDirectory: true)
+                .resolvingSymlinksInPath().path
+            check(resolved == expected,
+                  "FM_SHIFT_DIR should resolve the runbook root to \(expected), got \(resolved)")
+            // The directories the git path would otherwise have created must
+            // exist on this branch too, or every read below it silently returns
+            // nothing rather than failing.
+            check(fm.fileExists(atPath: store.root.path), "the fallback root should be created eagerly")
+            check(fm.fileExists(atPath: store.postmortemsRoot.path), "the fallback postmortems/ should be created eagerly")
+
+            // And it is a working store, not merely a correctly-pointed one.
+            let made = store.createRunbook(title: "Fallback Smoke", content: "# Fallback Smoke\n\nbody")
+            check(store.listRunbooks().contains { $0.id == made.id },
+                  "a store rooted through FM_SHIFT_DIR should still round-trip a runbook")
+        }
+
         // MARK: 2. CRUD against a plain scratch folder (FM_DOCS_RUNBOOKS_DIR-style override)
 
         do {

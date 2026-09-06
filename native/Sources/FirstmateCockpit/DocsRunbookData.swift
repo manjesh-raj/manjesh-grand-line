@@ -347,23 +347,60 @@ final class DocsRunbookStore {
     let root: URL
     var postmortemsRoot: URL { root.appendingPathComponent("postmortems", isDirectory: true) }
 
-    /// `nil` when `FM_DOCS_RUNBOOKS_DIR` overrides `root` (every self-test in
-    /// this area, and any captain who wants a plain local-only folder with no
-    /// git backing) - same convention as `ShiftStore.gitSync`.
+    /// `nil` when `FM_DOCS_RUNBOOKS_DIR`/`FM_SHIFT_DIR` overrides `root` (every
+    /// self-test in this area, and any captain who wants a plain local-only
+    /// folder with no git backing) - same convention as `ShiftStore.gitSync`.
     let gitSync: DocsRunbookGitSync?
 
+    /// Root resolution mirrors `CodePreviewStore`'s, `StickyBoardStore`'s,
+    /// `IncidentStore`'s and `LogAnalyzerStore`'s, **including honouring
+    /// `FM_SHIFT_DIR`** - which, until the second full-app audit's §7.1, it
+    /// was the one store in this family NOT to do.
+    ///
+    /// That was a real hermeticity hole rather than an inconsistency: with
+    /// neither override set this `init()` calls `DocsRunbookGitSync.shared.start()`,
+    /// which delegates to `ShiftGitSync.shared.ensureWorkingTreeNow()` - the
+    /// real clone/fetch/pull machinery against the captain's actual private
+    /// `manjesh-config` repo (worst case, the layout migration's own
+    /// commit+push path). Two windowed suites reach it on any *local* run
+    /// today, both indirectly and neither aware it is happening:
+    /// `AppShellDrillHeaderTitleSelfTest` (a real `AppShellController` eagerly
+    /// builds `RunbooksController`/`PostmortemsController` and a canvas store)
+    /// and `DaylightDrillPageSelfTest` (`ShiftController` ->
+    /// `CommandLibraryPageView`'s own `DocsRunbookStore()`). Both set
+    /// `FM_SHIFT_DIR` - the established way a suite keeps away from that clone -
+    /// and were silently getting no protection from it. CI happened to be safe
+    /// only because `ci.yml`'s env block sets `FM_DOCS_RUNBOOKS_DIR` directly.
+    ///
+    /// `main.swift`'s `#if FM_SELFTESTS` block sets both overrides now, so this
+    /// fallback is not the only defence - but it is the one that makes the
+    /// contract that block's own comment (and AGENTS.md) already claimed
+    /// actually true, and the one that covers a single suite run by hand with
+    /// just `FM_SHIFT_DIR` set.
     init() {
-        if let override = ProcessInfo.processInfo.environment["FM_DOCS_RUNBOOKS_DIR"], !override.isEmpty {
+        let env = ProcessInfo.processInfo.environment
+        if let override = env["FM_DOCS_RUNBOOKS_DIR"], !override.isEmpty {
             root = URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true)
             gitSync = nil
-            try? fm.createDirectory(at: root, withIntermediateDirectories: true)
-            try? fm.createDirectory(at: root.appendingPathComponent("postmortems"), withIntermediateDirectories: true)
+        } else if let override = env["FM_SHIFT_DIR"], !override.isEmpty {
+            root = URL(fileURLWithPath: (override as NSString).expandingTildeInPath, isDirectory: true)
+                .appendingPathComponent("runbooks", isDirectory: true)
+            gitSync = nil
         } else {
             let sync = DocsRunbookGitSync.shared
             sync.start()
             root = sync.dataRoot
             gitSync = sync
+            // Deliberately no eager `createDirectory` on this branch:
+            // `ensureReadyNow()` makes both directories itself, *after* the
+            // clone-into-temp-and-swap has landed. Creating them here first
+            // would put this store into `salvageRacedLocalWrites`' path for no
+            // benefit. The two override branches above have no such sync to do
+            // it for them, so they create eagerly.
+            return
         }
+        try? fm.createDirectory(at: root, withIntermediateDirectories: true)
+        try? fm.createDirectory(at: root.appendingPathComponent("postmortems"), withIntermediateDirectories: true)
     }
 
     func listRunbooks() -> [DocsRunbook] {

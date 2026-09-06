@@ -48,6 +48,7 @@ enum E2ETestingPolicySelfTest {
         checkWindowBackedSuitesAreDeclared(&ok)
         checkTheScriptStillOffersBothModes(&ok)
         checkThisProcessCannotReachTheCaptainsRealData(&ok)
+        checkEveryGrandLineDocsStoreHonoursShiftDir(&ok)
         print(ok ? "E2ETestingPolicySelfTest: all checks passed"
                  : "E2ETestingPolicySelfTest: FAILED")
         return ok
@@ -262,7 +263,17 @@ enum E2ETestingPolicySelfTest {
         // whole `GrandLineDocs/` family falls back to, so it is the one that
         // covers stores nobody has thought about yet.
         let required = ["FM_FLEET_LOG_DIR", "FM_SCHEDULES_FILE", "FM_SCHEDULE_HISTORY_DIR",
-                        "FM_STICKY_BOARD_DIR", "FM_CODE_PREVIEW_DIR", "FM_SHIFT_DIR"]
+                        "FM_STICKY_BOARD_DIR", "FM_CODE_PREVIEW_DIR",
+                        // The second audit's §7.1/§7.3. `FM_DOCS_RUNBOOKS_DIR`
+                        // is the one that was genuinely being reached: the
+                        // store behind it ignored `FM_SHIFT_DIR`, so the
+                        // catch-all below did not cover it and this check -
+                        // asserting only what the block itself sets - could not
+                        // see the gap. It does now, and the store honours
+                        // `FM_SHIFT_DIR` too.
+                        "FM_DOCS_RUNBOOKS_DIR", "FM_DOCS_DIR",
+                        "FM_KEYS_FILE", "FM_SNIPPETS_FILE", "FM_HOSTS_FILE", "FM_DICTATION_DIR",
+                        "FM_SHIFT_DIR"]
         let env = ProcessInfo.processInfo.environment
 
         // The property is "not the captain's real data", **not** "under this
@@ -300,6 +311,60 @@ enum E2ETestingPolicySelfTest {
             }
         }
         print("  \(required.count) store override(s) confirmed set and clear of \(realStoreRoot)")
+    }
+
+    /// The second audit's §7.1, as a guard rather than a corrected list.
+    ///
+    /// The finding was not "one store is missing a line" - it was that the
+    /// check above **cannot see** this class of gap at all. That one asserts
+    /// the overrides `main.swift`'s block sets; it says nothing about whether
+    /// a store actually *honours* the one those overrides fall back to. So
+    /// `DocsRunbookStore` ignored `FM_SHIFT_DIR` for its whole life while both
+    /// the block's own comment and AGENTS.md stated it did not, and two
+    /// windowed suites reached the real clone of the captain's private
+    /// `manjesh-config` on every local run with nothing reporting it.
+    ///
+    /// Every store whose no-argument `init()` resolves into
+    /// `ShiftGitSync.shared`'s working tree must read `FM_SHIFT_DIR`, because
+    /// that is the single override a suite sets to stay off that clone - and
+    /// the one a suite reaching the store *indirectly* (through a controller,
+    /// or a singleton nobody constructs on purpose) is realistically going to
+    /// have set. A source check, because the property is about which code path
+    /// exists, and proving it behaviourally would mean constructing the store
+    /// with no override - performing the exact hazard the guard exists to
+    /// close.
+    private static func checkEveryGrandLineDocsStoreHonoursShiftDir(_ ok: inout Bool) {
+        // Named explicitly rather than discovered: a store joining this family
+        // should have to be added here deliberately, and a discovery rule
+        // ("mentions ShiftGitSync.shared") would sweep in the sync classes
+        // themselves, which legitimately do not read this variable.
+        let family = [
+            "ShiftStore.swift", "IncidentStore.swift", "DocsRunbookData.swift",
+            "CommandLibraryStore.swift", "LogAnalyzerStore.swift",
+            "StickyBoardStore.swift", "CodePreviewStore.swift",
+        ]
+        guard let dir = SelfTestSources.appSourceDirectory() else {
+            print("  NOTE: app sources not found - skipping the FM_SHIFT_DIR family check")
+            return
+        }
+        var confirmed = 0
+        for file in family {
+            guard let source = try? String(contentsOf: dir.appendingPathComponent(file), encoding: .utf8) else {
+                fail("\(file) is named in the GrandLineDocs store family but could not be read", &ok)
+                continue
+            }
+            // The read itself, not a mention: every one of these files also
+            // *discusses* `FM_SHIFT_DIR` in a doc comment, and a comment is
+            // exactly what this check must not accept as the contract.
+            guard source.contains("\"FM_SHIFT_DIR\"]") else {
+                fail("\(file) never reads environment[\"FM_SHIFT_DIR\"] - a suite that sets only that "
+                     + "variable (the established way to stay off the captain's real manjesh-config clone) "
+                     + "would still resolve this store into it. Add the fallback, as its siblings have.", &ok)
+                continue
+            }
+            confirmed += 1
+        }
+        print("  \(confirmed)/\(family.count) GrandLineDocs store(s) confirmed to honour FM_SHIFT_DIR")
     }
 
     /// The two modes the CI workflow depends on still exist.
