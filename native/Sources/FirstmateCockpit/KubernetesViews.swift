@@ -65,7 +65,11 @@ final class KubeResourceTableView: NSView, NSTableViewDataSource, NSTableViewDel
         }
     }
 
-    static let rowHeight: CGFloat = 26
+    /// Measured at chrome text scale 1.0 - see `HelmType.scaledRowHeight`.
+    /// A cell here renders `HelmType.code()` or `HelmType.body()`, both scaled
+    /// roles, so a fixed 26 clips them at "Larger".
+    static let baseRowHeight: CGFloat = 26
+    static var rowHeight: CGFloat { HelmType.scaledRowHeight(baseRowHeight) }
 
     /// The app's shared table (`HelmTableView`), not a bare `NSTableView`.
     /// This page was built with a raw one and was the last table in the app
@@ -200,6 +204,10 @@ final class KubeResourceTableView: NSView, NSTableViewDataSource, NSTableViewDel
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
         tableView.headerView?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+        // GL-32: a chrome-text-scale change arrives as an app-wide theme
+        // re-fire, so re-deriving the row height here is what makes a
+        // fixed-height table follow the setting instead of clipping.
+        tableView.rowHeight = Self.rowHeight
         tableView.reloadData()
     }
 
@@ -271,7 +279,11 @@ final class KubeResourceTableView: NSView, NSTableViewDataSource, NSTableViewDel
 /// The Log Tail's own stream: one line per row, pod-coloured, demand-driven.
 final class KubeLogListView: NSView, NSTableViewDataSource, NSTableViewDelegate {
 
-    static let rowHeight: CGFloat = 17
+    /// Measured at chrome text scale 1.0 - see `HelmType.scaledRowHeight`.
+    /// The tightest row in the app: a log line is `HelmType.code()`, which at
+    /// "Larger" resolves close to 15pt inside what was a fixed 17.
+    static let baseRowHeight: CGFloat = 17
+    static var rowHeight: CGFloat { HelmType.scaledRowHeight(baseRowHeight) }
 
     /// `HelmTableView` for the same reason the resource table above uses it -
     /// one table component across the app. This one takes no selection at all
@@ -355,6 +367,8 @@ final class KubeLogListView: NSView, NSTableViewDataSource, NSTableViewDelegate 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
         applyThemeChrome()
+        // GL-32, as in `KubeResourceTableView.applyTheme`.
+        tableView.rowHeight = Self.rowHeight
         tableView.reloadData()
     }
 

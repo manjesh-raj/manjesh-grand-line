@@ -35,7 +35,28 @@ import AppKit
 /// tinted red here is a line that genuinely counted as an error there.
 final class LogRawPaneView: NSView {
 
-    static let rowHeight: CGFloat = 15
+    /// Measured at chrome text scale 1.0 - see `HelmType.scaledRowHeight`.
+    ///
+    /// **Chrome scale, not `FontSizeManager`.** Audit #2 §1.2 asks this site
+    /// to pick an owner, because a fixed 15 tracked neither. Chrome scale
+    /// wins: nothing in the Log Analyzer observes the monospace/terminal-size
+    /// setting (its only three observers are Console, Tools and Code Preview),
+    /// and every `HelmType` role used elsewhere in this file is chrome-scale
+    /// driven. Wiring the terminal size in here would be a new capability
+    /// rather than adopting an existing mechanism.
+    ///
+    /// **What this does and does not buy today**, because that finding's
+    /// stated premise for this one site is wrong: `LogRawLineCell` renders raw
+    /// `.monospacedSystemFont(ofSize: 9.5 / 10.5)` literals, *not*
+    /// `HelmType.code()` - that call is in `LogErrorGroupListView`'s sample
+    /// cell, a different class further down this file. So this pane cannot
+    /// clip at "Larger" today: nothing inside it grows. Those two literals are
+    /// pre-existing sub-11pt GL-32 debt, deliberately out of this pass's
+    /// scope. Scaling the row height now is what makes the height already
+    /// correct when that debt is paid, instead of the fix for it landing as a
+    /// clipping bug.
+    static let baseRowHeight: CGFloat = 15
+    static var rowHeight: CGFloat { HelmType.scaledRowHeight(baseRowHeight) }
 
     let tableView = NSTableView()
     private let scroll = NSScrollView()
@@ -105,6 +126,10 @@ final class LogRawPaneView: NSView {
         layer?.masksToBounds = true
         layer?.cornerRadius = theme.isDaylight ? HelmMetrics.dSurface : 0
         layer?.backgroundColor = Self.surfaceColor(for: theme).cgColor
+        // GL-32: a chrome-text-scale change arrives as an app-wide theme
+        // re-fire, so re-deriving the row height here is what makes a
+        // fixed-height list follow the setting instead of clipping.
+        tableView.rowHeight = Self.rowHeight
         tableView.reloadData()
     }
 
@@ -273,8 +298,18 @@ final class LogErrorGroupListView: NSView {
         case more(Int)
     }
 
-    static let groupRowHeight: CGFloat = 58
-    static let sampleRowHeight: CGFloat = 22
+    /// Measured at chrome text scale 1.0 - see `HelmType.scaledRowHeight`.
+    ///
+    /// Both content rows scale, because both grow: a group row is a
+    /// `HelmAccentRow` (the exact shape the six lists #333 fixed carry), and a
+    /// sample row renders `HelmType.code()`, which is a scaled role. Scaling
+    /// only the group height would leave the same table clipping its other
+    /// half. The empty row keeps a fixed height - a `HelmEmptyState` has
+    /// generous slack, and that is the precedent `FleetLogListView` set.
+    static let baseGroupRowHeight: CGFloat = 58
+    static var groupRowHeight: CGFloat { HelmType.scaledRowHeight(baseGroupRowHeight) }
+    static let baseSampleRowHeight: CGFloat = 22
+    static var sampleRowHeight: CGFloat { HelmType.scaledRowHeight(baseSampleRowHeight) }
     static let emptyRowHeight: CGFloat = 140
 
     let tableView = NSTableView()
@@ -338,6 +373,10 @@ final class LogErrorGroupListView: NSView {
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
+        // GL-32, as in `LogRawPaneView.applyTheme` - plus `recomputeHeight`,
+        // because this list sizes itself to its own content.
+        tableView.rowHeight = Self.groupRowHeight
+        recomputeHeight()
         tableView.reloadData()
     }
 
@@ -509,7 +548,11 @@ private final class LogSampleLineCell: NSTableCellView {
 
 final class LogTimelineListView: NSView {
 
-    static let rowHeight: CGFloat = 52
+    /// Measured at chrome text scale 1.0 - see `HelmType.scaledRowHeight`.
+    /// A timeline cell stacks `HelmType.rowTitle()` over `HelmType.caption()`,
+    /// so two scaled lines share this height. The empty row stays fixed.
+    static let baseRowHeight: CGFloat = 52
+    static var rowHeight: CGFloat { HelmType.scaledRowHeight(baseRowHeight) }
     static let emptyRowHeight: CGFloat = 130
 
     let tableView = NSTableView()
@@ -565,14 +608,24 @@ final class LogTimelineListView: NSView {
             events = list
             unavailableReason = list.isEmpty ? "Timeline unavailable — no events found." : nil
         }
+        recomputeHeight()
+        tableView.reloadData()
+    }
+
+    /// The list sizes itself to its own content, so this has to be re-derived
+    /// whenever the row height can have changed - which now includes a chrome
+    /// text scale change, not just a new set of events.
+    private func recomputeHeight() {
         heightConstraint.constant = events.isEmpty
             ? Self.emptyRowHeight
             : CGFloat(events.count) * Self.rowHeight + CGFloat(max(0, events.count - 1)) * 4
-        tableView.reloadData()
     }
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
+        // GL-32, as in `LogRawPaneView.applyTheme`.
+        tableView.rowHeight = Self.rowHeight
+        recomputeHeight()
         tableView.reloadData()
     }
 
@@ -707,7 +760,12 @@ private final class LogTimelineCell: NSTableCellView {
 
 final class LogCorrelationListView: NSView {
 
-    static let rowHeight: CGFloat = 56
+    /// Measured at chrome text scale 1.0 - see `HelmType.scaledRowHeight`.
+    /// These cells are `HelmAccentRow`s whose title *wraps*
+    /// (`Content.titleWraps`), so they are the least forgiving rows in this
+    /// file about a height that does not grow with the text.
+    static let baseRowHeight: CGFloat = 56
+    static var rowHeight: CGFloat { HelmType.scaledRowHeight(baseRowHeight) }
     static let emptyRowHeight: CGFloat = 130
 
     let tableView = NSTableView()
@@ -751,14 +809,22 @@ final class LogCorrelationListView: NSView {
     func setLinks(_ links: [LogCorrelationLink], theme: HelmTheme) {
         self.links = links
         self.theme = theme
+        recomputeHeight()
+        tableView.reloadData()
+    }
+
+    /// See `LogTimelineListView.recomputeHeight`.
+    private func recomputeHeight() {
         heightConstraint.constant = links.isEmpty
             ? Self.emptyRowHeight
             : CGFloat(links.count) * Self.rowHeight + CGFloat(max(0, links.count - 1)) * 6
-        tableView.reloadData()
     }
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
+        // GL-32, as in `LogRawPaneView.applyTheme`.
+        tableView.rowHeight = Self.rowHeight
+        recomputeHeight()
         tableView.reloadData()
     }
 }
@@ -837,7 +903,12 @@ final class LogAccentRowListView: NSView {
     private var contents: [HelmAccentRow.Content] = []
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var heightConstraint: NSLayoutConstraint!
-    private let rowHeight: CGFloat
+    private let baseRowHeight: CGFloat
+    private var rowHeight: CGFloat { HelmType.scaledRowHeight(baseRowHeight) }
+    #if FM_SELFTESTS
+    var baseRowHeightForTests: CGFloat { baseRowHeight }
+    var rowHeightForTests: CGFloat { rowHeight }
+    #endif
     private let emptyState: HelmEmptyState
 
     var onSelect: ((Int) -> Void)?
@@ -845,8 +916,17 @@ final class LogAccentRowListView: NSView {
     private static let columnID = NSUserInterfaceItemIdentifier("logAccentColumn")
     private static let cellID = NSUserInterfaceItemIdentifier("logAccentCell")
 
-    init(rowHeight: CGFloat = 70, emptySymbol: String, emptyTitle: String, emptyBody: String) {
-        self.rowHeight = rowHeight
+    /// `baseRowHeight` is measured at chrome text scale 1.0; `rowHeight`
+    /// grows it - see `HelmType.scaledRowHeight`.
+    ///
+    /// The audit named six sites; this is a seventh instance of the identical
+    /// shape, in one of the two files those six live in, and it backs three
+    /// real lists on the same page (findings, evidence, history - all
+    /// `HelmAccentRow` cards, the exact shape #333 fixed elsewhere). Fixing
+    /// the six and leaving this one would leave GL-32 adoption incomplete in
+    /// the very file the finding is about.
+    init(rowHeight baseRowHeight: CGFloat = 70, emptySymbol: String, emptyTitle: String, emptyBody: String) {
+        self.baseRowHeight = baseRowHeight
         self.emptyState = HelmEmptyState(symbol: emptySymbol, title: emptyTitle, body: emptyBody,
                                          size: .standard, boxed: true)
         super.init(frame: .zero)
@@ -884,10 +964,15 @@ final class LogAccentRowListView: NSView {
     func setContents(_ contents: [HelmAccentRow.Content], theme: HelmTheme) {
         self.contents = contents
         self.theme = theme
+        recomputeHeight()
+        tableView.reloadData()
+    }
+
+    /// See `LogTimelineListView.recomputeHeight`.
+    private func recomputeHeight() {
         heightConstraint.constant = contents.isEmpty
             ? 130
             : CGFloat(contents.count) * rowHeight + CGFloat(max(0, contents.count - 1)) * 8
-        tableView.reloadData()
     }
 
     func setEmptyText(title: String, body: String) {
@@ -897,6 +982,9 @@ final class LogAccentRowListView: NSView {
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
         emptyState.applyTheme(theme)
+        // GL-32, as in `LogRawPaneView.applyTheme`.
+        tableView.rowHeight = rowHeight
+        recomputeHeight()
         tableView.reloadData()
     }
 

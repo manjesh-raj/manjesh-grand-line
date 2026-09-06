@@ -217,10 +217,28 @@ final class RecentDestinationsPanelViewController: NSViewController {
     ///
     /// `.belowBody` because this panel (260pt) is even narrower than the
     /// notification one - no room for a chip beside the title.
+    ///
+    /// The hue is an **identity**, not a state: a row here says only "you were
+    /// recently on that page", and nothing about a visit is healthy, failing
+    /// or overdue - so `domainHue` carries it and `tint` is only the value
+    /// that field overrides. This is the same shape Dictation's history rows
+    /// use, and for the same reason.
+    ///
+    /// Before that, this passed `tint: entry.kind.hue.fallbackTint` - the last
+    /// `.fallbackTint` caller in Sources, and exactly the defect
+    /// `HelmDomainHue.identityHex(in:)` was written to fix. Routing a domain
+    /// hue through the fallback paints the theme's *semantic* slot on the
+    /// twelve pre-Daylight palettes, so `.shift`/`.dictation` (`.rose` ->
+    /// `.critical`) rendered a red alert bar and badge on a Recents row for
+    /// something as ordinary as Tasks, and `.postmortems`/`.stickyBoard`/the
+    /// four Setup pages (`.amber` -> `.warn`) rendered amber. It was wrong on
+    /// Daylight too, where `fallbackTint` resolves unconditionally and so
+    /// replaced the real §2.2 identity hue with a semantic slot.
     static func makeRow(for entry: RecentDestinationEntry, theme: HelmTheme) -> HelmAccentRow {
         let row = HelmAccentRow(chipPlacement: .belowBody)
         row.configure(HelmAccentRow.Content(
-            tint: entry.kind.hue.fallbackTint,
+            tint: .neutral,
+            domainHue: entry.kind.hue,
             kicker: entry.kind.kicker,
             title: entry.kind.title,
             badgeSymbol: entry.kind.symbol,

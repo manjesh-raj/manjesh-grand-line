@@ -47,6 +47,8 @@ enum TextScaleRowHeightSelfTest {
         checkHeightsGrowWithTheScale(check)
         checkRowsStillFitAtEveryScale(check)
         checkListsReDeriveOnThemeReFire(check)
+        checkAuditTwoListsReDeriveOnThemeReFire(check)
+        checkAuditTwoRowsStillFitAtEveryScale(check)
 
         if failures.isEmpty {
             print("TextScaleRowHeightSelfTest: OK")
@@ -65,6 +67,18 @@ enum TextScaleRowHeightSelfTest {
         ("DictationHistoryListView", DictationHistoryListView.baseRowHeight, { DictationHistoryListView.rowHeight }),
         ("HostsListSection", HostsListSection.baseRecordRowHeight, { HostsListSection.recordRowHeight }),
         ("FleetLogListView", FleetLogListView.baseEventRowHeight, { FleetLogListView.eventRowHeight }),
+        // Audit #2 §1.2 - the tables #333's own sweep missed. Five of these
+        // genuinely clip today (their cells are scaled `HelmType` roles); the
+        // raw pane is the one exception and says why at its own declaration.
+        ("LogRawPaneView", LogRawPaneView.baseRowHeight, { LogRawPaneView.rowHeight }),
+        ("LogErrorGroupListView.group", LogErrorGroupListView.baseGroupRowHeight,
+         { LogErrorGroupListView.groupRowHeight }),
+        ("LogErrorGroupListView.sample", LogErrorGroupListView.baseSampleRowHeight,
+         { LogErrorGroupListView.sampleRowHeight }),
+        ("LogTimelineListView", LogTimelineListView.baseRowHeight, { LogTimelineListView.rowHeight }),
+        ("LogCorrelationListView", LogCorrelationListView.baseRowHeight, { LogCorrelationListView.rowHeight }),
+        ("KubeResourceTableView", KubeResourceTableView.baseRowHeight, { KubeResourceTableView.rowHeight }),
+        ("KubeLogListView", KubeLogListView.baseRowHeight, { KubeLogListView.rowHeight }),
     ]
 
     private static func checkHeightsGrowWithTheScale(_ check: (Bool, String) -> Void) {
@@ -173,6 +187,145 @@ enum TextScaleRowHeightSelfTest {
         check(abs(log.tableView.rowHeight - FleetLogListView.eventRowHeight) <= tableRounding,
               "FleetLogListView did not re-derive its row height on a theme re-fire "
               + "(\(log.tableView.rowHeight) vs \(FleetLogListView.eventRowHeight))")
+    }
+
+    // MARK: - Audit #2 §1.2
+
+    /// The same two halves as above, for the eight tables the first sweep
+    /// missed: they re-derive on a theme re-fire, and a real row still fits.
+    ///
+    /// Built at scale 1.0 and asserted stale *before* the theme re-fire, for
+    /// the reason the check above documents: without that step an assertion
+    /// that the height is right afterwards would pass against a table that
+    /// never re-derived anything, because 1.0 and the new scale would both
+    /// have been read at `init`.
+    private static func checkAuditTwoListsReDeriveOnThemeReFire(_ check: (Bool, String) -> Void) {
+        let theme = ThemeManager.shared.theme
+        let tableRounding: CGFloat = 0.5
+
+        ChromeTextScale.shared.setScale(1.0)
+        let raw = LogRawPaneView(frame: .zero)
+        let groups = LogErrorGroupListView(frame: .zero)
+        let timeline = LogTimelineListView(frame: .zero)
+        let correlation = LogCorrelationListView(frame: .zero)
+        let generic = LogAccentRowListView(rowHeight: 74, emptySymbol: "tray",
+                                           emptyTitle: "Nothing captured",
+                                           emptyBody: "Capture some output first.")
+        let k8sTable = KubeResourceTableView(frame: .zero)
+        let k8sLog = KubeLogListView(frame: .zero)
+
+        let cases: [(String, () -> CGFloat, () -> CGFloat, CGFloat)] = [
+            ("LogRawPaneView", { raw.tableView.rowHeight },
+             { LogRawPaneView.rowHeight }, LogRawPaneView.baseRowHeight),
+            ("LogErrorGroupListView", { groups.tableView.rowHeight },
+             { LogErrorGroupListView.groupRowHeight }, LogErrorGroupListView.baseGroupRowHeight),
+            ("LogTimelineListView", { timeline.tableView.rowHeight },
+             { LogTimelineListView.rowHeight }, LogTimelineListView.baseRowHeight),
+            ("LogCorrelationListView", { correlation.tableView.rowHeight },
+             { LogCorrelationListView.rowHeight }, LogCorrelationListView.baseRowHeight),
+            ("LogAccentRowListView", { generic.tableView.rowHeight },
+             { generic.rowHeightForTests }, generic.baseRowHeightForTests),
+            ("KubeResourceTableView", { k8sTable.tableViewForTests.rowHeight },
+             { KubeResourceTableView.rowHeight }, KubeResourceTableView.baseRowHeight),
+            ("KubeLogListView", { k8sLog.tableViewForTests.rowHeight },
+             { KubeLogListView.rowHeight }, KubeLogListView.baseRowHeight),
+        ]
+
+        for (name, built, _, base) in cases {
+            check(abs(built() - base) <= tableRounding,
+                  "\(name) built at \(built())pt, want its measured \(base)pt")
+        }
+
+        ChromeTextScale.shared.setScale(1.3)
+        for (name, built, _, base) in cases {
+            check(abs(built() - base) <= tableRounding,
+                  "\(name)'s table changed height with no theme re-fire, so the "
+                  + "assertion below would prove nothing")
+        }
+
+        raw.applyTheme(theme)
+        groups.applyTheme(theme)
+        timeline.applyTheme(theme)
+        correlation.applyTheme(theme)
+        generic.applyTheme(theme)
+        k8sTable.applyTheme(theme)
+        k8sLog.applyTheme(theme)
+
+        for (name, built, want, _) in cases {
+            check(abs(built() - want()) <= tableRounding,
+                  "\(name) did not re-derive its row height on a theme re-fire "
+                  + "(\(built()) vs \(want()))")
+        }
+    }
+
+    /// The fit half for audit #2 §1.2's tables.
+    ///
+    /// Split deliberately, because measurement showed the two kinds of row
+    /// here are in genuinely different states:
+    ///
+    ///   * A **single scaled line** - a Kubernetes log line, a resource cell,
+    ///     an error-group sample line - is the shape the finding is about, and
+    ///     it now fits at every step. That is asserted.
+    ///   * An **accent row** in the two Log Analyzer lists does *not* fit, and
+    ///     did not before this fix either: measured at Default, a group row
+    ///     needs 76pt against its 58, and a correlation row 76-108pt (it wraps
+    ///     its title) against its 56. That is a pre-existing sizing defect the
+    ///     audit did not claim and this pass is not scoped to redesign - the
+    ///     correlation one cannot be fixed by a better constant at all, since
+    ///     no fixed height suits a wrapping title. Asserting the fit here
+    ///     would fail for a reason this change neither caused nor fixed, so
+    ///     what is asserted instead is that scaling **narrows** that gap
+    ///     rather than widening it, and the real shortfall is printed so it
+    ///     stays visible rather than becoming folklore.
+    private static func checkAuditTwoRowsStillFitAtEveryScale(_ check: (Bool, String) -> Void) {
+        let theme = ThemeManager.shared.theme
+
+        // A single scaled monospace line - all a Kubernetes log row, a
+        // resource cell or an error-group sample line holds.
+        for step in ChromeTextScale.steps {
+            ChromeTextScale.shared.setScale(step.scale)
+            let label = NSTextField(labelWithString:
+                "2026-09-06T09:14:22Z contract-ingest-worker-0 connection refused")
+            label.font = HelmType.code()
+            let needs = label.fittingSize.height
+            check(needs > 0, "the measured code line had no height at all at \(step.title)")
+            for (name, height) in [("KubeLogListView", KubeLogListView.rowHeight),
+                                   ("KubeResourceTableView", KubeResourceTableView.rowHeight),
+                                   ("LogErrorGroupListView.sample", LogErrorGroupListView.sampleRowHeight)] {
+                check(needs <= height,
+                      "at \(step.title) a HelmType.code() line needs \(needs)pt but \(name) "
+                      + "gives it \(height)pt - descenders clip")
+            }
+        }
+
+        // The two accent-row lists: prove the fix helps, and report the
+        // pre-existing shortfall it does not claim to fix.
+        var content = HelmAccentRow.Content(
+            tint: .critical,
+            kicker: "ERROR",
+            title: "connection refused talking to contract-ingest-worker-0",
+            badgeSymbol: "xmark.octagon.fill",
+            chipText: "Show lines")
+        content.meta = "42 occurrences \u{00B7} 09:14-09:51"
+
+        func shortfall(at scale: CGFloat) -> CGFloat {
+            ChromeTextScale.shared.setScale(scale)
+            let row = HelmAccentRow(chipPlacement: .trailing, hover: true)
+            row.configure(content, theme: theme)
+            row.applyTheme(theme)
+            row.frame = NSRect(x: 0, y: 0, width: 640, height: LogErrorGroupListView.groupRowHeight)
+            row.layoutSubtreeIfNeeded()
+            return row.fittingSize.height - LogErrorGroupListView.groupRowHeight
+        }
+
+        let atDefault = shortfall(at: 1.0)
+        let atLarger = shortfall(at: 1.3)
+        print("  NOTE  LogErrorGroupListView's accent row is short by "
+              + "\(atDefault)pt at Default and \(atLarger)pt at Larger "
+              + "(pre-existing; see this method's own comment)")
+        check(atLarger <= atDefault + 0.01,
+              "scaling made LogErrorGroupListView's accent row fit *worse* "
+              + "(short by \(atDefault)pt at Default, \(atLarger)pt at Larger)")
     }
 }
 
