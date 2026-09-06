@@ -198,6 +198,15 @@ enum FullAppAuditUISelfTest {
         let saved = ThemeManager.shared.theme
         defer { ThemeManager.shared.setTheme(saved) }
 
+        // Audit #2 §5.1(b): `showIncidentCard` refuses outright while the app
+        // is locked, and `AppLockGate` starts locked (the app does). This case
+        // is about what the card *looks like* once it opens, which is an
+        // unlocked-app question; the locked half is
+        // `FM_RUN_AUDIT2_SECURITY_LOCK_TESTS`'s.
+        let wasLocked = AppLockGate.shared.isLocked
+        AppLockGate.shared.setLocked(false)
+        defer { AppLockGate.shared.setLocked(wasLocked) }
+
         let controller = ConsoleController(keyStore: SSHKeyStore(),
                                            snippetStore: SnippetStore(),
                                            isFirstmateConsole: false)

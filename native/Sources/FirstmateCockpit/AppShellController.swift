@@ -916,6 +916,16 @@ final class AppShellController: NSViewController {
     /// (never cached - the captain could set it between one lock and the
     /// next) before deciding which of the lock screen's two states to show.
     func showLock(reason: AppLockReason) {
+        // Audit #2 §5.1(b): before `setLocked(true)` below, because a console
+        // page's incident card is an `NSPopover` and the gate's generic
+        // secondary-window sweep can only `orderOut` its window - which would
+        // leave `NSPopover.isShown` believing it is still up, so the next
+        // `showIncidentCard()` would skip its own `show()` and the card would
+        // never come back. Closing it properly first means that sweep finds
+        // nothing to do; the registration in `buildIncidentCard` stays as the
+        // backstop for any future path that opens one without coming through
+        // here.
+        forEachConsole { $0.closeLockSensitiveSurfaces() }
         lockScreen.view.isHidden = false
         // E4: re-add what `hideLock` removed. A re-lock does not necessarily
         // re-lay-out an already-sized overlay, so this cannot be left to
@@ -1020,6 +1030,25 @@ final class AppShellController: NSViewController {
         lockScreen.stopAnimations()
         AppLockGate.shared.setLocked(false)
         onLockStateChanged?(false)
+        // Audit #2 §5.1: after `setLocked(false)`, so the work each console
+        // replays actually passes its own gate. Only a page that appeared
+        // while locked has anything owed - see
+        // `ConsoleController.appearanceWorkDeferredByLock`.
+        forEachConsole { $0.resumeAfterUnlock() }
+    }
+
+    /// The shared Firstmate console plus every dedicated host page, in one
+    /// place, so a lock-state change reaches all of them without either half
+    /// being forgotten.
+    ///
+    /// A push from here rather than each console registering with
+    /// `AppLockGate.observe`: that API has no unregister, and a per-host
+    /// `ConsoleController` is deallocated when its host is deleted - the same
+    /// dead-closure leak this app already keeps theme/font observation
+    /// *tokens* to avoid.
+    private func forEachConsole(_ body: (ConsoleController) -> Void) {
+        body(console)
+        for controller in hostConsoles.values { body(controller) }
     }
 
     /// Open `command` as a new tab in the shared Firstmate console and bring

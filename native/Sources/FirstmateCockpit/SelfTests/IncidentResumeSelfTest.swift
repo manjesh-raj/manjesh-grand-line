@@ -27,6 +27,17 @@ import AppKit
 enum IncidentResumeSelfTest {
 
     static func run() -> Bool {
+        // Audit #2 §5.1: `AppLockGate` starts *locked* (the app does, and the
+        // gate's default says so), and a console page now defers every
+        // privileged thing it does on appearing until the app is unlocked. A
+        // self-test process never runs the real unlock, so these cases - which
+        // are all about what an *unlocked* app does when a page opens - have to
+        // say so. The locked half is asserted by
+        // `FM_RUN_AUDIT2_SECURITY_LOCK_TESTS`.
+        let wasLocked = AppLockGate.shared.isLocked
+        AppLockGate.shared.setLocked(false)
+        defer { AppLockGate.shared.setLocked(wasLocked) }
+
         let cases: [(String, () -> String?)] = [
             ("aPreExistingIncidentIsAnnouncedOnTheHostPagesNextOpen", test_announcedOnReopen),
             ("itIsAnnouncedOnlyOncePerRun", test_announcedOnlyOnce),

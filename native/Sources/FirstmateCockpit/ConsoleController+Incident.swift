@@ -211,8 +211,38 @@ extension ConsoleController {
 
     // MARK: The card
 
+    /// Audit #2 §5.1(b): dismiss anything this page shows outside the main
+    /// window, so the lock overlay's coverage is real. Called by
+    /// `AppShellController.showLock` on every console it owns, on the way
+    /// into the locked state.
+    ///
+    /// `performClose` rather than the gate's own `orderOut` sweep: an
+    /// `NSPopover` tracks its own shown state, and ordering its window out
+    /// behind its back leaves `isShown` true - after which `showIncidentCard`
+    /// would decline to re-`show()` it and the card would be gone for the rest
+    /// of the session.
+    func closeLockSensitiveSurfaces() {
+        guard incidentPopover.isShown else { return }
+        incidentPopover.performClose(nil)
+    }
+
     func showIncidentCard() {
+        // Audit #2 §5.1(b). An `NSPopover` is its own window, layered above
+        // the main window and therefore above the lock overlay, which is only
+        // a subview of that window - so this card stayed fully readable and
+        // fully writable (its note field appends to the git-synced incident
+        // record; "End Incident" starts postmortem generation) over the lock
+        // screen. `resumeActiveIncidentIfNeeded` reaches here at launch, from
+        // `viewDidAppear`, on the F2 restore path.
+        //
+        // Gated here rather than only at that one caller: the toolbar button,
+        // the "start an incident" flow and the evidence deep link all reach
+        // this method, and a gate at the call site would cover one of them.
+        guard AppLockGate.shared.allows(.incidentCard) else { return }
         guard let button = incidentButton, !button.isHidden else { return }
+        #if FM_SELFTESTS
+        debugIncidentCardShowCount += 1
+        #endif
         renderIncidentCard()
         if !incidentPopover.isShown {
             // `ThemeManager.swift`'s checklist item 2, the same line the
@@ -243,6 +273,25 @@ extension ConsoleController {
     }
 
     func buildIncidentCard() {
+        // Audit #2 §5.1(b), the second half: `showIncidentCard` above refuses
+        // to *open* while locked, and this covers a card already open when the
+        // lock fires (the 12h session expiry can land mid-use). Same mechanism
+        // the Host Editor uses for the same reason - a window outside the main
+        // one cannot be covered by an overlay that lives inside it.
+        //
+        // Two deliberate guards in the provider. `isShown` first, because a
+        // closed popover has nothing to order out. And an identity check
+        // against this page's own window, because `contentViewController.view`
+        // is expected to be detached when the popover is closed but the cost
+        // of that expectation being wrong here is handing the gate the app's
+        // *main* window to `orderOut` - which would hide the whole app rather
+        // than secure it.
+        AppLockGate.shared.registerSecondaryWindow { [weak self] in
+            guard let self, self.incidentPopover.isShown else { return nil }
+            let popoverWindow = self.incidentPopover.contentViewController?.view.window
+            guard popoverWindow !== self.view.window else { return nil }
+            return popoverWindow
+        }
         incidentCard.onEndIncident = { [weak self] in self?.endIncidentClicked() }
         incidentCard.onAddNote = { [weak self] text in
             guard let self, let incident = self.activeIncident() else { return }

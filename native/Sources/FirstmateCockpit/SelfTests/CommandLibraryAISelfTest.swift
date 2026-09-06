@@ -339,7 +339,15 @@ enum CommandLibraryAISelfTest {
             )
 
             let page = CommandLibraryPageView(store: store)
-            page.applySuggestedTemplate("kubectl get pods -n {{namespace}} -o wide", to: created.id)
+            // `commitSuggestedTemplate`, not `applySuggestedTemplate`: the
+            // latter now puts `confirmAIAuthored`'s modal in front of the
+            // write (audit #2 §5.3) and an `NSAlert.runModal()` cannot be
+            // answered from a headless suite. The routing - that the modal is
+            // genuinely in front of this - is asserted as source by
+            // `Audit2SecurityFixesSelfTest`, the same split this codebase
+            // already uses for the other two `confirmAIAuthored` sinks.
+            page.commitSuggestedTemplate("kubectl get pods -n {{namespace}} -o wide",
+                                         to: created.id, replacing: created)
 
             // Read back through a *fresh* store over the same directory, so
             // this proves the file changed rather than an in-memory copy.
@@ -350,12 +358,25 @@ enum CommandLibraryAISelfTest {
             }
             // Everything else survives - this is a template edit, not a
             // re-creation.
+            //
+            // Except the risk level, which deliberately does *not*: this case
+            // used to assert `saved.risk == .readOnly`, i.e. it encoded audit
+            // #2 §5.3 as expected behaviour. A stored risk is a human vouching
+            // for text they read, and the model just replaced that text - so
+            // carrying `readOnly` through is what let an AI-rewritten command
+            // skip `CommandRiskConfirmation.confirm` silently, forever, at
+            // every sink including F9's multi-host fan-out.
             guard saved.name == "Sample",
                   saved.description == "A description worth keeping",
-                  saved.risk == .readOnly,
                   saved.tags == ["k8s"],
                   saved.parameters.map(\.name) == ["namespace"] else {
                 return "saving a template changed another field: \(saved)"
+            }
+            guard saved.risk != .readOnly else {
+                return "an AI-rewritten template kept its human-vouched readOnly risk level (§5.3)"
+            }
+            guard saved.risk == .potentiallyDisruptive else {
+                return "expected the re-derived risk to be potentiallyDisruptive, got \(saved.risk)"
             }
             return nil
         }

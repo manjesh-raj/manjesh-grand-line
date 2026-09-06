@@ -90,6 +90,34 @@ enum CommandRiskLevel: String, CaseIterable, Equatable {
         case .destructive: return .critical
         }
     }
+
+    /// How loud this level is, so two of them can be compared.
+    ///
+    /// Deliberately not `Comparable`: the only comparison this app has any
+    /// business making is "which of these two is the more cautious", and
+    /// `raised(to:)` below is that question spelled out. A free `<` would also
+    /// make "is this risk *low* enough to skip the confirmation" expressible,
+    /// which is the shape of decision `CommandRiskConfirmation` exists to
+    /// keep in one place.
+    private var severity: Int {
+        switch self {
+        case .readOnly: return 0
+        case .potentiallyDisruptive: return 1
+        case .destructive: return 2
+        }
+    }
+
+    /// The more cautious of the two - never the less.
+    ///
+    /// Audit #2 §5.3: a saved command's risk level is a human vouching for
+    /// text they read, and an AI rewrite of that text invalidates the vouch
+    /// without touching the level. Re-deriving the level from the new text is
+    /// only half a fix on its own, because the heuristic is deliberately
+    /// coarse; taking the maximum is what makes a re-derivation unable to
+    /// *downgrade* a level the captain set deliberately.
+    func raised(to other: CommandRiskLevel) -> CommandRiskLevel {
+        severity >= other.severity ? self : other
+    }
 }
 
 // MARK: - Command

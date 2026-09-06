@@ -484,6 +484,17 @@ extension ConsoleController {
         // Route to the active terminal's native find bar. SwiftTerm's
         // `performFindPanelAction` expects a menu item whose tag is the
         // NSFindPanelAction; showFindPanel == 1.
+        //
+        // Audit #2 §5.1(c): this is the one *menu*-reachable path that makes a
+        // live PTY first responder, and the Edit menu is deliberately the one
+        // menu `setContentMenusEnabled` leaves enabled while locked (the lock
+        // screen's own password field needs Cut/Copy/Paste). It is unreachable
+        // in practice - the item is nil-target, so AppKit only enables it when
+        // a `ConsoleController` is actually in the responder chain, which
+        // while locked it is not - but "unreachable because of how the
+        // responder chain happens to be shaped right now" is a weaker
+        // guarantee than the gate, and this costs one line.
+        guard AppLockGate.shared.allows(.terminalFocus) else { return }
         guard let term = activeTerminal() else { return }
         let item = NSMenuItem()
         item.tag = Int(NSFindPanelAction.showFindPanel.rawValue)

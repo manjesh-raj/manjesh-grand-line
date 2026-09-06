@@ -155,6 +155,12 @@ NEEDS_SESSION=(
   # pure-logic suite - FM_RUN_AUDIT_SECURITY_FIXES_TESTS - is deliberately not
   # here and does run in CI.
   "FM_RUN_AUDIT_SECURITY_LOCK_TESTS"
+  # Audit #2 §5.1: mounts real `ConsoleController`s in a real `NSWindow` and
+  # drives real lock transitions, to prove a locked app forks no tab process,
+  # steals no terminal focus and opens no incident card. Its pure-logic half -
+  # FM_RUN_AUDIT2_SECURITY_FIXES_TESTS - is deliberately not here and does run
+  # in CI.
+  "FM_RUN_AUDIT2_SECURITY_LOCK_TESTS"
   "FM_RUN_SRE_LEAD_PER_TAB_TESTS"
   "FM_RUN_NOTIFICATION_CENTER_SRE_LEAD_TESTS"
   "FM_RUN_SHIFT_ATTACHMENT_WELL_TESTS"

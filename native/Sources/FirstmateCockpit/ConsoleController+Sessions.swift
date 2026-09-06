@@ -72,7 +72,7 @@ extension ConsoleController {
         let launch = TabLaunch.shell(executable: shellArgv().executable, args: ["-lc", command], cwd: cwd ?? shellCwd())
         let tab = addTab(launch: launch, name: label, select: true, isOneShotCommand: true)
         tab.onOneShotCompletion = completion
-        if let current = currentTab { view.window?.makeFirstResponder(current.terminal) }
+        if let current = currentTab { focusTerminal(of: current) }
         return tab
     }
 
@@ -102,7 +102,7 @@ extension ConsoleController {
         addTab(launch: launch, name: numberedName(for: launch), select: true, accentHex: accentHex,
                blockViewOptIn: blockViewOptIn, kubeContextBadgeOptIn: kubeContextBadgeOptIn)
         // Bring the console forward if the user was in the sidebar.
-        if let tab = currentTab { view.window?.makeFirstResponder(tab.terminal) }
+        if let tab = currentTab { focusTerminal(of: tab) }
     }
 
     /// Fix 1 (dedicated host pages): the connect action for a saved host's
@@ -129,9 +129,14 @@ extension ConsoleController {
     /// Re-focus whichever tab is already current, without touching the tab
     /// set - used when a host's dedicated page is shown again after its one
     /// ssh tab was already opened by an earlier `connectSSHIfNeeded` call.
+    /// Audit #2 §5.1(c): through `focusTerminal(of:)` like every other
+    /// terminal focus grab in this controller family. This one is not a
+    /// theoretical path - `AppShellController.revealHostConsole` calls it,
+    /// and `restoreSessionIfNeeded` -> `connectToHost` reaches that at
+    /// launch, i.e. on exactly the sequence §5.1 is about.
     func focusCurrentTab() {
         guard let tab = currentTab else { return }
-        view.window?.makeFirstResponder(tab.terminal)
+        focusTerminal(of: tab)
     }
 
     /// Start an ssh tab's process. If `keyID` names a saved key, it is resolved
