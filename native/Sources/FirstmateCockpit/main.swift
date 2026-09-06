@@ -142,6 +142,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var knownHostIDs: Set<UUID> = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // F2: read the saved session BEFORE anything else, because launch
+        // itself navigates. `AppShellController.loadView` ends with a real
+        // `show(...)` (GL-31's landing decision), which reaches
+        // `updateRecentDestinations` - and once `onSessionStateChanged` is
+        // wired further down, that path *writes*. Reading here rather than at
+        // the point of use removes the ordering dependency entirely: moving
+        // the wiring earlier, which is an easy and invisible mistake, can no
+        // longer clobber the state with "wherever launch happened to land"
+        // before it has been restored.
+        let savedSession = AppSettings.shared.sessionRestoreState
+
         // Connect action from the panel: a saved host (has an id) reaches its
         // own dedicated page (Fix 1) - the same one its rail icon opens, via
         // `connectToHost` below; an ad-hoc quick-connect (no saved identity to
@@ -526,7 +537,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // F2 (audit §2 item 1). After `loadView` (which is what makes GL-31's
         // own first-run landing decision) and behind the lock screen, so
         // nothing restored is visible before the captain has unlocked.
-        restoreSessionIfNeeded()
+        restoreSessionIfNeeded(savedSession)
     }
 
     // MARK: F2 - session restoration
@@ -539,8 +550,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// that fixes the cause - that landing is the whole point of GL-31's
     /// exception. Tabs are still restored in that case; only the destination
     /// defers.
-    private func restoreSessionIfNeeded() {
-        guard let state = AppSettings.shared.sessionRestoreState, !state.isEmpty else { return }
+    private func restoreSessionIfNeeded(_ saved: SessionRestoreState?) {
+        guard let state = saved, !state.isEmpty else { return }
 
         appShell.restoreTabs(from: state)
 
