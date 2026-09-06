@@ -549,7 +549,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // addTab`'s `hasAppeared` guard) forks no `ssh` until the captain
         // actually opens it. The one that was *showing* is connected last,
         // with navigation, so it is the page that comes up.
-        let byID = Dictionary(uniqueKeysWithValues: hostStore.hosts.map { ($0.id.uuidString, $0) })
+        // `uniquingKeysWith`, never `uniqueKeysWithValues`: the latter traps
+        // on a duplicate key, and this runs on the launch path against a file
+        // that can be hand-edited. `HostStore` should never produce two hosts
+        // with one id, but a crash at launch is a far worse answer to that
+        // than quietly keeping the first.
+        let byID = Dictionary(hostStore.hosts.map { ($0.id.uuidString, $0) }, uniquingKeysWith: { first, _ in first })
         let plan = SessionRestorePlan.hosts(from: state, knownHostIDs: Set(byID.keys))
         for id in plan.background {
             guard let host = byID[id] else { continue }
