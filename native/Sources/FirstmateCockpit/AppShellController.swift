@@ -1148,6 +1148,18 @@ final class AppShellController: NSViewController {
     /// and - the property that matters - has not started its `ssh`.
     func debugHostConsole(id: UUID) -> ConsoleController? { hostConsoles[id] }
 
+    /// The shared Firstmate console, so audit 2 §4.1's own case can drive the
+    /// real `restoreTabs(from:)` launch path and then read the tabs that
+    /// actually landed. `console` stays `private` - nothing in production
+    /// reaches it from outside this controller.
+    ///
+    /// Guarded, unlike some of its older neighbours here: GL-27's lesson is
+    /// that a `debug*` hook living in a production file keeps shipping unless
+    /// it says otherwise, so a *new* one is compiled into debug builds only.
+    #if FM_SELFTESTS
+    var debugConsole: ConsoleController { console }
+    #endif
+
     func debugSeedHostConsole(_ controller: ConsoleController, hostID: UUID) {
         hostConsoles[hostID] = controller
         addChild(controller)

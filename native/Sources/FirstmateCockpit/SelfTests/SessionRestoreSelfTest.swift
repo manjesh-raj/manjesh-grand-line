@@ -55,6 +55,8 @@ enum SessionRestoreSelfTest {
             ("thePlanDropsHostsDeletedBetweenRuns", test_plan),
             ("consoleTabsComeBackWithTheirNames", test_consoleTabs),
             ("onlyShellTabsAreRecorded", test_onlyShellTabsRecorded),
+            ("consoleTabsSurviveTheAutoOpenedShell", test_consoleTabsSurviveTheAutoOpenedShell),
+            ("aConsoleTheCaptainWorkedInIsLeftAlone", test_consoleWithRealWorkIsLeftAlone),
             ("toolTabsComeBackByKindAndName", test_toolTabs),
             ("hostPagesComeBackWithoutConnecting", test_lazyHostPages),
             ("captureReadsWhateverIsActuallyOpen", test_capture),
@@ -171,13 +173,27 @@ enum SessionRestoreSelfTest {
         let (window, console) = makeConsole()
         defer { window.contentViewController = nil }
 
+        // Audit 2 §4.1. The precondition this case exists to run against:
+        // production always reaches `restoreConsoleTabs` with the console's
+        // own auto-opened Shell already in place. Asserted rather than
+        // assumed - if this ever goes back to zero, every assertion below
+        // passes for the wrong reason and the real bug is invisible again.
+        guard console.tabs.count == 1, !console.tabs[0].hasUserChosenName else {
+            return "harness problem: the console should hold exactly its own auto-opened Shell "
+                 + "before restore, got \(console.tabs.map(\.name))"
+        }
+
         console.restoreConsoleTabs([
             .init(name: "deploys", hasUserChosenName: true),
             .init(name: "Shell 2", hasUserChosenName: false),
             .init(name: "logs", hasUserChosenName: true),
             .init(name: "Shell 5", hasUserChosenName: false),
         ])
-        guard console.tabs.count == 4 else { return "expected 4 restored tabs, got \(console.tabs.count)" }
+        // Four saved tabs means four tabs - the auto-opened Shell is
+        // *reused* as the first one, never left as a fifth alongside them.
+        guard console.tabs.count == 4 else {
+            return "expected 4 restored tabs, got \(console.tabs.count): \(console.tabs.map(\.name))"
+        }
 
         // A name the captain typed comes back verbatim.
         guard console.tabs[0].name == "deploys", console.tabs[0].hasUserChosenName else {
@@ -225,12 +241,125 @@ enum SessionRestoreSelfTest {
                                      name: "Setup", select: false, isOneShotCommand: true)
         guard oneShot.isOneShotCommand else { return "harness problem: the one-shot flag did not stick" }
 
+        // Three, not two: the console's own auto-opened Shell (audit 2 §4.1's
+        // harness alignment) is a perfectly ordinary interactive shell tab
+        // and is recorded like any other. That is what production has always
+        // saved, and what `restoreConsoleTabs` now reuses rather than
+        // duplicating on the way back in.
         let recorded = console.restorableConsoleTabs()
-        guard recorded.count == 2 else {
-            return "expected only the 2 real shell tabs, got \(recorded.count): \(recorded.map(\.name))"
+        guard recorded.count == 3 else {
+            return "expected the 3 real shell tabs, got \(recorded.count): \(recorded.map(\.name))"
         }
         guard !recorded.contains(where: { $0.name == "Setup" }) else {
             return "a one-shot command tab was recorded for restoration"
+        }
+        return nil
+    }
+
+    /// Audit 2 §4.1, end to end through the *real* launch path.
+    ///
+    /// `test_consoleTabs` drives `restoreConsoleTabs` directly; this one goes
+    /// through `AppShellController.restoreTabs(from:)` - what
+    /// `restoreSessionIfNeeded` actually calls - against a shell whose
+    /// console auto-opens its Shell exactly like production's does. That
+    /// combination is the bug: the console is an eager mount, its `loadView`
+    /// had already added the Shell, and the old `tabs.isEmpty` guard turned
+    /// the whole restore into a no-op on every real launch while the saved
+    /// names went to the floor.
+    private static func test_consoleTabsSurviveTheAutoOpenedShell() -> String? {
+        withScratchEnv {
+            let (window, shell) = makeShell()
+            defer { window.contentViewController = nil }
+
+            // The precondition, asserted: this is the state a real launch is
+            // in by the time restoration runs.
+            guard shell.debugConsole.tabs.count == 1 else {
+                return "harness problem: the shared console should have auto-opened exactly one Shell, "
+                     + "got \(shell.debugConsole.tabs.map(\.name))"
+            }
+
+            shell.restoreTabs(from: SessionRestoreState(consoleTabs: [
+                .init(name: "prod tail", hasUserChosenName: true),
+                .init(name: "Shell 3", hasUserChosenName: false),
+            ]))
+
+            let names = shell.debugConsole.tabs.map(\.name)
+            guard names.count == 2 else {
+                return "the saved shared-console tabs were dropped on the launch path (the §4.1 bug): got \(names)"
+            }
+            guard names[0] == "prod tail" else {
+                return "the first saved tab's own name did not come back: \(names)"
+            }
+            guard shell.debugConsole.tabs[0].hasUserChosenName else {
+                return "a name the captain typed came back unmarked, so the next launch would re-derive it"
+            }
+            // The derived one is re-derived against the tabs that now exist,
+            // not frozen at whatever number a previous run gave it.
+            guard names[1] == "Shell" else {
+                return "the derived tab should take the first free number, got \(names)"
+            }
+            return nil
+        }
+    }
+
+    /// The other half of §4.1's guard: reconciling against the *one pristine
+    /// auto-opened Shell* must not become "append to whatever is open".
+    ///
+    /// A console the captain has genuinely worked in is left completely
+    /// alone - which is the property the original `tabs.isEmpty` guard was
+    /// protecting, and the reason the fix is a narrow match rather than a
+    /// dropped guard.
+    private static func test_consoleWithRealWorkIsLeftAlone() -> String? {
+        // Two tabs: more than the single auto-opened Shell.
+        do {
+            let (window, console) = makeConsole()
+            defer { window.contentViewController = nil }
+            console.newShellTab()
+            let before = console.tabs.map(\.name)
+            console.restoreConsoleTabs([.init(name: "restored", hasUserChosenName: true)])
+            guard console.tabs.map(\.name) == before else {
+                return "restore reached into a console with two open tabs: \(before) -> \(console.tabs.map(\.name))"
+            }
+        }
+        // One tab, but renamed by the captain - not pristine, so not ours to
+        // reuse.
+        do {
+            let (window, console) = makeConsole()
+            defer { window.contentViewController = nil }
+            guard let only = console.tabs.first else { return "harness problem: no auto-opened tab" }
+            console.renameTab(id: only.id, to: "my work")
+            console.restoreConsoleTabs([.init(name: "restored", hasUserChosenName: true)])
+            guard console.tabs.count == 1, console.tabs[0].name == "my work" else {
+                return "restore overwrote a tab the captain had renamed: \(console.tabs.map(\.name))"
+            }
+        }
+        // One tab, but a one-shot provisioning command - also not the
+        // interactive Shell `loadView` opens, so also not ours to reuse.
+        //
+        // Built on a `isFirstmateConsole: false` console deliberately: the
+        // shared one auto-opens a Shell *and* reopens one whenever its last
+        // tab closes (so the window is never empty), which makes a lone
+        // one-shot tab impossible to arrange there. What is under test is
+        // `soleAutoOpenedShellTab`'s `!isOneShotCommand` condition, and this
+        // is the shape that isolates it.
+        do {
+            let console = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(),
+                                            isFirstmateConsole: false)
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+                                  styleMask: [.titled], backing: .buffered, defer: false)
+            window.contentViewController = console
+            console.view.layoutSubtreeIfNeeded()
+            defer { window.contentViewController = nil }
+
+            console.addTab(launch: .shell(executable: "/bin/echo", args: ["hi"], cwd: "/"),
+                           name: "Setup", select: false, isOneShotCommand: true)
+            guard console.tabs.count == 1, console.tabs[0].isOneShotCommand else {
+                return "harness problem: expected a lone one-shot tab, got \(console.tabs.map(\.name))"
+            }
+            console.restoreConsoleTabs([.init(name: "restored", hasUserChosenName: true)])
+            guard console.tabs.count == 1, console.tabs[0].name == "Setup" else {
+                return "restore reused a one-shot provisioning tab: \(console.tabs.map(\.name))"
+            }
         }
         return nil
     }
@@ -335,12 +464,16 @@ enum SessionRestoreSelfTest {
         }
 
         // An empty restore must not disturb a console the app already opened
-        // for itself.
+        // for itself - which, since audit 2 §4.1's harness alignment, is
+        // exactly the auto-opened Shell this console starts with, no extra
+        // tab needed to set the condition up.
         let (window, console) = makeConsole()
         defer { window.contentViewController = nil }
-        console.newShellTab()
+        let opened = console.tabs.map(\.name)
         console.restoreConsoleTabs([])
-        guard console.tabs.count == 1 else { return "an empty restore changed the open tabs" }
+        guard console.tabs.map(\.name) == opened else {
+            return "an empty restore changed the open tabs: \(opened) -> \(console.tabs.map(\.name))"
+        }
         return nil
     }
 
@@ -403,9 +536,22 @@ enum SessionRestoreSelfTest {
 
     // MARK: Harness
 
+    /// **`isFirstmateConsole: true` - the shape production actually has**
+    /// (audit 2 §4.1). This harness used to pass `false`, which skips
+    /// `loadView`'s own `openFirstmateHost(focus: false)`, so every console
+    /// test here ran against an *empty* tab list that no real launch ever
+    /// sees. That is what let `restoreConsoleTabs`' `tabs.isEmpty` guard be
+    /// dead code in production while this suite reported PASS. The shared
+    /// Firstmate console is an eager mount whose auto-opened Shell is
+    /// therefore always present by restore time; every case below now starts
+    /// from that.
+    ///
+    /// This still forks no shell: the window is deliberately never ordered
+    /// in, so `viewDidAppear` does not fire and `addTab`'s `if hasAppeared`
+    /// guard keeps every tab process-free.
     private static func makeConsole() -> (window: NSWindow, controller: ConsoleController) {
         let controller = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(),
-                                           isFirstmateConsole: false)
+                                           isFirstmateConsole: true)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.contentViewController = controller
@@ -431,7 +577,12 @@ enum SessionRestoreSelfTest {
         let snippetStore = SnippetStore()
         let shell = AppShellController(
             hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
-            console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
+            // Production's own value (audit 2 §4.1) - see `makeConsole`'s note.
+            // `test_consoleTabsSurviveTheAutoOpenedShell` drives the real
+            // `AppShellController.restoreTabs(from:)` through this, and that
+            // is only a reproduction of the launch path if this console
+            // auto-opens its Shell exactly like the real one does.
+            console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: true),
             settings: SettingsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore,
                                          dictationStore: DictationStore()),
             hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, shiftStore: ShiftStore(),
