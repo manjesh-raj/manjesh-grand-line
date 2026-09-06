@@ -64,6 +64,7 @@ enum RecentDestinationsSelfTest {
             ("recordNavigationIsTheOnlyWriter", test_recordNavigationIsTheOnlyWriter),
             ("endedSessionRowReconnectsInsteadOfDoingNothing", test_endedSessionRowReconnectsInsteadOfDoingNothing),
             ("deletedHostRowIsDroppedRatherThanLeftDead", test_deletedHostRowIsDroppedRatherThanLeftDead),
+            ("rowsCarryAnIdentityHueNotAnAlarmingSemanticOne", test_rowsCarryAnIdentityHueNotAnAlarmingSemanticOne),
         ]
         for (name, check) in cases {
             if let failure = check() { failures.append("\(name): \(failure)") }
@@ -524,6 +525,98 @@ enum RecentDestinationsSelfTest {
         }
         guard panel.debugRows().isEmpty else { return "rows exist with an empty registry" }
         guard !panel.debugEmptyStateIsHidden else { return "the empty state is hidden with nothing recorded" }
+        return nil
+    }
+
+    // MARK: Audit #2 §1.1 - identity hue, not a semantic one
+
+    /// A Recents row for a benign destination must not render as an alert.
+    ///
+    /// The defect: `makeRow` passed `tint: entry.kind.hue.fallbackTint`, the
+    /// last `.fallbackTint` caller in Sources. `RailDestination.domainHue`
+    /// maps Tasks and Dictation to `.rose`, whose fallback slot is
+    /// `.critical`, and Postmortems / Sticky Board / the four Setup pages to
+    /// `.amber` -> `.warn` - so "you were recently on Tasks" rendered with a
+    /// red accent bar and badge on all twelve pre-Daylight palettes, and on
+    /// Daylight it replaced the real §2.2 identity hue with a semantic slot
+    /// (`fallbackTint` resolves unconditionally).
+    ///
+    /// **This reads the colour the row is actually painted with**
+    /// (`debugPaint().accentBar`), not the `Content` it was handed - a check
+    /// against the struct would pass against a component that resolved it
+    /// wrongly on the way to the layer. Colours are compared component-wise:
+    /// `HelmContrast.ratio` is a *luminance* comparison, so two entirely
+    /// different hues of similar brightness pass it (a trap this codebase has
+    /// walked into twice - see `DaylightDrillPageSlice5SelfTest`'s own note).
+    private static func test_rowsCarryAnIdentityHueNotAnAlarmingSemanticOne() -> String? {
+        // Every destination whose domain hue borrows an *alarming* slot on the
+        // legacy palettes, which is the whole population at risk.
+        let alarming: [(RailDestination, HelmTint)] = [
+            (.shift, .critical),        // Tasks     - .rose
+            (.dictation, .critical),    // .rose
+            (.postmortems, .warn),      // .amber
+            (.stickyBoard, .warn),      // .amber
+            (.updates, .warn),          // Setup     - .amber
+            (.bootstrap, .warn),
+            (.automation, .warn),
+            (.githubSync, .warn),
+        ]
+
+        func same(_ a: NSColor, _ b: NSColor) -> Bool {
+            let x = HelmContrast.components(a)
+            let y = HelmContrast.components(b)
+            return abs(x.0 - y.0) < 0.01 && abs(x.1 - y.1) < 0.01 && abs(x.2 - y.2) < 0.01
+        }
+
+        for theme in HelmTheme.allThemes {
+            for (dest, alarmSlot) in alarming {
+                let entry = RecentDestinationEntry(kind: .rail(dest), visitedAt: Date())
+                let row = RecentDestinationsPanelViewController.makeRow(for: entry, theme: theme)
+                row.applyTheme(theme)
+                guard let bar = row.debugPaint().accentBar else {
+                    return "\(theme.id)/\(dest): the row painted no accent bar at all"
+                }
+
+                // 1. Never the alarming semantic slot - the defect itself.
+                let alarm = HelmTheme.nsColor(alarmSlot.hex(in: theme))
+                if same(bar, alarm) {
+                    return "\(theme.id)/\(dest): a benign Recents row is painted the "
+                        + "theme's \(alarmSlot) colour - it reads as an alert"
+                }
+
+                // 2. And it is the *right* colour, per `identityHex`: the real
+                //    §2.2 hue on Daylight, neutral on a palette with no
+                //    identity vocabulary. Asserting only (1) would pass for
+                //    any wrong-but-not-red colour.
+                let want = HelmTheme.nsColor(dest.domainHue.identityHex(in: theme))
+                if !same(bar, want) {
+                    return "\(theme.id)/\(dest): accent bar is not the identity hue "
+                        + "\(dest.domainHue.identityHex(in: theme))"
+                }
+            }
+        }
+
+        // 3. The badge has to agree with the bar. `Content.resolvedBadgeTint`
+        //    exists precisely so a row carrying a `domainHue` cannot end up
+        //    with a neutral bar beside a still-alarming badge.
+        var content = HelmAccentRow.Content(tint: .neutral, kicker: "TASKS", title: "Tasks")
+        content.domainHue = RailDestination.shift.domainHue
+        if content.resolvedBadgeTint != .neutral {
+            return "a row carrying a domainHue resolves its badge to "
+                + "\(content.resolvedBadgeTint), so the badge would stay alarming"
+        }
+
+        // 4. Daylight really does get the identity hue rather than the
+        //    fallback - the half a legacy-only check would miss entirely.
+        guard let daylight = HelmTheme.allThemes.first(where: { $0.isDaylight }) else {
+            return "no Daylight-family theme to check the identity hue against"
+        }
+        let identity = RailDestination.shift.domainHue.identityHex(in: daylight)
+        let fallback = RailDestination.shift.domainHue.fallbackTint.hex(in: daylight)
+        if identity.lowercased() == fallback.lowercased() {
+            return "on \(daylight.id) the identity hue and the fallback slot are the "
+                + "same colour, so this suite cannot tell the fix from the defect"
+        }
         return nil
     }
 
