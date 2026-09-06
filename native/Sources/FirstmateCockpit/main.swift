@@ -1293,6 +1293,29 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     if (ProcessInfo.processInfo.environment["FM_CODE_PREVIEW_DIR"] ?? "").isEmpty {
         setenv("FM_CODE_PREVIEW_DIR", scratchRoot.appendingPathComponent("code-snippets", isDirectory: true).path, 1)
     }
+    // The full-app audit's §7.2, and the entry that generalises every one
+    // above: `FM_SHIFT_DIR` is the *root* override the whole
+    // `GrandLineDocs/` family resolves through.
+    //
+    // `ShiftStore`, `IncidentStore`, `DocsRunbookStore`, `CommandLibraryStore`,
+    // `LogAnalyzerStore`, `StickyBoardStore` and `CodePreviewStore` all have a
+    // no-argument production `init()` that, with no override set, resolves to
+    // `ShiftGitSync.shared`'s working tree - a real local clone of the
+    // captain's actual private `manjesh-config` repo. Every suite that
+    // constructs one today sets either its own narrow override or this one, so
+    // nothing is reaching that clone right now; this closes the case where the
+    // *next* one does not, which is precisely how the two incidents the
+    // comments above recount both happened. A per-suite fix keeps missing it
+    // because the store is usually reached indirectly - through a controller,
+    // or a singleton nobody constructs on purpose.
+    //
+    // Setting it also switches `ShiftStore` to its non-git-backed mode
+    // (`gitSync == nil`), so a suite that writes cannot queue a commit against
+    // the real remote either. Deliberately last, so a suite that sets one of
+    // the narrower overrides above still wins for its own store.
+    if (ProcessInfo.processInfo.environment["FM_SHIFT_DIR"] ?? "").isEmpty {
+        setenv("FM_SHIFT_DIR", scratchRoot.appendingPathComponent("tasks", isDirectory: true).path, 1)
+    }
 }
 
 // `fm/cockpit-sre-lead-shared-terminal`: `swift build && FM_RUN_SRE_LEAD_BRIDGE_TESTS=1
@@ -1522,6 +1545,33 @@ if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_MODULE_TESTS"] == "1" {
 // run-all-tests.sh's NEEDS_SESSION list. See LockScreenSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_LOCK_SCREEN_TESTS"] == "1" {
     exit(LockScreenSelfTest.run() ? 0 : 1)
+}
+
+// The full-app audit's §7.1: a source guard cross-checking every window-backed
+// suite in `SelfTests/` against `Scripts/run-all-tests.sh`'s `NEEDS_SESSION`
+// list, which CI's `--ci` / `--session-only` split depends on being accurate.
+if ProcessInfo.processInfo.environment["FM_RUN_E2E_TESTING_POLICY_TESTS"] == "1" {
+    exit(E2ETestingPolicySelfTest.run() ? 0 : 1)
+}
+
+// The full-app audit's §7: regression coverage for the Docs Playbook's
+// WKWebView subresource-cache fix (`fm/grandline-docs-webview-cache-fix`),
+// which shipped with none.
+if ProcessInfo.processInfo.environment["FM_RUN_DOCS_PLAYBOOK_RELOAD_TESTS"] == "1" {
+    exit(DocsPlaybookReloadSelfTest.run() ? 0 : 1)
+}
+
+// The full-app audit's §7: the general Console tab-lifecycle suite - create,
+// duplicate, rename, close, reconnect and the numbered-name convention, none
+// of which had permanent coverage despite being the app's most-patched area.
+if ProcessInfo.processInfo.environment["FM_RUN_CONSOLE_TAB_LIFECYCLE_TESTS"] == "1" {
+    exit(ConsoleTabLifecycleSelfTest.run() ? 0 : 1)
+}
+
+// The full-app audit's §7: first coverage for the Setup/Bootstrap data layer,
+// via the `UpdatesDataTestSeam`/`DotfilesDataTestSeam` transport seams.
+if ProcessInfo.processInfo.environment["FM_RUN_SETUP_DATA_LAYER_TESTS"] == "1" {
+    exit(SetupDataLayerSelfTest.run() ? 0 : 1)
 }
 
 // Daylight Phase 6 (the last phase): the accessibility sweep and the Reduce

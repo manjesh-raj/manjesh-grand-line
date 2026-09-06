@@ -154,12 +154,21 @@ A window titled **"Manjesh Grand Line"** opens on the **Shell** tab.
 ## Tests
 
 ```bash
-./Scripts/run-all-tests.sh            # build, then run every self-test suite
-./Scripts/run-all-tests.sh --list     # show the suites without running them
+./Scripts/run-all-tests.sh              # build, then run every self-test suite
+./Scripts/run-all-tests.sh --list       # show the suites without running them
 ./Scripts/run-all-tests.sh --no-build FM_RUN_SHIFT_STORE_TESTS
+
+./Scripts/run-all-tests.sh --ci           # only the suites that need no window server
+./Scripts/run-all-tests.sh --session-only # only the ones that do (the exact complement)
 ```
 
-There is no XCTest target - the app carries ~44 permanent suites, each behind its own `FM_RUN_*_TESTS=1` variable, all handled before `NSApplication` is touched so they run headless and are safe alongside the real app. The runner reads its list out of `main.swift`, so it never goes stale. The repo root README has the full convention and the environment-variable index.
+There is no XCTest target - the app carries ~100 permanent suites, each behind its own `FM_RUN_*_TESTS=1` variable, all handled before `NSApplication` is touched so they run headless and are safe alongside the real app. The runner reads its list out of `main.swift`, so it never goes stale. The repo root README has the full convention and the environment-variable index.
+
+`--ci` and `--session-only` split that list in two along one line: whether a suite mounts a real `NSWindow`. CI runs both, as separate jobs - the headless half blocking, the window-backed half non-blocking to start (see `.github/workflows/ci.yml`'s own header for why). The split lives in the script's `NEEDS_SESSION` array and nowhere else, and `FM_RUN_E2E_TESTING_POLICY_TESTS` cross-checks it against the suites themselves so a new window-backed suite cannot quietly miss it.
+
+### What the suites cannot cover
+
+A suite process is never composited, so the *visible* half of WebKit gating, real terminal pixels, Energy Impact, biometric prompts, real notification buttons and every real remote path are all outside its reach. Those live in [`MANUAL-CHECKS.md`](MANUAL-CHECKS.md), a short captain-run list. For the composited-but-local half of that, `./Scripts/build-probe-app.sh` builds a separately-identified copy that is safe to run alongside the real app - use it instead of launching a worktree build.
 
 ## Package as an app
 

@@ -61,10 +61,9 @@ extension ConsoleController {
     /// and opening a new shell reuses that name rather than climbing to
     /// "Shell 3".
     func numberedName(for launch: TabLaunch) -> String {
-        let bare = launch.defaultName
         let kind = launch.kindIdentity
-        let existing = tabs.filter { $0.launch.kindIdentity == kind }.count
-        return existing == 0 ? bare : "\(bare) \(existing + 1)"
+        return TabNaming.nextName(bare: launch.defaultName,
+                                  taken: tabs.filter { $0.launch.kindIdentity == kind }.map { $0.name })
     }
 
     /// Add a tab for `launch`, build its chip, and (if the view is already on

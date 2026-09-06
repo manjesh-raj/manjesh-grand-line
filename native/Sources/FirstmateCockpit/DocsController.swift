@@ -292,6 +292,14 @@ final class DocsController: NSViewController, DaylightDrillActions {
     #if FM_SELFTESTS
     var debugPlaybookCard: NSView { playbookCard }
     var debugWebView: NSView { webView }
+    /// The Playbook web view as itself, so a suite can read real state back
+    /// out of the loaded page (`evaluateJavaScript`) rather than only
+    /// measuring the view. Used by `DocsPlaybookReloadSelfTest` to prove the
+    /// subresource-cache fix in `loadDocsIfAvailable` still holds.
+    var debugPlaybookWebView: WKWebView { webView }
+    /// The toolbar's real Reload control, so a suite drives the same
+    /// target/action a click does instead of calling the handler directly.
+    var debugReloadButton: NSButton { reloadButton }
     #endif
 
     // MARK: Theme

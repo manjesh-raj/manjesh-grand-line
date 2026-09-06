@@ -169,18 +169,42 @@ enum AppKitAuditSelfTest {
     private static func test_pr1() -> String? {
         // Both resolvers read the environment every time, so this measures
         // exactly what a bare `ScheduleStore()` in this process would open.
+        //
+        // The property is "not the captain's real store", **not** "matches the
+        // redirect block's own scratch path shape". This used to require the
+        // literal substring "selftest-process-", which the block happens to
+        // use - and CI caught the consequence: the workflow legitimately
+        // points `FM_SCHEDULES_FILE` at `${{ runner.temp }}/ci-stores/`, so
+        // this reported "the captain's real schedules.json is being read on
+        // every test run" about a disposable runner directory. An alarming
+        // claim, and a false one. A caller choosing its own scratch location
+        // is fine; only a path resolving into the real store is not.
+        let realStoreRoot = (FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
+            ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support", isDirectory: true))
+            .appendingPathComponent("FirstmateCockpit", isDirectory: true)
+            .resolvingSymlinksInPath().path
+
+        // Component-wise, never a string prefix - `FirstmateCockpit-scratch`
+        // is a genuine prefix of `FirstmateCockpit` without being inside it.
+        func isInsideRealStore(_ path: String) -> Bool {
+            let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+            return resolved == realStoreRoot || resolved.hasPrefix(realStoreRoot + "/")
+        }
+
         let schedules = ScheduleStore.storeURL().path
-        if !schedules.contains("selftest-process-") {
-            return "a bare ScheduleStore() in a self-test process resolves to \(schedules) - the captain's real schedules.json is being read on every test run"
+        if isInsideRealStore(schedules) {
+            return "a bare ScheduleStore() in a self-test process resolves to \(schedules), inside the real store - the captain's real schedules.json is being read on every test run"
         }
         let history = ScheduleRunHistoryStore.defaultDirectory().path
-        if !history.contains("selftest-process-") {
-            return "ScheduleRunHistoryStore.shared resolves to \(history) - the real run history is reachable from a self-test process"
+        if isInsideRealStore(history) {
+            return "ScheduleRunHistoryStore.shared resolves to \(history), inside the real store - the real run history is reachable from a self-test process"
         }
-        // The real locations must genuinely be somewhere else, or a scratch
-        // path that happens to look right would pass vacuously.
-        if schedules.contains("Application Support/FirstmateCockpit/schedules.json") {
-            return "the scratch redirect still lands inside the real Application Support store"
+        // Vacuity guard, kept: an override that is simply unset would leave
+        // both resolving to the real location, which the two checks above
+        // catch - but assert the real location genuinely differs so a future
+        // change to `realStoreRoot` cannot make this pass by measuring nothing.
+        if !isInsideRealStore(realStoreRoot + "/schedules.json") {
+            return "the real-store containment check is not measuring anything - realStoreRoot resolved to \(realStoreRoot)"
         }
         return nil
     }
