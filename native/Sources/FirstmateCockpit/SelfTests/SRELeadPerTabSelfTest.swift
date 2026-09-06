@@ -94,6 +94,14 @@ enum SRELeadPerTabSelfTest {
         return (window, controller, controller.debugAllTabIDs())
     }
 
+    /// The literal text `ConsoleController.processTerminated` feeds into a
+    /// tab's terminal when its child exits, and - with auto-reconnect off -
+    /// the last write anything makes to that buffer. Used as the settle
+    /// signal by `test_scrollbackSurvivesSRELeadToggle`; if this ever stops
+    /// matching that method, the settle times out with a message naming it
+    /// rather than silently going back to guessing.
+    private static let processEndedMarker = "[process ended"
+
     /// A fake `claude -p ... --output-format json` stand-in: echoes the
     /// question it was asked (`-p <question>` is always argv[1]/argv[2])
     /// back inside `result`, so two tabs asking different questions produce
@@ -303,29 +311,63 @@ enum SRELeadPerTabSelfTest {
 
         guard let terminal = controller.debugCurrentTerminal() else { return "no Terminal behind the current tab" }
 
-        // Let the failing ssh process finish writing before establishing the
-        // baseline, so its own async output can't land between two snapshots
-        // and read as a corrupted buffer.
-        var lastLength = -1
-        _ = waitUntil(timeout: 8) {
-            let length = controller.debugCurrentTerminalOutput()?.count ?? 0
-            defer { lastLength = length }
-            return length > 0 && length == lastLength
+        // Settle before establishing the baseline - and settle on *positive
+        // evidence of completion*, not on the absence of change.
+        //
+        // This wait was two sequential "two consecutive equal reads" loops
+        // (one for output length, one for geometry) and it failed ~36% of
+        // windowed CI runs in two different ways, both of which are the same
+        // mistake: `waitUntil` polls every 50ms, so "two consecutive equal
+        // reads" is 50ms of stability, and 50ms of stability cannot tell
+        // *settled* apart from *has not begun*.
+        //
+        //  - Geometry (run 34012509772, "80x25 -> 115x36"): 80x25 is
+        //    SwiftTerm's untouched default. Two reads before AppKit's first
+        //    real layout are trivially equal, so the loop declared victory at
+        //    the default and the first real layout landed later, during the
+        //    `.ready` wait - reading as a resize the toggle never performed.
+        //  - Content (three runs, an identical 19093 -> 19191): the +98 is
+        //    `processTerminated`'s own `[process ended (exit N) - ...]` notice
+        //    (`ConsoleController+Tabs.swift`), one buffer line wide. The ssh
+        //    child to 127.0.0.1 had not exited yet; a 50ms gap between two
+        //    writes satisfied the loop, and the notice landed after the
+        //    baseline snapshot. Not "a shell that might emit anything at any
+        //    time" - one deterministic, identifiable write.
+        //
+        // So: wait for that notice to actually be in the buffer, which is the
+        // last write anything makes to this terminal (the child is gone,
+        // auto-reconnect is off above, and SRE Lead writes to its own chat
+        // view, never here) - and require BOTH length and geometry to hold
+        // still across `requiredStableReads` consecutive polls of one combined
+        // loop, so settling one cannot perturb the other. Waiting for the
+        // child to exit also buys ~a second of pumped runloop, by which point
+        // AppKit's first layout has certainly landed.
+        let requiredStableReads = 10          // x 50ms poll = ~0.5s of real stillness
+        var stableReads = 0
+        var lastSignature = ""
+        let settled = waitUntil(timeout: 30) {
+            controller.view.layoutSubtreeIfNeeded()
+            let output = controller.debugCurrentTerminalOutput() ?? ""
+            let signature = "\(terminal.cols)x\(terminal.rows)|\(output.count)"
+            stableReads = (signature == lastSignature) ? stableReads + 1 : 0
+            lastSignature = signature
+            return output.contains(processEndedMarker) && stableReads >= requiredStableReads
+        }
+        guard settled else {
+            let output = controller.debugCurrentTerminalOutput() ?? ""
+            return "the tab never went quiet: processEnded=\(output.contains(processEndedMarker)) "
+                + "size=\(terminal.cols)x\(terminal.rows) len=\(output.count) "
+                + "stableReads=\(stableReads)/\(requiredStableReads). Without a settled tab this case "
+                + "measures the ssh child's own output and AppKit's first layout, not the SRE Lead toggle."
         }
 
-        // The terminal's real geometry is resolved by AppKit a runloop turn or
-        // two after the constraints are set, and this window is never ordered
-        // front, so it can still be sitting at SwiftTerm's 80x25 default here.
-        // Taking the baseline before it settles made this case fail
-        // intermittently with "80x25 -> 97x32" - which is the first real layout
-        // landing during the wait below, not the pane resizing anything. Wait
-        // for a stable size, then measure.
-        var lastSize = (cols: -1, rows: -1)
-        _ = waitUntil(timeout: 8) {
-            controller.view.layoutSubtreeIfNeeded()
-            let size = (cols: terminal.cols, rows: terminal.rows)
-            defer { lastSize = size }
-            return size == lastSize
+        // A baseline taken at SwiftTerm's untouched default means no real
+        // layout ever happened, which makes the cols/rows assertions below
+        // meaningless rather than merely fragile - the same class of guard as
+        // the seeded-content check further down.
+        guard (terminal.cols, terminal.rows) != (80, 25) else {
+            return "the terminal is still at SwiftTerm's untouched 80x25 default, so AppKit never laid "
+                + "it out and the no-resize assertions below would be vacuous"
         }
 
         // Comfortably more than one screen, so real lines are pushed into
