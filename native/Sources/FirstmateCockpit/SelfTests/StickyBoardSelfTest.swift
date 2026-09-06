@@ -414,19 +414,31 @@ enum StickyBoardSelfTest {
             let ranWhileQueueWasHeld = sync.flushForTerminationNow()
             let waited = Date().timeIntervalSince(queuedStart)
             barrier.signal()
+            // Let the queue drain before touching git from this thread
+            // again: the abandoned flush's own work item is still on there,
+            // and `ensureReadyNow()` runs git on the *caller's* thread, so
+            // racing the two would reproduce the very index-lock contention
+            // this finding is about - inside the test.
+            queue.sync {}
             check(!ranWhileQueueWasHeld,
                   "the flush reported success while the shared queue was held - it ran off-queue, on the caller's thread")
             check(waited >= StickyBoardGitSync.terminateFlushBudget - 0.5,
                   "the flush gave up in \(waited)s, before its own budget - it never reached the queue at all")
             check(waited < StickyBoardGitSync.terminateFlushBudget + 3,
                   "the flush held its caller for \(waited)s, well past its \(StickyBoardGitSync.terminateFlushBudget)s budget")
-            // Whatever the bound abandoned is recoverable, which is what
-            // makes a short bound the right answer: the next launch's
-            // `ensureReadyNow()` re-reports the dirty tree and re-commits.
+            // Whatever the bound abandoned is not *lost*, which is what
+            // makes a short bound the right answer: the work item finishes
+            // once the queue frees (as it just did), and had the process
+            // genuinely exited first, the next launch's `ensureReadyNow()`
+            // re-reports the dirty tree and calls `markDirty()` itself. Both
+            // routes are asserted here - the commit landed, and a fresh
+            // readiness check over the same tree still reports clean.
+            check(commitCount(remote, gitDir: true) == before + 2,
+                  "the work an abandoned flush left behind never reached the remote at all")
             check(sync.ensureReadyNow(), "ensureReadyNow should still succeed after an abandoned flush")
             waitForSynced(sync, timeout: 10)
-            check(commitCount(remote, gitDir: true) == before + 2,
-                  "the work an abandoned flush left behind should be picked up by the next launch's own dirty check")
+            check(sync.status == .synced,
+                  "the tree should read clean once the abandoned flush's own commit landed, got \(sync.status)")
         }
 
         // MARK: 6d. Audit 2 §4.3's wiring, as a source guard.
