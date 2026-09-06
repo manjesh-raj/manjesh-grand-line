@@ -59,6 +59,7 @@ jobs:
   build:
     name: swift build
     runs-on: macos-14
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -107,6 +108,7 @@ jobs:
   test:
     name: self-test suites
     runs-on: macos-14
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -141,6 +143,11 @@ jobs:
   test-windowed:
     name: self-test suites (window-backed)
     runs-on: macos-14
+    # A bound, because this job has already needed one: its first run hung and
+    # was killed by GitHub's own 6-hour cap, producing no usable log. The
+    # runner script now bounds each suite individually (`FM_SUITE_TIMEOUT`), so
+    # this is only the backstop for the whole job.
+    timeout-minutes: 60
     # Non-blocking on purpose - see this file's header for the full reasoning.
     # In short: these suites need a window server, which is a property of the
     # runner rather than of this app, and a red X nobody can act on is worse

@@ -71,6 +71,22 @@ done
 BIN=".build/debug/FirstmateCockpit"
 MAIN="Sources/FirstmateCockpit/main.swift"
 
+# Per-suite wall-clock bound, in seconds.
+#
+# Not a nicety - a real incident. The first CI run of the window-backed job
+# hung on a hosted runner and was killed by GitHub's own 6-hour job cap, having
+# produced no output and no indication of which suite was stuck. A suite that
+# waits on something a runner cannot provide (a window server, a web content
+# process, a real login session) can wait forever, and an unbounded runner
+# turns that into six hours of macOS runner time and a useless log.
+#
+# So every suite gets a bound and a suite that exceeds it is reported as
+# TIMEOUT, by name, and the run continues. That is strictly more informative
+# than a killed job: one hung suite no longer hides the result of the other
+# hundred. Generous on purpose - the slowest legitimate suites here drive real
+# subprocesses and real page loads.
+SUITE_TIMEOUT="${FM_SUITE_TIMEOUT:-300}"
+
 # Suites that need something this script cannot provide, with the reason. They
 # are reported as SKIP rather than silently dropped - a skipped suite is a real
 # coverage gap and should be visible in the output.
@@ -292,9 +308,38 @@ if [ ! -x "$BIN" ]; then
   exit 1
 fi
 
+# Run one suite, bounded. Writes its output to $2. Returns the suite's own exit
+# status, or 124 (the conventional timeout status) if it had to be killed.
+#
+# `sleep`-polling a background pid rather than `timeout(1)`: that is GNU
+# coreutils and macOS does not ship it, and this script has to run on both a
+# developer's Mac and the CI runner.
+run_suite() {
+  local flag="$1"
+  local outfile="$2"
+  env "$flag=1" "$BIN" >"$outfile" 2>&1 &
+  local pid=$!
+  local waited=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$waited" -ge "$SUITE_TIMEOUT" ]; then
+      # TERM first so a suite with a cleanup path can take it, then KILL.
+      kill -TERM "$pid" 2>/dev/null
+      sleep 2
+      kill -KILL "$pid" 2>/dev/null
+      wait "$pid" 2>/dev/null
+      return 124
+    fi
+    sleep 1
+    waited=$((waited + 1))
+  done
+  wait "$pid"
+  return $?
+}
+
 PASSED=()
 FAILED=()
 SKIPPED=()
+TIMEDOUT=()
 
 for flag in "${FLAGS[@]}"; do
   skip=0
@@ -310,11 +355,18 @@ for flag in "${FLAGS[@]}"; do
   # Each suite's own stdout is captured and only shown on failure - a passing
   # run of 43 suites is thousands of lines otherwise, and the point of this
   # script is a single verdict you will actually read.
-  output=$(env "$flag=1" "$BIN" 2>&1)
+  suite_out=$(mktemp)
+  run_suite "$flag" "$suite_out"
   status=$?
+  output=$(cat "$suite_out")
+  rm -f "$suite_out"
   if [ "$status" -eq 0 ]; then
     printf 'PASS  %s\n' "$flag"
     PASSED+=("$flag")
+  elif [ "$status" -eq 124 ]; then
+    printf 'TIMEOUT  %s (killed after %ss)\n' "$flag" "$SUITE_TIMEOUT"
+    TIMEDOUT+=("$flag")
+    echo "$output" | tail -20 | sed 's/^/      | /'
   else
     printf 'FAIL  %s (exit %s)\n' "$flag" "$status"
     FAILED+=("$flag")
@@ -324,13 +376,16 @@ done
 
 echo ""
 echo "======================================================"
-printf '%d passed, %d failed, %d skipped (of %d)\n' \
-  "${#PASSED[@]}" "${#FAILED[@]}" "${#SKIPPED[@]}" "${#FLAGS[@]}"
+printf '%d passed, %d failed, %d timed out, %d skipped (of %d)\n' \
+  "${#PASSED[@]}" "${#FAILED[@]}" "${#TIMEDOUT[@]}" "${#SKIPPED[@]}" "${#FLAGS[@]}"
 if [ ${#SKIPPED[@]} -gt 0 ]; then
   printf 'skipped: %s\n' "${SKIPPED[*]}"
 fi
-if [ ${#FAILED[@]} -gt 0 ]; then
-  printf 'failed:  %s\n' "${FAILED[*]}"
+if [ ${#TIMEDOUT[@]} -gt 0 ]; then
+  printf 'timed out: %s\n' "${TIMEDOUT[*]}"
+fi
+if [ ${#FAILED[@]} -gt 0 ] || [ ${#TIMEDOUT[@]} -gt 0 ]; then
+  [ ${#FAILED[@]} -gt 0 ] && printf 'failed:  %s\n' "${FAILED[*]}"
   exit 1
 fi
 echo "all good"
