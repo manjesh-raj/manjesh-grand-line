@@ -248,6 +248,12 @@ final class AppShellController: NSViewController {
     /// wired once in `loadView()`.
     let recentDestinations = RecentDestinations()
 
+    /// F2: fires whenever the captured session state may have changed - i.e.
+    /// on every navigation. Wired by the app delegate to its own
+    /// `saveSessionState()`, which is what makes the restore survive a crash
+    /// or a force-quit rather than only a clean ⌘Q.
+    var onSessionStateChanged: (() -> Void)?
+
     /// Whatever `updateRecentDestinations(arriving:)` last recorded as
     /// current - the one piece of state that lets it know what was "on
     /// screen" a moment ago, so the *next* navigation can record the right
@@ -1138,6 +1144,10 @@ final class AppShellController: NSViewController {
     /// only covers the registry; a Recents test additionally needs
     /// `switchToSession`/`revealHostConsole` to actually run, and both require
     /// a real entry in `hostConsoles`.
+    /// F2: the restored page for a host, so a self-test can assert it exists
+    /// and - the property that matters - has not started its `ssh`.
+    func debugHostConsole(id: UUID) -> ConsoleController? { hostConsoles[id] }
+
     func debugSeedHostConsole(_ controller: ConsoleController, hostID: UUID) {
         hostConsoles[hostID] = controller
         addChild(controller)
@@ -1684,6 +1694,105 @@ final class AppShellController: NSViewController {
         updateKeyViewLoop()
     }
 
+    // MARK: F2 - session restoration
+
+    /// Where the captain is right now, in a form that survives a relaunch.
+    ///
+    /// Reads the same `currentDestinationKind` the Recents dropdown and the
+    /// tab shortcuts already read, and the same `hostConsoles` dictionary the
+    /// session strip does - never a second notion of "what is open".
+    ///
+    /// See `SessionRestore.swift` for exactly what is and is not captured.
+    func captureSessionState() -> SessionRestoreState {
+        var destination: String?
+        var activeHost: String?
+        switch currentDestinationKind {
+        case .rail(let dest): destination = dest.rawValue
+        case .host(let id, _): activeHost = id.uuidString
+        case nil: break
+        }
+        return SessionRestoreState(
+            destination: destination,
+            activeHostID: activeHost,
+            // Sorted so an unchanged session encodes to identical bytes -
+            // `Dictionary.keys` has no defined order, and without this the
+            // save-only-when-changed check below would write on every
+            // navigation regardless.
+            openHostIDs: hostConsoles.keys.map(\.uuidString).sorted(),
+            consoleTabs: console.isViewLoaded ? console.restorableConsoleTabs() : [],
+            toolTabs: tools.isViewLoaded ? tools.restorableToolTabs() : []
+        )
+    }
+
+    /// Restores the halves that need no host store: the shared Console's tabs
+    /// and the Tools page's tabs.
+    ///
+    /// Mounting each page here is deliberate and is what makes the lazy half
+    /// work: `DestinationRegistry` would otherwise not build these until the
+    /// captain visited them, and a page that does not exist cannot hold
+    /// restored tabs. Mounting is not showing - `ConsoleController.addTab`
+    /// only starts a tab's process `if hasAppeared`, so a restored Console the
+    /// captain does not open forks no shells until they do.
+    func restoreTabs(from state: SessionRestoreState) {
+        if !state.consoleTabs.isEmpty {
+            // Touching `view` forces `loadView` - enough for a controller to
+            // hold tabs. It is NOT a mount: `DestinationRegistry` still embeds
+            // the page on its first visit, and `ConsoleController.addTab` only
+            // starts a tab's process `if hasAppeared`, so a restored Console
+            // the captain does not open forks no shells until they do.
+            _ = console.view
+            console.restoreConsoleTabs(state.consoleTabs)
+        }
+        if !state.toolTabs.isEmpty {
+            _ = tools.view
+            tools.restoreToolTabs(state.toolTabs)
+        }
+    }
+
+    /// Restores the destination that was showing.
+    ///
+    /// Returns `false` when the state named a host page, which this method
+    /// cannot open on its own (it needs the host record and its resolved `ssh`
+    /// argv, which this controller deliberately knows nothing about - the same
+    /// boundary `connectHost`'s own `args` parameter draws). The app delegate
+    /// handles that case; everything else is an ordinary `show(_:)`.
+    @discardableResult
+    func restoreDestination(from state: SessionRestoreState) -> Bool {
+        guard state.activeHostID == nil else { return false }
+        guard let raw = state.destination, let dest = RailDestination(rawValue: raw) else { return false }
+        show(dest)
+        return true
+    }
+
+    /// Audit §2 item 7: which page a tab keyboard shortcut should act on
+    /// right now, or `nil` when none should.
+    ///
+    /// Derived from `currentDestinationKind` - the state the Recents dropdown
+    /// already keeps current on *every* navigation path (`show(_:)`,
+    /// `revealHostConsole`, and the SRE Lead reply-jump bypass all funnel
+    /// through `updateRecentDestinations`) - rather than a second notion of
+    /// "what is showing" invented for the shortcuts. A dedicated host page is
+    /// a `ConsoleController` with its own tabs, so ⌘T/⌘W/⌘1 mean exactly what
+    /// they mean on the shared Console; that is the reason this resolves a
+    /// controller instead of switching on `RailDestination` alone.
+    ///
+    /// Everything else answers `nil`, which is what keeps ⌘R on the Docs page
+    /// (or in the Whiteboard's web view) out of this feature's hands.
+    func activeTabShortcutTarget() -> TabShortcutHandling? {
+        switch currentDestinationKind {
+        case .host(let id, _):
+            return hostConsoles[id]
+        case .rail(let dest):
+            switch dest {
+            case .console: return console
+            case .tools: return tools
+            default: return nil
+            }
+        case nil:
+            return nil
+        }
+    }
+
     /// Records the navigation into `recentDestinations` and remembers
     /// `kind` as the new "current" - the one call site both `show(_:)` and
     /// `revealHostConsole` (and the SRE Lead reply-jump bypass) make, so the
@@ -1691,6 +1800,10 @@ final class AppShellController: NSViewController {
     private func updateRecentDestinations(arriving kind: RecentDestinationKind) {
         recentDestinations.recordNavigation(leaving: currentDestinationKind, arriving: kind)
         currentDestinationKind = kind
+        // F2: every navigation path funnels through here, so this is the one
+        // hook that keeps the saved session current without a timer. The app
+        // delegate's own handler writes only when the state actually changed.
+        onSessionStateChanged?()
     }
 
     /// A Recents row was clicked - dispatched to whichever navigation

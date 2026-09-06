@@ -480,6 +480,16 @@ final class HomeCanvasController: NSViewController {
     }
 
     private func applyTheme(_ theme: HelmTheme) {
+        // `ThemeManager.swift`'s checklist item 2. Every layer fill below
+        // tracks the theme on its own; this is what makes the *system-
+        // semantic* colours in this subtree (a scroller's track and knob, an
+        // `NSMenu` popped from a card, a focus ring) resolve against the Helm
+        // theme instead of the OS's own light/dark setting. Asserted for every
+        // destination by `DestinationMountingSelfTest.everyDestinationForces
+        // ItsOwnAppearance`, which hosts each page in a deliberately
+        // opposite-appearance window so inheriting from the themed main
+        // window cannot make the check pass vacuously.
+        view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
         greetingLabel.font = HelmType.heroTitle()
         greetingLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)

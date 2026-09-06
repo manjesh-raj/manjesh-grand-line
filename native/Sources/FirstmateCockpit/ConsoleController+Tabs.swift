@@ -428,6 +428,53 @@ extension ConsoleController {
         addTab(launch: launch, name: numberedName(for: launch), select: true)
     }
 
+    // MARK: F2 - session restoration
+
+    /// This console's tabs, in a form that survives a relaunch.
+    ///
+    /// `.shell` launches only. An `.ssh` tab belongs to a dedicated host page,
+    /// and those are restored as *pages* (one connection each, opened lazily)
+    /// rather than as individual tabs - see `SessionRestore.swift`'s header
+    /// for why restoring a host's duplicated ssh tabs would mean a second real
+    /// connection and a second Touch ID prompt per duplicate. A one-shot
+    /// command tab is skipped for the reason `processTerminated` already
+    /// skips it: a finished `rebuild.sh` is not something to re-run.
+    func restorableConsoleTabs() -> [SessionRestoreState.ConsoleTab] {
+        tabs.compactMap { tab in
+            guard case .shell = tab.launch, !tab.isOneShotCommand else { return nil }
+            return SessionRestoreState.ConsoleTab(name: tab.name, hasUserChosenName: tab.hasUserChosenName)
+        }
+    }
+
+    /// Reopens the tabs a previous run had, with their names.
+    ///
+    /// Every restored tab is a fresh `.shell` launch built from *this* run's
+    /// current shell/cwd settings, not a stored argv: a captain who changed
+    /// their default working directory between runs should get the new one,
+    /// and a stored executable path is exactly the sort of thing that goes
+    /// stale across a machine move.
+    ///
+    /// `hasUserChosenName` is carried through so a name this app derived is
+    /// re-derived by `numberedName(for:)` (staying correct as tabs come and
+    /// go) while one the captain typed comes back verbatim.
+    ///
+    /// Does nothing when this console already has tabs - restoration runs at
+    /// launch, and quietly appending to a console the app has already
+    /// populated for itself would be a surprise rather than a restore.
+    func restoreConsoleTabs(_ restored: [SessionRestoreState.ConsoleTab]) {
+        guard tabs.isEmpty, !restored.isEmpty else { return }
+        let s = shellArgv()
+        let cwd = shellCwd()
+        for (index, record) in restored.enumerated() {
+            let launch = TabLaunch.shell(executable: s.executable, args: s.args, cwd: cwd)
+            let name = record.hasUserChosenName && !record.name.isEmpty
+                ? record.name
+                : numberedName(for: launch)
+            let tab = addTab(launch: launch, name: name, select: index == 0)
+            tab.hasUserChosenName = record.hasUserChosenName
+        }
+    }
+
     /// ⌘D: a new tab running the same argv as the current one.
     @objc func duplicateCurrentTab() {
         if let tab = currentTab { duplicateTab(id: tab.id) }
@@ -534,11 +581,26 @@ extension ConsoleController {
     }
 
     /// ⌘1…⌘9: select the Nth tab (menu items carry a 1-based tag).
+    ///
+    /// Kept from the Tab-menu era and now unreferenced by any menu (that menu
+    /// is gone - see AGENTS.md's "Menu bar"); it delegates to the same
+    /// index-based method `TabKeyboardShortcuts` drives, so the two can never
+    /// disagree about what "the Nth tab" means.
     @objc func selectTabByShortcut(_ sender: NSMenuItem) {
-        let idx = sender.tag - 1
-        guard idx >= 0, idx < tabs.count else { return }
-        select(tabID: tabs[idx].id)
+        selectTab(atIndex: sender.tag - 1)
     }
+
+    /// `TabShortcutHandling`. Out-of-range does nothing on purpose - see that
+    /// protocol's own note on why clamping would be worse.
+    func selectTab(atIndex index: Int) {
+        guard index >= 0, index < tabs.count else { return }
+        select(tabID: tabs[index].id)
+    }
+
+    /// `TabShortcutHandling`. A thin alias for `reconnectActive()` so the
+    /// protocol can name one method both a console and the connection-less
+    /// Tools page can answer.
+    func reconnectCurrentTabIfSupported() { reconnectActive() }
 
     /// The tab chip's right-click "Forward Drags to This Tab's Program".
     /// Flips `CockpitTerminalView.forwardDragsToChild` for this one tab - see

@@ -115,7 +115,7 @@ enum ToolKind: String, CaseIterable {
     }
 }
 
-final class ToolsController: NSViewController, DaylightDrillActions {
+final class ToolsController: NSViewController, DaylightDrillActions, TabShortcutHandling {
 
     private var theme: HelmTheme = ThemeManager.shared.theme
 
@@ -638,6 +638,33 @@ final class ToolsController: NSViewController, DaylightDrillActions {
         selectTab(id: instance.id)
     }
 
+    // MARK: F2 - session restoration
+
+    /// The open tool tabs, in a form that survives a relaunch. A tab's
+    /// *content* is deliberately not recorded: a tool tab is a scratch
+    /// surface, and persisting whatever was pasted into a diff or a JWT
+    /// decoder would mean writing the captain's pasted material to disk for a
+    /// feature that only promised to reopen the tab.
+    func restorableToolTabs() -> [SessionRestoreState.ToolTab] {
+        tabs.map { SessionRestoreState.ToolTab(kind: $0.kind.rawValue, name: $0.name) }
+    }
+
+    /// Reopens the tool tabs a previous run had. An unrecognised `kind` is
+    /// skipped rather than guessed at, so a tool removed in a later build
+    /// cannot come back as a different one.
+    ///
+    /// Does nothing when tabs are already open, for the same reason
+    /// `ConsoleController.restoreConsoleTabs` does not: this runs at launch.
+    func restoreToolTabs(_ restored: [SessionRestoreState.ToolTab]) {
+        guard tabs.isEmpty, !restored.isEmpty else { return }
+        for record in restored {
+            guard let kind = ToolKind(rawValue: record.kind) else { continue }
+            let instance = openNewTab(kind: kind)
+            let trimmed = record.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { renameTab(id: instance.id, to: trimmed) }
+        }
+    }
+
     /// ⌘D: duplicate the current tab - same kind, same input content, a new
     /// independent tab. Never copies the source tab's output; the new tab
     /// recomputes that itself once the captain acts on it.
@@ -697,11 +724,24 @@ final class ToolsController: NSViewController, DaylightDrillActions {
     }
 
     /// ⌘1…⌘9: select the Nth open tab (menu items carry a 1-based tag).
+    ///
+    /// Kept from the Tab-menu era and now unreferenced by any menu; it
+    /// delegates to the same index-based method `TabKeyboardShortcuts` drives.
     @objc func selectTabByShortcut(_ sender: NSMenuItem) {
-        let idx = sender.tag - 1
-        guard idx >= 0, idx < tabs.count else { return }
-        selectTab(id: tabs[idx].id)
+        selectTab(atIndex: sender.tag - 1)
     }
+
+    /// `TabShortcutHandling`. Out-of-range does nothing on purpose.
+    func selectTab(atIndex index: Int) {
+        guard index >= 0, index < tabs.count else { return }
+        selectTab(id: tabs[index].id)
+    }
+
+    /// `TabShortcutHandling`. A tool tab runs no process, so there is nothing
+    /// to reconnect - a deliberate no-op rather than a protocol flag every
+    /// caller would have to branch on. ⌘R on this page therefore does nothing
+    /// rather than doing something surprising.
+    func reconnectCurrentTabIfSupported() {}
 
     private func selectTab(id: UUID) {
         guard let tab = tabs.first(where: { $0.id == id }) else { return }

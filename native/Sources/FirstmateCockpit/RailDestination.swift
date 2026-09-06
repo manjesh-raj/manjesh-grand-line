@@ -154,7 +154,13 @@ import AppKit
 ///     They are left in place rather than deleted so the rail's own
 ///     decision history stays greppable; if a future phase wants a rail-like
 ///     surface back, they are what it should read.
-enum RailDestination: CaseIterable {
+/// `String`-backed so a destination has a stable identity that can be written
+/// to disk (F2's session restoration persists which one was showing). The raw
+/// values are the case names, derived by the compiler - nothing hand-written
+/// to drift, and renaming a case is a deliberate act that invalidates a saved
+/// state rather than silently restoring the wrong page (an unknown raw value
+/// simply fails to decode and the launch lands where it always did).
+enum RailDestination: String, CaseIterable {
     /// Daylight Phase 2: the home canvas (`HomeCanvasController`) - the hub
     /// every module card and every drill page's back button returns to. It is
     /// a real destination in every sense (a registered slot, an eager mount,

@@ -94,7 +94,17 @@ final class CommandLibraryPageView: NSObject {
     private let detailEditButton = HelmButton(title: "Edit", variant: .quiet, target: nil, action: nil)
     private let detailDuplicateButton = HelmButton(title: "Duplicate", variant: .quiet, target: nil, action: nil)
     private let detailWorkflowButton = HelmButton(title: "Add to Runbook", variant: .secondary, symbol: "plus", target: nil, action: nil)
-    private let detailExplainButton = HelmButton(title: "Explain", variant: .quiet, symbol: "sparkles", target: nil, action: nil)
+    /// Phase 3's AI actions (audit §2 item 4's approved slice). Phase 1
+    /// reserved this slot as a disabled "Explain"; it is one button popping a
+    /// three-item menu rather than three buttons, deliberately. This row is
+    /// already eight controls wide and carries a documented window-width-floor
+    /// hazard (see `detailSendToHostsButton`'s note on gotchas (13)/(14) -
+    /// that one button's compression resistance once capped the whole app
+    /// window's minimum width); three more `.required`-hugging buttons would
+    /// be three more chances to reintroduce it. A menu on a single control is
+    /// also the idiom `HostsListSection`'s own `⋯` overflow already
+    /// establishes for exactly this.
+    private let detailExplainButton = HelmButton(title: "AI", variant: .quiet, symbol: "sparkles", target: nil, action: nil)
     private let detailFavoriteButton = HelmButton(title: "Favorite", variant: .quiet, symbol: "star", target: nil, action: nil)
     private let detailContentContainer = NSView()
 
@@ -120,6 +130,10 @@ final class CommandLibraryPageView: NSObject {
     var onPresentEditor: ((CommandEditorController) -> Void)?
 
     private let runbookStore = DocsRunbookStore()
+    /// Phase 3's AI-actions popover. Owned here (rather than by the page's
+    /// controller) for the same reason `runbookStore` is - this view is what
+    /// knows which command is selected.
+    private let aiController = CommandLibraryAIController()
 
     init(store: CommandLibraryStore) {
         self.store = store
@@ -279,8 +293,9 @@ final class CommandLibraryPageView: NSObject {
         detailParamsStack.translatesAutoresizingMaskIntoConstraints = false
 
         detailExplainButton.controlSize = .small
-        detailExplainButton.isEnabled = false
-        detailExplainButton.toolTip = "Coming in a later phase"
+        detailExplainButton.toolTip = "Explain, improve or troubleshoot this command"
+        detailExplainButton.target = self
+        detailExplainButton.action = #selector(aiClicked(_:))
         detailExplainButton.translatesAutoresizingMaskIntoConstraints = false
 
         detailCopyButton.controlSize = .small
@@ -977,6 +992,54 @@ final class CommandLibraryPageView: NSObject {
         paramValues = [:]
         render()
         Toast.show(in: view, message: "Duplicated as \u{201C}\(duplicate.name)\u{201D}")
+    }
+
+    /// Phase 3's AI actions. One menu, three actions - see
+    /// `detailExplainButton`'s own note for why this is not three buttons.
+    @objc private func aiClicked(_ sender: NSButton) {
+        guard selectedCommandID != nil else { return }
+        let menu = NSMenu()
+        for action in CommandLibraryAIAction.allCases {
+            let item = NSMenuItem(title: action.title, action: #selector(aiActionPicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = action.rawValue
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: sender.bounds.height), in: sender)
+    }
+
+    @objc private func aiActionPicked(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let action = CommandLibraryAIAction(rawValue: raw),
+              let id = selectedCommandID,
+              let command = store.command(id: id) else { return }
+        // The popover writes nothing itself - this closure is the one path
+        // from an AI suggestion to the saved command, and it goes through the
+        // same `updateCommand` the editor sheet uses.
+        aiController.onSaveTemplate = { [weak self] template in
+            self?.applySuggestedTemplate(template, to: id)
+        }
+        aiController.present(action: action, command: command, relativeTo: detailExplainButton)
+    }
+
+    /// Saves an Improve suggestion over the command's own template. Every
+    /// other field is carried through unchanged - this is a template edit,
+    /// not a re-creation - and the captain gets a toast naming what happened,
+    /// since the change is otherwise only visible in the detail pane they may
+    /// already have scrolled past.
+    func applySuggestedTemplate(_ template: String, to id: String) {
+        guard let existing = store.command(id: id) else { return }
+        let trimmed = template.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != existing.commandTemplate else { return }
+        _ = store.updateCommand(
+            id: id, name: existing.name, description: existing.description,
+            category: existing.category, subcategory: existing.subcategory,
+            commandTemplate: trimmed, parameters: existing.parameters,
+            tags: existing.tags, risk: existing.risk
+        )
+        paramValues = [:]
+        render()
+        Toast.show(in: view, message: "Saved the suggested template for \u{201C}\(existing.name)\u{201D}")
     }
 
     @objc private func workflowClicked(_ sender: NSButton) {

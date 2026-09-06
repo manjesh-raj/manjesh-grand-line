@@ -27,6 +27,7 @@ final class AppSettings {
         static let morningBriefingEnabled = "fm.morningBriefingEnabled"
         static let morningBriefingRecord = "fm.morningBriefingRecord"
         static let didSeedDailyGitHubSyncSchedule = "fm.didSeedDailyGitHubSyncSchedule"
+        static let sessionRestoreState = "fm.sessionRestoreState"
     }
 
     /// GL-P3 (audit §6.10): the defaults store is injectable.
@@ -212,5 +213,32 @@ final class AppSettings {
     var didSeedDailyGitHubSyncSchedule: Bool {
         get { defaults.bool(forKey: Keys.didSeedDailyGitHubSyncSchedule) }
         set { defaults.set(newValue, forKey: Keys.didSeedDailyGitHubSyncSchedule) }
+    }
+
+    /// F2 (audit §2 item 1): where the captain was at quit - the showing
+    /// destination, the shared Console's and Tools' open tabs, and which
+    /// hosts had a dedicated page. JSON-encoded, on the same "one cohesive
+    /// value, always read and written as a unit" reasoning as
+    /// `dictationShortcut`/`morningBriefingRecord` above rather than five
+    /// flat keys.
+    ///
+    /// See `SessionRestore.swift` for exactly what is and is not restored,
+    /// and why a host page comes back without connecting until it is opened.
+    var sessionRestoreState: SessionRestoreState? {
+        get {
+            guard let data = defaults.data(forKey: Keys.sessionRestoreState),
+                  let decoded = try? JSONDecoder().decode(SessionRestoreState.self, from: data) else {
+                return nil
+            }
+            return decoded
+        }
+        set {
+            guard let newValue else {
+                defaults.removeObject(forKey: Keys.sessionRestoreState)
+                return
+            }
+            guard let data = try? JSONEncoder().encode(newValue) else { return }
+            defaults.set(data, forKey: Keys.sessionRestoreState)
+        }
     }
 }
