@@ -222,6 +222,20 @@ NEEDS_SESSION=(
   # FM_RUN_TAB_FORWARD_DRAGS_TOGGLE_TESTS / FM_RUN_CONSOLE_CLAUDE_USAGE_TESTS
   # peers.
   "FM_RUN_CONSOLE_TAB_LIFECYCLE_TESTS"
+  # F2 (audit §2 item 1): mounts real `ConsoleController`/`ToolsController`/
+  # `AppShellController` instances in real windows and forks real `.shell`
+  # children, like its peers above. Its host-page cases deliberately never
+  # appear a console with an ssh tab - see the suite's own header.
+  "FM_RUN_SESSION_RESTORE_TESTS"
+  # Audit §2 item 7: drives real NSEvents against a real `ConsoleController`
+  # and a real `ToolsController` in real windows, and needs a real
+  # `windowNumber` for `event.window` to resolve at all.
+  "FM_RUN_TAB_KEYBOARD_SHORTCUTS_TESTS"
+  # Command Library Phase 3's AI actions: mounts the real popover content view
+  # (a real `NSViewController` in a real window) alongside its pure-logic
+  # cases. The `claude` half runs against a disposable fake script, never the
+  # real binary.
+  "FM_RUN_COMMAND_LIBRARY_AI_TESTS"
 )
 
 # Suites that need this machine specifically, not merely a window server.

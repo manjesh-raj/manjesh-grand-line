@@ -209,6 +209,13 @@ final class SetupContainerController: NSViewController, DaylightDrillActions {
     var currentTab: SetupTab { activeTab }
 
     private func applyTheme(_ theme: HelmTheme) {
+        // `ThemeManager.swift`'s checklist item 2 - see the identical note in
+        // `HomeCanvasController.applyTheme`. The four sub-pages re-parented
+        // under this container each force their own appearance too, but this
+        // container owns the tab strip above them, and a container that only
+        // ever inherits is one re-host (a sheet, a panel, a popover) away
+        // from the half-themed class this app has shipped four times.
+        view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
         tabs?.applyTheme(theme)
     }

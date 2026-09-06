@@ -58,6 +58,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var shiftQuickCapture = ShiftQuickCaptureController(store: shiftStore)
     lazy var shiftNotifications = ShiftNotificationScheduler(store: shiftStore)
     lazy var shiftHotkey = ShiftGlobalHotkey { [weak self] in self?.shiftQuickCapture.present() }
+    /// Audit §2 item 7: ⌘T/⌘D/⌘W/⌘R/⇧⌘R/⌘1-9 for Console and Tools tabs,
+    /// restored after the Tab menu's removal took them. A local monitor
+    /// rather than menu items - see `TabKeyboardShortcuts`'s header for why
+    /// a menu is not an option here. Owned alongside the app's other two
+    /// monitor-backed shortcuts.
+    lazy var tabShortcuts = TabKeyboardShortcuts(
+        target: { [weak self] in self?.appShell.activeTabShortcutTarget() },
+        mainWindow: { [weak self] in self?.window }
+    )
     // fm/grandline-dictation-mvp (phase 1): one `DictationEngine` for the
     // app's whole lifetime, driven by `DictationHotkey`'s hold/release
     // callbacks - mirrors `shiftHotkey`/`shiftQuickCapture`'s own shape.
@@ -133,6 +142,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var knownHostIDs: Set<UUID> = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // F2: read the saved session BEFORE anything else, because launch
+        // itself navigates. `AppShellController.loadView` ends with a real
+        // `show(...)` (GL-31's landing decision), which reaches
+        // `updateRecentDestinations` - and once `onSessionStateChanged` is
+        // wired further down, that path *writes*. Reading here rather than at
+        // the point of use removes the ordering dependency entirely: moving
+        // the wiring earlier, which is an easy and invisible mistake, can no
+        // longer clobber the state with "wherever launch happened to land"
+        // before it has been restored.
+        let savedSession = AppSettings.shared.sessionRestoreState
+
         // Connect action from the panel: a saved host (has an id) reaches its
         // own dedicated page (Fix 1) - the same one its rail icon opens, via
         // `connectToHost` below; an ad-hoc quick-connect (no saved identity to
@@ -372,6 +392,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // silently failing later.
         shiftHotkey.requestPermissionIfNeeded()
         shiftHotkey.start()
+        tabShortcuts.start()
         // fm/grandline-notification-center: feeds the same due-detection
         // `poll()` already computes for the OS banner into the in-app
         // Notification Center too, rather than only firing a one-shot
@@ -509,6 +530,72 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // first frame the captain sees is the lock screen, not the console.
         appLock.lock(reason: .launch)
 
+        // F2: keep the saved session current on every navigation, so a crash
+        // or a force-quit loses at most whatever changed since the last one.
+        appShell.onSessionStateChanged = { [weak self] in self?.saveSessionState() }
+
+        // F2 (audit §2 item 1). After `loadView` (which is what makes GL-31's
+        // own first-run landing decision) and behind the lock screen, so
+        // nothing restored is visible before the captain has unlocked.
+        restoreSessionIfNeeded(savedSession)
+    }
+
+    // MARK: F2 - session restoration
+
+    /// Reopens where the captain was. See `SessionRestore.swift` for exactly
+    /// what is and is not restored.
+    ///
+    /// **GL-31 wins.** A machine with no firstmate home resolved lands on
+    /// Setup, and a saved destination must not drag it away from the page
+    /// that fixes the cause - that landing is the whole point of GL-31's
+    /// exception. Tabs are still restored in that case; only the destination
+    /// defers.
+    private func restoreSessionIfNeeded(_ saved: SessionRestoreState?) {
+        guard let state = saved, !state.isEmpty else { return }
+
+        appShell.restoreTabs(from: state)
+
+        // Every host that had a page, reconnected with `navigate: false` - so
+        // each page exists but stays hidden, and (per `ConsoleController.
+        // addTab`'s `hasAppeared` guard) forks no `ssh` until the captain
+        // actually opens it. The one that was *showing* is connected last,
+        // with navigation, so it is the page that comes up.
+        // `uniquingKeysWith`, never `uniqueKeysWithValues`: the latter traps
+        // on a duplicate key, and this runs on the launch path against a file
+        // that can be hand-edited. `HostStore` should never produce two hosts
+        // with one id, but a crash at launch is a far worse answer to that
+        // than quietly keeping the first.
+        let byID = Dictionary(hostStore.hosts.map { ($0.id.uuidString, $0) }, uniquingKeysWith: { first, _ in first })
+        let plan = SessionRestorePlan.hosts(from: state, knownHostIDs: Set(byID.keys))
+        for id in plan.background {
+            guard let host = byID[id] else { continue }
+            appShell.connectHost(host, args: host.sshArguments(allHosts: hostStore.hosts), navigate: false)
+        }
+
+        guard FirstmateHome.homeOk() else {
+            AppLog.lifecycle.info("session restore: tabs restored, destination left to GL-31's Setup landing")
+            return
+        }
+
+        if let showing = plan.showing, let host = byID[showing] {
+            connectToHost(host)
+        } else {
+            appShell.restoreDestination(from: state)
+        }
+    }
+
+    /// Records where the captain is, for the next launch.
+    ///
+    /// Called on quit and on every navigation - the second is what makes this
+    /// survive a crash or a force-quit, and it is cheap: a handful of tabs
+    /// encoded to JSON, written only when the result actually differs from
+    /// what is already stored (`UserDefaults` would otherwise take a write on
+    /// every single navigation, most of which change nothing).
+    func saveSessionState() {
+        guard appShell.isViewLoaded else { return }
+        let state = appShell.captureSessionState()
+        guard state != AppSettings.shared.sessionRestoreState else { return }
+        AppSettings.shared.sessionRestoreState = state
     }
 
     /// The main window's saved-frame key. Once the captain resizes or zooms
@@ -532,6 +619,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return screen.visibleFrame
     }
 
+    /// F2: a natural, low-frequency checkpoint that also catches tab changes
+    /// (opened, closed, renamed) made since the last navigation - `saveSession
+    /// State` is a no-op when nothing actually changed, so switching apps
+    /// costs one JSON encode and no write.
+    func applicationDidResignActive(_ notification: Notification) {
+        saveSessionState()
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
     }
@@ -548,8 +643,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // field giving up focus). Without this, ⌘Q within
         // `StickyBoardStore.persistDebounce` of the last keystroke would lose
         // it.
+        saveSessionState()
         appShell.shutdownStickyBoard()
         shiftHotkey.stop()
+        tabShortcuts.stop()
         shiftNotifications.stop()
         BackgroundSignalsPoller.shared.stop()
         ScheduleRunner.shared.stop()
@@ -2099,6 +2196,31 @@ if ProcessInfo.processInfo.environment["FM_RUN_DEPENDENCY_CHECK_CACHE_TESTS"] ==
 // header.
 if ProcessInfo.processInfo.environment["FM_RUN_TAB_FORWARD_DRAGS_TOGGLE_TESTS"] == "1" {
     exit(TabForwardDragsToggleSelfTest.run() ? 0 : 1)
+}
+
+// F2, session restoration (audit §2 item 1) - the persisted state's shape and
+// backward compatibility, the pure host-restore plan, and the load-bearing
+// safety property that a restored host page does NOT connect until it is
+// opened. See SessionRestoreSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_SESSION_RESTORE_TESTS"] == "1" {
+    exit(SessionRestoreSelfTest.run() ? 0 : 1)
+}
+
+// Command Library Phase 3's AI actions (audit §2 item 4's approved slice) -
+// the prompts, the Improve reply parse (the one thing that can write over a
+// saved command), the real `claude -p` round trip through a disposable fake,
+// and the popover's own save gating. See CommandLibraryAISelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_COMMAND_LIBRARY_AI_TESTS"] == "1" {
+    exit(CommandLibraryAISelfTest.run() ? 0 : 1)
+}
+
+// Audit §2 item 7: the Console/Tools tab keyboard shortcuts restored after the
+// Tab menu's removal - the pure matching table (including the near-misses it
+// must NOT claim, notably the session switcher's own ⌘⌃1-9) plus the monitor's
+// real gating, driven through real NSEvents against a real ConsoleController.
+// See TabKeyboardShortcutsSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_TAB_KEYBOARD_SHORTCUTS_TESTS"] == "1" {
+    exit(TabKeyboardShortcutsSelfTest.run() ? 0 : 1)
 }
 
 // `fm/grandline-k8s-context-badge`: the context/namespace safety badge's

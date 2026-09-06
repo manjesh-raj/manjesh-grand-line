@@ -66,7 +66,7 @@
 import AppKit
 import SwiftTerm
 
-final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegate, DaylightDrillActions {
+final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegate, DaylightDrillActions, TabShortcutHandling {
 
     /// The saved-keys Keychain (Phase 2) - consulted only to resolve a host's
     /// `.ssh` tab into a live `-i <path>` at start/reconnect time

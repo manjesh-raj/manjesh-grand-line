@@ -318,6 +318,15 @@ extension ConsoleController {
     // MARK: Theme
 
     func applyTheme() {
+        // `ThemeManager.swift`'s checklist item 2 - see the identical note in
+        // `HomeCanvasController.applyTheme`. This page is mostly opaque
+        // theme-painted chrome plus SwiftTerm's own themed terminal, so
+        // nothing here rendered wrong while it inherited from the themed main
+        // window; what it did not have was any guarantee of its own. The find
+        // bar's field editor, the tab strip's inline-rename field and every
+        // scroller in the SRE Lead pane all resolve system-semantic colours.
+        view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+
         for tab in tabs {
             theme.apply(to: tab.terminal)
             tab.blockContainer?.applyTheme(theme)

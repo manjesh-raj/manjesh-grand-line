@@ -64,6 +64,7 @@ enum DestinationMountingSelfTest {
             ("runbooksAndPostmortemsHaveTheirOwnSlotsAndDocsNoLongerRendersThem", test_runbooksAndPostmortemsAreSeparateFromDocs),
             ("mounterIsLazyAndBuildsEachSlotOnce", test_mounterUnitBehaviour),
             ("everyDestinationRendersRealContentOnFirstLoad", test_everyDestinationRendersRealContentOnFirstLoad),
+            ("everyDestinationForcesItsOwnAppearance", test_everyDestinationForcesItsOwnAppearance),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -559,6 +560,123 @@ enum DestinationMountingSelfTest {
 
         guard mounter.show(.vault) == nil else { return "an unregistered slot should return nil rather than mounting something" }
         return nil
+    }
+
+    /// Audit §2 item 6: the structural guard that retires the "half-themed
+    /// surface" bug class.
+    ///
+    /// **What it asserts.** Every `RailDestination`'s own body view resolves
+    /// its `effectiveAppearance` to the active Helm theme's light/dark mode -
+    /// i.e. every destination obeys `ThemeManager.swift`'s checklist item 2
+    /// and forces `view.appearance` itself, rather than relying on inheriting
+    /// it from somewhere.
+    ///
+    /// **Why the host window's appearance is deliberately set to the OPPOSITE
+    /// mode, and why that is the whole test.** In the real app the main window
+    /// calls `followHelmTheme()` (`main.swift`), so `window.appearance` already
+    /// tracks the theme and *every* view inside it inherits a correct
+    /// `effectiveAppearance` whether or not it sets one. A guard hosted in a
+    /// correctly-themed window therefore passes for a destination that does
+    /// nothing at all - it would have shipped green through all four of the
+    /// historical half-themed bugs it exists to catch. Forcing the host window
+    /// to the opposite mode makes inheritance produce the *wrong* answer, so
+    /// only a destination that genuinely sets its own appearance can pass.
+    ///
+    /// That is not a contrived configuration either: it is exactly the
+    /// OS-mode-diverges-from-Helm-mode setup the captain demonstrably runs,
+    /// and the reason the ShiftMenuBar popover (anchored to AppKit's own
+    /// status-bar window, which no `followHelmTheme()` ever reaches) rendered
+    /// mutedInk-on-light. A destination that only ever inherits is one re-host
+    /// - a sheet, a panel, a popover, a second window - away from the same
+    /// failure.
+    ///
+    /// **Both directions are swept**, because the two are different code
+    /// paths: a page mounted *while* a theme is active gets its appearance
+    /// from `ThemeManager.observe`'s synchronous fire at registration, and a
+    /// page already on screen when the theme *changes* gets it from the same
+    /// closure firing again. Historically the bugs were in the second (an
+    /// `applyTheme` that repainted every layer and never touched
+    /// `appearance`), so a mount-only sweep would be the weaker half.
+    ///
+    /// Confirmed, per this project's convention, to catch a real regression
+    /// rather than merely to pass: reverting any one of the historical fixes
+    /// (`StickyBoardController`/`CodePreviewController`/`WhiteboardController`'s
+    /// `view.appearance = ...` line) fails this case by name.
+    private static func test_everyDestinationForcesItsOwnAppearance() -> String? {
+        withScratchEnv {
+            guard let light = HelmTheme.allThemes.first(where: { $0.id == "helm-light" }),
+                  let dark = HelmTheme.allThemes.first(where: { $0.id == "helm-dark" }) else {
+                return "expected both helm-light and helm-dark in HelmTheme.allThemes"
+            }
+
+            // Hermeticity: `setTheme` writes through to the real
+            // `UserDefaults`, so the captain's own selection is captured and
+            // restored - the rule `Phase3PolishSelfTest.checkSuitesRestoreThe
+            // Theme` enforces as a source guard, after four suites leaked a
+            // theme and turned unrelated suites red on a clean tree.
+            let savedTheme = ThemeManager.shared.theme
+            defer { ThemeManager.shared.setTheme(savedTheme) }
+
+            var problems: [String] = []
+
+            /// Visits every destination and checks the one thing this case is
+            /// about. `label` names which sweep found a failure, since the
+            /// mount-time and theme-change paths are different bugs.
+            func sweep(_ shell: AppShellController, theme: HelmTheme, label: String) {
+                let expected: NSAppearance.Name = theme.mode == .dark ? .darkAqua : .aqua
+                var reported: Set<DestinationSlotID> = []
+                for dest in RailDestination.allCases {
+                    shell.show(dest)
+                    guard let body = shell.destinationViewIfMountedForTests(dest.slot) else {
+                        problems.append("\(label): \(dest) did not mount")
+                        continue
+                    }
+                    // One report per slot - the four Setup destinations share
+                    // one body view, and four identical lines would read as
+                    // four separate defects.
+                    guard !reported.contains(dest.slot) else { continue }
+                    let match = body.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
+                    if match != expected {
+                        reported.insert(dest.slot)
+                        problems.append("""
+                            \(label): \(dest.slot) resolved \(match?.rawValue ?? "nil") under \
+                            theme \(theme.id) (expected \(expected.rawValue)) - it does not force \
+                            its own view.appearance, so it renders system-semantic colours \
+                            against the OS's light/dark setting rather than the Helm theme
+                            """)
+                    }
+                }
+            }
+
+            // Sweep 1 + 2: build under light, assert; then switch the live
+            // theme to dark on the same, already-mounted shell and assert
+            // again. The second half is the theme-change path.
+            ThemeManager.shared.setTheme(light)
+            do {
+                let (window, shell) = makeMountedShell()
+                // The discriminating step - see this case's own doc comment.
+                window.appearance = NSAppearance(named: .darkAqua)
+                sweep(shell, theme: light, label: "mounted under helm-light")
+
+                ThemeManager.shared.setTheme(dark)
+                window.appearance = NSAppearance(named: .aqua)
+                sweep(shell, theme: dark, label: "switched live to helm-dark")
+                window.contentViewController = nil
+            }
+
+            // Sweep 3: a shell built from scratch with dark already active,
+            // so a destination whose appearance is only ever set on a *change*
+            // (and not on the observer's synchronous first fire) is caught too.
+            ThemeManager.shared.setTheme(dark)
+            do {
+                let (window, shell) = makeMountedShell()
+                window.appearance = NSAppearance(named: .aqua)
+                sweep(shell, theme: dark, label: "mounted under helm-dark")
+                window.contentViewController = nil
+            }
+
+            return problems.isEmpty ? nil : problems.joined(separator: "\n      ")
+        }
     }
 
     // MARK: Harness
