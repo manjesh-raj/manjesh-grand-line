@@ -646,7 +646,7 @@ extension ConsoleController {
         tab.hasUserChosenName = !trimmed.isEmpty
         tab.chip.setName(tab.name)
         styleChips()
-        if let current = currentTab { view.window?.makeFirstResponder(current.terminal) }
+        if let current = currentTab { focusTerminal(of: current) }
     }
 
     /// ⌘1…⌘9: select the Nth tab (menu items carry a 1-based tag).
@@ -720,7 +720,7 @@ extension ConsoleController {
         // background tab's badge should be asleep even while the page itself
         // is on screen.
         refreshPeriodicWorkGating()
-        if focus { view.window?.makeFirstResponder(tab.terminal) }
+        if focus { focusTerminal(of: tab) }
     }
 
     /// `fm/grandline-notification-center`: the one external entry point for
@@ -768,7 +768,7 @@ extension ConsoleController {
         // `restartTabBookkeeping`'s doc comment for why `startTab` and this
         // method are the only two callers, and why that matters.
         restartTabBookkeeping(tab)
-        view.window?.makeFirstResponder(tab.terminal)
+        focusTerminal(of: tab)
     }
 
     /// Tear down every materialized ssh key temp file and the theme observer registered in `loadView` - so

@@ -81,6 +81,49 @@ enum AppLockedSurface {
     /// entry point (a notification action, a menu-bar item) inherits the gate
     /// instead of having to remember it.
     case crewReply
+    /// Audit #2 §5.1(a): forking a console tab's real child process - an
+    /// `ssh` to a production bastion, or a login shell.
+    ///
+    /// The page itself is inside the main window, under the overlay, so this
+    /// is not a walk-up *click* path. It is here because of F2: session
+    /// restoration reopens the showing host page while the app is still
+    /// locked, `viewDidAppear` fires under the overlay, and the tab's process
+    /// starts - which for a key-backed host also drives a Touch ID prompt
+    /// *above* the lock screen and writes the private key to a temp file, all
+    /// before the Grand Line password has been typed. The lock's whole point
+    /// is a gate independent of the Mac login; without this, relaunching the
+    /// app opens the connection for whoever is sitting there.
+    case terminalSession
+    /// Audit #2 §5.1(c): handing keyboard focus to a live PTY.
+    ///
+    /// Deliberately its own case rather than sharing `terminalSession`'s.
+    /// They are different harms with different call sites - one starts a
+    /// process (two call sites), the other steals first responder (eight) -
+    /// and a self-test asserting "no ssh starts while locked" passes just as
+    /// happily with the focus gate deleted. The harm here is that the lock
+    /// screen's password field loses first responder to a terminal nobody can
+    /// see, so the password itself is typed into a remote shell.
+    case terminalFocus
+    /// Audit #2 §5.1(b): opening the incident card.
+    ///
+    /// An `NSPopover` is its own window, layered above the main window and
+    /// therefore above the overlay - the rule in this file's header exactly.
+    /// It shows an incident's id, title and timeline, its note field writes
+    /// into the git-synced record, and "End Incident" starts postmortem
+    /// generation.
+    case incidentCard
+    /// Audit #2 §5.2: the Console/Tools tab keystrokes (⌘T/⌘D/⌘W/⌘R/⇧⌘R and
+    /// ⌘1-9).
+    ///
+    /// A regression the monitor migration introduced rather than a new
+    /// surface: the Tab *menu* these replaced was disabled while locked by
+    /// `AppDelegate.setContentMenusEnabled(false)`, and a local `NSEvent`
+    /// monitor bypasses the menu system entirely. Today's protection is
+    /// incidental - the lock screen's password field is an `NSText` responder,
+    /// which `TabKeyboardShortcuts` already refuses to act under - and it
+    /// evaporates the moment anything else holds focus (a Full Keyboard Access
+    /// user tabbing to the unlock button; §5.1(c)'s own race).
+    case tabShortcuts
 }
 
 final class AppLockGate {
@@ -147,6 +190,16 @@ final class AppLockGate {
     /// screen (`orderOutSecondaryWindows` skips anything not `isVisible`, so
     /// a never-shown panel leaves no trace).
     var debugRegisteredWindows: [NSWindow] { secondaryWindows.compactMap { $0() } }
+
+    /// How many providers are registered, resolved or not.
+    ///
+    /// `debugRegisteredWindows` above cannot see a surface whose window only
+    /// exists while it is on screen - an `NSPopover`'s does - so audit #2
+    /// §5.1(b) needs to ask "did a registration land" separately from "which
+    /// windows does it resolve to right now". A count alone is weak evidence
+    /// on its own, which is why the suite pairs it with a source guard that
+    /// the registration is where it should be.
+    var debugRegisteredWindowProviderCount: Int { secondaryWindows.count }
     #endif
 
     private func orderOutSecondaryWindows() {

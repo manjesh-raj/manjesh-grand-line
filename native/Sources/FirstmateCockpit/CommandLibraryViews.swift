@@ -1023,23 +1023,66 @@ final class CommandLibraryPageView: NSObject {
     }
 
     /// Saves an Improve suggestion over the command's own template. Every
-    /// other field is carried through unchanged - this is a template edit,
-    /// not a re-creation - and the captain gets a toast naming what happened,
-    /// since the change is otherwise only visible in the detail pane they may
-    /// already have scrolled past.
+    /// other field except the risk level is carried through unchanged - this
+    /// is a template edit, not a re-creation - and the captain gets a toast
+    /// naming what happened, since the change is otherwise only visible in the
+    /// detail pane they may already have scrolled past.
+    ///
+    /// ## Audit #2 §5.3: the risk level cannot be carried through
+    ///
+    /// A stored `risk` is a human vouching for text they read. An AI rewrite
+    /// replaces that text and leaves the vouch pointing at something nobody
+    /// read - and because `CommandRiskConfirmation.confirm` short-circuits on
+    /// `.readOnly`, a `readOnly` command whose template the model rewrote into
+    /// something destructive then reached a terminal with *no* confirmation,
+    /// silently, forever after: through the detail pane's own Send, through
+    /// ⌘K, and through F9's multi-host fan-out. `confirmAIAuthored` - the
+    /// unconditional gate for model-written text - never fired either, because
+    /// by then this was an ordinary saved command.
+    ///
+    /// Two halves, and both are needed. The gate below is the captain
+    /// explicitly letting model-written text into their own library; raising
+    /// the risk is what makes every *later* send treat it as unvouched, since
+    /// nothing at those sinks can know how the template got there.
+    ///
+    /// `raised(to:)`, never a plain assignment: `heuristicRisk` is coarse and
+    /// deliberately never answers `.readOnly`, so taking the maximum both
+    /// guarantees the level can no longer be stale-low and guarantees a
+    /// re-derivation can never talk a `destructive` command down.
     func applySuggestedTemplate(_ template: String, to id: String) {
         guard let existing = store.command(id: id) else { return }
         let trimmed = template.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, trimmed != existing.commandTemplate else { return }
+        CommandRiskConfirmation.confirmAIAuthored(command: trimmed, source: "Claude",
+                                                  intent: .saveTemplate) { [weak self] in
+            self?.commitSuggestedTemplate(trimmed, to: id, replacing: existing)
+        }
+    }
+
+    /// The write itself, once the captain has confirmed.
+    ///
+    /// Split from the confirmation above for the reason this codebase already
+    /// splits its other two `confirmAIAuthored` sinks: a modal cannot be
+    /// answered from a headless self-test, so the *behaviour* is asserted by
+    /// driving this directly and the *routing* by a source guard that this has
+    /// exactly one production caller and that caller confirms first. Both
+    /// halves are needed - the write being right proves nothing about the gate
+    /// still being in front of it.
+    func commitSuggestedTemplate(_ trimmed: String, to id: String, replacing existing: DevOpsCommand) {
+        let risk = existing.risk.raised(to: CommandRiskConfirmation.heuristicRisk(of: trimmed))
         _ = store.updateCommand(
             id: id, name: existing.name, description: existing.description,
             category: existing.category, subcategory: existing.subcategory,
             commandTemplate: trimmed, parameters: existing.parameters,
-            tags: existing.tags, risk: existing.risk
+            tags: existing.tags, risk: risk
         )
         paramValues = [:]
         render()
-        Toast.show(in: view, message: "Saved the suggested template for \u{201C}\(existing.name)\u{201D}")
+        let reclassified = risk == existing.risk
+            ? ""
+            : " \u{2014} now marked \(risk.displayName), since nobody has vouched for the new text"
+        Toast.show(in: view,
+                   message: "Saved the suggested template for \u{201C}\(existing.name)\u{201D}\(reclassified)")
     }
 
     @objc private func workflowClicked(_ sender: NSButton) {
@@ -1196,16 +1239,65 @@ enum CommandRiskConfirmation {
         return .potentiallyDisruptive
     }
 
+    /// What is about to happen to a model-authored command, which decides the
+    /// confirmation's wording.
+    ///
+    /// Audit #2 §5.3 added `.saveTemplate`. It is a distinct intent rather
+    /// than reusing `.run`'s copy because the two ask genuinely different
+    /// questions: `.run` asks whether to execute this text once, now, and
+    /// `.saveTemplate` asks whether to let it into the library the captain's
+    /// own vouching is recorded against - after which every later send reads
+    /// the *stored* risk level rather than passing this gate again.
+    enum AIAuthoredIntent {
+        case run
+        case saveTemplate
+
+        /// Filled into "\u{2026} which would run as several separate shell
+        /// commands while only the first line is visible. It was not X."
+        var refusalPastTense: String {
+            switch self {
+            case .run: return "sent"
+            case .saveTemplate: return "saved"
+            }
+        }
+
+        var question: String {
+            switch self {
+            case .run: return "Run this AI-written command?"
+            case .saveTemplate: return "Save this AI-written command template?"
+            }
+        }
+
+        var lead: String {
+            switch self {
+            case .run: return "wrote this command. Nobody has vouched for it - read it before it runs:"
+            case .saveTemplate:
+                return "wrote this template. Nobody has vouched for it - read it before it is saved "
+                    + "over the command you already have:"
+            }
+        }
+
+        var proceedTitle: String {
+            switch self {
+            case .run: return "Send Anyway"
+            case .saveTemplate: return "Save Anyway"
+            }
+        }
+    }
+
     /// The gate every model-authored command passes through before it reaches
-    /// a terminal. `source` names where the command came from, because "an AI
-    /// wrote this" is the load-bearing half of the warning.
-    static func confirmAIAuthored(command: String, source: String, proceed: () -> Void) {
+    /// a terminal - or, since audit #2 §5.3, before it is saved into the
+    /// library as one. `source` names where the command came from, because "an
+    /// AI wrote this" is the load-bearing half of the warning.
+    static func confirmAIAuthored(command: String, source: String,
+                                  intent: AIAuthoredIntent = .run, proceed: () -> Void) {
         guard isSingleCommand(command) else {
             let alert = NSAlert()
             alert.alertStyle = .critical
             alert.messageText = "That command spans more than one line"
             alert.informativeText = "\(source) produced a command containing a line break, which would run as "
-                + "several separate shell commands while only the first line is visible. It was not sent."
+                + "several separate shell commands while only the first line is visible. "
+                + "It was not \(intent.refusalPastTense)."
                 + "\n\n\(command)"
             alert.addButton(withTitle: "OK")
             alert.runModal()
@@ -1215,12 +1307,12 @@ enum CommandRiskConfirmation {
         let alert = NSAlert()
         alert.alertStyle = risk == .destructive ? .critical : .warning
         alert.messageText = risk == .destructive
-            ? "\u{26A0}\u{FE0F} Run this AI-written command?"
-            : "Run this AI-written command?"
-        alert.informativeText = "\(source) wrote this command. Nobody has vouched for it - read it before it runs:"
+            ? "\u{26A0}\u{FE0F} \(intent.question)"
+            : intent.question
+        alert.informativeText = "\(source) \(intent.lead)"
             + "\n\n\(command)"
         alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Send Anyway")
+        alert.addButton(withTitle: intent.proceedTitle)
         guard alert.runModal() == .alertSecondButtonReturn else { return }
         proceed()
     }

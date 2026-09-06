@@ -276,8 +276,15 @@ final class CommandLibraryAIViewController: NSViewController {
         resultTextView.string = ""
         resultStack.isHidden = true
         saveTemplateButton.isHidden = true
+        // Audit #2 §5.4: the redaction itself lives at the prompt boundary
+        // (`CommandLibraryAI.prompt`), but a captain pasting real output
+        // deserves to be told, and the model's reply will visibly contain
+        // `[REDACTED]` where a token was. Static copy rather than a live
+        // count, so this adds no layout state to a popover that resizes
+        // itself around its own content.
         setStatus(action.takesErrorInput
-                  ? "Paste the error or output you saw, then press Ask. Leaving it empty is fine."
+                  ? "Paste the error or output you saw, then press Ask. Leaving it empty is fine "
+                      + "\u{2014} anything that looks like a secret is redacted before it is sent."
                   : "", isError: false)
         applyTheme(theme)
         notifySize()

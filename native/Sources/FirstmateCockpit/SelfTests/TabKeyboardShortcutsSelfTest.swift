@@ -44,6 +44,15 @@ import AppKit
 enum TabKeyboardShortcutsSelfTest {
 
     static func run() -> Bool {
+        // Audit #2 §5.2: `AppLockGate` starts *locked* (the app does), and
+        // `handle` now refuses everything while it is. Every case below except
+        // `aLockedAppInterceptsNothing` asks what an *unlocked* app does, so
+        // the harness says so once here rather than in each of them; that one
+        // case sets the gate itself and puts it back.
+        let wasLocked = AppLockGate.shared.isLocked
+        AppLockGate.shared.setLocked(false)
+        defer { AppLockGate.shared.setLocked(wasLocked) }
+
         let cases: [(String, () -> String?)] = [
             ("everyRestoredShortcutMapsToItsAction", test_table),
             ("neighbouringChordsAreLeftAlone", test_nearMisses),
@@ -52,6 +61,7 @@ enum TabKeyboardShortcutsSelfTest {
             ("aKeystrokeWhileEditingTextIsNotConsumed", test_editingText),
             ("noTabBearingPageMeansNoInterception", test_noTarget),
             ("toolsAnswersTheSameProtocolAndNeverReconnects", test_toolsConformance),
+            ("aLockedAppInterceptsNothing", test_lockedAppInterceptsNothing),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -127,6 +137,70 @@ enum TabKeyboardShortcutsSelfTest {
     }
 
     // MARK: Behaviour
+
+    /// Audit #2 §5.2. The Tab *menu* these shortcuts replaced was disabled
+    /// while locked by `AppDelegate.setContentMenusEnabled(false)`; a local
+    /// `NSEvent` monitor bypasses the menu system, so the migration dropped
+    /// that gate without anything noticing.
+    ///
+    /// Driven through the real `handle(_:)` with a real event and a real
+    /// console, and asserted on *both* halves - not consumed, and nothing
+    /// happened - because the two can come apart: a version that swallowed the
+    /// keystroke without acting would leave the tab count right and still be
+    /// wrong (a locked app has no business eating a keystroke the lock screen
+    /// should see).
+    private static func test_lockedAppInterceptsNothing() -> String? {
+        let (window, console) = makeTestConsole()
+        let shortcuts = TabKeyboardShortcuts(target: { console }, mainWindow: { window })
+
+        // One tab to start from, created while unlocked, so the locked probes
+        // below have something a ⌘W or a ⌘1 could visibly damage.
+        guard shortcuts.handle(event(in: window, "t", [.command])) else {
+            return "setup ⌘T was not consumed while unlocked"
+        }
+        let tabsBefore = console.tabs.count
+        guard tabsBefore == 1 else { return "setup produced \(tabsBefore) tab(s), expected 1" }
+
+        AppLockGate.shared.setLocked(true)
+        defer { AppLockGate.shared.setLocked(false) }
+
+        // Every shortcut this monitor claims, while locked. ⌘T forks a login
+        // shell, ⌘W kills a live tab's process, ⌘D can drive a Touch ID
+        // prompt, ⌘R restarts a connection, and ⌘1 hands first responder to a
+        // live PTY - the concrete harms the finding names.
+        let probes: [(String, NSEvent.ModifierFlags)] = [
+            ("t", [.command]), ("d", [.command]), ("w", [.command]),
+            ("r", [.command]), ("R", [.command, .shift]), ("1", [.command]),
+        ]
+        for (chars, mods) in probes {
+            if shortcuts.handle(event(in: window, chars, mods)) {
+                return "a locked app consumed \"\(chars)\" + \(mods.rawValue)"
+            }
+        }
+        guard console.tabs.count == tabsBefore else {
+            return "a locked app changed the tab count from \(tabsBefore) to \(console.tabs.count)"
+        }
+
+        // ...and the gate is genuinely this surface's own case, not one
+        // borrowed from a neighbour: allowing the others must not let these
+        // through. (`AppLockGate.allows` is one predicate today, so this is
+        // about the *case* existing and being the one consulted - the same
+        // property `AuditSecurityLockSelfTest` pins for ⌘K vs ⌥Space.)
+        guard !AppLockGate.shared.allows(.tabShortcuts) else {
+            return "the gate allowed .tabShortcuts while locked"
+        }
+
+        // Unlocking restores them, so the gate is a gate and not a removal.
+        AppLockGate.shared.setLocked(false)
+        guard shortcuts.handle(event(in: window, "t", [.command])) else {
+            return "⌘T was still refused after unlocking"
+        }
+        guard console.tabs.count == tabsBefore + 1 else {
+            return "⌘T after unlocking left \(console.tabs.count) tab(s), expected \(tabsBefore + 1)"
+        }
+        return nil
+    }
+
 
     private static func test_consoleActions() -> String? {
         let (window, console) = makeTestConsole()

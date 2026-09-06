@@ -45,6 +45,18 @@
 //     activeTabShortcutTarget()` answers with the shared Console, a dedicated
 //     host page's console, or the Tools page - and `nil` everywhere else, so
 //     ⌘R on the Docs page still means whatever Docs means by it.
+//   * **Never while the app is locked** (audit #2 §5.2). The Tab *menu* these
+//     shortcuts replaced was disabled while locked by `AppDelegate.
+//     setContentMenusEnabled(false)`; a local `NSEvent` monitor bypasses the
+//     menu system entirely, so the migration silently dropped that gate. The
+//     text-editing guard above happens to cover the common case - the lock
+//     screen's password field is an `NSText` responder - but it is incidental,
+//     not a gate: a Full Keyboard Access user tabbing to the unlock *button*
+//     (and §5.1(c)'s own focus race) leaves it holding nothing, at which point
+//     ⌘T forks a login shell, ⌘W kills a live SSH tab's process, ⌘D can drive
+//     a Touch ID prompt, and ⌘1-9 hands first responder to a hidden live PTY -
+//     after which the password being typed at the lock screen executes in a
+//     real remote shell.
 //
 // The matching itself is a pure function (`TabShortcut.from`) so a self-test
 // can assert the whole table - including the near-misses it must *not* claim -
@@ -188,6 +200,14 @@ final class TabKeyboardShortcuts {
     func handle(_ event: NSEvent) -> Bool {
         guard let shortcut = TabShortcut.from(characters: event.charactersIgnoringModifiers,
                                               modifiers: event.modifierFlags) else { return false }
+        // Audit #2 §5.2. Deliberately *before* the window and responder tests
+        // rather than folded into them: those two answer "is this keystroke
+        // meant for the tab strip", which is a different question from "may
+        // anything act on it at all", and a locked app must answer the second
+        // one no regardless of what has focus. `false` (not consumed) rather
+        // than swallowing the event - a locked app has no business eating a
+        // keystroke either; the lock screen is what should see it.
+        guard AppLockGate.shared.allows(.tabShortcuts) else { return false }
         guard let window = mainWindow(), event.window === window else { return false }
         guard !Self.isEditingText(in: window) else { return false }
         guard let target = target() else { return false }

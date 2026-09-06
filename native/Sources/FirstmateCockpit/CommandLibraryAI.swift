@@ -152,7 +152,26 @@ enum CommandLibraryAI {
             \(context)
             """
         case .troubleshoot:
-            let observed = errorText.trimmingCharacters(in: .whitespacesAndNewlines)
+            // Audit #2 §5.4. This is the app's only path that sends
+            // captain-pasted *terminal output* to `claude`, and the box asks
+            // for exactly that - real output routinely carries bearer tokens,
+            // connection strings and `password=` pairs. `LogRedactor` is the
+            // established boundary for this content class (the Log Analyzer
+            // redacts once, at intake, so nothing downstream holds an
+            // unredacted copy) and this is the same rule one feature over.
+            //
+            // Applied here rather than at the popover's call site so it covers
+            // every caller of `prompt`/`run` - a second entry point added later
+            // inherits it instead of having to remember it. The captain's own
+            // text view is untouched: they keep seeing what they pasted, and
+            // only what leaves the machine is scrubbed.
+            //
+            // Explain and Improve need no equivalent: both deliberately send
+            // the saved `{{token}}` template and never a filled-in instance,
+            // so no captain-supplied value reaches either prompt.
+            let observed = LogRedactor.redact(errorText)
+                .text
+                .trimmingCharacters(in: .whitespacesAndNewlines)
             let observedBlock = observed.isEmpty
                 ? "The captain did not paste any output - reason from the command alone."
                 : "Error or output the captain saw:\n\(observed)"

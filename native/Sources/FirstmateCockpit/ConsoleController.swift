@@ -116,7 +116,28 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
 
     var tabs: [TabModel] = []
     var currentTab: TabModel?
+    /// "This page is on screen, so a tab added to it may start its process
+    /// now" - the flag `addTab` reads, and the only thing it is used for
+    /// (grep: this file, and `ConsoleController+Tabs.swift`'s one check).
+    ///
+    /// Audit #2 §5.1(a): deliberately *not* set while the app is locked, even
+    /// though `viewDidAppear` has genuinely fired. F2 reopens the showing host
+    /// page behind the lock overlay, so "appeared" and "the captain is here"
+    /// stopped being the same thing at launch - and leaving this true while
+    /// locked would let a later `addTab` fork an `ssh` under the overlay even
+    /// with `viewDidAppear`'s own start loop gated. `runAppearanceWorkIfUnlocked`
+    /// is the single place that flips it.
     var hasAppeared = false
+
+    /// Audit #2 §5.1: `viewDidAppear` fired while the app was locked, so its
+    /// three privileged side effects were skipped and are owed on unlock.
+    ///
+    /// Self-scoping, which is the point: only a page that actually appeared
+    /// sets this, so replaying "every console the shell owns" on unlock can
+    /// never start a *background* restored host page's `ssh` - that page never
+    /// appeared, so its flag is false and F2's own `hasAppeared` guarantee is
+    /// untouched.
+    var appearanceWorkDeferredByLock = false
 
     /// Scrollback retained per normal-screen terminal. SwiftTerm defaults to 500
     /// lines; a shell session wants much more so history that scrolls off the top
@@ -359,6 +380,16 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// for one begun in this run - so a suite can set that state up without
     /// driving a real `NSAlert` prompt.
     func debugMarkIncidentAnnounced(_ id: String) { announcedIncidentIDs.insert(id) }
+
+    /// How many times `showIncidentCard` got past audit #2 §5.1(b)'s lock
+    /// gate and went on to open the popover.
+    ///
+    /// Counted rather than read off `NSPopover.isShown`, because a popover
+    /// attached to a window this suite deliberately never orders front may
+    /// legitimately decline to appear - and "the card did not render in a
+    /// headless process" and "the gate refused it" are very different facts to
+    /// be asserting the same way.
+    var debugIncidentCardShowCount = 0
     #endif
     let incidentPopover = NSPopover()
     let incidentCard = IncidentCardView()
@@ -606,11 +637,86 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
 
     override func viewDidAppear() {
         super.viewDidAppear()
+        // `refreshPeriodicWorkGating` is unconditional: it only *computes*
+        // whether cadenced background work may run, and a locked app wants
+        // that recomputed too. Everything else this page does on appearing is
+        // privileged - see `runAppearanceWorkIfUnlocked`.
+        refreshPeriodicWorkGating()
+        runAppearanceWorkIfUnlocked()
+    }
+
+    /// The three privileged things this page does when it comes on screen -
+    /// start its tabs' processes, hand keyboard focus to the current
+    /// terminal, and reopen an active incident's card - run only once the app
+    /// is genuinely unlocked (audit #2 §5.1).
+    ///
+    /// Called from `viewDidAppear` and again from `resumeAfterUnlock()`. Both
+    /// paths land here rather than the unlock path re-implementing the list,
+    /// so a fourth side effect added to appearing is covered by the gate
+    /// without anybody having to remember the second call site.
+    ///
+    /// Idempotent: `startTab` is guarded by `tab.started`, the focus grab is a
+    /// no-op when the terminal already has it, and `resumeActiveIncidentIfNeeded`
+    /// has its own once-per-run-per-incident guard.
+    ///
+    /// ## What this deliberately does not cover
+    ///
+    /// A page that appeared while *unlocked* keeps `hasAppeared` through a
+    /// later lock, so `addTab` on it would still start a process. Traced
+    /// rather than assumed: every caller that can reach `addTab` from outside
+    /// this page is already gated (the ⌘K palette and notification actions by
+    /// their own `AppLockedSurface` cases, the tab keystrokes by §5.2's, the
+    /// session switcher and every other menu item by
+    /// `AppDelegate.setContentMenusEnabled(false)`), and the rest are controls
+    /// under the overlay. `ScheduleRunner`'s action set is a closed enum with
+    /// nothing that opens a tab.
+    ///
+    /// The one genuinely ungated path left is `processTerminated`'s
+    /// auto-reconnect timer, which would re-establish a dropped `ssh` - and
+    /// re-prompt for Touch ID - behind the overlay. That is the same harm
+    /// class, but it is not what audit #2 §5.1 found (it is a session the
+    /// captain deliberately opened, being restored, rather than one created
+    /// from nothing by F2), and gating it needs a resume story of its own for
+    /// the tab left dead afterwards. Left as recorded scope rather than
+    /// silently widened.
+    func runAppearanceWorkIfUnlocked() {
+        guard AppLockGate.shared.allows(.terminalSession) else {
+            appearanceWorkDeferredByLock = true
+            AppLog.lifecycle.info("console: appearance work deferred - app is locked")
+            return
+        }
+        appearanceWorkDeferredByLock = false
         hasAppeared = true
         for tab in tabs where !tab.started { startTab(tab) }
-        if let tab = currentTab { view.window?.makeFirstResponder(tab.terminal) }
-        refreshPeriodicWorkGating()
+        if let tab = currentTab { focusTerminal(of: tab) }
         resumeActiveIncidentIfNeeded()
+    }
+
+    /// Replays whatever the lock deferred. `AppShellController.hideLock` calls
+    /// this on every console it owns; a page that never appeared under the
+    /// lock has nothing owed and returns immediately.
+    ///
+    /// A push from the shell rather than an `AppLockGate.observe` registration
+    /// here: that API has no unregister, and a per-host `ConsoleController` is
+    /// torn down when its host is deleted - which is exactly the dead-closure
+    /// leak this controller already keeps theme/font/activity *tokens* to
+    /// avoid.
+    func resumeAfterUnlock() {
+        guard appearanceWorkDeferredByLock else { return }
+        runAppearanceWorkIfUnlocked()
+    }
+
+    /// Hands keyboard focus to a tab's live PTY - the one place in this
+    /// controller family that does (audit #2 §5.1(c)).
+    ///
+    /// A choke point rather than a gate repeated at eight call sites: the
+    /// harm is not "`viewDidAppear` stole focus", it is "a terminal nobody can
+    /// see is first responder while the lock screen is asking for a password",
+    /// and `revealHostConsole` -> `focusCurrentTab()` reaches that state on the
+    /// very same launch path `viewDidAppear` does.
+    func focusTerminal(of tab: TabModel) {
+        guard AppLockGate.shared.allows(.terminalFocus) else { return }
+        view.window?.makeFirstResponder(tab.terminal)
     }
 
     override func viewDidDisappear() {

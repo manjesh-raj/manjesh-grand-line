@@ -43,6 +43,20 @@ import AppKit
 enum SRELeadPerTabSelfTest {
 
     static func run() -> Bool {
+        // Audit #2 §5.1: `AppLockGate` starts *locked* (the app does), and a
+        // console page now defers everything privileged it does on appearing -
+        // including starting its tabs' processes. `makeStartedTestConsole`
+        // below starts its tabs through the real `viewDidAppear` path, so
+        // without this the ssh children never run, never exit, and
+        // `test_scrollbackSurvivesSRELeadToggle`'s settle loop times out
+        // waiting for a `processEndedMarker` that can never arrive.
+        //
+        // Every case here asks what an *unlocked* app does, so the harness
+        // says so once. The locked half is `FM_RUN_AUDIT2_SECURITY_LOCK_TESTS`.
+        let wasLocked = AppLockGate.shared.isLocked
+        AppLockGate.shared.setLocked(false)
+        defer { AppLockGate.shared.setLocked(wasLocked) }
+
         let cases: [(String, () -> String?)] = [
             ("independentPhasesAndNoChatCrossTalk", test_independentPhasesAndNoChatCrossTalk),
             ("tabSwitchRebindsPaneToCurrentTab", test_tabSwitchRebindsPaneToCurrentTab),

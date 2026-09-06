@@ -1835,6 +1835,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_AUDIT_SECURITY_LOCK_TESTS"] == "1
     exit(AuditSecurityLockSelfTest.run() ? 0 : 1)
 }
 
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT2_SECURITY_FIXES_TESTS"] == "1" {
+    exit(Audit2SecurityFixesSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT2_SECURITY_LOCK_TESTS"] == "1" {
+    exit(Audit2SecurityLockSelfTest.run() ? 0 : 1)
+}
+
 // B1 (`data/grand-line-e2e-audit/report.md`): same convention, for the Vault
 // page's failed/pending read states - see VaultLoadingStateSelfTest.swift.
 if ProcessInfo.processInfo.environment["FM_RUN_VAULT_LOADING_STATE_TESTS"] == "1" {
