@@ -178,6 +178,82 @@ final class StickyBoardGitSync {
         }
     }
 
+    /// How long the terminate-time flush will hold its caller before giving
+    /// up on the git work and letting the app finish quitting.
+    ///
+    /// Short on purpose. The local commit - the part that preserves the
+    /// record - is fast and offline; the slow part is the network push, and
+    /// that one is *already* recoverable with no help from here:
+    /// `ensureReadyNow()` re-reports a dirty tree on the next launch and
+    /// calls `markDirty()` itself, so an abandoned push is picked up then.
+    /// Holding the main thread any longer would only trade a bounded, safe
+    /// loss for a visible hang on ⌘Q, against a `Subprocess` push bound of
+    /// 600s.
+    static let terminateFlushBudget: TimeInterval = 3.0
+
+    /// The quit-time flush (audit 2 §4.3).
+    ///
+    /// Two things this does that calling `commitAndPushNow()` directly did
+    /// not. It runs the git work **on `queue`** - the same serial queue every
+    /// other invocation in this app uses (`ShiftGitSync.sharedQueue` in
+    /// production, shared with Shift's, Docs' and Code Preview's own commits
+    /// against the *same* working tree), so a flush can no longer race a
+    /// sibling's `git` for `.git/index.lock`. And it **cancels the still-
+    /// pending debounced commit first**, which shutdown never did - a
+    /// `markDirty()` from the last edit could otherwise fire during or after
+    /// this flush and commit the same work twice.
+    ///
+    /// The cancel happens *inside* the queue block rather than before it, for
+    /// two reasons: `pendingCommit` is only ever touched on `queue` (see
+    /// `markDirty`), and a serial queue guarantees the pending item is not
+    /// running concurrently with us - so if it has not started yet the cancel
+    /// takes, and if it already ran there is nothing left to cancel.
+    ///
+    /// The caller is held for at most `terminateFlushBudget`. Whatever the
+    /// bound abandons is safe: the local YAML write already completed
+    /// synchronously before this is ever called (`StickyBoardStore.
+    /// flushPendingWrite`), so the captain's notes are on disk either way,
+    /// and an un-pushed commit is recovered on the next launch.
+    @discardableResult
+    func flushForTerminationNow() -> Bool {
+        // `committed` is written on `queue` and read here, and the bound
+        // means the writer can still be running when this returns - so it is
+        // lock-guarded rather than relying on the semaphore's ordering alone.
+        // GL-28's lesson, and cheap: exactly one write and one read.
+        let lock = NSLock()
+        var committed = false
+        let done = DispatchSemaphore(value: 0)
+        queue.async { [weak self] in
+            guard let self else { done.signal(); return }
+            self.pendingCommit?.cancel()
+            self.pendingCommit = nil
+            let result = self.commitAndPushNow()
+            lock.lock()
+            committed = result
+            lock.unlock()
+            done.signal()
+        }
+        if done.wait(timeout: .now() + Self.terminateFlushBudget) == .timedOut {
+            AppLog.lifecycle.info("""
+                sticky board: quit-time git flush still running after \
+                \(Self.terminateFlushBudget, privacy: .public)s - letting the app quit; \
+                the local notes are already on disk and the next launch re-commits
+                """)
+            return false
+        }
+        lock.lock()
+        defer { lock.unlock() }
+        return committed
+    }
+
+    #if FM_SELFTESTS
+    /// Whether a debounced commit is still outstanding - audit 2 §4.3's own
+    /// case, which has to prove the terminate flush *cancelled* the pending
+    /// item rather than merely outran it. Read on `queue`, where
+    /// `pendingCommit` is only ever touched.
+    var hasPendingCommitForTests: Bool { queue.sync { pendingCommit != nil } }
+    #endif
+
     @discardableResult
     func commitAndPushNow() -> Bool {
         guard FileManager.default.fileExists(atPath: workingTree.appendingPathComponent(".git").path) else {

@@ -329,6 +329,150 @@ enum StickyBoardSelfTest {
             check(after == before + 1, "5 rapid edits within the debounce window should produce exactly 1 commit, before=\(before) after=\(after)")
         }
 
+        // MARK: 6c. Audit 2 §4.3 - the quit-time flush runs on the shared
+        // serial git queue, with a bound, and cancels the pending debounce
+        // first.
+        //
+        // `StickyBoardController.shutdown()` used to call
+        // `commitAndPushNow()` directly from `applicationWillTerminate`, i.e.
+        // on the main thread and off `queue` - the one queue every other
+        // invocation in this app serializes on, shared with Shift's, Docs'
+        // and Code Preview's own commits against the *same* working tree. So
+        // a flush could run `git` concurrently with a sibling's (fighting for
+        // `.git/index.lock`), and quitting could block on a real network
+        // push. It also never cancelled the still-pending debounced commit,
+        // which could then fire again during or after the flush and commit
+        // the same work twice.
+        do {
+            let remote = makeBareRemote(name: "remote-terminate")
+            seedRemote(remote)
+            let wt = gitScratch.appendingPathComponent("wt-terminate", isDirectory: true)
+            // A long debounce, so the pending commit is genuinely still
+            // outstanding when the flush runs - which is the race being
+            // closed, not a theoretical one.
+            let queue = DispatchQueue(label: "sticky-board-selftest-terminate")
+            let sync = StickyBoardGitSync(workingTree: wt, remoteURL: remote.path, debounceInterval: 60,
+                                          queue: queue, sharesProductionWorkingTree: false)
+            check(sync.ensureReadyNow(), "ensureReadyNow should succeed for the terminate scenario")
+            let before = commitCount(remote, gitDir: true)
+
+            let notesPath = sync.dataRoot.appendingPathComponent("notes.yaml").path
+            try? ShiftYaml.writeList(path: notesPath, key: "notes", items: [
+                .dictionary({
+                    var m = YamlOrderedMap()
+                    m[ShiftYamlBridge.key("id")] = ShiftYamlBridge.str("terminate-note")
+                    m[ShiftYamlBridge.key("text")] = ShiftYamlBridge.str("Written just before quit")
+                    return m
+                }()),
+            ])
+            sync.markDirty()
+            check(sync.status == .localChanges, "markDirty should mark the tree dirty before the flush")
+
+            // The flush itself: the work reaches the remote, and it reaches
+            // it from a call the caller can rely on having finished.
+            check(sync.flushForTerminationNow(),
+                  "the terminate flush should report a completed commit+push, got status \(sync.status)")
+            let after = commitCount(remote, gitDir: true)
+            check(after == before + 1,
+                  "the terminate flush should land exactly one commit on the remote, before=\(before) after=\(after)")
+
+            let verify = gitScratch.appendingPathComponent("verify-terminate", isDirectory: true)
+            _ = shell("/usr/bin/git", ["clone", remote.path, verify.path])
+            let pushed = try? String(contentsOf: verify.appendingPathComponent("GrandLineDocs/sticky-board/notes.yaml"),
+                                     encoding: .utf8)
+            check(pushed?.contains("Written just before quit") == true,
+                  "a fresh clone should carry the note the terminate flush pushed")
+
+            // The debounce was cancelled, not merely outrun: waiting past
+            // what is left of the 60s window is not an option, so this is
+            // asserted the one way it can be - the pending item is gone, so
+            // nothing can fire a second, duplicate commit after the flush.
+            check(!sync.hasPendingCommitForTests,
+                  "the terminate flush left the debounced commit pending - it can still fire a duplicate")
+
+            // And the git work genuinely ran *on the shared queue*, never on
+            // the caller's thread. Proven by occupying the queue: whatever
+            // the flush does has to queue behind this block, so a flush that
+            // ran inline would finish before the barrier ever released.
+            let barrier = DispatchSemaphore(value: 0)
+            let occupied = DispatchSemaphore(value: 0)
+            queue.async {
+                occupied.signal()
+                barrier.wait()
+            }
+            occupied.wait()
+            try? ShiftYaml.writeList(path: notesPath, key: "notes", items: [
+                .dictionary({
+                    var m = YamlOrderedMap()
+                    m[ShiftYamlBridge.key("id")] = ShiftYamlBridge.str("second-note")
+                    return m
+                }()),
+            ])
+            let queuedStart = Date()
+            // The queue is held, so this cannot get on it and must give up on
+            // its own bound rather than running inline or waiting forever.
+            let ranWhileQueueWasHeld = sync.flushForTerminationNow()
+            let waited = Date().timeIntervalSince(queuedStart)
+            barrier.signal()
+            // Let the queue drain before touching git from this thread
+            // again: the abandoned flush's own work item is still on there,
+            // and `ensureReadyNow()` runs git on the *caller's* thread, so
+            // racing the two would reproduce the very index-lock contention
+            // this finding is about - inside the test.
+            queue.sync {}
+            check(!ranWhileQueueWasHeld,
+                  "the flush reported success while the shared queue was held - it ran off-queue, on the caller's thread")
+            check(waited >= StickyBoardGitSync.terminateFlushBudget - 0.5,
+                  "the flush gave up in \(waited)s, before its own budget - it never reached the queue at all")
+            check(waited < StickyBoardGitSync.terminateFlushBudget + 3,
+                  "the flush held its caller for \(waited)s, well past its \(StickyBoardGitSync.terminateFlushBudget)s budget")
+            // Whatever the bound abandoned is not *lost*, which is what
+            // makes a short bound the right answer: the work item finishes
+            // once the queue frees (as it just did), and had the process
+            // genuinely exited first, the next launch's `ensureReadyNow()`
+            // re-reports the dirty tree and calls `markDirty()` itself. Both
+            // routes are asserted here - the commit landed, and a fresh
+            // readiness check over the same tree still reports clean.
+            check(commitCount(remote, gitDir: true) == before + 2,
+                  "the work an abandoned flush left behind never reached the remote at all")
+            check(sync.ensureReadyNow(), "ensureReadyNow should still succeed after an abandoned flush")
+            waitForSynced(sync, timeout: 10)
+            check(sync.status == .synced,
+                  "the tree should read clean once the abandoned flush's own commit landed, got \(sync.status)")
+        }
+
+        // MARK: 6d. Audit 2 §4.3's wiring, as a source guard.
+        //
+        // 6c proves `flushForTerminationNow()` behaves; this proves the quit
+        // path is what calls it. Nothing observable distinguishes the two
+        // (both commit the same work when the queue happens to be free), so
+        // a behavioural check cannot see `shutdown()` slipping back to the
+        // direct, unbounded, off-queue `commitAndPushNow()`.
+        do {
+            if let dir = SelfTestSources.appSourceDirectory() {
+                let path = dir.appendingPathComponent("StickyBoardController.swift")
+                if let text = try? String(contentsOf: path, encoding: .utf8) {
+                    // Strip whole-line comments first: this file's own fix
+                    // note names `commitAndPushNow()` in order to explain why
+                    // it is no longer called, and a naive grep trips on that.
+                    let code = text.split(separator: "\n", omittingEmptySubsequences: false)
+                        .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+                        .joined(separator: "\n")
+                    check(code.contains("flushForTerminationNow()"),
+                          "StickyBoardController no longer uses the bounded, serial-queue terminate flush")
+                    check(!code.contains("commitAndPushNow()"),
+                          "StickyBoardController calls commitAndPushNow() directly again - back on the main "
+                          + "thread, off the shared git queue, with no bound (audit 2 §4.3)")
+                    check(code.contains("flushPendingWrite()"),
+                          "shutdown() no longer writes the captain's own note data before the git flush")
+                } else {
+                    print("[sticky-board] NOTE: could not read StickyBoardController.swift - wiring guard skipped")
+                }
+            } else {
+                print("[sticky-board] NOTE: app source directory not found - wiring guard skipped")
+            }
+        }
+
         // MARK: 7. Rotation is a fixed, persisted value - never re-randomized
         // on a later reload (matches `StickyBoardModels.swift`'s own
         // contract).

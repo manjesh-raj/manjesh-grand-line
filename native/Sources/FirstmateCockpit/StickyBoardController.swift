@@ -232,8 +232,17 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     /// contract `CodePreviewController.shutdown()` carries for the same
     /// reason.
     func shutdown() {
+        // The local YAML write first, synchronously: that is the captain's
+        // actual note data, and it must be on disk before anything else is
+        // allowed to give up on a budget.
         store.flushPendingWrite()
-        _ = store.gitSync?.commitAndPushNow()
+        // Audit 2 §4.3: the git half goes through the bounded, serial-queue
+        // flush rather than running `commitAndPushNow()` on this thread. See
+        // `StickyBoardGitSync.flushForTerminationNow()` for why - in short,
+        // this runs on the main thread inside `applicationWillTerminate`,
+        // and the direct call both raced sibling commits against the shared
+        // working tree and could hold ⌘Q on a real network push.
+        _ = store.gitSync?.flushForTerminationNow()
     }
 
     override func viewWillAppear() {

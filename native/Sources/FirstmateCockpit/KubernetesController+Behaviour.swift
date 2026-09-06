@@ -220,9 +220,28 @@ extension KubernetesController {
         lastRefreshedAt = nil
     }
 
+    /// The page's own Refresh action.
+    ///
+    /// Audit 2 §4.2: on the Cluster tab this also drops the namespace latch,
+    /// so the next sweep genuinely re-asks. `sweepCommands()` only issues
+    /// `get namespaces` while `knownNamespaces` is `nil` - deliberately, so a
+    /// list that does not churn is not re-typed into the captain's own
+    /// bastion session every 30 seconds - which meant an explicit Refresh
+    /// could never re-ask despite that being the documented way to. This is
+    /// the same rule `DependencyCheckCache` already follows: every explicit
+    /// Check/Refresh affordance in this app bypasses the cache it would
+    /// otherwise read.
+    ///
+    /// Cleared only in the `.cluster` branch, not for the whole method: a
+    /// Refresh on the Log Tail runs `pollTail()` and issues no
+    /// `get namespaces` at all, so clearing there would leave the picker
+    /// reading "Checking…" with nothing on its way to answer it.
     @objc func refreshTapped() {
         switch pageTab {
-        case .cluster: refreshCluster()
+        case .cluster:
+            knownNamespaces = nil
+            renderNamespacePicker()
+            refreshCluster()
         case .logTail: pollTail()
         }
     }
@@ -313,10 +332,16 @@ extension KubernetesController {
         // list: a cluster's namespaces do not churn the way its pods do, and
         // every command this page issues is *typed into the captain's own
         // bastion session*, so re-listing them on a 30s cadence would be
-        // visible noise for no new information. A failed read leaves
-        // `knownNamespaces` non-nil-and-empty, which is what stops it
-        // retrying forever on a cluster whose RBAC simply forbids it - the
-        // manual Refresh is the way to ask again.
+        // visible noise for no new information.
+        //
+        // A read that genuinely *completed* without yielding a list (the
+        // RBAC case) leaves `knownNamespaces` non-nil-and-empty, which is
+        // what stops it retrying forever on a cluster that simply forbids
+        // it. A read that never completed at all leaves it `nil` and is
+        // asked again here - audit 2 §4.2, and see `applySweep`'s own two
+        // `.getNamespaces` cases for the distinction. The manual Refresh
+        // clears the latch either way, which is what makes it a real way to
+        // ask again rather than only a claim in a comment.
         if knownNamespaces == nil { commands.append(.getNamespaces) }
         let podsAreVisible = (pageTab == .cluster && clusterTab == .pods) || pageTab == .logTail
         if podsAreVisible || pods.isEmpty {
@@ -504,12 +529,39 @@ extension KubernetesController {
             // not a broken page. Recording an empty list (rather than leaving
             // it nil) is what marks the read as *attempted*, so the picker can
             // say "this cluster won't list them" instead of "checking…".
+            //
+            // The RBAC case this latch exists for is a bridge-level
+            // **success**: kubectl really ran, printed `Error from server
+            // (Forbidden)` into the terminal, and both markers arrived - so
+            // the parse says `.failed` and the latch is set, exactly as
+            // before. That is the anti-retry protection, and it is untouched.
             case (.getNamespaces, .success(let raw)):
                 switch KubeResourceParser.parseNamespaces(raw) {
                 case .rows(let names): knownNamespaces = names
                 case .empty, .failed: knownNamespaces = []
                 }
-            case (.getNamespaces, .failure): knownNamespaces = []
+            // Audit 2 §4.2. A bridge-level *failure* means the command never
+            // completed - refused without being injected (`.busy`: the
+            // captain was typing in the feed tab, a sibling bridge held it,
+            // or it waited past `queueDeadline`), never answered
+            // (`.timeout`), discarded mid-flight, or the tab went away. None
+            // of those establishes anything at all about whether this
+            // cluster will list its namespaces, so the answer stays
+            // *unknown* (`nil`) and `sweepCommands()` asks again on the next
+            // sweep. Latching `[]` here is what used to blame RBAC for one
+            // transient refusal and then stick for the whole session, since
+            // nothing ever resets this back to `nil`.
+            //
+            // "Asks again" is bounded without a latch: only one extra
+            // command per sweep, and the bridge's own
+            // `maxConsecutiveFailures`/`hasStoppedRetrying` (which
+            // `refreshCluster` guards on) is what stops a genuinely dead
+            // feed tab retrying forever.
+            case (.getNamespaces, .failure(let error)):
+                AppLog.ui.info("""
+                    kubernetes: namespace list not established \
+                    (\(error.message, privacy: .public)) - leaving it unknown so the next sweep asks again
+                    """)
             case (_, .failure(let error)): hardFailure = hardFailure ?? error.message
             default: break
             }

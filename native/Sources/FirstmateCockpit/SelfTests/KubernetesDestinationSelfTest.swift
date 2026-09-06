@@ -82,6 +82,10 @@ enum KubernetesDestinationSelfTest {
             ("namespacePickerOffersTheClustersRealNamespaces", test_namespacePickerOffersTheClustersRealNamespaces),
             ("namespacePickerStaysHonestWhenTheClusterWillNotListThem", test_namespacePickerStaysHonestWhenTheClusterWillNotListThem),
             ("namespacePickerAndFieldShareOneCommitPath", test_namespacePickerAndFieldShareOneCommitPath),
+            // Audit 2 §4.2.
+            ("aTransientRefusalLeavesTheNamespaceListUnknown", test_transientRefusalLeavesNamespacesUnknown),
+            ("aRealForbiddenReplyStillLatchesNotListable", test_forbiddenReplyStillLatches),
+            ("theManualRefreshClearsTheNamespaceLatch", test_manualRefreshClearsTheNamespaceLatch),
         ]
 
         var failures = 0
@@ -624,6 +628,139 @@ enum KubernetesDestinationSelfTest {
         harness.controller.debugSetNamespace("raas-prod")
         guard harness.controller.debugNamespace == "raas-prod" else {
             return "typing a namespace stopped working once the picker could not list them"
+        }
+        return nil
+    }
+
+    // MARK: Audit 2 §4.2 - the namespace latch must mean "asked and answered"
+    //
+    // `sweepCommands()` only issues `get namespaces` while `knownNamespaces`
+    // is `nil`, so whatever sets it non-nil is a latch for the whole session.
+    // Setting it on a *bridge-level failure* - a `.busy` refusal (the captain
+    // typing in the feed tab, a sibling bridge holding it, a queue-deadline
+    // expiry), a `.timeout`, a discarded read - blamed RBAC for a command
+    // that never ran, and no manual Refresh could take it back.
+    //
+    // Driven through the real `finishRefreshCluster` hook rather than by
+    // arranging a real refusal in the bridge: the bridge's own contention and
+    // deadline are wall-clock (`queueDeadline` 45s, `commandTimeout` 20s),
+    // and `debugFinishRefreshCluster` exists for exactly this - the same
+    // "drive the decision directly" convention `fm/grandline-k8s-refresh-
+    // stuck-audit` established for the generation guard. What is asserted is
+    // the *rendered* picker state and whether the next sweep re-asks, which
+    // is what a captain actually experiences.
+
+    /// A refusal that never reached kubectl establishes nothing, so the list
+    /// stays unknown and the next sweep asks again.
+    private static func test_transientRefusalLeavesNamespacesUnknown() -> String? {
+        for error in [KubeBridgeError.busy("the captain is typing in the feed tab"),
+                      .timeout,
+                      .discarded("a keystroke landed mid-command"),
+                      .unavailable("the feed tab went away")] {
+            // `offerTabs: false`, so no feed is auto-adopted and no real
+            // sweep runs: the page starts with the list genuinely *unasked*,
+            // which is the state a first-sweep refusal actually lands in. A
+            // live harness cannot stand in for it - the fake answers every
+            // injected command, and an unscripted answer is still a
+            // *completed* command (markers and all), which legitimately
+            // latches. That distinction is the whole finding.
+            let harness = Harness(offerTabs: false)
+            harness.goLive()
+            let before = harness.controller.debugNamespacePickerTitles
+            guard !before.contains(where: { $0.lowercased().contains("not listable") }) else {
+                return "harness problem: the latch was already set before the refusal, so this proves nothing"
+            }
+
+            harness.controller.debugFinishRefreshCluster(
+                [(.getNamespaces, .failure(error)), (.getPods(namespace: "default"), .success(podsWide))],
+                generation: harness.controller.debugRefreshGeneration)
+
+            // "Checking…", not "Not listable": nothing has been established.
+            let titles = harness.controller.debugNamespacePickerTitles
+            if titles.contains(where: { $0.lowercased().contains("not listable") }) {
+                return "a \(error) refusal made the picker blame this cluster's RBAC: \(titles)"
+            }
+            // And - the half the latch actually broke - the next sweep asks
+            // again rather than never re-asking for the whole session.
+            guard harness.controller.debugSweepCommands.contains(where: { $0.contains("get namespaces") }) else {
+                return "after a \(error) refusal the next sweep no longer asks for namespaces: "
+                     + "\(harness.controller.debugSweepCommands)"
+            }
+            // The pod table is unrelated and must be untouched.
+            guard !harness.controller.debugPods.isEmpty else {
+                return "a \(error) namespace refusal broke the pod table it has nothing to do with"
+            }
+        }
+        return nil
+    }
+
+    /// The other side of the same rule, and the reason the latch exists at
+    /// all: a *completed* kubectl run whose output refuses is the real RBAC
+    /// case, and it must still latch - or this page would re-type a command
+    /// it already knows the answer to into the captain's own bastion session
+    /// on every 30s sweep, forever.
+    private static func test_forbiddenReplyStillLatches() -> String? {
+        let harness = Harness()
+        harness.answer([("get namespaces", "Error from server (Forbidden): namespaces is forbidden"),
+                        ("get pods", podsWide), ("top pods", topPods)])
+        harness.goLive()
+        harness.drain()
+
+        guard !harness.controller.debugNamespacePickerEnabled else {
+            return "a forbidden reply left the picker enabled with nothing to offer"
+        }
+        guard harness.controller.debugNamespacePickerTitles
+            .contains(where: { $0.lowercased().contains("not listable") }) else {
+            return "a real forbidden reply did not render the honest \"Not listable\" state: "
+                 + "\(harness.controller.debugNamespacePickerTitles)"
+        }
+        guard !harness.controller.debugSweepCommands.contains(where: { $0.contains("get namespaces") }) else {
+            return "a settled RBAC answer is being re-asked on every sweep: \(harness.controller.debugSweepCommands)"
+        }
+        return nil
+    }
+
+    /// The in-code comment promised "the manual Refresh is the way to ask
+    /// again" while `sweepCommands()` made that impossible. Driven through
+    /// the real `refreshButton`'s own target/action - a button wired to
+    /// nothing fails this.
+    private static func test_manualRefreshClearsTheNamespaceLatch() -> String? {
+        let harness = Harness()
+        harness.answer([("get namespaces", "Error from server (Forbidden): namespaces is forbidden"),
+                        ("get pods", podsWide), ("top pods", topPods)])
+        harness.goLive()
+        harness.drain()
+        guard !harness.controller.debugSweepCommands.contains(where: { $0.contains("get namespaces") }) else {
+            return "harness problem: the latch was never set, so this proves nothing"
+        }
+
+        harness.controller.refreshButton.performClick(nil)
+
+        guard harness.controller.debugSweepCommands.contains(where: { $0.contains("get namespaces") }) else {
+            return "an explicit Refresh still cannot re-ask for the namespace list: "
+                 + "\(harness.controller.debugSweepCommands)"
+        }
+        // While it is being re-asked the picker says so, rather than still
+        // claiming a verdict it has just dropped.
+        guard !harness.controller.debugNamespacePickerTitles
+            .contains(where: { $0.lowercased().contains("not listable") }) else {
+            return "the picker still claims \"Not listable\" after Refresh dropped the latch"
+        }
+
+        // And a Refresh on the *Log Tail* must not drop it: that tab issues
+        // no `get namespaces` at all, so clearing there would strand the
+        // picker on "Checking…" with nothing on its way to answer it.
+        let tail = Harness()
+        tail.answer([("get namespaces", "Error from server (Forbidden): namespaces is forbidden"),
+                     ("get pods", podsWide), ("top pods", topPods)])
+        tail.goLive()
+        tail.drain()
+        tail.controller.debugSelectPageTab(KubernetesController.PageTab.logTail.rawValue)
+        tail.controller.refreshButton.performClick(nil)
+        guard tail.controller.debugNamespacePickerTitles
+            .contains(where: { $0.lowercased().contains("not listable") }) else {
+            return "a Refresh on the Log Tail dropped the namespace latch with nothing to re-ask it: "
+                 + "\(tail.controller.debugNamespacePickerTitles)"
         }
         return nil
     }

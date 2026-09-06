@@ -458,21 +458,90 @@ extension ConsoleController {
     /// re-derived by `numberedName(for:)` (staying correct as tabs come and
     /// go) while one the captain typed comes back verbatim.
     ///
-    /// Does nothing when this console already has tabs - restoration runs at
-    /// launch, and quietly appending to a console the app has already
-    /// populated for itself would be a surprise rather than a restore.
+    /// Does nothing when this console already holds tabs the captain has
+    /// worked in - restoration runs at launch, and quietly appending to a
+    /// console someone has already populated would be a surprise rather than
+    /// a restore.
+    ///
+    /// **The one tab it does reconcile against is the Shell this console
+    /// opened for itself** (audit 2 §4.1). The guard here used to be a plain
+    /// `tabs.isEmpty`, which made this whole method dead code on every real
+    /// launch: the shared Firstmate console is an *eager* mount
+    /// (`DestinationRegistry`'s `mountsEagerly` set - it owns live PTYs), and
+    /// its `loadView` calls `openFirstmateHost(focus: false)`
+    /// unconditionally, which runs the moment
+    /// `window.contentViewController = appShell` is assigned - long before
+    /// `restoreSessionIfNeeded` at the end of `applicationDidFinishLaunching`.
+    /// So `tabs` is never empty by the time this is called in production, the
+    /// guard failed every time, and the captain's saved shared-console tabs
+    /// (names included) were silently dropped while Tools' came back fine
+    /// (Tools is lazy and opens nothing in `loadView`). The self-test kept
+    /// passing because its harness built the console with
+    /// `isFirstmateConsole: false`, skipping that auto-open - the exact
+    /// harness/production difference, now closed in `SessionRestoreSelfTest`.
+    ///
+    /// That one pristine tab is **reused** as the first restored tab rather
+    /// than closed, for two independent reasons. Its own shell process may
+    /// already be running by this point (`hasAppeared`), and terminating a
+    /// live child to immediately fork an identical one is pure churn. And
+    /// `closeTab` on the shared console's *last* tab deliberately opens a
+    /// fresh Shell so the window is never empty - so closing it first would
+    /// put us straight back where we started.
     func restoreConsoleTabs(_ restored: [SessionRestoreState.ConsoleTab]) {
-        guard tabs.isEmpty, !restored.isEmpty else { return }
+        guard !restored.isEmpty else { return }
+        // Either nothing here yet (a lazily-mounted console, and every
+        // `isFirstmateConsole: false` shape), or exactly the one Shell
+        // `loadView` opened for itself. Anything else is the captain's own
+        // work, which restoration leaves alone.
+        let reusable = soleAutoOpenedShellTab
+        guard tabs.isEmpty || reusable != nil else { return }
+
         let s = shellArgv()
         let cwd = shellCwd()
+        var renamedReusedTab = false
         for (index, record) in restored.enumerated() {
             let launch = TabLaunch.shell(executable: s.executable, args: s.args, cwd: cwd)
+            if index == 0, let tab = reusable {
+                // A derived name needs no work at all: this tab already
+                // carries exactly what `numberedName(for:)` would hand back
+                // for the same launch. Only a name the captain typed has to
+                // be put back, and `renameTab` is deliberately not the way -
+                // it ends by moving first responder to the current tab's
+                // terminal, and this runs at launch behind the lock screen,
+                // whose password field owns first responder at that moment.
+                if record.hasUserChosenName, !record.name.isEmpty {
+                    tab.name = record.name
+                    tab.hasUserChosenName = true
+                    tab.chip.setName(tab.name)
+                    renamedReusedTab = true
+                }
+                continue
+            }
             let name = record.hasUserChosenName && !record.name.isEmpty
                 ? record.name
                 : numberedName(for: launch)
             let tab = addTab(launch: launch, name: name, select: index == 0)
             tab.hasUserChosenName = record.hasUserChosenName
         }
+        // `addTab` refreshes the strip itself, so this only matters for the
+        // one-restored-tab case, where reusing is all that happened.
+        if renamedReusedTab, restored.count == 1 { styleChips() }
+    }
+
+    /// The single tab this console opened for itself at launch, when that is
+    /// all it holds - the one thing `restoreConsoleTabs` may reconcile
+    /// against rather than refuse.
+    ///
+    /// Deliberately narrow: exactly one tab, a plain interactive `.shell`
+    /// (never a one-shot provisioning command), still carrying the name this
+    /// app derived rather than one the captain typed. Any of those failing
+    /// means a captain has already worked in this console, and a restore
+    /// that reached in would be destroying their state rather than restoring
+    /// it.
+    private var soleAutoOpenedShellTab: TabModel? {
+        guard tabs.count == 1, let tab = tabs.first else { return nil }
+        guard case .shell = tab.launch, !tab.isOneShotCommand, !tab.hasUserChosenName else { return nil }
+        return tab
     }
 
     /// ⌘D: a new tab running the same argv as the current one.
