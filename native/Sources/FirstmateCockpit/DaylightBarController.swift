@@ -88,14 +88,22 @@ final class DaylightBarController: NSViewController {
     /// rather than a per-destination toolbar. Sits between the search pill
     /// and the bell, matching the captain's own reviewed layout.
     private let themeToggleButton = DaylightThemeToggleButton()
-    /// Quick-access jumps to two Stores destinations the captain reaches often
-    /// (`fm/grandline-sticky-code-preview-polish`). Both remain full
-    /// destinations under Stores - this is a shortcut, not a relocation - and
-    /// they sit immediately before the theme toggle, matching the captain's
-    /// own reviewed order: search -> Sticky Board -> Code Preview -> theme ->
-    /// bell -> avatar.
+    /// Quick-access jumps to destinations the captain reaches often
+    /// (`fm/grandline-sticky-code-preview-polish` for the first two,
+    /// `fm/grandline-tasks-quick-access-icon` for Tasks). Every one of them
+    /// remains a full destination in its own space - this is a shortcut, not a
+    /// relocation - and they sit immediately before the theme toggle, matching
+    /// the captain's own reviewed order: search -> Recents -> Sticky Board ->
+    /// Code Preview -> Tasks -> theme -> bell -> avatar.
+    ///
+    /// A new icon **appends** to the trailing end of this group rather than
+    /// being slotted in by topic, which is the convention Sticky Board and
+    /// Code Preview already set: the group reads in the order the captain
+    /// asked for each shortcut, and adding one never moves an icon a captain
+    /// has already built muscle memory for.
     private let stickyBoardButton = DaylightDestinationButton(destination: .stickyBoard)
     private let codePreviewButton = DaylightDestinationButton(destination: .codePreview)
+    private let tasksButton = DaylightDestinationButton(destination: .shift)
     /// The "Recents" dropdown (`fm/grandline-recents-navigation`) - a captain
     /// review of four back/forward-style approaches chose this one. It first
     /// shipped right after the space pills (never next to the logo the
@@ -176,7 +184,7 @@ final class DaylightBarController: NSViewController {
         themeToggleButton.target = self
         themeToggleButton.action = #selector(themeToggleClicked)
 
-        for button in [stickyBoardButton, codePreviewButton] {
+        for button in [stickyBoardButton, codePreviewButton, tasksButton] {
             button.target = self
             button.action = #selector(destinationButtonClicked(_:))
         }
@@ -189,6 +197,7 @@ final class DaylightBarController: NSViewController {
         bar.addSubview(recentDestinations.button)
         bar.addSubview(stickyBoardButton)
         bar.addSubview(codePreviewButton)
+        bar.addSubview(tasksButton)
         bar.addSubview(themeToggleButton)
         bar.addSubview(notificationCenter.bell)
         bar.addSubview(avatar)
@@ -242,10 +251,15 @@ final class DaylightBarController: NSViewController {
             stickyBoardButton.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
             stickyBoardButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
 
-            codePreviewButton.trailingAnchor.constraint(equalTo: themeToggleButton.leadingAnchor, constant: -HelmMetrics.s2),
+            codePreviewButton.trailingAnchor.constraint(equalTo: tasksButton.leadingAnchor, constant: -HelmMetrics.s2),
             codePreviewButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             codePreviewButton.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
             codePreviewButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
+
+            tasksButton.trailingAnchor.constraint(equalTo: themeToggleButton.leadingAnchor, constant: -HelmMetrics.s2),
+            tasksButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            tasksButton.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
+            tasksButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
 
             themeToggleButton.trailingAnchor.constraint(equalTo: notificationCenter.bell.leadingAnchor, constant: -HelmMetrics.s2),
             themeToggleButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
@@ -374,6 +388,7 @@ final class DaylightBarController: NSViewController {
         chain.append(recentDestinations.button)
         chain.append(stickyBoardButton)
         chain.append(codePreviewButton)
+        chain.append(tasksButton)
         chain.append(themeToggleButton)
         chain.append(notificationCenter.bell)
         chain.append(avatar)
@@ -563,6 +578,7 @@ final class DaylightBarController: NSViewController {
         recentDestinations.button.applyTheme(ink: muted, line: line, surface: iconSurface)
         stickyBoardButton.applyTheme(ink: muted, line: line, surface: iconSurface)
         codePreviewButton.applyTheme(ink: muted, line: line, surface: iconSurface)
+        tasksButton.applyTheme(ink: muted, line: line, surface: iconSurface)
         notificationCenter.bell.applyTheme(ink: muted, line: line, surface: theme.isDaylight
             ? HelmTheme.nsColor(theme.daylightTokens.inset) : surface)
 
@@ -604,10 +620,10 @@ final class DaylightBarController: NSViewController {
 
     /// The pill views, so a test can drive a real click/press through the
     /// same recognizer a captain's mouse would.
-    /// The bar's two quick-access destination icons, in visual order
+    /// The bar's quick-access destination icons, in visual order
     /// (leading -> trailing).
     func debugDestinationButtons() -> [DaylightDestinationButton] {
-        [stickyBoardButton, codePreviewButton]
+        [stickyBoardButton, codePreviewButton, tasksButton]
     }
 
     func debugThemeToggleButton() -> DaylightThemeToggleButton { themeToggleButton }
@@ -883,12 +899,12 @@ final class DaylightThemeToggleButton: DaylightBarIconButton {
 /// A one-click jump to a destination, sitting in the bar next to the theme
 /// toggle (`fm/grandline-sticky-code-preview-polish`).
 ///
-/// The captain's ask was for Sticky Board and Code Preview specifically: both
-/// stay full destinations in the Stores space, this is purely a shortcut for
-/// two pages reached often enough that a space switch plus a card click is
-/// friction. The glyph is each destination's **own** `RailDestination.symbol`
-/// rather than new iconography, so the bar icon and the card it opens can
-/// never drift apart.
+/// The captain asked for Sticky Board and Code Preview first, then Tasks
+/// (`fm/grandline-tasks-quick-access-icon`). Every one of them stays a full
+/// destination in its own space; this is purely a shortcut for pages reached
+/// often enough that a space switch plus a card click is friction. The glyph
+/// is each destination's **own** `RailDestination.symbol` rather than new
+/// iconography, so the bar icon and the page it opens can never drift apart.
 final class DaylightDestinationButton: DaylightBarIconButton {
     let destination: RailDestination
 
