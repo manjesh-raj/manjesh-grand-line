@@ -824,27 +824,34 @@ enum DaylightModuleSelfTest {
         if ok { print("  OK - geometry, shadow, no vibrancy, 5 radio pills, click and silent-select") }
     }
 
-    // MARK: 6b - the two quick-access destination icons
+    // MARK: 6b - the quick-access destination icons
     //
     // `fm/grandline-sticky-code-preview-polish`: the captain reaches Sticky
     // Board and Code Preview often enough that a space switch plus a card
-    // click is friction, so both get a bar icon. Both remain full Stores
-    // destinations - this is a shortcut, not a relocation.
+    // click is friction, so both get a bar icon. Tasks joined them in
+    // `fm/grandline-tasks-quick-access-icon`. Every one of them remains a full
+    // destination in its own space - this is a shortcut, not a relocation.
+    //
+    // The expected list is a literal here on purpose: a check that derived it
+    // from `debugDestinationButtons()` would pass for any set of icons in any
+    // order, including an accidental duplicate or a reordering that moves an
+    // icon the captain has muscle memory for.
 
     private static func checkBarDestinationIcons(_ ok: inout Bool) {
-        print("\n-- bar quick-access icons: Sticky Board and Code Preview --")
+        print("\n-- bar quick-access icons: Sticky Board, Code Preview, Tasks --")
         let bar = DaylightBarController()
         bar.loadView()
         bar.view.frame = NSRect(x: 0, y: 0, width: 1200, height: DaylightBarController.height + DaylightBarController.topMargin)
         bar.view.layoutSubtreeIfNeeded()
 
+        let expected: [RailDestination] = [.stickyBoard, .codePreview, .shift]
         let buttons = bar.debugDestinationButtons()
-        guard buttons.count == 2 else {
-            fail("expected 2 quick-access icons, found \(buttons.count)", &ok)
+        guard buttons.count == expected.count else {
+            fail("expected \(expected.count) quick-access icons, found \(buttons.count)", &ok)
             return
         }
-        if buttons.map(\.destination) != [.stickyBoard, .codePreview] {
-            fail("quick-access icons are \(buttons.map { $0.destination.title }), expected [stickyBoard, codePreview]", &ok)
+        if buttons.map(\.destination) != expected {
+            fail("quick-access icons are \(buttons.map { $0.destination.title }), expected \(expected.map(\.title))", &ok)
         }
 
         // The glyph is each destination's OWN symbol, so the bar icon and the
@@ -862,8 +869,8 @@ enum DaylightModuleSelfTest {
         }
 
         // Order, measured rather than assumed: the captain's own reviewed
-        // layout is search -> Sticky Board -> Code Preview -> theme toggle ->
-        // bell -> avatar.
+        // layout is search -> Recents -> Sticky Board -> Code Preview ->
+        // Tasks -> theme toggle -> bell -> avatar.
         let searchMaxX = bar.debugSearchPill().frame.maxX
         let toggleMinX = bar.debugThemeToggleButton().frame.minX
         let bellMinX = bar.notificationCenter.bell.frame.minX
@@ -875,8 +882,13 @@ enum DaylightModuleSelfTest {
                 fail("\(button.destination.title) sits after the theme toggle - it must come immediately before it", &ok)
             }
         }
-        if buttons[0].frame.minX >= buttons[1].frame.minX {
-            fail("Sticky Board should sit left of Code Preview", &ok)
+        // Pairwise rather than a single comparison, so a third (or fourth)
+        // icon landing out of order fails by name instead of only the first
+        // two being checked.
+        for (left, right) in zip(buttons, buttons.dropFirst()) {
+            if left.frame.minX >= right.frame.minX {
+                fail("\(left.destination.title) should sit left of \(right.destination.title)", &ok)
+            }
         }
         if toggleMinX >= bellMinX {
             fail("the theme toggle should still sit before the bell", &ok)
@@ -896,10 +908,9 @@ enum DaylightModuleSelfTest {
         // destination - a button wired to nothing renders identically.
         var picked: [RailDestination] = []
         bar.onSelectDestination = { picked.append($0) }
-        buttons[0].performClick(nil)
-        buttons[1].performClick(nil)
-        if picked != [.stickyBoard, .codePreview] {
-            fail("clicking both icons reported \(picked.map(\.title)), expected [stickyBoard, codePreview]", &ok)
+        for button in buttons { button.performClick(nil) }
+        if picked != expected {
+            fail("clicking every icon reported \(picked.map(\.title)), expected \(expected.map(\.title))", &ok)
         }
 
         // Both icons re-tint with the theme like every other control on the
@@ -913,7 +924,15 @@ enum DaylightModuleSelfTest {
             }
         }
 
-        if ok { print("  OK - 2 icons, right order, right glyphs, real clicks, themed") }
+        // Every icon is reachable by keyboard too - the bar's own half of
+        // §8's key loop. A control added to the row but not to the chain is
+        // invisible to Tab and renders identically.
+        let chain = bar.keyViewChain
+        for button in buttons where !chain.contains(where: { $0 === button }) {
+            fail("\(button.destination.title) is missing from the bar's key view chain", &ok)
+        }
+
+        if ok { print("  OK - \(buttons.count) icons, right order, right glyphs, real clicks, themed, in the key loop") }
     }
 
     // MARK: 5 - the bar cannot cap the window
