@@ -292,6 +292,15 @@ extension ConsoleController {
             guard popoverWindow !== self.view.window else { return nil }
             return popoverWindow
         }
+        // Audit 2 §2.7/§6.2: this card is where the popover-over-the-lock
+        // class was first found (§5.1(b)), and it is now covered by the same
+        // shared mechanism as every other popover rather than only by
+        // `AppShellController.showLock`'s explicit
+        // `closeLockSensitiveSurfaces()` call. Both are kept: that call runs
+        // *before* `setLocked(true)`, so it stays the primary path, and this
+        // is the backstop for any future lock path that does not go through
+        // the shell.
+        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.incidentPopover }
         incidentCard.onEndIncident = { [weak self] in self?.endIncidentClicked() }
         incidentCard.onAddNote = { [weak self] text in
             guard let self, let incident = self.activeIncident() else { return }

@@ -807,13 +807,20 @@ final class VaultController: NSViewController, DaylightDrillActions {
         }
     }
 
+    /// GL-P3: both run on every Recipe Backup render.
+    private static let isoFormatter = ISO8601DateFormatter()
+
+    private static let exportRelativeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .full
+        return f
+    }()
+
     private static func relativeExportSummary(generatedAt: String, repoName: String) -> String {
-        guard let date = ISO8601DateFormatter().date(from: generatedAt) else {
+        guard let date = isoFormatter.date(from: generatedAt) else {
             return "Last exported to \(repoName)."
         }
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .full
-        let relative = formatter.localizedString(for: date, relativeTo: Date())
+        let relative = exportRelativeFormatter.localizedString(for: date, relativeTo: Date())
         return "Last exported to \(repoName) \(relative)."
     }
 
@@ -1169,6 +1176,14 @@ final class VaultRecipeChecklistSheetController: NSViewController {
 
     private func checklistRow(_ item: VaultRecipeChecklistItem) -> NSView {
         let kindLabel = NSTextField(labelWithString: item.kind == .secret ? "Secret" : "Tool")
+        // Audit 2 §1.2's own cosmetic note: `scaled` clamps to
+        // `HelmType.minimumUIPointSize` (11), so at every chrome scale below
+        // ~1.16 this renders at 11 rather than the 9.5 it reads as. Left at
+        // 9.5 deliberately - the two are *not* interchangeable higher up the
+        // scale (at ×1.3 it is 12.35, where a literal 11 would be 14.3), so
+        // "fixing" the number would change how this renders for a captain who
+        // has scaled chrome text up. The finding was that the literal is
+        // misleading to read, not that it renders wrong.
         kindLabel.font = .systemFont(ofSize: HelmType.scaled(9.5), weight: .medium)
         kindLabel.textColor = HelmTheme.mutedInk(theme)
 

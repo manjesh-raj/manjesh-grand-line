@@ -130,6 +130,10 @@ final class DaylightBarController: NSViewController {
     // MARK: Build
 
     override func loadView() {
+        // Audit 2 §2.7/§6.2: closed on the way into the lock like every
+        // other popover in the app - a popover is its own window, layered
+        // above the lock overlay. Weak, because there is no unregister.
+        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.avatarPopover }
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: Self.height + Self.topMargin))
         root.wantsLayer = true
         view = root

@@ -645,6 +645,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // it.
         saveSessionState()
         appShell.shutdownStickyBoard()
+        // Audit 2 §6.8 / §2.8: the same class one destination over, and the
+        // call site `CodePreviewController.shutdown()`'s own doc comment had
+        // promised since it shipped while having none. Without it, ⌘Q inside
+        // the page's 500ms edit debounce loses those keystrokes and the final
+        // commit+push never runs.
+        appShell.shutdownCodePreview()
         shiftHotkey.stop()
         tabShortcuts.stop()
         shiftNotifications.stop()
@@ -1837,6 +1843,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_AUDIT_SECURITY_LOCK_TESTS"] == "1
 
 if ProcessInfo.processInfo.environment["FM_RUN_AUDIT2_SECURITY_FIXES_TESTS"] == "1" {
     exit(Audit2SecurityFixesSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT2_FEATURE_ENHANCEMENTS_TESTS"] == "1" {
+    exit(Audit2FeatureEnhancementsSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_LOCK_GATE_COVERAGE_TESTS"] == "1" {
+    exit(LockGateCoverageSelfTest.run() ? 0 : 1)
 }
 
 if ProcessInfo.processInfo.environment["FM_RUN_AUDIT2_SECURITY_LOCK_TESTS"] == "1" {

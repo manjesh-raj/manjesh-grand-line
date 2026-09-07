@@ -138,6 +138,7 @@ final class AppLockGate {
 
     private var observers: [(Bool) -> Void] = []
     private var secondaryWindows: [() -> NSWindow?] = []
+    private var dismissiblePopovers: [() -> NSPopover?] = []
 
     private init() {}
 
@@ -146,7 +147,16 @@ final class AppLockGate {
     func setLocked(_ locked: Bool) {
         let changed = locked != isLocked
         isLocked = locked
-        if locked { orderOutSecondaryWindows() }
+        if locked {
+            // Popovers first, and with a real `performClose` - see
+            // `registerLockDismissiblePopover`. Ordering matters: doing it
+            // before the window sweep means that sweep finds nothing left to
+            // order out, which is the same reason
+            // `AppShellController.showLock` closes the incident card before
+            // calling this at all.
+            closeLockDismissiblePopovers()
+            orderOutSecondaryWindows()
+        }
         guard changed else { return }
         AppLog.lifecycle.info("lock gate: \(locked ? "locked" : "unlocked", privacy: .public)")
         for observer in observers { observer(locked) }
@@ -178,6 +188,36 @@ final class AppLockGate {
         if isLocked { provider()?.orderOut(nil) }
     }
 
+    /// Register a popover that must not stay on screen over the lock
+    /// (audit 2 §2.7/§6.2 - the structural half of §5.1(b)).
+    ///
+    /// **Not** `registerSecondaryWindow`, and the difference is load-bearing.
+    /// An `NSPopover` tracks its own shown state, so ordering its window out
+    /// behind its back leaves `isShown` stuck `true` and the owner then
+    /// declines to re-`show()` it - the popover is broken for the rest of the
+    /// session. `performClose` is the only correct dismissal, which is exactly
+    /// the conclusion `ConsoleController+Incident.closeLockSensitiveSurfaces`
+    /// reached for the incident card; this is that fix generalised so it no
+    /// longer has to be re-derived per popover.
+    ///
+    /// Why every popover wants this rather than only the ones a lock can
+    /// plausibly catch open: a popover is its own window, layered *above* the
+    /// main window and therefore above the lock overlay (which is only a
+    /// subview of that window), so anything open when the lock fires stays
+    /// readable and interactive over the lock screen. The idle lock implies
+    /// nobody was at the keyboard, but the 12h session-expiry lock fires
+    /// mid-use - the same reasoning that put the ⌘K and Quick Capture panels
+    /// on `registerSecondaryWindow`.
+    ///
+    /// A provider closure rather than the popover itself, and captured
+    /// weakly by its caller, for `registerSecondaryWindow`'s own reason:
+    /// there is no unregister, and a per-host `ConsoleController`'s popovers
+    /// go away when that host is deleted.
+    func registerLockDismissiblePopover(_ provider: @escaping () -> NSPopover?) {
+        dismissiblePopovers.append(provider)
+        if isLocked, let popover = provider(), popover.isShown { popover.performClose(nil) }
+    }
+
     // MARK: Probe / self-test surface
 
     #if FM_SELFTESTS
@@ -201,6 +241,13 @@ final class AppLockGate {
     /// the registration is where it should be.
     var debugRegisteredWindowProviderCount: Int { secondaryWindows.count }
     #endif
+
+    private func closeLockDismissiblePopovers() {
+        for provider in dismissiblePopovers {
+            guard let popover = provider(), popover.isShown else { continue }
+            popover.performClose(nil)
+        }
+    }
 
     private func orderOutSecondaryWindows() {
         for provider in secondaryWindows {

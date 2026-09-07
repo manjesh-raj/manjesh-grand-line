@@ -201,6 +201,76 @@ final class CodePreviewGitSync {
         }
     }
 
+    /// How long the quit path is allowed to hold the app while this commits
+    /// and pushes. Deliberately short - the same trade `StickyBoardGitSync`
+    /// makes for the same reason (audit 2 §4.3): a visible hang on ⌘Q is worse
+    /// than an un-pushed commit, which the next launch re-commits anyway,
+    /// against a `Subprocess` push bound of 600s.
+    static let terminateFlushBudget: TimeInterval = 3.0
+
+    /// The quit-time flush (audit 2 §6.8 - the Code Preview half of the same
+    /// finding §4.3 fixed for the Sticky Board).
+    ///
+    /// `CodePreviewController.shutdown()` used to call `commitAndPushNow()`
+    /// directly, which is the shape §4.3 found and fixed one store over: it
+    /// runs git on the *calling* thread (the main thread, on the quit path)
+    /// and off `queue` - the serial queue every other invocation in this app
+    /// shares (`ShiftGitSync.sharedQueue` in production, against the *same*
+    /// working tree as Shift's, Docs' and the Sticky Board's own commits), so
+    /// it could race a sibling's `git` for `.git/index.lock`. It also never
+    /// cancelled the still-pending debounced `pendingCommit`, which could
+    /// then fire during or after the flush and commit the same work twice.
+    ///
+    /// That shape was harmless only because `shutdown()` had no callers at
+    /// all. Wiring it up (§6.8's other half) without this would have
+    /// *activated* §4.3's bug for this store rather than fixing it, so the
+    /// two land together.
+    ///
+    /// The cancel happens *inside* the queue block, not before it, for the
+    /// reason `StickyBoardGitSync.flushForTerminationNow()` records: this
+    /// store only ever touches `pendingCommit` on `queue` (see `markDirty`),
+    /// and a serial queue guarantees the pending item is not running
+    /// concurrently - so the cancel takes if it has not started and is moot
+    /// if it already ran. Cancelling on the caller's thread is worse than
+    /// useless: `markDirty`'s own `queue.async` may not have run yet, so the
+    /// cancel could land before the item is even assigned.
+    ///
+    /// Whatever the bound abandons is safe: every snippet's own file was
+    /// written synchronously long before this (`CodePreviewStore.save`, via
+    /// `snippetChanged`), so the captain's code is on disk either way, and an
+    /// un-pushed commit is recovered on the next launch's own `markDirty()`.
+    @discardableResult
+    func flushForTerminationNow() -> Bool {
+        // `committed` is written on `queue` and read here, and the bound means
+        // the writer can still be running when this returns - so it is
+        // lock-guarded rather than relying on the semaphore's ordering alone
+        // (GL-28's lesson; exactly one write and one read).
+        let lock = NSLock()
+        var committed = false
+        let done = DispatchSemaphore(value: 0)
+        queue.async { [weak self] in
+            guard let self else { done.signal(); return }
+            self.pendingCommit?.cancel()
+            self.pendingCommit = nil
+            let result = self.commitAndPushNow()
+            lock.lock()
+            committed = result
+            lock.unlock()
+            done.signal()
+        }
+        if done.wait(timeout: .now() + Self.terminateFlushBudget) == .timedOut {
+            AppLog.lifecycle.info("""
+                code preview: quit-time git flush still running after \
+                \(Self.terminateFlushBudget, privacy: .public)s - letting the app quit; \
+                the snippets are already on disk and the next launch re-commits
+                """)
+            return false
+        }
+        lock.lock()
+        defer { lock.unlock() }
+        return committed
+    }
+
     @discardableResult
     func commitAndPushNow() -> Bool {
         guard FileManager.default.fileExists(atPath: workingTree.appendingPathComponent(".git").path) else {

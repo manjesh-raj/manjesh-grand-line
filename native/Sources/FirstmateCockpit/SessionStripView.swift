@@ -67,6 +67,10 @@ final class SessionStripView: NSView, NSGestureRecognizerDelegate {
         /// `makePill`'s note on the full-app audit's finding 4.7.
         let close: NSButton?
         let isActive: Bool
+        /// Audit 2 §4.6: whether this entry has a live child process behind
+        /// it, or is a page F2 restored that nothing has started yet. Drives
+        /// the dot's solid-vs-hollow treatment in `applyTheme`.
+        let isConnected: Bool
         let accent: NSColor
     }
 
@@ -198,6 +202,11 @@ final class SessionStripView: NSView, NSGestureRecognizerDelegate {
         dot.wantsLayer = true
         dot.translatesAutoresizingMaskIntoConstraints = false
         dot.layer?.cornerRadius = 3.5
+        // Audit 2 §4.6: a restored-but-not-connected session renders this as
+        // a hollow ring rather than a solid dot, so the strip says at a
+        // glance what its accessibility label and the Hosts chip now say in
+        // words. `applyTheme` owns both colours.
+        dot.layer?.borderWidth = 1
 
         let label = NSTextField(labelWithString: session.label)
         label.translatesAutoresizingMaskIntoConstraints = false
@@ -292,7 +301,10 @@ final class SessionStripView: NSView, NSGestureRecognizerDelegate {
         // like the bar's space pills - same `radioButton` + group treatment
         // (GL-16/§8 Phase 6), not a new accessibility idiom.
         container.accessibilityRoleOverride = .radioButton
-        container.accessibilityLabelOverride = "\(session.label), connected \(session.durationText)"
+        // Audit 2 §4.6: reads the real state - a restored page announced as
+        // "connected 14m" is exactly the overclaim this fixes, and a screen
+        // reader is the one surface with no dot or fill to hedge it.
+        container.accessibilityLabelOverride = "\(session.label), \(session.stateText)"
         container.accessibilityValueOverride = isActive ? "selected" : "not selected"
         container.onKeyDown = { [weak self] event in self?.handleArrowKey(event, from: session.hostID) ?? false }
         container.toolTip = shortcut.map { "Switch to \(session.label) (\u{2318}\u{2303}\($0))" }
@@ -300,7 +312,7 @@ final class SessionStripView: NSView, NSGestureRecognizerDelegate {
 
         return Pill(hostID: session.hostID, container: container, dot: dot, label: label,
                     shortcut: shortcutLabel, close: closeButton,
-                    isActive: isActive, accent: accent)
+                    isActive: isActive, isConnected: session.isConnected, accent: accent)
     }
 
     // MARK: Actions
@@ -393,7 +405,13 @@ final class SessionStripView: NSView, NSGestureRecognizerDelegate {
             // that already names the host is a redundant cue, not the sole
             // carrier of meaning, so it needs no contrast correction (the same
             // exemption §2.4's own gradient-tile caveat relies on).
-            pill.dot.layer?.backgroundColor = pill.accent.cgColor
+            //
+            // Hollow for a restored page: same hue, no fill. Deliberately not
+            // a *different* hue - the dot's job is still "which host", and the
+            // captain's own `Host.accentHex` is what carries that.
+            pill.dot.layer?.backgroundColor = pill.isConnected ? pill.accent.cgColor
+                : NSColor.clear.cgColor
+            pill.dot.layer?.borderColor = pill.accent.cgColor
 
             pill.label.font = HelmType.rounded(HelmType.scaled(12.5), pill.isActive ? .semibold : .medium)
             pill.label.textColor = labelColor

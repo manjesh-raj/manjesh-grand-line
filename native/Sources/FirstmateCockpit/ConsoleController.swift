@@ -139,6 +139,24 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// untouched.
     var appearanceWorkDeferredByLock = false
 
+    /// Whether this page has a live child process behind any of its tabs -
+    /// the honest answer to "is this host connected" (audit 2 §4.6/§6.3).
+    ///
+    /// `false` for a page F2 restored and the captain has not opened yet, for
+    /// one whose start the lock screen is still deferring, and for one
+    /// `connectHost(navigate: false)` built without ever showing (which is
+    /// what makes `viewDidAppear` - and therefore `startTab` - never fire).
+    /// Mere existence of the page was what the session strip, the Hosts rows
+    /// and F9's picker all used to read as "connected".
+    var hasLiveSession: Bool { tabs.contains { $0.started } }
+
+    /// Fired whenever `hasLiveSession` may have changed, so
+    /// `AppShellController` can keep `HostSessionRegistry` honest without
+    /// polling. Deliberately a "may have changed" ping rather than a
+    /// transition event: the shell re-reads `hasLiveSession` itself, which
+    /// costs one array scan and cannot get out of step with the tabs.
+    var onLiveSessionMayHaveChanged: (() -> Void)?
+
     /// Scrollback retained per normal-screen terminal. SwiftTerm defaults to 500
     /// lines; a shell session wants much more so history that scrolls off the top
     /// stays reachable.

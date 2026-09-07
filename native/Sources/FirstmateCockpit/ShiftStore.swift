@@ -237,12 +237,18 @@ final class ShiftStore {
     private var attachmentsDir: URL { root.appendingPathComponent("attachments", isDirectory: true) }
     private func attachmentURL(forTaskID id: String) -> URL { attachmentsDir.appendingPathComponent("\(id).png") }
 
-    private static func monthKey(for date: Date = Date()) -> String {
+    /// GL-P3: this decides which `completed/<YYYY-MM>.yaml` a task belongs to,
+    /// so it runs once per completed task whenever those files are walked.
+    private static let monthKeyFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "yyyy-MM"
         f.calendar = Calendar(identifier: .gregorian)
         f.timeZone = TimeZone.current
-        return f.string(from: date)
+        return f
+    }()
+
+    private static func monthKey(for date: Date = Date()) -> String {
+        monthKeyFormatter.string(from: date)
     }
 
     // MARK: Load

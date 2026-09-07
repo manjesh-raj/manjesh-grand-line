@@ -177,7 +177,7 @@ enum KubernetesDestinationSelfTest {
         }
 
         func goLive(label: String = "EKS Preprod Bastion") {
-            sessions.register(hostID: hostID, label: label, accentHex: "6cd7e3")
+            sessions.register(hostID: hostID, label: label, accentHex: "6cd7e3", state: .connected)
         }
 
         func adoptFeed() {

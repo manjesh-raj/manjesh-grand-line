@@ -60,6 +60,12 @@ final class QuotaUsageController: NSObject, NSPopoverDelegate {
 
     override init() {
         super.init()
+        // Audit 2 §2.7/§6.2: a popover is its own window, layered above the
+        // lock overlay, so anything open when the lock fires would stay
+        // readable and interactive over the lock screen (§5.1(b)'s harm, of
+        // which the incident card was one instance). Weak, because there is
+        // no unregister.
+        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.popover }
         popover.contentViewController = content
         popover.behavior = .transient
         popover.delegate = self
