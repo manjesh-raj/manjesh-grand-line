@@ -228,7 +228,11 @@ struct UnifiedSearchSessionProvider: UnifiedSearchProvider {
                 kind: .session,
                 id: session.hostID.uuidString,
                 title: session.label,
-                meta: "LIVE \u{00B7} connected \(session.durationText) \u{00B7} \(meta)",
+                // Audit 2 §4.6: the kicker follows the real state too - a
+                // restored page is still worth listing here (switching to it
+                // is what connects it) but must not be labelled LIVE.
+                meta: "\(session.isConnected ? "LIVE" : "RESTORED") \u{00B7} "
+                    + "\(session.stateText) \u{00B7} \(meta)",
                 actionHint: "Switch \u{21B5}",
                 activate: { onSwitch(session.hostID) }
             )

@@ -1511,11 +1511,35 @@ final class AppShellController: NSViewController {
             blockViewOptIn: host.blockViewOptIn, kubeContextBadgeOptIn: host.kubeContextBadgeOptIn
         )
 
+        // Audit 2 §4.6: keep the registry's own reading of this page current.
+        // Assigned before the `register` below, so an already-started page
+        // (a re-reveal) reports `.connected` immediately rather than after
+        // whatever its next start/close happens to be.
+        //
+        // `startTab` is the only place `TabModel.started` is ever set, so this
+        // fires exactly when the answer can have changed - never on a timer,
+        // and never inferred by the registry itself.
+        let sessionHostID = host.id
+        controller.onLiveSessionMayHaveChanged = { [weak self, weak controller] in
+            guard let self, let controller else { return }
+            self.sessions.setState(hostID: sessionHostID,
+                                   controller.hasLiveSession ? .connected : .restored)
+        }
+
         // `fm/grandline-session-switcher`: this host now has a live session.
         // Idempotent, and re-called on every connect for the same reason the
         // closures below are reassigned - a renamed host or a recoloured
         // accent should be current on the strip without needing a reconnect.
-        sessions.register(hostID: host.id, label: host.label, accentHex: host.accentHex)
+        //
+        // Audit 2 §4.6: `.restored` unless the page has *already* started
+        // something. This runs before the page appears, so a first connect is
+        // genuinely not connected yet at this instant; `setState` above moves
+        // it the moment `startTab` runs, which for an ordinary connect is one
+        // layout pass later and for a restored (or lock-deferred) page is
+        // whenever the captain actually opens it. `register` never downgrades
+        // an already-live entry, so a re-reveal cannot blank a live pill.
+        sessions.register(hostID: host.id, label: host.label, accentHex: host.accentHex,
+                          state: controller.hasLiveSession ? .connected : .restored)
 
         // fm/grandline-notification-center: reassigned on every call (not
         // just the first) so a renamed host label is always current in the
@@ -1607,8 +1631,17 @@ final class AppShellController: NSViewController {
     /// the "Send to…" picker for each row's connected/not-connected line -
     /// the same piece of state the rail's own per-host highlighting uses, not
     /// a second notion of "connected" invented for the picker.
+    /// Whether `host` has a genuinely live session - a page with a running
+    /// child process, not merely a page this shell has built.
+    ///
+    /// Audit 2 §4.5/§4.6: this used to be `hostConsoles[host.id] != nil`,
+    /// which after F2 was true for a restored page that had forked nothing.
+    /// F9's picker showed such a host as "Connected" and `sendCommandToHost`
+    /// took its immediate-send branch, typing into a terminal with no process
+    /// on the other end - silently, since nothing reports a dropped send.
     func isHostConnected(_ host: Host) -> Bool {
-        hostConsoles[host.id] != nil
+        guard let controller = hostConsoles[host.id] else { return false }
+        return controller.hasLiveSession
     }
 
     /// F9 (v1): type `text` into `host`'s own dedicated page, connecting it
@@ -1632,10 +1665,24 @@ final class AppShellController: NSViewController {
         guard let controller = hostConsoles[host.id] else { return }
         if wasConnected {
             controller.sendCommandLibraryTextToActiveTab(text)
-        } else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + ConsoleController.remoteShellReadyDelay) { [weak controller] in
-                controller?.sendCommandLibraryTextToActiveTab(text)
-            }
+            return
+        }
+        // Audit 2 §4.5, the half that `isHostConnected` telling the truth
+        // (above) does not fix on its own. `navigate: false` means this page
+        // never appears, so `viewDidAppear` - and therefore `startTab` - never
+        // fires, and the delayed send below would type into a terminal with no
+        // process on the other end. That was true of this branch even before
+        // F2; F2 only widened which hosts reach it (a restored page used to
+        // take the *immediate* branch instead, which is worse).
+        //
+        // `runAppearanceWorkIfUnlocked` rather than `startTab` directly: it is
+        // the lock-gated entry point (#340 / §5.1), so a send that arrives
+        // while the app is locked defers the fork exactly like every other
+        // path and replays it on unlock, instead of this being a way around
+        // the gate. A page that is already started no-ops.
+        controller.runAppearanceWorkIfUnlocked()
+        DispatchQueue.main.asyncAfter(deadline: .now() + ConsoleController.remoteShellReadyDelay) { [weak controller] in
+            controller?.sendCommandLibraryTextToActiveTab(text)
         }
     }
 
@@ -1669,6 +1716,21 @@ final class AppShellController: NSViewController {
 
     func shutdownStickyBoard() {
         stickyBoard.shutdown()
+    }
+
+    /// Flush and commit anything Code Preview still has in flight, on the way
+    /// to quitting (audit 2 §6.8 / §2.8).
+    ///
+    /// The shell's forward for the same reason `shutdownStickyBoard` is one:
+    /// `codePreview` is `private` and the app delegate is where
+    /// `applicationWillTerminate` lives.
+    ///
+    /// Safe on a destination that was never mounted - this page is lazily
+    /// mounted, but its controller and store are built eagerly at init, and
+    /// `CodePreviewController.shutdown()` no-ops on a page whose editor never
+    /// loaded while its store still commits anything genuinely queued.
+    func shutdownCodePreview() {
+        codePreview.shutdown()
     }
 
     func removeHostConsole(id: UUID) {

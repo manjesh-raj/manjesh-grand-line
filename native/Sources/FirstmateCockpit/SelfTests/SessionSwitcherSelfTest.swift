@@ -167,8 +167,8 @@ enum SessionSwitcherSelfTest {
 
         let registry = HostSessionRegistry()
         let active = UUID(), inactive = UUID()
-        registry.register(hostID: active, label: "DEV Bastion", accentHex: "#e8a23d")
-        registry.register(hostID: inactive, label: "Prod Bastion", accentHex: "#22b3a6")
+        registry.register(hostID: active, label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
+        registry.register(hostID: inactive, label: "Prod Bastion", accentHex: "#22b3a6", state: .connected)
         registry.setActive(active)
         strip.render(registry)
         root.layoutSubtreeIfNeeded()
@@ -318,8 +318,8 @@ enum SessionSwitcherSelfTest {
     private static func test_registryOrderAndDuration() -> String? {
         let registry = HostSessionRegistry()
         let a = UUID(), b = UUID()
-        registry.register(hostID: a, label: "DEV Bastion", accentHex: "#e8a23d")
-        registry.register(hostID: b, label: "Prod Bastion", accentHex: "#22b3a6")
+        registry.register(hostID: a, label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
+        registry.register(hostID: b, label: "Prod Bastion", accentHex: "#22b3a6", state: .connected)
         // Insertion order, never sorted - the shortcut numbers and the strip's
         // left-to-right order are the same list, so a rename must not move a
         // captain's ⌘⌃2 out from under them.
@@ -329,7 +329,7 @@ enum SessionSwitcherSelfTest {
         // Idempotent, and a re-register refreshes the label without restarting
         // the clock.
         let started = registry.session(for: a)!.startedAt
-        registry.register(hostID: a, label: "DEV Bastion (renamed)", accentHex: "#e8a23d")
+        registry.register(hostID: a, label: "DEV Bastion (renamed)", accentHex: "#e8a23d", state: .connected)
         guard registry.sessions.count == 2 else { return "re-register added a duplicate row" }
         guard registry.session(for: a)?.label == "DEV Bastion (renamed)" else {
             return "re-register did not refresh the label"
@@ -353,7 +353,7 @@ enum SessionSwitcherSelfTest {
         let registry = HostSessionRegistry()
         guard registry.session(steppedBy: 1) == nil else { return "stepping an empty registry answered something" }
         let ids = (0..<10).map { _ in UUID() }
-        for (i, id) in ids.enumerated() { registry.register(hostID: id, label: "Host \(i)", accentHex: nil) }
+        for (i, id) in ids.enumerated() { registry.register(hostID: id, label: "Host \(i)", accentHex: nil, state: .connected) }
         // Only the first nine get a hint, because only the first nine have a
         // shortcut - a hint on an unreachable pill would be a lie.
         guard registry.shortcutIndex(for: ids[0]) == 1, registry.shortcutIndex(for: ids[8]) == 9,
@@ -377,7 +377,7 @@ enum SessionSwitcherSelfTest {
     private static func test_registryActiveNeverClaimsADeadHost() -> String? {
         let registry = HostSessionRegistry()
         let live = UUID(), never = UUID()
-        registry.register(hostID: live, label: "Live", accentHex: nil)
+        registry.register(hostID: live, label: "Live", accentHex: nil, state: .connected)
         registry.setActive(never)
         guard registry.activeHostID == nil else {
             return "activated a host with no session - the strip would fill in a pill nothing can switch to"
@@ -400,7 +400,7 @@ enum SessionSwitcherSelfTest {
             guard abs(collapsedInset - DaylightBarController.reservedTopHeight) < 0.5 else {
                 return "collapsed body inset \(collapsedInset), expected \(DaylightBarController.reservedTopHeight)"
             }
-            shell.sessions.register(hostID: UUID(), label: "DEV Bastion", accentHex: "#e8a23d")
+            shell.sessions.register(hostID: UUID(), label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
             shell.view.layoutSubtreeIfNeeded()
             guard !shell.sessionStripIsHiddenForTests else { return "strip stayed hidden with a live session" }
             // The height half matters as much as `isHidden`: an ordinary
@@ -424,8 +424,8 @@ enum SessionSwitcherSelfTest {
         withScratchEnv {
             let (_, shell, _) = makeMountedShell()
             let dev = UUID(), prod = UUID()
-            shell.sessions.register(hostID: dev, label: "DEV Bastion", accentHex: "#e8a23d")
-            shell.sessions.register(hostID: prod, label: "Prod Bastion", accentHex: "#22b3a6")
+            shell.sessions.register(hostID: dev, label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
+            shell.sessions.register(hostID: prod, label: "Prod Bastion", accentHex: "#22b3a6", state: .connected)
             shell.view.layoutSubtreeIfNeeded()
             let strip = shell.sessionStripForTests
             guard strip.debugPillHostIDs() == [dev, prod] else {
@@ -463,8 +463,8 @@ enum SessionSwitcherSelfTest {
         withScratchEnv {
             let (_, shell, _) = makeMountedShell()
             let dev = UUID(), prod = UUID()
-            shell.sessions.register(hostID: dev, label: "DEV Bastion", accentHex: nil)
-            shell.sessions.register(hostID: prod, label: "Prod Bastion", accentHex: nil)
+            shell.sessions.register(hostID: dev, label: "DEV Bastion", accentHex: nil, state: .connected)
+            shell.sessions.register(hostID: prod, label: "Prod Bastion", accentHex: nil, state: .connected)
             shell.sessions.setActive(dev)
             shell.view.layoutSubtreeIfNeeded()
             let strip = shell.sessionStripForTests
@@ -485,7 +485,7 @@ enum SessionSwitcherSelfTest {
         withScratchEnv {
             let (_, shell, _) = makeMountedShell()
             let dev = UUID()
-            shell.sessions.register(hostID: dev, label: "DEV Bastion", accentHex: nil)
+            shell.sessions.register(hostID: dev, label: "DEV Bastion", accentHex: nil, state: .connected)
             shell.sessions.setActive(dev)
             shell.view.layoutSubtreeIfNeeded()
             let strip = shell.sessionStripForTests
@@ -497,8 +497,15 @@ enum SessionSwitcherSelfTest {
             guard pill.accessibilityValueOverride == "selected" else {
                 return "active pill does not announce itself as selected"
             }
+            // Case-insensitive on the state word: audit 2 §4.6 moved this
+            // label onto `HostSession.stateText`, which renders "Connected ·
+            // 14m" / "Restored · not connected" - a sentence fragment for
+            // VoiceOver rather than a lowercase fixed word. What this case is
+            // about is that the label names the host *and* its state, which
+            // casing has nothing to do with.
             guard let label = strip.debugPillAccessibilityLabel(dev),
-                  label.contains("DEV Bastion"), label.contains("connected") else {
+                  label.contains("DEV Bastion"),
+                  label.lowercased().contains("connected") else {
                 return "pill label does not name the host and its state: \(strip.debugPillAccessibilityLabel(dev) ?? "nil")"
             }
             guard strip.debugAddButton().isActivatable,
@@ -520,7 +527,7 @@ enum SessionSwitcherSelfTest {
             hostStore.add(host)
             let panel = HostsController(hostStore: hostStore, keyStore: SSHKeyStore(), snippetStore: SnippetStore())
             let registry = HostSessionRegistry()
-            registry.register(hostID: host.id, label: host.label, accentHex: host.accentHex)
+            registry.register(hostID: host.id, label: host.label, accentHex: host.accentHex, state: .connected)
             panel.liveSession = { registry.session(for: $0) }
             var switched: [UUID] = []
             var connected = false
@@ -586,7 +593,7 @@ enum SessionSwitcherSelfTest {
             hostStore.add(dev)
             hostStore.add(prod)
             let registry = HostSessionRegistry()
-            registry.register(hostID: prod.id, label: prod.label, accentHex: prod.accentHex)
+            registry.register(hostID: prod.id, label: prod.label, accentHex: prod.accentHex, state: .connected)
 
             var switched: [UUID] = []
             var connected: [UUID] = []
@@ -652,7 +659,7 @@ enum SessionSwitcherSelfTest {
             // is `connectHost`, which builds the console first) - still a
             // no-op, never a reveal of nothing.
             let orphan = UUID()
-            shell.sessions.register(hostID: orphan, label: "Orphan", accentHex: nil)
+            shell.sessions.register(hostID: orphan, label: "Orphan", accentHex: nil, state: .connected)
             shell.switchToSession(hostID: orphan)
             guard shell.activeHostIDForTests == nil else { return "revealed a session with no console" }
             return nil

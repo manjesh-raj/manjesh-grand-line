@@ -320,7 +320,7 @@ enum RecentDestinationsSelfTest {
             let hostID = UUID()
             let hostConsole = ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false)
             shell.debugSeedHostConsole(hostConsole, hostID: hostID)
-            shell.sessions.register(hostID: hostID, label: "DEV Bastion", accentHex: "#e8a23d")
+            shell.sessions.register(hostID: hostID, label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
             shell.switchToSession(hostID: hostID)
             guard shell.activeHostIDForTests == hostID else { return "switchToSession did not reveal the seeded host page" }
 
@@ -371,7 +371,7 @@ enum RecentDestinationsSelfTest {
             let hostID = UUID()
             let hostConsole = ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false)
             shell.debugSeedHostConsole(hostConsole, hostID: hostID)
-            shell.sessions.register(hostID: hostID, label: "DEV Bastion", accentHex: "#e8a23d")
+            shell.sessions.register(hostID: hostID, label: "DEV Bastion", accentHex: "#e8a23d", state: .connected)
             shell.switchToSession(hostID: hostID)
             shell.show(.docs)   // leave it, so it lands in Recents
 
@@ -418,7 +418,7 @@ enum RecentDestinationsSelfTest {
             let liveID = UUID()
             let liveConsole = ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false)
             shell.debugSeedHostConsole(liveConsole, hostID: liveID)
-            shell.sessions.register(hostID: liveID, label: "Prod Bastion", accentHex: "#22b3a6")
+            shell.sessions.register(hostID: liveID, label: "Prod Bastion", accentHex: "#22b3a6", state: .connected)
             shell.show(.docs)
             shell.debugNavigateToRecent(.host(id: liveID, label: "Prod Bastion"))
             guard reconnectRequests.isEmpty else {
@@ -442,7 +442,7 @@ enum RecentDestinationsSelfTest {
             let hostID = UUID()
             let hostConsole = ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false)
             shell.debugSeedHostConsole(hostConsole, hostID: hostID)
-            shell.sessions.register(hostID: hostID, label: "Gone Bastion", accentHex: nil)
+            shell.sessions.register(hostID: hostID, label: "Gone Bastion", accentHex: nil, state: .connected)
             shell.switchToSession(hostID: hostID)
             shell.show(.docs)
             shell.removeHostConsole(id: hostID)

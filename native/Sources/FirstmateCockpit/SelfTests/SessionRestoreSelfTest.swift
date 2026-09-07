@@ -421,8 +421,25 @@ enum SessionRestoreSelfTest {
             }
 
             // It is nonetheless a real page the captain can open, and the
-            // shell counts it as open for the next capture.
-            guard shell.isHostConnected(host) else { return "the restored page is not registered as open" }
+            // shell counts it as open for the next capture - which is
+            // `hostConsoles` membership (asserted above) plus a switchable
+            // registry entry, *not* a claim that anything is connected.
+            //
+            // Audit 2 §4.5/§4.6: this used to assert `isHostConnected(host)`,
+            // which is exactly the overclaim that finding named - the two
+            // assertions directly above establish that this page has no
+            // started tab and no live child process, so a predicate answering
+            // "connected" for it was reporting something the same case had
+            // just proved false. F9's picker read that predicate and typed
+            // into a terminal with no process on the other end.
+            guard shell.sessions.isLive(host.id) else {
+                return "the restored page is not registered as a session, so it would be "
+                    + "unreachable from the strip, the ⌘⌃ shortcuts and ⌘K"
+            }
+            guard !shell.isHostConnected(host) else {
+                return "a restored page with no started tab reports as connected - F9 would "
+                    + "take its immediate-send branch and silently lose the command"
+            }
             guard shell.captureSessionState().openHostIDs == [host.id.uuidString] else {
                 return "the restored page was not captured as open"
             }

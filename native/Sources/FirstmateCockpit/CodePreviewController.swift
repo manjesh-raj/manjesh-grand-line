@@ -289,16 +289,68 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         flushPendingEdits()
     }
 
+    /// How long the quit path may wait for the page's own debounced edit to
+    /// come back over the bridge. Sized off the page's `CHANGE_DEBOUNCE_MS`
+    /// (500ms) plus room for one `WKWebView` round trip - long enough that the
+    /// keystrokes this exists to save actually arrive, short enough to be
+    /// invisible on ⌘Q.
+    static let terminateEditFlushBudget: TimeInterval = 1.0
+
     /// Called by the app delegate on quit, so the last few keystrokes before
-    /// ⌘Q are written and committed like every other edit.
+    /// ⌘Q are written and committed like every other edit (audit 2 §6.8 /
+    /// §2.8 - this method had *zero* callers until then, which is why the
+    /// promise in this comment was not true).
+    ///
+    /// The ordering is the whole point and is why this cannot just be two
+    /// fire-and-forget calls. A pending edit lives only in the page's own JS
+    /// debounce until `flush` posts it back over the bridge, and that reply is
+    /// what runs `snippetChanged` -> `store.save` -> `markDirty()`. So the git
+    /// flush has to happen *after* the bridge round trip has landed, or it
+    /// commits a working tree that does not yet contain the very keystrokes
+    /// this method exists to save.
     func shutdown() {
-        flushPendingEdits()
-        store.gitSync?.commitAndPushNow()
+        flushPendingEdits(waitingUpTo: Self.terminateEditFlushBudget)
+        // Never `commitAndPushNow()` directly - see
+        // `CodePreviewGitSync.flushForTerminationNow()` for why (it is §4.3's
+        // fix, applied to this store as its call site finally appeared).
+        store.gitSync?.flushForTerminationNow()
     }
 
-    private func flushPendingEdits() {
+    /// Posts whatever the page still has debounced.
+    ///
+    /// `wait` is `nil` everywhere except the quit path: while the app is still
+    /// running the reply lands on its own a moment later and the write
+    /// happens then, which is all `viewWillDisappear`/`suspend()` need. On
+    /// quit there is no "a moment later", so the caller has to hold the
+    /// process open for the round trip.
+    ///
+    /// Held by pumping the main run loop rather than blocking it: the reply
+    /// arrives as a `WKScriptMessageHandler` callback delivered *on* the main
+    /// queue, so a `DispatchSemaphore.wait()` here would deadlock against the
+    /// very thing it is waiting for. `applicationWillTerminate` is a
+    /// synchronous last-chance hook, which is exactly the situation this is
+    /// for. The bound is what keeps a wedged or never-loaded page from
+    /// blocking the quit at all, and anything it abandons is only the last
+    /// sub-second of typing - every earlier edit is already on disk.
+    private func flushPendingEdits(waitingUpTo wait: TimeInterval? = nil) {
         guard webView.isReady else { return }
-        webView.call("flush")
+        guard let wait else {
+            webView.call("flush")
+            return
+        }
+        var landed = false
+        webView.call("flush") { _ in landed = true }
+        let deadline = Date().addingTimeInterval(wait)
+        while !landed, Date() < deadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
+        }
+        if !landed {
+            AppLog.lifecycle.info("""
+                code preview: the page did not acknowledge its quit-time edit flush within \
+                \(wait, privacy: .public)s - letting the app quit; every edit older than the \
+                page's own debounce is already on disk
+                """)
+        }
     }
 
     // MARK: Building

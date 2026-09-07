@@ -22,6 +22,10 @@ final class ShiftMenuBarController: NSObject, NSPopoverDelegate {
     init(store: ShiftStore) {
         self.store = store
         super.init()
+        // Audit 2 §2.7/§6.2: closed on the way into the lock like every
+        // other popover in the app - a popover is its own window, layered
+        // above the lock overlay. Weak, because there is no unregister.
+        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.popover }
 
         if let button = statusItem.button {
             // fm/grandline-rail-followup-fixes: this used to be

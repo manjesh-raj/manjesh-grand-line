@@ -229,6 +229,10 @@ extension ConsoleController {
             connectSSH(tab, executable: exe, hostArgs: hostArgs, keyID: keyID, startupSnippetID: startupSnippetID)
         }
         tab.started = true
+        // Audit 2 §4.6: this is the moment a registered session stops being a
+        // restored page and becomes a real connection. The one place
+        // `started` is ever set, so the one place this has to be reported.
+        onLiveSessionMayHaveChanged?()
         restartTabBookkeeping(tab)
     }
 
@@ -615,10 +619,15 @@ extension ConsoleController {
                 updateBlockViewControls()
                 updateKubeContextBadgeControls()
             }
+            // Audit 2 §4.6: closing the last tab can take this page's live
+            // session with it - the shell re-reads `hasLiveSession` rather
+            // than this having to know whether it did.
+            onLiveSessionMayHaveChanged?()
             return
         }
 
         refreshTabBar()
+        onLiveSessionMayHaveChanged?()
         if currentTab === tab || currentTab == nil {
             let neighbor = tabs[min(idx, tabs.count - 1)]
             select(tabID: neighbor.id)

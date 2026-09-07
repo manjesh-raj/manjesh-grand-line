@@ -607,7 +607,10 @@ final class HostsController: NSViewController, DaylightDrillActions {
         // without this page picking a green of its own.
         let session = liveSession?(host.id)
         if let session {
-            content.chipText = "Connected \u{00B7} \(session.durationText)"
+            // Audit 2 §4.6: `stateText` rather than an unconditional
+            // "Connected", so an F2-restored page the captain has not opened
+            // yet says so instead of claiming a connection it does not have.
+            content.chipText = session.stateText
             content.chipTint = .good
         }
         var item = HostsListSection.Item(content: content)
