@@ -839,7 +839,13 @@ final class AppShellController: NSViewController {
         }
         homeCanvas.connectedHostIDs = { [weak self] in
             guard let self else { return [] }
-            return Set(self.hostConsoles.keys)
+            // Audit 2 §4.6: genuinely-connected pages, not merely built ones.
+            // Every one of this closure's readers phrases the count as *live*
+            // ("N host live", "N live", "N live sessions", and an `.ok` peek
+            // row per host), so `Set(hostConsoles.keys)` had the canvas
+            // reporting three live sessions for three F2-restored pages with
+            // no process between them.
+            return Set(self.hostConsoles.filter { $0.value.hasLiveSession }.keys)
         }
 
         // GL-31: a machine with no firstmate home resolved lands on Setup, not
@@ -1195,6 +1201,11 @@ final class AppShellController: NSViewController {
         embed(controller.view)
         controller.view.isHidden = true
     }
+
+    /// The set the Home canvas's own "N live sessions" reads, resolved through
+    /// the real closure (audit 2 §4.6). A test that rebuilt the predicate
+    /// would be asserting its own copy rather than the shipped one.
+    func debugConnectedHostIDs() -> Set<UUID> { homeCanvas.connectedHostIDs?() ?? [] }
 
     /// Drives the real Recents click handler (finding 4.3), which is
     /// `private` because the bar's own popover is its only production caller.

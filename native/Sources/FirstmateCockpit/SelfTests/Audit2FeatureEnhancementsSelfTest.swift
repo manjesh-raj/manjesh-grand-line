@@ -250,12 +250,23 @@ enum Audit2FeatureEnhancementsSelfTest {
                 return "isHostConnected reported a restored page as connected - F9 would take "
                     + "its immediate-send branch and type into a terminal with no process"
             }
+            // Same overclaim, same fix: every reader of this set phrases its
+            // count as *live* (the canvas's "N live sessions" subtitle, the
+            // Console module's "N host live" chip, an `.ok` peek row per
+            // host), so it must follow the process too.
+            guard shell.debugConnectedHostIDs().isEmpty else {
+                return "the canvas's connected-host set counts a restored page, so the hub "
+                    + "would report a live session with no process behind it"
+            }
             // And it has to flip once something genuinely starts, or F9 would
             // pointlessly delay every send to an already-open host.
             page.runAppearanceWorkIfUnlocked()
             guard page.hasLiveSession else { return "the page's tab never started" }
             guard shell.isHostConnected(host) else {
                 return "isHostConnected stayed false for a page with a live process"
+            }
+            guard shell.debugConnectedHostIDs() == [host.id] else {
+                return "the canvas's connected-host set did not pick up a genuinely live page"
             }
             return nil
         }
