@@ -662,6 +662,14 @@ final class FleetController: NSViewController {
     /// not fully succeed. Overview's "ready to merge" tile is a
     /// should-I-act-on-something instrument, so a failed scan must read as
     /// "unknown", not as a confident `0`.
+    /// GL-P3: `render` runs on every Overview refresh, and building a
+    /// localized weekday formatter per render is pure allocation.
+    private static let weekdayFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.setLocalizedDateFormatFromTemplate("EEEE")
+        return f
+    }()
+
     private func render(snapshot: FleetSnapshot, mergedPRs: [MergedPR]?, prFetchFailure: String? = nil) {
         if !hasLoadedOnce {
             hasLoadedOnce = true
@@ -682,10 +690,8 @@ final class FleetController: NSViewController {
         // Daylight §5.4: one definition of the greeting, shared with the home
         // canvas - see `FleetGreeting`'s own header for why that matters.
         greetingLabel.stringValue = FleetGreeting.greeting(captain: snapshot.captain)
-        let df = DateFormatter()
-        df.setLocalizedDateFormatFromTemplate("EEEE")
         subtitleLabel.stringValue = snapshot.homeOk
-            ? "\(df.string(from: Date())) \u{00B7} the fleet is yours"
+            ? "\(Self.weekdayFormatter.string(from: Date())) \u{00B7} the fleet is yours"
             : "Setup isn't finished yet"
 
         renderBanner(needs: needs, working: working, readyCount: mergedPRs?.count ?? 0,

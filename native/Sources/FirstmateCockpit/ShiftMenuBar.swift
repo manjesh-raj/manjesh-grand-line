@@ -259,13 +259,18 @@ private final class ShiftMenuBarPopoverController: NSViewController {
         nextFollowUpTitle.textColor = HelmTheme.mutedInk(theme)
     }
 
+    /// GL-P3: this popover re-renders on every open and on every store change.
+    private static let followUpTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.setLocalizedDateFormatFromTemplate("jm")
+        return f
+    }()
+
     func update(tasksToday: Int, nextFollowUp: ShiftFollowUp?, nextFollowUpDate: Date?) {
         applyTheme(ThemeManager.shared.theme)
         tasksRow.setValue("\(tasksToday)")
         if let nextFollowUp, let nextFollowUpDate {
-            let f = DateFormatter()
-            f.setLocalizedDateFormatFromTemplate("jm")
-            followUpRow.setValue(f.string(from: nextFollowUpDate))
+            followUpRow.setValue(Self.followUpTimeFormatter.string(from: nextFollowUpDate))
             nextFollowUpTitle.stringValue = nextFollowUp.title
             nextFollowUpTitle.isHidden = false
         } else {

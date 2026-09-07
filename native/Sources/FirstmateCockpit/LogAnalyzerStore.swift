@@ -378,14 +378,20 @@ final class LogAnalyzerStore {
         return nil
     }
 
+    /// GL-P3: one per saved investigation.
+    private static let directoryDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }()
+
     private func newDirectory(for investigation: LogInvestigation) -> URL {
         let calendar = Calendar(identifier: .gregorian)
         let year = String(calendar.component(.year, from: investigation.createdAt))
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.dateFormat = "yyyy-MM-dd"
-        let name = "\(formatter.string(from: investigation.createdAt))-\(Self.slugify(investigation.title))"
+        let name = "\(Self.directoryDateFormatter.string(from: investigation.createdAt))"
+            + "-\(Self.slugify(investigation.title))"
         return investigationsDir
             .appendingPathComponent(year, isDirectory: true)
             .appendingPathComponent(name, isDirectory: true)
@@ -408,27 +414,40 @@ final class LogAnalyzerStore {
         return String(slug.prefix(60))
     }
 
+    /// GL-P3: two cached formatters rather than one mutated per branch - this
+    /// method only ever uses these two formats, and it renders once per row of
+    /// the investigation history.
+    ///
+    /// `Calendar.current` is still read per call for the branch decisions -
+    /// that is what decides *which* branch a date falls into. The formatters
+    /// snapshot it once at first use, which is the one behavioural difference
+    /// from the per-call version and is what every other cached formatter in
+    /// this app already does (`FleetLogFeed`'s pair, `IncidentModels`'
+    /// `clockFormatter`): a captain who changes their calendar system
+    /// mid-session would need a relaunch for these two strings.
+    private static let clockFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar.current
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
+    private static let dayAndClockFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.calendar = Calendar.current
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "MMM d, HH:mm"
+        return f
+    }()
+
     static func relativeTime(from date: Date) -> String {
         let calendar = Calendar.current
-        let formatter = DateFormatter()
-        formatter.calendar = calendar
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-
-        if calendar.isDateInToday(date) {
-            formatter.dateFormat = "HH:mm"
-            return "Today, \(formatter.string(from: date))"
-        }
-        if calendar.isDateInYesterday(date) {
-            formatter.dateFormat = "HH:mm"
-            return "Yesterday, \(formatter.string(from: date))"
-        }
+        if calendar.isDateInToday(date) { return "Today, \(clockFormatter.string(from: date))" }
+        if calendar.isDateInYesterday(date) { return "Yesterday, \(clockFormatter.string(from: date))" }
         let days = calendar.dateComponents([.day], from: date, to: Date()).day ?? 0
-        if days < 7 {
-            formatter.dateFormat = "HH:mm"
-            return "\(days) days ago, \(formatter.string(from: date))"
-        }
-        formatter.dateFormat = "MMM d, HH:mm"
-        return formatter.string(from: date)
+        if days < 7 { return "\(days) days ago, \(clockFormatter.string(from: date))" }
+        return dayAndClockFormatter.string(from: date)
     }
 }
 

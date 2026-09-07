@@ -85,9 +85,15 @@ enum DocsGridSupport {
         return plate
     }
 
+    /// GL-P3: called once per card, and `HelmResponsiveGrid` re-flows the whole
+    /// grid on every window resize - so this ran per card per resize frame.
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        return f
+    }()
+
     static func relativeDate(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return formatter.localizedString(for: date, relativeTo: Date())
+        relativeFormatter.localizedString(for: date, relativeTo: Date())
     }
 }

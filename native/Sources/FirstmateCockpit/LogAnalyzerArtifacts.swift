@@ -32,12 +32,17 @@ enum LogAnalyzerArtifacts {
 
     // MARK: - Shared helpers
 
-    private static func timestampLine(_ date: Date) -> String {
+    /// GL-P3: every artifact this file renders stamps at least one line.
+    private static let timestampFormatter: DateFormatter = {
         let f = DateFormatter()
         f.calendar = Calendar(identifier: .gregorian)
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyy-MM-dd HH:mm"
-        return f.string(from: date)
+        return f
+    }()
+
+    private static func timestampLine(_ date: Date) -> String {
+        timestampFormatter.string(from: date)
     }
 
     private static func bulletList(_ items: [String], emptyText: String) -> String {
