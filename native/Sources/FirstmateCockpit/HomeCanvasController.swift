@@ -906,51 +906,14 @@ final class HomeCanvasController: NSViewController {
         content.body = .note("Browse pods, deployments and events read-only, or tail several pods at once - through a session you've already authenticated.")
     }
 
-    /// `fm/implement-grand-line-secrets-vault-poneg-ad`: this card used to
-    /// render Automic Vault's secret *names* count from
-    /// `BackgroundSignalsPoller.lastCounts`. That panel is Poneglyph now, under
-    /// Setup (`fillPoneglyph` below still renders exactly that number); this
-    /// card is the captain's own credential vault.
-    ///
-    /// It reads injected state and shells out to nothing - §6.1's rule, and
-    /// here it is also a security property: a canvas card must not decrypt
-    /// anything, and while the vault is locked there is genuinely nothing to
-    /// count.
+    /// Automic Vault's hardening panel, back at this app's `.vault`
+    /// destination by the captain's own later correction
+    /// (`fm/swap-vault-poneglyph-naming-in-grand-lin-1f` - see
+    /// `VaultController.swift`'s header for the full history). The number is
+    /// unchanged either way - the last snapshot `BackgroundSignalsPoller`
+    /// took, never a fresh `av` shell-out (§6.1) - because what it counts did
+    /// not change, only where the page lives and what it is called.
     private func fillVault(_ content: inout HelmModuleCard.Content) {
-        guard let vault = credentialVaultState?() else {
-            content.subtitle = "encrypted credentials"
-            content.body = .note("Open the Vault to unlock it.")
-            return
-        }
-        switch vault.state {
-        case .absent:
-            content.subtitle = "not set up yet"
-            content.chip = .warn("Set up")
-            content.body = .note("Store your tokens and passwords here, encrypted, and get them back on any machine.")
-        case .unreadable:
-            content.subtitle = "unavailable"
-            content.chip = .bad("Unreadable")
-            content.body = .note("The vault file could not be read. Nothing has been overwritten - open the Vault for details.")
-        case .present:
-            content.subtitle = "encrypted credentials"
-            guard vault.isUnlocked, let count = vault.count else {
-                content.chip = .mute("Locked")
-                content.body = .note("Unlock with your master password to reach your credentials.")
-                return
-            }
-            content.chip = .ok("Unlocked")
-            content.body = .metric(value: "\(count)",
-                                   unit: count == 1 ? "credential" : "credentials",
-                                   note: "Reveal or copy any of them in one click.")
-        }
-    }
-
-    /// Automic Vault's hardening panel, which used to be this app's `.vault`
-    /// destination and is now Poneglyph under Setup. The number is unchanged -
-    /// the last snapshot `BackgroundSignalsPoller` took, never a fresh `av`
-    /// shell-out (§6.1) - because what it counts did not change, only where the
-    /// page lives and what it is called.
-    private func fillPoneglyph(_ content: inout HelmModuleCard.Content) {
         let counts = BackgroundSignalsPoller.shared.lastCounts
         content.subtitle = "names only"
         guard let secrets = counts.vaultSecrets else {
@@ -967,6 +930,44 @@ final class HomeCanvasController: NSViewController {
         content.body = .metric(value: "\(secrets)",
                                unit: secrets == 1 ? "secret" : "secrets",
                                note: "Hardened in Automic Vault's Keychain. Values never leave it.")
+    }
+
+    /// `fm/implement-grand-line-secrets-vault-poneg-ad`: the captain's own
+    /// credential vault, named Poneglyph and living under Setup as its fifth
+    /// tab since `fm/swap-vault-poneglyph-naming-in-grand-lin-1f` gave
+    /// `.vault`/Stores back to Automic Vault's hardening panel above.
+    ///
+    /// It reads injected state and shells out to nothing - §6.1's rule, and
+    /// here it is also a security property: a canvas card must not decrypt
+    /// anything, and while the vault is locked there is genuinely nothing to
+    /// count.
+    private func fillPoneglyph(_ content: inout HelmModuleCard.Content) {
+        guard let vault = credentialVaultState?() else {
+            content.subtitle = "encrypted credentials"
+            content.body = .note("Open Poneglyph to unlock it.")
+            return
+        }
+        switch vault.state {
+        case .absent:
+            content.subtitle = "not set up yet"
+            content.chip = .warn("Set up")
+            content.body = .note("Store your tokens and passwords here, encrypted, and get them back on any machine.")
+        case .unreadable:
+            content.subtitle = "unavailable"
+            content.chip = .bad("Unreadable")
+            content.body = .note("The vault file could not be read. Nothing has been overwritten - open Poneglyph for details.")
+        case .present:
+            content.subtitle = "encrypted credentials"
+            guard vault.isUnlocked, let count = vault.count else {
+                content.chip = .mute("Locked")
+                content.body = .note("Unlock with your master password to reach your credentials.")
+                return
+            }
+            content.chip = .ok("Unlocked")
+            content.body = .metric(value: "\(count)",
+                                   unit: count == 1 ? "credential" : "credentials",
+                                   note: "Reveal or copy any of them in one click.")
+        }
     }
 
     /// `fm/grandline-docs-split-runbooks-postmortems` narrowed this card to

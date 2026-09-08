@@ -51,7 +51,7 @@ final class CredentialVaultDetailController: NSViewController {
     override func loadView() {
         let sheet = HelmFormSheet(title: credential.title,
                                   scrolls: true,
-                                  domainHue: RailDestination.vault.domainHue)
+                                  domainHue: RailDestination.poneglyph.domainHue)
         form = sheet
         view = sheet
 
@@ -79,11 +79,12 @@ final class CredentialVaultDetailController: NSViewController {
         copyButton.target = self
         copyButton.action = #selector(copyClicked)
         copyButton.toolTip = "Copy the value to the clipboard - does not show it on screen"
-        // `.violet`, the Vault's own hue, so the one primary action on this
-        // sheet reads as belonging to this page rather than as a generic accent
-        // button. Set here rather than at construction because `domainHue`
-        // re-points a `.primary`'s fill on every palette.
-        copyButton.domainHue = RailDestination.vault.domainHue
+        // Poneglyph's own hue (`RailDestination.poneglyph.domainHue`), so the
+        // one primary action on this sheet reads as belonging to this page
+        // rather than as a generic accent button. Set here rather than at
+        // construction because `domainHue` re-points a `.primary`'s fill on
+        // every palette.
+        copyButton.domainHue = RailDestination.poneglyph.domainHue
 
         let actionRow = NSStackView(views: [revealButton, copyButton])
         actionRow.orientation = .horizontal

@@ -137,12 +137,13 @@ final class AppShellController: NSViewController {
     /// The Sticky Board's own store - one instance, for the reason its own
     /// declaration gives.
     var stickyBoardStore: StickyBoardStore { stickyBoard.store }
-    /// `fm/implement-grand-line-secrets-vault-poneg-ad`: the `.vault`
-    /// destination is the captain's own credential vault now. Automic Vault's
-    /// hardening panel is `poneglyph` below, under Setup - see
-    /// `PoneglyphController.swift`'s header for the captain's decision.
-    private let vault = CredentialVaultController()
-    private let poneglyph = PoneglyphController()
+    /// `fm/swap-vault-poneglyph-naming-in-grand-lin-1f`: the `.vault`
+    /// destination is Automic Vault's hardening panel again (`vault`,
+    /// `VaultController`), and the captain's own personal credential vault is
+    /// `poneglyph` below, under Setup, labeled "Poneglyph" - see
+    /// `VaultController.swift`'s header for the full history of this swap.
+    private let vault = VaultController()
+    private let poneglyph = CredentialVaultController()
     private let dictation: DictationController
     /// `fm/grandline-schedules-sidebar-move`: F11's Schedules card, promoted
     /// off the Automation page onto its own rail destination - see
@@ -670,11 +671,11 @@ final class AppShellController: NSViewController {
             self?.runInConsole(label: label, command: command, completion: completion)
         }
         // fm/grandline-vault-tab: `av save`/`av inject` both need a real
-        // interactive terminal (see `PoneglyphController`'s header) - same
+        // interactive terminal (see `VaultController`'s header) - same
         // one-shot Console command-tab mechanism as every other
         // interactive/sudo action in this app.
-        poneglyph.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
-        poneglyph.onRunCommandTracked = { [weak self] label, command, completion in
+        vault.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
+        vault.onRunCommandTracked = { [weak self] label, command, completion in
             self?.runInConsole(label: label, command: command, completion: completion)
         }
         // fm/grandline-devops-command-library-phase2: the Command Library's
@@ -863,7 +864,7 @@ final class AppShellController: NSViewController {
         // inside the ciphertext.
         homeCanvas.credentialVaultState = { [weak self] in
             guard let self else { return (.absent, false, nil) }
-            let store = self.vault.credentialStore
+            let store = self.poneglyph.credentialStore
             return (store.loadState(), store.isUnlocked, store.isUnlocked ? store.credentials.count : nil)
         }
 
@@ -956,10 +957,12 @@ final class AppShellController: NSViewController {
         // two separate passwords), but the app locking means he has walked
         // away - so an unlocked vault behind the overlay must not still be
         // unlocked when he comes back. This is a *view-side* re-lock rather
-        // than an `AppLockedSurface` case: the vault page is a subview of this
-        // window, so the overlay already blocks reaching it; what has to happen
-        // is dropping the derived key and every decrypted value from memory.
-        vault.lockForAppLock()
+        // than an `AppLockedSurface` case: the vault page (now `poneglyph`,
+        // labeled "Poneglyph" - see `VaultController.swift`'s header for why)
+        // is a subview of this window, so the overlay already blocks reaching
+        // it; what has to happen is dropping the derived key and every
+        // decrypted value from memory.
+        poneglyph.lockForAppLock()
         lockScreen.view.isHidden = false
         // E4: re-add what `hideLock` removed. A re-lock does not necessarily
         // re-lay-out an already-sized overlay, so this cannot be left to
@@ -1776,13 +1779,15 @@ final class AppShellController: NSViewController {
     /// so a credential added seconds before quitting is still pushed to the
     /// captain's private config repo (`fm/implement-grand-line-secrets-vault-poneg-ad`).
     ///
-    /// The shell's forward for the same reason the two above are: `vault` is
-    /// `private` and the app delegate is where `applicationWillTerminate`
-    /// lives. Safe on a destination that was never mounted - the controller and
-    /// its store are built eagerly, and a store with nothing queued (or a
-    /// vault that was never unlocked) flushes nothing.
+    /// The shell's forward for the same reason the two above are: `poneglyph`
+    /// (the credential vault, labeled "Poneglyph" - see
+    /// `VaultController.swift`'s header for the full history) is `private`
+    /// and the app delegate is where `applicationWillTerminate` lives. Safe on
+    /// a destination that was never mounted - the controller and its store
+    /// are built eagerly, and a store with nothing queued (or a vault that was
+    /// never unlocked) flushes nothing.
     func shutdownCredentialVault() {
-        vault.shutdown()
+        poneglyph.shutdown()
     }
 
     func removeHostConsole(id: UUID) {

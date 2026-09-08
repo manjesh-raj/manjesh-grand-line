@@ -236,12 +236,15 @@ enum RailDestination: String, CaseIterable {
         case .automation: return "bolt.fill"
         case .githubSync: return "arrow.2.squarepath"
         // `fm/implement-grand-line-secrets-vault-poneg-ad`: a Poneglyph is a
-        // stone slab carrying inscriptions, and this page's job is the
-        // machine's own inscribed record of which tools are hardened.
-        // `doc.text.image` is the closest read for "an inscribed tablet" in
-        // this family and is unclaimed here. Verified to resolve -
-        // `NSImage(systemSymbolName:)` returns nil silently, and this app has
-        // shipped an invisible icon that way before.
+        // stone slab carrying hidden inscriptions - fitting for the captain's
+        // personal credential vault, which is what this destination shows
+        // after `fm/swap-vault-poneglyph-naming-in-grand-lin-1f` reclaimed
+        // "Vault" for Automic Vault's hardening panel (see `VaultController`'s
+        // header for the full history). `doc.text.image` is the closest read
+        // for "an inscribed tablet of secrets" in this family and is
+        // unclaimed here. Verified to resolve - `NSImage(systemSymbolName:)`
+        // returns nil silently, and this app has shipped an invisible icon
+        // that way before.
         case .poneglyph: return "doc.text.image"
         case .settings: return "gearshape"
         }

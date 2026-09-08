@@ -146,13 +146,20 @@ enum DaylightModule: String, CaseIterable {
         // updated alongside this per this file's own "change it here and in
         // that test together" rule.
         case .vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview: return .stores
-        // `fm/implement-grand-line-secrets-vault-poneg-ad`: Poneglyph is
-        // Automic Vault's hardening panel, moved out of the `.vault`
-        // destination (which is the credential vault now) into Setup - so its
-        // module belongs in Engineering beside the other four Setup pages, not
-        // in Stores where the old combined "Vault" card sat. The deliberate
-        // table change this file's own doc comment says to make together with
-        // `DaylightModuleSelfTest.checkSpaceTable`.
+        // `fm/implement-grand-line-secrets-vault-poneg-ad` moved Poneglyph
+        // (then Automic Vault's hardening panel) out of `.vault` into Setup,
+        // so its module belonged in Engineering beside the other four Setup
+        // pages rather than in Stores where the old combined "Vault" card
+        // sat. `fm/swap-vault-poneglyph-naming-in-grand-lin-1f` later swapped
+        // which feature each of the two destinations shows (Automic Vault's
+        // panel reclaimed `.vault`/Stores, the credential vault took
+        // `.poneglyph`/Engineering) - the space table itself did not need to
+        // change, since a destination's *slot* (and therefore its space) is
+        // independent of which controller happens to populate it; see
+        // `VaultController.swift`'s header for the full history. The
+        // deliberate table change this file's own doc comment says to make
+        // together with `DaylightModuleSelfTest.checkSpaceTable` still stands
+        // for any *future* space reassignment.
         case .updates, .bootstrap, .automation, .githubSync, .poneglyph, .settings: return .engineering
         }
     }

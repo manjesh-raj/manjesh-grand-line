@@ -65,12 +65,12 @@ final class CredentialVaultEditorController: NSViewController {
 
     override func loadView() {
         let isEditing = existing != nil
-        // `.teal` is the Vault destination's own domain hue, so this sheet's
-        // ribbon and its focus rings match the page it was opened from - §6.10's
+        // The Poneglyph destination's own domain hue, so this sheet's ribbon
+        // and its focus rings match the page it was opened from - §6.10's
         // own rule, and the reason `HelmFormSheet` takes a hue at all.
         let form = HelmFormSheet(title: isEditing ? "Edit credential" : "Add credential",
                                  scrolls: true,
-                                 domainHue: RailDestination.vault.domainHue)
+                                 domainHue: RailDestination.poneglyph.domainHue)
         view = form
 
         form.addLead(titleField)

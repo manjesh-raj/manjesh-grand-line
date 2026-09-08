@@ -1,16 +1,24 @@
 // Manjesh Grand Line - native macOS app.
 //
-// The `.vault` destination: the captain's personal credential vault.
+// **Poneglyph** - the captain's personal credential vault, the fifth Setup
+// tab (`SetupContainerController`/`SetupTab.poneglyph`).
 //
-// **This page replaced Automic Vault's panel here, by the captain's own
-// decision.** That panel is not gone - it moved under Setup and is renamed
-// **Poneglyph** (`PoneglyphController.swift`), his own naming call: *"Since we
-// are using lot of the ship and one piece theme, I would suggest the name of
-// the application or the feature instead of tool hardening as 'Poneglyph.'"*
-// Automic Vault's actual job (gating what a CLI tool may do with a credential)
-// is genuinely useful and unchanged; what it is not, by its own written
-// architecture decision, is a retrieval-based password manager, which is what
-// this page is. Two very different things had both been answering to "Vault".
+// **History, so the naming doesn't read as arbitrary.** This page originally
+// took over Automic Vault's `.vault` destination and was labeled "Vault"
+// itself (`fm/implement-grand-line-secrets-vault-poneg-ad`) - Automic Vault's
+// own hardening panel moved under Setup at the same time, renamed
+// **Poneglyph**, his own naming call: *"Since we are using lot of the ship and
+// one piece theme, I would suggest the name of the application or the feature
+// instead of tool hardening as 'Poneglyph.'"* After seeing the two live, the
+// captain judged that backwards - Automic Vault is the vault he already relies
+// on daily, so `fm/swap-vault-poneglyph-naming-in-grand-lin-1f` gave it back
+// the `.vault` destination and the "Vault" label (see `VaultController.swift`'s
+// header), and this page took the "Poneglyph" name in its place, moving here
+// under Setup. Automic Vault's actual job (gating what a CLI tool may do with
+// a credential) is genuinely useful and unchanged throughout; what it is not,
+// by its own written architecture decision, is a retrieval-based password
+// manager, which is what this page is. Two very different things that have
+// spent this app's history trading names, never behaviour.
 //
 // **The page has exactly two states**, and which one shows is decided by what
 // is on disk rather than by a flag: the unlock/setup gate
@@ -150,12 +158,15 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
 
         addButton.target = self
         addButton.action = #selector(addTapped)
-        addButton.domainHue = RailDestination.vault.domainHue
+        // `fm/swap-vault-poneglyph-naming-in-grand-lin-1f`: this page lives at
+        // `.poneglyph` now, not `.vault` - the hue belongs to the area a
+        // destination sits in (§2.2), so it follows the move.
+        addButton.domainHue = RailDestination.poneglyph.domainHue
         lockButton.target = self
         lockButton.action = #selector(lockTapped)
         settingsButton.target = self
         settingsButton.action = #selector(settingsTapped)
-        settingsButton.toolTip = "Vault settings and audit log"
+        settingsButton.toolTip = "Poneglyph settings and audit log"
 
         store.onChange = { [weak self] in self?.render() }
         CredentialVaultClipboard.shared.onCountdown = { [weak self] remaining in
@@ -424,7 +435,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
                     self.unlockView.clearPasswordFields()
                     self.noteInteraction()
                     self.render()
-                    Toast.show(in: self.view, message: "Vault created")
+                    Toast.show(in: self.view, message: "Poneglyph created")
                 case .failure(let error):
                     self.unlockView.showMessage(error.localizedDescription)
                 }

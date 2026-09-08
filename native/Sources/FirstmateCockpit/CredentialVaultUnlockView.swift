@@ -19,7 +19,7 @@
 //
 // **This is a plain `NSView`, not a sheet or a separate window.** It is shown
 // in place of the list inside the same destination, so a lock is a state of the
-// Vault page rather than a modal the captain has to dismiss - and so the
+// Poneglyph page rather than a modal the captain has to dismiss - and so the
 // existing whole-app lock screen (`LockScreenController`) stays the only
 // full-window gate. The two passwords are independent by the captain's own
 // decision ("Let us have different passwords for the vault as well as the
@@ -43,7 +43,7 @@ final class CredentialVaultUnlockView: NSView {
 
     private let card = HelmCard()
     private let iconTile = IconTileView(size: HelmMetrics.tileLarge, cornerRadius: 12)
-    private let titleLabel = NSTextField(labelWithString: "Vault")
+    private let titleLabel = NSTextField(labelWithString: "Poneglyph")
     private let subtitleLabel = NSTextField(wrappingLabelWithString: "")
     private let passwordField = HelmSecureTextField(placeholder: "Master password")
     private let confirmField = HelmSecureTextField(placeholder: "Confirm master password")
@@ -151,7 +151,7 @@ final class CredentialVaultUnlockView: NSView {
             passwordField.placeholderString = "Master password"
             confirmField.isHidden = false
             strengthLabel.isHidden = false
-            primaryButton.title = "Create Vault"
+            primaryButton.title = "Create Poneglyph"
             primaryButton.isHidden = false
             orLabel.isHidden = true
             touchIDButton.isHidden = true
@@ -159,7 +159,7 @@ final class CredentialVaultUnlockView: NSView {
 
         case .unlock(let touchIDAvailable):
             iconTile.configure(symbol: "lock.fill", tint: .accent)
-            titleLabel.stringValue = "Vault"
+            titleLabel.stringValue = "Poneglyph"
             subtitleLabel.stringValue = "Enter your master password to unlock."
             passwordField.isHidden = false
             passwordField.placeholderString = "Master password"
@@ -172,7 +172,7 @@ final class CredentialVaultUnlockView: NSView {
 
         case .unreadable(let reason, let backupPath):
             iconTile.configure(symbol: "exclamationmark.triangle.fill", tint: .critical)
-            titleLabel.stringValue = "Vault unavailable"
+            titleLabel.stringValue = "Poneglyph unavailable"
             subtitleLabel.stringValue = reason
             passwordField.isHidden = true
             confirmField.isHidden = true

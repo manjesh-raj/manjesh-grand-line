@@ -11,11 +11,11 @@
 // originally-planned phases are now complete).
 // Follows the same "hide, don't rebuild" body-child convention every other
 // destination uses (`AppShellController`), and the same Settings-styled card
-// layout `PoneglyphController`/`HelmCard` already established rather than
+// layout `VaultController`/`HelmCard` already established rather than
 // inventing new visual language.
 //
 // Status is read fresh from `DictationPermissions` on every `viewWillAppear`
-// (matching `PoneglyphController`/`ReviewController`'s own "refresh on appear,
+// (matching `VaultController`/`ReviewController`'s own "refresh on appear,
 // no polling" convention - PRODUCT.md's "quiet until it matters") and again
 // live whenever the shared `DictationEngine` reports a state change while
 // this page happens to be visible, so a captain watching this page while
@@ -140,7 +140,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
         root.wantsLayer = true
         view = root
 
-        // FlippedView - see PoneglyphController/ReviewController's identical
+        // FlippedView - see VaultController/ReviewController's identical
         // comment for why a plain NSView here would leave a blank gap above
         // the header until the first real render lands.
         let content = FlippedView()
@@ -306,7 +306,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
     /// visit, after the captain returns from a system permission dialog
     /// (there is no completion callback for "the user closed System
     /// Settings," so re-checking on next appear is the same honest approach
-    /// `SudoTouchIDController`/`PoneglyphController` already use for their own
+    /// `SudoTouchIDController`/`VaultController` already use for their own
     /// OS-level checks), and after `setEngineStatus` reports a change.
     func refresh() {
         cleanupSwitch.state = AppSettings.shared.dictationCleanupEnabled ? .on : .off
@@ -772,7 +772,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
         // Bug fix (fm/grandline-dictation-global-hotkey-and-theme-fixes):
         // the root view had `wantsLayer = true` (`loadView`) but this method
         // never gave that layer an explicit background color, unlike every
-        // other full-size destination (`PoneglyphController`/`FleetController`/
+        // other full-size destination (`VaultController`/`FleetController`/
         // etc. - see AGENTS.md's AppKit gotcha #8). With no background set,
         // the layer stayed transparent and whatever sat behind it in the
         // window showed through as visible seams between the panels' own

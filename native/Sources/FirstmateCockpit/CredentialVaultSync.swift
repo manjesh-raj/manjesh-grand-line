@@ -225,7 +225,7 @@ final class CredentialVaultGitSync {
         // changed ("added AWS root account") would publish to the repo's plain-
         // text history exactly the item titles the file format goes out of its
         // way to encrypt - see `CredentialVaultModels.swift`'s rule 1.
-        let commit = runGit(["commit", "-m", "Vault: encrypted credential store updated"],
+        let commit = runGit(["commit", "-m", "Poneglyph: encrypted credential store updated"],
                             cwd: workingTree, authenticated: false)
         guard commit.status == 0 else {
             setStatus(.failed("git commit failed: \(commit.stderr)"))
