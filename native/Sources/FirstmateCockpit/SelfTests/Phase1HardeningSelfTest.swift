@@ -20,6 +20,13 @@
 //    Info.plist layer is Launch Services' job. `FM_INSTANCE_LOCK_FILE` keeps
 //    the test off the captain's real lock file, so running this while the app
 //    is open is safe.
+//  - **GL-05, part two**: a candidate pid `NSRunningApplication` reports must
+//    be verified alive before it is trusted - reproduced live on the
+//    captain's own machine, where a stale answer for a genuinely-dead pid
+//    persisted for 15+ minutes and silently blocked every relaunch attempt
+//    (see `SingleInstanceGuard.otherRunningInstance()`'s own doc comment for
+//    the full incident). This part is a plain pid-liveness predicate and is
+//    tested directly, against a real spawned-then-reaped process.
 
 // GL-27: compiled into debug builds only.
 //
@@ -59,6 +66,7 @@ enum Phase1HardeningSelfTest {
         hostUnsafeFieldDetection()
         backupImportRefusesUnsafeHosts()
         instanceLockExcludesASecondHolder()
+        staleRunningApplicationPidIsNotTrusted()
 
         print(failures.isEmpty
             ? "== PASS (phase 1 hardening) =="
@@ -223,6 +231,48 @@ sys.exit(0)
             check(after.terminationStatus == 0, "the lock is genuinely released afterwards (so the check above means something)")
         } catch {
             print("  ! could not spawn the release probe - skipped")
+        }
+    }
+
+    /// GL-05, live-reproduced against the captain's real machine: after a
+    /// real instance quit cleanly (`launchd` itself confirmed the reap - exit
+    /// status 0, no signal), `NSRunningApplication.runningApplications
+    /// (withBundleIdentifier:)` kept reporting that dead pid as "running" for
+    /// more than fifteen minutes, and every relaunch attempt in that window
+    /// silently activated nothing and exited on the strength of that stale
+    /// answer - the app never opened again. `otherRunningInstance()` now
+    /// verifies a candidate pid is actually alive (`kill(pid, 0)`) before
+    /// trusting it, which is what lets `acquire()` fall through to the
+    /// (kernel-managed, never-stale) `flock` layer instead.
+    ///
+    /// `NSRunningApplication` itself needs two real bundled `.app` processes
+    /// to exercise (this file's header explains why that layer is otherwise
+    /// untestable here), but the liveness check it now leans on is a plain
+    /// pid predicate - test that directly, against a genuinely dead pid
+    /// rather than a made-up number, so a coincidentally-reused pid on the
+    /// test machine can't make this pass by accident.
+    private static func staleRunningApplicationPidIsNotTrusted() {
+        print("- SingleInstanceGuard: a dead pid from NSRunningApplication is not trusted")
+
+        check(SingleInstanceGuard.isProcessAliveForTests(ProcessInfo.processInfo.processIdentifier),
+              "this process's own pid reads as alive")
+
+        let child = Process()
+        child.executableURL = URL(fileURLWithPath: "/usr/bin/true")
+        child.standardOutput = FileHandle.nullDevice
+        child.standardError = FileHandle.nullDevice
+        do {
+            try child.run()
+            let deadPid = child.processIdentifier
+            child.waitUntilExit()
+            // `waitUntilExit()` blocks until the kernel has reaped the child,
+            // so this pid is genuinely, unambiguously dead by this point -
+            // exactly the shape `NSRunningApplication` was observed lying
+            // about live.
+            check(!SingleInstanceGuard.isProcessAliveForTests(deadPid),
+                  "a pid that has actually exited and been reaped reads as dead, not alive")
+        } catch {
+            print("  ! could not spawn the /usr/bin/true probe (\(error.localizedDescription)) - skipped")
         }
     }
 }

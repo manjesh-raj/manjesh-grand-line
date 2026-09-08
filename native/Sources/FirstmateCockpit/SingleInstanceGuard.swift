@@ -90,11 +90,51 @@ enum SingleInstanceGuard {
     /// Another process with our exact bundle identifier. `nil` for an
     /// unbundled binary (no identifier to match on) - that case falls through
     /// to the lock file, which is the whole reason the lock file exists.
+    ///
+    /// **A candidate's pid is verified alive before it is trusted.**
+    /// `NSRunningApplication.runningApplications(withBundleIdentifier:)` can
+    /// keep reporting a process that has genuinely and completely exited -
+    /// reproduced live: a real instance quit cleanly (`launchd` itself
+    /// confirmed the reap, `termination reported by launchd (0, 0, 0)`), and
+    /// this API still returned that dead pid as "running" more than fifteen
+    /// minutes later, with every relaunch attempt in between silently
+    /// `.activate()`-ing nothing and exiting on the strength of that stale
+    /// answer - the app never opened again until this check was added. A
+    /// stale candidate is discarded here rather than trusted, which is what
+    /// lets `acquire()` fall through to the `flock` layer below - kernel-
+    /// managed and therefore never subject to this staleness, since the lock
+    /// is released atomically when a process dies however it dies.
     private static func otherRunningInstance() -> NSRunningApplication? {
         guard let bundleID = Bundle.main.bundleIdentifier else { return nil }
         let me = ProcessInfo.processInfo.processIdentifier
-        return NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
-            .first { $0.processIdentifier != me }
+        let candidates = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .filter { $0.processIdentifier != me }
+        for candidate in candidates {
+            if isProcessAlive(candidate.processIdentifier) {
+                return candidate
+            }
+            let deadPid = candidate.processIdentifier
+            AppLog.lifecycle.error("single-instance: NSRunningApplication reported pid \(deadPid, privacy: .public) as running for bundle \(bundleID, privacy: .public), but the pid is dead - treating this as a stale answer and falling through to the flock check.")
+        }
+        return nil
+    }
+
+    /// Standard POSIX liveness check: send signal 0, which the kernel treats
+    /// as "just tell me whether this pid exists" and never actually delivers.
+    /// `ESRCH` is the one failure that means "no such process" - any other
+    /// failure (`EPERM`, a process owned by someone else) still means the pid
+    /// is real and alive, just not signalable by us.
+    private static func isProcessAlive(_ pid: pid_t) -> Bool {
+        kill(pid, 0) == 0 || errno != ESRCH
+    }
+
+    /// Test-only access to the liveness check `otherRunningInstance()` uses,
+    /// so the stale-pid fallback can be verified directly without needing two
+    /// real bundled `.app` processes (which `NSRunningApplication` requires -
+    /// see this file's header on why the flock layer is what the rest of this
+    /// suite exercises end to end instead).
+    static func isProcessAliveForTests(_ pid: pid_t) -> Bool {
+        isProcessAlive(pid)
     }
     #endif
 
