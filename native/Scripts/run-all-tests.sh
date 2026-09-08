@@ -223,6 +223,11 @@ NEEDS_SESSION=(
   "FM_RUN_CONSOLE_CLAUDE_USAGE_TESTS"
   "FM_RUN_TAB_FORWARD_DRAGS_TOGGLE_TESTS"
   "FM_RUN_KUBE_CONTEXT_BRIDGE_TESTS"
+  # `fm/grand-line-herdr-restart-button`: mounts a real `ConsoleController` in
+  # a real window, like its FM_RUN_CONSOLE_CLAUDE_USAGE_TESTS sibling. Its
+  # pure-logic half (FM_RUN_HERDR_RESTART_TESTS) is deliberately not here -
+  # that one runs in CI.
+  "FM_RUN_HERDR_RESTART_BUTTON_TESTS"
   # Mounts a real `DocsController` and loads a real scratch Playbook into its
   # WKWebView to prove the subresource-cache fix - a live web content process,
   # like its Whiteboard/Code Preview peers above.

@@ -2363,6 +2363,29 @@ if ProcessInfo.processInfo.environment["FM_RUN_RECENT_DESTINATIONS_TESTS"] == "1
     exit(RecentDestinationsSelfTest.run() ? 0 : 1)
 }
 
+// `fm/grand-line-herdr-restart-button`: the Console toolbar's "Herdr" restart
+// button - `HerdrStatusParser`/`HerdrSnapshotParser` against literal (and
+// live-captured) JSON fixtures, `HerdrRestartSource`'s
+// checkStatus/fetchSnapshotSummary/stopServer driven against a real,
+// disposable fake `herdr` script, and `HerdrRestartButtonStatus`'s own
+// title/tint/tooltip/isActionable mapping. Pure logic, no window, so it runs
+// in CI. See HerdrRestartSelfTest.swift's header for why the real,
+// currently-running shared herdr server is never touched by this suite.
+if ProcessInfo.processInfo.environment["FM_RUN_HERDR_RESTART_TESTS"] == "1" {
+    exit(HerdrRestartSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grand-line-herdr-restart-button`: the window-backed half - a real
+// `ConsoleController` mounted in a real `NSWindow`, proving the button's real
+// presence/absence per console kind and the real background-check/click/
+// restart pipeline against a fake `herdr` script. Window-backed, so it sits
+// in `run-all-tests.sh`'s NEEDS_SESSION list, like its
+// `FM_RUN_CONSOLE_CLAUDE_USAGE_TESTS` sibling. See
+// HerdrRestartButtonSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_HERDR_RESTART_BUTTON_TESTS"] == "1" {
+    exit(HerdrRestartButtonSelfTest.run() ? 0 : 1)
+}
+
 #endif
 
 // GL-05: refuse to be a second instance. This sits *after* every

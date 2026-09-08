@@ -820,6 +820,8 @@ extension ConsoleController {
         }
         composer.shutdown()
         quotaUsage.shutdown()
+        herdrRestartPollTimer?.invalidate()
+        herdrRestartPollTimer = nil
     }
 
     // MARK: Window title

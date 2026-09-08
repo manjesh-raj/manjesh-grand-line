@@ -110,6 +110,18 @@ extension ConsoleController {
         // it. `.shell`-tabs-only, exactly like `TabChipView.
         // forwardDragsEnabled`'s own gating - hidden for every `.ssh` tab.
         toolViews.append(dragForwardingButton)
+        // "Herdr" (`fm/grand-line-herdr-restart-button`): shared-console-only
+        // (see `herdrRestartButton`'s own doc comment for why), so it sits
+        // with Compose/Claude usage/drag-routing - the controls every
+        // console page's toolbar shows - rather than with the host-only
+        // investigation cluster below.
+        if isFirstmateConsole {
+            let button = makeLabeledButton(symbol: "arrow.triangle.2.circlepath", title: "Herdr",
+                                           tooltip: HerdrRestartButtonStatus.unknown.tooltip,
+                                           action: #selector(herdrRestartButtonClicked))
+            herdrRestartButton = button
+            toolViews.append(button)
+        }
         // Analyze Logs sits immediately after Compose, so the three
         // investigation-shaped features (SRE Lead, Compose, Analyze Logs)
         // read as one cluster - the placement the captain asked for.
