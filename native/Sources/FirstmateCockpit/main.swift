@@ -651,6 +651,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // the page's 500ms edit debounce loses those keystrokes and the final
         // commit+push never runs.
         appShell.shutdownCodePreview()
+        // `fm/implement-grand-line-secrets-vault-poneg-ad`: the credential
+        // vault's git backup is debounced the same way, so ⌘Q within that
+        // window would leave a just-added credential committed locally but not
+        // pushed - i.e. absent from the next machine, which is the one property
+        // this feature exists to guarantee.
+        appShell.shutdownCredentialVault()
         shiftHotkey.stop()
         tabShortcuts.stop()
         shiftNotifications.stop()
@@ -1396,6 +1402,20 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     if (ProcessInfo.processInfo.environment["FM_CODE_PREVIEW_DIR"] ?? "").isEmpty {
         setenv("FM_CODE_PREVIEW_DIR", scratchRoot.appendingPathComponent("code-snippets", isDirectory: true).path, 1)
     }
+    // The credential vault (`fm/implement-grand-line-secrets-vault-poneg-ad`),
+    // for exactly the reason the Sticky Board note above spells out and with
+    // more at stake than any other entry in this block: `CredentialVaultStore()`
+    // is reachable from a bare, no-argument production constructor, and with no
+    // override it resolves to `CredentialVaultGitSync.shared` - which shares
+    // `ShiftGitSync.shared`'s real working tree, a live clone of the captain's
+    // actual private `manjesh-config`. A suite that constructed one unprotected
+    // would write an encrypted vault file into that clone and mark it dirty for
+    // commit. The store honours `FM_SHIFT_DIR` as well (see its `init`), so
+    // this is the belt to that brace, and the one that covers a suite setting
+    // neither.
+    if (ProcessInfo.processInfo.environment["FM_CREDENTIAL_VAULT_DIR"] ?? "").isEmpty {
+        setenv("FM_CREDENTIAL_VAULT_DIR", scratchRoot.appendingPathComponent("grand-line-vault", isDirectory: true).path, 1)
+    }
     // The SECOND full-app audit's §7.1: `DocsRunbookStore` is the one store in
     // the `GrandLineDocs/` family that honoured only its own narrow override
     // and NOT `FM_SHIFT_DIR`, so the entry below - which the block's own
@@ -1857,10 +1877,10 @@ if ProcessInfo.processInfo.environment["FM_RUN_AUDIT2_SECURITY_LOCK_TESTS"] == "
     exit(Audit2SecurityLockSelfTest.run() ? 0 : 1)
 }
 
-// B1 (`data/grand-line-e2e-audit/report.md`): same convention, for the Vault
-// page's failed/pending read states - see VaultLoadingStateSelfTest.swift.
-if ProcessInfo.processInfo.environment["FM_RUN_VAULT_LOADING_STATE_TESTS"] == "1" {
-    exit(VaultLoadingStateSelfTest.run() ? 0 : 1)
+// B1 (`data/grand-line-e2e-audit/report.md`): same convention, for the Poneglyph
+// page's failed/pending read states - see PoneglyphLoadingStateSelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_PONEGLYPH_LOADING_STATE_TESTS"] == "1" {
+    exit(PoneglyphLoadingStateSelfTest.run() ? 0 : 1)
 }
 
 // E3 (`data/grand-line-e2e-audit/report.md`): same convention, for the
@@ -2349,6 +2369,28 @@ if ProcessInfo.processInfo.environment["FM_RUN_STICKY_BOARD_TESTS"] == "1" {
 // real Toast Undo button click. See StickyBoardViewSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_STICKY_BOARD_VIEW_TESTS"] == "1" {
     exit(StickyBoardViewSelfTest.run() ? 0 : 1)
+}
+
+// The credential vault's storage layer - PBKDF2/AES-GCM/HKDF round trips and
+// their negative cases, the store's CRUD and audit log, a byte-level grep of
+// the real file proving nothing readable (titles included) reaches disk, the
+// wrong-password and escalating-throttle branches, GL-01's refuse-to-overwrite
+// guard, older-payload decoding, a master-password re-key, the clipboard's
+// changeCount guard, and a real push to a disposable local bare repo read back
+// out of a fresh clone. See CredentialVaultSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_CREDENTIAL_VAULT_TESTS"] == "1" {
+    exit(CredentialVaultSelfTest.run() ? 0 : 1)
+}
+
+// The credential vault's window-backed half: the real destination in a real
+// window, driving the real Reveal and Copy buttons on a real list row - and
+// asserting both directions of the captain's split (Copy must not reveal,
+// Reveal must not copy). Plus the gate's three states, GL-01's
+// no-create-over-an-unreadable-vault rule, search/category filtering,
+// auto-lock, the editor round trip, and a theme sweep. See
+// CredentialVaultViewSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_CREDENTIAL_VAULT_VIEW_TESTS"] == "1" {
+    exit(CredentialVaultViewSelfTest.run() ? 0 : 1)
 }
 
 // `fm/grandline-recents-navigation`: the "Recents" dropdown on the top bar -

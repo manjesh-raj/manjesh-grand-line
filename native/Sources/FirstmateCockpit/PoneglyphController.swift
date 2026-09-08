@@ -1,57 +1,38 @@
 // Manjesh Grand Line - native macOS app.
 //
-// The "Vault" rail destination (fm/grandline-vault-tab): an in-app window
-// onto Automic Vault (https://github.com/automic-vault/automic-vault), not a
-// second secrets manager. Automic Vault stores secrets in the macOS Keychain
-// and gates their release per tool/launcher; it has no embeddable framework
-// or XPC interface, so - exactly like every other external system this app
-// already embeds (firstmate's own state files, herdr, Homebrew) - this page
-// only ever shells out to Automic Vault's real `av` CLI (`VaultData.swift`)
-// and renders what it says. Grand Line never reads the Keychain directly and
-// never stores, caches, or logs a secret value:
+// **Poneglyph** - Automic Vault's hardening panel. Renamed and relocated by the
+// captain's own decision (`fm/implement-grand-line-secrets-vault-poneg-ad`,
+// decision 1): *"Since we are using lot of the ship and one piece theme, I
+// would suggest the name of the application or the feature instead of tool
+// hardening as 'Poneglyph.'"*
 //
-//   - Listing secrets/tools (`av list`, `av doctor --json`) only ever returns
-//     names and metadata, so those run as an ordinary background `Process`
-//     exactly like `UpdatesController`'s checks do.
-//   - Saving a new secret (`av save NAME`) reads the value from the real
-//     terminal's own `/dev/tty` - confirmed live that piping a value in via
-//     stdin fails outright ("failed to open /dev/tty") - so it can only ever
-//     run inside a real interactive terminal. This page never even
-//     constructs the value; only the NAME crosses into a shell command
-//     string, and that command runs in a real Console tab
-//     (`AppShellController.runInConsole`, the exact mechanism every other
-//     sudo/interactive action in this app already uses - see Bootstrap's
-//     `onRunCommand`/Settings' Touch ID row).
-//   - Triggering an injected run (`av inject +NAME -- cmd`) is confirmed
-//     live to work fine as a background process with no controlling
-//     terminal (Automic Vault's own approval prompt, when one fires, is
-//     handled by its separate menu-bar app, not `/dev/tty`) - but this page
-//     still routes it through the same Console tab mechanism rather than
-//     capturing the command's output itself, since the command is
-//     caller-authored free text and may print anything; Grand Line must
-//     never be the thing that captures or logs a command's real output.
+// **What changed, and what deliberately did not.** This page used to be the
+// `.vault` destination and this class used to be called `VaultController`.
+// `.vault` is now the captain's personal credential vault
+// (`CredentialVaultController.swift`) - a genuinely different thing that
+// happened to share the word "Vault" - and this panel moved under Setup as its
+// fifth tab. Nothing about what it *does* changed: the same `av list` /
+// `av doctor --json` reads, the same `av save` / `av inject` Console-tab
+// mechanism, the same recipe export. Only the label and the location moved.
 //
-// Install/update reuses `UpdatesSource.check`/`.update` on the existing
-// `DependencyCatalog` "automic-vault" entry (`VaultSource.checkInstall`/
-// `.updateInstall`) - the same brew-cask mechanic the Updates and Bootstrap
-// pages already run for this tool, never a second implementation. This page
-// only calls `VaultSource.checkInstall()` headlessly (to decide whether the
-// Secrets/Verified Launchers sections have anything to show) and does NOT
-// render its own install-status row - that would duplicate the real one on
-// the Updates/Bootstrap pages (captain-flagged, fm/grandline-vault-header-
-// and-avatar-divider); go there to check/install/update `av` itself.
+// **Why the two had to be separated at all.** Automic Vault is not a
+// retrieval-based password manager and says so in its own product docs; ADR
+// 0010 in that project exists specifically to forbid ungated secret retrieval.
+// It is a good tool for a different job (authorising what a CLI may do with a
+// credential), and keeping it for that job while building the credential vault
+// independently is the whole shape of this feature's plan - see
+// `data/plan-secrets-vault-for-grand-line-34/report.md`.
 //
-// Per PRODUCT.md: quiet until it matters - no polling, no fake liveness.
-// Refresh happens on `viewWillAppear` and the header's manual Refresh
-// button only (mirrors `ReviewController`). The one thing this page draws
-// attention to unprompted is a tool `av doctor --json` itself reports has
-// real issues; with nothing outstanding, the page stays as quiet as any
-// other destination. Every status is a text label, never color alone
-// (PRODUCT.md's accessibility principle).
+// `VaultData.swift`/`VaultRecipe.swift`/`VaultRecipeGit.swift` keep their
+// existing type names on purpose. The captain's decision was about this
+// panel's user-facing label and its place in the navigation, not about renaming
+// every internal type behind it - and this app already has precedent for
+// exactly that distinction (its own display-name rebrand deliberately left the
+// bundle id, the signing identity and the Swift module name alone).
 
 import AppKit
 
-final class VaultController: NSViewController, DaylightDrillActions {
+final class PoneglyphController: NSViewController, DaylightDrillActions {
 
     /// Bootstrap/Settings' exact shape: a command that needs a real
     /// interactive terminal runs in the shared Console via

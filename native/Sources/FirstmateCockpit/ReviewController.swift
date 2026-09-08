@@ -12,7 +12,7 @@
 // state, and the same Review/Merge actions Overview's list already wires up.
 //
 // fm/grandline-review-page-redesign: brought this page up to the same design
-// language `FleetController`/`VaultController`/every other card-bearing
+// language `FleetController`/`PoneglyphController`/every other card-bearing
 // destination already uses, closing the gap a captain-supplied Lavish
 // prototype flagged (this page was still a flat list of plain pill-and-
 // button rows with no page header, no stats and no colour-by-status
@@ -78,7 +78,7 @@ final class ReviewController: NSViewController, DaylightDrillActions {
     /// row with nothing under the hero for the first second or two.
     private let subtitleLabel = NSTextField(labelWithString: "Open pull requests across your projects")
     /// A filled accent pill, matching Setup > Updates' own "Refresh"
-    /// (`FleetController`, `VaultController`, `HomeCanvasController`,
+    /// (`FleetController`, `PoneglyphController`, `HomeCanvasController`,
     /// `KubernetesController` follow the same recipe) rather than a
     /// page-local muted `.quiet` look.
     private let refreshButton = HelmButton(title: "Refresh", variant: .primary, symbol: "arrow.clockwise")

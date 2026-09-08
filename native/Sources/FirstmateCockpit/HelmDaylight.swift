@@ -552,7 +552,7 @@ extension RailDestination {
         // the destination it opens can never disagree about a hue.
         case .runbooks: return .blue
         case .postmortems: return .amber
-        case .updates, .bootstrap, .automation, .githubSync: return .amber  // Setup
+        case .updates, .bootstrap, .automation, .githubSync, .poneglyph: return .amber  // Setup
         case .settings: return .slate
         case .tools: return .slate
         // `fm/grand-line-whiteboard-excalidraw`: violet is this app's own "AI

@@ -126,6 +126,7 @@ Behaviour overrides. Everything here is optional; the app has working defaults f
 | `FM_LOG_ANALYZER_DIR` | Saved Log Analyzer investigations |
 | `FM_FLEET_LOG_DIR` | The captain's log (Overview > Log): its append-only `events.jsonl` |
 | `FM_INCIDENTS_DIR` | Incident records (F8 incident mode). Falls back to `FM_SHIFT_DIR`, then the synced clone |
+| `FM_CREDENTIAL_VAULT_DIR` | The credential vault's encrypted `vault.enc.json`. Falls back to `FM_SHIFT_DIR`, then the synced clone. Setting either bypasses git sync entirely |
 | `FM_WHISPER_MODEL_DIR` | Where the local Whisper model is downloaded |
 | `FM_INSTANCE_LOCK_FILE` | The single-instance lock file |
 | `FM_WHITEBOARD_WEB_DIR` | The vendored Excalidraw bundle the Whiteboard destination loads (checked after `Contents/Resources`, before the source-tree walk-up) |

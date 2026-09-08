@@ -342,6 +342,15 @@ enum E2ETestingPolicySelfTest {
             "ShiftStore.swift", "IncidentStore.swift", "DocsRunbookData.swift",
             "CommandLibraryStore.swift", "LogAnalyzerStore.swift",
             "StickyBoardStore.swift", "CodePreviewStore.swift",
+            // `fm/implement-grand-line-secrets-vault-poneg-ad`: this store's
+            // subpath sits at the repo root (`grand-line-vault-backup/`)
+            // rather than under `GrandLineDocs/`, but it shares
+            // `ShiftGitSync.shared`'s working tree exactly like the rest of
+            // this family - so `FM_SHIFT_DIR`, which means "keep away from the
+            // captain's real clone", has to be honoured here for the same
+            // reason. It is also the one store in the family whose stray write
+            // would be the captain's real credentials.
+            "CredentialVaultStore.swift",
         ]
         guard let dir = SelfTestSources.appSourceDirectory() else {
             print("  NOTE: app sources not found - skipping the FM_SHIFT_DIR family check")

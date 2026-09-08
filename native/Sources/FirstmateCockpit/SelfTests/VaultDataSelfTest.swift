@@ -7,7 +7,7 @@
 // (what's allowed to be spliced into a shell command unquoted), the two
 // command-string builders, and `av doctor --json` parsing against the exact
 // shape `av` returned on this machine during development (see
-// `VaultController.swift`'s header for the live probes that established the
+// `PoneglyphController.swift`'s header for the live probes that established the
 // rest of this file's behavior - `av list` returning bare names, `av save`
 // requiring a real `/dev/tty`, `av inject` working fine as a background
 // process).
