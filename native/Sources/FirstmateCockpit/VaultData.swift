@@ -10,7 +10,7 @@
 // return secret *names* and tool *metadata*, never secret material, so those
 // are safe to run here like any other read-only check (mirrors
 // `NotSyncedData.swift`'s `av hardeners --json` usage). `av save`/`av inject`
-// are NOT run from here - see `VaultController`'s header for why those go
+// are NOT run from here - see `PoneglyphController`'s header for why those go
 // through a real Console terminal tab instead.
 //
 // The `av` CLI itself is just another entry in `DependencyCatalog`

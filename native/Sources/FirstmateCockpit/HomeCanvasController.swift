@@ -82,6 +82,17 @@ final class HomeCanvasController: NSViewController {
     var consoleTabsProvider: (() -> [HelmModulePeekRow])?
     /// Which saved hosts have a live dedicated page, for the Hosts module.
     var connectedHostIDs: (() -> Set<UUID>)?
+    /// The credential vault's state for its module card, as a closure for
+    /// `connectedHostIDs`' own reason: this page must never construct a
+    /// `CredentialVaultStore` (whose `init` reaches the production git sync -
+    /// see `checkCanvasConstructsNoStores`), and it has no business holding a
+    /// reference to one either. The shell owns the vault and answers with what
+    /// it already knows.
+    ///
+    /// `count` is `nil` while the vault is locked, which is the honest answer:
+    /// the number of credentials is inside the ciphertext, and a canvas card
+    /// has no key. It is never guessed at and never rendered as zero.
+    var credentialVaultState: (() -> (state: VaultLoadState, isUnlocked: Bool, count: Int?))?
 
     // MARK: State pushed in from elsewhere
 
@@ -527,6 +538,7 @@ final class HomeCanvasController: NSViewController {
         case .logAnalyzer: fillLogAnalyzer(&content)
         case .kubernetes: fillKubernetes(&content)
         case .vault: fillVault(&content)
+        case .poneglyph: fillPoneglyph(&content)
         case .docs: fillDocs(&content)
         case .runbooks: fillRunbooks(&content)
         case .postmortems: fillPostmortems(&content)
@@ -894,18 +906,59 @@ final class HomeCanvasController: NSViewController {
         content.body = .note("Browse pods, deployments and events read-only, or tail several pods at once - through a session you've already authenticated.")
     }
 
+    /// `fm/implement-grand-line-secrets-vault-poneg-ad`: this card used to
+    /// render Automic Vault's secret *names* count from
+    /// `BackgroundSignalsPoller.lastCounts`. That panel is Poneglyph now, under
+    /// Setup (`fillPoneglyph` below still renders exactly that number); this
+    /// card is the captain's own credential vault.
+    ///
+    /// It reads injected state and shells out to nothing - §6.1's rule, and
+    /// here it is also a security property: a canvas card must not decrypt
+    /// anything, and while the vault is locked there is genuinely nothing to
+    /// count.
     private func fillVault(_ content: inout HelmModuleCard.Content) {
-        // The last snapshot the poller took, never a fresh `av` shell-out -
-        // §6.1: "the module renders the LAST snapshot, it does not shell out
-        // on canvas load".
+        guard let vault = credentialVaultState?() else {
+            content.subtitle = "encrypted credentials"
+            content.body = .note("Open the Vault to unlock it.")
+            return
+        }
+        switch vault.state {
+        case .absent:
+            content.subtitle = "not set up yet"
+            content.chip = .warn("Set up")
+            content.body = .note("Store your tokens and passwords here, encrypted, and get them back on any machine.")
+        case .unreadable:
+            content.subtitle = "unavailable"
+            content.chip = .bad("Unreadable")
+            content.body = .note("The vault file could not be read. Nothing has been overwritten - open the Vault for details.")
+        case .present:
+            content.subtitle = "encrypted credentials"
+            guard vault.isUnlocked, let count = vault.count else {
+                content.chip = .mute("Locked")
+                content.body = .note("Unlock with your master password to reach your credentials.")
+                return
+            }
+            content.chip = .ok("Unlocked")
+            content.body = .metric(value: "\(count)",
+                                   unit: count == 1 ? "credential" : "credentials",
+                                   note: "Reveal or copy any of them in one click.")
+        }
+    }
+
+    /// Automic Vault's hardening panel, which used to be this app's `.vault`
+    /// destination and is now Poneglyph under Setup. The number is unchanged -
+    /// the last snapshot `BackgroundSignalsPoller` took, never a fresh `av`
+    /// shell-out (§6.1) - because what it counts did not change, only where the
+    /// page lives and what it is called.
+    private func fillPoneglyph(_ content: inout HelmModuleCard.Content) {
         let counts = BackgroundSignalsPoller.shared.lastCounts
         content.subtitle = "names only"
         guard let secrets = counts.vaultSecrets else {
-            // The same two states as the four Setup modules above, for the
-            // same reason.
+            // The same two honest loading states as the four Setup modules, for
+            // the same reason.
             fillPendingSetupSignal(&content,
                                    checking: "Checking Automic Vault\u{2026} this card fills itself in when the first pass lands.",
-                                   stale: "Vault hasn't been checked yet this session.")
+                                   stale: "Automic Vault hasn't been checked yet this session.")
             return
         }
         if let attention = counts.vaultAttention, attention > 0 {

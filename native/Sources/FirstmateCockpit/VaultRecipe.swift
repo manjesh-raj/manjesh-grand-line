@@ -2,7 +2,7 @@
 //
 // "Backup the recipe, not the values" (fm/grandline-vault-recipe-backup): a
 // literal "export my secrets" feature was already rejected earlier in this
-// app's history (see `VaultController.swift`'s own header) as recreating the
+// app's history (see `PoneglyphController.swift`'s own header) as recreating the
 // exact plaintext-exfiltration risk Automic Vault exists to prevent. What's
 // safe and useful to back up is the *recipe* - which secrets were hardened,
 // for which tools/launchers - pure configuration, never secret material.
@@ -63,7 +63,7 @@ struct VaultRecipe: Codable, Equatable {
             // B1/H1: a failed read is `nil`, and recording it as "no secrets"
             // would bake a lie into the backup. Every caller is required to
             // refuse a degraded snapshot before reaching here - the two manual
-            // paths in `VaultController` (see `exportRecipeTapped`) and the F11
+            // paths in `PoneglyphController` (see `exportRecipeTapped`) and the F11
             // scheduled exporter (`ScheduleRunner.vaultRecipeExport`). `?? []`
             // is the belt-and-braces half, not the decision - but note the
             // scheduled caller was missing its guard for a while, so a new
@@ -119,7 +119,7 @@ enum VaultRecipeChecklist {
         var items: [VaultRecipeChecklistItem] = []
 
         let backupSecretNames = Set(recipe.secrets.map(\.name))
-        // B1: `?? []` only ever sees a complete snapshot - `VaultController`
+        // B1: `?? []` only ever sees a complete snapshot - `PoneglyphController`
         // refuses to run a checklist against a failed read, because every
         // secret would then report as "missing locally", which is the same
         // lie as "0 secrets" in a different shape.

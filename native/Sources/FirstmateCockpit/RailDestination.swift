@@ -167,7 +167,7 @@ enum RailDestination: String, CaseIterable {
     /// reachable through `show(_:)`), so nothing about routing needed a
     /// second concept.
     case homeCanvas
-    case overview, console, hosts, shift, review, logAnalyzer, kubernetes, tools, whiteboard, codePreview, stickyBoard, vault, dictation, schedules, health, docs, runbooks, postmortems, updates, bootstrap, automation, githubSync, settings
+    case overview, console, hosts, shift, review, logAnalyzer, kubernetes, tools, whiteboard, codePreview, stickyBoard, vault, dictation, schedules, health, docs, runbooks, postmortems, updates, bootstrap, automation, githubSync, poneglyph, settings
 
     var symbol: String {
         switch self {
@@ -235,6 +235,14 @@ enum RailDestination: String, CaseIterable {
         case .bootstrap: return "hammer"
         case .automation: return "bolt.fill"
         case .githubSync: return "arrow.2.squarepath"
+        // `fm/implement-grand-line-secrets-vault-poneg-ad`: a Poneglyph is a
+        // stone slab carrying inscriptions, and this page's job is the
+        // machine's own inscribed record of which tools are hardened.
+        // `doc.text.image` is the closest read for "an inscribed tablet" in
+        // this family and is unclaimed here. Verified to resolve -
+        // `NSImage(systemSymbolName:)` returns nil silently, and this app has
+        // shipped an invisible icon that way before.
+        case .poneglyph: return "doc.text.image"
         case .settings: return "gearshape"
         }
     }
@@ -264,6 +272,7 @@ enum RailDestination: String, CaseIterable {
         case .bootstrap: return "Bootstrap"
         case .automation: return "Automation"
         case .githubSync: return "GitHub Sync"
+        case .poneglyph: return "Poneglyph"
         case .settings: return "Settings"
         }
     }
@@ -308,6 +317,9 @@ enum RailDestination: String, CaseIterable {
         case .bootstrap: return .warn
         case .automation: return .accent
         case .githubSync: return .violet
+        // A Setup sub-page like the four above it. `.good` is unclaimed in this
+        // group and is the one remaining tint that collides with none of them.
+        case .poneglyph: return .good
         case .homeCanvas, .overview, .console, .hosts, .shift, .review, .logAnalyzer, .kubernetes,
              .tools, .whiteboard, .stickyBoard, .codePreview, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems, .settings: return .accent
         }
@@ -323,7 +335,7 @@ enum RailDestination: String, CaseIterable {
         // report's own placement note.
         case .kubernetes,
              .tools, .whiteboard, .codePreview, .stickyBoard, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems,
-             .updates, .bootstrap, .automation, .githubSync, .settings: return false
+             .updates, .bootstrap, .automation, .githubSync, .poneglyph, .settings: return false
         }
     }
 }

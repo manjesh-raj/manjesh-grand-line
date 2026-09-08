@@ -134,7 +134,10 @@ extension RailDestination {
         case .docs: return .docs
         case .runbooks: return .runbooks
         case .postmortems: return .postmortems
-        case .updates, .bootstrap, .automation, .githubSync: return .setup
+        // `fm/implement-grand-line-secrets-vault-poneg-ad`: Poneglyph is a
+        // fifth Setup sub-page, so it shares the container's one slot exactly
+        // like the other four - see `SetupTab`.
+        case .updates, .bootstrap, .automation, .githubSync, .poneglyph: return .setup
         case .settings: return .settings
         }
     }
@@ -166,7 +169,7 @@ extension RailDestination {
         case .whiteboard: return "An Excalidraw canvas, offline, with AI diagrams"
         case .stickyBoard: return "A freeform corkboard of quick sticky notes"
         case .codePreview: return "Paste code and read it properly, synced to your config repo"
-        case .vault: return "Secrets and verified launchers - names only"
+        case .vault: return "Your credentials, encrypted and one click from the clipboard"
         case .dictation: return "Speech to text, on this machine"
         case .schedules: return "Unattended runs of actions this app already has"
         case .health: return "How this app's own background services are doing"
@@ -176,7 +179,7 @@ extension RailDestination {
         case .docs: return "The DevOps Playbook, browsable offline"
         case .runbooks: return "Step-by-step operational procedures"
         case .postmortems: return "Incident write-ups and root causes"
-        case .updates, .bootstrap, .automation, .githubSync: return "Toolchain, machine config and fork sync"
+        case .updates, .bootstrap, .automation, .githubSync, .poneglyph: return "Toolchain, machine config, fork sync and tool hardening"
         case .settings: return "Connection, appearance, terminal, security and backup"
         }
     }

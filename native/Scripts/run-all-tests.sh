@@ -116,6 +116,10 @@ SKIP_FLAGS=(
 NEEDS_SESSION=(
   # The AppKit-expert audit fixes: M5 measures a real sheet footer.
   "FM_RUN_APPKIT_AUDIT_TESTS"
+  # The credential vault's UI half mounts the real `.vault` destination in a
+  # real window and clicks real Reveal/Copy buttons. Its storage/crypto half
+  # (`FM_RUN_CREDENTIAL_VAULT_TESTS`) is pure logic and deliberately NOT here.
+  "FM_RUN_CREDENTIAL_VAULT_VIEW_TESTS"
   "FM_RUN_APP_SHELL_BODY_WIDTH_TESTS"
   # The session switcher mounts a real `AppShellController` in a real window.
   "FM_RUN_SESSION_SWITCHER_TESTS"
@@ -169,7 +173,7 @@ NEEDS_SESSION=(
   "FM_RUN_NOTIFICATION_CENTER_SRE_LEAD_TESTS"
   "FM_RUN_SHIFT_ATTACHMENT_WELL_TESTS"
   "FM_RUN_TERMINAL_WRAP_REDRAW_TESTS"
-  "FM_RUN_VAULT_LOADING_STATE_TESTS"
+  "FM_RUN_PONEGLYPH_LOADING_STATE_TESTS"
   "FM_RUN_AUDIT_UI_FIXES_TESTS"
   "FM_RUN_AUDIT_PERF_FIXES_TESTS"
   # The full-app audit's UI findings: mounts a real host-page `ConsoleController`

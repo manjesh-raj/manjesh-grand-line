@@ -94,7 +94,12 @@ enum DestinationMountingSelfTest {
     }
 
     private static func test_setupGroupSharesOneSlot() -> String? {
-        let setupGroup: [RailDestination] = [.updates, .bootstrap, .automation, .githubSync]
+        // `fm/implement-grand-line-secrets-vault-poneg-ad` added `.poneglyph`:
+        // Automic Vault's hardening panel moved out of the `.vault`
+        // destination into Setup as its fifth tab. Listed explicitly rather
+        // than derived from `slot == .setup`, for this file's own reason - a
+        // test that reads the table it is checking asserts nothing.
+        let setupGroup: [RailDestination] = [.updates, .bootstrap, .automation, .githubSync, .poneglyph]
         for dest in setupGroup {
             guard dest.slot == .setup else { return "\(dest) should map to the setup slot, got \(dest.slot.rawValue)" }
             guard dest.bodyTitle == "Setup" else { return "\(dest).bodyTitle should be \"Setup\", got \"\(dest.bodyTitle)\"" }

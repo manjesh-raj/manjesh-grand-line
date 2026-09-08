@@ -37,7 +37,7 @@ import AppKit
 /// the rail flyout and this tab row can never disagree about what "Bootstrap"
 /// means.
 enum SetupTab: String, CaseIterable {
-    case updates, bootstrap, automation, githubSync
+    case updates, bootstrap, automation, githubSync, poneglyph
 
     var title: String {
         switch self {
@@ -45,6 +45,11 @@ enum SetupTab: String, CaseIterable {
         case .bootstrap: return "Bootstrap"
         case .automation: return "Automation"
         case .githubSync: return "GitHub Sync"
+        // `fm/implement-grand-line-secrets-vault-poneg-ad`: Automic Vault's
+        // hardening panel, moved here from the `.vault` destination and
+        // renamed by the captain's own decision. See
+        // `PoneglyphController.swift`'s header.
+        case .poneglyph: return "Poneglyph"
         }
     }
 
@@ -54,6 +59,7 @@ enum SetupTab: String, CaseIterable {
         case .bootstrap: return .bootstrap
         case .automation: return .automation
         case .githubSync: return .githubSync
+        case .poneglyph: return .poneglyph
         }
     }
 
@@ -63,6 +69,7 @@ enum SetupTab: String, CaseIterable {
         case .bootstrap: self = .bootstrap
         case .automation: self = .automation
         case .githubSync: self = .githubSync
+        case .poneglyph: self = .poneglyph
         default: return nil
         }
     }
@@ -74,6 +81,7 @@ final class SetupContainerController: NSViewController, DaylightDrillActions {
     let bootstrap: BootstrapController
     let automation: AutomationController
     let githubSync: GitHubSyncController
+    let poneglyph: PoneglyphController
 
     private var tabs: HelmSegmentedTabs!
     private var activeTab: SetupTab = .updates
@@ -103,12 +111,13 @@ final class SetupContainerController: NSViewController, DaylightDrillActions {
     }
 
     /// **Deliberately empty**, for the same reason Console's is (slice 2):
-    /// every one of the four sub-pages carries its own actions in its own
+    /// every one of the five sub-pages carries its own actions in its own
     /// toolbar or card header, 44pt below this header - Updates' Refresh pill
     /// (which swaps for a progress bar and its count while a sweep runs),
     /// Bootstrap's "Run full setup" (which sits on its own progress track),
     /// Automation's "Run Automation" (beside its live step line) and GitHub
-    /// Sync's "Sync All" (above the summary line it writes into). Hoisting a
+    /// Sync's "Sync All" (above the summary line it writes into), and
+    /// Poneglyph's own Refresh pill. Hoisting a
     /// copy of any of them would either duplicate a control §6.4's cluster
     /// exists to de-duplicate, or separate the button from the state it
     /// reports. The header still earns its place through the live subtitle
@@ -118,11 +127,13 @@ final class SetupContainerController: NSViewController, DaylightDrillActions {
     init(updates: UpdatesController,
          bootstrap: BootstrapController,
          automation: AutomationController,
-         githubSync: GitHubSyncController) {
+         githubSync: GitHubSyncController,
+         poneglyph: PoneglyphController) {
         self.updates = updates
         self.bootstrap = bootstrap
         self.automation = automation
         self.githubSync = githubSync
+        self.poneglyph = poneglyph
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -130,7 +141,8 @@ final class SetupContainerController: NSViewController, DaylightDrillActions {
 
     private var pageViews: [SetupTab: NSView] {
         [.updates: updates.view, .bootstrap: bootstrap.view,
-         .automation: automation.view, .githubSync: githubSync.view]
+         .automation: automation.view, .githubSync: githubSync.view,
+         .poneglyph: poneglyph.view]
     }
 
     override func loadView() {
@@ -189,6 +201,7 @@ final class SetupContainerController: NSViewController, DaylightDrillActions {
         case .bootstrap: return bootstrap
         case .automation: return automation
         case .githubSync: return githubSync
+        case .poneglyph: return poneglyph
         }
     }
 

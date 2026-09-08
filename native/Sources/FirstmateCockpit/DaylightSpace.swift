@@ -114,6 +114,7 @@ enum DaylightModule: String, CaseIterable {
     case bootstrap
     case automation
     case githubSync
+    case poneglyph
     case schedules
     case logAnalyzer
     case kubernetes
@@ -145,7 +146,14 @@ enum DaylightModule: String, CaseIterable {
         // updated alongside this per this file's own "change it here and in
         // that test together" rule.
         case .vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview: return .stores
-        case .updates, .bootstrap, .automation, .githubSync, .settings: return .engineering
+        // `fm/implement-grand-line-secrets-vault-poneg-ad`: Poneglyph is
+        // Automic Vault's hardening panel, moved out of the `.vault`
+        // destination (which is the credential vault now) into Setup - so its
+        // module belongs in Engineering beside the other four Setup pages, not
+        // in Stores where the old combined "Vault" card sat. The deliberate
+        // table change this file's own doc comment says to make together with
+        // `DaylightModuleSelfTest.checkSpaceTable`.
+        case .updates, .bootstrap, .automation, .githubSync, .poneglyph, .settings: return .engineering
         }
     }
 
@@ -171,7 +179,15 @@ enum DaylightModule: String, CaseIterable {
     var appearsOnOverview: Bool {
         switch self {
         case .tasks, .hosts, .updates, .bootstrap, .automation, .githubSync,
-             .logAnalyzer, .kubernetes, .vault, .docs, .runbooks, .postmortems, .dictation, .tools, .whiteboard, .stickyBoard, .codePreview, .settings:
+             .logAnalyzer, .kubernetes, .vault, .docs, .runbooks, .postmortems, .dictation, .tools, .whiteboard, .stickyBoard, .codePreview,
+             // `fm/implement-grand-line-secrets-vault-poneg-ad`: a *new* module
+             // has to be listed here explicitly, because the `default` below
+             // returns `true` - and `true` would put a seventh card on Overview,
+             // against the captain's own locked six-card decision. Caught by
+             // `DaylightModuleSelfTest`'s literal `overviewVisibleModules` list,
+             // which is exactly why that list is typed out rather than derived.
+             .poneglyph,
+             .settings:
             return false
         default:
             return true
@@ -222,6 +238,7 @@ enum DaylightModule: String, CaseIterable {
         case .bootstrap: return .bootstrap
         case .automation: return .automation
         case .githubSync: return .githubSync
+        case .poneglyph: return .poneglyph
         case .schedules: return .schedules
         case .logAnalyzer: return .logAnalyzer
         case .kubernetes: return .kubernetes
@@ -267,6 +284,7 @@ enum DaylightModule: String, CaseIterable {
         case .bootstrap: return "hammer.fill"
         case .automation: return "bolt.fill"
         case .githubSync: return "arrow.2.squarepath"
+        case .poneglyph: return "doc.text.image"
         case .schedules: return "clock.fill"
         case .logAnalyzer: return "text.magnifyingglass"
         case .kubernetes: return "cube.transparent"
@@ -312,6 +330,7 @@ enum DaylightModule: String, CaseIterable {
         case .bootstrap: return "Bootstrap"
         case .automation: return "Automation"
         case .githubSync: return "GitHub Sync"
+        case .poneglyph: return "Poneglyph"
         case .schedules: return "Schedules"
         case .logAnalyzer: return "Log Analyzer"
         case .kubernetes: return "Kubernetes"

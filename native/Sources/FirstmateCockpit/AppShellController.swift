@@ -137,7 +137,12 @@ final class AppShellController: NSViewController {
     /// The Sticky Board's own store - one instance, for the reason its own
     /// declaration gives.
     var stickyBoardStore: StickyBoardStore { stickyBoard.store }
-    private let vault = VaultController()
+    /// `fm/implement-grand-line-secrets-vault-poneg-ad`: the `.vault`
+    /// destination is the captain's own credential vault now. Automic Vault's
+    /// hardening panel is `poneglyph` below, under Setup - see
+    /// `PoneglyphController.swift`'s header for the captain's decision.
+    private let vault = CredentialVaultController()
+    private let poneglyph = PoneglyphController()
     private let dictation: DictationController
     /// `fm/grandline-schedules-sidebar-move`: F11's Schedules card, promoted
     /// off the Automation page onto its own rail destination - see
@@ -452,12 +457,13 @@ final class AppShellController: NSViewController {
         // icon (`ConsoleController.showFind`) and the Edit menu's `⌘F`.
         bar.onSearchTapped = { [weak self] in self?.onSearchTapped?() }
 
-        // The four Setup pages become children of `setup`, not of this
+        // The five Setup pages become children of `setup`, not of this
         // controller - `SetupContainerController.loadView` calls `addChild`
-        // for each of them, which means none of the four runs its own
+        // for each of them, which means none of the five runs its own
         // `loadView` until the Setup slot itself is first mounted.
         setup = SetupContainerController(updates: updates, bootstrap: bootstrap,
-                                         automation: automation, githubSync: githubSync)
+                                         automation: automation, githubSync: githubSync,
+                                         poneglyph: poneglyph)
         setup.onTabSelected = { _ in
             // Nothing to follow any more. Before Daylight this moved the rail
             // highlight; the drill header keeps saying "Setup" (all four pages
@@ -664,11 +670,11 @@ final class AppShellController: NSViewController {
             self?.runInConsole(label: label, command: command, completion: completion)
         }
         // fm/grandline-vault-tab: `av save`/`av inject` both need a real
-        // interactive terminal (see `VaultController`'s header) - same
+        // interactive terminal (see `PoneglyphController`'s header) - same
         // one-shot Console command-tab mechanism as every other
         // interactive/sudo action in this app.
-        vault.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
-        vault.onRunCommandTracked = { [weak self] label, command, completion in
+        poneglyph.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
+        poneglyph.onRunCommandTracked = { [weak self] label, command, completion in
             self?.runInConsole(label: label, command: command, completion: completion)
         }
         // fm/grandline-devops-command-library-phase2: the Command Library's
@@ -847,6 +853,19 @@ final class AppShellController: NSViewController {
             // no process between them.
             return Set(self.hostConsoles.filter { $0.value.hasLiveSession }.keys)
         }
+        // `fm/implement-grand-line-secrets-vault-poneg-ad`: the credential
+        // vault's card reads this rather than constructing a store of its own
+        // (`DaylightModuleSelfTest.checkCanvasConstructsNoStores` bans that,
+        // and here it would also reach the production git sync). `loadState()`
+        // is a `fileExists` plus, only on a genuine decode failure, GL-01's
+        // one-time backup - no decryption and no subprocess, so it is safe on
+        // every hub render. The count is `nil` while locked, because it is
+        // inside the ciphertext.
+        homeCanvas.credentialVaultState = { [weak self] in
+            guard let self else { return (.absent, false, nil) }
+            let store = self.vault.credentialStore
+            return (store.loadState(), store.isUnlocked, store.isUnlocked ? store.credentials.count : nil)
+        }
 
         // GL-31: a machine with no firstmate home resolved lands on Setup, not
         // on a Console tab in front of an Overview that can only report
@@ -932,6 +951,15 @@ final class AppShellController: NSViewController {
         // backstop for any future path that opens one without coming through
         // here.
         forEachConsole { $0.closeLockSensitiveSurfaces() }
+        // `fm/implement-grand-line-secrets-vault-poneg-ad`: the credential
+        // vault's own gate is independent of this one (the captain's decision:
+        // two separate passwords), but the app locking means he has walked
+        // away - so an unlocked vault behind the overlay must not still be
+        // unlocked when he comes back. This is a *view-side* re-lock rather
+        // than an `AppLockedSurface` case: the vault page is a subview of this
+        // window, so the overlay already blocks reaching it; what has to happen
+        // is dropping the derived key and every decrypted value from memory.
+        vault.lockForAppLock()
         lockScreen.view.isHidden = false
         // E4: re-add what `hideLock` removed. A re-lock does not necessarily
         // re-lay-out an already-sized overlay, so this cannot be left to
@@ -1742,6 +1770,19 @@ final class AppShellController: NSViewController {
     /// loaded while its store still commits anything genuinely queued.
     func shutdownCodePreview() {
         codePreview.shutdown()
+    }
+
+    /// Flush the credential vault's debounced backup on the way to quitting,
+    /// so a credential added seconds before quitting is still pushed to the
+    /// captain's private config repo (`fm/implement-grand-line-secrets-vault-poneg-ad`).
+    ///
+    /// The shell's forward for the same reason the two above are: `vault` is
+    /// `private` and the app delegate is where `applicationWillTerminate`
+    /// lives. Safe on a destination that was never mounted - the controller and
+    /// its store are built eagerly, and a store with nothing queued (or a
+    /// vault that was never unlocked) flushes nothing.
+    func shutdownCredentialVault() {
+        vault.shutdown()
     }
 
     func removeHostConsole(id: UUID) {

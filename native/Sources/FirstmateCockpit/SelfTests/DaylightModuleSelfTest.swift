@@ -94,7 +94,13 @@ enum DaylightModuleSelfTest {
         // same rule: a place to read a pasted snippet properly is reference
         // material, on the same shelf as the docs and runbooks it sits beside.
         .stores: [.vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview],
-        .engineering: [.updates, .bootstrap, .automation, .githubSync, .settings],
+        // `fm/implement-grand-line-secrets-vault-poneg-ad` added `.poneglyph`
+        // here: Automic Vault's hardening panel moved out of the `.vault`
+        // destination into Setup (the `.vault` card is the captain's own
+        // credential vault now), so its module moved from Stores to
+        // Engineering with it. The deliberate table change
+        // `DaylightSpace.swift`'s doc comment says to make together with this.
+        .engineering: [.updates, .bootstrap, .automation, .githubSync, .poneglyph, .settings],
     ]
 
     /// The two that appear on Overview and nowhere else.
@@ -163,8 +169,15 @@ enum DaylightModuleSelfTest {
         // six that *stay*, so a module quietly gaining an Overview card is the
         // regression this catches. Adding a module means bumping this by one
         // and saying why, which is what every line above did.
-        if trimmed.count != 18 {
-            fail("expected exactly 18 modules trimmed from Overview, got \(trimmed.count): "
+        //
+        // 18 -> 19: `fm/implement-grand-line-secrets-vault-poneg-ad` added
+        // `.poneglyph` (Automic Vault's hardening panel, now Setup's fifth
+        // tab). It is trimmed from Overview like every other Setup card - and
+        // this check is what caught it defaulting to *visible* there, which
+        // would have put a seventh card on Overview against the captain's own
+        // locked decision.
+        if trimmed.count != 19 {
+            fail("expected exactly 19 modules trimmed from Overview, got \(trimmed.count): "
                  + "\(trimmed.map(\.rawValue).sorted())", &ok)
         }
         for module in trimmed {
@@ -358,8 +371,13 @@ enum DaylightModuleSelfTest {
 
         // Engineering's own lineup, in order - the captain's second
         // refinement, stated as the list they asked for.
+        // `fm/implement-grand-line-secrets-vault-poneg-ad` added `.poneglyph`
+        // between GitHub Sync and Settings: Automic Vault's hardening panel
+        // became Setup's fifth tab, so its card joins the four Setup cards
+        // rather than staying in Stores where the old combined "Vault" card
+        // sat. `.settings` stays last, as the captain's own refinement put it.
         let engineering = DaylightModule.canvasOrder.filter { $0.isVisible(in: .engineering) }
-        let expected: [DaylightModule] = [.updates, .bootstrap, .automation, .githubSync, .settings]
+        let expected: [DaylightModule] = [.updates, .bootstrap, .automation, .githubSync, .poneglyph, .settings]
         if engineering != expected {
             fail("Engineering should show \(expected.map(\.rawValue)) in that order, got "
                  + "\(engineering.map(\.rawValue))", &ok)
@@ -740,7 +758,14 @@ enum DaylightModuleSelfTest {
         // A constructor call, not a mention: `Store()` / `Source()`.
         let banned = ["ShiftStore(", "HostStore(", "ScheduleStore(", "LogAnalyzerStore(",
                       "DocsRunbookStore(", "CommandLibraryStore(", "SnippetStore(",
-                      "SSHKeyStore(", "DictationStore(", "IncidentStore(", "FleetLogStore("]
+                      "SSHKeyStore(", "DictationStore(", "IncidentStore(", "FleetLogStore(",
+                      // `fm/implement-grand-line-secrets-vault-poneg-ad`: the
+                      // most consequential entry in this list. A
+                      // `CredentialVaultStore()` built here would reach
+                      // `CredentialVaultGitSync.shared` - the captain's real
+                      // `manjesh-config` clone - on every hub render. The card
+                      // reads injected state instead (`credentialVaultState`).
+                      "CredentialVaultStore("]
         for name in banned where code.contains(name) {
             fail("HomeCanvasController constructs a \(name.dropLast()) - it must be injected "
                  + "(see the file header: a store built here means a fetch on every hub visit)", &ok)
@@ -1304,41 +1329,51 @@ enum DaylightModuleSelfTest {
             if fanouts != 1 { fail("a changed counts publish fanned out \(fanouts) time(s), expected 1", &ok) }
             poller.unobserveCounts(probe)
 
-            // Vault and Dictation are on Stores now, likewise no longer on
-            // Overview - repeat the same warming-up -> real-count cycle there.
-            shell.selectSpace(.stores)
+            // The Automic-Vault-counts card and Dictation are no longer on
+            // Overview - repeat the same warming-up -> real-count cycle where
+            // each of them actually lives now.
+            //
+            // `fm/implement-grand-line-secrets-vault-poneg-ad` repointed the
+            // first half from `.vault` to `.poneglyph`: these three assertions
+            // are about *Automic Vault's* secret/attention counts arriving from
+            // `BackgroundSignalsPoller`, and that panel is Poneglyph under Setup
+            // now (hence Engineering, not Stores). The `.vault` card is the
+            // captain's own credential vault, whose count is inside the
+            // ciphertext and is deliberately never read from a poller.
+            shell.selectSpace(.engineering)
 
             poller.debugSetLastCompletedPassAt(nil)
             poller.debugSetCounts(BackgroundSignalsPoller.SignalCounts())
             canvas.debugRenderNow()
 
-            if let a = card(.vault) {
+            if let a = card(.poneglyph) {
                 if a.chipText != "Checking\u{2026}" {
-                    fail("Vault shows chip \(a.chipText ?? "nil") before the first pass - "
+                    fail("Poneglyph shows chip \(a.chipText ?? "nil") before the first pass - "
                          + "expected a Checking\u{2026} chip", &ok)
                 }
                 if !a.metricTexts.isEmpty {
                     fail("Vault rendered metric text \(a.metricTexts) before any pass - "
                          + "a fabricated number is exactly GL-14's failure", &ok)
                 }
-            } else { fail("no Vault card rendered before the first pass", &ok) }
+            } else { fail("no Poneglyph card rendered before the first pass", &ok) }
 
             poller.debugSetLastCompletedPassAt(Date())
             poller.debugSetCounts(.init(toolUpdates: 0, forkDrift: 0, vaultAttention: 2,
                                         setupDrift: 0, vaultSecrets: 7))
             drainMainQueue()
 
-            if let a = card(.vault) {
+            if let a = card(.poneglyph) {
                 if a.metricTexts.first != "7" {
-                    fail("Vault metric is \(a.metricTexts.first ?? "nil") after a pass reported 7 secrets", &ok)
+                    fail("Poneglyph metric is \(a.metricTexts.first ?? "nil") after a pass reported 7 secrets", &ok)
                 }
                 if a.chipText?.contains("2") != true {
-                    fail("Vault chip is \(a.chipText ?? "nil") - it should carry the 2 tools needing a look", &ok)
+                    fail("Poneglyph chip is \(a.chipText ?? "nil") - it should carry the 2 tools needing a look", &ok)
                 }
-            } else { fail("no Vault card after the pass", &ok) }
+            } else { fail("no Poneglyph card after the pass", &ok) }
 
-            // --- 2. Dictation, through the real forwarding path. Still on
-            // Stores, where Dictation now lives.
+            // --- 2. Dictation, through the real forwarding path. On Stores,
+            // where Dictation lives.
+            shell.selectSpace(.stores)
             for status in [DictationStatus.recording, .needsMicrophone, .ready] {
                 shell.setDictationEngineStatus(status)
                 drainMainQueue()
