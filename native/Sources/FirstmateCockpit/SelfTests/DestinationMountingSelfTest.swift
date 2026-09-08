@@ -95,10 +95,15 @@ enum DestinationMountingSelfTest {
 
     private static func test_setupGroupSharesOneSlot() -> String? {
         // `fm/implement-grand-line-secrets-vault-poneg-ad` added `.poneglyph`:
-        // Automic Vault's hardening panel moved out of the `.vault`
-        // destination into Setup as its fifth tab. Listed explicitly rather
-        // than derived from `slot == .setup`, for this file's own reason - a
-        // test that reads the table it is checking asserts nothing.
+        // the captain's own credential vault (Automic Vault's hardening panel
+        // at the time) moved out of the `.vault` destination into Setup as
+        // its fifth tab - unaffected by
+        // `fm/swap-vault-poneglyph-naming-in-grand-lin-1f` later swapping
+        // which feature `.vault`/`.poneglyph` each show, since the slot a
+        // destination maps to is independent of that. Listed explicitly
+        // rather than derived from `slot == .setup`, for this file's own
+        // reason - a test that reads the table it is checking asserts
+        // nothing.
         let setupGroup: [RailDestination] = [.updates, .bootstrap, .automation, .githubSync, .poneglyph]
         for dest in setupGroup {
             guard dest.slot == .setup else { return "\(dest) should map to the setup slot, got \(dest.slot.rawValue)" }

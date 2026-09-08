@@ -537,7 +537,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         // `HelmButton` are plain views with no text baseline of their own,
         // and `.firstBaseline` alignment against them dropped the badge
         // onto its own line below the title (live-caught rendering the
-        // fix). `PoneglyphController.sectionHeaderRow` uses the same `.centerY`
+        // fix). `VaultController.sectionHeaderRow` uses the same `.centerY`
         // for the identical icon+title+badge+button shape.
         row.alignment = .centerY
         row.translatesAutoresizingMaskIntoConstraints = false

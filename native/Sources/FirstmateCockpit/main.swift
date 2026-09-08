@@ -1877,10 +1877,11 @@ if ProcessInfo.processInfo.environment["FM_RUN_AUDIT2_SECURITY_LOCK_TESTS"] == "
     exit(Audit2SecurityLockSelfTest.run() ? 0 : 1)
 }
 
-// B1 (`data/grand-line-e2e-audit/report.md`): same convention, for the Poneglyph
-// page's failed/pending read states - see PoneglyphLoadingStateSelfTest.swift.
-if ProcessInfo.processInfo.environment["FM_RUN_PONEGLYPH_LOADING_STATE_TESTS"] == "1" {
-    exit(PoneglyphLoadingStateSelfTest.run() ? 0 : 1)
+// B1 (`data/grand-line-e2e-audit/report.md`): same convention, for the Vault
+// page's (Automic Vault's hardening panel) failed/pending read states - see
+// VaultLoadingStateSelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_VAULT_LOADING_STATE_TESTS"] == "1" {
+    exit(VaultLoadingStateSelfTest.run() ? 0 : 1)
 }
 
 // E3 (`data/grand-line-e2e-audit/report.md`): same convention, for the

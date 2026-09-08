@@ -2092,7 +2092,7 @@ extension LogAnalyzerController {
     /// cheap to rebuild (the three heavy lists are demand-driven tables) and
     /// a single path means two sections can never disagree about what the
     /// current analysis says - the same "rebuild the card, don't patch it"
-    /// convention `BootstrapController`/`PoneglyphController` already use.
+    /// convention `BootstrapController`/`VaultController` already use.
     func renderInvestigation() {
         updateFlowVisibility()
         renderImportBadge()

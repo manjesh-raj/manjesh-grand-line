@@ -184,7 +184,7 @@ enum DaylightDrillPageSlice4SelfTest {
             ok = false
         }
 
-        let vault = PoneglyphController()
+        let vault = VaultController()
         let vaultWindow = mount(vault)
         defer { _ = vaultWindow }
         vault.debugRender(secrets: [VaultSecret(name: "GITHUB_TOKEN"), VaultSecret(name: "AWS_KEY")],
@@ -221,7 +221,7 @@ enum DaylightDrillPageSlice4SelfTest {
         let heroFloor: CGFloat = 20
         let analyzer = makeLogAnalyzer()
         analyzer.debugRender(sampleInvestigation())
-        let vault = PoneglyphController()
+        let vault = VaultController()
         var clean = true
         for (name, page) in [("Log Analyzer", analyzer as NSViewController), ("Vault", vault)] {
             let window = mount(page)
@@ -351,7 +351,7 @@ enum DaylightDrillPageSlice4SelfTest {
         defer { ThemeManager.shared.setTheme(restore) }
         ThemeManager.shared.setTheme(daylight)
 
-        let vault = PoneglyphController()
+        let vault = VaultController()
         let window = mount(vault)
         defer { _ = window }
         vault.debugRender(secrets: [VaultSecret(name: "GITHUB_TOKEN")],
@@ -402,7 +402,7 @@ enum DaylightDrillPageSlice4SelfTest {
 
     private static func checkSecretNamesAreMono(_ ok: inout Bool) {
         print("\n-- §7: secret names render in the mono role --")
-        let vault = PoneglyphController()
+        let vault = VaultController()
         let window = mount(vault)
         defer { _ = window }
         vault.debugRender(secrets: [VaultSecret(name: "GITHUB_TOKEN")],
@@ -441,7 +441,7 @@ enum DaylightDrillPageSlice4SelfTest {
 
         let analyzer = makeLogAnalyzer()
         analyzer.debugRender(sampleInvestigation())
-        let vault = PoneglyphController()
+        let vault = VaultController()
         vault.debugRender(secrets: [VaultSecret(name: "A_VERY_LONG_SECRET_NAME_THAT_KEEPS_GOING")],
                           tools: [VaultTool(name: "aws", commands: ["aws"],
                                             status: .needsAttention(issueCount: 9))])

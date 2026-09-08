@@ -1,16 +1,20 @@
 // Manjesh Grand Line - native macOS app.
 //
-// B1 of `data/grand-line-e2e-audit/report.md`: the Poneglyph page must never
-// render a failed or still-pending `av` read as a confident "0 secrets · 0
-// verified launchers". Run with:
+// B1 of `data/grand-line-e2e-audit/report.md`: the Vault page (Automic
+// Vault's hardening panel) must never render a failed or still-pending `av`
+// read as a confident "0 secrets · 0 verified launchers". Run with:
 //
-//   swift build && FM_RUN_PONEGLYPH_LOADING_STATE_TESTS=1 .build/debug/FirstmateCockpit; echo $?
+//   swift build && FM_RUN_VAULT_LOADING_STATE_TESTS=1 .build/debug/FirstmateCockpit; echo $?
 //
-// Renamed with its subject by `fm/implement-grand-line-secrets-vault-poneg-ad`:
-// this page was the `.vault` destination and is now Poneglyph, the fifth Setup
-// tab. Nothing about what it asserts changed - the GL-14 nil-versus-empty
-// property is a property of Automic Vault's own reads, which moved with the
-// panel.
+// Renamed back to its original name, and this suite along with it, by
+// `fm/swap-vault-poneglyph-naming-in-grand-lin-1f`: this page briefly lived at
+// `.vault`, then moved under Setup as "Poneglyph"
+// (`fm/implement-grand-line-secrets-vault-poneg-ad`), then reclaimed the
+// `.vault` destination and the "Vault" name by the captain's own later
+// correction - see `VaultController.swift`'s header for the full history.
+// Nothing about what it asserts changed across any of that - the GL-14
+// nil-versus-empty property is a property of Automic Vault's own reads,
+// which moved with the panel each time.
 //
 // The bug is worth restating, because "an empty list" and "a failed fetch" are
 // the same *shape* and only different *meaning*: `VaultSource.loadSnapshot()`
@@ -34,7 +38,7 @@
 
 import AppKit
 
-enum PoneglyphLoadingStateSelfTest {
+enum VaultLoadingStateSelfTest {
 
     static func run() -> Bool {
         let cases: [(String, () -> String?)] = [
@@ -55,13 +59,13 @@ enum PoneglyphLoadingStateSelfTest {
             }
         }
         print(failures == 0
-              ? "PoneglyphLoadingStateSelfTest: all \(cases.count) cases passed"
-              : "PoneglyphLoadingStateSelfTest: \(failures)/\(cases.count) cases FAILED")
+              ? "VaultLoadingStateSelfTest: all \(cases.count) cases passed"
+              : "VaultLoadingStateSelfTest: \(failures)/\(cases.count) cases FAILED")
         return failures == 0
     }
 
-    private static func mounted() -> (NSWindow, PoneglyphController) {
-        let controller = PoneglyphController()
+    private static func mounted() -> (NSWindow, VaultController) {
+        let controller = VaultController()
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 800),
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = controller.view
@@ -185,7 +189,7 @@ enum PoneglyphLoadingStateSelfTest {
     /// reason this refusal exists, and it is invisible without a real `av`.
     private static func test_recipeGuardsSourceCheck() -> String? {
         guard let dir = SelfTestSources.appSourceDirectory(),
-              let text = try? String(contentsOf: dir.appendingPathComponent("PoneglyphController.swift"), encoding: .utf8) else {
+              let text = try? String(contentsOf: dir.appendingPathComponent("VaultController.swift"), encoding: .utf8) else {
             return nil
         }
         let guards = text.components(separatedBy: "guard !snapshot.isDegraded else {").count - 1

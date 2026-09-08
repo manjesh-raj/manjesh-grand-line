@@ -169,7 +169,14 @@ extension RailDestination {
         case .whiteboard: return "An Excalidraw canvas, offline, with AI diagrams"
         case .stickyBoard: return "A freeform corkboard of quick sticky notes"
         case .codePreview: return "Paste code and read it properly, synced to your config repo"
-        case .vault: return "Your credentials, encrypted and one click from the clipboard"
+        // `fm/swap-vault-poneglyph-naming-in-grand-lin-1f` reclaimed `.vault`
+        // for Automic Vault's hardening panel - the credential vault's own
+        // line moved to `.poneglyph` below. In practice this static string is
+        // a fallback only: `VaultController` conforms to
+        // `DaylightDrillActions` and always supplies its own live subtitle
+        // (secret/launcher counts), which `AppShellController.applyDrillHeader`
+        // prefers.
+        case .vault: return "Secret names and tool hardening status from Automic Vault"
         case .dictation: return "Speech to text, on this machine"
         case .schedules: return "Unattended runs of actions this app already has"
         case .health: return "How this app's own background services are doing"
@@ -179,7 +186,15 @@ extension RailDestination {
         case .docs: return "The DevOps Playbook, browsable offline"
         case .runbooks: return "Step-by-step operational procedures"
         case .postmortems: return "Incident write-ups and root causes"
-        case .updates, .bootstrap, .automation, .githubSync, .poneglyph: return "Toolchain, machine config, fork sync and tool hardening"
+        case .updates, .bootstrap, .automation, .githubSync: return "Toolchain, machine config and fork sync"
+        // The credential vault's own line, moved here from `.vault` by the
+        // same swap noted above. Also a fallback in practice: every Setup
+        // sub-page's slot controller is `SetupContainerController`, whose own
+        // `drillHeaderSubtitle` supplies a per-tab line (falling back to the
+        // plain tab title, "Poneglyph", for a tab whose child doesn't conform
+        // to `SetupPageSummary` - `CredentialVaultController` doesn't, the
+        // same shape `VaultController` was in when it lived here).
+        case .poneglyph: return "Your credentials, encrypted and one click from the clipboard"
         case .settings: return "Connection, appearance, terminal, security and backup"
         }
     }

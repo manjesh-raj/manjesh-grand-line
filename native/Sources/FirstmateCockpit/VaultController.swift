@@ -1,38 +1,45 @@
 // Manjesh Grand Line - native macOS app.
 //
-// **Poneglyph** - Automic Vault's hardening panel. Renamed and relocated by the
-// captain's own decision (`fm/implement-grand-line-secrets-vault-poneg-ad`,
-// decision 1): *"Since we are using lot of the ship and one piece theme, I
-// would suggest the name of the application or the feature instead of tool
-// hardening as 'Poneglyph.'"*
+// **Vault** - Automic Vault's hardening panel, moved back to the `.vault`
+// Stores destination and back to plain "Vault" by the captain's own
+// correction (`fm/swap-vault-poneglyph-naming-in-grand-lin-1f`): *"the atomic
+// vault, let us move it back to stores and keep that as vault again."*
 //
-// **What changed, and what deliberately did not.** This page used to be the
-// `.vault` destination and this class used to be called `VaultController`.
-// `.vault` is now the captain's personal credential vault
-// (`CredentialVaultController.swift`) - a genuinely different thing that
-// happened to share the word "Vault" - and this panel moved under Setup as its
-// fifth tab. Nothing about what it *does* changed: the same `av list` /
+// **History, so the naming doesn't read as arbitrary.** This page (and this
+// class) used to be called `VaultController` and lived at `.vault`. PR #344
+// (`fm/implement-grand-line-secrets-vault-poneg-ad`) then built a genuinely
+// new personal credential vault, gave it the `.vault` slot, and moved this
+// panel under Setup as a fifth tab named "Poneglyph" - two different things
+// that happened to both answer to "Vault". After seeing the two live, the
+// captain judged that backwards: this is the vault he already relies on
+// daily, so it reclaims the name and the destination. The credential vault
+// (`CredentialVaultController.swift`) now carries the "Poneglyph" label
+// instead, under Setup - see that file's own header. Nothing about what
+// *this* panel does changed across either move: the same `av list` /
 // `av doctor --json` reads, the same `av save` / `av inject` Console-tab
-// mechanism, the same recipe export. Only the label and the location moved.
+// mechanism, the same recipe export. Only the label and the location moved,
+// twice.
 //
-// **Why the two had to be separated at all.** Automic Vault is not a
+// **Why the two features are separate types at all.** Automic Vault is not a
 // retrieval-based password manager and says so in its own product docs; ADR
 // 0010 in that project exists specifically to forbid ungated secret retrieval.
 // It is a good tool for a different job (authorising what a CLI may do with a
-// credential), and keeping it for that job while building the credential vault
-// independently is the whole shape of this feature's plan - see
+// credential), and keeping it for that job while the credential vault covers
+// retrieval independently is the whole shape of that feature's plan - see
 // `data/plan-secrets-vault-for-grand-line-34/report.md`.
 //
 // `VaultData.swift`/`VaultRecipe.swift`/`VaultRecipeGit.swift` keep their
-// existing type names on purpose. The captain's decision was about this
-// panel's user-facing label and its place in the navigation, not about renaming
-// every internal type behind it - and this app already has precedent for
-// exactly that distinction (its own display-name rebrand deliberately left the
-// bundle id, the signing identity and the Swift module name alone).
+// existing type names on purpose - they never stopped being "the Vault data
+// layer" across either rename. The captain's decisions here are about this
+// panel's user-facing label and its place in the navigation, not about
+// renaming every internal type behind it - and this app already has
+// precedent for exactly that distinction (its own display-name rebrand
+// deliberately left the bundle id, the signing identity and the Swift module
+// name alone).
 
 import AppKit
 
-final class PoneglyphController: NSViewController, DaylightDrillActions {
+final class VaultController: NSViewController, DaylightDrillActions {
 
     /// Bootstrap/Settings' exact shape: a command that needs a real
     /// interactive terminal runs in the shared Console via

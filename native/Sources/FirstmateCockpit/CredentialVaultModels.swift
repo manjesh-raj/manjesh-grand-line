@@ -301,7 +301,7 @@ struct VaultAuditEvent: Codable, Equatable, Identifiable {
         case .copied: return "Copied \(name) to clipboard"
         case .unlocked: return "Unlocked the vault"
         case .locked: return "Locked the vault"
-        case .synced: return "Vault synced to manjesh-config"
+        case .synced: return "Synced to manjesh-config"
         case .passwordChanged: return "Changed the master password"
         }
     }

@@ -238,7 +238,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
         // width.
         //
         // `FleetController`, `ReviewController`, `UpdatesController`,
-        // `GitHubSyncController` and `PoneglyphController` all pin
+        // `GitHubSyncController` and `VaultController` all pin
         // `leading == +pageGutter` / `trailing == -pageGutter` with no cap.
         // Hosts was the only exception; it no longer is.
         let column = NSLayoutGuide()

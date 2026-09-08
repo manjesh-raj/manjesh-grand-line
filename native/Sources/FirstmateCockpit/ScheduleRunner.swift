@@ -516,7 +516,7 @@ enum ScheduleActions {
         }
         let snapshot = VaultSource.loadSnapshot()
         // H1/B1: the same guard the two manual export paths carry
-        // (`PoneglyphController.exportRecipeTapped`). A degraded snapshot means the
+        // (`VaultController.exportRecipeTapped`). A degraded snapshot means the
         // `av` read failed, and `VaultRecipe.build`'s `?? []` would turn that
         // into a recipe asserting this machine has zero secrets and zero
         // hardened launchers - which this action then commits and pushes to the

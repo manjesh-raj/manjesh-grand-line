@@ -1,6 +1,6 @@
 // Manjesh Grand Line - native macOS app.
 //
-// Vault settings and the full audit log - the mockup's sixth screen.
+// Poneglyph settings and the full audit log - the mockup's sixth screen.
 //
 // Four sections, in the mockup's own order: Locking, Clipboard, Backup & sync,
 // Audit log. Everything here is a property of *this vault* rather than of the
@@ -56,9 +56,9 @@ final class CredentialVaultSettingsController: NSViewController {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func loadView() {
-        let sheet = HelmFormSheet(title: "Vault settings",
+        let sheet = HelmFormSheet(title: "Poneglyph settings",
                                   scrolls: true,
-                                  domainHue: RailDestination.vault.domainHue)
+                                  domainHue: RailDestination.poneglyph.domainHue)
         form = sheet
         view = sheet
 

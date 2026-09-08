@@ -116,7 +116,7 @@ enum DaylightDrillPageSlice3SelfTest {
             automation: AutomationController(hostStore: hostStore, keyStore: keyStore,
                                              snippetStore: snippetStore, dictationStore: dictationStore),
             githubSync: GitHubSyncController(),
-            poneglyph: PoneglyphController())
+            poneglyph: CredentialVaultController())
     }
 
     /// Mounts a controller's **view** in a window - never as
