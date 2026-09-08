@@ -232,6 +232,21 @@ extension ConsoleController {
     func debugIsConsolePageOnScreenForPeriodicWork() -> Bool {
         isConsolePageOnScreenForPeriodicWork()
     }
+
+    // MARK: Test support (`fm/grand-line-herdr-restart-button`)
+    //
+    // `presentHerdrRestartConfirmation`'s own `NSAlert.runModal()` cannot be
+    // answered from a headless suite - the same reason
+    // `CommandLibraryAISelfTest` drives `commitSuggestedTemplate` rather than
+    // `applySuggestedTemplate` for `confirmAIAuthored`'s modal. This calls
+    // the real, post-confirmation `performHerdrRestart()` directly, so a
+    // suite can prove the actual `herdr server stop` -> button update ->
+    // toast pipeline against a fake `herdr` script without ever driving a
+    // real, blocking dialog. That the real click path always puts the modal
+    // in front of this call is a fact about `ConsoleController+Herdr.swift`'s
+    // own source (`presentHerdrRestartConfirmation` is `performHerdrRestart`'s
+    // only caller), not something this hook re-verifies.
+    func debugPerformHerdrRestart() { performHerdrRestart() }
 }
 
 #endif

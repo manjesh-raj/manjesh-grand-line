@@ -447,6 +447,41 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// behaviour" ask.
     var dragForwardingButton: HelmButton!
 
+    /// `fm/grand-line-herdr-restart-button`: a clean, captain-confirmed
+    /// restart of the *local* herdr server, for when herdr's CLI and server
+    /// drift out of protocol sync after an update (captain-reproduced live:
+    /// client protocol 22 vs. server protocol 20 - see `HerdrRestart.swift`'s
+    /// header for the full evidence).
+    ///
+    /// **Shared Firstmate console only** (`isFirstmateConsole`), not every
+    /// dedicated host page. herdr runs on this Mac, never on a remote SSH
+    /// target, and the captain's own framing of this feature ("the toolbar...
+    /// alongside the Herdr/Shell/Shell-N tabs") describes the shared
+    /// console's tab strip specifically - it's where the captain runs
+    /// `herdr session attach` by hand inside a `.shell` tab (see
+    /// `fm/grand-line-remove-firstmate-mirror`'s note in AGENTS.md: this app
+    /// no longer manages herdr sessions itself). `nil` on a dedicated host
+    /// page - see `ConsoleController+Herdr.swift`'s header for the whole
+    /// feature.
+    var herdrRestartButton: HelmButton?
+
+    /// The button's own current display state - see
+    /// `HerdrRestartButtonStatus`'s doc comment for what each case means and
+    /// how it maps onto the button's title/tint/tooltip/enabled state.
+    var herdrRestartStatus: HerdrRestartButtonStatus = .unknown
+
+    /// Guards against overlapping `herdr status --json` calls - a periodic
+    /// poll tick landing while the captain's own click-triggered check is
+    /// still in flight (or vice versa) would otherwise race to update the
+    /// button from two different results.
+    var herdrRestartCheckInFlight = false
+
+    /// The periodic re-check timer (`ConsoleController+Herdr.swift`'s
+    /// `startHerdrStatusPolling()`), started once in `loadView()` and torn
+    /// down in `shutdown()` - `nil` whenever this console has no herdr
+    /// button at all (a dedicated host page).
+    var herdrRestartPollTimer: Timer?
+
     /// `fm/grandline-sre-lead-per-tab`: SRE Lead's own state (session,
     /// bridge, runner, chat, phase) lives on each `TabModel.sreLead`, not
     /// here - see `SRELeadTabState.swift`'s header. `ConsoleController` only
@@ -639,6 +674,16 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
         activityObservation = AppActivityState.shared.observe { [weak self] _ in
             self?.refreshPeriodicWorkGating()
         }
+
+        // `fm/grand-line-herdr-restart-button`: the toolbar button, when this
+        // is the shared Firstmate console, already exists by now
+        // (`buildTabBar()` ran above). One initial check so it doesn't sit on
+        // its own `.unknown` placeholder until the first poll tick, then the
+        // recurring poll itself.
+        if herdrRestartButton != nil {
+            refreshHerdrStatus()
+            startHerdrStatusPolling()
+        }
     }
 
     var themeObservation: ThemeObservation?
@@ -661,6 +706,11 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
         // privileged - see `runAppearanceWorkIfUnlocked`.
         refreshPeriodicWorkGating()
         runAppearanceWorkIfUnlocked()
+        // Not privileged (a read-only local status check, same reasoning as
+        // `FleetNotifier`/`BackgroundSignalsPoller` running while locked - see
+        // AGENTS.md) - freshens the herdr badge the moment this page becomes
+        // visible again, rather than waiting for the next poll tick.
+        refreshHerdrStatus()
     }
 
     /// The three privileged things this page does when it comes on screen -
