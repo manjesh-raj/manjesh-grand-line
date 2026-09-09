@@ -1051,6 +1051,18 @@ enum DaylightModuleSelfTest {
                 fail("Overview built \(canvas.moduleCardsForTests.count) cards for "
                      + "\(overviewVisibleModules.count) modules", &ok)
             }
+            // `fm/straw-hat-voice-order-composer-polish-8dd2`: the captain's
+            // second ordering ask - Straw Hat Pirates should render LAST on
+            // Overview, after every other visible card, reversing the earlier
+            // "beside the briefing and the fleet board" placement. `canvasOrder`
+            // is `allCases` (declaration order), so this is checked as a real
+            // ordering property of the rendered list, not just membership -
+            // `visibleModulesForTests` preserves `canvasOrder`'s own order
+            // among whichever modules pass `isVisible(in: .overview)`.
+            if canvas.visibleModulesForTests.last != .strawHat {
+                fail("Straw Hat Pirates must be the LAST card on Overview, got "
+                     + "\(canvas.visibleModulesForTests.map(\.rawValue))", &ok)
+            }
             for space in DaylightSpace.allCases where space != .overview {
                 shell.selectSpace(space)
                 let visible = Set(canvas.visibleModulesForTests)

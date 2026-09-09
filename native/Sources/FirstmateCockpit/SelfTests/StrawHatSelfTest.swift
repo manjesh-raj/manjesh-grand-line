@@ -76,6 +76,7 @@ enum StrawHatSelfTest {
         checkRung1ValidatedEnvelope(&ok)
         checkRung2PartialSalvage(&ok)
         checkRung3PlainText(&ok)
+        checkToolNarrationSuppression(&ok)
         checkEnvelopeCaps(&ok)
         checkDueResolution(&ok)
         checkContextSnapshot(&ok)
@@ -237,6 +238,23 @@ enum StrawHatSelfTest {
               "the persona must name the [CONTEXT] block so it is not answered directly", &ok)
         check(persona.contains("unavailable:"),
               "the persona must know what an `unavailable:` line means - GL-14, unknown is not empty", &ok)
+
+        // `fm/straw-hat-voice-order-composer-polish-8dd2`: the captain's
+        // screenshot caught a bare, unattributed message reading "Context
+        // already says tasks_due_soon: 0, no need for a tool call." - the
+        // model narrating whether to call a phase 2.5 tool, instead of only
+        // emitting the envelope. Both places the persona says so are
+        // asserted, plus the exact leaked phrasing named as a concrete
+        // forbidden example (the same convention as "stuck it on the board"
+        // above and "adjusts straw hat" below) - a vaguer instruction that
+        // happens to avoid these particular words would still pass every
+        // other check here while leaving the actual failure mode open.
+        check(persona.contains("deciding whether to call a tool, which one, or why you skipped one is never part of the reply"),
+              "the persona must forbid narrating a tool-use decision in the reply-format section", &ok)
+        check(persona.contains("tasks_due_soon: 0, so no tool call needed"),
+              "...with the captain's own leaked phrase named as a concrete forbidden example", &ok)
+        check(persona.contains("whichever way you decide - to call a tool, or not - stays invisible"),
+              "the persona must repeat the same rule where the four tools are actually described", &ok)
     }
 
     /// Each crew member's own manner of speaking, and the clamp that keeps it
@@ -258,13 +276,13 @@ enum StrawHatSelfTest {
     /// speech, so flattening one member's voice back to a role description
     /// fails by that member's name instead of silently passing.
     private static let voiceHooks: [StrawHatMember: [String]] = [
-        .luffy: ["short, blunt, cheerful", "cool"],
-        .nami: ["bossy", "overdue, by the way", "interest"],
-        .robin: ["calm, precise", "morbid", "fufufu"],
-        .chopper: ["easily rattled", "flustered", "doctor"],
-        .zoro: ["terse to the point of rudeness", "fragments", "no idea where he is"],
-        .usopp: ["boastful", "captain usopp", "8,000 followers"],
-        .franky: ["super", "shipwright"],
+        .luffy: ["short, blunt, cheerful", "cool", "a verdict first"],
+        .nami: ["bossy", "overdue, by the way", "interest", "for once"],
+        .robin: ["calm, precise", "morbid", "fufufu", "her own dry framing"],
+        .chopper: ["easily rattled", "flustered", "doctor", "n-nobody"],
+        .zoro: ["terse to the point of rudeness", "fragments", "no idea where he is", "stays a fragment"],
+        .usopp: ["boastful", "captain usopp", "8,000 followers", "exaggerated flourish"],
+        .franky: ["super", "shipwright", "even when the answer is a small one"],
     ]
 
     private static func checkVoice(_ ok: inout Bool) {
@@ -349,6 +367,20 @@ enum StrawHatSelfTest {
               "the reply-format section must not still say there are four speaker ids", &ok)
         check(persona.contains("one of the seven ids above"),
               "...it names the real roster size", &ok)
+
+        // `fm/straw-hat-voice-order-composer-polish-8dd2`: the captain's
+        // first-real-use complaint - a live reply reading "like a competent
+        // generic assistant, not Nami" on a mundane, nothing-to-report turn,
+        // which is exactly the case terseness makes hardest to keep in
+        // character. Two clauses close that gap: the voice section names a
+        // boring answer as the real test of voice rather than an exemption
+        // from it, and the "keep it short" section says terse and neutral are
+        // not the same property, so cutting a reply down must never mean
+        // cutting the character out of it.
+        check(persona.contains("the real test of this, not an exemption from it"),
+              "the persona must say a boring answer is the test of voice, not an exemption from it", &ok)
+        check(persona.contains("terse and neutral are not the same thing"),
+              "the persona must say terseness is not licence to go flat", &ok)
     }
 
     private static func checkRoster(_ ok: inout Bool) {
@@ -1111,6 +1143,103 @@ enum StrawHatSelfTest {
             }
             check(!shown.isEmpty, "...and still show the captain something: \(reply)", &ok)
         }
+    }
+
+    /// `fm/straw-hat-voice-order-composer-polish-8dd2`: the parser-side half
+    /// of fixing the leaked-tool-narration bug the captain's screenshot
+    /// caught. `StrawHatCrew.persona` now forbids this outright (asserted in
+    /// `checkPersona`); this is the belt to that braces, for whatever a model
+    /// produces anyway.
+    ///
+    /// `StrawHatEnvelope.isLikelyToolNarration` is checked directly against
+    /// the captain's own exact fixture text and against a handful of near
+    /// misses, and - the case that matters most - against the "genuinely
+    /// both" fixture `checkRung3PlainText` already proved keeps both halves,
+    /// to prove this new, narrower check does not regress that deliberately
+    /// preserved behaviour.
+    private static func checkToolNarrationSuppression(_ ok: inout Bool) {
+        // The captain's own screenshot, verbatim.
+        check(StrawHatEnvelope.isLikelyToolNarration(
+                "Context already says tasks_due_soon: 0, no need for a tool call."),
+              "the exact leaked sentence from the captain's screenshot must be recognised", &ok)
+        // A few phrasings a model could plausibly reach for instead of the
+        // exact wording above - the check has to generalise, not memorise
+        // one sentence.
+        for phrase in [
+            "I'll skip the tool call here since the context already covers it.",
+            "No need to call shift_read for this one.",
+            "Let me check... actually, no tool call needed.",
+        ] {
+            check(StrawHatEnvelope.isLikelyToolNarration(phrase),
+                  "a near-miss phrasing of the same leak must still be caught: \(phrase)", &ok)
+        }
+
+        // The one thing this must NOT catch: `checkRung3PlainText`'s
+        // "genuinely both" fixture, a reply explaining its own reply format
+        // - real content the captain may have asked for, and the exact case
+        // `Extracted`'s own note says must keep both halves. Neither its
+        // leading nor its trailing half mentions a tool or a context field.
+        for benign in [
+            "Your reply format looks like this:",
+            "The `speaker` has to be one of the four of us.",
+            "Loguetown and Water Seven. Want the rest?",
+        ] {
+            check(!StrawHatEnvelope.isLikelyToolNarration(benign),
+                  "ordinary prose must not be flagged as tool narration: \(benign)", &ok)
+        }
+
+        // End to end: a real envelope with the leaked sentence stitched on as
+        // leading prose - the exact shape `Extracted.leading` produces -
+        // renders with only the real crew section, not two.
+        let withLeadingLeak = """
+        Context already says tasks_due_soon: 0, no need for a tool call.
+
+        ```json
+        { "sections": [ { "speaker": "nami", "text": "Nothing due today." } ] }
+        ```
+        """
+        guard case .envelope(let leadingCase) = StrawHatEnvelope.parse(withLeadingLeak) else {
+            check(false, "a real envelope survives even with leaked prose stitched in front of it", &ok)
+            return
+        }
+        check(leadingCase.count == 1,
+              "the leaked leading sentence is dropped, not rendered as its own section - got \(leadingCase.count)", &ok)
+        check(leadingCase.first?.speaker == .nami,
+              "and the real section is untouched", &ok)
+
+        // Same shape, trailing.
+        let withTrailingLeak = """
+        ```json
+        { "sections": [ { "speaker": "nami", "text": "Nothing due today." } ] }
+        ```
+
+        Context already says tasks_due_soon: 0, no need for a tool call.
+        """
+        guard case .envelope(let trailingCase) = StrawHatEnvelope.parse(withTrailingLeak) else {
+            check(false, "a real envelope survives even with leaked prose stitched after it", &ok)
+            return
+        }
+        check(trailingCase.count == 1,
+              "the leaked trailing sentence is dropped too, got \(trailingCase.count)", &ok)
+
+        // The genuinely-both fixture must still keep both halves once the
+        // narration filter is in place - the regression this whole check
+        // exists to prevent.
+        let genuinelyBoth = StrawHatEnvelope.parse("""
+        Your reply format looks like this:
+
+        ```json
+        { "sections": [ { "speaker": "nami", "text": "example" } ] }
+        ```
+
+        The `speaker` has to be one of the four of us.
+        """)
+        guard case .envelope(let bothSections) = genuinelyBoth else {
+            check(false, "the genuinely-both case must still parse as an envelope", &ok)
+            return
+        }
+        check(bothSections.count == 3,
+              "leading prose, the real section, then trailing prose - the narration filter must not have eaten one, got \(bothSections.count)", &ok)
     }
 
     private static func checkEnvelopeCaps(_ ok: inout Bool) {
