@@ -47,6 +47,20 @@
 // plumbing (`StrawHatRunner`), the reply parsing (`StrawHatEnvelope`), the
 // writes (`StrawHatProposalExecutor`) and the rendering
 // (`StrawHatChatView`).
+//
+// ## `fm/straw-hat-menubar-quick-chat-popover`
+//
+// Two additions, both deliberately thin wrappers around what this file
+// already owns rather than a second implementation of either:
+//
+//  - `send(_ text:completion:)` grew an optional completion so the menu-bar
+//    popover (`StrawHatMenuBarController`, owned by `AppDelegate`) can run a
+//    turn through this controller's own runner and transcript - see that
+//    method's own doc comment for why the popover's question is never a
+//    second, disconnected conversation.
+//  - `rosterButton`/`rosterTapped()` open `StrawHatRosterController`, a
+//    static "who does what" reference built from `StrawHatMember`'s own
+//    fixed table - not a live view, and holds no store.
 
 import AppKit
 
@@ -181,6 +195,17 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
         return button
     }()
 
+    /// `fm/straw-hat-menubar-quick-chat-popover`: "who does what" - a static
+    /// tree/org-chart reference (`StrawHatRosterController`), not a live
+    /// status view. `point.3.connected.trianglepath.dotted` is reused rather
+    /// than guessed at: it already resolves in this app (GitHub Sync's
+    /// "Repos" card, Kubernetes' session card header) and reads well for "a
+    /// group of connected nodes".
+    private lazy var rosterButton: HelmButton = HelmPageToolbar.iconButton(
+        symbol: "point.3.connected.trianglepath.dotted",
+        tooltip: "Crew roster - who does what",
+        target: self, action: #selector(rosterTapped))
+
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var themeToken: ThemeObservation?
 
@@ -239,10 +264,12 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
         return "\(aboard) \u{00B7} \(noun) \u{00B7} every write is yours to confirm"
     }
 
-    /// §6.4's action cluster: this page's one action, hoisted out of a page
+    /// §6.4's action cluster: this page's own actions, hoisted out of a page
     /// header that no longer exists. Caller-owned, so the enabled state this
-    /// controller manages on it keeps working.
-    var drillHeaderActions: [NSView] { [newButton] }
+    /// controller manages on `newButton` keeps working. The roster button
+    /// carries no state of its own - it always opens the same static
+    /// reference sheet.
+    var drillHeaderActions: [NSView] { [newButton, rosterButton] }
 
     // MARK: Building
 
@@ -337,6 +364,19 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
         chat.focusComposer()
     }
 
+    /// "Who does what" - opens the static crew roster reference
+    /// (`StrawHatRosterController`). A plain sheet, not a store-backed
+    /// controller: it reads nothing but `StrawHatMember`'s own fixed table,
+    /// so a fresh instance per press is cheap and there is nothing to keep
+    /// in sync.
+    @objc func rosterTapped() {
+        let roster = StrawHatRosterController()
+        presentAsSheet(roster)
+        #if FM_SELFTESTS
+        debugLastRoutedRoster = roster
+        #endif
+    }
+
     /// M3.3's entry point: one message from somewhere else in the app, into a
     /// **new** conversation.
     ///
@@ -361,8 +401,27 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
     /// The composer is disabled for the whole turn - `StrawHatRunner` is not
     /// built for concurrent `ask` calls and says so, the same contract
     /// `SRELeadChatView` enforces for SRE Lead.
-    func send(_ text: String) {
-        guard !turnInFlight else { return }
+    ///
+    /// `completion` is the menu-bar popover's own hook
+    /// (`fm/straw-hat-menubar-quick-chat-popover`) - it fires exactly once,
+    /// after the turn resolves, with the same sections `renderReply` just
+    /// appended to this controller's **own real transcript** on success (or
+    /// the failure message otherwise). This is deliberately not a second
+    /// turn cycle: the popover's question lands in the SAME conversation
+    /// `send(_:)` always has, so a proposal it surfaces can be confirmed
+    /// later on the real page with a working card - not re-asked from
+    /// scratch. `nil` for the composer's own call, which has nowhere else to
+    /// report to.
+    ///
+    /// A turn already in flight (from either surface - the popover and the
+    /// composer share this one runner) reports a real failure through
+    /// `completion` rather than silently doing nothing, since a popover
+    /// press with no visible effect reads as broken.
+    func send(_ text: String, completion: ((Result<[StrawHatSection], StrawHatError>) -> Void)? = nil) {
+        guard !turnInFlight else {
+            completion?(.failure(StrawHatError(message: "The crew is already answering something else - try again in a moment.")))
+            return
+        }
 
         chat.append(.captain(text))
 
@@ -373,7 +432,9 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
         guard let runner else {
             // Not a crash and not a silent no-op: the one thing this feature
             // needs that the app cannot install for the captain.
-            chat.append(.error("I can't find the `claude` command on this Mac. Install Claude Code and sign in, then try again \u{2014} Grand Line uses your own CLI login, so there's no API key to set up."))
+            let message = "I can't find the `claude` command on this Mac. Install Claude Code and sign in, then try again \u{2014} Grand Line uses your own CLI login, so there's no API key to set up."
+            chat.append(.error(message))
+            completion?(.failure(StrawHatError(message: message)))
             return
         }
 
@@ -397,10 +458,12 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
             self.chat.removeTrailingStatus()
             switch result {
             case .success(let reply):
-                self.renderReply(reply)
+                let sections = self.renderReply(reply)
+                completion?(.success(sections))
             case .failure(let error):
                 AppLog.ai.error("straw hat: turn failed: \(error.message, privacy: .public)")
                 self.chat.append(.error(error.message))
+                completion?(.failure(error))
             }
             self.chat.setInputEnabled(true)
             self.refreshNewButtonState()
@@ -425,24 +488,36 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
     /// feature exists to avoid, so it renders as a plain, unattributed note
     /// instead - honest about what happened, and still something rather than
     /// nothing (the ladder's own "the reply is never dropped" invariant).
-    private func renderReply(_ reply: String) {
+    ///
+    /// Returns exactly the sections this call appended to `chat`, in order -
+    /// `send(_:completion:)`'s own hook for the menu-bar popover, so a
+    /// second surface can build a compact summary from the same parse rather
+    /// than re-deriving it.
+    @discardableResult
+    private func renderReply(_ reply: String) -> [StrawHatSection] {
         var spoke: [StrawHatMember] = []
         var preview: String?
+        var rendered: [StrawHatSection] = []
         switch StrawHatEnvelope.parse(reply) {
         case .envelope(let sections):
             for section in sections {
                 chat.append(.crew(section))
+                rendered.append(section)
                 if let speaker = section.speaker, !spoke.contains(speaker) { spoke.append(speaker) }
                 if preview == nil { preview = Self.previewLine(of: section.text) }
             }
         case .plain(let text):
             if StrawHatEnvelope.isLikelyToolNarration(text) {
                 AppLog.ai.info("straw hat: the whole reply looked like leaked tool-use narration - showing a status note instead of crediting it to Luffy")
-                chat.append(.crew(StrawHatSection(speaker: nil, rawSpeaker: "",
-                                                  text: "That reply didn't come through cleanly - try asking again.",
-                                                  proposals: [], droppedProposalCount: 0, followup: nil)))
+                let note = StrawHatSection(speaker: nil, rawSpeaker: "",
+                                           text: "That reply didn't come through cleanly - try asking again.",
+                                           proposals: [], droppedProposalCount: 0, followup: nil)
+                chat.append(.crew(note))
+                rendered = [note]
             } else {
-                chat.append(.crew(.text(StrawHatCrew.speaker, text)))
+                let section = StrawHatSection.text(StrawHatCrew.speaker, text)
+                chat.append(.crew(section))
+                rendered = [section]
                 spoke = [StrawHatCrew.speaker]
                 preview = Self.previewLine(of: text)
             }
@@ -453,6 +528,7 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
         // an all-proposals section with empty text should leave the card's
         // previous preview alone rather than blanking it.
         if let preview { canvasState.lastLine = preview }
+        return rendered
     }
 
     /// The Overview card's one-line preview of a reply.
@@ -735,7 +811,14 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
     #if FM_SELFTESTS
     var debugChat: StrawHatChatView { chat }
     var debugNewButton: HelmButton { newButton }
+    var debugRosterButton: HelmButton { rosterButton }
     var debugTurnInFlight: Bool { turnInFlight }
+    /// The roster sheet most recently built by `rosterTapped()`, whether or
+    /// not `presentAsSheet` actually showed it on screen - the same
+    /// "no self-test in this codebase relies on a genuine sheet presentation
+    /// working headlessly" convention `debugLastRoutedEditor` already
+    /// documents.
+    var debugLastRoutedRoster: StrawHatRosterController?
     /// Whether the chat view has been built at all. The point of a lazily
     /// mounted destination is that a captain who never opens this page pays
     /// nothing for it, and a stored view property would silently undo that.

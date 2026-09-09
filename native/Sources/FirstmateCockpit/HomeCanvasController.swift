@@ -716,18 +716,27 @@ final class HomeCanvasController: NSViewController {
     /// fallback if the payload ever stops decoding - see
     /// `HelmGradientTile.configure(artwork:symbol:hue:)`.
     ///
-    /// The body is a preview of what was last said, not a count of anything:
-    /// there is no "unread" concept here (the captain is the only other
+    /// The subtitle is a fixed line, not a status readout - the captain's own
+    /// call (`fm/straw-hat-menubar-quick-chat-popover`), replacing the
+    /// earlier "Nami \u{00B7} 3 exchanges" derived-from-state text. Luffy's
+    /// signature line ("I'm gonna be King of the Pirates!"), always, in
+    /// every state - not a rotating pool, and not swapped out while a turn
+    /// is in flight either. It reads as the crew's own voice on their own
+    /// card rather than as a summary of the conversation.
+    ///
+    /// The body is still the real activity line: a preview of what was last
+    /// said, with no "unread" concept (the captain is the only other
     /// participant, and a reply they have not read is one they asked for
-    /// seconds ago), so the useful thing to show is where the conversation
-    /// got to. Nothing is invented - with no conversation yet it says so and
-    /// names what the crew can be asked for.
+    /// seconds ago). Nothing is invented - with no conversation yet it says
+    /// so and names what the crew can be asked for; while thinking, it says
+    /// that instead of a stale preview from the previous reply (the one
+    /// piece of the removed "thinking\u{2026}" subtitle worth keeping - see
+    /// below).
     private func fillStrawHat(_ content: inout HelmModuleCard.Content) {
         content.artwork = StrawHatFlag.image
-        let aboard = "\(StrawHatMember.allCases.count) aboard"
+        content.subtitle = "I'm gonna be King of the Pirates!"
 
         guard let state = strawHatState, state.exchanges > 0 || state.isThinking else {
-            content.subtitle = aboard
             // Short on purpose: a module note is one or two lines at a card's
             // real width, so the invitation is the half that has to survive -
             // "every write is yours to confirm" is already on this page's own
@@ -736,48 +745,15 @@ final class HomeCanvasController: NSViewController {
             return
         }
 
-        // **No chip on this card, and that is measured rather than an
-        // omission.** `HelmModuleCard`'s header gives its title `.defaultLow`
-        // compression resistance, so the title yields to a chip - and a real
-        // off-screen render showed "Straw Hat Pirates" (17 characters) cut to
-        // "Straw Hat Pira..." beside a chip as short as "Nami +1". Every
-        // other chipped module has a short title (`Merge queue`, `Console`,
-        // `Health`); the two longest, `Morning briefing` and this one, have
-        // no room for one. The card's own name is the more important text, so
-        // everything a chip would have said goes in the subtitle, which has
-        // the full width to itself.
         if state.isThinking {
-            content.subtitle = "thinking\u{2026}"
+            // The "thinking" signal used to live in the subtitle
+            // ("thinking\u{2026}"); with the subtitle now fixed, the body
+            // carries it instead - still real, current activity, which is
+            // exactly what this line is for.
+            content.body = .note("The crew is thinking\u{2026}")
         } else {
-            let noun = state.exchanges == 1 ? "1 exchange" : "\(state.exchanges) exchanges"
-            // Who actually spoke, not the whole roster - the roster is a
-            // constant and would say nothing about this conversation.
-            if let who = Self.speakerChip(state.lastSpeakers) {
-                content.subtitle = "\(who) \u{00B7} \(noun)"
-            } else {
-                content.subtitle = noun
-            }
+            content.body = .note(state.lastLine ?? "The crew is on it.")
         }
-
-        content.body = .note(state.lastLine ?? "The crew is on it.")
-    }
-
-    /// "Nami", or "Nami +1" when more than one crew member spoke - who led
-    /// the most recent reply.
-    ///
-    /// **A count rather than a list, and that is measured.** A real
-    /// off-screen render showed "Nami & Luffy" too wide for this card's
-    /// subtitle line beside "3 exchanges"; one name plus a count fits, says
-    /// the same thing, and keeps the lane the reply was about ("Nami" means
-    /// it was about tasks) which is the actually useful half.
-    ///
-    /// `nil` for an unattributed reply (the parser's rung 2), because naming a
-    /// crew member who did not speak is exactly the plausible-but-wrong the
-    /// whole ladder exists to avoid.
-    private static func speakerChip(_ members: [StrawHatMember]) -> String? {
-        guard let first = members.first else { return nil }
-        let others = members.count - 1
-        return others > 0 ? "\(first.displayName) +\(others)" : first.displayName
     }
 
     private func fillConsole(_ content: inout HelmModuleCard.Content) {

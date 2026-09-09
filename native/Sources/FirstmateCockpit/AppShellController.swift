@@ -2336,6 +2336,16 @@ final class AppShellController: NSViewController {
         shift.openTask(id: id)
     }
 
+    /// `fm/straw-hat-menubar-quick-chat-popover`: one turn from the crew
+    /// menu-bar popover, forwarded straight to `StrawHatController`'s own
+    /// runner and real transcript - never a second, page-less conversation.
+    /// See `StrawHatController.send(_:completion:)`'s own doc comment for
+    /// the full reasoning, including why a proposal surfaced here is still
+    /// confirmable on the real page afterward.
+    func askCrewFromMenuBar(_ text: String, completion: @escaping (Result<[StrawHatSection], StrawHatError>) -> Void) {
+        strawHat.send(text, completion: completion)
+    }
+
     /// `fm/grandline-k8s-cluster-tail`: the Shape-C deep link. A host page's
     /// own "Tail Logs" / "Cluster" toolbar buttons land here with that host
     /// already selected as the scope, so the captain reaches the same one

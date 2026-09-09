@@ -37,6 +37,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var hostsPanel = HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore)
     lazy var settingsController = SettingsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore)
     lazy var shiftMenuBar = ShiftMenuBarController(store: shiftStore)
+    // `fm/straw-hat-menubar-quick-chat-popover`: the crew's own status item,
+    // mirroring `shiftMenuBar`'s shape. `onAsk`/`onOpenFullChat` are wired
+    // below, after `appShell` exists - the forward-don't-own convention
+    // every out-of-window surface in this app follows.
+    lazy var strawHatMenuBar = StrawHatMenuBarController()
     // F5 (`fm/grandline-feature-f5-command-palette-expansion`): the `⌘K`
     // command palette, now the app's one search/verb surface - it absorbed
     // Shift's own separate ⌘⇧P palette (`ShiftSearchController`, deleted), so
@@ -456,6 +461,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // `NSStatusItem` actually appears at launch rather than only the
         // first time something else happens to reference the property.
         _ = shiftMenuBar
+
+        // `fm/straw-hat-menubar-quick-chat-popover`: same reason, same
+        // pattern. `onAsk` forwards into `AppShellController.
+        // askCrewFromMenuBar`, which is `StrawHatController.send(_:completion:)`
+        // - the crew page's own real runner and transcript, never a second
+        // conversation. `onOpenFullChat` is the popover's persistent
+        // "Open Straw Hat Pirates" affordance.
+        strawHatMenuBar.onAsk = { [weak self] text, completion in
+            self?.appShell.askCrewFromMenuBar(text, completion: completion)
+        }
+        strawHatMenuBar.onOpenFullChat = { [weak self] in self?.appShell.show(.strawHat) }
+        _ = strawHatMenuBar
 
         buildMenu()
 
@@ -1555,6 +1572,16 @@ if ProcessInfo.processInfo.environment["FM_RUN_STRAW_HAT_MCP_TESTS"] == "1" {
 // its own suite rather than more cases in the view one.
 if ProcessInfo.processInfo.environment["FM_RUN_STRAW_HAT_HANDOFF_TESTS"] == "1" {
     exit(StrawHatHandoffSelfTest.run() ? 0 : 1)
+}
+
+// `fm/straw-hat-menubar-quick-chat-popover`: the crew's menu-bar quick-chat
+// popover and the static crew roster reference sheet - two more real,
+// window-mounted views, so this joins `run-all-tests.sh`'s `NEEDS_SESSION`
+// list beside its Straw Hat Pirates siblings. See
+// `StrawHatMenuBarSelfTest.swift`'s header for why it never drives the
+// popover's real click-to-open path.
+if ProcessInfo.processInfo.environment["FM_RUN_STRAW_HAT_MENUBAR_TESTS"] == "1" {
+    exit(StrawHatMenuBarSelfTest.run() ? 0 : 1)
 }
 
 // `fm/cockpit-sre-lead-reply-formatting`: same convention, for
