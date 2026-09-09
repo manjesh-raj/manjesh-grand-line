@@ -50,6 +50,23 @@ extension FleetController {
         return store
     }
 
+    /// The three store roots phase 2.5's read-only tools are pointed at
+    /// (`StrawHatTools.swift`).
+    ///
+    /// Built here rather than inside `StrawHatCrew.setUpTools` for the same
+    /// reason `StrawHatContextSnapshot.capture` takes its stores as
+    /// parameters: this page already owns two of the three, and a tool layer
+    /// that constructed its own would both duplicate each store's root
+    /// precedence (three env branches apiece, which would drift) and risk
+    /// reaching the captain's real git-synced clone. Going through the real
+    /// stores also means a self-test's `FM_SHIFT_DIR` reaches the tools with
+    /// no extra wiring, because these stores already resolved it.
+    var crewStoreRoots: StrawHatStoreRoots {
+        StrawHatStoreRoots(shift: crewShiftStore.root,
+                           docs: crewDocsStore.root,
+                           commands: commandLibraryRoot)
+    }
+
     // MARK: Building
 
     func buildCrewSection() -> NSView {
@@ -190,7 +207,10 @@ extension FleetController {
 
         crewChat.append(.captain(text))
 
-        if crewRunner == nil { crewRunner = StrawHatRunner() }
+        // Phase 2.5: the runner sets its own tool session up from these roots
+        // once, on first use, and tears it down with itself. A page that never
+        // opens the Crew tab never writes an MCP config at all.
+        if crewRunner == nil { crewRunner = StrawHatRunner(storeRoots: crewStoreRoots) }
         guard let runner = crewRunner else {
             // Not a crash and not a silent no-op: the one thing this feature
             // needs that the app cannot install for the captain.
@@ -318,6 +338,10 @@ extension FleetController {
     func debugConfirmCrewProposal(_ proposal: StrawHatProposal) -> StrawHatProposalOutcome {
         confirmCrewProposal(proposal)
     }
+    /// The store roots this page would point the crew's tools at, so a suite
+    /// can assert the MCP config really reaches its scratch directories.
+    var debugCrewStoreRoots: StrawHatStoreRoots { crewStoreRoots }
+    var debugCrewRunner: StrawHatRunner? { crewRunner }
     var debugCrewContext: StrawHatContextSnapshot {
         StrawHatContextSnapshot.capture(shift: crewShiftStore, docs: crewDocsStore)
     }

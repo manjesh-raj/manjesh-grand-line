@@ -1535,6 +1535,17 @@ if ProcessInfo.processInfo.environment["FM_RUN_STRAW_HAT_VIEW_TESTS"] == "1" {
     exit(StrawHatViewSelfTest.run() ? 0 : 1)
 }
 
+// Straw Hat Pirates phase 2.5
+// (`fm/implement-straw-hat-pirates-phase25-mcp-fb52`): the crew's read-only
+// MCP tools - the pinned `--allowedTools`, the MCP config's real contents,
+// M2.5b's health file bridge, and the cross-language case that runs the real
+// `luffy_stores_mcp.py` over stdio against real Swift-written stores. Builds
+// no window, so it runs in CI alongside `FM_RUN_STRAW_HAT_TESTS`. The Python
+// half is `native/Scripts/test_luffy_stores_mcp.py`.
+if ProcessInfo.processInfo.environment["FM_RUN_STRAW_HAT_MCP_TESTS"] == "1" {
+    exit(StrawHatMCPSelfTest.run() ? 0 : 1)
+}
+
 // `fm/cockpit-sre-lead-reply-formatting`: same convention, for
 // `SRELeadMarkdown.parse`'s block/callout parsing - see
 // `SRELeadMarkdownSelfTest.swift`'s header.

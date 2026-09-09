@@ -38,6 +38,11 @@ final class FleetController: NSViewController {
     // reads its due-task count from it, and F6's Log tab reads the task half
     // of its feed from the same store's activity YAML.
     private let shiftStore: ShiftStore
+    /// See `init` - the command library's folder, for the crew's read-only
+    /// `command_search` tool only. `internal` so `FleetController+Crew` can
+    /// build `StrawHatStoreRoots` from it (GL-36: `private` is file-scoped, so
+    /// anything that file reaches has to be internal on the core type).
+    let commandLibraryRoot: URL
     private let briefingCard = MorningBriefingCard()
     /// The `.quota` clause opens `QuotaUsageController`'s own popover,
     /// anchored on the briefing paragraph - this page's own instance, not
@@ -48,8 +53,19 @@ final class FleetController: NSViewController {
     private let quotaUsage = QuotaUsageController()
     private var isGeneratingBriefing = false
 
-    init(shiftStore: ShiftStore) {
+    /// `commandLibraryRoot` is phase 2.5's one new dependency: the folder the
+    /// crew's read-only `command_search` tool is pointed at.
+    ///
+    /// A root URL rather than the store itself, deliberately. This page has no
+    /// use for a `CommandLibraryStore` - it never lists, searches or writes
+    /// commands - and constructing one here would be the mistake GL-24 fixed:
+    /// that instance is shared precisely because two caching copies diverged
+    /// in-session and raced each other's `recent.yaml`. `AppShellController`
+    /// already holds the shared one, so it hands over `.root` and nothing
+    /// more.
+    init(shiftStore: ShiftStore, commandLibraryRoot: URL) {
         self.shiftStore = shiftStore
+        self.commandLibraryRoot = commandLibraryRoot
         super.init(nibName: nil, bundle: nil)
     }
 

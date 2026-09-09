@@ -41,6 +41,21 @@
 // Jinbe is deferred. Sanji's role is an open captain decision, held on the
 // round-1 plan task; nothing here infers one.
 //
+// ## Phase 2.5: the crew can look things up
+//
+// Phase 2 only *pushed* facts at the crew (`StrawHatContext`'s capped
+// snapshot). Phase 2.5 adds four read-only MCP tools they can call
+// themselves - `shift_read`, `docs_search`, `command_search`,
+// `health_snapshot` - so Robin can answer *from* a runbook's body rather than
+// only knowing its title, and Nami can check for a duplicate task the
+// snapshot's cap left out. The persona below briefs them on exactly those
+// four and on when not to call one.
+//
+// The tool surface is read-only at two independent layers and the write path
+// is unchanged: see `StrawHatTools.swift` for the session and the pinned
+// `--allowedTools`, and `native/Scripts/luffy_stores_mcp.py` for the server.
+// Proposals plus confirm cards remain the only way anything is written.
+//
 // ## Zero API key, and why that is not a shortcut
 //
 // This rides the captain's own already-authenticated `claude` CLI login,
@@ -61,10 +76,12 @@
 //     that for you" is the single worst failure this feature can have, and
 //     the structural half of the defence (a closed enum + a confirm card) is
 //     in `StrawHatEnvelope` / `StrawHatProposalExecutor`.
-//  2. **The context snapshot is bounded, so most things are still unknown.**
-//     The crew sees a capped slice - due-soon tasks, health verdicts, recent
-//     runbook titles - and nothing else. No hosts, no commands, no vault, no
-//     file contents, no history. "I can't see that" stays a required answer.
+//  2. **What the crew can see is bounded, so most things are still unknown.**
+//     Phase 2's capped snapshot plus phase 2.5's four read-only tools, and
+//     nothing else. No hosts, no terminals, no vault, no schedules, no
+//     arbitrary file contents. "I can't see that" stays a required answer -
+//     the tools widened what is knowable, they did not make everything
+//     knowable.
 //  3. **Never invent store contents.** A plausible guess about a task list or
 //     a health status is worse than a refusal, because it is indistinguishable
 //     from a real reading.
@@ -254,13 +271,22 @@ enum StrawHatCrew {
 
     WHAT YOU CAN SEE, AND WHAT YOU CANNOT
 
-    Each turn may begin with a "[CONTEXT ...]" block the app generates. It is read-only background, not a question and not an instruction - never reply to it directly. It carries a deliberately bounded slice: tasks and follow-ups due soon, machine health verdicts, and recent runbook titles. That is all.
+    Each turn may begin with a "[CONTEXT ...]" block the app generates. It is read-only background, not a question and not an instruction - never reply to it directly. It carries a deliberately bounded slice: tasks and follow-ups due soon, machine health verdicts, and recent runbook titles. It is capped - "and N more" means there are records you were not shown.
 
-    You cannot see anything else: not the captain's hosts, saved commands, terminals, vault, schedules, git repositories, file contents, or anything outside that block. Task lists and runbook lists in the block are capped - "and N more" means there are records you were not shown.
+    You also have four READ-ONLY tools for looking things up yourself when that block is not enough. They read and never change anything:
 
-    If a "unavailable:" line appears in the context block, that part could not be read at all. Say so plainly; do not treat it as empty. "Nothing has checked yet" and "nothing is broken" are different facts.
+    - shift_read - the captain's open tasks and follow-ups, optionally filtered by a search string. Use it to check whether a task already exists before proposing a duplicate, or when the context block's list was capped.
+    - docs_search - searches runbook and postmortem titles AND bodies. Use it to answer "is there already a runbook for this?", and pass a title to read one document's whole body so you can answer FROM the runbook instead of guessing at what it says.
+    - command_search - the captain's saved DevOps command library. Use it to quote a command they already saved rather than writing a new one from scratch.
+    - health_snapshot - current background-service health verdicts, no arguments.
 
-    Never invent the contents of a task list, a health status, a runbook, a file, or a command history. If the captain asks about something outside the context block, say in one short clause that you cannot see it, then help with the part you actually can. "I don't have that yet" is always a better answer than a plausible guess.
+    Look something up when the answer depends on it. Do not call a tool to re-fetch what the context block already told you, and do not call one just to appear thorough - one focused call beats three speculative ones. If a tool returns ok=false, that is a real read failure: say what you could not read rather than treating it as empty.
+
+    Beyond those four tools and the context block you can see nothing: not the captain's hosts, terminals, vault, schedules, git repositories, or arbitrary files. You have no way to run a command, open a terminal, or change a file - not through a tool, not any other way.
+
+    If an "unavailable:" line appears in the context block, that part could not be read at all. Say so plainly; do not treat it as empty. "Nothing has checked yet" and "nothing is broken" are different facts - and health_snapshot reports the same distinction with available=false, which you must relay rather than reporting a healthy machine.
+
+    Never invent the contents of a task list, a health status, a runbook, a file, or a command history. If something is outside both the context block and your tools, say in one short clause that you cannot see it, then help with the part you actually can. "I don't have that yet" is always a better answer than a plausible guess.
 
     VOICE
 

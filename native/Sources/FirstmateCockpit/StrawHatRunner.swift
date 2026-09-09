@@ -12,16 +12,23 @@
 // time, and `claude`'s own `session_id` threaded back through `--resume` to
 // make the pane a conversation rather than a series of unrelated questions.
 //
-// What it deliberately does NOT copy from `SRELeadRunner`: the MCP config,
-// `--strict-mcp-config`, `--allowedTools` and `--permission-mode
-// bypassPermissions`. The crew still has no tools - phase 2 gives them
-// *facts* (a bounded snapshot pushed into the prompt, `StrawHatContext`) and
-// a way to *propose* a write, never a tool call. So an allowlist would still
-// describe a capability that does not exist, and `bypassPermissions` on a
-// session with nothing to permit is still a strictly worse default.
-// Read-only MCP tools are phase 2.5 (`luffy_stores_mcp.py`); writes stay out
-// of MCP entirely and always will - confirm cards are the only write path
-// this feature will ever have.
+// **Phase 2.5 gave the crew real tools**, so this now also passes
+// `--mcp-config`, `--strict-mcp-config` and `--allowedTools`, matching
+// `SRELeadRunner`'s own argv shape rather than inventing a second one. The
+// tools are read-only and the allowlist is pinned to exactly four of them -
+// see `StrawHatTools.swift` for the session that registers them and for the
+// two independent layers that keep the surface read-only. Push and pull are
+// complementary: `StrawHatContext`'s bounded snapshot still rides every turn
+// unchanged, and the tools cover what a capped snapshot cannot.
+//
+// The one flag it still does **not** copy is `--permission-mode
+// bypassPermissions`. That was measured, not reasoned about: `--allowedTools`
+// alone both permits a listed tool and denies an unlisted one, so
+// `bypassPermissions` would be a strictly broader grant bought for nothing.
+// The measurement is written up in `StrawHatTools.swift`'s header.
+//
+// Writes stay out of MCP entirely and always will - proposals plus confirm
+// cards are the only write path this feature will ever have.
 //
 // ## Stale `--resume`, and why the recovery is not just "drop it"
 //
@@ -79,6 +86,18 @@ final class StrawHatRunner {
     private let claude: String
     private let workingDir: URL?
 
+    /// This conversation's read-only tool session (phase 2.5), or `nil` when
+    /// the tools could not be set up - a missing `python3`, a missing script,
+    /// an unwritable scratch directory, or a caller that passed no store
+    /// roots at all.
+    ///
+    /// `nil` is a supported, survivable state, not an error path: the turn
+    /// simply runs without `--mcp-config`, which is exactly phase 2's
+    /// behaviour, and the pushed context snapshot still tells the crew what it
+    /// told them before. Losing the tools must degrade the crew from "able to
+    /// look" to "told", never break the chat.
+    private let tools: StrawHatToolSession?
+
     /// `claude`'s own session id from the last successful turn. `nil` until the
     /// first reply lands, and after `reset()`.
     private var sessionID: String?
@@ -91,10 +110,24 @@ final class StrawHatRunner {
 
     /// Fails only when `claude` cannot be found at all - which the chat view
     /// renders as a real, actionable message rather than a dead composer.
-    init?(claude: String? = nil) {
+    ///
+    /// `storeRoots` is what phase 2.5's tools are pointed at, supplied by the
+    /// caller from stores it already holds. Passing `nil` runs the
+    /// conversation with no tools at all - phase 2's behaviour, kept
+    /// reachable so a self-test can drive the pushed-context path in
+    /// isolation.
+    init?(claude: String? = nil, storeRoots: StrawHatStoreRoots? = nil) {
         guard let resolved = claude ?? StrawHatCrew.resolveClaude() else { return nil }
         self.claude = resolved
         self.workingDir = StrawHatCrew.resolveWorkingDirectory()
+        self.tools = storeRoots.flatMap { StrawHatCrew.setUpTools(roots: $0) }
+    }
+
+    deinit {
+        // The scratch directory holds this conversation's MCP config and its
+        // health snapshot, and nothing else - nothing lingers once the page
+        // that owned the runner goes away.
+        tools?.tearDown()
     }
 
     /// Whether this conversation has any history yet - the chat view's "New
@@ -133,6 +166,17 @@ final class StrawHatRunner {
         // snapshot would be the second consumer of stores the page already
         // holds (AGENTS.md's `CommandLibraryStore` lesson).
         let prompt = StrawHatTurn.prompt(context: context, message: trimmed)
+
+        // M2.5b: health is in-process app state, so the `health_snapshot`
+        // tool reads a file the app writes instead of opening a store. Written
+        // *before* the process starts, and from the same snapshot the
+        // `[CONTEXT]` block above was rendered from, so the pushed and pulled
+        // views of health cannot disagree within one turn. A write failure is
+        // logged and survivable - the tool then reports an honest read
+        // failure, never a healthy machine.
+        if let tools, let context {
+            tools.writeHealthSnapshot(context.healthBridgePayload())
+        }
 
         runOnce(prompt: prompt, resumeSessionID: resume, token: token) { [weak self] result in
             guard let self else { return }
@@ -215,7 +259,7 @@ final class StrawHatRunner {
         ClaudeOneShot.run(
             executable: claude,
             prompt: prompt,
-            extraArguments: ["--append-system-prompt", StrawHatCrew.persona],
+            extraArguments: Self.arguments(tools: tools),
             resumeSessionID: resumeSessionID,
             cwd: workingDir,
             timeout: ClaudeOneShot.conversationTimeout,
@@ -227,6 +271,28 @@ final class StrawHatRunner {
             case .failure(let error): completion(.failure(StrawHatError(message: error.message)))
             }
         }
+    }
+
+    /// Every turn's `claude` arguments beyond the prompt itself.
+    ///
+    /// `static` and taking the session explicitly so `StrawHatMCPSelfTest`
+    /// can assert the exact argv - including the negative half, that
+    /// `--permission-mode` never appears - without spawning anything.
+    ///
+    /// With no tool session this is byte-for-byte phase 2's argv: the persona
+    /// and nothing else. `--strict-mcp-config` is what stops `claude` also
+    /// loading whatever MCP servers the captain has configured globally for
+    /// their own use, so the crew's surface is exactly the four tools below
+    /// and not a superset that varies per machine.
+    static func arguments(tools: StrawHatToolSession?) -> [String] {
+        var args = ["--append-system-prompt", StrawHatCrew.persona]
+        guard let tools else { return args }
+        args += [
+            "--mcp-config", tools.mcpConfigPath.path,
+            "--strict-mcp-config",
+            "--allowedTools", StrawHatCrew.allowedTools,
+        ]
+        return args
     }
 
     /// The recovery prompt's recap half, kept as this class's own entry point
@@ -269,5 +335,12 @@ final class StrawHatRunner {
 
     /// How many turns the recap would carry right now.
     var debugTranscriptCount: Int { transcript.count }
+
+    /// This conversation's tool session, so a suite can read the MCP config
+    /// this runner actually wrote and the health file it actually rewrites.
+    var debugTools: StrawHatToolSession? { tools }
+
+    /// The argv this runner would pass, with its real session.
+    var debugArguments: [String] { Self.arguments(tools: tools) }
     #endif
 }

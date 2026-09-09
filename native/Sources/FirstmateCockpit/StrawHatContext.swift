@@ -83,6 +83,17 @@ struct StrawHatContextSnapshot {
     var pendingFollowUpCount: Int = 0
     var followUps: [DatedItem] = []
     var health: [HealthLine] = []
+    /// Whether the health registry had anything to say at all this turn.
+    ///
+    /// Explicit rather than inferred from `health.isEmpty`: phase 2.5's
+    /// `health_snapshot` tool has to tell the crew *which* of the two GL-14
+    /// facts it is looking at ("nobody has checked" vs "nothing is broken"),
+    /// and reconstructing that from an empty array plus a string match
+    /// against `unavailable` would be a second, weaker encoding of something
+    /// `capture` already knows for certain.
+    var healthAvailable: Bool = false
+    /// Why health could not be read, when `healthAvailable` is false.
+    var healthUnavailableReason: String?
     var runbookTitles: [String] = []
     var runbookCount: Int = 0
     var postmortemCount: Int = 0
@@ -167,8 +178,11 @@ struct StrawHatContextSnapshot {
         // and "nothing is broken" are different facts.
         let states = healthStates ?? readHealthStates()
         if states.isEmpty {
+            snapshot.healthAvailable = false
+            snapshot.healthUnavailableReason = "no service has reported yet this session"
             snapshot.unavailable.append("machine health (no service has reported yet this session)")
         } else {
+            snapshot.healthAvailable = true
             for entry in states {
                 snapshot.health.append(HealthLine(service: entry.service.title,
                                                   verdict: describe(entry.state)))
@@ -188,6 +202,39 @@ struct StrawHatContextSnapshot {
             snapshot.unavailable.append("runbooks and postmortems (the docs folder isn't readable)")
         }
         return snapshot
+    }
+
+    // MARK: The health file bridge (phase 2.5, M2.5b)
+
+    /// This turn's health state as the JSON payload `luffy_stores_mcp.py`'s
+    /// `health_snapshot` tool reads.
+    ///
+    /// Health is the one store phase 2.5's tools cannot open directly:
+    /// `ServiceHealthRegistry` is in-process app state (a lock-guarded
+    /// dictionary), so a subprocess has nothing to read. The app therefore
+    /// writes it out per turn - the same file-bridge idea `SRELeadBridge`
+    /// proved for the far harder version of this problem, reduced to one
+    /// direction and one file.
+    ///
+    /// **Built from the snapshot rather than re-read from the registry**, and
+    /// that is the point: the pushed `[CONTEXT]` block and the pulled tool
+    /// then carry the same values, computed once, so the crew can never be
+    /// told two different things about the same service in one turn.
+    ///
+    /// GL-14 is carried across the boundary explicitly rather than left to be
+    /// inferred from an empty list: `available: false` plus a reason is a
+    /// registry that has not reported, which the tool is required to report as
+    /// such and never as a healthy machine.
+    func healthBridgePayload(now: Date = Date()) -> [String: Any] {
+        var payload: [String: Any] = [
+            "generated_at": ISO8601DateFormatter().string(from: now),
+            "available": healthAvailable,
+            "services": health.map { ["service": $0.service, "verdict": $0.verdict] },
+        ]
+        if !healthAvailable {
+            payload["reason"] = healthUnavailableReason ?? "no service has reported yet this session"
+        }
+        return payload
     }
 
     private static func describe(_ state: ServiceHealthState) -> String {

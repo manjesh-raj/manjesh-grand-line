@@ -83,7 +83,13 @@ enum StrawHatViewSelfTest {
         // `shiftStore` is passed only by the cases that then assert what a
         // confirmed proposal wrote - everything else takes a fresh one, which
         // resolves through this suite's own scratch `FM_SHIFT_DIR`.
-        let controller = FleetController(shiftStore: shiftStore ?? ShiftStore())
+        // Phase 2.5's command-library root: a disposable empty directory,
+        // because this suite drives the chat/proposal surface rather than the
+        // crew's tools. `StrawHatMCPSelfTest` is where a real, populated set
+        // of roots is exercised end to end.
+        let controller = FleetController(shiftStore: shiftStore ?? ShiftStore(),
+                                         commandLibraryRoot: FileManager.default.temporaryDirectory
+                                             .appendingPathComponent("fm-straw-hat-view-commands", isDirectory: true))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
                               styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.contentViewController = controller
