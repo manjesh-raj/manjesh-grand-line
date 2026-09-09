@@ -530,6 +530,14 @@ extension RailDestination {
         // The hub itself carries the app's own identity hue.
         case .homeCanvas: return .blue
         case .overview: return .blue          // Fleet
+        // `fm/polish-straw-hat-overview-card-and-voice-c8d3`: violet is this
+        // app's own "AI feature" hue - the composer popovers' tinted tile,
+        // Dictation's clean-up card, the Whiteboard's Claude-generated
+        // diagrams - and the crew chat is the largest AI surface in the app.
+        // It is only the tile's *fallback* hue in practice (both tiles render
+        // the Jolly Roger artwork), but it is what the page's focus ring and
+        // primary button take, so it has to be a real choice.
+        case .strawHat: return .violet
         case .console: return .teal
         case .hosts: return .teal
         case .logAnalyzer: return .teal

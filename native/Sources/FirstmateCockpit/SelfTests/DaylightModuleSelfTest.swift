@@ -106,16 +106,29 @@ enum DaylightModuleSelfTest {
         .engineering: [.updates, .bootstrap, .automation, .githubSync, .settings],
     ]
 
-    /// The two that appear on Overview and nowhere else.
-    private static let overviewOnly: Set<DaylightModule> = [.briefing, .fleet]
+    /// The modules that appear on Overview and nowhere else.
+    ///
+    /// `fm/polish-straw-hat-overview-card-and-voice-c8d3` made this three: the
+    /// captain asked for the Straw Hat Pirates chat to be its own Overview
+    /// card, and it has no natural space of its own (not Command, not
+    /// Operations, not a Store, not a Setup page) - which is exactly the "no
+    /// other home" property the briefing and the fleet board have.
+    private static let overviewOnly: Set<DaylightModule> = [.briefing, .fleet, .strawHat]
 
     /// `fm/grandline-overview-canvas-trim`'s own captain decision, restated
     /// as literal data for the same reason `lockedMembership` above is: a
     /// test that reads `appearsOnOverview` to check `appearsOnOverview`
-    /// asserts nothing. This is the exact six the captain named as staying
-    /// on the Overview canvas after a screenshot review.
+    /// asserts nothing. That decision named six modules as staying on the
+    /// Overview canvas after a screenshot review.
+    ///
+    /// It is **seven** now, and the seventh is the captain's own explicit
+    /// later ask: `fm/polish-straw-hat-overview-card-and-voice-c8d3` is him
+    /// saying he expected the Straw Hat Pirates chat to be its own Overview
+    /// card "like the Console card" rather than a tab inside Fleet's page.
+    /// Raising the count is exactly the deliberate two-place edit this
+    /// literal exists to force.
     private static let overviewVisibleModules: Set<DaylightModule> =
-        [.briefing, .fleet, .mergeQueue, .console, .health, .schedules]
+        [.briefing, .fleet, .strawHat, .mergeQueue, .console, .health, .schedules]
 
     private static func checkSpaceTable(_ ok: inout Bool) {
         print("\n-- space filter: the table matches the locked captain decision --")
@@ -225,7 +238,7 @@ enum DaylightModuleSelfTest {
         }
 
         if ok {
-            print("  OK - 4 spaces x their locked modules, 2 Overview-only, Overview trimmed to "
+            print("  OK - 4 spaces x their locked modules, \(overviewOnly.count) Overview-only, Overview trimmed to "
                   + "\(overviewVisibleModules.count), 5 pills in \u{2318}1-\u{2318}5 order")
         }
     }

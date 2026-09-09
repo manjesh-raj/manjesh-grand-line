@@ -71,14 +71,10 @@ enum FleetReplyLayoutSelfTest {
     }
 
     private static func checkRowsAndComposer(_ ok: inout Bool) {
-        // Phase 2.5's `commandLibraryRoot` is only ever read to point the
-        // crew's read-only `command_search` tool at a folder; this suite is
-        // about F7's reply rows and never opens the Crew tab, so a disposable
-        // empty directory is both sufficient and the hermetic choice - it
-        // cannot reach the captain's real command library.
-        let controller = FleetController(shiftStore: ShiftStore(),
-                                         commandLibraryRoot: FileManager.default.temporaryDirectory
-                                             .appendingPathComponent("fm-fleet-reply-commands", isDirectory: true))
+        // `fm/polish-straw-hat-overview-card-and-voice-c8d3` took the crew's
+        // four store dependencies off this page along with the chat, so this
+        // page's whole surface is now the one store F7's reply rows read.
+        let controller = FleetController(shiftStore: ShiftStore())
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 800),
                               styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.contentViewController = controller

@@ -105,6 +105,14 @@ enum DaylightSpace: String, CaseIterable {
 enum DaylightModule: String, CaseIterable {
     case briefing
     case fleet
+    // `fm/polish-straw-hat-overview-card-and-voice-c8d3`: the captain's own
+    // correction after using phases 1-3 - he expected the Straw Hat Pirates
+    // chat to be its own Overview card "like the Console card", not a third
+    // tab nested inside Fleet's detail page. Declared here rather than
+    // appended, because `canvasOrder` below is `allCases` (declaration
+    // order): the crew belongs beside the briefing and the fleet board at the
+    // top of Overview, not after Settings.
+    case strawHat
     case tasks
     case mergeQueue
     case console
@@ -145,7 +153,12 @@ enum DaylightModule: String, CaseIterable {
     /// exactly the modules whose space matches.
     var space: DaylightSpace? {
         switch self {
-        case .briefing, .fleet: return nil
+        // `fm/polish-straw-hat-overview-card-and-voice-c8d3` makes this three.
+        // The crew chat has no natural space of its own - it is not a
+        // Command surface, an Operations one, a Store or a Setup page - and
+        // the captain asked for it on Overview specifically, which is exactly
+        // the "no other home" property the other two have.
+        case .briefing, .fleet, .strawHat: return nil
         case .console, .tasks, .mergeQueue: return .command
         case .hosts, .logAnalyzer, .kubernetes, .health, .schedules: return .operations
         // `fm/grandline-docs-split-runbooks-postmortems` added Runbooks and
@@ -177,10 +190,20 @@ enum DaylightModule: String, CaseIterable {
     /// removed from Overview after reviewing a live screenshot - the canvas
     /// had grown to eighteen cards, most of which duplicated a page already
     /// one click away via its own space (Command/Operations/Stores/
-    /// Engineering), the nav, or `⌘K`. What Overview keeps is the pair with
-    /// no other home (`.briefing`/`.fleet`, `space == nil`) plus the small
-    /// "operational pulse" set the captain wants visible at a glance without
-    /// switching spaces: `.mergeQueue`, `.console`, `.health`, `.schedules`.
+    /// Engineering), the nav, or `⌘K`. What Overview keeps is the three with
+    /// no other home (`.briefing`/`.fleet`/`.strawHat`, `space == nil`) plus
+    /// the small "operational pulse" set the captain wants visible at a
+    /// glance without switching spaces: `.mergeQueue`, `.console`,
+    /// `.health`, `.schedules`.
+    ///
+    /// **That is seven cards, not the six
+    /// `fm/grandline-overview-canvas-trim` locked.** The seventh is
+    /// `.strawHat`, and it is the captain's own explicit later ask
+    /// (`fm/polish-straw-hat-overview-card-and-voice-c8d3`): he wanted the
+    /// crew chat to be its own Overview card rather than a tab inside
+    /// Fleet's page. `DaylightModuleSelfTest.overviewVisibleModules` is
+    /// typed out as a literal precisely so raising that count has to be a
+    /// deliberate edit in two places.
     ///
     /// **This is presentation-only, exactly like `space`/`isVisible` above -
     /// it removes a module's card from the Overview canvas, nothing else.**
@@ -242,6 +265,7 @@ enum DaylightModule: String, CaseIterable {
     var opens: RailDestination {
         switch self {
         case .briefing, .fleet: return .overview
+        case .strawHat: return .strawHat
         case .tasks: return .shift
         case .mergeQueue: return .review
         case .console: return .console
@@ -288,6 +312,11 @@ enum DaylightModule: String, CaseIterable {
         switch self {
         case .briefing: return "cup.and.saucer.fill"
         case .fleet: return "sailboat.fill"
+        // Only the fallback: `HomeCanvasController.fillStrawHat` gives this
+        // card `StrawHatFlag.image`, the crew's own Jolly Roger. Kept in sync
+        // with `RailDestination.strawHat.symbol` by hand - a card and the page
+        // it opens should not disagree even in their fallback.
+        case .strawHat: return "person.3.fill"
         case .tasks: return "checkmark.circle.fill"
         case .mergeQueue: return "arrow.triangle.branch"
         case .console: return "terminal.fill"
@@ -319,8 +348,10 @@ enum DaylightModule: String, CaseIterable {
     /// Read from the destination this module opens wherever that is the same
     /// idea (`RailDestination.domainHue`, Phase 1's own table), so the module
     /// card and the drill page it opens can never disagree about a hue. The
-    /// two exceptions are the Overview-only pair, which share a destination
-    /// but not a hue: the briefing is amber (§4), Fleet is blue.
+    /// two exceptions are `.briefing`/`.fleet`, which share one destination
+    /// (`.overview`) but not a hue: the briefing is amber (§4), Fleet is
+    /// blue. `.strawHat` needs no exception - it opens its own destination,
+    /// so the `default` below reads that page's own violet.
     var hue: HelmDomainHue {
         switch self {
         case .briefing: return .amber
@@ -334,6 +365,7 @@ enum DaylightModule: String, CaseIterable {
         switch self {
         case .briefing: return "Morning briefing"
         case .fleet: return "Fleet"
+        case .strawHat: return "Straw Hat Pirates"
         case .tasks: return "Tasks"
         case .mergeQueue: return "Merge queue"
         case .console: return "Console"

@@ -107,7 +107,7 @@ enum DestinationSlotID: String, CaseIterable {
     /// Daylight Phase 2's home canvas - eagerly mounted, because it is the
     /// launch landing and the target of every drill page's back button.
     case homeCanvas
-    case overview, console, hosts, shift, review, logAnalyzer, kubernetes
+    case overview, strawHat, console, hosts, shift, review, logAnalyzer, kubernetes
     case tools, whiteboard, codePreview, stickyBoard, vault, dictation, schedules, health, docs, runbooks, postmortems, setup, settings
 }
 
@@ -117,6 +117,7 @@ extension RailDestination {
         switch self {
         case .homeCanvas: return .homeCanvas
         case .overview: return .overview
+        case .strawHat: return .strawHat
         case .console: return .console
         case .hosts: return .hosts
         case .shift: return .shift
@@ -158,7 +159,11 @@ extension RailDestination {
     var drillSubtitle: String {
         switch self {
         case .homeCanvas: return ""
-        case .overview: return "Crew, decisions and the morning briefing"
+        // `fm/polish-straw-hat-overview-card-and-voice-c8d3` narrowed this: the
+        // crew chat is its own destination now, so Fleet's line is about the
+        // dispatched-crewmate board it actually shows.
+        case .overview: return "Dispatched crew, decisions and the morning briefing"
+        case .strawHat: return "Ask the crew - every write is yours to confirm"
         case .console: return "Terminals, hosts and the shared Firstmate session"
         case .hosts: return "Saved hosts, SSH keys and snippets"
         case .shift: return "Tasks, follow-ups, projects and DevOps commands"

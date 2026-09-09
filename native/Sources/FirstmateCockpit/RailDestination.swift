@@ -115,6 +115,30 @@ import AppKit
 /// (`DaylightSpace.stores`) alongside `.docs`, `.vault` and `.tools` -
 /// `.docs` itself is now the Playbook viewer only. Both are utilities
 /// (`isDailyUse == false`), matching their Stores siblings.
+/// `.strawHat` (`fm/polish-straw-hat-overview-card-and-voice-c8d3`) is the
+/// Straw Hat Pirates crew chat. Phases 1-3 shipped it as a third tab inside
+/// `FleetController` (Overview's own page), per the captain's phase-1
+/// placement call - "This will be inside overview section" - and this task is
+/// his own correction after using it: he expected it to be **its own card on
+/// Overview, like the Console card**, not nested inside Fleet's detail page
+/// beside that page's unrelated Overview/Log tabs. Fleet's card is Grand
+/// Line's dispatched-crewmate task status; the Straw Hat crew is an AI persona
+/// chat. Two different "crews" had been tangled into one page by an accident
+/// of naming, which is exactly what he reacted to.
+///
+/// **Adding this case does not add a nav entry, because there is no nav rail
+/// to add one to.** The task brief asked for "its own detail page, not a new
+/// `RailDestination`" - but Daylight Phase 2 deleted `IconRailController`, and
+/// `DaylightModule.opens` is typed `RailDestination`, so "a card opens its own
+/// page" *is* implemented by a case here (see this file's own Phase 2 note,
+/// and `HomeCanvasController.makeCard`). What a case actually buys is the
+/// registry slot, the drill header, a stable identity for F2's session
+/// restore, and a ⌘K entry. What would put it in the app's top-level
+/// navigation is a `DaylightBarIconButton` quick-access icon, which this task
+/// deliberately does **not** add - those are added one at a time by explicit
+/// captain request. It is a utility (`isDailyUse == false`, inert since Phase
+/// 2 either way) with no space of its own: like `.briefing`/`.fleet`, its
+/// module appears on Overview and nowhere else.
 /// `.stickyBoard` (`fm/grandline-sticky-board`) is a freeform corkboard of
 /// draggable, colored sticky notes for quick thoughts - the captain's own
 /// request. It sits in the Stores space alongside Docs/Tools/Vault/
@@ -167,7 +191,7 @@ enum RailDestination: String, CaseIterable {
     /// reachable through `show(_:)`), so nothing about routing needed a
     /// second concept.
     case homeCanvas
-    case overview, console, hosts, shift, review, logAnalyzer, kubernetes, tools, whiteboard, codePreview, stickyBoard, vault, dictation, schedules, health, docs, runbooks, postmortems, updates, bootstrap, automation, githubSync, poneglyph, settings
+    case overview, strawHat, console, hosts, shift, review, logAnalyzer, kubernetes, tools, whiteboard, codePreview, stickyBoard, vault, dictation, schedules, health, docs, runbooks, postmortems, updates, bootstrap, automation, githubSync, poneglyph, settings
 
     var symbol: String {
         switch self {
@@ -175,6 +199,11 @@ enum RailDestination: String, CaseIterable {
         // app's own mark.
         case .homeCanvas: return "sailboat.fill"
         case .overview: return "square.grid.2x2"
+        // Only the *fallback*, for a `StrawHatFlag` payload that stops
+        // decoding - both tiles that render this destination take the Jolly
+        // Roger itself. A group of people rather than one, and distinct from
+        // `.overview`'s grid and `.shift`'s checkmark.
+        case .strawHat: return "person.3.fill"
         // fm/grandline-rail-followup-fixes: the captain asked for the menu
         // bar's Shift/Tasks status item to use the same "sailboat" glyph as
         // the app's own logo mark, since that standalone item has no nearby
@@ -254,6 +283,7 @@ enum RailDestination: String, CaseIterable {
         switch self {
         case .homeCanvas: return "Home"
         case .overview: return "Fleet"
+        case .strawHat: return "Straw Hat Pirates"
         case .shift: return "Tasks"
         case .hosts: return "Hosts"
         case .console: return "Console"
@@ -323,7 +353,7 @@ enum RailDestination: String, CaseIterable {
         // A Setup sub-page like the four above it. `.good` is unclaimed in this
         // group and is the one remaining tint that collides with none of them.
         case .poneglyph: return .good
-        case .homeCanvas, .overview, .console, .hosts, .shift, .review, .logAnalyzer, .kubernetes,
+        case .homeCanvas, .overview, .strawHat, .console, .hosts, .shift, .review, .logAnalyzer, .kubernetes,
              .tools, .whiteboard, .stickyBoard, .codePreview, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems, .settings: return .accent
         }
     }
@@ -337,6 +367,10 @@ enum RailDestination: String, CaseIterable {
         // (`DaylightModule.kubernetes`), beside Log Analyzer, per the scout
         // report's own placement note.
         case .kubernetes,
+             // A surface the captain opens when they have something to ask,
+             // on the same criterion as its Stores-space siblings. Inert
+             // since Phase 2 removed the rail - see this enum's own note.
+             .strawHat,
              .tools, .whiteboard, .codePreview, .stickyBoard, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems,
              .updates, .bootstrap, .automation, .githubSync, .poneglyph, .settings: return false
         }
