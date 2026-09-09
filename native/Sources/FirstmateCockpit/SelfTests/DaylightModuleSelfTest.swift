@@ -93,19 +93,17 @@ enum DaylightModuleSelfTest {
         // and `fm/grandline-monaco-code-preview` added `.codePreview` by that
         // same rule: a place to read a pasted snippet properly is reference
         // material, on the same shelf as the docs and runbooks it sits beside.
-        .stores: [.vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview],
-        // `fm/implement-grand-line-secrets-vault-poneg-ad` added `.poneglyph`
-        // here: Automic Vault's hardening panel moved out of the `.vault`
-        // destination into Setup (the `.vault` card was the captain's own
-        // credential vault at the time), so its module moved from Stores to
-        // Engineering with it. `fm/swap-vault-poneglyph-naming-in-grand-lin-1f`
-        // later swapped which feature each of `.vault`/`.poneglyph` shows
-        // (see `VaultController.swift`'s header), which did not need a change
-        // here - a destination's *slot*, and therefore its space, is
-        // independent of which controller populates it. The deliberate table
-        // change `DaylightSpace.swift`'s doc comment says to make together
-        // with this still stands for any *future* space reassignment.
-        .engineering: [.updates, .bootstrap, .automation, .githubSync, .poneglyph, .settings],
+        // `fm/implement-grand-line-secrets-vault-poneg-ad` originally put
+        // `.poneglyph` in `.engineering` (Automic Vault's hardening panel had
+        // moved out of `.vault` into Setup, so its module moved from Stores to
+        // Engineering with it); `fm/swap-vault-poneglyph-naming-in-grand-lin-1f`
+        // then swapped which feature each of `.vault`/`.poneglyph` shows (see
+        // `VaultController.swift`'s header) with no space-table change, since a
+        // destination's *slot* is independent of which controller populates
+        // it. `fm/move-poneglyph-to-stores-space-282a` is the captain's own
+        // later ask to move it here, beside the other Stores utilities.
+        .stores: [.vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview, .poneglyph],
+        .engineering: [.updates, .bootstrap, .automation, .githubSync, .settings],
     ]
 
     /// The two that appear on Overview and nowhere else.
@@ -377,18 +375,17 @@ enum DaylightModuleSelfTest {
 
         // Engineering's own lineup, in order - the captain's second
         // refinement, stated as the list they asked for.
-        // `fm/implement-grand-line-secrets-vault-poneg-ad` added `.poneglyph`
-        // between GitHub Sync and Settings: the credential vault (Automic
-        // Vault's hardening panel, at the time) became Setup's fifth tab, so
-        // its card joins the four Setup cards rather than staying in Stores
-        // where the old combined "Vault" card sat.
-        // `fm/swap-vault-poneglyph-naming-in-grand-lin-1f` later swapped
-        // which feature `.poneglyph` shows (see `VaultController.swift`'s
-        // header) - the position in this Engineering lineup did not change,
-        // since the destination's slot is unaffected by the swap. `.settings`
-        // stays last, as the captain's own refinement put it.
+        // `fm/implement-grand-line-secrets-vault-poneg-ad` had added
+        // `.poneglyph` between GitHub Sync and Settings, and
+        // `fm/swap-vault-poneglyph-naming-in-grand-lin-1f` later swapped which
+        // feature `.poneglyph` shows (see `VaultController.swift`'s header)
+        // with no change to its position here. `fm/move-poneglyph-to-stores-space-282a`
+        // then moved `.poneglyph` itself out of Engineering into Stores (see
+        // `DaylightSpace.swift`'s `space` table), so it no longer appears in
+        // this lineup at all. `.settings` stays last, as the captain's own
+        // refinement put it.
         let engineering = DaylightModule.canvasOrder.filter { $0.isVisible(in: .engineering) }
-        let expected: [DaylightModule] = [.updates, .bootstrap, .automation, .githubSync, .poneglyph, .settings]
+        let expected: [DaylightModule] = [.updates, .bootstrap, .automation, .githubSync, .settings]
         if engineering != expected {
             fail("Engineering should show \(expected.map(\.rawValue)) in that order, got "
                  + "\(engineering.map(\.rawValue))", &ok)
