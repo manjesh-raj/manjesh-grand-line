@@ -486,6 +486,11 @@ final class DictationController: NSViewController, DaylightDrillActions {
         // ("only the optional \"Clean up my sentences\" rewrite above needs
         // network access").
         cleanupDetailLabel.stringValue = "Rewrites each dictation into a well-formed sentence before pasting."
+        // This same pass also corrects a misheard word against "Words I use
+        // often" below, using the rest of the sentence for context - see
+        // `DictationCleanup.swift`'s header for why that rides on this toggle
+        // rather than a second one.
+        cleanupDetailLabel.toolTip = "Also checks the transcript against \"Words I use often\" below and fixes a likely misrecognition of one of those words, using the rest of the sentence as context."
         cleanupDetailLabel.font = HelmType.caption()
         cleanupDetailLabel.preferredMaxLayoutWidth = 460
         cleanupDetailLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -636,7 +641,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
         // softer whole-list nudge) is still available on hover via the
         // label's own tooltip.
         explainerLabel.stringValue = "Biases recognition toward your own vocabulary - added here, it's used as a hint on your next recording."
-        explainerLabel.toolTip = "This is a soft nudge, not a guarantee: Apple's on-device recognizer treats each phrase individually, while the local Whisper engine (if enabled) treats the whole list as a softer style hint."
+        explainerLabel.toolTip = "This is a soft nudge, not a guarantee: Apple's on-device recognizer treats each phrase individually, while the local Whisper engine (if enabled) treats the whole list as a softer style hint. Turning on \"Clean up my sentences\" above adds a second pass over the finished sentence that can catch and correct a misheard word against this list even when the live nudge didn't."
         explainerLabel.font = HelmType.caption()
         explainerLabel.preferredMaxLayoutWidth = 520
         explainerLabel.translatesAutoresizingMaskIntoConstraints = false
