@@ -105,14 +105,6 @@ enum DaylightSpace: String, CaseIterable {
 enum DaylightModule: String, CaseIterable {
     case briefing
     case fleet
-    // `fm/polish-straw-hat-overview-card-and-voice-c8d3`: the captain's own
-    // correction after using phases 1-3 - he expected the Straw Hat Pirates
-    // chat to be its own Overview card "like the Console card", not a third
-    // tab nested inside Fleet's detail page. Declared here rather than
-    // appended, because `canvasOrder` below is `allCases` (declaration
-    // order): the crew belongs beside the briefing and the fleet board at the
-    // top of Overview, not after Settings.
-    case strawHat
     case tasks
     case mergeQueue
     case console
@@ -144,6 +136,23 @@ enum DaylightModule: String, CaseIterable {
     case stickyBoard
     case codePreview
     case settings
+    // `fm/straw-hat-voice-order-composer-polish-8dd2`: the captain's second
+    // correction. `fm/polish-straw-hat-overview-card-and-voice-c8d3` had
+    // declared this case right after `.fleet` specifically so the crew's
+    // card would sit "beside the briefing and the fleet board at the top of
+    // Overview" - the captain then used the shipped page and asked for the
+    // opposite: the crew chat card should be LAST in the Overview grid,
+    // after every other visible card. `canvasOrder` below is `allCases`
+    // (declaration order), so the case moves here, after `.settings`, rather
+    // than the ordering being expressed some other way - the same mechanism
+    // `.poneglyph`'s own history above already used to move a card without
+    // touching its `space`. This module's `space` stays `nil` (Overview-only,
+    // see `space` below), so moving its *declaration* to the very end of the
+    // whole enum affects only where it renders among Overview's own visible
+    // subset - every other space's canvas order is unaffected, since a
+    // module with `space == nil` never appears there regardless of where its
+    // case sits.
+    case strawHat
 
     /// Which space this module belongs to, or `nil` for the two that appear
     /// **only** on Overview (locked decision 5: "The Morning briefing and

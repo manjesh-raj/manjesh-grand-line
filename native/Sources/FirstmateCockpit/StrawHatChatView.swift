@@ -113,23 +113,51 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         boxed: true,
         hue: RailDestination.overview.domainHue)
 
-    // MARK: Composer - `SRELeadChatView.buildComposer`'s shape
-
+    // MARK: Composer
+    //
+    // A rounded, single-surface pill rather than `SRELeadChatView.
+    // buildComposer`'s text-box-plus-toolbar-strip shape. The two composers
+    // were never a shared component (each view hand-rolls its own `HelmComposerCard`
+    // instance and its own text view - see this file's header), so this
+    // redesign is scoped to this file alone: nothing here touches
+    // `SRELeadChatView.swift`, and its own composer is unaffected.
+    //
+    // The captain's complaint (a screenshot of the old shape) was threefold:
+    // a plain bordered box, raw keybinding text ("\u{21B5} to send \u{00B7} \u{21E7}\u{21B5}
+    // for a new line") competing for attention below the field, and a small
+    // square send button sitting in its own separate strip. The fix is
+    // structural, not just a bigger corner radius: the text field and the
+    // send button now live in one `NSStackView` row inside the same rounded
+    // surface, bottom-aligned so the button tracks the text box's own bottom
+    // edge as it grows - the same shape iMessage/WhatsApp/ChatGPT's input
+    // bars use - and the keybinding hint moved to a tooltip instead of a
+    // permanently-visible label.
     private let composerWrap = NSView()
-    private let composerKicker = NSTextField(labelWithString: "")
     private let composerCard = HelmComposerCard(cornerRadius: HelmMetrics.rRow)
     private let textScroll = NSScrollView()
     private let textView = NSTextView()
     /// `NSTextView` has no placeholder API - a muted label overlaid at the
     /// text container's inset, toggled on every edit.
     private let textPlaceholderLabel = NSTextField(labelWithString: "Message the crew\u{2026}")
-    private let toolbarRow = NSView()
-    /// The Shift+Return hint, so the one non-obvious key is discoverable
-    /// without a tooltip.
-    private let hintLabel = NSTextField(labelWithString: "\u{21B5} to send \u{00B7} \u{21E7}\u{21B5} for a new line")
     private let sendButton = HelmButton(symbol: "arrow.up", variant: .primary, size: .small)
 
     private var textScrollHeightConstraint: NSLayoutConstraint!
+
+    /// The keybinding hint, now a tooltip rather than a permanent label -
+    /// still discoverable on hover, no longer a strip of text competing with
+    /// the send button for attention.
+    private static let keybindingHint = "\u{21B5} to send  \u{00B7}  \u{21E7}\u{21B5} for a new line"
+
+    /// A noticeably rounder pill than the app's generic `rRow` token, chosen
+    /// for this one surface: with the toolbar strip gone, the composer is a
+    /// single unbroken shape now, and a bigger radius is what actually reads
+    /// as "pill" rather than "rounded rectangle" at the field's minimum
+    /// height. Daylight keeps its own established `dWell` token unchanged -
+    /// every other Daylight "well" (Console's composer, SRE Lead's,
+    /// Whiteboard's) already uses it, and diverging here would make this the
+    /// one composer in the app with a different Daylight radius for no
+    /// reason.
+    private static let composerCornerRadius: CGFloat = 18
 
     private static let minTextHeight: CGFloat = 34
     private static let maxTextHeight: CGFloat = 120
@@ -222,29 +250,28 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         composerWrap.translatesAutoresizingMaskIntoConstraints = false
         addSubview(composerWrap)
 
-        composerKicker.translatesAutoresizingMaskIntoConstraints = false
-        composerKicker.attributedStringValue = NSAttributedString(
-            string: "Ask the crew".uppercased(),
-            attributes: [.font: HelmType.kicker(), .kern: HelmType.kickerKern])
-
         composerCard.translatesAutoresizingMaskIntoConstraints = false
-
-        let composerStack = NSStackView(views: [composerKicker, composerCard])
-        composerStack.orientation = .vertical
-        composerStack.alignment = .leading
-        composerStack.spacing = HelmMetrics.s1 + 2
-        composerStack.translatesAutoresizingMaskIntoConstraints = false
-        composerWrap.addSubview(composerStack)
+        composerWrap.addSubview(composerCard)
 
         buildTextView()
-        buildToolbar()
+        buildSendButton()
 
-        let cardStack = NSStackView(views: [textScroll, toolbarRow])
-        cardStack.orientation = .vertical
-        cardStack.alignment = .leading
-        cardStack.spacing = 0
-        cardStack.translatesAutoresizingMaskIntoConstraints = false
-        composerCard.contentContainer.addSubview(cardStack)
+        // One horizontal row, not a text box stacked over a toolbar strip:
+        // the field and the button share the same rounded surface, and
+        // `.bottom` alignment keeps the button pinned to the field's own
+        // bottom edge as it grows - the shape a modern chat input uses.
+        //
+        // AGENTS.md gotcha (10): a horizontal `NSStackView` left at its
+        // default `.gravityAreas` distribution ignores hugging/compression
+        // priorities entirely, so `.fill` has to be set explicitly or
+        // `textScroll`'s "grow to fill" priority below does nothing.
+        let inputRow = NSStackView(views: [textScroll, sendButton])
+        inputRow.orientation = .horizontal
+        inputRow.alignment = .bottom
+        inputRow.distribution = .fill
+        inputRow.spacing = HelmMetrics.s2
+        inputRow.translatesAutoresizingMaskIntoConstraints = false
+        composerCard.contentContainer.addSubview(inputRow)
 
         textScrollHeightConstraint = textScroll.heightAnchor.constraint(equalToConstant: Self.minTextHeight)
 
@@ -259,20 +286,19 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
             composerWrap.trailingAnchor.constraint(equalTo: trailingAnchor),
             composerWrap.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            composerStack.leadingAnchor.constraint(equalTo: composerWrap.leadingAnchor, constant: Self.contentInset),
-            composerStack.trailingAnchor.constraint(equalTo: composerWrap.trailingAnchor, constant: -Self.contentInset),
-            composerStack.topAnchor.constraint(equalTo: composerWrap.topAnchor, constant: HelmMetrics.s2),
-            composerStack.bottomAnchor.constraint(equalTo: composerWrap.bottomAnchor, constant: -Self.contentInset),
-            composerCard.widthAnchor.constraint(equalTo: composerStack.widthAnchor),
+            composerCard.leadingAnchor.constraint(equalTo: composerWrap.leadingAnchor, constant: Self.contentInset),
+            composerCard.trailingAnchor.constraint(equalTo: composerWrap.trailingAnchor, constant: -Self.contentInset),
+            composerCard.topAnchor.constraint(equalTo: composerWrap.topAnchor, constant: HelmMetrics.s2),
+            composerCard.bottomAnchor.constraint(equalTo: composerWrap.bottomAnchor, constant: -Self.contentInset),
 
-            cardStack.leadingAnchor.constraint(equalTo: composerCard.contentContainer.leadingAnchor),
-            cardStack.trailingAnchor.constraint(equalTo: composerCard.contentContainer.trailingAnchor),
-            cardStack.topAnchor.constraint(equalTo: composerCard.contentContainer.topAnchor),
-            cardStack.bottomAnchor.constraint(equalTo: composerCard.contentContainer.bottomAnchor),
-            textScroll.widthAnchor.constraint(equalTo: cardStack.widthAnchor),
+            // The row - and therefore the whole rounded surface - is sized
+            // bottom-up from `textScroll`'s own dynamic height; nothing here
+            // gives `composerCard` a height of its own.
+            inputRow.leadingAnchor.constraint(equalTo: composerCard.contentContainer.leadingAnchor, constant: 14),
+            inputRow.trailingAnchor.constraint(equalTo: composerCard.contentContainer.trailingAnchor, constant: -8),
+            inputRow.topAnchor.constraint(equalTo: composerCard.contentContainer.topAnchor, constant: 6),
+            inputRow.bottomAnchor.constraint(equalTo: composerCard.contentContainer.bottomAnchor, constant: -6),
             textScrollHeightConstraint,
-            toolbarRow.widthAnchor.constraint(equalTo: cardStack.widthAnchor),
-            toolbarRow.heightAnchor.constraint(equalToConstant: 36),
 
             // Activated here, once `textScroll` is in the real tree - see
             // `SRELeadChatView.buildComposer`'s own note on the measured
@@ -305,6 +331,12 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         textScroll.borderType = .noBorder
         textScroll.drawsBackground = false
         textScroll.translatesAutoresizingMaskIntoConstraints = false
+        // The one flexible element in `inputRow` - everything else
+        // (`sendButton`) is fixed-size, so this is what absorbs the row's
+        // leftover width under `.fill` distribution.
+        textScroll.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        textScroll.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textScroll.toolTip = Self.keybindingHint
 
         textPlaceholderLabel.font = textView.font
         textPlaceholderLabel.isEditable = false
@@ -325,35 +357,29 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         textScroll.addSubview(textPlaceholderLabel)
     }
 
-    private func buildToolbar() {
-        toolbarRow.translatesAutoresizingMaskIntoConstraints = false
-
-        hintLabel.font = HelmType.captionSmall()
-        hintLabel.translatesAutoresizingMaskIntoConstraints = false
-        hintLabel.lineBreakMode = .byTruncatingTail
-        // The hint yields first: the send button must never be squeezed.
-        hintLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        toolbarRow.addSubview(hintLabel)
-
+    /// The send button - fixed size, held at the trailing edge of `inputRow`
+    /// by that row's own `.fill` distribution and required hugging below, so
+    /// it never shrinks or grows past its own natural size regardless of how
+    /// much room the text box takes.
+    private func buildSendButton() {
         sendButton.translatesAutoresizingMaskIntoConstraints = false
         sendButton.target = self
         sendButton.action = #selector(submit)
         sendButton.isEnabled = false
-        sendButton.toolTip = "Send to Luffy"
-        toolbarRow.addSubview(sendButton)
+        sendButton.toolTip = Self.keybindingHint
+        sendButton.setContentHuggingPriority(.required, for: .horizontal)
+        sendButton.setContentCompressionResistancePriority(.required, for: .horizontal)
 
         // `HelmPageToolbar.iconButton`'s alignment-rect correction: a
         // `HelmButton` paints its chrome in its own layer, which fills the
         // *frame*, while Auto Layout constrains its *alignment rect* - so a
-        // plain 28pt height constraint renders a visibly taller box.
-        let side: CGFloat = 28
+        // plain height constraint renders a visibly taller box. Slightly
+        // larger than the old 28pt square (a more tactile, "this is the
+        // thing you press" size once it sits beside the text rather than in
+        // its own thin strip).
+        let side: CGFloat = 32
         let insets = sendButton.alignmentRectInsets
         NSLayoutConstraint.activate([
-            hintLabel.leadingAnchor.constraint(equalTo: toolbarRow.leadingAnchor, constant: HelmMetrics.s2 + 2),
-            hintLabel.centerYAnchor.constraint(equalTo: toolbarRow.centerYAnchor),
-            hintLabel.trailingAnchor.constraint(lessThanOrEqualTo: sendButton.leadingAnchor, constant: -HelmMetrics.s2),
-            sendButton.trailingAnchor.constraint(equalTo: toolbarRow.trailingAnchor, constant: -HelmMetrics.s2),
-            sendButton.centerYAnchor.constraint(equalTo: toolbarRow.centerYAnchor),
             sendButton.widthAnchor.constraint(equalToConstant: side - insets.left - insets.right),
             sendButton.heightAnchor.constraint(equalToConstant: side - insets.top - insets.bottom),
         ])
@@ -914,10 +940,8 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         // *terminal's* token. `SRELeadChatView` shipped that exact mix-up once
         // and it rendered as "a large black empty area"; see its `applyTheme`.
         layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
-        composerKicker.textColor = HelmTheme.mutedInk(theme)
-        hintLabel.textColor = HelmTheme.mutedInk(theme)
         composerCard.domainHue = theme.isDaylight ? RailDestination.overview.domainHue : nil
-        composerCard.cornerRadius = theme.isDaylight ? HelmMetrics.dWell : HelmMetrics.rRow
+        composerCard.cornerRadius = theme.isDaylight ? HelmMetrics.dWell : Self.composerCornerRadius
         composerCard.applyTheme(theme)
         let ink = HelmField.ink(theme)
         textView.textColor = ink

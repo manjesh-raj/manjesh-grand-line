@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""Generate `StrawHatFlag.swift` from the captain's Jolly Roger reference image.
+"""Generate `StrawHatFlag.swift` from the crew's Jolly Roger reference image.
 
-`fm/polish-straw-hat-overview-card-and-voice-c8d3`: the captain asked for "an
-image for the new Straw Hat Pirates card" and sent a screenshot of the crew's
-Jolly Roger - the black flag with the straw-hatted skull and crossed bones.
+`fm/straw-hat-voice-order-composer-polish-8dd2`: after the first version of
+this icon shipped (`fm/polish-straw-hat-overview-card-and-voice-c8d3`, a photo
+of the flag flying on its pole), the captain sent a second, cleaner reference
+- a flat-style Jolly Roger drawn directly on a dark rounded-square card
+backdrop, with no pole, sky or fold shading to crop around - and asked for the
+card icon to use it instead. This is the second source this script has
+generated `StrawHatFlag.swift` from; only the `DEFAULT_SOURCE`/`CROP`
+constants and this docstring's "why this crop" section changed between the
+two runs, everything else (why a generated file, why 128px, the chunking) is
+unchanged from the original.
 
 ## Why a generated Swift file and not an asset catalog or an SPM resource
 
@@ -19,25 +26,28 @@ precedent in this tree (read its docstring for the full version):
     identically under `swift run`, a debug binary, and a hand-assembled
     `.app`.
 
-## Why this crop, and why the black stays
+## Why this crop (v2 reference)
 
-The reference is a photo of the flag flying: a bamboo pole down the left,
-sky and clouds top-right and bottom, the emblem waving across the middle.
-`CROP` below is a square box on the **emblem** - skull, straw hat with its
-red band, and the inner ends of all four bones - derived the way the
-portraits' `FACE_BOX` values were: crop, render at the real tile size, look
-at it, adjust. Three candidates were rendered at 60px (2x of the 30pt module
-tile) and compared; a wider box shrank the skull to mush and a tighter one
-clipped the hat brim and the teeth.
+The v2 reference is already the finished icon, not a photo to crop an emblem
+out of: a white skull with black eye sockets, a yellow straw hat with a red
+band, and white crossbones, laid flat on a solid dark charcoal background that
+fills the frame edge to edge (measured - the corner and edge pixels are the
+same opaque background colour as the centre, no rounded-corner transparency
+baked in, so any corner rounding on screen comes from the tile view's own
+`cornerRadius`/`masksToBounds`, not from this asset). So `CROP` is the whole
+image rather than a fraction picked out of it; the only work `render()` still
+does is trim the source's few pixels of rectangular slack (494x502) down to a
+square before the resize, exactly as it always did for a crop that wasn't
+perfectly square either.
 
-The flag's **black is kept rather than cut out to transparency**, which is a
-deliberate choice with two reasons. It is faithful - a Jolly Roger *is* a
-black flag, and the black is as much of the identity as the skull. And it is
-robust: the flag in the reference is shaded and folded, so separating
-skull-from-flag cleanly would be a guess in the mid-greys, and any error shows
-up as a fringe on a 30pt tile. The consequence, intended: this card's tile
-reads as a black flag rather than as one more hue-gradient tile, which is what
-makes it recognisable at a glance on a canvas of otherwise-uniform cards.
+The background is kept rather than cut to transparency, for the same reason
+v1's flag-black was kept: the dark backdrop is part of this icon's own design,
+not incidental fill around it, and removing it would leave a guess at the
+skull's own edge with no source of truth for where the card's "real" boundary
+is. The consequence, intended and unchanged from v1: this card still reads as
+a fixed, self-contained piece of art rather than one more hue-gradient tile,
+which is what makes it recognisable at a glance on a canvas of otherwise-
+uniform cards.
 
 ## Why 128x128
 
@@ -65,17 +75,22 @@ try:
 except ImportError:  # pragma: no cover - a clear message beats a traceback
     sys.exit("This script needs Pillow: python3 -m pip install --user Pillow")
 
-# The captain's reference screenshot. It lives in firstmate's own `data/`
-# directory, outside this repo - it is an input to the task, not an app asset,
-# so only the derived payload is committed here.
+# The captain's v2 reference image (a flat-style Jolly Roger already composed
+# on a dark rounded-square card backdrop). It lives in firstmate's own
+# `data/` directory, outside this repo - it is an input to the task, not an
+# app asset, so only the derived payload is committed here. The v1 photo this
+# replaced (`data/polish-straw-hat-overview-card-and-voice-c8d3/straw-hat-
+# jolly-roger-reference.png`) is untouched and left as historical record on
+# the firstmate side; this script no longer reads it.
 DEFAULT_SOURCE = os.path.expanduser(
-    "~/manjesh/firstmate/data/polish-straw-hat-overview-card-and-voice-c8d3/"
-    "straw-hat-jolly-roger-reference.png"
+    "~/manjesh/firstmate/data/straw-hat-voice-order-composer-polish-8dd2/"
+    "straw-hat-card-icon-v2-reference.png"
 )
 
-# Square crop on the emblem, as fractions of the source (l, t, r, b).
-# See the module docstring for how this was derived.
-CROP = (0.29, 0.16, 0.75, 0.76)
+# The whole source, as fractions (l, t, r, b) - the v2 reference is already
+# the finished icon with no emblem to pick out of a larger scene. See the
+# module docstring's "why this crop" section.
+CROP = (0.0, 0.0, 1.0, 1.0)
 
 SIDE = 128
 # One base64 line per this many characters - a single 40KB line is unreadable
@@ -116,14 +131,16 @@ def swift_source(payload: bytes) -> str:
         "// Manjesh Grand Line - native macOS app.",
         "//",
         "// GENERATED FILE - do not hand-edit. Produced by",
-        "// `native/Scripts/build-straw-hat-flag.py` from the captain's own Jolly",
-        "// Roger reference screenshot (`data/polish-straw-hat-overview-card-and-",
-        "// voice-c8d3/straw-hat-jolly-roger-reference.png`, on the firstmate side -",
-        "// an input to that task, not an app asset, so it is not committed here).",
+        "// `native/Scripts/build-straw-hat-flag.py` from the captain's v2 Jolly",
+        "// Roger reference image (`data/straw-hat-voice-order-composer-polish-8dd2/",
+        "// straw-hat-card-icon-v2-reference.png`, on the firstmate side - an input",
+        "// to that task, not an app asset, so it is not committed here). This",
+        "// replaced the original flag-in-sky photo reference with a flat-style",
+        "// icon already composed on its own card backdrop; see the script's own",
+        "// docstring for why the crop changed to \"the whole image\" as a result.",
         "// Re-run that script to change the crop or the size; see its own docstring",
         "// for why this is a base64 literal rather than an asset catalog or an SPM",
-        "// resource bundle, why the flag's black is kept rather than cut out, and",
-        "// how the crop was derived.",
+        "// resource bundle and why the background is kept rather than cut out.",
         "//",
         f"// The payload is a {SIDE}x{SIDE} PNG - ~3.8x the largest tile that renders it",
         "// (`HelmGradientTile.Size.drill`, 34pt).",

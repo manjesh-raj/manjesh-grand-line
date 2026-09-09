@@ -113,6 +113,32 @@
 // envelope - neither side is dropped: the envelope renders as attributed
 // sections and the surrounding prose renders as unattributed ones, in place.
 // See `Extracted`'s own note for why picking a side was the wrong trade.
+//
+// ## One exception to "the reply is never dropped": leaked tool-use narration
+//
+// Phase 2.5's read-only tools gave the model something to deliberate about
+// mid-turn, and that deliberation can leak into the visible reply as an
+// unattributed message with no crew avatar - the captain's own screenshot
+// caught one verbatim: "Context already says tasks_due_soon: 0, no need for
+// a tool call." `StrawHatCrew.persona`'s "HOW TO REPLY" section now forbids
+// narrating a tool-use decision outright, in any form, whether or not a tool
+// ran; `isLikelyToolNarration` is the parser-side belt to that persona-side
+// braces, for whatever gets through anyway.
+//
+// It is deliberately a narrow, specific check (literal context/tool field
+// names, or a phrase about the tool-call decision itself) rather than
+// treating every leading/trailing prose fragment as suspect - the
+// "genuinely both" case two paragraphs up (a reply explaining its own reply
+// format) is real content the captain may have asked for, and stays exactly
+// as it was. Only a fragment matching one of those two specific signals is
+// suppressed: as unattributed leading/trailing prose around a real envelope,
+// it is dropped outright (the genuine crew reply already renders in full,
+// so a garbled aside next to it is a strict downgrade); as the *entire*
+// reply (rung 3, no envelope at all), `StrawHatController.renderReply`
+// renders a plain "that reply didn't come through cleanly" note instead of
+// putting the leaked fragment in Luffy's own voice - misattributing internal
+// reasoning to a character speaking in character is exactly the kind of
+// immersion break this whole feature exists to avoid.
 
 import Foundation
 
@@ -515,16 +541,83 @@ enum StrawHatEnvelope {
 
         // Prose the model wrote outside the fence, kept in its original
         // position and unattributed - see `Extracted`'s own note on why
-        // losing either side of this was the wrong trade.
+        // losing either side of this was the wrong trade. The one exception:
+        // text that looks like leaked tool-use deliberation rather than a
+        // genuine aside - see `isLikelyToolNarration`'s own header - is
+        // dropped instead of rendered, since the real crew reply already
+        // renders fully in `sections` and putting a garbled internal-
+        // reasoning fragment next to it is a strict downgrade, not a second
+        // thing worth showing.
         if let leading = found.leading {
-            sections.insert(StrawHatSection(speaker: nil, rawSpeaker: "", text: leading,
-                                            proposals: [], droppedProposalCount: 0, followup: nil), at: 0)
+            if isLikelyToolNarration(leading) {
+                AppLog.ai.info("straw hat: dropped stray pre-envelope text that looked like tool-use narration")
+            } else {
+                sections.insert(StrawHatSection(speaker: nil, rawSpeaker: "", text: leading,
+                                                proposals: [], droppedProposalCount: 0, followup: nil), at: 0)
+            }
         }
         if let trailing = found.trailing {
-            sections.append(StrawHatSection(speaker: nil, rawSpeaker: "", text: trailing,
-                                            proposals: [], droppedProposalCount: 0, followup: nil))
+            if isLikelyToolNarration(trailing) {
+                AppLog.ai.info("straw hat: dropped stray post-envelope text that looked like tool-use narration")
+            } else {
+                sections.append(StrawHatSection(speaker: nil, rawSpeaker: "", text: trailing,
+                                                proposals: [], droppedProposalCount: 0, followup: nil))
+            }
         }
         return .envelope(sections)
+    }
+
+    /// Whether `text` reads as the model's own internal tool-use
+    /// deliberation leaking into a reply, rather than a genuine answer that
+    /// merely missed the envelope wrapper.
+    ///
+    /// The fixture this was written against is the captain's own screenshot:
+    /// a plain, unattributed message reading "Context already says
+    /// tasks_due_soon: 0, no need for a tool call." - a sentence about
+    /// *whether to call a tool*, quoting the `[CONTEXT ...]` block's own
+    /// field name verbatim, that should never have left the model's own
+    /// reasoning. `StrawHatCrew.persona`'s "HOW TO REPLY" section now
+    /// forbids this outright; this is the belt to that braces.
+    ///
+    /// **Deliberately narrower than "any leading/trailing prose"**, so the
+    /// preserved "genuinely both prose and envelope" case (a reply
+    /// explaining its own reply format) is untouched - see `Extracted`'s own
+    /// note on why that case keeps both halves, and
+    /// `StrawHatSelfTest.checkRung3PlainText`'s "both" fixture, which
+    /// contains neither of the two signals below.
+    ///
+    /// Two signals, either enough on its own:
+    ///
+    ///  - **A literal context-block or tool identifier**
+    ///    (`tasks_due_soon`, `follow_ups_pending`, `shift_read`,
+    ///    `docs_search`, `command_search`, `health_snapshot`). These are
+    ///    internal wire tokens `StrawHatContext.render()`/`StrawHatTools.
+    ///    swift` produce for the model to read, never words the persona asks
+    ///    a crew member to say - their presence in ordinary prose is close
+    ///    to conclusive on its own.
+    ///  - **A phrase about the tool-call decision itself** ("no need for a
+    ///    tool call", "don't need to call a tool", "skip the tool call", and
+    ///    similar).
+    ///
+    /// `internal` (not `private`) so `StrawHatSelfTest` can drive it
+    /// directly against fixtures a fake `claude` script cannot easily be
+    /// made to produce on its own.
+    static func isLikelyToolNarration(_ text: String) -> Bool {
+        let lower = text.lowercased()
+        let tokens = [
+            "tasks_due_soon", "follow_ups_pending",
+            "shift_read", "docs_search", "command_search", "health_snapshot",
+        ]
+        if tokens.contains(where: lower.contains) { return true }
+        let phrases = [
+            "no need for a tool call", "no need for the tool call",
+            "no need to call a tool", "no need to call the tool",
+            "don't need a tool call", "don't need to call a tool",
+            "no tool call needed", "no need to use a tool", "no need to use the tool",
+            "not going to call a tool", "skip the tool call",
+            "no need to look anything up", "no need to look that up",
+        ]
+        return phrases.contains(where: lower.contains)
     }
 
     // MARK: Internals

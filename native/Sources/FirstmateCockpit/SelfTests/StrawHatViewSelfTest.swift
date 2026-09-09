@@ -62,6 +62,7 @@ enum StrawHatViewSelfTest {
         checkMultiSectionReply(&ok)
         checkAcceptanceScenario(&ok)
         checkSalvageRendersButNeverExecutes(&ok)
+        checkToolNarrationRendersNeutralNote(&ok)
         checkContributingGlow(&ok)
         checkUnwiredCardFailsVisibly(&ok)
         checkHandoffRendersAsALink(&ok)
@@ -406,9 +407,14 @@ enum StrawHatViewSelfTest {
         if let block = chat.debugLastBlockView,
            let name = findLabel(in: block, text: "Luffy"),
            // From the roster, never a literal: Luffy's role read "Crew" in
-           // phase 1 and "Orchestrator" in phase 2, and a hardcoded word
-           // here fails for a reason that has nothing to do with layout.
-           let role = findLabel(in: block, textContaining: StrawHatMember.luffy.role) {
+           // phase 1, "Orchestrator" in phase 2, and a richer multi-segment
+           // phrase ("General Assistant / Conversation") after the captain's
+           // reference-image ask - a hardcoded word here fails for a reason
+           // that has nothing to do with layout. The explicit `maxLength`
+           // (default 30, calibrated against the old one-word roles) is what
+           // the richer phrase needs - `findLabel`'s own header names this
+           // exact situation as the reason that parameter exists.
+           let role = findLabel(in: block, textContaining: StrawHatMember.luffy.role, maxLength: 60) {
             let nameSlack = name.frame.width - name.intrinsicContentSize.width
             let roleSlack = role.frame.width - role.intrinsicContentSize.width
             check(nameSlack < 20,
@@ -828,6 +834,47 @@ enum StrawHatViewSelfTest {
         check(shown.contains("\"level\": \"debug\""), "and so does the code the captain asked for", &ok)
         check(store.activeTasks.isEmpty && store.followUps.isEmpty,
               "neither rung wrote anything", &ok)
+    }
+
+    /// `fm/straw-hat-voice-order-composer-polish-8dd2`: the one case rung 3
+    /// deliberately does NOT render as an ordinary Luffy message - a whole
+    /// reply that reads as leaked tool-use narration
+    /// (`StrawHatEnvelope.isLikelyToolNarration`), the captain's screenshot's
+    /// exact fixture. Attributing an internal-reasoning fragment to a
+    /// character speaking in character is precisely the immersion break this
+    /// feature exists to avoid, so `StrawHatController.renderReply` renders a
+    /// plain, unattributed note instead - still something (the ladder's own
+    /// "the reply is never dropped" invariant), never Luffy's own words.
+    ///
+    /// The parser-level suppression (leading/trailing prose stitched around a
+    /// real envelope) is pure logic and covered in `StrawHatSelfTest.
+    /// checkToolNarrationSuppression` - this is the one half of the fix that
+    /// needs a real rendered transcript to prove.
+    private static func checkToolNarrationRendersNeutralNote(_ ok: inout Bool) {
+        let m = mount()
+        showCrew(m)
+        let chat = m.controller.debugChat
+
+        m.controller.debugRenderReply(
+            "Context already says tasks_due_soon: 0, no need for a tool call.")
+
+        check(chat.debugCrewSpeakers() == ["-"],
+              "a leaked-narration reply must not be credited to Luffy, got \(chat.debugCrewSpeakers())", &ok)
+        let shown = chat.debugMessageTexts().joined()
+        check(!shown.contains("no need for a tool call"),
+              "the raw leaked sentence must not reach the transcript verbatim, got: \(shown)", &ok)
+        check(shown.contains("didn't come through cleanly"),
+              "...a plain, honest note is shown instead - the reply is never dropped, got: \(shown)", &ok)
+        check(m.controller.canvasState.lastSpeakers.isEmpty,
+              "the Overview card credits nobody either, got \(m.controller.canvasState.lastSpeakers.map(\.rawValue))", &ok)
+
+        // An ordinary rung-3 reply with none of the two narration signals
+        // still renders normally, in Luffy's own voice - the fix must not
+        // have widened into "every unparseable reply is suspect".
+        m.controller.newConversationTapped()
+        m.controller.debugRenderReply("Loguetown and Water Seven. Want the rest?")
+        check(chat.debugCrewSpeakers() == ["Luffy"],
+              "an ordinary prose reply still renders as Luffy, got \(chat.debugCrewSpeakers())", &ok)
     }
 
     /// M2.4's glow, and its Reduce Motion gate.

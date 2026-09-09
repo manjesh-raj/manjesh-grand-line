@@ -412,10 +412,19 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
     ///
     /// The rungs themselves are `StrawHatEnvelope.parse`'s; all this does is
     /// append what came back. Note there is **no** failure branch: the parser
-    /// cannot fail, by design - rung 3 renders the reply verbatim as one Luffy
-    /// block, which is exactly phase 1's behaviour. That is what makes a model
-    /// that stops emitting the envelope a cosmetic regression rather than a
-    /// chat that silently stops answering.
+    /// cannot fail, by design - rung 3 renders the reply as a crew block,
+    /// which is exactly phase 1's behaviour. That is what makes a model that
+    /// stops emitting the envelope a cosmetic regression rather than a chat
+    /// that silently stops answering.
+    ///
+    /// One exception, inside rung 3: a whole reply that reads as leaked
+    /// tool-use narration (`StrawHatEnvelope.isLikelyToolNarration`'s own
+    /// header - the captain's screenshot is its fixture) is never put in
+    /// Luffy's own voice. Attributing an internal-reasoning fragment to a
+    /// character speaking in character is the exact immersion break this
+    /// feature exists to avoid, so it renders as a plain, unattributed note
+    /// instead - honest about what happened, and still something rather than
+    /// nothing (the ladder's own "the reply is never dropped" invariant).
     private func renderReply(_ reply: String) {
         var spoke: [StrawHatMember] = []
         var preview: String?
@@ -427,9 +436,16 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
                 if preview == nil { preview = Self.previewLine(of: section.text) }
             }
         case .plain(let text):
-            chat.append(.crew(.text(StrawHatCrew.speaker, text)))
-            spoke = [StrawHatCrew.speaker]
-            preview = Self.previewLine(of: text)
+            if StrawHatEnvelope.isLikelyToolNarration(text) {
+                AppLog.ai.info("straw hat: the whole reply looked like leaked tool-use narration - showing a status note instead of crediting it to Luffy")
+                chat.append(.crew(StrawHatSection(speaker: nil, rawSpeaker: "",
+                                                  text: "That reply didn't come through cleanly - try asking again.",
+                                                  proposals: [], droppedProposalCount: 0, followup: nil)))
+            } else {
+                chat.append(.crew(.text(StrawHatCrew.speaker, text)))
+                spoke = [StrawHatCrew.speaker]
+                preview = Self.previewLine(of: text)
+            }
         }
         canvasState.exchanges += 1
         canvasState.lastSpeakers = spoke
