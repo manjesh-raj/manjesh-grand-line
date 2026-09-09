@@ -1790,6 +1790,25 @@ final class AppShellController: NSViewController {
         poneglyph.shutdown()
     }
 
+    /// Cancel any in-flight Straw Hat turn on the way to quitting
+    /// (`fm/implement-straw-hat-pirates-phase1-luffy-fb98`).
+    ///
+    /// The shell's forward for the same reason the three above are: `overview`
+    /// is `private` and the app delegate is where `applicationWillTerminate`
+    /// lives. Unlike those, this flushes nothing - there is no on-disk chat
+    /// history in phase 1 by explicit scope. What it stops is a `claude -p`
+    /// child outliving the app that spawned it: a turn is bounded at
+    /// `ClaudeOneShot.conversationTimeout` (300s), so without this a captain
+    /// who sends a message and immediately quits leaves a subprocess running
+    /// for up to five minutes with nowhere to deliver its answer. GL-13's rule
+    /// - background work stops when the thing it serves goes away.
+    ///
+    /// Safe on a page whose Crew tab was never opened: the runner is built
+    /// lazily on the first send, so there is usually nothing to cancel.
+    func shutdownStrawHatCrew() {
+        overview.shutdownCrew()
+    }
+
     func removeHostConsole(id: UUID) {
         guard let controller = hostConsoles.removeValue(forKey: id) else { return }
         let wasActive = activeHostID == id
