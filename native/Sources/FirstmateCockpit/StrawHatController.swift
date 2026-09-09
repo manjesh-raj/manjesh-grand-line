@@ -479,11 +479,17 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
 
     /// M2.2: the captain pressed a confirm card's button.
     ///
-    /// The write itself is `StrawHatProposalExecutor`'s; this owns only the
-    /// stores it hands over and the feedback afterwards. Wired to the chat
+    /// A kind that has an existing "New X" editor to review through
+    /// (`StrawHatProposalKind.opensEditor`) never reaches
+    /// `StrawHatProposalExecutor.execute` at all - `openEditorForReview` owns
+    /// it end to end, including its own write once the captain saves. The two
+    /// remaining kinds keep the original path unchanged. Wired to the chat
     /// view once, in `chat`'s own initializer - so there is exactly one path
     /// from a proposal to a store, and it starts at a real button press.
     func confirmProposal(_ proposal: StrawHatProposal) -> StrawHatProposalOutcome {
+        guard !proposal.kind.opensEditor else {
+            return openEditorForReview(proposal)
+        }
         let outcome = StrawHatProposalExecutor.execute(proposal, stores: stores)
         switch outcome {
         case .written(let message, let undo):
@@ -502,8 +508,174 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
         case .failed(let message):
             AppLog.ai.error("straw hat: a confirmed proposal failed: \(message, privacy: .public)")
             Toast.show(in: view, message: message)
+        case .openedForReview:
+            // Unreachable: `execute` never returns this case - the guard above
+            // already diverted every kind that could.
+            break
         }
         return outcome
+    }
+
+    // MARK: Editor-routed confirmation
+    //
+    // `fm/straw-hat-task-proposal-full-editor`. Each of these opens the same
+    // "New X" sheet the app's own hand-created-record flows use, pre-filled
+    // from the proposal, and wires that sheet's own Save to the real store
+    // write - so the captain reviews/adjusts every field that sheet exposes
+    // (priority, project, tags, category, cadence, ...) before anything lands
+    // anywhere. See `StrawHatProposalExecutor.swift`'s header for why this
+    // deliberately never calls `execute` for these four kinds.
+
+    /// One dispatch point for the four editor-routed kinds - kept separate
+    /// from `confirmProposal` so the "does this kind open an editor at all"
+    /// question and "which editor, with which fields" are two different
+    /// switches, each exhaustive on its own.
+    private func openEditorForReview(_ proposal: StrawHatProposal) -> StrawHatProposalOutcome {
+        switch proposal.kind {
+        case .addTask:
+            return openTaskEditor(proposal)
+        case .addFollowUp:
+            return openFollowUpEditor(proposal)
+        case .saveCommandDraft:
+            return openCommandEditor(proposal)
+        case .createScheduleDraft:
+            return openScheduleEditor(proposal)
+        case .createRunbookDraft, .addSticky, .openSRELead, .openDestination:
+            // Unreachable - `opensEditor` is false for all four, so
+            // `confirmProposal`'s guard never sends them here. Kept explicit
+            // rather than folded into `default:` so adding a kind is a
+            // compile error in both switches.
+            return .failed(message: "Nothing was written.")
+        }
+    }
+
+    /// Nami's `add_task`: opens the real New Task sheet pre-filled with the
+    /// title, due date and notes the crew drafted - the captain sets
+    /// priority, project, tags and description themselves, exactly as they
+    /// would for a hand-created task.
+    ///
+    /// The crew's `notes` land in the sheet's **Description** field, not
+    /// `ShiftTask.notes` - `ShiftTaskEditorController` has no UI for the
+    /// latter at all (it is written but never shown anywhere in the app), so
+    /// putting the crew's words there would be the exact "silently defaulted,
+    /// no chance to see or edit it" complaint this whole change exists to fix.
+    private func openTaskEditor(_ proposal: StrawHatProposal) -> StrawHatProposalOutcome {
+        let due = proposal.resolvedDue()
+        let editor = ShiftTaskEditorController(
+            task: nil, projects: shiftStore.projects,
+            prefillTitle: proposal.title, prefillDescription: proposal.notes,
+            prefillDueDate: due?.date, prefillDueTime: due?.time)
+        editor.onSave = { [weak self] task, attachmentChange in
+            guard let self else { return }
+            self.shiftStore.addTask(task, attachment: attachmentChange)
+            Toast.show(in: self.view, message: "Added \u{201C}\(task.title)\u{201D} to Tasks")
+        }
+        presentAsSheet(editor)
+        #if FM_SELFTESTS
+        debugLastRoutedEditor = editor
+        #endif
+        return .openedForReview(message: proposal.kind.openedForReviewLabel)
+    }
+
+    /// Nami's `add_follow_up`: same shape as the task editor above.
+    private func openFollowUpEditor(_ proposal: StrawHatProposal) -> StrawHatProposalOutcome {
+        let due = proposal.resolvedDue()
+        let editor = ShiftFollowUpEditorController(
+            followUp: nil, tasks: shiftStore.activeTasks, projects: shiftStore.projects,
+            prefillTitle: proposal.title, prefillNotes: proposal.notes,
+            prefillFollowUpAt: due?.date, prefillFollowUpTime: due?.time)
+        editor.onSave = { [weak self] followUp in
+            guard let self else { return }
+            self.shiftStore.addFollowUp(followUp)
+            Toast.show(in: self.view, message: "Added \u{201C}\(followUp.title)\u{201D} to Follow-ups")
+        }
+        presentAsSheet(editor)
+        #if FM_SELFTESTS
+        debugLastRoutedEditor = editor
+        #endif
+        return .openedForReview(message: proposal.kind.openedForReviewLabel)
+    }
+
+    /// Zoro's `save_command_draft`. Audit #2 section 5.3's gate stays in
+    /// front of the editor, unchanged: the captain still has to read the
+    /// model's own shell text and vouch for it (`confirmAIAuthored`) before
+    /// anything - including a form to edit it in - opens at all. Only once
+    /// they proceed does the pre-filled Command editor appear, where they set
+    /// category/description/tags/parameters/risk themselves; the stored risk
+    /// is therefore the captain's own choice at Save time, never the
+    /// heuristic guess alone (which only seeds the field).
+    ///
+    /// `"Crew Drafts"`, the folder the old direct write used, is not one of
+    /// `CommandLibraryCategory.all`'s thirteen real, pickable categories, so
+    /// it could never be *shown* as selected in this editor's own category
+    /// card - a category the captain cannot see they are saving into is not
+    /// review. "General DevOps" is the closest real starting point instead,
+    /// same as any other unsorted new command; the captain can pick any
+    /// category they like before saving.
+    private func openCommandEditor(_ proposal: StrawHatProposal) -> StrawHatProposalOutcome {
+        guard let commandLibraryStore else {
+            return .failed(message: "I couldn't reach your command library, so there was nowhere to save that.")
+        }
+        guard let command = proposal.command, !command.isEmpty else {
+            return .failed(message: "That draft had no command in it, so there was nothing to save.")
+        }
+        var outcome = StrawHatProposalOutcome.failed(
+            message: "Not saved - you can ask again if you want it after all.")
+        CommandRiskConfirmation.confirmAIAuthored(command: command, source: "The crew", intent: .saveTemplate) { [weak self] in
+            guard let self else { return }
+            let generalCategory = CommandLibraryCategory.all.first { $0.id == "general" }?.id
+                ?? CommandLibraryCategory.all[0].id
+            let prefill = DevOpsCommand(
+                id: UUID().uuidString, name: proposal.title,
+                description: proposal.notes ?? "Drafted by the crew - not yet vouched for.",
+                category: generalCategory, subcategory: nil,
+                commandTemplate: command, parameters: [], tags: ["crew-draft"],
+                risk: CommandRiskConfirmation.heuristicRisk(of: command))
+            let editor = CommandEditorController(editingID: nil, prefill: prefill, config: commandLibraryStore.config)
+            editor.onSave = { [weak self] name, description, category, subcategory, template, parameters, tags, risk in
+                guard let self else { return }
+                let saved = commandLibraryStore.createCommand(
+                    name: name, description: description, category: category, subcategory: subcategory,
+                    commandTemplate: template, parameters: parameters, tags: tags, risk: risk)
+                Toast.showUndo(in: self.view,
+                               message: "Saved \u{201C}\(saved.name)\u{201D} to DevOps Commands as \(saved.risk.displayName)") {
+                    commandLibraryStore.deleteCommand(id: saved.id)
+                }
+            }
+            self.presentAsSheet(editor)
+            #if FM_SELFTESTS
+            self.debugLastRoutedEditor = editor
+            #endif
+            outcome = .openedForReview(message: proposal.kind.openedForReviewLabel)
+        }
+        return outcome
+    }
+
+    /// Franky's `create_schedule_draft`: opens the real Schedule editor
+    /// pre-filled with the drafted action and cadence - the captain can
+    /// change either, or the notify setting, before Save creates it.
+    private func openScheduleEditor(_ proposal: StrawHatProposal) -> StrawHatProposalOutcome {
+        guard let scheduleStore else {
+            return .failed(message: "I couldn't reach your schedules, so there was nowhere to save that.")
+        }
+        guard let action = proposal.scheduleAction, let cadence = proposal.scheduleCadence else {
+            return .failed(message: "That draft was missing its action or its cadence, so there was nothing to save.")
+        }
+        let prefill = AutomationSchedule(action: action, cadence: cadence, notifyOn: .changeOnly)
+        let editor = ScheduleEditorController(schedule: nil, prefill: prefill)
+        editor.onSave = { [weak self] schedule in
+            guard let self else { return }
+            scheduleStore.add(schedule)
+            Toast.showUndo(in: self.view,
+                           message: "Added \u{201C}\(schedule.action.pickerTitle)\u{201D} \u{00B7} \(schedule.cadence.displayString)") {
+                scheduleStore.delete(id: schedule.id)
+            }
+        }
+        presentAsSheet(editor)
+        #if FM_SELFTESTS
+        debugLastRoutedEditor = editor
+        #endif
+        return .openedForReview(message: proposal.kind.openedForReviewLabel)
     }
 
     // MARK: M3.2 - the two navigation handoffs
@@ -592,6 +764,13 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
     /// extractor - so a suite can assert what a markdown reply reduces to
     /// without rendering a card.
     static func debugPreviewLine(of markdown: String) -> String? { previewLine(of: markdown) }
+    /// The editor most recently built by `openEditorForReview`, whether or
+    /// not `presentAsSheet` actually managed to show it on screen - no
+    /// self-test in this codebase relies on a genuine sheet presentation
+    /// working headlessly (see `DaylightChromeSelfTest`'s own convention of
+    /// mounting an editor controller standalone instead), so a suite drives
+    /// this instance's own fields/save button directly, the same way.
+    var debugLastRoutedEditor: NSViewController?
     #endif
 }
 

@@ -61,6 +61,8 @@ enum StrawHatViewSelfTest {
         checkFailureIsShown(&ok)
         checkMultiSectionReply(&ok)
         checkAcceptanceScenario(&ok)
+        checkEditorRoutedScheduleDraft(&ok)
+        checkEditorRoutedMissingStoresFailVisibly(&ok)
         checkSalvageRendersButNeverExecutes(&ok)
         checkToolNarrationRendersNeutralNote(&ok)
         checkContributingGlow(&ok)
@@ -673,8 +675,19 @@ enum StrawHatViewSelfTest {
         }
     }
 
-    /// The acceptance criterion, end to end: one message, two clicks, a task
-    /// and a follow-up really in Shift.
+    /// The acceptance criterion, end to end: one message, two clicks, and the
+    /// captain gets to review a task and a follow-up in the app's own real
+    /// editors before either lands in Shift.
+    ///
+    /// `fm/straw-hat-task-proposal-full-editor`: this test used to assert a
+    /// confirm-card press wrote a bare task/follow-up straight to the store
+    /// with no priority, no project and no chance to see either - exactly the
+    /// captain's complaint. `add_task`/`add_follow_up` are now
+    /// `StrawHatProposalKind.opensEditor` kinds, so a press opens the real New
+    /// Task / New Follow-up sheet pre-filled with the crew's draft instead,
+    /// and it is *that* sheet's own Save which writes - proven here by
+    /// reading the store both before and after driving the editor's own Save
+    /// button, never by reading anything off the confirm card alone.
     private static func checkAcceptanceScenario(_ ok: inout Bool) {
         // This case's own store, so what it writes is its own and a leftover
         // from an earlier case cannot make it pass.
@@ -696,7 +709,7 @@ enum StrawHatViewSelfTest {
         let envelope = """
         {"sections":[
           {"speaker":"nami","text":"Drafted both:","proposals":[
-            {"kind":"add_task","title":"Fix the login issue","due":"tomorrow"},
+            {"kind":"add_task","title":"Fix the login issue","due":"tomorrow","notes":"from the crew"},
             {"kind":"add_follow_up","title":"Ask Rahul about the Cognito configuration"}]},
           {"speaker":"luffy","text":"Confirm to add."}]}
         """
@@ -718,53 +731,187 @@ enum StrawHatViewSelfTest {
               "rendering the cards must write nothing at all", &ok)
 
         let cards = chat.debugConfirmCards()
-        guard cards.count == 2 else {
+        guard cards.count == 2, let taskCard = cards.first, let followUpCard = cards.last else {
             check(false, "expected two cards to press, got \(cards.count)", &ok)
             return
         }
 
-        // Two real presses, through the real button's own target/action.
-        for card in cards { card.debugConfirmButton.performClick(nil) }
+        // ---- The task: press opens the real editor, pre-filled ----
+        //
+        // Through the real button's own target/action, exactly as a mouse
+        // would - not `confirmProposal` called directly.
+        taskCard.debugConfirmButton.performClick(nil)
 
-        check(store.activeTasks.contains(where: { $0.title == "Fix the login issue" }),
-              "the task landed in Shift, got \(store.activeTasks.map(\.title))", &ok)
-        check(store.followUps.contains(where: { $0.title.contains("Rahul") }),
-              "the follow-up landed in Shift, got \(store.followUps.map(\.title))", &ok)
-        check(cards.allSatisfy { $0.debugIsConfirmed },
-              "both cards show their confirmed state", &ok)
-        check(cards.allSatisfy { $0.debugConfirmButtonHidden },
-              "and the button is gone, so a second press cannot double-write", &ok)
-        check(cards.first?.debugDoneText.contains("Added to Tasks") == true,
-              "the confirmed card names where the record went, got \(cards.first?.debugDoneText ?? "")", &ok)
-        // ...and it is not truncated. The action column used to be pinned to
-        // the *button's* width on both edges, so the longer confirmed label
-        // rendered as "\u{2713} Adde\u{2026}" - caught in a real off-screen
-        // render, invisible to every other assertion here (the string is
-        // correct; only its frame was too small).
+        check(store.activeTasks.isEmpty,
+              "opening the editor must not write anything by itself", &ok)
+        check(taskCard.debugOpenedForReview && !taskCard.debugIsConfirmed,
+              "the card shows \"opened for review\", not \"written\" - nothing has been saved yet", &ok)
+        check(taskCard.debugConfirmButtonHidden,
+              "and the button is gone, so a second press cannot open a second editor", &ok)
+        check(taskCard.debugDoneText == StrawHatProposalKind.addTask.openedForReviewLabel,
+              "the card names what happened, got \(taskCard.debugDoneText)", &ok)
+        // The detail line still names the record, unaffected by any of this -
+        // it was never the toast's job either way.
+        check(taskCard.debugDetailText.contains("Tomorrow") == true,
+              "a routed card keeps its own detail line, got \(taskCard.debugDetailText)", &ok)
+        // ...and its own label is not truncated, the same geometry concern
+        // the old "Added to Tasks" wording was checked against.
         m.controller.view.layoutSubtreeIfNeeded()
-        if let done = cards.first?.debugDoneLabel {
-            let slack = done.frame.width - done.intrinsicContentSize.width
-            check(slack >= -0.5,
-                  "the confirmed label has room for its own text - short by \(-slack)pt [\(cards.first!.debugFrames)]", &ok)
-        } else {
-            check(false, "could not reach the confirmed label", &ok)
-        }
-        // The detail line still says what the record is, rather than being
-        // overwritten with the toast's own wording (which threw away the due
-        // date the card was showing).
-        check(cards.first?.debugDetailText.contains("Tomorrow") == true,
-              "a confirmed card keeps its detail, got \(cards.first?.debugDetailText ?? "")", &ok)
+        let done = taskCard.debugDoneLabel
+        let slack = done.frame.width - done.intrinsicContentSize.width
+        check(slack >= -0.5,
+              "the opened-for-review label has room for its own text - short by \(-slack)pt [\(taskCard.debugFrames)]", &ok)
 
-        // A second press on an already-confirmed card writes nothing more -
-        // guarded as well as hidden, since a keyboard activation could reach it.
+        guard let taskEditor = m.controller.debugLastRoutedEditor as? ShiftTaskEditorController else {
+            check(false, "confirming the task proposal must open a real ShiftTaskEditorController", &ok)
+            return
+        }
+        check(taskEditor.debugTitleText == "Fix the login issue",
+              "the editor's title field is pre-filled with the crew's own wording, got \(taskEditor.debugTitleText)", &ok)
+        // The crew's notes land in the visible Description field - not
+        // `ShiftTask.notes`, which this editor has no UI for at all.
+        check(taskEditor.debugDescriptionText == "from the crew",
+              "the crew's notes are pre-filled into the editor's visible Description field, got \(taskEditor.debugDescriptionText)", &ok)
+        check(taskEditor.debugDueRowIsOn,
+              "the due-date toggle is pre-enabled from the proposal's own \"tomorrow\"", &ok)
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
+        check(Calendar.current.isDate(taskEditor.debugDueDateValue, inSameDayAs: tomorrow),
+              "the due date resolves to tomorrow, got \(taskEditor.debugDueDateValue)", &ok)
+        // Nothing invented beyond what the proposal carried: priority/project
+        // stay whatever a brand-new task's own default is, exactly as they
+        // did before this change - the whole point is that the captain, not
+        // the app, is now the one who would change them.
+        check(store.activeTasks.isEmpty,
+              "reading the editor's pre-filled fields must still write nothing", &ok)
+
+        // The captain reviews, then presses the editor's own real Save -
+        // never `StrawHatProposalExecutor.execute`.
+        taskEditor.debugTriggerSave()
+        check(store.activeTasks.contains(where: { $0.title == "Fix the login issue" }),
+              "the editor's own Save is what actually writes the task, got \(store.activeTasks.map(\.title))", &ok)
+        check(store.activeTasks.first(where: { $0.title == "Fix the login issue" })?.description == "from the crew",
+              "...with the notes landing where the editor showed them", &ok)
+
+        // A second click on the same (now hidden) confirm button must not
+        // open a second editor or write a second copy - guarded the same way
+        // the old direct-write flow guarded a re-press.
         let tasksAfter = store.activeTasks.count
-        cards.first?.debugConfirmButton.performClick(nil)
+        taskCard.debugConfirmButton.performClick(nil)
         check(store.activeTasks.count == tasksAfter,
               "a re-press must not write a second copy, went \(tasksAfter) -> \(store.activeTasks.count)", &ok)
 
-        // It really reached disk, not just the in-memory array.
+        // ---- The follow-up: the same shape, driven through its own editor ----
+        followUpCard.debugConfirmButton.performClick(nil)
+        check(followUpCard.debugOpenedForReview, "the follow-up card also opens for review, not written directly", &ok)
+        guard let followUpEditor = m.controller.debugLastRoutedEditor as? ShiftFollowUpEditorController else {
+            check(false, "confirming the follow-up proposal must open a real ShiftFollowUpEditorController", &ok)
+            return
+        }
+        check(followUpEditor.debugTitleText == "Ask Rahul about the Cognito configuration",
+              "the follow-up editor is pre-filled with the crew's own title, got \(followUpEditor.debugTitleText)", &ok)
+        check(store.followUps.isEmpty, "opening the follow-up editor must not write anything either", &ok)
+        followUpEditor.debugTriggerSave()
+        check(store.followUps.contains(where: { $0.title.contains("Rahul") }),
+              "the follow-up editor's own Save writes it, got \(store.followUps.map(\.title))", &ok)
+
+        // Both really reached disk, not just the in-memory arrays.
         check(ShiftStore().activeTasks.contains(where: { $0.title == "Fix the login issue" }),
-              "a confirmed task survives a fresh store", &ok)
+              "a saved task survives a fresh store", &ok)
+        check(ShiftStore().followUps.contains(where: { $0.title.contains("Rahul") }),
+              "a saved follow-up survives a fresh store", &ok)
+    }
+
+    /// Franky's `create_schedule_draft`: the fourth editor-routed kind, and
+    /// the one that (unlike `save_command_draft`) has no `NSAlert` gate in
+    /// front of it - so this is the one editor-routed write this suite can
+    /// drive fully end to end, confirm press through Save, with no modal to
+    /// answer.
+    private static func checkEditorRoutedScheduleDraft(_ ok: inout Bool) {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("straw-hat-schedule-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        // A bare `ScheduleStore()` reads this machine's real `schedules.json`
+        // with no override - the exact hazard `main.swift`'s own redirect
+        // block exists for (AGENTS.md's "Phase 3 execution" note).
+        let previousSchedulesFile = ProcessInfo.processInfo.environment["FM_SCHEDULES_FILE"]
+        setenv("FM_SCHEDULES_FILE", scratch.appendingPathComponent("schedules.json").path, 1)
+        defer {
+            if let previousSchedulesFile { setenv("FM_SCHEDULES_FILE", previousSchedulesFile, 1) } else { unsetenv("FM_SCHEDULES_FILE") }
+            try? FileManager.default.removeItem(at: scratch)
+        }
+
+        let schedules = ScheduleStore()
+        let m = mount(scheduleStore: schedules)
+        showCrew(m)
+
+        m.controller.debugRenderReply("""
+        {"sections":[{"speaker":"franky","text":"Drafted a nightly drift check:","proposals":[
+          {"kind":"create_schedule_draft","action":"driftCheck","cadence":"daily 09:00"}]}]}
+        """)
+        guard let card = m.controller.debugChat.debugConfirmCards().first else {
+            check(false, "the schedule proposal must render a confirm card", &ok)
+            return
+        }
+
+        card.debugConfirmButton.performClick(nil)
+        check(schedules.schedules.isEmpty, "opening the schedule editor must not write anything by itself", &ok)
+        check(card.debugOpenedForReview, "the card shows \"opened for review\", not \"written\"", &ok)
+
+        guard let editor = m.controller.debugLastRoutedEditor as? ScheduleEditorController else {
+            check(false, "confirming the schedule proposal must open a real ScheduleEditorController", &ok)
+            return
+        }
+        check(editor.debugAction == .driftCheck, "the editor is pre-filled with the crew's own action, got \(editor.debugAction)", &ok)
+        check(editor.debugCadence == .daily(hour: 9, minute: 0),
+              "...and its cadence, got \(editor.debugCadence)", &ok)
+        check(editor.debugNotifyOn == .changeOnly,
+              "the notify setting is the app's own default, not the model's choice, got \(editor.debugNotifyOn)", &ok)
+
+        editor.debugTriggerSave()
+        check(schedules.schedules.contains(where: { $0.action == .driftCheck }),
+              "the editor's own Save is what creates the schedule, got \(schedules.schedules.map(\.action))", &ok)
+        check(schedules.schedules.first(where: { $0.action == .driftCheck })?.isEnabled == true,
+              "created enabled, exactly as this editor's own Save always leaves a new schedule", &ok)
+    }
+
+    /// The two kinds that need a store this page might not have
+    /// (`commandLibraryStore`/`scheduleStore` are both optional) must fail
+    /// visibly rather than silently, exactly like the two kinds still routed
+    /// through `execute` already do - and for the command kind, this guard
+    /// fires *before* the AI-authored alert, so it is reachable from a
+    /// headless suite even though the rest of that path is not.
+    private static func checkEditorRoutedMissingStoresFailVisibly(_ ok: inout Bool) {
+        let m = mount() // no commandLibraryStore, no scheduleStore
+        showCrew(m)
+
+        m.controller.debugRenderReply("""
+        {"sections":[{"speaker":"zoro","text":"Drafted:","proposals":[
+          {"kind":"save_command_draft","title":"Tail it","command":"kubectl logs -f deploy/api"}]}]}
+        """)
+        guard let commandCard = m.controller.debugChat.debugConfirmCards().first else {
+            check(false, "the command draft must still render a card", &ok)
+            return
+        }
+        commandCard.debugConfirmButton.performClick(nil)
+        check(!commandCard.debugOpenedForReview && !commandCard.debugIsConfirmed,
+              "a missing command library must fail rather than open anything", &ok)
+        check(commandCard.debugDetailText.lowercased().contains("command library"),
+              "...and say why, got \(commandCard.debugDetailText)", &ok)
+
+        m.controller.newConversationTapped()
+        m.controller.debugRenderReply("""
+        {"sections":[{"speaker":"franky","text":"Drafted:","proposals":[
+          {"kind":"create_schedule_draft","action":"driftCheck","cadence":"daily 02:00"}]}]}
+        """)
+        guard let scheduleCard = m.controller.debugChat.debugConfirmCards().first else {
+            check(false, "the schedule draft must still render a card", &ok)
+            return
+        }
+        scheduleCard.debugConfirmButton.performClick(nil)
+        check(!scheduleCard.debugOpenedForReview && !scheduleCard.debugIsConfirmed,
+              "a missing schedule store must fail rather than open anything", &ok)
+        check(scheduleCard.debugDetailText.lowercased().contains("schedules"),
+              "...and say why, got \(scheduleCard.debugDetailText)", &ok)
     }
 
     /// Rung 2 and rung 3, through the real render path - neither is reachable

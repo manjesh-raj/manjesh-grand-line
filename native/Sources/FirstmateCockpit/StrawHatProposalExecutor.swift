@@ -60,6 +60,32 @@
 // through to a default, so even a view that mis-rendered a handoff as a
 // confirm card could not turn a press into a write.
 //
+// ## Four kinds route through an existing editor instead, and never reach
+// `execute` at all
+//
+// `fm/straw-hat-task-proposal-full-editor`: `execute`'s `addTask` used to
+// build a `ShiftTask` straight from the proposal and write it - no priority,
+// no project, no tags, because the model was never asked for any of them and
+// the captain never got a chance to set them either. That is honest ("nothing
+// invented") but it is not what the captain wants: a task/follow-up/command/
+// schedule draft each has a real "New X" sheet elsewhere in the app exposing
+// strictly more fields than a proposal carries, so `StrawHatController.
+// confirmProposal` opens that same sheet, pre-filled, for `.addTask`,
+// `.addFollowUp`, `.saveCommandDraft` and `.createScheduleDraft`
+// (`StrawHatProposalKind.opensEditor`) - and never calls `execute` for them at
+// all, because the write that happens once the captain reviews and presses
+// that sheet's own Save must use *their* edited values, not a fresh
+// re-derivation from the original proposal.
+//
+// `execute`'s own branches for those four kinds are therefore untouched on
+// purpose (see the file's own tests, which still drive them directly) rather
+// than deleted: they remain the honest "what would this look like with
+// nothing added" reference this file's header always described, now reachable
+// only from a test calling `execute` directly, never from the confirm-card
+// flow. `createRunbookDraft` and `addSticky` are the two kinds `execute` still
+// serves in production - see `opensEditor`'s own doc comment for why neither
+// has an equivalent dialog to route through instead.
+//
 // ## Undo: real for four kinds, deliberately absent for two
 //
 // GL-33's rule is that `onUndo` must restore the value the caller already had
@@ -102,6 +128,14 @@ enum StrawHatProposalOutcome {
     /// captain rather than swallowed: they pressed a button and are owed an
     /// answer either way.
     case failed(message: String)
+    /// The proposal's own kind opens an existing editor for the captain to
+    /// review before anything is written (`StrawHatProposalKind.opensEditor`)
+    /// - never returned by `execute` itself, only by
+    /// `StrawHatController.openEditorForReview`, which intercepts those four
+    /// kinds before they would otherwise reach here. The real write, if the
+    /// captain goes through with it, happens inside that editor's own Save
+    /// action, entirely independent of this outcome.
+    case openedForReview(message: String)
 }
 
 enum StrawHatProposalExecutor {

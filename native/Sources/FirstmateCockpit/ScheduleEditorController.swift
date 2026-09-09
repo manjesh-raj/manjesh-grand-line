@@ -36,6 +36,17 @@ final class ScheduleEditorController: NSViewController {
     private var isWeekly: Bool
     private var weekday: Int
     private var notifyOn: ScheduleNotifyOn
+    /// The time picker's own starting value - kept alongside `weekday`
+    /// (`initial.cadence`'s other half) rather than re-derived in `loadView`,
+    /// which used to read `editing?.cadence.hour`/`.minute` directly and so
+    /// silently ignored `prefill` (a real bug this file's own prefill support
+    /// surfaced: `editing` and `initial` agree whenever `schedule` is
+    /// non-nil, and the hardcoded `?? 2`/`?? 0` fallback happened to match
+    /// `initial`'s own default whenever it was nil too - so nothing ever
+    /// noticed the two had quietly stopped being the same source until a
+    /// third value, `prefill`, was added to `initial` and not to that line).
+    private let initialHour: Int
+    private let initialMinute: Int
 
     // MARK: Controls
 
@@ -48,11 +59,25 @@ final class ScheduleEditorController: NSViewController {
     private var remoteWriteCard: NSView?
     private var form: HelmFormSheet!
 
-    init(schedule: AutomationSchedule?) {
+    /// `prefill` seeds a brand-new schedule with a starting point already in
+    /// hand - the Straw Hat Pirates confirm-card flow's own ask
+    /// (`fm/straw-hat-task-proposal-full-editor`): Franky's draft names an
+    /// action and a cadence, and the captain reviews/adjusts them (or the
+    /// notify setting) themselves before Save creates the real schedule.
+    ///
+    /// Deliberately separate from `schedule`, never folded into it: `editing`
+    /// is what decides "Save" vs. "Create Schedule" and whether Delete is
+    /// offered, and a not-yet-created draft must read as "new" in both -
+    /// passing it as `schedule:` instead would show a Delete button for a
+    /// schedule that does not exist yet. Ignored whenever `schedule` is
+    /// non-nil, which already has its own real values.
+    init(schedule: AutomationSchedule?, prefill: AutomationSchedule? = nil) {
         self.editing = schedule
-        let initial = schedule ?? AutomationSchedule(action: .driftCheck, cadence: .daily(hour: 2, minute: 0))
+        let initial = schedule ?? prefill ?? AutomationSchedule(action: .driftCheck, cadence: .daily(hour: 2, minute: 0))
         self.action = initial.action
         self.notifyOn = initial.notifyOn
+        self.initialHour = initial.cadence.hour
+        self.initialMinute = initial.cadence.minute
         switch initial.cadence.normalized {
         case .daily:
             self.isWeekly = false
@@ -108,8 +133,7 @@ final class ScheduleEditorController: NSViewController {
 
         timePicker.datePickerStyle = .textFieldAndStepper
         timePicker.datePickerElements = [.hourMinute]
-        timePicker.dateValue = Self.date(hour: (editing?.cadence.hour) ?? 2,
-                                        minute: (editing?.cadence.minute) ?? 0)
+        timePicker.dateValue = Self.date(hour: initialHour, minute: initialMinute)
         timePicker.translatesAutoresizingMaskIntoConstraints = false
 
         form.addColumns([cadenceCard, weekdayCard])
@@ -207,4 +231,13 @@ final class ScheduleEditorController: NSViewController {
     @objc private func cancel() {
         dismiss(self)
     }
+
+    #if FM_SELFTESTS
+    var debugAction: ScheduledActionKind { action }
+    var debugCadence: ScheduleCadence { chosenCadence }
+    var debugNotifyOn: ScheduleNotifyOn { notifyOn }
+    /// Triggers the real `save()` - the same method the footer's own Save
+    /// button target/action calls.
+    func debugTriggerSave() { save() }
+    #endif
 }
