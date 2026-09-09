@@ -279,6 +279,36 @@ enum RailDestination: String, CaseIterable {
         }
     }
 
+    /// A raster artwork override for the shell's drill header tile
+    /// (`AppShellController.applyDrillHeader` -> `HelmDrillHeader.configure`),
+    /// in place of `symbol`'s SF Symbol.
+    ///
+    /// `fm/straw-hat-header-icon-and-luffy-followup-5282`: the previous
+    /// polish pass (`fm/polish-straw-hat-overview-card-and-voice-c8d3`) wired
+    /// the Jolly Roger into the Overview canvas's own module card
+    /// (`HomeCanvasController.fillStrawHat`'s `content.artwork =
+    /// StrawHatFlag.image`), which flows into
+    /// `HelmGradientTile.configure(artwork:symbol:hue:)` there - but the
+    /// drill header the card's own click opens onto is a **separate**
+    /// `HelmGradientTile` instance the shell owns, fed only through
+    /// `symbol`/`domainHue`, so it fell back to `symbol`'s generic
+    /// `person.3.fill` placeholder. No other destination in this app carries
+    /// a raster payload anywhere (checked: Poneglyph's is a plain SF Symbol,
+    /// `doc.text.image`), so this is a genuinely new, narrow gap rather than
+    /// a mechanism another destination already needed - `nil` for every case
+    /// but `.strawHat` is what keeps it that way, exhaustively enumerated per
+    /// this file's own house style (see `flyoutTint`) so a future
+    /// artwork-carrying destination has to be added here deliberately.
+    var drillHeaderArtwork: NSImage? {
+        switch self {
+        case .strawHat: return StrawHatFlag.image
+        case .homeCanvas, .overview, .console, .hosts, .shift, .review, .logAnalyzer, .kubernetes, .tools,
+             .whiteboard, .codePreview, .stickyBoard, .vault, .dictation, .schedules, .health, .docs,
+             .runbooks, .postmortems, .updates, .bootstrap, .automation, .githubSync, .poneglyph, .settings:
+            return nil
+        }
+    }
+
     var title: String {
         switch self {
         case .homeCanvas: return "Home"

@@ -83,7 +83,7 @@ final class AppShellController: NSViewController {
     /// changed can have its subtitle re-read without the shell having to work
     /// out which destination is showing all over again.
     private var lastDrillContext: (title: String, subtitle: String, symbol: String,
-                                   hue: HelmDomainHue, controller: NSViewController?)?
+                                   hue: HelmDomainHue, artwork: NSImage?, controller: NSViewController?)?
 
     /// The hub. Owns the space filter and the module grid; knows nothing about
     /// navigation beyond the closures wired below.
@@ -1396,6 +1396,7 @@ final class AppShellController: NSViewController {
                          subtitle: dest.drillSubtitle,
                          symbol: dest.symbol,
                          hue: dest.domainHue,
+                         artwork: dest.drillHeaderArtwork,
                          isCanvas: slot.id == .homeCanvas,
                          slotController: slot.controller)
 
@@ -1533,7 +1534,7 @@ final class AppShellController: NSViewController {
     /// participate fully in Auto Layout, so hiding alone would leave a
     /// `HelmDrillHeader.height` gap above the canvas.
     private func applyDrillHeader(title: String, subtitle: String, symbol: String,
-                                  hue: HelmDomainHue, isCanvas: Bool,
+                                  hue: HelmDomainHue, artwork: NSImage? = nil, isCanvas: Bool,
                                   slotController: NSViewController?) {
         drillHeader.isHidden = isCanvas
         drillHeaderHeightConstraint.constant = isCanvas ? 0 : HelmDrillHeader.height
@@ -1541,14 +1542,14 @@ final class AppShellController: NSViewController {
         let page = slotController as? DaylightDrillActions
         drillHeader.configure(title: title,
                               subtitle: page?.drillHeaderSubtitle ?? subtitle,
-                              symbol: symbol, hue: hue)
+                              symbol: symbol, hue: hue, artwork: artwork)
         // §6.4's action cluster. Asked of the destination rather than switched
         // on here, so migrating a page in a later slice is one conformance on
         // that page and no edit to the shell - and a page that has not been
         // migrated yet answers `nil`, which clears the cluster rather than
         // leaving the previous page's buttons showing.
         drillHeader.setActions(page?.drillHeaderActions ?? [])
-        lastDrillContext = (title, subtitle, symbol, hue, slotController)
+        lastDrillContext = (title, subtitle, symbol, hue, artwork, slotController)
     }
 
     /// Re-read the showing page's own live subtitle (§6.4). Called by a
@@ -1558,7 +1559,7 @@ final class AppShellController: NSViewController {
         let page = context.controller as? DaylightDrillActions
         drillHeader.configure(title: context.title,
                               subtitle: page?.drillHeaderSubtitle ?? context.subtitle,
-                              symbol: context.symbol, hue: context.hue)
+                              symbol: context.symbol, hue: context.hue, artwork: context.artwork)
     }
 
     /// Re-read the showing page's own action cluster (§6.4) - the sibling of

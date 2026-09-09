@@ -175,11 +175,21 @@ final class HelmDrillHeader: NSView {
 
     /// Point the header at a destination. `subtitle` is optional live detail
     /// the shell already knows (a host page's label, for instance).
-    func configure(title: String, subtitle: String, symbol: String, hue: HelmDomainHue) {
+    ///
+    /// `artwork` is `RailDestination.drillHeaderArtwork` - `nil` for every
+    /// destination but the one that carries a raster payload today. Routed
+    /// through `HelmGradientTile.configure(artwork:symbol:hue:)` rather than
+    /// the plain glyph path, mirroring how `HelmModuleCard` already renders
+    /// that same destination's Overview card tile.
+    func configure(title: String, subtitle: String, symbol: String, hue: HelmDomainHue, artwork: NSImage? = nil) {
         titleLabel.stringValue = title
         subtitleLabel.stringValue = subtitle
         subtitleLabel.isHidden = subtitle.isEmpty
-        tile.configure(symbol: symbol, hue: hue)
+        if let artwork {
+            tile.configure(artwork: artwork, symbol: symbol, hue: hue)
+        } else {
+            tile.configure(symbol: symbol, hue: hue)
+        }
         reassertTitleWidthTie()
     }
 
