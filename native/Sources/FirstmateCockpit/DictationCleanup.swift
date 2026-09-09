@@ -40,12 +40,49 @@
 // response) always falls back to the raw transcript rather than losing or
 // blocking the dictation - `DictationEngine.finish(text:)` is the one call
 // site, and it never waits on this indefinitely either (see `timeout` below).
+//
+// Vocabulary-aware correction (captain report: "an herdr session" reliably
+// transcribed as "an older session" - a common word beating a custom
+// vocabulary word, even with that word already in "Words I use often" and
+// therefore already wired into `SFSpeechRecognitionRequest.contextualStrings`
+// - see `DictationEngine.beginCapture`). `contextualStrings` is a flat array
+// with no per-word weight/priority knob - there is no dial to turn up a
+// single word's influence beyond what's already applied live, during
+// recognition. This rewrite pass is the one place in the pipeline that sees
+// the *whole* finished sentence at once, which is exactly the extra signal a
+// human proofreader would use to catch "an older session" next to
+// fleet/terminal-shaped words and realize it should read "an herdr session" -
+// so `prompt(for:vocabulary:)` now also asks the model to make that specific
+// kind of correction, using the captain's own vocabulary list
+// (`DictationStore.vocabulary`, the same list `contextualStrings` already
+// reads) as the set of words worth checking for.
+//
+// This rides on the *existing* "Clean up my sentences" toggle rather than
+// getting a second one, deliberately: both the sentence rewrite and this
+// correction need the identical network+`claude`-CLI dependency, so a second
+// toggle would either be redundant (needing both switches on to get vocabulary
+// correction) or would mean a second, separate `claude -p` call purely for
+// vocabulary correction - doubling latency/API calls for a captain who wants
+// both, for no capability the combined single-call version doesn't already
+// provide. The captain's own report described exactly what one whole-sentence
+// rewrite pass already does (use surrounding context, not a single word in
+// isolation) - see this task's PR description for the fuller reasoning.
+//
+// Over-correction is a real, named risk, not just an under-correction one: a
+// genuinely-meant "an older session" must not be turned into "an herdr
+// session" just because "herdr" happens to be on the list. `prompt(for:
+// vocabulary:)` states the guard explicitly (only correct when the rest of
+// the sentence actually supports the vocabulary reading) rather than only
+// asking for corrections and hoping restraint follows.
 
 import Foundation
 
 /// Rewrites a raw transcript into a well-formed sentence via one non-
-/// interactive `claude -p` call. Stateless - a fresh instance's `rewrite`
-/// call is independent of any other; there is no conversation to resume.
+/// interactive `claude -p` call - and, in the same pass, corrects a word or
+/// short phrase that's a plausible phonetic near-match for one of the
+/// captain's own vocabulary words when the rest of the sentence supports that
+/// reading. Stateless - a fresh instance's `rewrite` call is independent of
+/// any other; there is no conversation to resume.
 enum DictationCleanup {
     /// Bounded wait for the whole `claude -p` round trip - a rewrite that
     /// takes meaningfully longer than this is assumed hung/unreachable, and
@@ -55,17 +92,57 @@ enum DictationCleanup {
     /// few seconds) while still being far short of "the captain gives up."
     static let timeout: TimeInterval = 20
 
-    static func prompt(for transcript: String) -> String {
-        """
-        Rewrite the following rough, spoken transcript as a single grammatically \
-        correct, well-formed piece of text. Fix filler words, false starts, and \
-        awkward phrasing, but preserve the original meaning and intent exactly - \
-        do not add information, opinions, or commentary. Reply with ONLY the \
-        rewritten text and nothing else - no quotes, no preamble, no explanation.
+    /// `vocabulary` is the captain's own "Words I use often" list
+    /// (`DictationStore.vocabulary`) - empty when he hasn't configured any,
+    /// in which case the prompt carries no vocabulary-correction instruction
+    /// at all (nothing to check against, so nothing to ask for).
+    static func prompt(for transcript: String, vocabulary: [String] = []) -> String {
+        var sections = [
+            """
+            Rewrite the following rough, spoken transcript as a single grammatically \
+            correct, well-formed piece of text. Fix filler words, false starts, and \
+            awkward phrasing, but preserve the original meaning and intent exactly - \
+            do not add information, opinions, or commentary.
+            """
+        ]
 
-        Transcript:
-        \(transcript)
-        """
+        if !vocabulary.isEmpty {
+            let list = vocabulary.map { "- \($0)" }.joined(separator: "\n")
+            sections.append(
+                """
+                The speaker has a personal vocabulary of words/phrases the speech \
+                recognizer sometimes mishears as a common, similar-sounding word or \
+                phrase, because their custom words compete against far more common \
+                words during recognition:
+                \(list)
+
+                Check the transcript for a word or short phrase that's a plausible \
+                phonetic near-match for one of these vocabulary entries, and correct \
+                it to the vocabulary spelling ONLY when the rest of the sentence \
+                actually supports that reading (e.g. "an older session" next to \
+                fleet/terminal-related words strongly implies the vocabulary word \
+                "herdr", not a coincidental "older"). Do not force a vocabulary word \
+                in where it doesn't genuinely fit the sentence's own meaning - a word \
+                the speaker plainly meant to say (a genuine "older", "brook", "sea", \
+                etc.) must be left exactly as it is, even if it superficially \
+                resembles a vocabulary entry. When you're not confident a mismatch is \
+                really a misrecognition of a vocabulary word, leave the transcript's \
+                own wording alone.
+                """
+            )
+        }
+
+        sections.append(
+            """
+            Reply with ONLY the rewritten text and nothing else - no quotes, no \
+            preamble, no explanation.
+
+            Transcript:
+            \(transcript)
+            """
+        )
+
+        return sections.joined(separator: "\n\n")
     }
 
     /// Runs the rewrite. `completion` is always called on the main thread,
@@ -82,7 +159,12 @@ enum DictationCleanup {
     /// `SRELead.resolveClaude()`, exactly as before this seam existed."
     static var claudePathOverrideForTests: String?
 
-    static func rewrite(_ transcript: String, completion: @escaping (Result<String, DictationCleanupError>) -> Void) {
+    /// `vocabulary` is the captain's current "Words I use often" list,
+    /// threaded straight through to `prompt(for:vocabulary:)` - see this
+    /// file's header for why this rides on the same call rather than a
+    /// second one. Defaults to empty so every pre-existing caller (and this
+    /// file's own self-test) keeps its original behavior unless it opts in.
+    static func rewrite(_ transcript: String, vocabulary: [String] = [], completion: @escaping (Result<String, DictationCleanupError>) -> Void) {
         let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             completion(.failure(DictationCleanupError(message: "empty transcript")))
@@ -99,7 +181,7 @@ enum DictationCleanup {
         // behaviour this call site cares about is unchanged: bounded by
         // `timeout`, completion always on the main thread exactly once, and any
         // failure means "fall back to the raw transcript".
-        ClaudeOneShot.run(executable: claude, prompt: prompt(for: trimmed),
+        ClaudeOneShot.run(executable: claude, prompt: prompt(for: trimmed, vocabulary: vocabulary),
                           timeout: timeout, label: "claude -p (dictation cleanup)") { result in
             switch result {
             case .success(let reply):

@@ -65,6 +65,8 @@ enum DictationEngineSelfTest {
             ("whisperEngineIsNotResidentUntilUsed", test_whisperNotResidentUntilUsed),
             ("whisperEngineIsReleasedAfterIdle", test_whisperReleasedAfterIdle),
             ("whisperEngineLifecycleIsNotIndefinite", test_whisperLifecycleSourceGuard),
+            ("cleanupPassCorrectsAVocabularyMisrecognition", test_cleanupCorrectsVocabularyMisrecognition),
+            ("cleanupPassDoesNotOverCorrectAGenuineWord", test_cleanupDoesNotOverCorrectGenuineWord),
         ]
 
         var failures = 0
@@ -101,7 +103,7 @@ enum DictationEngineSelfTest {
         var recorded: [(text: String, duration: TimeInterval)] = []
         var statuses: [(status: DictationStatus, isCeilingTimeout: Bool)] = []
 
-        init(cleanupEnabled: Bool = false) {
+        init(cleanupEnabled: Bool = false, vocabulary: [String] = []) {
             DictationEngine.pasteSinkForTests = { [weak self] in self?.pasted.append($0) }
             engine.onTranscript = { [weak self] text, duration in
                 self?.recorded.append((text, duration))
@@ -111,7 +113,7 @@ enum DictationEngineSelfTest {
             }
             engine.cleanupEnabledProvider = { cleanupEnabled }
             engine.localWhisperEnabledProvider = { false }
-            engine.vocabularyProvider = { [] }
+            engine.vocabularyProvider = { vocabulary }
         }
 
         deinit { DictationEngine.pasteSinkForTests = nil }
@@ -304,6 +306,155 @@ enum DictationEngineSelfTest {
         guard h.pasted.count == 1 else { return "delivered \(h.pasted.count) times: \(h.pasted)" }
         guard h.recorded.count == 1 else { return "recorded \(h.recorded.count) history entries" }
         return nil
+    }
+
+    // MARK: Vocabulary-aware cleanup correction
+    //
+    // The captain's own reported bug: with "herdr" already in "Words I use
+    // often" - and therefore already biasing live recognition via
+    // `SFSpeechRecognitionRequest.contextualStrings` (see
+    // `DictationEngine.beginCapture`) - a phrase like "an herdr session" still
+    // reliably came out as "an older session," because that API has no
+    // per-word weight knob to push a custom word's priority any higher.
+    // `DictationCleanup`'s "Clean up my sentences" pass now also corrects a
+    // plausible phonetic misrecognition of a vocabulary word using the whole
+    // sentence's context - see `DictationCleanup.swift`'s header for the full
+    // reasoning, including why this rides the existing toggle rather than a
+    // second one.
+    //
+    // Unlike `DictationCleanupSelfTest.swift` (which exercises
+    // `DictationCleanup` directly, in isolation), these two cases drive the
+    // *real* `finish` -> `finishWithFinalText` -> `DictationCleanup.rewrite`
+    // path through this engine's own `cleanupEnabledProvider`/
+    // `vocabularyProvider` - proving the call site actually threads the
+    // vocabulary list through, not just that `DictationCleanup` would use it
+    // correctly if handed it. Confirmed live (this task's own regression
+    // check, not asserted here): reverting `finishWithFinalText`'s
+    // `vocabulary: vocabulary` argument passes every case in
+    // `DictationCleanupSelfTest.swift` untouched and still fails here - that
+    // file alone cannot see a dropped call-site argument.
+    //
+    // Real model behavior (does the correction genuinely happen; does the
+    // model genuinely decline to over-correct a real "older") was verified
+    // live against the real `claude` CLI with this exact prompt shape - see
+    // this task's PR description for both transcripts. These cases use a
+    // disposable fake `claude` (never the real CLI, never a real network
+    // call) whose canned reply stands in for what the real model already
+    // proved it does, so the *plumbing* between this engine and that pass
+    // stays covered deterministically and without a live Claude dependency.
+
+    /// Correction happens: the vocabulary list reaches the real prompt sent
+    /// to `claude`, and the corrected result is what's actually pasted and
+    /// recorded.
+    ///
+    /// Asserting the *outcome* alone would not actually prove the vocabulary
+    /// was threaded through this engine's call site: a fake `claude` that
+    /// ignores its own input and always prints the same canned reply passes
+    /// this case's outcome check whether or not `vocabulary` ever reached
+    /// `DictationCleanup.rewrite` at all (confirmed the hard way while
+    /// writing this - a first draft asserted only the outcome and kept
+    /// passing after deliberately dropping `vocabulary: vocabulary` from
+    /// `finishWithFinalText`'s call site). The `argv.txt` check below, on the
+    /// real prompt this engine actually sent, is what makes this a genuine
+    /// wiring regression test rather than one that only proves
+    /// `DictationCleanup` itself works correctly if handed a vocabulary list.
+    private static func test_cleanupCorrectsVocabularyMisrecognition() -> String? {
+        guard let script = writeFakeClaudeCapturingArgv(resultJSON: #"{"result": "Let's start a herdr session.", "is_error": false}"#) else {
+            return "could not write the fake claude script"
+        }
+        let scriptDir = script.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: scriptDir) }
+        DictationCleanup.claudePathOverrideForTests = script.path
+        defer { DictationCleanup.claudePathOverrideForTests = nil }
+
+        let h = Harness(cleanupEnabled: true, vocabulary: ["herdr"])
+        h.engine.debugBeginCaptureForTests()
+        h.engine.debugFinishForTests(text: "let's start an older session")
+        waitUntil(timeout: 15) { h.lastStatus != .cleaningUp }
+
+        guard h.pasted == ["Let's start a herdr session."] else {
+            return "expected the vocabulary-corrected text to be delivered, got \(h.pasted)"
+        }
+        guard h.recorded.count == 1, h.recorded[0].text == "Let's start a herdr session." else {
+            return "history should record the same corrected text that was pasted, got \(h.recorded)"
+        }
+        let sentArgv = (try? String(contentsOf: scriptDir.appendingPathComponent("argv.txt"), encoding: .utf8)) ?? ""
+        guard sentArgv.contains("herdr") else {
+            return "the vocabulary word never reached the real prompt this engine sent to claude - argv:\n\(sentArgv)"
+        }
+        return nil
+    }
+
+    /// No over-correction: a genuinely-meant word that superficially
+    /// resembles a vocabulary entry must pass through unmodified, not get
+    /// swapped for the vocabulary word just because it's on the list. The
+    /// vocabulary list still reaches the real prompt either way (the model
+    /// choosing not to correct is a *model* decision, not a code path that
+    /// skips sending the vocabulary in the first place).
+    private static func test_cleanupDoesNotOverCorrectGenuineWord() -> String? {
+        let unmodified = "He's a bit older than expected for this position."
+        guard let script = writeFakeClaudeCapturingArgv(resultJSON: #"{"result": "\#(unmodified)", "is_error": false}"#) else {
+            return "could not write the fake claude script"
+        }
+        let scriptDir = script.deletingLastPathComponent()
+        defer { try? FileManager.default.removeItem(at: scriptDir) }
+        DictationCleanup.claudePathOverrideForTests = script.path
+        defer { DictationCleanup.claudePathOverrideForTests = nil }
+
+        let h = Harness(cleanupEnabled: true, vocabulary: ["herdr"])
+        h.engine.debugBeginCaptureForTests()
+        h.engine.debugFinishForTests(text: "he's a bit older than expected for this position")
+        waitUntil(timeout: 15) { h.lastStatus != .cleaningUp }
+
+        guard h.pasted == [unmodified] else {
+            return "a genuinely-meant word should pass through unmodified, got \(h.pasted)"
+        }
+        let sentArgv = (try? String(contentsOf: scriptDir.appendingPathComponent("argv.txt"), encoding: .utf8)) ?? ""
+        guard sentArgv.contains("herdr") else {
+            return "the vocabulary list should still reach the sent prompt even when the model declines to correct - argv:\n\(sentArgv)"
+        }
+        return nil
+    }
+
+    /// A disposable fake `claude` executable (never the real CLI) that dumps
+    /// its own real argv (the prompt travels as one argv element - see
+    /// `ClaudeOneShot.swift`'s header) to a sibling `argv.txt` before printing
+    /// one canned `claude -p ... --output-format json` reply - the same
+    /// argv-capturing shape `DictationCleanupSelfTest.swift`'s
+    /// `writeFakeClaudeCapturingArgv` uses, and for the identical reason: a
+    /// fake script that only ever returns canned output cannot, on its own,
+    /// prove what was actually sent to it. This file needed its own copy
+    /// since that one is `private` to its own enum.
+    private static func writeFakeClaudeCapturingArgv(resultJSON: String) -> URL? {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grandline-dictation-engine-cleanup-\(UUID().uuidString)")
+        guard (try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)) != nil else {
+            return nil
+        }
+        let path = dir.appendingPathComponent("claude")
+        let escaped = (resultJSON + "\n").replacingOccurrences(of: "'", with: "'\\''")
+        let script = """
+        #!/bin/sh
+        printf '%s\\n' "$@" > "$(dirname "$0")/argv.txt"
+        printf '%s' '\(escaped)'
+        exit 0
+        """
+        guard (try? script.write(to: path, atomically: true, encoding: .utf8)) != nil else { return nil }
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
+        return path
+    }
+
+    /// Pumps the main run loop (never blocks on a semaphore - see
+    /// `DictationCleanupSelfTest.runRewriteSync`'s own doc comment for why:
+    /// `DictationCleanup.rewrite`'s completion is dispatched via
+    /// `DispatchQueue.main.async`, and this suite runs on the main thread
+    /// before `NSApplication.run()` starts) until `condition` is true or
+    /// `timeout` elapses.
+    private static func waitUntil(timeout: TimeInterval, _ condition: () -> Bool) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition(), Date() < deadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.05))
+        }
     }
 }
 

@@ -853,7 +853,12 @@ final class DictationEngine {
         }
 
         report(.cleaningUp)
-        DictationCleanup.rewrite(finalText) { [weak self] result in
+        // Same vocabulary list `beginCapture` already biases live recognition
+        // with, read fresh here too - see `DictationCleanup.swift`'s header
+        // for why this whole-sentence pass can catch a misrecognition
+        // `contextualStrings` alone couldn't prevent.
+        let vocabulary = vocabularyProvider?() ?? []
+        DictationCleanup.rewrite(finalText, vocabulary: vocabulary) { [weak self] result in
             guard let self else { return }
             switch result {
             case .success(let cleaned):
