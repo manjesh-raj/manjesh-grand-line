@@ -281,7 +281,10 @@ enum RailDestination: String, CaseIterable {
 
     /// A raster artwork override for the shell's drill header tile
     /// (`AppShellController.applyDrillHeader` -> `HelmDrillHeader.configure`),
-    /// in place of `symbol`'s SF Symbol.
+    /// in place of `symbol`'s SF Symbol. Also the floating bar's own
+    /// quick-access shortcut icon (`DaylightDestinationButton.init`), which
+    /// reads this same property so the bar shortcut and the drill header can
+    /// never drift apart.
     ///
     /// `fm/straw-hat-header-icon-and-luffy-followup-5282`: the previous
     /// polish pass (`fm/polish-straw-hat-overview-card-and-voice-c8d3`) wired
@@ -292,19 +295,29 @@ enum RailDestination: String, CaseIterable {
     /// drill header the card's own click opens onto is a **separate**
     /// `HelmGradientTile` instance the shell owns, fed only through
     /// `symbol`/`domainHue`, so it fell back to `symbol`'s generic
-    /// `person.3.fill` placeholder. No other destination in this app carries
-    /// a raster payload anywhere (checked: Poneglyph's is a plain SF Symbol,
-    /// `doc.text.image`), so this is a genuinely new, narrow gap rather than
-    /// a mechanism another destination already needed - `nil` for every case
-    /// but `.strawHat` is what keeps it that way, exhaustively enumerated per
-    /// this file's own house style (see `flyoutTint`) so a future
-    /// artwork-carrying destination has to be added here deliberately.
+    /// `person.3.fill` placeholder.
+    ///
+    /// `fm/grandline-card-shortcut-icons` extended this to four more
+    /// destinations, per the captain's own custom images
+    /// (`native/Scripts/build-card-shortcut-icons.py`): `.poneglyph`, `.shift`,
+    /// `.codePreview` and `.stickyBoard` each get their own artwork now,
+    /// matching `content.artwork` set in `HomeCanvasController`'s own
+    /// `fillPoneglyph`/`fillTasks`/`fillCodePreview`/`fillStickyBoard` - the
+    /// card and the shortcut/drill header always agree because both read from
+    /// the captain's same source image. `nil` for every other case,
+    /// exhaustively enumerated per this file's own house style (see
+    /// `flyoutTint`) so a future artwork-carrying destination has to be added
+    /// here deliberately.
     var drillHeaderArtwork: NSImage? {
         switch self {
         case .strawHat: return StrawHatFlag.image
-        case .homeCanvas, .overview, .console, .hosts, .shift, .review, .logAnalyzer, .kubernetes, .tools,
-             .whiteboard, .codePreview, .stickyBoard, .vault, .dictation, .schedules, .health, .docs,
-             .runbooks, .postmortems, .updates, .bootstrap, .automation, .githubSync, .poneglyph, .settings:
+        case .poneglyph: return PoneglyphIcon.image
+        case .shift: return TasksIcon.image
+        case .codePreview: return CodePreviewIcon.image
+        case .stickyBoard: return StickyNotesIcon.image
+        case .homeCanvas, .overview, .console, .hosts, .review, .logAnalyzer, .kubernetes, .tools,
+             .whiteboard, .vault, .dictation, .schedules, .health, .docs,
+             .runbooks, .postmortems, .updates, .bootstrap, .automation, .githubSync, .settings:
             return nil
         }
     }
