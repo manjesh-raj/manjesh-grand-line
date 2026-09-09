@@ -145,8 +145,10 @@ final class AppShellController: NSViewController {
     /// `fm/swap-vault-poneglyph-naming-in-grand-lin-1f`: the `.vault`
     /// destination is Automic Vault's hardening panel again (`vault`,
     /// `VaultController`), and the captain's own personal credential vault is
-    /// `poneglyph` below, under Setup, labeled "Poneglyph" - see
-    /// `VaultController.swift`'s header for the full history of this swap.
+    /// `poneglyph` below, labeled "Poneglyph", now its own destination rather
+    /// than a Setup tab (`fm/poneglyph-own-destination-and-strawhat-toolbar-
+    /// shortcut`) - see `VaultController.swift`'s and
+    /// `CredentialVaultController.swift`'s headers for the full history.
     private let vault = VaultController()
     private let poneglyph = CredentialVaultController()
     private let dictation: DictationController
@@ -484,13 +486,16 @@ final class AppShellController: NSViewController {
         // icon (`ConsoleController.showFind`) and the Edit menu's `⌘F`.
         bar.onSearchTapped = { [weak self] in self?.onSearchTapped?() }
 
-        // The five Setup pages become children of `setup`, not of this
+        // The four Setup pages become children of `setup`, not of this
         // controller - `SetupContainerController.loadView` calls `addChild`
-        // for each of them, which means none of the five runs its own
-        // `loadView` until the Setup slot itself is first mounted.
+        // for each of them, which means none of the four runs its own
+        // `loadView` until the Setup slot itself is first mounted. Poneglyph
+        // is registered as its own slot below instead
+        // (`fm/poneglyph-own-destination-and-strawhat-toolbar-shortcut`) -
+        // see `SetupContainerController.swift`'s header for why it no longer
+        // shares this container.
         setup = SetupContainerController(updates: updates, bootstrap: bootstrap,
-                                         automation: automation, githubSync: githubSync,
-                                         poneglyph: poneglyph)
+                                         automation: automation, githubSync: githubSync)
         setup.onTabSelected = { _ in
             // Nothing to follow any more. Before Daylight this moved the rail
             // highlight; the drill header keeps saying "Setup" (all four pages
@@ -532,6 +537,7 @@ final class AppShellController: NSViewController {
         mounter.register(DestinationSlot(id: .runbooks, title: RailDestination.runbooks.bodyTitle, mountsEagerly: false, controller: runbooks))
         mounter.register(DestinationSlot(id: .postmortems, title: RailDestination.postmortems.bodyTitle, mountsEagerly: false, controller: postmortems))
         mounter.register(DestinationSlot(id: .setup, title: RailDestination.updates.bodyTitle, mountsEagerly: false, controller: setup))
+        mounter.register(DestinationSlot(id: .poneglyph, title: RailDestination.poneglyph.bodyTitle, mountsEagerly: false, controller: poneglyph))
         mounter.register(DestinationSlot(id: .settings, title: RailDestination.settings.bodyTitle, mountsEagerly: false, controller: settings))
 
         // Built here, before the window is ever shown, for the three
@@ -852,6 +858,12 @@ final class AppShellController: NSViewController {
         schedules.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         logAnalyzer.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         vault.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        // Poneglyph is its own destination now
+        // (`fm/poneglyph-own-destination-and-strawhat-toolbar-shortcut`), so
+        // it wires this exactly like every other conforming destination
+        // rather than through `SetupContainerController`'s own per-tab
+        // forwarding.
+        poneglyph.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Docs' subtitle still tracks the Playbook's own real sync state; its
         // action cluster no longer changes while it's on screen now that the
         // runbook editor (and the per-tab switch that used to empty the

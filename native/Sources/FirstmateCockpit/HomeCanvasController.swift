@@ -1026,9 +1026,12 @@ final class HomeCanvasController: NSViewController {
     }
 
     /// `fm/implement-grand-line-secrets-vault-poneg-ad`: the captain's own
-    /// credential vault, named Poneglyph and living under Setup as its fifth
-    /// tab since `fm/swap-vault-poneglyph-naming-in-grand-lin-1f` gave
-    /// `.vault`/Stores back to Automic Vault's hardening panel above.
+    /// credential vault, named Poneglyph (`fm/swap-vault-poneglyph-naming-in-
+    /// grand-lin-1f` gave `.vault`/Stores back to Automic Vault's hardening
+    /// panel above). It is its own standalone destination now rather than a
+    /// Setup tab (`fm/poneglyph-own-destination-and-strawhat-toolbar-
+    /// shortcut`) - this card still just opens `RailDestination.poneglyph`,
+    /// unaffected by which slot that destination shows.
     ///
     /// It reads injected state and shells out to nothing - §6.1's rule, and
     /// here it is also a security property: a canvas card must not decrypt

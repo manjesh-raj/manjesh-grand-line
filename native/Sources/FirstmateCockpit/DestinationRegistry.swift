@@ -108,7 +108,7 @@ enum DestinationSlotID: String, CaseIterable {
     /// launch landing and the target of every drill page's back button.
     case homeCanvas
     case overview, strawHat, console, hosts, shift, review, logAnalyzer, kubernetes
-    case tools, whiteboard, codePreview, stickyBoard, vault, dictation, schedules, health, docs, runbooks, postmortems, setup, settings
+    case tools, whiteboard, codePreview, stickyBoard, vault, dictation, schedules, health, docs, runbooks, postmortems, setup, poneglyph, settings
 }
 
 extension RailDestination {
@@ -135,10 +135,16 @@ extension RailDestination {
         case .docs: return .docs
         case .runbooks: return .runbooks
         case .postmortems: return .postmortems
-        // `fm/implement-grand-line-secrets-vault-poneg-ad`: Poneglyph is a
-        // fifth Setup sub-page, so it shares the container's one slot exactly
-        // like the other four - see `SetupTab`.
-        case .updates, .bootstrap, .automation, .githubSync, .poneglyph: return .setup
+        case .updates, .bootstrap, .automation, .githubSync: return .setup
+        // `fm/poneglyph-own-destination-and-strawhat-toolbar-shortcut`:
+        // Poneglyph used to be a fifth Setup sub-page sharing the container's
+        // one slot (see `SetupTab`'s own now-removed `.poneglyph` case) - the
+        // captain's own correction was that opening it from its Stores card
+        // should never show a "Setup" tab strip, since the credential vault
+        // is a fully separate feature from Updates/Bootstrap/Automation/
+        // GitHub Sync. It gets its own slot now, the same way `.strawHat`
+        // (below) got its own slot rather than sharing anything.
+        case .poneglyph: return .poneglyph
         case .settings: return .settings
         }
     }
@@ -193,12 +199,15 @@ extension RailDestination {
         case .postmortems: return "Incident write-ups and root causes"
         case .updates, .bootstrap, .automation, .githubSync: return "Toolchain, machine config and fork sync"
         // The credential vault's own line, moved here from `.vault` by the
-        // same swap noted above. Also a fallback in practice: every Setup
-        // sub-page's slot controller is `SetupContainerController`, whose own
-        // `drillHeaderSubtitle` supplies a per-tab line (falling back to the
-        // plain tab title, "Poneglyph", for a tab whose child doesn't conform
-        // to `SetupPageSummary` - `CredentialVaultController` doesn't, the
-        // same shape `VaultController` was in when it lived here).
+        // same swap noted above. In practice this static string is a fallback
+        // only: `CredentialVaultController` conforms to `DaylightDrillActions`
+        // directly now (`fm/poneglyph-own-destination-and-strawhat-toolbar-
+        // shortcut` gave it its own slot instead of sharing
+        // `SetupContainerController`'s) and always supplies its own live
+        // subtitle (credential count, lock state), which
+        // `AppShellController.applyDrillHeader` prefers - the same
+        // "conforming page wins, this is just what an unmigrated page would
+        // show" shape every other case in this switch already follows.
         case .poneglyph: return "Your credentials, encrypted and one click from the clipboard"
         case .settings: return "Connection, appearance, terminal, security and backup"
         }

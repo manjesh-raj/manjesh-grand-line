@@ -90,11 +90,13 @@ final class DaylightBarController: NSViewController {
     private let themeToggleButton = DaylightThemeToggleButton()
     /// Quick-access jumps to destinations the captain reaches often
     /// (`fm/grandline-sticky-code-preview-polish` for the first two,
-    /// `fm/grandline-tasks-quick-access-icon` for Tasks). Every one of them
-    /// remains a full destination in its own space - this is a shortcut, not a
-    /// relocation - and they sit immediately before the theme toggle, matching
-    /// the captain's own reviewed order: search -> Recents -> Sticky Board ->
-    /// Code Preview -> Tasks -> theme -> bell -> avatar.
+    /// `fm/grandline-tasks-quick-access-icon` for Tasks,
+    /// `fm/poneglyph-own-destination-and-strawhat-toolbar-shortcut` for the
+    /// last two). Every one of them remains a full destination in its own
+    /// space - this is a shortcut, not a relocation - and they sit
+    /// immediately before the theme toggle, matching the captain's own
+    /// reviewed order: search -> Recents -> Sticky Board -> Code Preview ->
+    /// Tasks -> Straw Hat Pirates -> Poneglyph -> theme -> bell -> avatar.
     ///
     /// A new icon **appends** to the trailing end of this group rather than
     /// being slotted in by topic, which is the convention Sticky Board and
@@ -104,6 +106,14 @@ final class DaylightBarController: NSViewController {
     private let stickyBoardButton = DaylightDestinationButton(destination: .stickyBoard)
     private let codePreviewButton = DaylightDestinationButton(destination: .codePreview)
     private let tasksButton = DaylightDestinationButton(destination: .shift)
+    /// The captain asked for two more, in the same message: one-click jumps
+    /// to the Straw Hat Pirates crew chat and to Poneglyph (his own personal
+    /// credential vault) - both reached often enough from elsewhere that a
+    /// space switch plus a card click is friction, matching every other icon
+    /// in this group. Straw Hat Pirates sits first (the more central, daily
+    /// feature); Poneglyph sits right before the theme toggle.
+    private let strawHatButton = DaylightDestinationButton(destination: .strawHat)
+    private let poneglyphButton = DaylightDestinationButton(destination: .poneglyph)
     /// The "Recents" dropdown (`fm/grandline-recents-navigation`) - a captain
     /// review of four back/forward-style approaches chose this one. It first
     /// shipped right after the space pills (never next to the logo the
@@ -184,7 +194,7 @@ final class DaylightBarController: NSViewController {
         themeToggleButton.target = self
         themeToggleButton.action = #selector(themeToggleClicked)
 
-        for button in [stickyBoardButton, codePreviewButton, tasksButton] {
+        for button in [stickyBoardButton, codePreviewButton, tasksButton, strawHatButton, poneglyphButton] {
             button.target = self
             button.action = #selector(destinationButtonClicked(_:))
         }
@@ -198,6 +208,8 @@ final class DaylightBarController: NSViewController {
         bar.addSubview(stickyBoardButton)
         bar.addSubview(codePreviewButton)
         bar.addSubview(tasksButton)
+        bar.addSubview(strawHatButton)
+        bar.addSubview(poneglyphButton)
         bar.addSubview(themeToggleButton)
         bar.addSubview(notificationCenter.bell)
         bar.addSubview(avatar)
@@ -256,10 +268,20 @@ final class DaylightBarController: NSViewController {
             codePreviewButton.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
             codePreviewButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
 
-            tasksButton.trailingAnchor.constraint(equalTo: themeToggleButton.leadingAnchor, constant: -HelmMetrics.s2),
+            tasksButton.trailingAnchor.constraint(equalTo: strawHatButton.leadingAnchor, constant: -HelmMetrics.s2),
             tasksButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             tasksButton.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
             tasksButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
+
+            strawHatButton.trailingAnchor.constraint(equalTo: poneglyphButton.leadingAnchor, constant: -HelmMetrics.s2),
+            strawHatButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            strawHatButton.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
+            strawHatButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
+
+            poneglyphButton.trailingAnchor.constraint(equalTo: themeToggleButton.leadingAnchor, constant: -HelmMetrics.s2),
+            poneglyphButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            poneglyphButton.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
+            poneglyphButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
 
             themeToggleButton.trailingAnchor.constraint(equalTo: notificationCenter.bell.leadingAnchor, constant: -HelmMetrics.s2),
             themeToggleButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
@@ -389,6 +411,8 @@ final class DaylightBarController: NSViewController {
         chain.append(stickyBoardButton)
         chain.append(codePreviewButton)
         chain.append(tasksButton)
+        chain.append(strawHatButton)
+        chain.append(poneglyphButton)
         chain.append(themeToggleButton)
         chain.append(notificationCenter.bell)
         chain.append(avatar)
@@ -579,6 +603,8 @@ final class DaylightBarController: NSViewController {
         stickyBoardButton.applyTheme(ink: muted, line: line, surface: iconSurface)
         codePreviewButton.applyTheme(ink: muted, line: line, surface: iconSurface)
         tasksButton.applyTheme(ink: muted, line: line, surface: iconSurface)
+        strawHatButton.applyTheme(ink: muted, line: line, surface: iconSurface)
+        poneglyphButton.applyTheme(ink: muted, line: line, surface: iconSurface)
         notificationCenter.bell.applyTheme(ink: muted, line: line, surface: theme.isDaylight
             ? HelmTheme.nsColor(theme.daylightTokens.inset) : surface)
 
@@ -623,7 +649,7 @@ final class DaylightBarController: NSViewController {
     /// The bar's quick-access destination icons, in visual order
     /// (leading -> trailing).
     func debugDestinationButtons() -> [DaylightDestinationButton] {
-        [stickyBoardButton, codePreviewButton, tasksButton]
+        [stickyBoardButton, codePreviewButton, tasksButton, strawHatButton, poneglyphButton]
     }
 
     func debugThemeToggleButton() -> DaylightThemeToggleButton { themeToggleButton }
