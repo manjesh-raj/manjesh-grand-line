@@ -653,6 +653,11 @@ final class HomeCanvasController: NSViewController {
     }
 
     private func fillTasks(_ content: inout HelmModuleCard.Content) {
+        // `fm/grandline-card-shortcut-icons`: the captain's own checklist
+        // artwork, replacing the plain `checkmark.circle` glyph - matches
+        // `RailDestination.drillHeaderArtwork`'s `.shift` case, so the card
+        // and the floating-bar shortcut/drill header agree.
+        content.artwork = TasksIcon.image
         // Exactly the two predicates the Tasks page's own stat tiles use.
         let tasks = sources.shiftStore.activeTasks
         let calendar = Calendar.current
@@ -1014,6 +1019,10 @@ final class HomeCanvasController: NSViewController {
     /// anything, and while the vault is locked there is genuinely nothing to
     /// count.
     private func fillPoneglyph(_ content: inout HelmModuleCard.Content) {
+        // `fm/grandline-card-shortcut-icons`: the captain's own poneglyph
+        // tablet artwork, replacing the plain `doc.text.image` glyph -
+        // matches `RailDestination.drillHeaderArtwork`'s `.poneglyph` case.
+        content.artwork = PoneglyphIcon.image
         guard let vault = credentialVaultState?() else {
             content.subtitle = "encrypted credentials"
             content.body = .note("Open Poneglyph to unlock it.")
@@ -1127,6 +1136,10 @@ final class HomeCanvasController: NSViewController {
     /// forbid - the canvas never fires a fetch, and a store construction here
     /// is one, not just a read.
     private func fillStickyBoard(_ content: inout HelmModuleCard.Content) {
+        // `fm/grandline-card-shortcut-icons`: the captain's own sticky-note
+        // artwork, replacing the plain `note.text` glyph - matches
+        // `RailDestination.drillHeaderArtwork`'s `.stickyBoard` case.
+        content.artwork = StickyNotesIcon.image
         content.subtitle = "quick notes"
         content.body = .note("Jot down a thought on a colored sticky note, anywhere on the board.")
     }
@@ -1135,6 +1148,11 @@ final class HomeCanvasController: NSViewController {
     /// called", and a snippet's content can be large - reading every one of
     /// them on every return to the hub would be a real cost for a subtitle.
     private func fillCodePreview(_ content: inout HelmModuleCard.Content) {
+        // `fm/grandline-card-shortcut-icons`: the captain's own code-preview
+        // artwork, replacing the plain `chevron.left.forwardslash.chevron.right`
+        // glyph - matches `RailDestination.drillHeaderArtwork`'s
+        // `.codePreview` case.
+        content.artwork = CodePreviewIcon.image
         let names = sources.codePreviewStore.names()
         content.subtitle = "Monaco, offline"
         guard !names.isEmpty else {

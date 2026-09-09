@@ -112,6 +112,15 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     // setting the header's height and the title merely centred inside it,
     // which only worked because the title was smaller than the pill's box).
     private let boardHeader = NSView()
+    /// The captain's own sticky-note artwork, branding the case-file header
+    /// itself - `fm/grandline-card-shortcut-icons`'s "surface it inside the
+    /// feature too" ask, distinct from the card (`HomeCanvasController.
+    /// fillStickyBoard`) and the floating-bar shortcut/drill header
+    /// (`RailDestination.drillHeaderArtwork`'s `.stickyBoard` case), which
+    /// both already carry it. Always visible once the board is open,
+    /// regardless of note count - unlike the empty-state overlay below, which
+    /// only shows with zero notes.
+    private let boardIcon = NSImageView()
     private let boardTitle = NSTextField(labelWithString: "CASE: MY THOUGHTS")
     private let statusPill = NSView()
     private let statusDot = NSView()
@@ -263,12 +272,30 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     private static let boardTitleBasePointSize: CGFloat = 15
     private static let boardTitleScale: CGFloat = 3
 
+    /// The board icon's fixed side, in points - roughly the title's own cap
+    /// height rather than its full line height (which includes descender/
+    /// leading slack a square icon would otherwise look oversized against).
+    private static let boardIconSide: CGFloat = 40
+
     /// The case-file header: a typewriter title and a live status pill. See
     /// the property declarations above for why a second in-page title is a
     /// sanctioned exception here specifically.
     private func buildBoardHeader() {
         boardHeader.translatesAutoresizingMaskIntoConstraints = false
         boardHeader.wantsLayer = true
+
+        boardIcon.translatesAutoresizingMaskIntoConstraints = false
+        boardIcon.image = StickyNotesIcon.image
+        boardIcon.imageScaling = .scaleProportionallyUpOrDown
+        // Artwork mode only, matching `HelmGradientTile`'s and
+        // `DaylightBarIconButton`'s own established idiom: a raster asset
+        // clips to its own rounded corners rather than needing a themed
+        // background behind it - the icon's own colours already read as a
+        // self-contained piece of art.
+        boardIcon.wantsLayer = true
+        boardIcon.layer?.cornerRadius = HelmMetrics.dTileSmall
+        boardIcon.layer?.masksToBounds = true
+        boardHeader.addSubview(boardIcon)
 
         boardTitle.translatesAutoresizingMaskIntoConstraints = false
         boardTitle.font = StickyFont.typewriter(HelmType.scaled(Self.boardTitleBasePointSize * Self.boardTitleScale))
@@ -300,7 +327,15 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
             // below its real line height (this app's AppKit gotcha
             // catalogue's own "vertical compression, not a visible warning"
             // failure mode) rather than growing the header to fit it.
-            boardTitle.leadingAnchor.constraint(equalTo: boardHeader.leadingAnchor),
+            // The icon sits to the title's left, vertically centred on it -
+            // never on `boardHeader` itself, whose height the title alone
+            // still drives (see the comment above).
+            boardIcon.leadingAnchor.constraint(equalTo: boardHeader.leadingAnchor),
+            boardIcon.centerYAnchor.constraint(equalTo: boardTitle.centerYAnchor),
+            boardIcon.widthAnchor.constraint(equalToConstant: Self.boardIconSide),
+            boardIcon.heightAnchor.constraint(equalToConstant: Self.boardIconSide),
+
+            boardTitle.leadingAnchor.constraint(equalTo: boardIcon.trailingAnchor, constant: HelmMetrics.s3),
             boardTitle.topAnchor.constraint(equalTo: boardHeader.topAnchor),
             boardTitle.bottomAnchor.constraint(equalTo: boardHeader.bottomAnchor),
 
@@ -560,6 +595,7 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     var debugOverlayVisible: Bool { !overlayContainer.isHidden }
     var debugFooterText: String { footer.stringValue }
     var debugBoardHeader: NSView { boardHeader }
+    var debugBoardIcon: NSImageView { boardIcon }
     var debugBoardTitle: NSTextField { boardTitle }
     var debugStatusLabel: NSTextField { statusLabel }
     var debugStatusDot: NSView { statusDot }
