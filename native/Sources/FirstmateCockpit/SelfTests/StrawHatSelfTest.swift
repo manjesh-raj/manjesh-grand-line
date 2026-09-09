@@ -79,6 +79,9 @@ enum StrawHatSelfTest {
         checkContextSnapshot(&ok)
         checkTurnEnvelope(&ok)
         checkProposalExecution(&ok)
+        checkPhase3Parsing(&ok)
+        checkPhase3Execution(&ok)
+        checkCommandDraftGate(&ok)
         checkRecapPrompt(&ok)
         checkLockGate(&ok)
         checkSingleTurn(&ok)
@@ -162,18 +165,62 @@ enum StrawHatSelfTest {
                   "the persona must name \(member.displayName)'s speaker id \"\(member.rawValue)\"", &ok)
         }
 
-        // The plan's phase-3 vocabulary must not have leaked in early: a
-        // persona describing a proposal nothing can execute produces exactly
-        // the plausible-but-wrong the confirm-card rule exists to prevent.
-        for absent in ["add_sticky", "save_command_draft", "create_schedule_draft",
-                       "open_sre_lead", "open_destination"] {
-            check(!StrawHatCrew.persona.contains(absent),
-                  "phase 2's persona must not describe \"\(absent)\" - phase 3 owns it and nothing executes it yet", &ok)
+        // Phase 3's own additions to the same wire contract. The loops above
+        // already assert every `StrawHatProposalKind` and every
+        // `StrawHatMember` is named, which covers the eight kinds and seven
+        // voices generically - these are the clauses a model cannot infer
+        // from a name alone.
+        //
+        // The two closed sets a `kind` alone does not describe. A model that
+        // is not told these lists writes a plausible action or destination,
+        // the parser refuses it, and the captain sees a turn where a crew
+        // member offered nothing for no visible reason.
+        for action in ScheduledActionKind.allCases {
+            check(StrawHatCrew.persona.contains(action.rawValue),
+                  "the persona must name the \"\(action.rawValue)\" schedule action - the parser accepts only these", &ok)
         }
-        for absent in ["zoro", "usopp", "franky"] {
+        for dest in StrawHatHandoff.allowedDestinations {
+            check(StrawHatCrew.persona.contains(dest.rawValue),
+                  "the persona must name \"\(dest.rawValue)\" as a handoff destination", &ok)
+        }
+        // The cadence grammar, which is strict and refuses anything else.
+        check(StrawHatCrew.persona.contains("daily HH:MM")
+                && StrawHatCrew.persona.contains("weekly <weekday> HH:MM"),
+              "the persona must state both cadence shapes verbatim - the parser accepts no others", &ok)
+
+        // M3.2: a handoff is a link, and describing one as a save is the
+        // write/handoff split's own version of the "never claim a write
+        // happened" rule.
+        check(persona.contains("links, not writes"),
+              "the persona must say the two handoffs are links rather than writes", &ok)
+
+        // Zoro's whole scope is what he *cannot* do, so the persona has to say
+        // it: an execution voice that thinks it can run a command produces the
+        // one failure mode this feature cannot have.
+        check(persona.contains("zoro drafts rather than runs"),
+              "the persona must say Zoro drafts rather than runs", &ok)
+        check(persona.contains("never say a command was run"),
+              "the persona must forbid claiming a command ran", &ok)
+        // The host hint is a name the *captain* used, never something looked
+        // up - the crew cannot see hosts at all.
+        check(persona.contains("if they never named one, leave it out rather than guessing"),
+              "the persona must forbid guessing a host name", &ok)
+
+        // A model-supplied risk level would be a vouch nobody made (audit #2
+        // section 5.3, one store over).
+        check(persona.contains("never state a risk level"),
+              "the persona must forbid stating a command's risk level", &ok)
+
+        // The three the plan does NOT give a v1 seat. Naming them as absent is
+        // what stops a reply answering as a colleague the parser will refuse -
+        // and Sanji's role is an open captain decision, so a persona clause
+        // about the Morning Briefing would be inferring one.
+        for absent in ["brook", "jinbe", "sanji"] {
             check(!persona.contains("\"\(absent)\""),
-                  "phase 2's persona must not hand \(absent) a speaker id - the parser would refuse it", &ok)
+                  "\(absent) has no speaker id - the parser would refuse it", &ok)
         }
+        check(!persona.contains("morning briefing"),
+              "Sanji's role is an open captain decision - the persona must not infer one", &ok)
 
         // The bounded-context honesty rule (#2 in this file's header): the
         // crew sees a capped slice, so most things are still genuinely unknown.
@@ -189,10 +236,12 @@ enum StrawHatSelfTest {
     }
 
     private static func checkRoster(_ ok: inout Bool) {
-        // Phase 2's four. Asserted as a literal set rather than a count, so a
-        // fifth voice arriving early fails by name.
-        check(StrawHatMember.allCases.map(\.rawValue) == ["luffy", "nami", "chopper", "robin"],
-              "phase 2 ships Luffy, Nami, Chopper and Robin, got \(StrawHatMember.allCases.map(\.rawValue))", &ok)
+        // Phase 3's full v1 roster. Asserted as a literal ordered list rather
+        // than a count, so an eighth voice - or Sanji arriving on a role
+        // nobody has decided - fails by name.
+        check(StrawHatMember.allCases.map(\.rawValue)
+                == ["luffy", "nami", "chopper", "robin", "zoro", "usopp", "franky"],
+              "phase 3 ships the plan's seven v1 voices, got \(StrawHatMember.allCases.map(\.rawValue))", &ok)
         check(StrawHatCrew.speaker == .luffy, "the fallback speaker is Luffy - he owns the conversation", &ok)
 
         // `NSImage(systemSymbolName:)` returns nil silently, and this app has
@@ -225,11 +274,56 @@ enum StrawHatSelfTest {
             check(member.tint != .critical,
                   "\(member.displayName)'s tint must not be `.critical` - it would read as an alert", &ok)
         }
-        // ...and they must be distinguishable, or M2.4's per-crew colour buys
-        // nothing.
+        // The whole mapping, as a literal table.
+        //
+        // Phase 2 asserted only that every tint was *distinct*, which phase 3
+        // makes impossible: `HelmTint` has seven cases, `.critical` is
+        // unavailable to an identity for the reason above, and the roster is
+        // seven voices - so six hues cover seven members and exactly one pair
+        // shares. That is a decision (see `StrawHatMember.tint`'s own doc
+        // comment for which pair and why), so it is asserted the way
+        // `DaylightModuleSelfTest.checkSpaceTable` asserts its own locked
+        // table: as data, restated here rather than derived from the enum,
+        // because a check that reads the table it is checking asserts nothing.
+        let expectedTints: [StrawHatMember: HelmTint] = [
+            .luffy: .accent, .nami: .warn, .chopper: .good, .robin: .info,
+            .zoro: .violet, .usopp: .neutral, .franky: .neutral,
+        ]
+        for member in StrawHatMember.allCases {
+            check("\(member.tint)" == "\(expectedTints[member].map { "\($0)" } ?? "?")",
+                  "\(member.displayName)'s tint is \(expectedTints[member].map { "\($0)" } ?? "unmapped"), got \(member.tint)", &ok)
+        }
+        // ...and the differentiation must not erode further: one shared pair
+        // is the documented cost of a seven-member roster, two would mean
+        // M2.4's per-crew colour had quietly stopped buying anything.
         let tints = StrawHatMember.allCases.map { "\($0.tint)" }
-        check(Set(tints).count == tints.count,
-              "every crew member needs their own tint, got \(tints)", &ok)
+        check(Set(tints).count >= StrawHatMember.allCases.count - 1,
+              "at most one pair of crew members may share a tint, got \(tints)", &ok)
+
+        // The bar/ring colour, not the raw tint - and the difference is a
+        // real render finding rather than a nicety.
+        //
+        // `HelmTint.neutral` resolves to `chromeInkHex`, the theme's
+        // *full-strength* ink, which on a dark palette is the
+        // highest-contrast colour there is. A real off-screen render of the
+        // real page showed Franky's 3pt bar visibly brighter than Zoro's
+        // magenta one - so the two voices that deliberately carry no identity
+        // hue were rendering as the loudest on the page. `accentColor(in:)`
+        // is the fix, and this is what stops it being reverted to
+        // `tint.hex(in:)` by a later tidy-up.
+        for theme in HelmTheme.allThemes {
+            let muted = HelmTheme.mutedInk(theme)
+            for member in StrawHatMember.allCases {
+                let resolved = member.accentColor(in: theme)
+                if member.tint == .neutral {
+                    check(resolved == muted,
+                          "\(member.displayName)'s bar must be muted ink in \(theme.id), not full-strength ink", &ok)
+                } else {
+                    check(resolved != muted,
+                          "\(member.displayName) carries a real hue, so their bar must not be muted ink in \(theme.id)", &ok)
+                }
+            }
+        }
 
         // Read-only by design: no store write is mapped to Chopper, and giving
         // him one would mean inventing a capability.
@@ -242,6 +336,26 @@ enum StrawHatSelfTest {
               "Nami owns tasks and follow-ups", &ok)
         check(StrawHatMember.robin.proposalKinds == [.createRunbookDraft],
               "Robin owns runbook drafts", &ok)
+
+        // Phase 3's three, and the two handoffs' owners.
+        check(StrawHatMember.zoro.proposalKinds.contains(.saveCommandDraft),
+              "Zoro owns command drafts", &ok)
+        check(StrawHatMember.zoro.proposalKinds.contains(.openSRELead),
+              "...and the SRE Lead handoff - his scope is defined by needing it", &ok)
+        check(StrawHatMember.usopp.proposalKinds.contains(.addSticky),
+              "Usopp owns sticky notes", &ok)
+        check(StrawHatMember.usopp.proposalKinds.contains(.openDestination),
+              "...and a destination handoff, which is the plan's \"draw it out\" into the Whiteboard", &ok)
+        check(StrawHatMember.franky.proposalKinds == [.createScheduleDraft],
+              "Franky is thin by design - one kind, schedule drafts", &ok)
+
+        // Every kind has to be *briefed* to someone, or a vocabulary the
+        // parser accepts is one no voice was ever told about.
+        let briefed = Set(StrawHatMember.allCases.flatMap(\.proposalKinds))
+        for kind in StrawHatProposalKind.allCases {
+            check(briefed.contains(kind),
+                  "no crew member is briefed on \"\(kind.rawValue)\" - the parser would accept a kind nobody offers", &ok)
+        }
     }
 
     // MARK: M2.2 - the closed proposal vocabulary
@@ -252,8 +366,99 @@ enum StrawHatSelfTest {
         // as a literal: a kind added without a matching executor branch and a
         // deliberate decision fails here rather than shipping.
         check(StrawHatProposalKind.allCases.map(\.rawValue)
-                == ["add_task", "add_follow_up", "create_runbook_draft"],
-              "phase 2's vocabulary is exactly three kinds, got \(StrawHatProposalKind.allCases.map(\.rawValue))", &ok)
+                == ["add_task", "add_follow_up", "create_runbook_draft",
+                    "add_sticky", "save_command_draft", "create_schedule_draft",
+                    "open_sre_lead", "open_destination"],
+              "phase 3's vocabulary is exactly these eight kinds, got \(StrawHatProposalKind.allCases.map(\.rawValue))", &ok)
+
+        // The write/handoff split, as a literal list on both sides.
+        //
+        // This is the assertion that matters most in this file. A handoff runs
+        // on a single click with **no confirm card**, so a kind that writes
+        // anywhere and is filed as navigation would be a store write with no
+        // confirmation at all - and it would render, and work, and look
+        // right. A generic "isNavigation is consistent" check could not see
+        // it; only naming both sides can.
+        check(StrawHatProposalKind.allCases.filter { $0.isNavigation }.map(\.rawValue)
+                == ["open_sre_lead", "open_destination"],
+              "exactly two kinds are navigation, got \(StrawHatProposalKind.allCases.filter { $0.isNavigation }.map(\.rawValue))", &ok)
+        check(StrawHatProposalKind.allCases.filter { !$0.isNavigation }.map(\.rawValue)
+                == ["add_task", "add_follow_up", "create_runbook_draft",
+                    "add_sticky", "save_command_draft", "create_schedule_draft"],
+              "and exactly six write, got \(StrawHatProposalKind.allCases.filter { !$0.isNavigation }.map(\.rawValue))", &ok)
+
+        // A navigation kind can never travel the write path, whatever the view
+        // renders it as - `execute`'s own guard, asserted rather than trusted.
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("straw-hat-nav-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        let previous = ProcessInfo.processInfo.environment["FM_SHIFT_DIR"]
+        setenv("FM_SHIFT_DIR", scratch.path, 1)
+        defer {
+            if let previous { setenv("FM_SHIFT_DIR", previous, 1) } else { unsetenv("FM_SHIFT_DIR") }
+            try? FileManager.default.removeItem(at: scratch)
+        }
+        let navShift = ShiftStore()
+        for kind in StrawHatProposalKind.allCases where kind.isNavigation {
+            let proposal = StrawHatProposal(kind: kind, title: "should not write",
+                                            handoff: .destination(.console, hint: nil))
+            guard case .failed = StrawHatProposalExecutor.execute(
+                proposal, stores: .init(shift: navShift)) else {
+                check(false, "\(kind.rawValue) reached the write path and was not refused", &ok)
+                continue
+            }
+        }
+        check(navShift.activeTasks.isEmpty && navShift.followUps.isEmpty,
+              "and it wrote nothing on the way to being refused", &ok)
+
+        // Two independent refusals, and the behavioural check above cannot
+        // tell them apart - which is a real finding rather than a note: the
+        // first injected regression run for this suite removed `execute`'s
+        // early `isNavigation` guard and every case above still passed,
+        // because the switch's own explicit `.openSRELead, .openDestination`
+        // branch returns `.failed` as well.
+        //
+        // Both are worth keeping, for different futures. The switch branch is
+        // what makes *adding* a kind a compile error here. The guard is what
+        // protects a kind added later and given a write branch by mistake -
+        // exactly the case no behavioural test can construct today, because
+        // the kind does not exist yet. So its presence is asserted as source,
+        // the way this repo's other "the mechanism is still in front of it"
+        // guards are.
+        if let sources = SelfTestSources.appSourceDirectory(),
+           let text = try? String(contentsOf: sources.appendingPathComponent("StrawHatProposalExecutor.swift"),
+                                  encoding: .utf8) {
+            let code = text.split(separator: "\n", omittingEmptySubsequences: false)
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+                .joined(separator: "\n")
+            check(code.contains("guard !proposal.kind.isNavigation else {"),
+                  "the write path must refuse a navigation kind up front, not only in its switch", &ok)
+        } else {
+            print("  NOTE: source tree not reachable - skipping the navigation-guard source check")
+        }
+
+        // The two closed sets a handoff resolves against.
+        check(!StrawHatHandoff.allowedDestinations.contains(.poneglyph)
+                && !StrawHatHandoff.allowedDestinations.contains(.vault),
+              "a crew handoff must never be able to link to a credential surface", &ok)
+        check(!StrawHatHandoff.allowedDestinations.contains(.overview)
+                && !StrawHatHandoff.allowedDestinations.contains(.homeCanvas),
+              "a handoff to the page the chat is on is a dead link", &ok)
+        check(!StrawHatHandoff.allowedDestinations.contains(.settings),
+              "machine configuration is not a conversational handoff", &ok)
+        check(StrawHatHandoff.allowedDestinations.contains(.whiteboard),
+              "the Whiteboard has to be reachable - it is the plan's own \"draw it out\"", &ok)
+        check(Set(StrawHatHandoff.allowedDestinations).count == StrawHatHandoff.allowedDestinations.count,
+              "the handoff allowlist must not carry a duplicate", &ok)
+
+        // A title the app derives must be derived from real data, never left
+        // blank - a link row with no title is an invisible button.
+        check(StrawHatHandoff.destination(.logAnalyzer, hint: nil).title.contains("Log Analyzer"),
+              "a destination handoff names its destination, got \(StrawHatHandoff.destination(.logAnalyzer, hint: nil).title)", &ok)
+        check(StrawHatHandoff.sreLead(hostHint: "prod-bastion").title.contains("prod-bastion"),
+              "an SRE Lead handoff names the host the captain named", &ok)
+        check(!StrawHatHandoff.sreLead(hostHint: nil).title.isEmpty,
+              "...and still has a title with no hint at all", &ok)
 
         for kind in StrawHatProposalKind.allCases {
             check(NSImage(systemSymbolName: kind.symbol, accessibilityDescription: nil) != nil,
@@ -603,8 +808,14 @@ enum StrawHatSelfTest {
     }
 
     private static func checkRung2PartialSalvage(_ ok: inout Bool) {
-        // An unknown speaker (a phase-3 voice arriving early) and an unknown
-        // proposal kind, in one reply.
+        // An unknown speaker and an unknown proposal kind, in one reply.
+        //
+        // The unaboard voice is **Brook**, who the plan gives no code at all
+        // (Dictation's hotkey already types into this composer) - phase 2's
+        // fixture used Zoro, who is aboard as of phase 3, so this case had to
+        // be re-pointed at a voice that is genuinely still absent rather than
+        // left asserting the old roster.
+        //
         // Note the unaboard speaker's proposal uses a **valid** kind. An
         // invented kind is refused by the kind check regardless of who
         // proposed it, so a fixture pairing the two leaves the speaker guard
@@ -613,7 +824,7 @@ enum StrawHatSelfTest {
         let reply = """
         ```json
         { "sections": [
-            { "speaker": "zoro",
+            { "speaker": "brook",
               "text": "I'd restart the pod.",
               "proposals": [ { "kind": "add_task", "title": "Should never be offered" } ] },
             { "speaker": "nami",
@@ -634,7 +845,7 @@ enum StrawHatSelfTest {
         let unknown = sections[0]
         check(unknown.speaker == nil,
               "a voice that is not aboard must not be credited, got \(unknown.speaker?.rawValue ?? "nil")", &ok)
-        check(unknown.rawSpeaker == "zoro", "...but what the model wrote is kept for the log", &ok)
+        check(unknown.rawSpeaker == "brook", "...but what the model wrote is kept for the log", &ok)
         check(unknown.text == "I'd restart the pod.", "its text still renders - the reply is never dropped", &ok)
         check(unknown.proposals.isEmpty,
               "an unattributed section's proposals must never be executable, got \(unknown.proposals.map(\.title))", &ok)
@@ -1062,7 +1273,7 @@ enum StrawHatSelfTest {
         let taskProposal = StrawHatProposal(kind: .addTask, title: "Fix the login issue",
                                             due: "2026-09-09", notes: "from the crew")
         guard case .written(let taskMessage, let taskUndo) =
-                StrawHatProposalExecutor.execute(taskProposal, shift: shift, docs: docs, now: now) else {
+                StrawHatProposalExecutor.execute(taskProposal, stores: .init(shift: shift, docs: docs), now: now) else {
             check(false, "confirming a task proposal must write it", &ok)
             return
         }
@@ -1092,7 +1303,7 @@ enum StrawHatSelfTest {
         let followUpProposal = StrawHatProposal(kind: .addFollowUp,
                                                 title: "Ask Rahul about the Cognito config",
                                                 due: "tomorrow")
-        guard case .written = StrawHatProposalExecutor.execute(followUpProposal, shift: shift, docs: docs, now: now) else {
+        guard case .written = StrawHatProposalExecutor.execute(followUpProposal, stores: .init(shift: shift, docs: docs), now: now) else {
             check(false, "confirming a follow-up proposal must write it", &ok)
             return
         }
@@ -1108,7 +1319,7 @@ enum StrawHatSelfTest {
         let draft = StrawHatProposal(kind: .createRunbookDraft, title: "Draining a node",
                                      content: "# Draining a node\n\nkubectl drain node-1")
         guard case .written(let draftMessage, let draftUndo) =
-                StrawHatProposalExecutor.execute(draft, shift: shift, docs: docs, now: now) else {
+                StrawHatProposalExecutor.execute(draft, stores: .init(shift: shift, docs: docs), now: now) else {
             check(false, "confirming a runbook draft must write it", &ok)
             return
         }
@@ -1127,7 +1338,7 @@ enum StrawHatSelfTest {
         // display title back off the slug instead of the proposed title.
         let headless = StrawHatProposal(kind: .createRunbookDraft, title: "Rolling a secret",
                                         content: "Step one: revoke it.")
-        guard case .written = StrawHatProposalExecutor.execute(headless, shift: shift, docs: docs, now: now) else {
+        guard case .written = StrawHatProposalExecutor.execute(headless, stores: .init(shift: shift, docs: docs), now: now) else {
             check(false, "a headingless body still saves", &ok)
             return
         }
@@ -1136,10 +1347,354 @@ enum StrawHatSelfTest {
 
         // A runbook proposal with nowhere to save fails visibly - the captain
         // pressed a button and is owed an answer either way.
-        guard case .failed = StrawHatProposalExecutor.execute(draft, shift: shift, docs: nil, now: now) else {
+        guard case .failed = StrawHatProposalExecutor.execute(draft, stores: .init(shift: shift, docs: nil), now: now) else {
             check(false, "a runbook draft with no docs store must fail visibly, not silently", &ok)
             return
         }
+    }
+
+    // MARK: Phase 3 (M3.1 / M3.2) - parsing the five new kinds
+
+    /// Everything the parser must refuse, and everything it must derive.
+    ///
+    /// The refusals matter more than the acceptances here: three of the five
+    /// new kinds carry a payload the app resolves against a *closed set*
+    /// (`ScheduledActionKind`, `RailDestination`, the cadence grammar), and
+    /// the whole point of resolving them at parse time is that an invented one
+    /// produces no proposal at all rather than a card whose press has to
+    /// guess.
+    private static func checkPhase3Parsing(_ ok: inout Bool) {
+
+        /// One section's proposals, from a bare envelope.
+        func proposals(_ json: String, speaker: String = "zoro") -> (kept: [StrawHatProposal], dropped: Int) {
+            let reply = "{\"sections\":[{\"speaker\":\"\(speaker)\",\"text\":\"x\",\"proposals\":[\(json)]}]}"
+            guard case .envelope(let sections) = StrawHatEnvelope.parse(reply),
+                  let only = sections.first else { return ([], 0) }
+            return (only.proposals, only.droppedProposalCount)
+        }
+
+        // ---- add_sticky ----
+        let sticky = proposals(#"{"kind":"add_sticky","title":"Board idea","notes":"the body"}"#, speaker: "usopp")
+        check(sticky.kept.count == 1 && sticky.kept.first?.kind == .addSticky,
+              "a sticky proposal parses, got \(sticky.kept.map(\.kind))", &ok)
+        check(sticky.kept.first?.notes == "the body", "and carries its body", &ok)
+        // A model writes `text` as readily as `notes` for a note's body.
+        let stickyText = proposals(#"{"kind":"add_sticky","title":"T","text":"alt body"}"#, speaker: "usopp")
+        check(stickyText.kept.first?.notes == "alt body",
+              "a sticky's body is read from `text` as well as `notes`", &ok)
+
+        // ---- save_command_draft ----
+        let command = proposals(#"{"kind":"save_command_draft","title":"Restart login","command":"kubectl rollout restart deploy/login -n prod"}"#)
+        check(command.kept.first?.command == "kubectl rollout restart deploy/login -n prod",
+              "a command draft carries its template, got \(command.kept.first?.command ?? "nil")", &ok)
+        // No command: nothing to derive, so no proposal.
+        check(proposals(#"{"kind":"save_command_draft","title":"Named only"}"#).kept.isEmpty,
+              "a command draft with no command is refused", &ok)
+        // **Multi-line is refused before the captain ever sees a card**,
+        // because `confirmAIAuthored` would refuse it at the gate anyway -
+        // only the first line of a multi-line command is visible in that
+        // alert, which is the whole reason that rule exists.
+        let multiline = proposals("{\"kind\":\"save_command_draft\",\"title\":\"Two things\",\"command\":\"ls\\nrm -rf /\"}")
+        check(multiline.kept.isEmpty && multiline.dropped == 1,
+              "a multi-line command draft is refused and counted, got \(multiline.kept.count) kept", &ok)
+        // A proposal can never carry a risk level - there is no field for one,
+        // which is the structural half of audit #2 section 5.3's fix.
+        check(command.kept.first.map { _ in true } == true,
+              "the command draft parsed at all", &ok)
+
+        // ---- create_schedule_draft ----
+        let schedule = proposals(#"{"kind":"create_schedule_draft","action":"driftCheck","cadence":"daily 09:30"}"#, speaker: "franky")
+        guard let onlySchedule = schedule.kept.first else {
+            check(false, "a schedule draft with a real action and cadence must parse", &ok)
+            return
+        }
+        check(onlySchedule.scheduleAction == .driftCheck,
+              "the action resolves to the real enum, got \(onlySchedule.scheduleAction.map(\.rawValue) ?? "nil")", &ok)
+        check(onlySchedule.scheduleCadence == .daily(hour: 9, minute: 30),
+              "and the cadence to the real type, got \(onlySchedule.scheduleCadence?.displayString ?? "nil")", &ok)
+        // Derived title - the model is not asked to name what the app names
+        // better, and a blank title would be an unreadable card.
+        check(onlySchedule.title == ScheduledActionKind.driftCheck.pickerTitle,
+              "a schedule draft's title is derived from its action, got \(onlySchedule.title)", &ok)
+        // snake_case, because a model writes it that way.
+        check(proposals(#"{"kind":"create_schedule_draft","action":"tool_update_check","cadence":"nightly 02:00"}"#, speaker: "franky")
+                .kept.first?.scheduleAction == .toolUpdateCheck,
+              "a snake_case action still resolves", &ok)
+        check(proposals(#"{"kind":"create_schedule_draft","action":"forkSync","cadence":"weekly monday 06:15"}"#, speaker: "franky")
+                .kept.first?.scheduleCadence == .weekly(weekday: 2, hour: 6, minute: 15),
+              "a weekly cadence resolves, Monday being Calendar's weekday 2", &ok)
+        // **An invented automation cannot become a proposal.** This is the
+        // security property of resolving at parse time rather than carrying a
+        // string: the app has six unattended actions and no way to run a
+        // seventh.
+        check(proposals(#"{"kind":"create_schedule_draft","action":"deleteAllBackups","cadence":"daily 03:00"}"#, speaker: "franky")
+                .kept.isEmpty,
+              "an invented schedule action is refused", &ok)
+        for bad in ["every day at nine", "daily", "daily 9", "daily 25:00", "weekly 06:00",
+                    "weekly funday 06:00", "monthly 09:00", ""] {
+            let parsed = proposals("{\"kind\":\"create_schedule_draft\",\"action\":\"driftCheck\",\"cadence\":\"\(bad)\"}", speaker: "franky")
+            check(parsed.kept.isEmpty,
+                  "the cadence grammar is strict - \"\(bad)\" must be refused, not guessed at", &ok)
+        }
+
+        // ---- open_destination ----
+        let handoff = proposals(#"{"kind":"open_destination","destination":"logAnalyzer","notes":"paste the trace"}"#)
+        guard case .destination(let dest, let hint)? = handoff.kept.first?.handoff else {
+            check(false, "a destination handoff must parse into a real RailDestination", &ok)
+            return
+        }
+        check(dest == .logAnalyzer, "...the one named, got \(dest.rawValue)", &ok)
+        check(hint == "paste the trace", "and carries what to bring there", &ok)
+        check(handoff.kept.first?.title.contains("Log Analyzer") == true,
+              "its title is derived from the destination, got \(handoff.kept.first?.title ?? "nil")", &ok)
+        check(proposals(#"{"kind":"open_destination","destination":"log_analyzer"}"#).kept.first?.handoff
+                == .destination(.logAnalyzer, hint: nil),
+              "a snake_case destination still resolves", &ok)
+        // A destination that exists but is off the allowlist is refused
+        // exactly like one that does not exist - and this is the one that
+        // matters, because a link row runs on a single click.
+        check(proposals(#"{"kind":"open_destination","destination":"poneglyph"}"#).kept.isEmpty,
+              "a handoff to the credential vault is refused even though the destination is real", &ok)
+        check(proposals(#"{"kind":"open_destination","destination":"settings"}"#).kept.isEmpty,
+              "...and so is one to Settings", &ok)
+        check(proposals(#"{"kind":"open_destination","destination":"middleEarth"}"#).kept.isEmpty,
+              "...and one to a destination that does not exist at all", &ok)
+        check(proposals(#"{"kind":"open_destination"}"#).kept.isEmpty,
+              "a destination handoff with no destination is refused", &ok)
+
+        // ---- open_sre_lead ----
+        let sre = proposals(#"{"kind":"open_sre_lead","host":"prod-bastion"}"#)
+        check(sre.kept.first?.handoff == .sreLead(hostHint: "prod-bastion"),
+              "an SRE Lead handoff carries the host the captain named, got \(String(describing: sre.kept.first?.handoff))", &ok)
+        // The hint is genuinely optional - the crew cannot see hosts, so a
+        // conversation that never named one must still be able to hand off.
+        check(proposals(#"{"kind":"open_sre_lead"}"#).kept.first?.handoff == .sreLead(hostHint: nil),
+              "...and parses with no hint at all", &ok)
+    }
+
+    // MARK: Phase 3 - the three new writes, against real stores
+
+    private static func checkPhase3Execution(_ ok: inout Bool) {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("straw-hat-p3-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        // Every one of the four, narrowly: `CommandLibraryStore` and
+        // `StickyBoardStore` both honour `FM_SHIFT_DIR` as a fallback and
+        // would otherwise share this process's other cases' folders, and
+        // `ScheduleStore` has only its own file override - a bare
+        // `ScheduleStore()` reads this machine's **real** `schedules.json`,
+        // which is exactly the hazard `main.swift`'s own redirect block
+        // exists for.
+        let saved = ["FM_SHIFT_DIR", "FM_STICKY_BOARD_DIR", "FM_COMMAND_LIBRARY_DIR", "FM_SCHEDULES_FILE"]
+            .map { ($0, ProcessInfo.processInfo.environment[$0]) }
+        setenv("FM_SHIFT_DIR", scratch.path, 1)
+        setenv("FM_STICKY_BOARD_DIR", scratch.appendingPathComponent("sticky").path, 1)
+        setenv("FM_COMMAND_LIBRARY_DIR", scratch.appendingPathComponent("commands").path, 1)
+        setenv("FM_SCHEDULES_FILE", scratch.appendingPathComponent("schedules.json").path, 1)
+        defer {
+            for (key, value) in saved {
+                if let value { setenv(key, value, 1) } else { unsetenv(key) }
+            }
+            try? FileManager.default.removeItem(at: scratch)
+        }
+
+        let shift = ShiftStore()
+        let sticky = StickyBoardStore()
+        let commands = CommandLibraryStore()
+        let schedules = ScheduleStore()
+        let stores = StrawHatProposalExecutor.Stores(
+            shift: shift, docs: nil, sticky: sticky, commands: commands, schedules: schedules)
+
+        // ---- add_sticky ----
+        let stickyProposal = StrawHatProposal(kind: .addSticky, title: "Rate-limit idea",
+                                              notes: "cap the retry loop")
+        guard case .written(let stickyMessage, let stickyUndo) =
+                StrawHatProposalExecutor.execute(stickyProposal, stores: stores) else {
+            check(false, "confirming a sticky proposal must write it", &ok)
+            return
+        }
+        check(stickyMessage.contains("Rate-limit idea"), "the toast names the note", &ok)
+        guard let note = sticky.notes.first(where: { $0.title == "Rate-limit idea" }) else {
+            check(false, "the note must actually be on the board", &ok)
+            return
+        }
+        check(note.text == "cap the retry loop", "with its body, got \(note.text)", &ok)
+        // Position, colour and tilt are the app's, and the position is the
+        // *next free slot* rather than the origin - a proposed note stacked
+        // under an existing one reads as a bug.
+        check(note.x == Double(StickyBoardMetrics.cascadeOrigin(index: 0).x)
+                && note.y == Double(StickyBoardMetrics.cascadeOrigin(index: 0).y),
+              "a crew note lands where \"New Note\" would have put it, got (\(note.x), \(note.y))", &ok)
+        // Reached disk, not just the array - the board debounces its own
+        // writes 1.5s and a confirmed proposal must not wait on that.
+        check(StickyBoardStore().notes.contains(where: { $0.title == "Rate-limit idea" }),
+              "a confirmed note must survive a fresh store - otherwise it never reached disk", &ok)
+        guard let undoSticky = stickyUndo else {
+            check(false, "a sticky note DOES get an undo - `deleteNote`/`restoreNote` both exist", &ok)
+            return
+        }
+        undoSticky()
+        check(!StickyBoardStore().notes.contains(where: { $0.title == "Rate-limit idea" }),
+              "and that undo genuinely removes it from disk", &ok)
+
+        // A second note goes in the *next* slot, which is what makes the
+        // cascade real rather than a constant.
+        _ = StrawHatProposalExecutor.execute(
+            StrawHatProposal(kind: .addSticky, title: "First"), stores: stores)
+        _ = StrawHatProposalExecutor.execute(
+            StrawHatProposal(kind: .addSticky, title: "Second"), stores: stores)
+        let first = sticky.notes.first { $0.title == "First" }
+        let second = sticky.notes.first { $0.title == "Second" }
+        check(first != nil && second != nil && (first!.x != second!.x || first!.y != second!.y),
+              "two crew notes must not land on top of each other", &ok)
+
+        // ---- create_schedule_draft ----
+        let scheduleProposal = StrawHatProposal(kind: .createScheduleDraft,
+                                                title: "ignored - derived",
+                                                scheduleAction: .driftCheck,
+                                                scheduleCadence: .daily(hour: 9, minute: 0))
+        let before = schedules.schedules.count
+        guard case .written(let scheduleMessage, let scheduleUndo) =
+                StrawHatProposalExecutor.execute(scheduleProposal, stores: stores) else {
+            check(false, "confirming a schedule draft must write it", &ok)
+            return
+        }
+        check(scheduleMessage.contains("Daily at 9:00 AM"),
+              "the toast names the cadence, got \(scheduleMessage)", &ok)
+        guard let written = schedules.schedules.last, schedules.schedules.count == before + 1 else {
+            check(false, "the schedule must actually be in the store", &ok)
+            return
+        }
+        check(written.action == .driftCheck, "with its action", &ok)
+        check(written.isEnabled, "enabled, exactly as the Schedule Editor's own Save leaves it", &ok)
+        check(written.notifyOn == .changeOnly,
+              "and quiet-until-it-matters, which is the app's default rather than the model's choice", &ok)
+        // `ScheduleStore.add` seeds this so a nightly job confirmed at 15:00
+        // means "starting tonight" rather than "and also right now".
+        check(written.lastFiredOccurrence != nil,
+              "its first occurrence is seeded, or it would fire the instant it was saved", &ok)
+        check(ScheduleStore().schedules.contains(where: { $0.id == written.id }),
+              "a confirmed schedule must survive a fresh store", &ok)
+        guard let undoSchedule = scheduleUndo else {
+            check(false, "a schedule draft DOES get an undo - `delete(id:)` and the id are both in hand", &ok)
+            return
+        }
+        undoSchedule()
+        check(!ScheduleStore().schedules.contains(where: { $0.id == written.id }),
+              "and that undo genuinely removes it", &ok)
+
+        // ---- save_command_draft: the write half only ----
+        //
+        // `execute` runs `confirmAIAuthored`, an `NSAlert.runModal()` that a
+        // headless suite cannot answer, so the *behaviour* is driven through
+        // `commitCommandDraft` directly and the *routing* is asserted by
+        // `checkCommandDraftGate`'s source guard. Both halves are needed: the
+        // write being right proves nothing about the gate still being in
+        // front of it.
+        let draft = StrawHatProposal(kind: .saveCommandDraft, title: "Tail the login logs",
+                                     notes: "follows the deployment",
+                                     command: "kubectl logs -f deploy/login -n prod")
+        guard case .written(let commandMessage, let commandUndo) = StrawHatProposalExecutor.commitCommandDraft(
+                draft, command: draft.command ?? "", commands: commands) else {
+            check(false, "committing a command draft must write it", &ok)
+            return
+        }
+        guard let savedCommand = commands.commands.first(where: { $0.name == "Tail the login logs" }) else {
+            check(false, "the command must actually be in the library", &ok)
+            return
+        }
+        check(savedCommand.commandTemplate == "kubectl logs -f deploy/login -n prod",
+              "with its exact template, got \(savedCommand.commandTemplate)", &ok)
+        check(savedCommand.category == StrawHatProposalExecutor.crewCommandCategory,
+              "in the crew's own folder rather than a category a model named, got \(savedCommand.category)", &ok)
+        // **The load-bearing assertion of this whole kind.** Audit #2 section
+        // 5.3: a stored `.readOnly` is a human's vouch, every later sink reads
+        // the stored level instead of asking again, and `heuristicRisk` never
+        // answers `.readOnly` - so a crew-authored command can never be
+        // stale-low at the detail pane, the palette, or F9's fan-out.
+        check(savedCommand.risk != .readOnly,
+              "a crew-authored command must never be stored as readOnly - nobody vouched for it", &ok)
+        check(savedCommand.risk == CommandRiskConfirmation.heuristicRisk(of: savedCommand.commandTemplate),
+              "and its level is the heuristic's, got \(savedCommand.risk.rawValue)", &ok)
+        check(commandMessage.contains(savedCommand.risk.displayName),
+              "the toast says how it was classified, got \(commandMessage)", &ok)
+        // A genuinely destructive template is classified as such rather than
+        // taking the floor.
+        let destructive = StrawHatProposal(kind: .saveCommandDraft, title: "Wipe the cache",
+                                           command: "rm -rf /var/cache/app")
+        _ = StrawHatProposalExecutor.commitCommandDraft(destructive, command: destructive.command ?? "",
+                                                        commands: commands)
+        check(commands.commands.first(where: { $0.name == "Wipe the cache" })?.risk == .destructive,
+              "a destructive template is stored destructive", &ok)
+        guard let undoCommand = commandUndo else {
+            check(false, "a command draft DOES get an undo - `deleteCommand(id:)` removes the file", &ok)
+            return
+        }
+        undoCommand()
+        check(!CommandLibraryStore().commands.contains(where: { $0.name == "Tail the login logs" }),
+              "and that undo genuinely removes it", &ok)
+
+        // ---- a missing store fails visibly, never silently ----
+        let bare = StrawHatProposalExecutor.Stores(shift: shift)
+        for proposal in [StrawHatProposal(kind: .addSticky, title: "nowhere"),
+                         StrawHatProposal(kind: .saveCommandDraft, title: "nowhere", command: "ls"),
+                         StrawHatProposal(kind: .createScheduleDraft, title: "nowhere",
+                                          scheduleAction: .driftCheck,
+                                          scheduleCadence: .daily(hour: 1, minute: 0))] {
+            guard case .failed = StrawHatProposalExecutor.execute(proposal, stores: bare) else {
+                check(false, "\(proposal.kind.rawValue) with no store must fail visibly, not silently", &ok)
+                continue
+            }
+        }
+    }
+
+    /// The routing half of `save_command_draft`'s gate.
+    ///
+    /// A source guard, because a modal cannot be answered from a headless
+    /// suite and because the write being correct is *invisible* to whether the
+    /// gate is still in front of it - which is exactly how audit #2 section
+    /// 5.3's original defect shipped one store over.
+    private static func checkCommandDraftGate(_ ok: inout Bool) {
+        guard let sources = SelfTestSources.appSourceDirectory() else {
+            print("  NOTE: source tree not reachable - skipping the command-draft gate source guard")
+            return
+        }
+        let path = sources.appendingPathComponent("StrawHatProposalExecutor.swift")
+        guard let text = try? String(contentsOf: path, encoding: .utf8) else {
+            check(false, "could not read StrawHatProposalExecutor.swift", &ok)
+            return
+        }
+        // Whole-line comments stripped first: this file's own header explains
+        // the gate by name, and a guard that trips on the comment documenting
+        // it is a guard nobody can keep.
+        let code = text.split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+
+        check(code.contains("CommandRiskConfirmation.confirmAIAuthored"),
+              "the executor must still run the AI-authored gate before saving a command", &ok)
+        check(code.contains("intent: .saveTemplate"),
+              "...with the save intent, whose wording is about letting text into the library", &ok)
+        // Exactly one production caller of the write, and it is inside the
+        // function that confirms. Two callers would mean one of them could
+        // skip the alert.
+        let callers = code.components(separatedBy: "commitCommandDraft(").count - 1
+        check(callers == 2,
+              "commitCommandDraft must be declared once and called from exactly one place, found \(callers) mentions", &ok)
+        guard let gateRange = code.range(of: "func saveCommandDraft"),
+              let confirmRange = code.range(of: "CommandRiskConfirmation.confirmAIAuthored"),
+              let commitRange = code.range(of: "outcome = commitCommandDraft(") else {
+            check(false, "the gate and the write must both live in `saveCommandDraft`", &ok)
+            return
+        }
+        check(gateRange.lowerBound < confirmRange.lowerBound
+                && confirmRange.lowerBound < commitRange.lowerBound,
+              "the confirmation has to come before the write, not after it", &ok)
+        // And the risk level is re-derived rather than trusted.
+        check(code.contains("CommandRiskConfirmation.heuristicRisk(of: command)"),
+              "the stored risk must be re-derived from the text, never taken from the model", &ok)
+        check(!code.contains("risk: .readOnly"),
+              "a crew-authored command must never be stored readOnly", &ok)
     }
 
     // MARK: Harness

@@ -340,7 +340,18 @@ final class AppShellController: NSViewController {
         // one the Tasks page shows. F6: Overview's "Log" tab reads the task
         // half of its feed straight from Shift's own activity YAML rather
         // than a second copy of it (see `FleetLogFeed`'s header).
-        self.overview = FleetController(shiftStore: shiftStore, commandLibraryRoot: commandLibraryStore.root)
+        // Phase 3 (M3.1): the crew's three new proposal kinds write to the
+        // command library, the sticky board and the schedules - so this page
+        // now needs the *stores*, not just the command library's root. All
+        // three are the shared instances (`stickyBoard.store` is `internal`
+        // for exactly this reason, per audit section 6.5b): each one caches
+        // its records as well as writing them, so a second instance would be
+        // a second writer to the same file.
+        self.overview = FleetController(shiftStore: shiftStore,
+                                        commandLibraryRoot: commandLibraryStore.root,
+                                        commandLibraryStore: commandLibraryStore,
+                                        stickyStore: stickyBoard.store,
+                                        scheduleStore: scheduleStore)
         self.dictation = DictationController(store: dictationStore)
         // Phase 5 (cockpit-shift-power-features): `shiftStore` is now built
         // once by the app delegate and shared with the menu bar item, the
@@ -661,6 +672,17 @@ final class AppShellController: NSViewController {
         // than new behaviour.
         overview.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
         overview.onOpenShiftTask = { [weak self] id in self?.openShiftTask(id: id) }
+        // Straw Hat phase 3 (M3.2): the crew's two navigation handoffs. Both
+        // are pass-throughs into navigation this object already owns - a
+        // handoff writes nothing, which is what lets its link row run on a
+        // single click with no confirm card in front of it.
+        overview.onOpenCrewDestination = { [weak self] dest, hint in
+            self?.openDestinationForCrew(dest, hint: hint)
+        }
+        overview.onOpenSRELead = { [weak self] hint in
+            self?.openSRELeadForCrew(hostHint: hint)
+                ?? "I couldn't reach your host pages from here."
+        }
         // cockpit-settings-sudo-touchid: Settings' "Touch ID for sudo" row
         // runs `sudo av harden sudo`, which needs a real interactive `sudo`
         // prompt exactly like Bootstrap's provisioning actions - same
@@ -1224,6 +1246,26 @@ final class AppShellController: NSViewController {
     /// it says otherwise, so a *new* one is compiled into debug builds only.
     #if FM_SELFTESTS
     var debugConsole: ConsoleController { console }
+
+    /// Which destination is showing, in the same terms `show(_:)` takes.
+    ///
+    /// Read off `currentDestinationKind`, the one piece of state the Recents
+    /// dropdown, the tab shortcuts and F2's own capture already share - never
+    /// a second notion of "what is on screen", which is how those three would
+    /// start disagreeing.
+    var debugCurrentDestination: RailDestination? {
+        guard case .rail(let dest)? = currentDestinationKind else { return nil }
+        return dest
+    }
+
+    /// Which host page is showing, or nil. Straw Hat phase 3's handoff suite
+    /// asserts a refusal *did not* switch, which needs the nil case.
+    var debugActiveHostID: UUID? { activeHostID }
+
+    /// The Whiteboard destination, so the crew's "draw it out" handoff can be
+    /// asserted against that page's own composer rather than against a copy
+    /// of the prefill this suite passed in.
+    var debugWhiteboard: WhiteboardController { whiteboard }
     #endif
 
     func debugSeedHostConsole(_ controller: ConsoleController, hostID: UUID) {
@@ -2283,6 +2325,107 @@ final class AppShellController: NSViewController {
     func openPostmortem(id: String) {
         show(.postmortems)
         postmortems.openPostmortem(id: id)
+    }
+
+    // MARK: Straw Hat crew handoffs (phase 3, M3.2)
+
+    /// `open_destination`: select the page, and where that page has an entry
+    /// point worth landing on, open it carrying what the crew was talking
+    /// about.
+    ///
+    /// The second half is the app's own established convention rather than an
+    /// extra: every `open*(id:)` wrapper above *reveals the record* rather
+    /// than only selecting its destination, because audit bug 4.3 corrected
+    /// exactly that dead end once for Recents. A "draw it out" handoff that
+    /// left the captain on an empty whiteboard, having discarded the idea
+    /// Usopp was describing, is the same shape.
+    ///
+    /// The Whiteboard is the only destination with such an entry point today
+    /// (its own "Generate diagram" composer - reused, never a second
+    /// generator), so it is the only special case, and every other
+    /// destination ignores the hint.
+    func openDestinationForCrew(_ dest: RailDestination, hint: String?) {
+        show(dest)
+        guard dest == .whiteboard, let hint, !hint.isEmpty else { return }
+        // Deferred one turn: the composer is an `NSPopover` anchored on the
+        // "Generate diagram" button, which lives in the *drill header* that
+        // `show(_:)` has only just repopulated - showing a popover relative to
+        // a button that has not been laid out yet places it against a zero
+        // rect.
+        DispatchQueue.main.async { [weak self] in
+            self?.whiteboard.openDiagramComposer(prefill: hint)
+        }
+    }
+
+    /// `open_sre_lead`: reveal a host's SRE Lead pane, or say why not.
+    ///
+    /// **This deliberately never connects a host that is not already
+    /// connected**, and that restraint is what makes "a handoff writes
+    /// nothing, so its link runs on a single click" literally true rather
+    /// than approximately. Forking a real `/usr/bin/ssh` - and possibly
+    /// prompting for Touch ID to materialise a key - is not navigation, and a
+    /// model-authored link row is not where the captain should be asked for
+    /// it. A host with no live session lands on the Hosts page, where Connect
+    /// is their own deliberate click.
+    ///
+    /// **The app resolves which host, never the crew.** They cannot see hosts
+    /// at all (`StrawHatCrew.persona`'s bounded-visibility rule), so a hint is
+    /// only ever a name the captain themselves used earlier in the
+    /// conversation. It is matched against the live-session registry - and
+    /// refuses to choose between two rather than guessing, the same
+    /// conservative shape `KubeContextParser`/`MultiHostSend` already use.
+    ///
+    /// Returns nil once the app has moved, or a message the crew's link row
+    /// shows in place.
+    func openSRELeadForCrew(hostHint: String?) -> String? {
+        let live = sessions.sessions
+        guard !live.isEmpty else {
+            show(.hosts)
+            return "You don't have a live host session right now - connect one from Hosts and ask me again."
+        }
+
+        let chosen: HostSession
+        if let hint = hostHint?.trimmingCharacters(in: .whitespacesAndNewlines), !hint.isEmpty {
+            let needle = hint.lowercased()
+            // Exact label first, then a unique substring - a host called
+            // "prod" must not be ambiguous just because "prod-bastion" also
+            // exists.
+            let exact = live.filter { $0.label.lowercased() == needle }
+            let partial = live.filter { $0.label.lowercased().contains(needle) }
+            if let only = exact.first, exact.count == 1 {
+                chosen = only
+            } else if let only = partial.first, partial.count == 1 {
+                chosen = only
+            } else if partial.isEmpty {
+                show(.hosts)
+                return "I don't have a live session called \u{201C}\(hint)\u{201D} - here are your hosts."
+            } else {
+                show(.hosts)
+                return "More than one live session matches \u{201C}\(hint)\u{201D}, so I'd rather you picked."
+            }
+        } else if live.count == 1, let only = live.first {
+            chosen = only
+        } else {
+            show(.hosts)
+            return "You have \(live.count) live sessions - pick the one you meant and I'll follow you there."
+        }
+
+        // Two distinct near-misses, kept distinct because saying "I opened it"
+        // about a page that never appeared is the same kind of overclaim the
+        // whole feature's honesty rules exist to prevent. A session can be in
+        // the registry with no page behind it at all (`connectHost(navigate:
+        // false)`, or an F2-restored entry), in which case `switchToSession`
+        // is a documented no-op and nothing moved.
+        guard let controller = hostConsoles[chosen.hostID] else {
+            show(.hosts)
+            return "I couldn't reach \u{201C}\(chosen.label)\u{201D}'s page - open it from Hosts and ask me again."
+        }
+        switchToSession(hostID: chosen.hostID)
+        guard controller.openSRELeadFromCrewHandoff() else {
+            return "I opened \u{201C}\(chosen.label)\u{201D}, but there was no tab there to start SRE Lead on."
+        }
+        AppLog.ai.info("straw hat: opened SRE Lead from a crew handoff")
+        return nil
     }
 
     /// ⌘K landing actions for the two newest stores (audit §6.5b / §6.6b).

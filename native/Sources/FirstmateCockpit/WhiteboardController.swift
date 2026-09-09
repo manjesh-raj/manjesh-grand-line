@@ -239,6 +239,60 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
         composer.toggle(relativeTo: generateButton)
     }
 
+    /// The Straw Hat crew's "draw it out" handoff (phase 3, M3.1 / M3.2) -
+    /// Usopp pointing an idea at this page's own diagram generator.
+    ///
+    /// **The same entry point the toolbar button uses**, not a second one:
+    /// one `composer.toggle(relativeTo:)` call, the same popover, the same
+    /// Generate button, the same `WhiteboardDiagram.run`. All this adds is
+    /// arriving with the description already typed in - which is the app's
+    /// own convention for a deep link (every `open*(id:)` wrapper in
+    /// `AppShellController` reveals the record rather than only selecting its
+    /// page), and is what stops a handoff from discarding the very idea it
+    /// was about.
+    ///
+    /// Nothing is generated: the prefill is text in a field the captain reads
+    /// and edits, and Generate is still their own press.
+    /// Returns whether the composer actually opened. A caller that only
+    /// wanted the page (or arrived while this destination is not showing) is
+    /// told rather than left assuming.
+    @discardableResult
+    func openDiagramComposer(prefill: String?) -> Bool {
+        // **`NSPopover.show(relativeTo:of:preferredEdge:)` raises
+        // `NSInvalidArgumentException` - "view has no window" - rather than
+        // no-opping**, and `generateButton` lives in the shell's *drill
+        // header*, which carries the actions of whichever destination is
+        // currently showing. So it genuinely has no window whenever this page
+        // is not the one on screen.
+        //
+        // Found by an injected regression rather than by reading the code: a
+        // deliberately broken version of `AppShellController.
+        // openDestinationForCrew` reached here for a non-Whiteboard handoff
+        // and took the whole process down with an uncaught exception. In
+        // production that path is guarded (`dest == .whiteboard` plus a
+        // `show(.whiteboard)` immediately before), but "should be in a window
+        // by now" is not a safe assumption to hand an API that throws - this
+        // app has crashed on that exact class once before (a cross-view
+        // constraint activated one line too early, `fm/grandline-docs-no-window-fix`).
+        //
+        // The prefill still lands either way, so a captain who navigates here
+        // themselves finds the idea already typed in.
+        if let prefill, !prefill.isEmpty {
+            composer.setPrompt(prefill)
+        }
+        guard generateButton.window != nil else {
+            AppLog.ui.info("whiteboard: diagram composer asked for while the page is not showing - left closed")
+            return false
+        }
+        // Idempotent for the handoff's sake: `toggle` would *close* a composer
+        // that a captain already had open, which is the opposite of what a
+        // "draw it out" link says it does.
+        if !composer.isShown {
+            composer.toggle(relativeTo: generateButton)
+        }
+        return true
+    }
+
     @objc private func fitTapped() {
         webView.call("fitToContent")
     }

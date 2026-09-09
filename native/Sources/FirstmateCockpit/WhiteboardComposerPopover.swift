@@ -115,6 +115,15 @@ final class WhiteboardComposerController: NSObject, NSPopoverDelegate {
         popover.performClose(nil)
     }
 
+    /// Type a description into the field without generating anything.
+    ///
+    /// Added for the Straw Hat crew's "draw it out" handoff (phase 3): the
+    /// handoff opens *this* composer rather than a second generator, and
+    /// arriving with the idea already in the field is what stops it
+    /// discarding the thing it was about. Generate is still the captain's own
+    /// press - this only fills in text they then read and can edit.
+    func setPrompt(_ text: String) { content.setPrompt(text) }
+
     /// Drop the conversation and go back to the fresh, first-generation shape.
     /// Called by the captain's own "Start over", and by `WhiteboardController`
     /// when the board is cleared out from under it.
@@ -137,6 +146,10 @@ final class WhiteboardComposerController: NSObject, NSPopoverDelegate {
     func debugClearStatus() { content.debugClearStatus() }
     var debugStatus: String { content.debugStatusText }
     var debugContentView: NSView { content.view }
+    /// What is actually in the field, so the crew's "draw it out" handoff can
+    /// be asserted against the real composer rather than against the string
+    /// the caller passed in.
+    var debugPrompt: String { content.debugPromptText }
     var debugTurns: [String] { content.debugTurns }
     var debugSessionID: String? { content.debugSessionID }
     var debugIsRefining: Bool { content.hasSession }
@@ -647,6 +660,15 @@ private final class WhiteboardComposerViewController: NSViewController, NSTextVi
         onSizeChanged?(size)
     }
 
+    /// See `WhiteboardComposerController.setPrompt(_:)` - this is the half
+    /// that touches the field. Forces `loadView` first, because a handoff can
+    /// reach this before the popover has ever been shown.
+    func setPrompt(_ text: String) {
+        _ = view
+        promptField.string = text
+        updatePlaceholder()
+    }
+
     private func updatePlaceholder() {
         placeholderLabel.isHidden = !promptField.string.isEmpty
     }
@@ -657,6 +679,10 @@ private final class WhiteboardComposerViewController: NSViewController, NSTextVi
 
     #if FM_SELFTESTS
     var debugStatusText: String { statusLabel.isHidden ? "" : statusLabel.stringValue }
+    var debugPromptText: String {
+        _ = view
+        return promptField.string
+    }
     var debugTurns: [String] { turns }
     var debugSessionID: String? { sessionID }
     var debugTitleText: String { titleLabel.stringValue }
@@ -669,7 +695,9 @@ private final class WhiteboardComposerViewController: NSViewController, NSTextVi
 
     func debugPrepare(prompt: String, appends: Bool) {
         _ = view  // force `loadView` for a popover that has never been shown
-        promptField.string = prompt
+        // Through the production setter, so a change to it is exercised here
+        // rather than shadowed by a test-only copy of the same two lines.
+        setPrompt(prompt)
         appendToggle.state = appends ? .on : .off
         updatePlaceholder()
     }

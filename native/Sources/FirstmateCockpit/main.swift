@@ -1546,6 +1546,17 @@ if ProcessInfo.processInfo.environment["FM_RUN_STRAW_HAT_MCP_TESTS"] == "1" {
     exit(StrawHatMCPSelfTest.run() ? 0 : 1)
 }
 
+// Straw Hat Pirates phase 3 (M3.2): the two navigation handoffs' resolution,
+// against a real `AppShellController` - which host a hint resolves to,
+// whether a handoff ever *connects* one (it must not), and the Whiteboard's
+// own composer being opened prefilled. Mounts a real shell, so it is in
+// `run-all-tests.sh`'s `NEEDS_SESSION` list - see
+// `StrawHatHandoffSelfTest.swift`'s header for why the shell-level half is
+// its own suite rather than more cases in the view one.
+if ProcessInfo.processInfo.environment["FM_RUN_STRAW_HAT_HANDOFF_TESTS"] == "1" {
+    exit(StrawHatHandoffSelfTest.run() ? 0 : 1)
+}
+
 // `fm/cockpit-sre-lead-reply-formatting`: same convention, for
 // `SRELeadMarkdown.parse`'s block/callout parsing - see
 // `SRELeadMarkdownSelfTest.swift`'s header.

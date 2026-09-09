@@ -29,12 +29,42 @@
 // write to the crew's vocabulary is a deliberate edit to this enum plus a
 // deliberate edit to that executor's `switch`, which is the point.
 //
-// Phase 2 ships three kinds. The plan's phase-3 set (`add_sticky`,
-// `save_command_draft`, `create_schedule_draft`, `open_sre_lead` /
-// `open_destination`) is deliberately absent - a persona that describes a
-// proposal nothing can execute produces exactly the failure the confirm-card
-// rule exists to prevent, and `StrawHatSelfTest` asserts the enum has not
-// grown early.
+// Phase 3 completes the plan's vocabulary: `add_sticky` (Usopp),
+// `save_command_draft` (Zoro) and `create_schedule_draft` (Franky) join the
+// three write kinds, plus the two navigation handoffs `open_sre_lead` /
+// `open_destination`. `StrawHatSelfTest` asserts the membership as a literal
+// list, so a kind added without a matching executor branch and a deliberate
+// decision fails there rather than shipping.
+//
+// ## Two families, and the split is behavioural rather than cosmetic
+//
+// `StrawHatProposalKind.isNavigation` divides the vocabulary in two, and
+// which side a kind sits on decides what the captain has to do with it:
+//
+//  - **A write** renders as a `StrawHatConfirmCard` with a confirm *button*,
+//    and nothing happens until they press it. Six of the eight.
+//  - **A handoff** (`open_sre_lead` / `open_destination`) renders as a link
+//    row and runs on the click itself, because it writes nothing anywhere -
+//    it selects a destination the captain could have reached from the nav.
+//    A confirm card in front of a link would be a modal in front of a link.
+//
+// That second claim is load-bearing, so it is kept literally true rather
+// than approximately: `open_sre_lead` deliberately **will not connect a host
+// that is not already connected** (see `StrawHatHandoff`), because forking a
+// real `ssh` and possibly prompting for Touch ID is not navigation. It
+// switches into a live session or lands on the Hosts page.
+//
+// ## Validated to a real enum at parse time, never carried as a string
+//
+// `create_schedule_draft` and `open_destination` both name something from a
+// closed set the app already owns (`ScheduledActionKind`, `RailDestination`),
+// and both are resolved **here** rather than in the executor. A model that
+// invents an action or a destination therefore produces no proposal at all -
+// the same structural refusal an invented `kind` gets, one level in - and the
+// executor's `switch` has nothing left to validate.
+//
+// `open_destination`'s set is additionally an allowlist *narrower* than
+// `RailDestination`: see `StrawHatHandoff.allowedDestinations`.
 //
 // ## The three rungs, and the one thing all three guarantee
 //
@@ -92,31 +122,92 @@ enum StrawHatProposalKind: String, CaseIterable {
     case addTask = "add_task"
     case addFollowUp = "add_follow_up"
     case createRunbookDraft = "create_runbook_draft"
+    // Phase 3 (M3.1) - one per new voice.
+    case addSticky = "add_sticky"
+    case saveCommandDraft = "save_command_draft"
+    case createScheduleDraft = "create_schedule_draft"
+    // Phase 3 (M3.2) - navigation, not writes. See `isNavigation`.
+    case openSRELead = "open_sre_lead"
+    case openDestination = "open_destination"
 
-    /// The confirm card's own kicker.
+    /// Whether this kind only *navigates*.
+    ///
+    /// The whole of the write/handoff split in the file header rests on this
+    /// one property: the view picks a confirm card or a link row from it, and
+    /// `StrawHatProposalExecutor` reads it to decide whether a press is a
+    /// store write at all. A kind that writes anywhere - a store, a file, a
+    /// remote - must answer `false`, and `StrawHatSelfTest` asserts the
+    /// membership of both sides as a literal list so a new kind cannot be
+    /// quietly filed on the side that needs no confirmation.
+    var isNavigation: Bool {
+        switch self {
+        case .addTask, .addFollowUp, .createRunbookDraft,
+             .addSticky, .saveCommandDraft, .createScheduleDraft:
+            return false
+        case .openSRELead, .openDestination:
+            return true
+        }
+    }
+
+    /// Whether the model has to supply a `title`, or the app derives one.
+    ///
+    /// Derived is better wherever the title is a *function of already
+    /// validated data*: a schedule draft's title is its `ScheduledActionKind`'s
+    /// own picker title, and a handoff's is its destination's own name. That
+    /// keeps "nothing is invented" literally true - a derived title comes out
+    /// of a closed enum, not out of a guess - and stops a model being asked
+    /// to name something the app already names better.
+    var requiresTitle: Bool {
+        switch self {
+        case .addTask, .addFollowUp, .createRunbookDraft, .addSticky, .saveCommandDraft:
+            return true
+        case .createScheduleDraft, .openSRELead, .openDestination:
+            return false
+        }
+    }
+
+    /// The confirm card's own kicker (or the handoff row's).
     var label: String {
         switch self {
         case .addTask: return "New task"
         case .addFollowUp: return "New follow-up"
         case .createRunbookDraft: return "Runbook draft"
+        case .addSticky: return "Sticky note"
+        case .saveCommandDraft: return "Command draft"
+        case .createScheduleDraft: return "Schedule draft"
+        case .openSRELead: return "Hand off"
+        case .openDestination: return "Hand off"
         }
     }
 
-    /// The confirm button's title - a verb, because clicking it writes.
+    /// The confirm button's title - a verb, because clicking it writes. For a
+    /// navigation kind it is the link row's own title instead, and says where
+    /// the click goes rather than what it changes.
     var confirmTitle: String {
         switch self {
         case .addTask: return "Add task"
         case .addFollowUp: return "Add follow-up"
         case .createRunbookDraft: return "Save draft"
+        case .addSticky: return "Add note"
+        case .saveCommandDraft: return "Save command"
+        case .createScheduleDraft: return "Create schedule"
+        case .openSRELead: return "Open SRE Lead"
+        case .openDestination: return "Open"
         }
     }
 
-    /// Past tense, for the card's confirmed state and the toast.
+    /// Past tense, for the card's confirmed state and the toast. Unused by the
+    /// navigation kinds, which have no "after" state on the row - the app
+    /// simply moves.
     var confirmedTitle: String {
         switch self {
         case .addTask: return "Added to Tasks"
         case .addFollowUp: return "Added to Follow-ups"
         case .createRunbookDraft: return "Saved to Runbooks"
+        case .addSticky: return "Added to Sticky Board"
+        case .saveCommandDraft: return "Saved to Commands"
+        case .createScheduleDraft: return "Added to Schedules"
+        case .openSRELead, .openDestination: return "Opened"
         }
     }
 
@@ -125,15 +216,89 @@ enum StrawHatProposalKind: String, CaseIterable {
         case .addTask: return "checkmark.circle"
         case .addFollowUp: return "bell"
         case .createRunbookDraft: return "doc.text"
+        case .addSticky: return "note.text"
+        case .saveCommandDraft: return "terminal"
+        case .createScheduleDraft: return "clock.arrow.circlepath"
+        case .openSRELead: return "shield.lefthalf.filled"
+        case .openDestination: return "arrow.up.forward.square"
         }
     }
 
     /// Which store this writes to, named for the card's own detail line so the
-    /// captain can see where a click lands before making it.
+    /// captain can see where a click lands before making it. For a navigation
+    /// kind this is where the click *goes*, which is the same question.
     var destination: String {
         switch self {
         case .addTask, .addFollowUp: return "Tasks"
         case .createRunbookDraft: return "Runbooks"
+        case .addSticky: return "Sticky Board"
+        case .saveCommandDraft: return "DevOps Commands"
+        case .createScheduleDraft: return "Schedules"
+        case .openSRELead: return "SRE Lead"
+        case .openDestination: return "another page"
+        }
+    }
+}
+
+/// Where a navigation handoff goes - the resolved half of `open_sre_lead` /
+/// `open_destination`, built by the parser out of real enum cases so nothing
+/// downstream has a string to interpret.
+enum StrawHatHandoff: Equatable {
+    /// SRE Lead on a host. The hint is whatever the *captain* called the host
+    /// earlier in the conversation, if the model repeated it - never
+    /// something the crew can look up, because hosts are deliberately outside
+    /// everything they can see (`StrawHatCrew.persona`'s bounded-visibility
+    /// rule, and `StrawHatContext` carries no hosts). The app resolves it
+    /// against the real host store, or refuses to guess: see
+    /// `AppShellController.openSRELeadForCrew`.
+    case sreLead(hostHint: String?)
+    /// A destination, already checked against `allowedDestinations`. The
+    /// `hint` is the idea the crew was talking about, carried so a handoff can
+    /// land on the target's own entry point with it rather than on an empty
+    /// page - today that is the Whiteboard's "Generate diagram" composer,
+    /// which is Usopp's "draw it out" (M3.1). Every other destination ignores
+    /// it.
+    case destination(RailDestination, hint: String?)
+
+    /// The destinations a crew handoff may name. **An allowlist, and narrower
+    /// than `RailDestination` on purpose.**
+    ///
+    /// The closed-enum argument that makes `StrawHatProposalKind` safe applies
+    /// again one level in, and it is not only about capability: a link row runs
+    /// on a single click with no confirmation, so "which pages may a model put
+    /// a one-click link to" is a real question. What is deliberately out:
+    ///
+    ///  - **`.poneglyph` and `.vault`** - the captain's credential surfaces. A
+    ///    crew member producing a one-click link to a password store is the
+    ///    phishing-shaped move to make structurally impossible, whatever the
+    ///    surrounding text says. The crew is told it cannot see the vault; it
+    ///    does not get to send the captain there either.
+    ///  - **`.settings`, `.bootstrap`, `.updates`, `.automation`,
+    ///    `.githubSync`** - machine configuration and unattended-write pages.
+    ///    None is a handoff from a conversation; all are places the captain
+    ///    goes deliberately.
+    ///  - **`.dictation`** - a device-permission page, not a work surface.
+    ///  - **`.overview` / `.homeCanvas`** - where the chat already is. A
+    ///    handoff to the page you are on is a dead link.
+    ///
+    /// What is in is every surface a crew member can genuinely hand work to.
+    static let allowedDestinations: [RailDestination] = [
+        .console, .hosts, .kubernetes, .logAnalyzer, .health,
+        .shift, .review, .schedules,
+        .runbooks, .postmortems, .docs,
+        .whiteboard, .stickyBoard, .codePreview, .tools,
+    ]
+
+    /// The row's own title - derived, never model-authored. A handoff whose
+    /// label the model wrote could say "open your tasks" over a link to
+    /// something else entirely.
+    var title: String {
+        switch self {
+        case .sreLead(let hint):
+            guard let hint else { return "Open SRE Lead on a host" }
+            return "Open SRE Lead on \u{201C}\(hint)\u{201D}"
+        case .destination(let dest, _):
+            return "Open \(dest.title)"
         }
     }
 }
@@ -152,16 +317,45 @@ struct StrawHatProposal: Equatable {
     let due: String?
     let notes: String?
     /// A runbook draft's markdown body. Required for `.createRunbookDraft`
-    /// and meaningless for the other two.
+    /// and meaningless for every other kind.
     let content: String?
+    /// A saved command's own shell template, `{{token}}` placeholders and all.
+    /// Required for `.saveCommandDraft`, meaningless elsewhere.
+    ///
+    /// **Never carries a risk level.** `CommandRiskLevel` on a saved command
+    /// is a record of a *human* having read the text and vouched for it, so a
+    /// model-supplied one would be a vouch nobody made - audit #2 §5.3's own
+    /// finding, one store over. The level is re-derived from this string by
+    /// `CommandRiskConfirmation.heuristicRisk` at execution time.
+    let command: String?
+    /// Which of the app's six pre-approved scheduled actions this draft would
+    /// run. Required for `.createScheduleDraft`.
+    ///
+    /// Already the real enum, resolved by the parser - so this cannot name an
+    /// automation the app does not have, and Franky cannot invent one. See
+    /// this file's header.
+    let scheduleAction: ScheduledActionKind?
+    /// How often. Required for `.createScheduleDraft`, and likewise already
+    /// parsed into the real type rather than left as text.
+    let scheduleCadence: ScheduleCadence?
+    /// Where a navigation kind goes. Required for `.openSRELead` /
+    /// `.openDestination` and nil for every write kind.
+    let handoff: StrawHatHandoff?
 
     init(kind: StrawHatProposalKind, title: String, due: String? = nil,
-         notes: String? = nil, content: String? = nil) {
+         notes: String? = nil, content: String? = nil, command: String? = nil,
+         scheduleAction: ScheduledActionKind? = nil,
+         scheduleCadence: ScheduleCadence? = nil,
+         handoff: StrawHatHandoff? = nil) {
         self.kind = kind
         self.title = title
         self.due = due
         self.notes = notes
         self.content = content
+        self.command = command
+        self.scheduleAction = scheduleAction
+        self.scheduleCadence = scheduleCadence
+        self.handoff = handoff
     }
 
     /// The `("YYYY-MM-DD", "HH:MM"?)` pair `ShiftTask`/`ShiftFollowUp`
@@ -204,6 +398,15 @@ struct StrawHatProposal: Equatable {
         if kind == .createRunbookDraft, let content {
             let lines = content.split(separator: "\n").count
             parts.append("\(lines) line\(lines == 1 ? "" : "s")")
+        }
+        // The command itself is the whole point of the card - the captain is
+        // about to let model-written shell text into their own library, so it
+        // is on the card *before* the gate, not only inside the alert.
+        if kind == .saveCommandDraft, let command {
+            parts.append(command)
+        }
+        if kind == .createScheduleDraft, let scheduleCadence {
+            parts.append(scheduleCadence.displayString)
         }
         return parts.joined(separator: " \u{00B7} ")
     }
@@ -376,17 +579,20 @@ enum StrawHatEnvelope {
             AppLog.ai.info("straw hat: refused an unknown proposal kind: \(rawKind, privacy: .public)")
             return nil
         }
-        guard let title = (dict["title"] as? String)?
-            .trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else {
-            // Every kind needs a title, and there is nothing safe to invent -
-            // a task called "Untitled" is a task the captain did not ask for.
+        let modelTitle = optionalString(dict["title"])
+        if kind.requiresTitle && modelTitle == nil {
+            // A kind whose title is the captain's own words needs them, and
+            // there is nothing safe to invent - a task called "Untitled" is a
+            // task the captain did not ask for. The three kinds whose title is
+            // a function of validated data derive it below instead.
             AppLog.ai.info("straw hat: refused a \(rawKind, privacy: .public) proposal with no title")
             return nil
         }
 
         let due = optionalString(dict["due"]) ?? optionalString(dict["follow_up_at"])
-        let notes = optionalString(dict["notes"])
+        let notes = optionalString(dict["notes"]) ?? optionalString(dict["text"])
         let content = optionalString(dict["content"]) ?? optionalString(dict["body"])
+        let command = optionalString(dict["command"]) ?? optionalString(dict["template"])
 
         if kind == .createRunbookDraft && content == nil {
             // A runbook with no body is an empty file in the captain's
@@ -394,7 +600,139 @@ enum StrawHatEnvelope {
             AppLog.ai.info("straw hat: refused a runbook draft with no content")
             return nil
         }
-        return StrawHatProposal(kind: kind, title: title, due: due, notes: notes, content: content)
+
+        var scheduleAction: ScheduledActionKind?
+        var scheduleCadence: ScheduleCadence?
+        var handoff: StrawHatHandoff?
+
+        switch kind {
+        case .addTask, .addFollowUp, .createRunbookDraft, .addSticky:
+            break
+
+        case .saveCommandDraft:
+            // A command draft with no command is a named row that does
+            // nothing, and there is nothing to derive it from.
+            guard let command else {
+                AppLog.ai.info("straw hat: refused a command draft with no command")
+                return nil
+            }
+            // The one-line rule is the *gate's* (`confirmAIAuthored` refuses a
+            // multi-line command outright, because only its first line is
+            // visible in the alert). Refusing it here as well means the
+            // captain never sees a card for something that could not have
+            // been saved anyway - and the reason is stated in the log rather
+            // than shown as an alert they did not ask for.
+            guard !command.contains(where: \.isNewline) else {
+                AppLog.ai.info("straw hat: refused a multi-line command draft")
+                return nil
+            }
+
+        case .createScheduleDraft:
+            // Both halves come out of closed types - see this file's header.
+            // A model that names an automation the app does not have, or a
+            // cadence nothing can read, produces no proposal at all rather
+            // than a card whose press would have to guess.
+            guard let action = self.scheduledAction(from: dict) else {
+                AppLog.ai.info("straw hat: refused a schedule draft with no recognised action")
+                return nil
+            }
+            guard let cadence = self.cadence(from: dict) else {
+                AppLog.ai.info("straw hat: refused a schedule draft with no recognised cadence")
+                return nil
+            }
+            scheduleAction = action
+            scheduleCadence = cadence
+
+        case .openSRELead:
+            // The host hint is optional by design: the crew genuinely cannot
+            // see the captain's hosts, so this is only ever a name the captain
+            // themselves used. The app resolves it, or refuses to guess.
+            handoff = .sreLead(hostHint: optionalString(dict["host"]))
+
+        case .openDestination:
+            guard let dest = self.handoffDestination(from: dict) else {
+                AppLog.ai.info("straw hat: refused a handoff to an unknown or disallowed destination")
+                return nil
+            }
+            // `notes` is the idea the crew was talking about, so a handoff can
+            // land on the target's own entry point carrying it - Usopp's
+            // "draw it out" into the Whiteboard's composer. Every other
+            // destination ignores it.
+            handoff = .destination(dest, hint: notes)
+        }
+
+        // Derived, for the kinds whose title is a function of the validated
+        // data above rather than something a model should be naming.
+        let title = modelTitle
+            ?? scheduleAction?.pickerTitle
+            ?? handoff?.title
+            ?? kind.label
+
+        return StrawHatProposal(kind: kind, title: title, due: due, notes: notes,
+                                content: content, command: command,
+                                scheduleAction: scheduleAction, scheduleCadence: scheduleCadence,
+                                handoff: handoff)
+    }
+
+    /// One of the app's six pre-approved scheduled actions, matched against
+    /// `ScheduledActionKind`'s own raw values plus the snake_case spelling a
+    /// model is likelier to write. Anything else is refused.
+    private static func scheduledAction(from dict: [String: Any]) -> ScheduledActionKind? {
+        guard let raw = optionalString(dict["action"])?.lowercased()
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: " ", with: "") else { return nil }
+        return ScheduledActionKind.allCases.first { $0.rawValue.lowercased() == raw }
+    }
+
+    /// A destination from `StrawHatHandoff.allowedDestinations`, matched
+    /// against `RailDestination`'s raw values (case- and separator-insensitive,
+    /// since a model writes "log_analyzer" as readily as "logAnalyzer").
+    ///
+    /// A destination that exists but is not on the allowlist is refused
+    /// exactly like one that does not exist - the log line does not
+    /// distinguish them, because "this page is off-limits to you" is not
+    /// information a persona needs to be taught by trial and error.
+    private static func handoffDestination(from dict: [String: Any]) -> RailDestination? {
+        guard let raw = optionalString(dict["destination"])?.lowercased()
+            .replacingOccurrences(of: "_", with: "")
+            .replacingOccurrences(of: "-", with: "")
+            .replacingOccurrences(of: " ", with: "") else { return nil }
+        return StrawHatHandoff.allowedDestinations.first { $0.rawValue.lowercased() == raw }
+    }
+
+    /// `"daily 09:00"` or `"weekly monday 06:00"`, and nothing else.
+    ///
+    /// Deliberately strict rather than forgiving. `ShiftDateParser` is the
+    /// app's natural-language *date* scanner and is reused for a task's due
+    /// date, but a cadence is not a date - it is a recurrence, and a schedule
+    /// that fires at the wrong hour every day forever is a worse failure than
+    /// a refused draft. `ScheduleCadence.normalized` clamps the numbers, so a
+    /// parsed cadence can never be one that matches nothing.
+    private static func cadence(from dict: [String: Any]) -> ScheduleCadence? {
+        guard let raw = optionalString(dict["cadence"])?.lowercased() else { return nil }
+        let parts = raw.split(whereSeparator: { $0 == " " || $0 == "," }).map(String.init)
+        guard let first = parts.first else { return nil }
+
+        func clock(_ text: String) -> (hour: Int, minute: Int)? {
+            let halves = text.split(separator: ":").map(String.init)
+            guard halves.count == 2, let h = Int(halves[0]), let m = Int(halves[1]),
+                  (0...23).contains(h), (0...59).contains(m) else { return nil }
+            return (h, m)
+        }
+
+        switch first {
+        case "daily", "nightly":
+            guard parts.count == 2, let time = clock(parts[1]) else { return nil }
+            return ScheduleCadence.daily(hour: time.hour, minute: time.minute).normalized
+        case "weekly":
+            guard parts.count == 3, let time = clock(parts[2]),
+                  let weekday = ScheduleCadence.weekdayNames
+                    .firstIndex(where: { !$0.isEmpty && $0.lowercased() == parts[1] }) else { return nil }
+            return ScheduleCadence.weekly(weekday: weekday, hour: time.hour, minute: time.minute).normalized
+        default:
+            return nil
+        }
     }
 
     private static func optionalString(_ value: Any?) -> String? {

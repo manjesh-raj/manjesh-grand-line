@@ -169,6 +169,8 @@ NEEDS_SESSION=(
   # `FleetController` on its Crew tab and clicks the real Send button. Its
   # pure-logic half (`FM_RUN_STRAW_HAT_TESTS`) needs no window and runs in CI.
   "FM_RUN_STRAW_HAT_VIEW_TESTS"
+  # Phase 3's handoff resolution mounts a real `AppShellController`.
+  "FM_RUN_STRAW_HAT_HANDOFF_TESTS"
   "FM_RUN_INPUT_SURFACE_TESTS"
   "FM_RUN_REVIEW_LOADING_STATE_TESTS"
   "FM_RUN_REVIEW_PR_LIST_VOLUME_TESTS"

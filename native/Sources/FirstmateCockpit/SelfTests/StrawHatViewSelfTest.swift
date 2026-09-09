@@ -56,6 +56,9 @@ enum StrawHatViewSelfTest {
         checkSalvageRendersButNeverExecutes(&ok)
         checkContributingGlow(&ok)
         checkUnwiredCardFailsVisibly(&ok)
+        checkHandoffRendersAsALink(&ok)
+        checkHandoffWritesNothing(&ok)
+        checkQuickAskCard(&ok)
         checkThemeSweep(&ok)
 
         print(ok ? "StrawHatViewSelfTest: all checks passed" : "StrawHatViewSelfTest: FAILED")
@@ -79,7 +82,10 @@ enum StrawHatViewSelfTest {
     /// A real `FleetController` in a real off-screen window, switched to the
     /// Crew tab through the same method a real pill click reaches.
     private static func mount(width: CGFloat = 1100, height: CGFloat = 800,
-                              shiftStore: ShiftStore? = nil) -> Mounted {
+                              shiftStore: ShiftStore? = nil,
+                              stickyStore: StickyBoardStore? = nil,
+                              commandLibraryStore: CommandLibraryStore? = nil,
+                              scheduleStore: ScheduleStore? = nil) -> Mounted {
         // `shiftStore` is passed only by the cases that then assert what a
         // confirmed proposal wrote - everything else takes a fresh one, which
         // resolves through this suite's own scratch `FM_SHIFT_DIR`.
@@ -87,9 +93,15 @@ enum StrawHatViewSelfTest {
         // because this suite drives the chat/proposal surface rather than the
         // crew's tools. `StrawHatMCPSelfTest` is where a real, populated set
         // of roots is exercised end to end.
+        // Phase 3's three write stores are passed only by the cases that then
+        // assert what a confirmed proposal wrote - a `nil` one is the real
+        // "this page has no such store" path, which must fail visibly.
         let controller = FleetController(shiftStore: shiftStore ?? ShiftStore(),
                                          commandLibraryRoot: FileManager.default.temporaryDirectory
-                                             .appendingPathComponent("fm-straw-hat-view-commands", isDirectory: true))
+                                             .appendingPathComponent("fm-straw-hat-view-commands", isDirectory: true),
+                                         commandLibraryStore: commandLibraryStore,
+                                         stickyStore: stickyStore,
+                                         scheduleStore: scheduleStore)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
                               styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.contentViewController = controller
@@ -604,8 +616,15 @@ enum StrawHatViewSelfTest {
         let chat = m.controller.debugCrewChat
 
         // Rung 2: a voice that is not aboard, carrying a proposal.
+        //
+        // **Brook**, who the plan gives no code at all - phase 2's fixture
+        // used Zoro, who is aboard as of phase 3, so this was re-pointed at a
+        // voice that is genuinely still absent rather than left asserting the
+        // old roster (the same shape audit #2 section 4.5 found in
+        // `SessionRestoreSelfTest`: an assertion that had quietly become a
+        // record of the old behaviour).
         m.controller.debugRenderCrewReply("""
-        {"sections":[{"speaker":"zoro","text":"I'd restart the pod.",
+        {"sections":[{"speaker":"brook","text":"I'd restart the pod.",
           "proposals":[{"kind":"run_kubectl","title":"rollout restart"}]}]}
         """)
         check(chat.debugCrewSpeakers() == ["-"],
@@ -728,6 +747,234 @@ enum StrawHatViewSelfTest {
     }
 
     // MARK: Utilities
+
+    // MARK: Phase 3 (M3.2) - the two handoffs render as links, not cards
+
+    /// A navigation proposal must render as a link row and **never** as a
+    /// confirm card, and the row must not stretch its own button.
+    ///
+    /// The card/link choice is the visible half of the write/handoff split:
+    /// a confirm button in front of something that writes nothing would
+    /// teach the captain that a confirm press sometimes means "this changes
+    /// nothing", which is what makes every *other* confirm press worth less.
+    private static func checkHandoffRendersAsALink(_ ok: inout Bool) {
+        let m = mount()
+        showCrew(m)
+        let chat = m.controller.debugCrewChat
+
+        m.controller.debugRenderCrewReply("""
+        {"sections":[{"speaker":"zoro","text":"That needs a live session.","proposals":[
+          {"kind":"open_sre_lead","host":"prod-bastion"},
+          {"kind":"open_destination","destination":"logAnalyzer","notes":"paste the trace"}]}]}
+        """)
+
+        let rows = chat.debugHandoffRows()
+        check(rows.count == 2, "both handoffs render as link rows, got \(rows.count)", &ok)
+        check(chat.debugConfirmCards().isEmpty,
+              "a handoff must never render as a confirm card, got \(chat.debugConfirmCards().count)", &ok)
+        guard rows.count == 2 else { return }
+
+        // Derived titles, so a link always says where it goes.
+        check(rows[0].debugTitle.contains("prod-bastion"),
+              "the SRE Lead link names the host, got \(rows[0].debugTitle)", &ok)
+        check(rows[1].debugTitle.contains("Log Analyzer"),
+              "the destination link names the page, got \(rows[1].debugTitle)", &ok)
+
+        // The button keeps its own width. Two views with no intrinsic content
+        // size in one row is the exact shape this codebase has measured wrong
+        // three separate times (`ToolRowLayout`, `StrawHatConfirmCard`, the
+        // Hosts list's Connect button at ~900pt) - so this is measured, not
+        // reasoned about.
+        m.controller.view.layoutSubtreeIfNeeded()
+        for row in rows {
+            check(row.debugButton.frame.width > 0,
+                  "a handoff button must have a real width - \(row.debugFrames)", &ok)
+            check(row.debugButton.frame.width < row.frame.width - 20,
+                  "a handoff link must not stretch to the block's full width - \(row.debugFrames)", &ok)
+        }
+
+        // And a section that carries both a write and a handoff renders one
+        // of each, in order - the split is per proposal, not per section.
+        m.controller.newCrewConversationTapped()
+        m.controller.debugRenderCrewReply("""
+        {"sections":[{"speaker":"zoro","text":"Both:","proposals":[
+          {"kind":"save_command_draft","title":"Tail it","command":"kubectl logs -f deploy/api"},
+          {"kind":"open_destination","destination":"console"}]}]}
+        """)
+        check(chat.debugConfirmCards().count == 1 && chat.debugHandoffRows().count == 1,
+              "one section can carry a card and a link at once, got \(chat.debugConfirmCards().count) cards / \(chat.debugHandoffRows().count) links", &ok)
+    }
+
+    /// Clicking a handoff must reach `onHandoff` and write nothing.
+    ///
+    /// Driven through the row's real button target/action, so a row that lost
+    /// its wiring fails this rather than passing - and the write assertion is
+    /// what makes "a link runs on a single click" defensible: if a handoff
+    /// could reach a store, running it without a confirm card would be a
+    /// model-triggered unconfirmed write.
+    private static func checkHandoffWritesNothing(_ ok: inout Bool) {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("straw-hat-handoff-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        let previous = ProcessInfo.processInfo.environment["FM_SHIFT_DIR"]
+        setenv("FM_SHIFT_DIR", scratch.path, 1)
+        defer {
+            if let previous { setenv("FM_SHIFT_DIR", previous, 1) } else { unsetenv("FM_SHIFT_DIR") }
+            try? FileManager.default.removeItem(at: scratch)
+        }
+
+        let store = ShiftStore()
+        let m = mount(shiftStore: store)
+        showCrew(m)
+        let chat = m.controller.debugCrewChat
+
+        var destinations: [RailDestination] = []
+        var hints: [String?] = []
+        var sreHints: [String?] = []
+        m.controller.onOpenCrewDestination = { dest, hint in
+            destinations.append(dest)
+            hints.append(hint)
+        }
+        m.controller.onOpenSRELead = { hint in
+            sreHints.append(hint)
+            return nil
+        }
+
+        let tasksBefore = store.activeTasks.count
+        let followUpsBefore = store.followUps.count
+
+        m.controller.debugRenderCrewReply("""
+        {"sections":[{"speaker":"usopp","text":"Draw it?","proposals":[
+          {"kind":"open_destination","destination":"whiteboard","notes":"three boxes and an arrow"}]}]}
+        """)
+        guard let row = chat.debugHandoffRows().first else {
+            check(false, "the handoff row must render before it can be clicked", &ok)
+            return
+        }
+        // The real target/action, not `onActivate` directly.
+        row.debugButton.performClick(nil)
+        check(destinations == [.whiteboard],
+              "clicking a destination link reaches the page it names, got \(destinations.map(\.rawValue))", &ok)
+        check(hints == ["three boxes and an arrow"],
+              "...carrying what the crew was talking about, got \(String(describing: hints))", &ok)
+        check(row.debugNote.isEmpty,
+              "a handoff that worked says nothing in place - the app moved, got \(row.debugNote)", &ok)
+
+        // The SRE Lead half, through the same path.
+        m.controller.newCrewConversationTapped()
+        m.controller.debugRenderCrewReply("""
+        {"sections":[{"speaker":"zoro","text":"Needs a session.","proposals":[
+          {"kind":"open_sre_lead","host":"prod-bastion"}]}]}
+        """)
+        chat.debugHandoffRows().first?.debugButton.performClick(nil)
+        check(sreHints == ["prod-bastion"],
+              "clicking the SRE Lead link passes the host the captain named, got \(String(describing: sreHints))", &ok)
+
+        // Nothing was written by either.
+        check(store.activeTasks.count == tasksBefore && store.followUps.count == followUpsBefore,
+              "a handoff must write nothing - that is what lets it run with no confirm card", &ok)
+
+        // A refusal is shown in place rather than looking like it worked.
+        m.controller.onOpenSRELead = { _ in "You don't have a live host session right now." }
+        m.controller.newCrewConversationTapped()
+        m.controller.debugRenderCrewReply("""
+        {"sections":[{"speaker":"zoro","text":"x","proposals":[{"kind":"open_sre_lead"}]}]}
+        """)
+        guard let refusing = chat.debugHandoffRows().first else {
+            check(false, "the refusing handoff row must render", &ok)
+            return
+        }
+        refusing.debugButton.performClick(nil)
+        check(refusing.debugNote.contains("live host session"),
+              "a handoff that could not be followed says why, got \(refusing.debugNote)", &ok)
+    }
+
+    // MARK: Phase 3 (M3.3) - "Ask your crew" on the dashboard
+
+    /// The quick-ask card is on the **Overview** tab, and one press starts a
+    /// new conversation on the Crew tab with the captain's message already
+    /// sent.
+    ///
+    /// Every assertion here is about the *placement and the routing*, because
+    /// that is the whole milestone: the field is one tab away from where the
+    /// friction was, and the message has to arrive in a conversation the
+    /// captain can then see.
+    private static func checkQuickAskCard(_ ok: inout Bool) {
+        let m = mount()
+        // Overview is the default tab, so the card is on screen with no tab
+        // switch at all - which is the point.
+        m.controller.view.layoutSubtreeIfNeeded()
+        guard let card = m.controller.debugCrewQuickAsk else {
+            check(false, "M3.3's quick-ask card must exist on the Overview tab", &ok)
+            return
+        }
+        check(!card.isHidden && card.frame.width > 0,
+              "...and be visible on the dashboard without switching tabs, got \(card.frame)", &ok)
+        // Not on the Crew tab, which already has the full composer - a second
+        // one there would be the duplication M3.3 is not.
+        check(card.isDescendant(of: m.controller.view),
+              "the card is part of this page", &ok)
+        check(!card.isDescendant(of: m.controller.debugCrewChat),
+              "the quick-ask card must not be inside the chat pane it is an alternative to", &ok)
+
+        // Nothing to send yet.
+        check(!card.debugAskEnabled, "Ask starts disabled - there is nothing to ask", &ok)
+        card.debugType("what needs my attention?")
+        check(card.debugAskEnabled, "typing enables Ask", &ok)
+        card.debugType("   ")
+        check(!card.debugAskEnabled, "whitespace alone does not", &ok)
+
+        // The row's own geometry: the field takes the slack, the button keeps
+        // its width. Measured for the same reason the handoff row's is.
+        card.debugType("a real question")
+        m.controller.view.layoutSubtreeIfNeeded()
+        check(card.debugField.frame.width > card.debugAskButton.frame.width * 2,
+              "the field takes the row's slack, not the button - \(card.debugFrames)", &ok)
+        check(card.debugAskButton.frame.width > 0,
+              "...and the button still has a real width - \(card.debugFrames)", &ok)
+
+        // ---- the press: switch, reset, send ----
+        //
+        // A fake `claude` so the turn is real end to end rather than stopping
+        // at "a runner was built".
+        let script = writeFakeClaude(reply: """
+        {"sections":[{"speaker":"luffy","text":"Two things need you."}]}
+        """, argvLog: nil, sessionID: nil)
+        defer { try? FileManager.default.removeItem(at: script) }
+        StrawHatCrew.claudePathOverrideForTests = script.path
+        defer { StrawHatCrew.claudePathOverrideForTests = nil }
+
+        // Seed a conversation on the Crew tab first, so "starts a NEW
+        // conversation" is a real assertion rather than one about an already
+        // empty thread.
+        showCrew(m)
+        m.controller.debugRenderCrewReply("""
+        {"sections":[{"speaker":"nami","text":"an older turn nobody can see from Overview"}]}
+        """)
+        check(m.controller.debugCrewChat.debugMessageCount > 0, "the seeded turn is there", &ok)
+        m.controller.debugSelectTab("overview")
+
+        card.debugType("what needs my attention?")
+        card.debugPressAsk()
+
+        check(m.controller.debugCrewTabHidden == false,
+              "pressing Ask takes the captain to the Crew tab - the reply is not visible on Overview", &ok)
+        check(card.debugText.isEmpty,
+              "and clears the field, so it does not read as an unsent draft", &ok)
+
+        let deadline = Date().addingTimeInterval(20)
+        while m.controller.debugCrewTurnInFlight && Date() < deadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
+        }
+        let texts = m.controller.debugCrewChat.debugMessageTexts()
+        check(texts.contains("what needs my attention?"),
+              "the captain's own message is in the transcript, got \(texts)", &ok)
+        check(texts.contains("Two things need you."),
+              "...and so is the reply, got \(texts)", &ok)
+        // M3.3's "into a NEW conversation": the seeded turn is gone.
+        check(!texts.contains(where: { $0.contains("older turn") }),
+              "a quick ask starts a new conversation - the old thread must be cleared, got \(texts)", &ok)
+    }
 
     private static func findLabel(in view: NSView, text: String) -> NSTextField? {
         if let field = view as? NSTextField, field.stringValue == text { return field }

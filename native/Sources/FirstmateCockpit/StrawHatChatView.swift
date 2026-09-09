@@ -81,6 +81,18 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     /// real failure rather than silently doing nothing.
     var onConfirmProposal: ((StrawHatProposal) -> StrawHatProposalOutcome)?
 
+    /// Fires when the captain clicks a navigation handoff's link row, and
+    /// returns a message to show *only* when the handoff could not be
+    /// followed (no live session on that host, for instance) - nil means the
+    /// app moved and there is nothing left to say.
+    ///
+    /// A separate closure from `onConfirmProposal` on purpose. Those two do
+    /// genuinely different things - one writes to a store behind a confirm
+    /// press, one selects a page on a click - and sharing a closure would
+    /// make a self-test asserting "a handoff writes nothing" pass just as
+    /// happily with the two paths crossed. Phase 3, M3.2.
+    var onHandoff: ((StrawHatHandoff) -> String?)?
+
     /// M2.4's "contributing glow" surface - who is aboard, and who spoke in
     /// the reply that just landed. See `StrawHatCrewViews.swift`'s header for
     /// why the glow lives here rather than on the reply block itself.
@@ -96,7 +108,7 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     private let emptyState = HelmEmptyState(
         symbol: StrawHatCrew.speaker.symbol,
         title: "Talk to your crew",
-        body: "Luffy, Nami, Chopper and Robin are aboard. Ask them anything - think a problem through, or say what you need doing and Nami will draft the task. Every write is a card you confirm.",
+        body: "The whole crew is aboard - tasks, docs, health, commands, ideas and automations. Ask them anything, or say what you need doing and they will draft it. Every write is a card you confirm.",
         size: .standard,
         boxed: true,
         hue: RailDestination.overview.domainHue)
@@ -573,9 +585,25 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
             add(blockStack)
         }
 
-        // M2.2: one card per validated proposal. Nothing here writes - the
-        // press goes up through `onConfirmProposal`.
+        // M2.2 / M3.2: one row per validated proposal, and *which* row is
+        // decided by `StrawHatProposalKind.isNavigation` rather than by a
+        // list here - so a kind added to that enum cannot land on the wrong
+        // side of the write/link split by omission.
+        //
+        // Nothing in either branch writes: a card's press goes up through
+        // `onConfirmProposal` and a link's through `onHandoff`.
         for proposal in section.proposals {
+            if proposal.kind.isNavigation, let handoff = proposal.handoff {
+                let row = StrawHatHandoffRow(handoff: handoff, kind: proposal.kind, theme: theme)
+                row.onActivate = { [weak self] handoff in
+                    guard let handler = self?.onHandoff else {
+                        return "This chat isn't connected to the rest of the app right now."
+                    }
+                    return handler(handoff)
+                }
+                add(row)
+                continue
+            }
             let card = StrawHatConfirmCard(proposal: proposal, theme: theme)
             card.onConfirm = { [weak self] proposal in
                 guard let handler = self?.onConfirmProposal else {
@@ -623,7 +651,7 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
             let bar = NSView()
             bar.wantsLayer = true
             bar.layer?.cornerRadius = 1.5
-            bar.layer?.backgroundColor = HelmTheme.nsColor(member.tint.hex(in: theme)).cgColor
+            bar.layer?.backgroundColor = member.accentColor(in: theme).cgColor
             bar.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(bar)
             NSLayoutConstraint.activate([
@@ -934,6 +962,17 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
 
     /// Every confirm card currently in the transcript, in order - the only way
     /// a suite can press the real button on the real card.
+    /// Every handoff link row currently in the transcript, in order.
+    func debugHandoffRows() -> [StrawHatHandoffRow] {
+        var found: [StrawHatHandoffRow] = []
+        func walk(_ view: NSView) {
+            if let row = view as? StrawHatHandoffRow { found.append(row) }
+            view.subviews.forEach(walk)
+        }
+        walk(stack)
+        return found
+    }
+
     func debugConfirmCards() -> [StrawHatConfirmCard] {
         var found: [StrawHatConfirmCard] = []
         func walk(_ view: NSView) {

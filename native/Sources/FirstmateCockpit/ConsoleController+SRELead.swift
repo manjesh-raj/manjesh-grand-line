@@ -187,6 +187,34 @@ extension ConsoleController {
         startSRELead(for: tab)
     }
 
+    /// The Straw Hat crew's `open_sre_lead` handoff (phase 3, M3.2).
+    ///
+    /// A third entry point beside the toolbar pill and the pane's own
+    /// empty-state button, and named for its caller so the wiring is
+    /// greppable - but it starts nothing that those two do not, and it
+    /// **never connects anything**: the handoff only ever reaches a host page
+    /// whose session is already live (`AppShellController.openSRELeadForCrew`
+    /// resolves that), so this only has to open the pane on the tab that page
+    /// is already showing.
+    ///
+    /// Returns whether there was a tab to open it on. A page with no tab yet
+    /// is a real "nothing happened", and the crew's link row says so rather
+    /// than looking like it worked.
+    @discardableResult
+    func openSRELeadFromCrewHandoff() -> Bool {
+        guard let tab = currentTab else { return false }
+        switch tab.sreLead?.phase ?? .notStarted {
+        case .starting, .ready:
+            // Already up - the handoff's job was to bring the captain here,
+            // and it has. Toggling it off would be the opposite of what the
+            // link says it does.
+            setSRELeadPaneOpen(true)
+        case .notStarted, .failed:
+            startSRELead(for: tab)
+        }
+        return true
+    }
+
     /// Starts a brand-new, fully independent SRE Lead investigation for
     /// `tab` - its own `SRELeadSession`/`SRELeadBridge` (bridge target is
     /// `tab` itself, never any other tab's terminal) /`SRELeadRunner`, and

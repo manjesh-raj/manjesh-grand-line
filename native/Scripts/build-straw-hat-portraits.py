@@ -63,16 +63,29 @@ DEFAULT_PLAN = os.path.expanduser(
     "straw-hat-pirates-plan.html"
 )
 
-# The four crew members phase 2 ships. Keep in sync with `StrawHatMember`.
-CREW = ["Luffy", "Nami", "Chopper", "Robin"]
+# The crew members the app ships. Keep in sync with `StrawHatMember` - the
+# self-test asserts every member's portrait decodes, so a case added there
+# without a name here fails rather than rendering the SF Symbol fallback
+# forever.
+CREW = ["Luffy", "Nami", "Chopper", "Robin", "Zoro", "Usopp", "Franky"]
 
 # Hand-tuned square face crops, as fractions of each original (l, t, r, b).
-# See the module docstring for how these were derived.
+# See the module docstring for how these were derived. Phase 3's three were
+# derived the same way: crop, render, look at the 96px result, adjust.
 FACE_BOX = {
     "Luffy": (0.15, 0.03, 0.87, 0.75),
     "Nami": (0.20, 0.10, 0.80, 0.70),
     "Robin": (0.10, 0.02, 0.90, 0.82),
     "Chopper": (0.14, 0.05, 0.94, 0.85),
+    # Zoro's source is a full-body chibi on white, so his box is a real face
+    # crop rather than the light trim the four close-ups need. Usopp's is
+    # already a head-and-hat close-up filling the frame, so his is almost the
+    # whole image - a tighter box cut the hat and the chin. Franky's source is
+    # a dramatic upward-angle shot; the box is centred on the goggles-and-grin
+    # region, which is what makes him recognisable at 26pt.
+    "Zoro": (0.17, 0.05, 0.70, 0.58),
+    "Usopp": (0.04, 0.00, 1.00, 0.96),
+    "Franky": (0.28, 0.00, 0.96, 0.68),
 }
 
 SIDE = 96

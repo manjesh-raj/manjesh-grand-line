@@ -50,6 +50,24 @@ extension FleetController {
         return store
     }
 
+    /// Every store a confirmed proposal can reach, in the one shape
+    /// `StrawHatProposalExecutor` takes (phase 3, M3.1).
+    ///
+    /// Assembled here rather than inside the executor for the reason
+    /// `StrawHatContextSnapshot.capture` also takes its stores as parameters:
+    /// a file that constructs its own would duplicate that store's root
+    /// precedence and could reach the captain's real git-synced clone from a
+    /// self-test. The three phase-3 stores are the shared instances
+    /// `AppShellController` already owns - see `FleetController.init` for why
+    /// a second instance of any of them would be a second writer.
+    var crewStores: StrawHatProposalExecutor.Stores {
+        StrawHatProposalExecutor.Stores(shift: crewShiftStore,
+                                        docs: crewDocsStore,
+                                        sticky: stickyStore,
+                                        commands: commandLibraryStore,
+                                        schedules: scheduleStore)
+    }
+
     /// The three store roots phase 2.5's read-only tools are pointed at
     /// (`StrawHatTools.swift`).
     ///
@@ -76,7 +94,7 @@ extension FleetController {
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         crewTitleLabel = title
 
-        let subtitle = NSTextField(labelWithString: "Luffy, Nami, Chopper and Robin \u{00B7} every write is yours to confirm")
+        let subtitle = NSTextField(labelWithString: "\(StrawHatMember.allCases.count) aboard \u{00B7} every write is yours to confirm")
         subtitle.font = HelmType.captionSmall()
         subtitle.translatesAutoresizingMaskIntoConstraints = false
         subtitle.lineBreakMode = .byTruncatingTail
@@ -128,6 +146,14 @@ extension FleetController {
                 return .failed(message: "This page went away before that could be saved.")
             }
             return self.confirmCrewProposal(proposal)
+        }
+        // M3.2's other half, and deliberately its own closure rather than a
+        // second branch inside `onConfirmProposal`: a handoff writes nothing,
+        // and sharing one closure would let a self-test asserting that pass
+        // with the two paths crossed.
+        crewChat.onHandoff = { [weak self] handoff in
+            guard let self else { return "This page went away." }
+            return self.followCrewHandoff(handoff)
         }
         crewChat.onMessagesChanged = { [weak self] in
             guard let self else { return }
@@ -271,9 +297,7 @@ extension FleetController {
     /// once, in `buildCrewSection` - so there is exactly one path from a
     /// proposal to a store, and it starts at a real button press.
     func confirmCrewProposal(_ proposal: StrawHatProposal) -> StrawHatProposalOutcome {
-        let outcome = StrawHatProposalExecutor.execute(proposal,
-                                                       shift: crewShiftStore,
-                                                       docs: crewDocsStore)
+        let outcome = StrawHatProposalExecutor.execute(proposal, stores: crewStores)
         switch outcome {
         case .written(let message, let undo):
             // GL-33 / the house convention: a toast for a transient
@@ -293,6 +317,77 @@ extension FleetController {
             Toast.show(in: view, message: message)
         }
         return outcome
+    }
+
+    // MARK: M3.2 - the two navigation handoffs
+
+    /// The captain clicked a handoff link row.
+    ///
+    /// Returns a message only when the handoff could **not** be followed;
+    /// `nil` means the app has already moved and there is nothing left to
+    /// say (the row is not on screen any more either).
+    ///
+    /// Neither branch writes anything, which is what makes running on a
+    /// single click rather than behind a confirm card defensible. The
+    /// destination branch is one call to the closure `AppShellController`
+    /// already wired for F12's briefing clauses - not new navigation
+    /// plumbing.
+    func followCrewHandoff(_ handoff: StrawHatHandoff) -> String? {
+        switch handoff {
+        case .destination(let dest, let hint):
+            guard let open = onOpenCrewDestination else {
+                return "I couldn't reach that page from here."
+            }
+            AppLog.ai.info("straw hat: captain followed a handoff to \(dest.rawValue, privacy: .public)")
+            open(dest, hint)
+            return nil
+
+        case .sreLead(let hint):
+            guard let open = onOpenSRELead else {
+                return "I couldn't reach SRE Lead from here."
+            }
+            // The app resolves which host, never the crew - see
+            // `AppShellController.openSRELeadForCrew`. A refusal comes back as
+            // real text so the row can say why rather than looking broken.
+            return open(hint)
+        }
+    }
+
+    // MARK: M3.3 - "Ask your crew" from the dashboard
+
+    /// The Overview tab's quick-ask card, built lazily so a captain who never
+    /// types in it costs nothing beyond one view.
+    func buildCrewQuickAskCard() -> StrawHatQuickAskCard {
+        let card = StrawHatQuickAskCard()
+        card.onSubmit = { [weak self] text in self?.sendFromQuickAsk(text) }
+        crewQuickAsk = card
+        return card
+    }
+
+    /// One message typed on the dashboard: switch to the Crew tab, start a
+    /// **new** conversation, and send it.
+    ///
+    /// The order matters. Switching first is what gives the chat a laid-out
+    /// height to render into (`crewTabDidChangeVisibility` measures real
+    /// geometry), and resetting before sending is M3.3's own "into a new
+    /// conversation" - a message appended to a thread the captain cannot see
+    /// would be answered in a context they are not looking at.
+    ///
+    /// It goes through `sendToCrew`, the same turn cycle the Crew tab's own
+    /// composer uses - so the lock gate, the in-flight guard, the context
+    /// snapshot and the three-rung parser are all inherited rather than
+    /// duplicated. There is one turn cycle in this feature, not two.
+    func sendFromQuickAsk(_ text: String) {
+        // A turn already running belongs to a conversation the captain can
+        // see on the Crew tab; resetting it out from under them would drop a
+        // reply mid-flight. Take them there instead and let them decide.
+        guard !crewTurnInFlight else {
+            onSelectCrewTab?()
+            return
+        }
+        onSelectCrewTab?()
+        newCrewConversationTapped()
+        sendToCrew(text)
     }
 
     // MARK: Lifecycle
@@ -319,6 +414,7 @@ extension FleetController {
         crewSubtitleLabel?.textColor = HelmTheme.mutedInk(theme)
         crewChat.layer?.borderColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6).cgColor
         crewChat.applyTheme(theme)
+        crewQuickAsk?.applyTheme(theme)
         // `crewNewButton` is a `HelmButton` and themes itself - never set
         // `contentTintColor`/`attributedTitle` on one, `restyle()` owns them.
     }
@@ -341,6 +437,13 @@ extension FleetController {
     /// The store roots this page would point the crew's tools at, so a suite
     /// can assert the MCP config really reaches its scratch directories.
     var debugCrewStoreRoots: StrawHatStoreRoots { crewStoreRoots }
+    var debugCrewStores: StrawHatProposalExecutor.Stores { crewStores }
+    var debugCrewQuickAsk: StrawHatQuickAskCard? { crewQuickAsk }
+    /// Follows a handoff through the real resolution path, so a suite can
+    /// assert what a click does without synthesizing a mouse event on a row.
+    func debugFollowCrewHandoff(_ handoff: StrawHatHandoff) -> String? {
+        followCrewHandoff(handoff)
+    }
     var debugCrewRunner: StrawHatRunner? { crewRunner }
     var debugCrewContext: StrawHatContextSnapshot {
         StrawHatContextSnapshot.capture(shift: crewShiftStore, docs: crewDocsStore)
