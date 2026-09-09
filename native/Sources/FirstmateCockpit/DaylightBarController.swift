@@ -857,8 +857,19 @@ class DaylightBarIconButton: NSButton {
 
     private let iconBackground = NSView()
     private let iconImageView = NSImageView()
+    private let usesArtwork: Bool
 
-    init(symbol: String, tooltip: String, accessibilityLabel: String) {
+    /// - Parameter artwork: when non-nil, this raster image fills the tile
+    ///   edge to edge (clipped to the tile's own rounded corners) instead of
+    ///   a small centred SF Symbol glyph - the same "artwork replaces the
+    ///   glyph" idiom `HelmGradientTile.configure(artwork:symbol:hue:)`
+    ///   already establishes for the drill header / module card tiles this
+    ///   button shortcuts to. `symbol` is still required: it is what renders
+    ///   when `artwork` is nil (every caller but Straw Hat Pirates) or fails
+    ///   to decode, matching `RailDestination.drillHeaderArtwork`'s own
+    ///   "a corrupt payload degrades to the glyph" contract.
+    init(symbol: String, tooltip: String, accessibilityLabel: String, artwork: NSImage? = nil) {
+        usesArtwork = artwork != nil
         super.init(frame: .zero)
         title = ""
         isBordered = false
@@ -874,32 +885,60 @@ class DaylightBarIconButton: NSButton {
         // as `NotificationBellButton.iconBackground` is.
         addSubview(iconBackground)
 
-        // A symbol name that does not resolve returns nil and renders as an
-        // invisible button with no error anywhere - this app has shipped that
-        // exact bug before (the Hosts list's "anchor", which is not an SF
-        // Symbol at all). Every caller's symbol is a `RailDestination.symbol`
-        // already rendering elsewhere in the app, and
-        // `DaylightBarDestinationButtonSelfTest` asserts each one resolves.
-        iconImageView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 14, weight: .regular))
-        iconImageView.imageScaling = .scaleProportionallyDown
         iconImageView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(iconImageView)
 
-        NSLayoutConstraint.activate([
-            iconBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
-            iconBackground.centerYAnchor.constraint(equalTo: centerYAnchor),
-            iconBackground.widthAnchor.constraint(equalToConstant: Self.side),
-            iconBackground.heightAnchor.constraint(equalToConstant: Self.side),
+        if let artwork {
+            iconImageView.image = artwork
+            iconImageView.imageScaling = .scaleProportionallyUpOrDown
+            // `iconImageView` is a sibling of `iconBackground`, not its
+            // subview (both hang off the button directly), so
+            // `iconBackground.layer?.masksToBounds` clips nothing here - the
+            // artwork needs its own clip to read as a rounded tile rather
+            // than a square corner poking out past the background.
+            iconImageView.wantsLayer = true
+            iconImageView.layer?.cornerRadius = iconBackground.layer?.cornerRadius ?? 0
+            iconImageView.layer?.masksToBounds = true
+            NSLayoutConstraint.activate([
+                iconBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
+                iconBackground.centerYAnchor.constraint(equalTo: centerYAnchor),
+                iconBackground.widthAnchor.constraint(equalToConstant: Self.side),
+                iconBackground.heightAnchor.constraint(equalToConstant: Self.side),
 
-            iconImageView.centerXAnchor.constraint(equalTo: iconBackground.centerXAnchor),
-            iconImageView.centerYAnchor.constraint(equalTo: iconBackground.centerYAnchor),
-        ])
+                iconImageView.leadingAnchor.constraint(equalTo: iconBackground.leadingAnchor),
+                iconImageView.trailingAnchor.constraint(equalTo: iconBackground.trailingAnchor),
+                iconImageView.topAnchor.constraint(equalTo: iconBackground.topAnchor),
+                iconImageView.bottomAnchor.constraint(equalTo: iconBackground.bottomAnchor),
+            ])
+        } else {
+            // A symbol name that does not resolve returns nil and renders as
+            // an invisible button with no error anywhere - this app has
+            // shipped that exact bug before (the Hosts list's "anchor",
+            // which is not an SF Symbol at all). Every caller's symbol is a
+            // `RailDestination.symbol` already rendering elsewhere in the
+            // app, and `DaylightBarDestinationButtonSelfTest` asserts each
+            // one resolves.
+            iconImageView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 14, weight: .regular))
+            iconImageView.imageScaling = .scaleProportionallyDown
+            NSLayoutConstraint.activate([
+                iconBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
+                iconBackground.centerYAnchor.constraint(equalTo: centerYAnchor),
+                iconBackground.widthAnchor.constraint(equalToConstant: Self.side),
+                iconBackground.heightAnchor.constraint(equalToConstant: Self.side),
+
+                iconImageView.centerXAnchor.constraint(equalTo: iconBackground.centerXAnchor),
+                iconImageView.centerYAnchor.constraint(equalTo: iconBackground.centerYAnchor),
+            ])
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     func applyTheme(ink: NSColor, line: NSColor, surface: NSColor) {
+        // A no-op in artwork mode - `contentTintColor` only affects a
+        // template image, and `StrawHatFlag.image` explicitly sets
+        // `isTemplate = false` so its own colours are never flattened.
         iconImageView.contentTintColor = ink.withAlphaComponent(0.75)
         iconBackground.layer?.backgroundColor = surface.cgColor
         iconBackground.layer?.borderWidth = 1
@@ -909,6 +948,7 @@ class DaylightBarIconButton: NSButton {
     #if FM_SELFTESTS
     var debugHasIcon: Bool { iconImageView.image != nil }
     var debugIconBackground: NSView { iconBackground }
+    var debugUsesArtwork: Bool { usesArtwork }
     #endif
 }
 
@@ -930,7 +970,13 @@ final class DaylightThemeToggleButton: DaylightBarIconButton {
 /// destination in its own space; this is purely a shortcut for pages reached
 /// often enough that a space switch plus a card click is friction. The glyph
 /// is each destination's **own** `RailDestination.symbol` rather than new
-/// iconography, so the bar icon and the page it opens can never drift apart.
+/// iconography, so the bar icon and the page it opens can never drift apart -
+/// and `RailDestination.drillHeaderArtwork` is honoured the same way (only
+/// Straw Hat Pirates carries one today): the bar shortcut, the drill header
+/// and the Overview canvas card all render the identical Jolly Roger, rather
+/// than the bar alone falling back to a generic `person.3.fill` placeholder
+/// for a destination whose real identity is a raster asset (`fm/strawhat-
+/// toolbar-shortcut-use-jolly-roger-icon-69c3`).
 final class DaylightDestinationButton: DaylightBarIconButton {
     let destination: RailDestination
 
@@ -938,7 +984,8 @@ final class DaylightDestinationButton: DaylightBarIconButton {
         self.destination = destination
         super.init(symbol: destination.symbol,
                    tooltip: "Open \(destination.title)",
-                   accessibilityLabel: destination.title)
+                   accessibilityLabel: destination.title,
+                   artwork: destination.drillHeaderArtwork)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }

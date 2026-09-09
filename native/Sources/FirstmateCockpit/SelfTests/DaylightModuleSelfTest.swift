@@ -902,14 +902,23 @@ enum DaylightModuleSelfTest {
             fail("quick-access icons are \(buttons.map { $0.destination.title }), expected \(expected.map(\.title))", &ok)
         }
 
-        // The glyph is each destination's OWN symbol, so the bar icon and the
-        // card it opens can never drift apart - and a symbol name that does
-        // not resolve renders as an invisible button with no error anywhere,
-        // which this app has shipped before ("anchor", which is not an SF
-        // Symbol at all).
+        // The glyph is each destination's OWN symbol - or, for a destination
+        // carrying `drillHeaderArtwork` (only Straw Hat Pirates today), its
+        // own raster artwork - so the bar icon and the card it opens can
+        // never drift apart. A symbol name that does not resolve renders as
+        // an invisible button with no error anywhere, which this app has
+        // shipped before ("anchor", which is not an SF Symbol at all) - and
+        // `fm/strawhat-toolbar-shortcut-use-jolly-roger-icon-69c3` shipped a
+        // second flavour of the same class of bug: the bar icon silently
+        // falling back to a generic `person.3.fill` glyph instead of the
+        // Jolly Roger the drill header and the Overview card both show.
         for button in buttons {
             if !button.debugHasIcon {
-                fail("\(button.destination.title): its SF Symbol '\(button.destination.symbol)' did not resolve - the icon is invisible", &ok)
+                fail("\(button.destination.title): its icon (symbol '\(button.destination.symbol)') did not resolve - the icon is invisible", &ok)
+            }
+            let expectsArtwork = button.destination.drillHeaderArtwork != nil
+            if button.debugUsesArtwork != expectsArtwork {
+                fail("\(button.destination.title): debugUsesArtwork=\(button.debugUsesArtwork), expected \(expectsArtwork) to match RailDestination.drillHeaderArtwork", &ok)
             }
             if button.accessibilityLabel() != button.destination.title {
                 fail("\(button.destination.title): accessibility label is \(button.accessibilityLabel() ?? "nil"), expected the destination title", &ok)
