@@ -38,6 +38,42 @@ enum StickyBoardMetrics {
         CGSize(width: min(max(minNoteSize.width, size.width), maxNoteSize.width),
                height: min(max(minNoteSize.height, size.height), maxNoteSize.height))
     }
+
+    /// Keeps an origin fully inside the fixed canvas.
+    ///
+    /// Extracted out of `StickyBoardCanvasView.clamp(_:size:)`, which now
+    /// delegates here: the arithmetic is a pure function of this enum's own
+    /// constants and never needed a view, and a second caller now genuinely
+    /// has no view to ask - `StrawHatProposalExecutor` places a crew-proposed
+    /// note before the board has ever been mounted.
+    static func clampOrigin(_ point: CGPoint, size: CGSize = noteSize) -> CGPoint {
+        let maxX = max(0, canvasSize.width - size.width)
+        let maxY = max(0, canvasSize.height - size.height)
+        return CGPoint(x: min(max(0, point.x), maxX), y: min(max(0, point.y), maxY))
+    }
+
+    /// Where the `index`-th note goes: a simple grid that wraps diagonally
+    /// once a full grid's worth exist.
+    ///
+    /// Lifted out of `StickyBoardController.nextPosition()` for the same
+    /// reason as `clampOrigin` above, and load-bearing for phase 3's
+    /// `add_sticky`: a note the crew proposed has to land where a "New Note"
+    /// click would have put it, not stacked at the origin under an existing
+    /// one. One definition is what keeps those two the same.
+    static func cascadeOrigin(index: Int) -> CGPoint {
+        let stepX = noteSize.width + noteMargin
+        let stepY = noteSize.height + noteMargin
+        let usableWidth = canvasSize.width - noteSize.width - noteMargin
+        let usableHeight = canvasSize.height - noteSize.height - noteMargin
+        let columns = max(1, Int(usableWidth / stepX))
+        let rows = max(1, Int(usableHeight / stepY))
+        let slot = max(0, index) % (columns * rows)
+        let col = slot % columns
+        let row = slot / columns
+        let cascade = CGFloat(max(0, index) / (columns * rows)) * noteCascadeStep
+        return clampOrigin(CGPoint(x: noteMargin + CGFloat(col) * stepX + cascade,
+                                   y: noteMargin + CGFloat(row) * stepY + cascade))
+    }
 }
 
 /// The board's document view - a fixed-size, non-Auto-Layout canvas holding
@@ -166,9 +202,7 @@ final class StickyBoardCanvasView: NSView {
     /// resizable, a single shared constant would let a grown note's
     /// bottom-right corner fall off the board.
     func clamp(_ point: CGPoint, size: CGSize = StickyBoardMetrics.noteSize) -> CGPoint {
-        let maxX = max(0, StickyBoardMetrics.canvasSize.width - size.width)
-        let maxY = max(0, StickyBoardMetrics.canvasSize.height - size.height)
-        return CGPoint(x: min(max(0, point.x), maxX), y: min(max(0, point.y), maxY))
+        StickyBoardMetrics.clampOrigin(point, size: size)
     }
 
     /// The resize counterpart of `clamp(_:size:)`: bounds a proposed size to

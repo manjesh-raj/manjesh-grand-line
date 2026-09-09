@@ -43,6 +43,12 @@ final class FleetController: NSViewController {
     /// build `StrawHatStoreRoots` from it (GL-36: `private` is file-scoped, so
     /// anything that file reaches has to be internal on the core type).
     let commandLibraryRoot: URL
+    /// Phase 3's three write targets - see `init` for why each is the shared
+    /// instance and never a second one. `internal` for GL-36's reason: the
+    /// code that uses them lives in `FleetController+Crew.swift`.
+    let commandLibraryStore: CommandLibraryStore?
+    let stickyStore: StickyBoardStore?
+    let scheduleStore: ScheduleStore?
     private let briefingCard = MorningBriefingCard()
     /// The `.quota` clause opens `QuotaUsageController`'s own popover,
     /// anchored on the briefing paragraph - this page's own instance, not
@@ -63,9 +69,38 @@ final class FleetController: NSViewController {
     /// in-session and raced each other's `recent.yaml`. `AppShellController`
     /// already holds the shared one, so it hands over `.root` and nothing
     /// more.
-    init(shiftStore: ShiftStore, commandLibraryRoot: URL) {
+    /// Phase 3's three new dependencies, and the reason they are *stores*
+    /// where the command library used to be only a root URL: two of the
+    /// crew's new proposal kinds write to them, and all three cache their
+    /// records in memory as well as writing them.
+    ///
+    /// That caching is what makes a shared instance mandatory rather than
+    /// tidy (GL-23's lesson, applied three times over):
+    ///
+    ///  - `CommandLibraryStore` is the instance GL-24 made shared after two
+    ///    caching copies diverged in-session and raced each other's
+    ///    `recent.yaml`. Phase 2.5 only needed its `.root`; a crew-saved
+    ///    command needs the store, and it has to be that one.
+    ///  - `StickyBoardStore` debounces its writes 1.5s and holds its notes in
+    ///    memory, so a second instance's next flush would overwrite whatever
+    ///    the board's own page had just written. That store is already
+    ///    `internal` on `StickyBoardController` for exactly this reason
+    ///    (audit section 6.5b did the same for the command palette).
+    ///  - `ScheduleStore` likewise caches, and its rows drive a live runner.
+    ///
+    /// All three are optional so this page still builds in a context that has
+    /// none of them - a confirmed proposal then fails with a real message
+    /// rather than silently doing nothing, exactly as a missing
+    /// `DocsRunbookStore` already does.
+    init(shiftStore: ShiftStore, commandLibraryRoot: URL,
+         commandLibraryStore: CommandLibraryStore? = nil,
+         stickyStore: StickyBoardStore? = nil,
+         scheduleStore: ScheduleStore? = nil) {
         self.shiftStore = shiftStore
         self.commandLibraryRoot = commandLibraryRoot
+        self.commandLibraryStore = commandLibraryStore
+        self.stickyStore = stickyStore
+        self.scheduleStore = scheduleStore
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -178,6 +213,32 @@ final class FleetController: NSViewController {
     /// page every launch renders is work for a feature most visits never use.
     var crewRunner: StrawHatRunner?
     var crewTurnInFlight = false
+    /// M3.3's quick-ask card, on the *Overview* tab rather than this one -
+    /// see `StrawHatQuickAsk.swift`'s header for why it lives there and not
+    /// on the Daylight canvas. Held so `applyTheme` can reach it.
+    var crewQuickAsk: StrawHatQuickAskCard?
+
+    /// M3.2: where a `open_destination` handoff goes, and the hint it carries.
+    ///
+    /// Forwarded rather than owned, the same convention `onNavigateToDestination`
+    /// above already follows - this page knows nothing about the whiteboard's
+    /// composer or about which destination has an entry point worth landing
+    /// on. `AppShellController` wires it.
+    var onOpenCrewDestination: ((RailDestination, String?) -> Void)?
+
+    /// M3.2: `open_sre_lead`. Returns a message when the handoff could not be
+    /// followed (no live session on that host, or no host matched what the
+    /// captain called it) and `nil` when the app moved.
+    ///
+    /// The *app* resolves which host, never the crew - the crew cannot see
+    /// hosts at all. See `AppShellController.openSRELeadForCrew`.
+    var onOpenSRELead: ((String?) -> String?)?
+
+    /// M3.3: switches this page's own tab strip to Crew. A closure rather
+    /// than a direct call because `switchTab` is `private` to
+    /// `FleetController.swift` and the quick-ask handler lives in
+    /// `FleetController+Crew.swift` (GL-36's file-scoped-`private` trade).
+    var onSelectCrewTab: (() -> Void)?
     /// Backing storage for `crewDocsStore` (phase 2): a stored property cannot
     /// live in the extension that uses it, the same GL-36 constraint the
     /// labels below are here for. Built on first use - see that accessor.
@@ -329,6 +390,14 @@ final class FleetController: NSViewController {
         // costs this page nothing.
         buildBriefingCard()
         overviewContainer.addArrangedSubview(briefingCard)
+        // M3.3, directly under the morning briefing: both are "here is the
+        // day, and here is one thing you can do about it right now", and this
+        // is the one card on the dashboard the captain *types* into - burying
+        // it under the stat tiles would leave the friction it exists to
+        // remove (see `StrawHatQuickAsk.swift`'s header).
+        let quickAsk = buildCrewQuickAskCard()
+        overviewContainer.addArrangedSubview(quickAsk)
+        onSelectCrewTab = { [weak self] in self?.switchTab(.crew) }
         overviewContainer.addArrangedSubview(loadingSection)
         overviewContainer.addArrangedSubview(bannerRow)
         // F7: the "Needs your call" list sits directly under the banner that
@@ -372,6 +441,7 @@ final class FleetController: NSViewController {
             logSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             crewSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             briefingCard.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
+            quickAsk.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
             loadingSection.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
             bannerRow.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
             statsRow.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),

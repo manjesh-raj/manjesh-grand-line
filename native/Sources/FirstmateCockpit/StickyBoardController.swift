@@ -470,21 +470,12 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     /// full grid's worth exist - deterministic and good enough for a
     /// personal quick-notes board; the captain can drag a note anywhere
     /// regardless.
+    /// The math itself moved to `StickyBoardMetrics.cascadeOrigin(index:)`
+    /// when phase 3's `add_sticky` needed to place a note with no board
+    /// mounted - one definition, so a crew-proposed note lands exactly where
+    /// this button would have put it.
     private func nextPosition() -> CGPoint {
-        let index = store.notes.count
-        let stepX = StickyBoardMetrics.noteSize.width + StickyBoardMetrics.noteMargin
-        let stepY = StickyBoardMetrics.noteSize.height + StickyBoardMetrics.noteMargin
-        let usableWidth = StickyBoardMetrics.canvasSize.width - StickyBoardMetrics.noteSize.width - StickyBoardMetrics.noteMargin
-        let usableHeight = StickyBoardMetrics.canvasSize.height - StickyBoardMetrics.noteSize.height - StickyBoardMetrics.noteMargin
-        let columns = max(1, Int(usableWidth / stepX))
-        let rows = max(1, Int(usableHeight / stepY))
-        let slot = index % (columns * rows)
-        let col = slot % columns
-        let row = slot / columns
-        let cascade = CGFloat(index / (columns * rows)) * StickyBoardMetrics.noteCascadeStep
-        let x = StickyBoardMetrics.noteMargin + CGFloat(col) * stepX + cascade
-        let y = StickyBoardMetrics.noteMargin + CGFloat(row) * stepY + cascade
-        return canvas.clamp(CGPoint(x: x, y: y))
+        StickyBoardMetrics.cascadeOrigin(index: store.notes.count)
     }
 
     // MARK: Theme

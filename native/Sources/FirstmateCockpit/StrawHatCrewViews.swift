@@ -170,7 +170,7 @@ final class StrawHatPortraitTile: NSView {
 
     func applyTheme(_ theme: HelmTheme) {
         fallback?.applyTheme(theme)
-        let tint = HelmTheme.nsColor(member.tint.hex(in: theme))
+        let tint = member.accentColor(in: theme)
         strawHatWithoutImplicitAnimation {
             ring.borderColor = tint.withAlphaComponent(isLit ? 0.95 : 0.28).cgColor
             ring.shadowColor = tint.cgColor
@@ -289,6 +289,136 @@ final class StrawHatCrewStrip: NSView {
         Set(tiles.filter { $0.value.debugIsLit }.keys)
     }
     var debugCaption: String { caption.stringValue }
+    #endif
+}
+
+/// One navigation handoff, rendered as a link row rather than a confirm card
+/// (phase 3, M3.2).
+///
+/// ## Why this is a different view from `StrawHatConfirmCard`
+///
+/// A handoff writes nothing - it selects a page the captain could have
+/// reached from the nav - so a card with a *confirm* button in front of it
+/// would be a modal in front of a link, and would teach the captain that the
+/// confirm button sometimes means "this changes nothing". Keeping the two
+/// visually distinct is what keeps a confirm press meaningful: a card means
+/// something is about to be written, a link means the app is about to move.
+///
+/// ## Why it is a `HelmButton`, and not a hand-rolled clickable row
+///
+/// `.quiet` is this app's own link weight, and going through the shared
+/// button buys the whole accessibility contract for free - a real `.button`
+/// role, a keyboard/VoiceOver press, an exterior focus ring, and theming
+/// that follows every one of the fourteen palettes. GL-16's own sweep
+/// exists because ~40 hand-rolled clickable rows in this app were invisible
+/// to VoiceOver; this is not the place to add a forty-first.
+///
+/// The button sits in a plain container pinned leading-with-a-`<=`-trailing
+/// rather than being width-tied, because a `HelmButton` stretched to a
+/// block's full width reads as a primary action bar rather than a link -
+/// and because `HelmButton.init` calls `sizeToFit()` without clearing
+/// `translatesAutoresizingMaskIntoConstraints` (AGENTS.md's documented trap),
+/// so it needs that cleared and `.required` hugging either way.
+final class StrawHatHandoffRow: NSView {
+
+    /// Fires on the press. Returns a message to surface, or nil when the
+    /// navigation simply happened and the app has already moved - there is
+    /// nothing to say about a link that worked.
+    var onActivate: ((StrawHatHandoff) -> String?)?
+
+    private let handoff: StrawHatHandoff
+    private let kind: StrawHatProposalKind
+    private let button: HelmButton
+    /// Only ever shown when a handoff could *not* be followed - "you have no
+    /// live session on that host". Hidden otherwise, because a link that
+    /// worked has already taken the captain somewhere else.
+    private let noteLabel = NSTextField(labelWithString: "")
+    private var theme: HelmTheme
+
+    init(handoff: StrawHatHandoff, kind: StrawHatProposalKind, theme: HelmTheme) {
+        self.handoff = handoff
+        self.kind = kind
+        self.theme = theme
+        self.button = HelmButton(title: handoff.title, variant: .quiet, size: .small, symbol: kind.symbol)
+        super.init(frame: .zero)
+
+        translatesAutoresizingMaskIntoConstraints = false
+
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.target = self
+        button.action = #selector(activate)
+        button.setContentHuggingPriority(.required, for: .horizontal)
+        button.setContentCompressionResistancePriority(.required, for: .horizontal)
+        button.toolTip = "Goes to \(kind.destination). Nothing is written."
+
+        noteLabel.font = HelmType.captionSmall()
+        noteLabel.lineBreakMode = .byWordWrapping
+        noteLabel.maximumNumberOfLines = 2
+        noteLabel.isHidden = true
+        noteLabel.translatesAutoresizingMaskIntoConstraints = false
+        noteLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        addSubview(button)
+        addSubview(noteLabel)
+        NSLayoutConstraint.activate([
+            button.leadingAnchor.constraint(equalTo: leadingAnchor),
+            button.topAnchor.constraint(equalTo: topAnchor),
+            // `<=`, never a width tie - see this class's own note above.
+            button.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
+
+            noteLabel.leadingAnchor.constraint(equalTo: leadingAnchor),
+            noteLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
+            noteLabel.topAnchor.constraint(equalTo: button.bottomAnchor, constant: 2),
+            noteLabel.bottomAnchor.constraint(equalTo: bottomAnchor),
+        ])
+        applyTheme(theme)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    @objc private func activate() {
+        guard let onActivate else {
+            show(note: "This chat isn't connected to the rest of the app right now.")
+            return
+        }
+        if let note = onActivate(handoff) {
+            show(note: note)
+        } else {
+            // The app moved. Nothing to say, and the row is no longer on
+            // screen anyway.
+            noteLabel.isHidden = true
+        }
+    }
+
+    private func show(note: String) {
+        noteLabel.stringValue = note
+        noteLabel.isHidden = false
+        applyTheme(theme)
+    }
+
+    func applyTheme(_ theme: HelmTheme) {
+        self.theme = theme
+        // A refusal is the only thing this label ever says, so it takes the
+        // contrast-corrected warn hue rather than plain muted ink - and
+        // through `legibleTintedText`, because a `HelmTint` is safe as a fill
+        // and is not automatically safe as text (the section 5.7 defect this
+        // codebase has fixed four times).
+        noteLabel.textColor = HelmContrast.legibleTintedText(
+            tintHex: HelmTint.warn.hex(in: theme),
+            over: HelmTheme.nsColor(theme.chromeBackgroundHex), theme: theme)
+        // `button` is a `HelmButton` and themes itself - never set its font,
+        // `attributedTitle`, `contentTintColor` or `isBordered` from here.
+    }
+
+    #if FM_SELFTESTS
+    var debugHandoff: StrawHatHandoff { handoff }
+    var debugButton: HelmButton { button }
+    var debugTitle: String { button.title }
+    var debugNote: String { noteLabel.isHidden ? "" : noteLabel.stringValue }
+    /// The row must never stretch its own button to full width - a link that
+    /// looks like a primary action bar is the defect this class's header
+    /// describes.
+    var debugFrames: String { "row=\(frame.width) button=\(button.frame.width)" }
     #endif
 }
 

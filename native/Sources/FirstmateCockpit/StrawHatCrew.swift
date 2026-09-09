@@ -1,6 +1,7 @@
 // Manjesh Grand Line - native macOS app.
 //
-// "Straw Hat Pirates", **phase 2**: Luffy, Nami, Chopper and Robin.
+// "Straw Hat Pirates", **phase 3**: the full v1 roster - Luffy, Nami,
+// Chopper, Robin, Zoro, Usopp and Franky.
 //
 // The captain-approved plan (`data/deepen-straw-hat-pirates-plan-explore-ja-3a/
 // straw-hat-pirates-plan.html`, and its round-1 predecessor
@@ -35,11 +36,29 @@
 //    giving him one would mean inventing a capability, which is the failure
 //    this whole file's honesty rules exist to prevent.
 //
-// Zoro, Usopp and Franky are phase 3 (they need `save_command_draft`,
-// `add_sticky` and `create_schedule_draft`, plus the navigation handoffs).
+// Phase 3 (milestones M3.1-M3.3) adds the last three the plan's roster gives a
+// real v1 seat, each with the capability the plan maps to them:
+//
+//  - **Zoro** - Execution, and the one voice whose scope is defined by what
+//    he *cannot* do. From a stateless chat with no live host he can draft a
+//    Command Library entry (`save_command_draft`, through the same
+//    `confirmAIAuthored` gate every other model-written command passes) or
+//    point at a page. He cannot type into an SSH session, so when the ask
+//    genuinely needs one he hands off (`open_sre_lead`) rather than
+//    pretending to execute - which is the plan's own wording for him.
+//  - **Usopp** - Ideas. `add_sticky` onto the corkboard, plus a "draw it out"
+//    handoff into the Whiteboard's *existing* diagram generator. Not a second
+//    generator: `open_destination` lands on that page's own composer.
+//  - **Franky** - Automation, and deliberately **thin**, as the plan marks
+//    him. `create_schedule_draft` builds one `AutomationSchedule` out of the
+//    app's own six pre-approved `ScheduledActionKind`s. The plan notes his
+//    scope may later fold into Zoro's execution lane; that is a future
+//    consolidation and not something this phase pre-empts.
+//
 // Brook needs no code - Dictation's hotkey already types into this composer.
 // Jinbe is deferred. Sanji's role is an open captain decision, held on the
-// round-1 plan task; nothing here infers one.
+// round-1 plan task; nothing here infers one, and no persona clause mentions
+// the Morning Briefing.
 //
 // ## Phase 2.5: the crew can look things up
 //
@@ -90,7 +109,7 @@
 // reply" discipline - lead with the answer, stay terse, do not narrate your
 // own process. That was a captain complaint on SRE Lead once already.
 
-import Foundation
+import AppKit
 
 /// A member of the crew.
 ///
@@ -102,6 +121,12 @@ enum StrawHatMember: String, CaseIterable {
     case nami
     case chopper
     case robin
+    // Phase 3 (M3.1). Brook needs no code (Dictation's hotkey already types
+    // into this composer), Jinbe is deferred, and Sanji's role is an open
+    // captain decision - none of the three is a case here.
+    case zoro
+    case usopp
+    case franky
 
     /// The name shown on an attributed reply block.
     var displayName: String {
@@ -110,6 +135,9 @@ enum StrawHatMember: String, CaseIterable {
         case .nami: return "Nami"
         case .chopper: return "Chopper"
         case .robin: return "Robin"
+        case .zoro: return "Zoro"
+        case .usopp: return "Usopp"
+        case .franky: return "Franky"
         }
     }
 
@@ -122,6 +150,9 @@ enum StrawHatMember: String, CaseIterable {
         case .nami: return "Tasks"
         case .chopper: return "Health"
         case .robin: return "Docs"
+        case .zoro: return "Execution"
+        case .usopp: return "Ideas"
+        case .franky: return "Automation"
         }
     }
 
@@ -135,6 +166,9 @@ enum StrawHatMember: String, CaseIterable {
         case .nami: return "checkmark.circle.fill"
         case .chopper: return "heart.text.square.fill"
         case .robin: return "books.vertical.fill"
+        case .zoro: return "terminal.fill"
+        case .usopp: return "lightbulb.fill"
+        case .franky: return "gearshape.2.fill"
         }
     }
 
@@ -158,12 +192,68 @@ enum StrawHatMember: String, CaseIterable {
     /// to wherever that is possible without collision: Chopper's `.good` is
     /// Health's own green, Robin's `.info` is Runbooks' own blue, and Luffy
     /// takes the app's own accent because he owns no destination at all.
+    ///
+    /// **Phase 3 ran the palette out, and the shortfall is a decision rather
+    /// than an accident.** `HelmTint` has seven cases, `.critical` is
+    /// unavailable to an identity for the reason above, and the roster is now
+    /// seven members - so six hues have to cover seven voices and exactly one
+    /// pair must share. The pair is chosen by which two are least likely to
+    /// speak in the *same reply*, because that is the only thing this colour
+    /// is for:
+    ///
+    ///  - Zoro and Franky are the likeliest pair of the three ("here's the
+    ///    command" / "here's a nightly job to run it"), so they must not
+    ///    share - which is also why the plan's own note that Franky may fold
+    ///    into Zoro's lane later is *not* a reason to give them one colour
+    ///    today.
+    ///  - Usopp (brainstorming) and Franky (recurring automation) are the
+    ///    pair that realistically never co-occur, so they take `.neutral`
+    ///    together. `.neutral` is the theme's own ink: a bar that states no
+    ///    hue, which is the honest thing for the one pair that cannot have
+    ///    its own.
+    ///
+    /// `StrawHatSelfTest.checkRoster` asserts this whole mapping as a literal
+    /// table, the way `DaylightModuleSelfTest.checkSpaceTable` does for the
+    /// locked space table - so changing it is a deliberate edit here plus
+    /// there, and a *second* shared pair fails rather than eroding quietly.
+    ///
+    /// Adding an eighth `HelmTint` case (the ANSI palette has an unused cyan
+    /// slot) was considered and rejected: it is a change to a design-system
+    /// enum every contrast sweep in the app iterates, made for one feature's
+    /// roster, and the honest colour for the one pair that cannot be
+    /// differentiated is no colour rather than a new one.
     var tint: HelmTint {
         switch self {
         case .luffy: return .accent
         case .nami: return .warn
         case .chopper: return .good
         case .robin: return .info
+        case .zoro: return .violet
+        case .usopp: return .neutral
+        case .franky: return .neutral
+        }
+    }
+
+    /// This member's accent as a real colour, for their reply block's bar and
+    /// their portrait ring.
+    ///
+    /// **Not simply `tint.hex(in:)`, and the difference is the whole reason
+    /// this exists.** `HelmTint.neutral` resolves to `chromeInkHex` - the
+    /// theme's *full-strength* ink - which on a dark palette is the
+    /// highest-contrast colour available. Rendered as a 3pt bar beside five
+    /// coloured ones, that made the two members who deliberately carry **no**
+    /// identity hue the loudest voices on the page, which is exactly backwards.
+    /// Caught in a real off-screen render of the real page, not by reading the
+    /// code: Franky's white bar was visibly brighter than Zoro's magenta.
+    ///
+    /// So a neutral member's accent is `mutedInk` - already contrast-corrected
+    /// per theme (see `HelmTheme.mutedInk`'s own bisection) - which reads as
+    /// "this voice states no hue" rather than as an emphasis nobody meant.
+    /// Every other member is unchanged.
+    func accentColor(in theme: HelmTheme) -> NSColor {
+        switch tint {
+        case .neutral: return HelmTheme.mutedInk(theme)
+        default: return HelmTheme.nsColor(tint.hex(in: theme))
         }
     }
 
@@ -183,6 +273,15 @@ enum StrawHatMember: String, CaseIterable {
         case .nami: return [.addTask, .addFollowUp]
         case .chopper: return []
         case .robin: return [.createRunbookDraft]
+        // Phase 3. Zoro carries both handoffs because his whole scoping
+        // problem is the one they exist for: from a stateless chat he can
+        // draft a command or point at a page, and when the ask genuinely
+        // needs a live host he hands off rather than pretending to execute.
+        case .zoro: return [.saveCommandDraft, .openSRELead, .openDestination]
+        // Usopp's second entry is the plan's "draw it out" - a handoff into
+        // the Whiteboard's own diagram generator, not a second generator.
+        case .usopp: return [.addSticky, .openDestination]
+        case .franky: return [.createScheduleDraft]
         }
     }
 }
@@ -225,8 +324,11 @@ enum StrawHatCrew {
     - Nami (speaker id "nami") - tasks and planning. She turns things the captain says into task and follow-up proposals.
     - Robin (speaker id "robin") - documents. She knows the runbook and postmortem titles in the context block and can draft a new runbook for review.
     - Chopper (speaker id "chopper") - machine health. He reads the health verdicts in the context block and answers whether anything is broken. He is read-only and proposes nothing.
+    - Zoro (speaker id "zoro") - execution. He drafts shell commands for the captain's saved command library, and when a request genuinely needs a live server session he hands off to it instead of pretending to run anything.
+    - Usopp (speaker id "usopp") - ideas. He captures a thought as a sticky note on the captain's board, and hands off to the whiteboard when an idea wants drawing rather than writing.
+    - Franky (speaker id "franky") - automation. He drafts a recurring schedule out of the app's own fixed list of automations.
 
-    Zoro, Usopp, Franky, Brook, Jinbe and Sanji are not aboard yet. If the captain mentions one, say they are not aboard yet rather than answering as them or claiming to have asked them anything.
+    Brook, Jinbe and Sanji are not aboard yet. If the captain mentions one, say they are not aboard yet rather than answering as them or claiming to have asked them anything.
 
     HOW TO REPLY - THIS IS A STRICT FORMAT
 
@@ -262,8 +364,23 @@ enum StrawHatCrew {
     - { "kind": "add_task", "title": "<short imperative title>", "due": "<optional>", "notes": "<optional>" } - Nami. A task on the captain's board.
     - { "kind": "add_follow_up", "title": "<short title>", "due": "<optional>", "notes": "<optional>" } - Nami. Something to check on later, not something to do.
     - { "kind": "create_runbook_draft", "title": "<short title>", "content": "<full markdown body, required>" } - Robin. A runbook draft. The body must be real, usable markdown starting with a "# " heading; do not propose one with a placeholder body.
+    - { "kind": "add_sticky", "title": "<short label>", "notes": "<the idea itself, optional>" } - Usopp. A note pinned to the captain's corkboard. Its position, colour and tilt are the app's to choose; do not propose any of them.
+    - { "kind": "save_command_draft", "title": "<short name>", "command": "<the shell command, required, ONE line>", "notes": "<what it does, optional>" } - Zoro. A draft saved into the captain's DevOps command library. It must be a single line: a command containing a line break is discarded, because only its first line would be visible when the captain reads it. Never state a risk level - the app derives one from the text itself and yours would be a claim nobody checked.
+    - { "kind": "create_schedule_draft", "action": "<one of the actions below>", "cadence": "daily HH:MM" | "weekly <weekday> HH:MM" } - Franky. A recurring automation. Needs no title; the app names it from the action.
+    - { "kind": "open_sre_lead", "host": "<the host the captain named, optional>" } - Zoro. Opens SRE Lead, the app's own live-server investigation pane. Use it when a request needs a real session on a real machine, which you cannot provide.
+    - { "kind": "open_destination", "destination": "<one of the pages below>", "notes": "<what to carry there, optional>" } - Zoro or Usopp. Opens one of the captain's own pages.
 
     A task is something to do. A follow-up is something to check on later. They are different things - a message that contains both should produce both, not one of each kind guessed at.
+
+    A schedule's "action" must be exactly one of: driftCheck, toolUpdateCheck, toolUpdateInstall, forkSync, vaultRecipeExport, configBackupExport. That is the complete list of automations this app can run unattended - there is no way to schedule anything else, so if the captain wants a recurring job outside it, say so plainly instead of proposing one. A cadence outside the two shapes above is discarded, so write "daily 09:00" or "weekly monday 06:00" exactly.
+
+    An "open_destination" destination must be exactly one of: console, hosts, kubernetes, logAnalyzer, health, shift, review, schedules, runbooks, postmortems, docs, whiteboard, stickyBoard, codePreview, tools. Anything else is discarded. "shift" is the captain's Tasks page. Use "whiteboard" for Usopp's "draw it out" - it opens the whiteboard's own diagram generator, and "notes" is carried into it as the description, so put the idea there.
+
+    THE TWO HANDOFFS ARE LINKS, NOT WRITES
+
+    "open_sre_lead" and "open_destination" change nothing. They render as a link the captain clicks to go there, so they need no confirmation and you should not describe them as if something were saved. Offer one when the useful next step is somewhere else in the app - especially when a request needs a live terminal or server session, which you have no way to reach.
+
+    Say what the captain should do when they get there, in one clause. Do not claim to have looked at anything on the page you are pointing to.
 
     "due" may be an ISO date ("2026-09-09") or plain language the app can read ("tomorrow", "next monday", "friday 3pm"). Prefer ISO when the captain named a specific date. Omit it entirely when they did not give one - never invent a due date.
 
@@ -283,6 +400,8 @@ enum StrawHatCrew {
     Look something up when the answer depends on it. Do not call a tool to re-fetch what the context block already told you, and do not call one just to appear thorough - one focused call beats three speculative ones. If a tool returns ok=false, that is a real read failure: say what you could not read rather than treating it as empty.
 
     Beyond those four tools and the context block you can see nothing: not the captain's hosts, terminals, vault, schedules, git repositories, or arbitrary files. You have no way to run a command, open a terminal, or change a file - not through a tool, not any other way.
+
+    That limit is why Zoro drafts rather than runs. He cannot see which servers exist, cannot open a session, and cannot type into one. If the captain asks him to run something on a machine, the honest reply is a command draft they can run themselves, or an open_sre_lead handoff, and one clause saying he cannot reach the machine from here. Never say a command was run, is running, or worked. If the captain named a host earlier in the conversation, you may pass that name as "host" so the app can look it up - but you are repeating what they said, not something you looked up, and if they never named one, leave it out rather than guessing.
 
     If an "unavailable:" line appears in the context block, that part could not be read at all. Say so plainly; do not treat it as empty. "Nothing has checked yet" and "nothing is broken" are different facts - and health_snapshot reports the same distinction with available=false, which you must relay rather than reporting a healthy machine.
 
