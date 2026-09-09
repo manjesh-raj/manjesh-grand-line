@@ -47,10 +47,17 @@ import AppKit
 enum StrawHatMessage {
     /// The captain's own typed words.
     case captain(String)
-    /// A crew member's reply. Carries the member so phase 2's multi-speaker
-    /// replies need no new case.
-    case crew(StrawHatMember, String)
-    /// This view's own chrome - "Luffy is thinking...", never content.
+    /// One attributed block of a reply.
+    ///
+    /// Phase 1 carried `(StrawHatMember, String)`; phase 2 carries the whole
+    /// parsed `StrawHatSection`, because a block now also holds its
+    /// proposals, its dropped-proposal count and its follow-up line - and
+    /// because a rung-2 section has *no* speaker, which a non-optional member
+    /// could not express. One reply becomes several of these, appended in
+    /// order, which is what makes "several crew voices from one call" a
+    /// transcript rather than a new view.
+    case crew(StrawHatSection)
+    /// This view's own chrome - "the crew is thinking...", never content.
     case status(String)
     /// A turn that failed, rendered so the captain can see why and retry.
     case error(String)
@@ -63,7 +70,22 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     /// Fires whenever `messages` changes - the controller's "New conversation"
     /// button is pointless on an empty thread.
     var onMessagesChanged: (() -> Void)?
+    /// Fires when the captain presses a confirm card's button, and returns what
+    /// actually happened so the card can render it.
+    ///
+    /// This view holds no store and cannot write: the whole point of the
+    /// confirm card is that a human press is the only path from a model's
+    /// proposal to the captain's data, and the write itself lives in
+    /// `StrawHatProposalExecutor`, reached through `FleetController+Crew`.
+    /// Unset (as in a bare view with no controller) means a press reports a
+    /// real failure rather than silently doing nothing.
+    var onConfirmProposal: ((StrawHatProposal) -> StrawHatProposalOutcome)?
 
+    /// M2.4's "contributing glow" surface - who is aboard, and who spoke in
+    /// the reply that just landed. See `StrawHatCrewViews.swift`'s header for
+    /// why the glow lives here rather than on the reply block itself.
+    private let crewStrip = StrawHatCrewStrip()
+    private let crewStripDivider = NSView()
     private let scroll = NSScrollView()
     private let document = FlippedView()
     private let stack = NSStackView()
@@ -74,7 +96,7 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     private let emptyState = HelmEmptyState(
         symbol: StrawHatCrew.speaker.symbol,
         title: "Talk to your crew",
-        body: "Luffy is aboard. Ask him anything - think a problem through, draft some wording, or get a second opinion. He has no access to your tasks, hosts or files yet.",
+        body: "Luffy, Nami, Chopper and Robin are aboard. Ask them anything - think a problem through, or say what you need doing and Nami will draft the task. Every write is a card you confirm.",
         size: .standard,
         boxed: true,
         hue: RailDestination.overview.domainHue)
@@ -88,7 +110,7 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     private let textView = NSTextView()
     /// `NSTextView` has no placeholder API - a muted label overlaid at the
     /// text container's inset, toggled on every edit.
-    private let textPlaceholderLabel = NSTextField(labelWithString: "Message Luffy\u{2026}")
+    private let textPlaceholderLabel = NSTextField(labelWithString: "Message the crew\u{2026}")
     private let toolbarRow = NSView()
     /// The Shift+Return hint, so the one non-obvious key is discoverable
     /// without a tooltip.
@@ -114,6 +136,7 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
         wantsLayer = true
+        buildCrewStrip()
         buildScroll()
         buildComposer()
         applyTheme(theme)
@@ -121,6 +144,24 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    private func buildCrewStrip() {
+        crewStrip.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(crewStrip)
+        crewStripDivider.wantsLayer = true
+        crewStripDivider.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(crewStripDivider)
+        NSLayoutConstraint.activate([
+            crewStrip.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.contentInset),
+            crewStrip.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -Self.contentInset),
+            crewStrip.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s2 + 2),
+
+            crewStripDivider.leadingAnchor.constraint(equalTo: leadingAnchor),
+            crewStripDivider.trailingAnchor.constraint(equalTo: trailingAnchor),
+            crewStripDivider.topAnchor.constraint(equalTo: crewStrip.bottomAnchor, constant: HelmMetrics.s2),
+            crewStripDivider.heightAnchor.constraint(equalToConstant: 1),
+        ])
+    }
 
     private func buildScroll() {
         scroll.translatesAutoresizingMaskIntoConstraints = false
@@ -198,7 +239,8 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         NSLayoutConstraint.activate([
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: topAnchor),
+            // Below the crew strip, not at this view's own top edge.
+            scroll.topAnchor.constraint(equalTo: crewStripDivider.bottomAnchor),
             scroll.bottomAnchor.constraint(equalTo: composerWrap.topAnchor),
 
             composerWrap.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -313,6 +355,7 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         stack.addArrangedSubview(block)
         block.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         updateEmptyState()
+        refreshCrewStrip()
         scrollToBottom()
         onMessagesChanged?()
     }
@@ -327,6 +370,7 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         // arranged subview is the block for the message just dropped.
         stack.arrangedSubviews.last.map { $0.removeFromSuperview() }
         updateEmptyState()
+        refreshCrewStrip()
         onMessagesChanged?()
     }
 
@@ -334,6 +378,7 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         messages.removeAll()
         stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
         updateEmptyState()
+        refreshCrewStrip()
         onMessagesChanged?()
     }
 
@@ -365,6 +410,35 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         emptyState.isHidden = !messages.isEmpty
     }
 
+    /// Lights the strip for whoever spoke in the *most recent* reply.
+    ///
+    /// Derived from `messages` rather than pushed in by the controller, so the
+    /// strip cannot disagree with the transcript beside it - and so a theme
+    /// rebuild (which replays every message) lands back on the same state. A
+    /// reply is a contiguous run of `.crew` blocks at the tail, since one turn
+    /// appends its sections together; anything before the captain's last
+    /// message belongs to an older turn and must not stay lit.
+    private func refreshCrewStrip() {
+        var contributors: Set<StrawHatMember> = []
+        for message in messages.reversed() {
+            switch message {
+            case .crew(let section):
+                if let speaker = section.speaker { contributors.insert(speaker) }
+            case .status:
+                // A turn in flight. Nobody has answered yet, and lighting a
+                // guess is exactly what this must never do.
+                contributors.removeAll()
+                crewStrip.setContributors([])
+                return
+            case .captain, .error:
+                // Reached the start of this reply's own turn.
+                crewStrip.setContributors(contributors)
+                return
+            }
+        }
+        crewStrip.setContributors(contributors)
+    }
+
     private func updateSendButtonEnabled() {
         let hasText = !textView.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         sendButton.isEnabled = isInputEnabled && hasText
@@ -382,7 +456,7 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     private func messageBlock(for message: StrawHatMessage) -> NSView {
         switch message {
         case .captain(let text): return captainBlock(text)
-        case .crew(let member, let text): return crewBlock(member: member, text: text)
+        case .crew(let section): return crewBlock(section)
         case .status(let text): return statusBlock(text)
         case .error(let text): return errorBlock(text)
         }
@@ -454,69 +528,74 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         return row
     }
 
-    /// An attributed reply card: an icon tile plus "Luffy \u{00B7} Crew" over a
-    /// hairline, then the parsed markdown. The attribution header is the
-    /// captain's own approved mockup, and the seam phase 2's several-speakers
-    /// -per-reply needs.
-    private func crewBlock(member: StrawHatMember, text: String) -> NSView {
-        let icon = IconTileView(size: 22, cornerRadius: 11)
-        icon.configure(symbol: member.symbol, tint: .accent, pointSize: 11)
-
-        let name = NSTextField(labelWithString: member.displayName)
-        name.font = .systemFont(ofSize: HelmType.scaled(11.5), weight: .semibold)
-        name.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        name.translatesAutoresizingMaskIntoConstraints = false
-        name.setContentCompressionResistancePriority(.required, for: .horizontal)
-
-        let role = NSTextField(labelWithString: "\u{00B7} \(member.role)")
-        role.font = HelmType.captionSmall()
-        role.textColor = HelmTheme.mutedInk(theme)
-        role.translatesAutoresizingMaskIntoConstraints = false
-        role.lineBreakMode = .byTruncatingTail
-        role.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        // Without this spacer the row's slack goes to `role` (`.fill` stretches
-        // whichever view hugs least), which a real render showed as the role
-        // label pinned to the far right of the card, a hundred points away
-        // from the name it belongs to. The spacer absorbs the slack instead.
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        role.setContentHuggingPriority(.required, for: .horizontal)
-
-        let headerRow = NSStackView(views: [icon, name, role, spacer])
-        headerRow.orientation = .horizontal
-        headerRow.spacing = 7
-        headerRow.alignment = .centerY
-        headerRow.distribution = .fill
-        headerRow.translatesAutoresizingMaskIntoConstraints = false
-
-        let divider = NSView()
-        divider.wantsLayer = true
-        divider.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.5).cgColor
-        divider.translatesAutoresizingMaskIntoConstraints = false
-        divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
-
-        let blockStack = NSStackView()
-        blockStack.orientation = .vertical
-        blockStack.alignment = .leading
-        blockStack.spacing = HelmMetrics.s2
-        blockStack.translatesAutoresizingMaskIntoConstraints = false
-        // The whole markdown parser, reused - see this file's header.
-        for block in SRELeadMarkdown.parse(text) {
-            let view = renderBlock(block)
-            blockStack.addArrangedSubview(view)
-            view.widthAnchor.constraint(equalTo: blockStack.widthAnchor).isActive = true
-        }
-
-        let contentStack = NSStackView(views: [headerRow, divider, blockStack])
+    /// An attributed reply card: a portrait tile plus "Nami \u{00B7} Tasks" over
+    /// a hairline, then the parsed markdown, then a confirm card per proposal,
+    /// then an optional follow-up line.
+    ///
+    /// A section with **no** speaker (the parser's rung 2 - the model named a
+    /// voice that is not aboard) deliberately gets no attribution header at
+    /// all: its text still renders, because the ladder's invariant is that a
+    /// reply is never dropped, but crediting it to a crew member who did not
+    /// say it would be exactly the plausible-but-wrong this feature exists to
+    /// avoid. `StrawHatEnvelope` also refuses to carry that section's
+    /// proposals, so there is nothing to confirm on it either.
+    private func crewBlock(_ section: StrawHatSection) -> NSView {
+        let contentStack = NSStackView()
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
         contentStack.spacing = HelmMetrics.s2
         contentStack.translatesAutoresizingMaskIntoConstraints = false
-        headerRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
-        divider.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
-        blockStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+
+        // Every row is width-tied to the block, so a long markdown paragraph
+        // and a confirm card line up on both edges.
+        func add(_ view: NSView) {
+            contentStack.addArrangedSubview(view)
+            view.widthAnchor.constraint(equalTo: contentStack.widthAnchor).isActive = true
+        }
+
+        if let member = section.speaker {
+            add(attributionHeader(for: member))
+            add(hairlineDivider())
+        }
+
+        if !section.text.isEmpty {
+            let blockStack = NSStackView()
+            blockStack.orientation = .vertical
+            blockStack.alignment = .leading
+            blockStack.spacing = HelmMetrics.s2
+            blockStack.translatesAutoresizingMaskIntoConstraints = false
+            // The whole markdown parser, reused - see this file's header.
+            for block in SRELeadMarkdown.parse(section.text) {
+                let view = renderBlock(block)
+                blockStack.addArrangedSubview(view)
+                view.widthAnchor.constraint(equalTo: blockStack.widthAnchor).isActive = true
+            }
+            add(blockStack)
+        }
+
+        // M2.2: one card per validated proposal. Nothing here writes - the
+        // press goes up through `onConfirmProposal`.
+        for proposal in section.proposals {
+            let card = StrawHatConfirmCard(proposal: proposal, theme: theme)
+            card.onConfirm = { [weak self] proposal in
+                guard let handler = self?.onConfirmProposal else {
+                    return .failed(message: "This chat isn't connected to your stores right now.")
+                }
+                return handler(proposal)
+            }
+            add(card)
+        }
+
+        // The "no silent caps" rule: a proposal the parser refused is stated
+        // rather than vanishing, because a card that never appears is
+        // indistinguishable from the crew not having offered anything.
+        if section.droppedProposalCount > 0 {
+            add(droppedProposalNote(section.droppedProposalCount))
+        }
+
+        if let followup = section.followup {
+            add(followupRow(followup))
+        }
 
         let container = NSView()
         container.wantsLayer = true
@@ -526,13 +605,122 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         container.layer?.borderColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6).cgColor
         container.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(contentStack)
+        // An attributed block leaves room for its accent bar on the leading
+        // edge; an unattributed one has none, so its text starts where every
+        // other block's does.
+        let leading: CGFloat = section.speaker == nil ? HelmMetrics.s3 : HelmMetrics.s3 + 6
         NSLayoutConstraint.activate([
-            contentStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: HelmMetrics.s3),
+            contentStack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: leading),
             contentStack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -HelmMetrics.s3),
             contentStack.topAnchor.constraint(equalTo: container.topAnchor, constant: HelmMetrics.s3),
             contentStack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -HelmMetrics.s3),
         ])
+
+        // The block's own accent, in the speaking member's colour - what makes
+        // three voices in one turn readable at a glance rather than three
+        // identical cards.
+        if let member = section.speaker {
+            let bar = NSView()
+            bar.wantsLayer = true
+            bar.layer?.cornerRadius = 1.5
+            bar.layer?.backgroundColor = HelmTheme.nsColor(member.tint.hex(in: theme)).cgColor
+            bar.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(bar)
+            NSLayoutConstraint.activate([
+                bar.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 5),
+                bar.widthAnchor.constraint(equalToConstant: 3),
+                bar.topAnchor.constraint(equalTo: container.topAnchor, constant: HelmMetrics.s2),
+                bar.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -HelmMetrics.s2),
+            ])
+        }
         return container
+    }
+
+    private func hairlineDivider() -> NSView {
+        let divider = NSView()
+        divider.wantsLayer = true
+        divider.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.5).cgColor
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        return divider
+    }
+
+    /// "<portrait> Nami \u{00B7} Tasks" - the captain's own approved mockup.
+    private func attributionHeader(for member: StrawHatMember) -> NSView {
+        let portrait = StrawHatPortraitTile(member: member, side: StrawHatPortraitTile.replySize)
+        portrait.applyTheme(theme)
+
+        let name = NSTextField(labelWithString: member.displayName)
+        name.font = .systemFont(ofSize: HelmType.scaled(11.5), weight: .semibold)
+        name.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+        name.translatesAutoresizingMaskIntoConstraints = false
+        name.setContentCompressionResistancePriority(.required, for: .horizontal)
+        name.setContentHuggingPriority(.required, for: .horizontal)
+
+        let role = NSTextField(labelWithString: "\u{00B7} \(member.role)")
+        role.font = HelmType.captionSmall()
+        role.textColor = HelmTheme.mutedInk(theme)
+        role.translatesAutoresizingMaskIntoConstraints = false
+        role.lineBreakMode = .byTruncatingTail
+        role.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        role.setContentHuggingPriority(.required, for: .horizontal)
+
+        // Without this spacer the row's slack goes to whichever label hugs
+        // least (`.fill` stretches it), which a real render showed as the role
+        // label pinned to the far right of the card, a hundred points from the
+        // name it belongs to. The spacer absorbs the slack instead.
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let headerRow = NSStackView(views: [portrait, name, role, spacer])
+        headerRow.orientation = .horizontal
+        headerRow.spacing = 7
+        headerRow.alignment = .centerY
+        headerRow.distribution = .fill
+        headerRow.translatesAutoresizingMaskIntoConstraints = false
+        return headerRow
+    }
+
+    private func droppedProposalNote(_ count: Int) -> NSView {
+        let plural = count == 1
+            ? "1 suggestion in this reply couldn't be offered as a card"
+            : "\(count) suggestions in this reply couldn't be offered as cards"
+        let note = NSTextField(wrappingLabelWithString:
+            "\u{26A0} \(plural) \u{2014} the crew isn't allowed to do that yet.")
+        note.font = HelmType.captionSmall()
+        note.textColor = HelmTheme.mutedInk(theme)
+        note.lineBreakMode = .byWordWrapping
+        note.isSelectable = true
+        note.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        note.translatesAutoresizingMaskIntoConstraints = false
+        return note
+    }
+
+    /// A section's closing question - a muted line with a leading glyph, never
+    /// a card. It asks; it does not write, and nothing about it is clickable.
+    private func followupRow(_ text: String) -> NSView {
+        let glyph = NSImageView()
+        glyph.image = NSImage(systemSymbolName: "arrow.turn.down.right", accessibilityDescription: nil)
+        glyph.contentTintColor = HelmTheme.mutedInk(theme)
+        glyph.translatesAutoresizingMaskIntoConstraints = false
+        glyph.setContentHuggingPriority(.required, for: .horizontal)
+
+        let label = NSTextField(wrappingLabelWithString: text)
+        label.font = .systemFont(ofSize: HelmType.scaled(11.5))
+        label.textColor = HelmTheme.mutedInk(theme)
+        label.isSelectable = true
+        label.lineBreakMode = .byWordWrapping
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        let row = NSStackView(views: [glyph, label])
+        row.orientation = .horizontal
+        row.alignment = .firstBaseline
+        row.spacing = 6
+        row.distribution = .fill
+        row.translatesAutoresizingMaskIntoConstraints = false
+        return row
     }
 
     // MARK: Markdown block rendering (`SRELeadChatView`'s, reused in shape)
@@ -708,6 +896,9 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         textView.insertionPointColor = ink
         textPlaceholderLabel.textColor = HelmField.mutedInk(theme)
         emptyState.applyTheme(theme)
+        crewStrip.applyTheme(theme)
+        crewStripDivider.layer?.backgroundColor =
+            HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.5).cgColor
 
         // Rebuild every block rather than re-deriving each one's role from its
         // current styling: `messages` is the source of truth and styling is a
@@ -726,18 +917,34 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         messages.map {
             switch $0 {
             case .captain(let t), .status(let t), .error(let t): return t
-            case .crew(_, let t): return t
+            case .crew(let section): return section.text
             }
         }
     }
 
-    /// The speaker names shown on reply blocks, in order.
+    /// The speaker names shown on reply blocks, in order. An unattributed
+    /// (rung-2) section reports `"-"` rather than being skipped, so a suite
+    /// can tell "no header was rendered" from "no block was rendered".
     func debugCrewSpeakers() -> [String] {
         messages.compactMap {
-            if case .crew(let member, _) = $0 { return member.displayName }
+            if case .crew(let section) = $0 { return section.speaker?.displayName ?? "-" }
             return nil
         }
     }
+
+    /// Every confirm card currently in the transcript, in order - the only way
+    /// a suite can press the real button on the real card.
+    func debugConfirmCards() -> [StrawHatConfirmCard] {
+        var found: [StrawHatConfirmCard] = []
+        func walk(_ view: NSView) {
+            if let card = view as? StrawHatConfirmCard { found.append(card) }
+            view.subviews.forEach(walk)
+        }
+        stack.arrangedSubviews.forEach(walk)
+        return found
+    }
+
+    var debugCrewStrip: StrawHatCrewStrip { crewStrip }
 
     var debugMessageCount: Int { messages.count }
     var debugEmptyStateHidden: Bool { emptyState.isHidden }

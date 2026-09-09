@@ -51,6 +51,11 @@ enum StrawHatViewSelfTest {
         checkMarkdownRenders(&ok)
         checkNewConversation(&ok)
         checkFailureIsShown(&ok)
+        checkMultiSectionReply(&ok)
+        checkAcceptanceScenario(&ok)
+        checkSalvageRendersButNeverExecutes(&ok)
+        checkContributingGlow(&ok)
+        checkUnwiredCardFailsVisibly(&ok)
         checkThemeSweep(&ok)
 
         print(ok ? "StrawHatViewSelfTest: all checks passed" : "StrawHatViewSelfTest: FAILED")
@@ -73,8 +78,12 @@ enum StrawHatViewSelfTest {
 
     /// A real `FleetController` in a real off-screen window, switched to the
     /// Crew tab through the same method a real pill click reaches.
-    private static func mount(width: CGFloat = 1100, height: CGFloat = 800) -> Mounted {
-        let controller = FleetController(shiftStore: ShiftStore())
+    private static func mount(width: CGFloat = 1100, height: CGFloat = 800,
+                              shiftStore: ShiftStore? = nil) -> Mounted {
+        // `shiftStore` is passed only by the cases that then assert what a
+        // confirmed proposal wrote - everything else takes a fresh one, which
+        // resolves through this suite's own scratch `FM_SHIFT_DIR`.
+        let controller = FleetController(shiftStore: shiftStore ?? ShiftStore())
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
                               styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.contentViewController = controller
@@ -214,7 +223,10 @@ enum StrawHatViewSelfTest {
         m.controller.view.layoutSubtreeIfNeeded()
         if let block = chat.debugLastBlockView,
            let name = findLabel(in: block, text: "Luffy"),
-           let role = findLabel(in: block, textContaining: "Crew") {
+           // From the roster, never a literal: Luffy's role read "Crew" in
+           // phase 1 and "Orchestrator" in phase 2, and a hardcoded word
+           // here fails for a reason that has nothing to do with layout.
+           let role = findLabel(in: block, textContaining: StrawHatMember.luffy.role) {
             let nameSlack = name.frame.width - name.intrinsicContentSize.width
             let roleSlack = role.frame.width - role.intrinsicContentSize.width
             check(nameSlack < 20,
@@ -387,6 +399,328 @@ enum StrawHatViewSelfTest {
         }
     }
 
+    // MARK: Phase 2 - several voices in one reply
+
+    /// The plan's own worked example, driven all the way through: one fake
+    /// `claude` reply becomes two attributed blocks and two confirm cards.
+    private static func checkMultiSectionReply(_ ok: inout Bool) {
+        let m = mount()
+        showCrew(m)
+        let chat = m.controller.debugCrewChat
+
+        let envelope = """
+        ```json
+        { "sections": [
+            { "speaker": "nami",
+              "text": "I heard a task and a follow-up in there - drafted both:",
+              "proposals": [
+                { "kind": "add_task", "title": "Fix the login issue", "due": "2026-09-09" },
+                { "kind": "add_follow_up", "title": "Ask Rahul about the Cognito config" } ] },
+            { "speaker": "luffy",
+              "text": "Both drafted - confirm to add.",
+              "followup": "Want Robin to check for a Cognito runbook first?" }
+        ] }
+        ```
+        """
+        let script = writeFakeClaude(reply: envelope, argvLog: nil, sessionID: "sess-multi")
+        defer { try? FileManager.default.removeItem(at: script) }
+        StrawHatCrew.claudePathOverrideForTests = script.path
+        defer { StrawHatCrew.claudePathOverrideForTests = nil }
+
+        // Through the real composer, so the whole turn cycle runs.
+        chat.debugType("I need to fix the login issue tomorrow and ask Rahul about the Cognito configuration")
+        chat.debugSendButton.performClick(nil)
+        waitUntil(timeout: 20) { !m.controller.debugCrewTurnInFlight }
+        guard !m.controller.debugCrewTurnInFlight else {
+            check(false, "the turn never completed - transcript is \(chat.debugMessageTexts())", &ok)
+            return
+        }
+
+        // One captain message + two crew blocks. The status line is gone.
+        check(chat.debugCrewSpeakers() == ["Nami", "Luffy"],
+              "one reply renders as two attributed blocks, got \(chat.debugCrewSpeakers())", &ok)
+        check(chat.debugMessageTexts().contains(where: { $0.contains("drafted both") }),
+              "Nami's own words render", &ok)
+        check(chat.debugMessageTexts().contains(where: { $0.contains("confirm to add") }),
+              "and so do Luffy's", &ok)
+
+        // M2.4: the strip lights exactly the two who spoke, and nobody else.
+        let strip = chat.debugCrewStrip
+        check(strip.debugLitMembers == [.nami, .luffy],
+              "the strip lights exactly the crew who replied, got \(strip.debugLitMembers.map(\.rawValue).sorted())", &ok)
+        check(strip.debugCaption.contains("Nami") && strip.debugCaption.contains("Luffy"),
+              "...and names them, got \(strip.debugCaption)", &ok)
+        for member in [StrawHatMember.chopper, .robin] {
+            check(strip.debugTile(member)?.debugIsLit == false,
+                  "\(member.displayName) did not speak and must stay dim", &ok)
+        }
+
+        // M2.2: two confirm cards, in the reply's own order, neither confirmed.
+        let cards = chat.debugConfirmCards()
+        check(cards.count == 2, "two proposals means two confirm cards, got \(cards.count)", &ok)
+        check(cards.first?.debugProposal.kind == .addTask, "the task's card first", &ok)
+        check(cards.last?.debugProposal.kind == .addFollowUp, "then the follow-up's", &ok)
+        check(cards.allSatisfy { !$0.debugIsConfirmed },
+              "a rendered card is not a confirmed one - nothing writes until a press", &ok)
+        check(cards.allSatisfy { !$0.debugConfirmButtonHidden },
+              "and each still offers its button", &ok)
+
+        // The card's own three columns. Two successive attempts to express
+        // "the text column takes the slack" through hugging priorities were
+        // measured wrong on a real render (the action column resolved to 871pt
+        // of a 998pt card, wrapping a one-line title over three lines and
+        // truncating the detail beside a wide empty gap) - so this asserts the
+        // resolved geometry rather than the priorities that were supposed to
+        // produce it.
+        m.controller.view.layoutSubtreeIfNeeded()
+        for card in cards {
+            let title = card.debugTitleLabel
+            let slack = title.frame.width - title.intrinsicContentSize.width
+            check(slack >= -0.5,
+                  "a proposal title has room for its own text - short by \(-slack)pt [\(card.debugFrames)]", &ok)
+            // ...and the action column is sized by its own control rather than
+            // absorbing the row.
+            check(card.debugActionColumnWidth < card.frame.width * 0.35,
+                  "the action column hugs its button - \(card.debugActionColumnWidth)pt of \(card.frame.width)", &ok)
+        }
+    }
+
+    /// The acceptance criterion, end to end: one message, two clicks, a task
+    /// and a follow-up really in Shift.
+    private static func checkAcceptanceScenario(_ ok: inout Bool) {
+        // This case's own store, so what it writes is its own and a leftover
+        // from an earlier case cannot make it pass.
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("straw-hat-accept-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        let previousShiftDir = ProcessInfo.processInfo.environment["FM_SHIFT_DIR"]
+        setenv("FM_SHIFT_DIR", scratch.path, 1)
+        defer {
+            if let previousShiftDir { setenv("FM_SHIFT_DIR", previousShiftDir, 1) } else { unsetenv("FM_SHIFT_DIR") }
+            try? FileManager.default.removeItem(at: scratch)
+        }
+
+        let store = ShiftStore()
+        let m = mount(shiftStore: store)
+        showCrew(m)
+        let chat = m.controller.debugCrewChat
+
+        let envelope = """
+        {"sections":[
+          {"speaker":"nami","text":"Drafted both:","proposals":[
+            {"kind":"add_task","title":"Fix the login issue","due":"tomorrow"},
+            {"kind":"add_follow_up","title":"Ask Rahul about the Cognito configuration"}]},
+          {"speaker":"luffy","text":"Confirm to add."}]}
+        """
+        let script = writeFakeClaude(reply: envelope, argvLog: nil, sessionID: "sess-accept")
+        defer { try? FileManager.default.removeItem(at: script) }
+        StrawHatCrew.claudePathOverrideForTests = script.path
+        defer { StrawHatCrew.claudePathOverrideForTests = nil }
+
+        chat.debugType("I need to fix the login issue tomorrow and ask Rahul about the Cognito configuration")
+        chat.debugSendButton.performClick(nil)
+        waitUntil(timeout: 20) { !m.controller.debugCrewTurnInFlight }
+        guard !m.controller.debugCrewTurnInFlight else {
+            check(false, "the acceptance turn never completed", &ok)
+            return
+        }
+
+        // Nothing has been written yet - the cards are rendered, not pressed.
+        check(store.activeTasks.isEmpty && store.followUps.isEmpty,
+              "rendering the cards must write nothing at all", &ok)
+
+        let cards = chat.debugConfirmCards()
+        guard cards.count == 2 else {
+            check(false, "expected two cards to press, got \(cards.count)", &ok)
+            return
+        }
+
+        // Two real presses, through the real button's own target/action.
+        for card in cards { card.debugConfirmButton.performClick(nil) }
+
+        check(store.activeTasks.contains(where: { $0.title == "Fix the login issue" }),
+              "the task landed in Shift, got \(store.activeTasks.map(\.title))", &ok)
+        check(store.followUps.contains(where: { $0.title.contains("Rahul") }),
+              "the follow-up landed in Shift, got \(store.followUps.map(\.title))", &ok)
+        check(cards.allSatisfy { $0.debugIsConfirmed },
+              "both cards show their confirmed state", &ok)
+        check(cards.allSatisfy { $0.debugConfirmButtonHidden },
+              "and the button is gone, so a second press cannot double-write", &ok)
+        check(cards.first?.debugDoneText.contains("Added to Tasks") == true,
+              "the confirmed card names where the record went, got \(cards.first?.debugDoneText ?? "")", &ok)
+        // ...and it is not truncated. The action column used to be pinned to
+        // the *button's* width on both edges, so the longer confirmed label
+        // rendered as "\u{2713} Adde\u{2026}" - caught in a real off-screen
+        // render, invisible to every other assertion here (the string is
+        // correct; only its frame was too small).
+        m.controller.view.layoutSubtreeIfNeeded()
+        if let done = cards.first?.debugDoneLabel {
+            let slack = done.frame.width - done.intrinsicContentSize.width
+            check(slack >= -0.5,
+                  "the confirmed label has room for its own text - short by \(-slack)pt [\(cards.first!.debugFrames)]", &ok)
+        } else {
+            check(false, "could not reach the confirmed label", &ok)
+        }
+        // The detail line still says what the record is, rather than being
+        // overwritten with the toast's own wording (which threw away the due
+        // date the card was showing).
+        check(cards.first?.debugDetailText.contains("Tomorrow") == true,
+              "a confirmed card keeps its detail, got \(cards.first?.debugDetailText ?? "")", &ok)
+
+        // A second press on an already-confirmed card writes nothing more -
+        // guarded as well as hidden, since a keyboard activation could reach it.
+        let tasksAfter = store.activeTasks.count
+        cards.first?.debugConfirmButton.performClick(nil)
+        check(store.activeTasks.count == tasksAfter,
+              "a re-press must not write a second copy, went \(tasksAfter) -> \(store.activeTasks.count)", &ok)
+
+        // It really reached disk, not just the in-memory array.
+        check(ShiftStore().activeTasks.contains(where: { $0.title == "Fix the login issue" }),
+              "a confirmed task survives a fresh store", &ok)
+    }
+
+    /// Rung 2 and rung 3, through the real render path - neither is reachable
+    /// from a well-behaved fake `claude`, so both are driven directly.
+    private static func checkSalvageRendersButNeverExecutes(_ ok: inout Bool) {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("straw-hat-salvage-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        let previousShiftDir = ProcessInfo.processInfo.environment["FM_SHIFT_DIR"]
+        setenv("FM_SHIFT_DIR", scratch.path, 1)
+        defer {
+            if let previousShiftDir { setenv("FM_SHIFT_DIR", previousShiftDir, 1) } else { unsetenv("FM_SHIFT_DIR") }
+            try? FileManager.default.removeItem(at: scratch)
+        }
+
+        let store = ShiftStore()
+        let m = mount(shiftStore: store)
+        showCrew(m)
+        let chat = m.controller.debugCrewChat
+
+        // Rung 2: a voice that is not aboard, carrying a proposal.
+        m.controller.debugRenderCrewReply("""
+        {"sections":[{"speaker":"zoro","text":"I'd restart the pod.",
+          "proposals":[{"kind":"run_kubectl","title":"rollout restart"}]}]}
+        """)
+        check(chat.debugCrewSpeakers() == ["-"],
+              "an unaboard voice renders with no attribution, got \(chat.debugCrewSpeakers())", &ok)
+        check(chat.debugMessageTexts().contains("I'd restart the pod."),
+              "...but its text still renders - the reply is never dropped", &ok)
+        check(chat.debugConfirmCards().isEmpty,
+              "and it offers no card at all, got \(chat.debugConfirmCards().count)", &ok)
+        // The refusal is stated rather than silent.
+        guard let block = chat.debugLastBlockView,
+              findLabel(in: block, textContaining: "couldn't be offered", maxLength: 300) != nil else {
+            check(false, "a refused proposal must be stated in the block, not silently dropped", &ok)
+            return
+        }
+        // The strip lights nobody: crediting a voice that is not aboard is
+        // exactly the plausible-but-wrong this feature must never do.
+        check(chat.debugCrewStrip.debugLitMembers.isEmpty,
+              "an unattributed reply lights nobody, got \(chat.debugCrewStrip.debugLitMembers.map(\.rawValue))", &ok)
+
+        // Rung 3: prose with a fenced block that is not an envelope. The
+        // direction that matters - this must not be shredded into a fragment.
+        chat.clearMessages()
+        m.controller.debugRenderCrewReply("""
+        Your config needs a `logging` block:
+
+        ```json
+        { "level": "debug", "sections": 4 }
+        ```
+
+        Drop that in and restart.
+        """)
+        check(chat.debugCrewSpeakers() == ["Luffy"],
+              "rung 3 renders as one Luffy block, got \(chat.debugCrewSpeakers())", &ok)
+        let shown = chat.debugMessageTexts().joined()
+        check(shown.contains("Drop that in and restart."),
+              "the prose after the block survives - losing it would be silent data loss", &ok)
+        check(shown.contains("\"level\": \"debug\""), "and so does the code the captain asked for", &ok)
+        check(store.activeTasks.isEmpty && store.followUps.isEmpty,
+              "neither rung wrote anything", &ok)
+    }
+
+    /// M2.4's glow, and its Reduce Motion gate.
+    private static func checkContributingGlow(_ ok: inout Bool) {
+        let m = mount()
+        showCrew(m)
+        let chat = m.controller.debugCrewChat
+        let strip = chat.debugCrewStrip
+
+        // Before anything is said: everyone aboard, nobody lit.
+        check(strip.debugLitMembers.isEmpty, "an empty thread lights nobody", &ok)
+        check(strip.debugCaption.contains("\(StrawHatMember.allCases.count) crew aboard"),
+              "...and the strip says who is aboard, got \(strip.debugCaption)", &ok)
+
+        // Portraits, not the fallback glyphs - M2.4's actual ask.
+        for member in StrawHatMember.allCases {
+            check(strip.debugTile(member)?.debugUsesPortrait == true,
+                  "\(member.displayName)'s strip tile renders a portrait, not the fallback glyph", &ok)
+        }
+
+        // While a turn is in flight nobody is lit: the app does not know yet
+        // who will answer, and lighting a guess is what this must never do.
+        chat.append(.captain("anything broken?"))
+        chat.append(.status("The crew is thinking\u{2026}"))
+        check(strip.debugLitMembers.isEmpty,
+              "a turn in flight lights nobody, got \(strip.debugLitMembers.map(\.rawValue))", &ok)
+
+        chat.removeTrailingStatus()
+        m.controller.debugRenderCrewReply("""
+        {"sections":[{"speaker":"chopper","text":"Schedules are failing."}]}
+        """)
+        check(strip.debugLitMembers == [.chopper],
+              "the reply's own speaker lights, got \(strip.debugLitMembers.map(\.rawValue))", &ok)
+
+        // The pulse is the motion half, and Reduce Motion gets the end state
+        // instantly - never the same motion slower. A gate that is read and
+        // then ignored is invisible from every other angle, which is why this
+        // reads the animation off the layer.
+        let wasReduced = HelmMotion.reducedOverrideForTests
+        defer { HelmMotion.reducedOverrideForTests = wasReduced }
+
+        HelmMotion.reducedOverrideForTests = false
+        chat.applyTheme(ThemeManager.shared.theme)
+        check(strip.debugTile(.chopper)?.debugIsPulsing == true,
+              "a lit tile pulses with Reduce Motion off", &ok)
+
+        HelmMotion.reducedOverrideForTests = true
+        chat.applyTheme(ThemeManager.shared.theme)
+        check(strip.debugTile(.chopper)?.debugIsPulsing == false,
+              "Reduce Motion removes the pulse", &ok)
+        check(strip.debugTile(.chopper)?.debugIsLit == true,
+              "...but keeps the lit end state - the app's own rule", &ok)
+
+        // A theme rebuild replays every message, so the strip has to land back
+        // on the same state rather than clearing.
+        check(strip.debugLitMembers == [.chopper],
+              "a theme rebuild preserves who contributed, got \(strip.debugLitMembers.map(\.rawValue))", &ok)
+
+        // A new conversation clears it.
+        m.controller.newCrewConversationTapped()
+        check(strip.debugLitMembers.isEmpty, "a new conversation lights nobody again", &ok)
+    }
+
+    /// A rendered card holds no store; a press without a wired handler must
+    /// report a real failure rather than silently doing nothing.
+    private static func checkUnwiredCardFailsVisibly(_ ok: inout Bool) {
+        let chat = StrawHatChatView()
+        chat.frame = NSRect(x: 0, y: 0, width: 600, height: 400)
+        chat.append(.crew(StrawHatSection(
+            speaker: .nami, rawSpeaker: "nami", text: "Drafted:",
+            proposals: [StrawHatProposal(kind: .addTask, title: "Orphaned")],
+            droppedProposalCount: 0, followup: nil)))
+        guard let card = chat.debugConfirmCards().first else {
+            check(false, "a bare chat view still renders its card", &ok)
+            return
+        }
+        card.debugConfirmButton.performClick(nil)
+        check(!card.debugIsConfirmed, "an unwired press must not claim success", &ok)
+        check(card.debugDetailText.lowercased().contains("isn't connected"),
+              "...and says why, got \(card.debugDetailText)", &ok)
+    }
+
     // MARK: Utilities
 
     private static func findLabel(in view: NSView, text: String) -> NSTextField? {
@@ -399,6 +733,19 @@ enum StrawHatViewSelfTest {
         if let field = view as? NSTextField, field.stringValue.contains(needle),
            field.stringValue.count < 30 { return field }
         for sub in view.subviews { if let hit = findLabel(in: sub, textContaining: needle) { return hit } }
+        return nil
+    }
+
+    /// The 30-character cap on the variant above exists so a search for a
+    /// short word does not match a whole wrapped paragraph; a caller looking
+    /// for a phrase *inside* a long note has to say so.
+    private static func findLabel(in view: NSView, textContaining needle: String,
+                                  maxLength: Int) -> NSTextField? {
+        if let field = view as? NSTextField, field.stringValue.contains(needle),
+           field.stringValue.count < maxLength { return field }
+        for sub in view.subviews {
+            if let hit = findLabel(in: sub, textContaining: needle, maxLength: maxLength) { return hit }
+        }
         return nil
     }
 

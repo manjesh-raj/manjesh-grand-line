@@ -162,6 +162,10 @@ final class FleetController: NSViewController {
     /// page every launch renders is work for a feature most visits never use.
     var crewRunner: StrawHatRunner?
     var crewTurnInFlight = false
+    /// Backing storage for `crewDocsStore` (phase 2): a stored property cannot
+    /// live in the extension that uses it, the same GL-36 constraint the
+    /// labels below are here for. Built on first use - see that accessor.
+    var crewDocs: DocsRunbookStore?
     /// Built inside `buildCrewSection()`, held here so `applyThemeToCrew` can
     /// re-tint them (an extension cannot declare stored properties).
     var crewTitleLabel: NSTextField?
@@ -175,6 +179,12 @@ final class FleetController: NSViewController {
     /// number `updateCrewChatHeight` cannot read back off a laid-out frame.
     /// Keep in sync with `loadView`'s `contentStack.bottomAnchor` constant.
     var crewDocumentBottomInset: CGFloat { 28 }
+    /// The shared `ShiftStore`, for the Crew extension's context snapshot and
+    /// its confirmed task/follow-up writes. A narrow accessor rather than
+    /// widening `shiftStore` itself, and deliberately *the shared instance* -
+    /// a second `ShiftStore()` would cache and write against the same files
+    /// (AGENTS.md's `CommandLibraryStore` lesson).
+    var crewShiftStore: ShiftStore { shiftStore }
 
     /// fm/grandline-sidebar-badges: fires every time `render` recomputes the
     /// banner's "needs your call" set (`needs_decision`/`blocked` tasks) -

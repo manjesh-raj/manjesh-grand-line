@@ -1,8 +1,9 @@
 // Manjesh Grand Line - native macOS app.
 //
-// Straw Hat Pirates phase 1's conversation runner - the plan's `LuffyRunner`
-// milestone (M1.2), named for the feature rather than the one member phase 1
-// ships so phase 2 adds crew inside it rather than around it.
+// The Straw Hat Pirates conversation runner - the plan's `LuffyRunner`
+// milestone (M1.2), named for the feature rather than for one member so that
+// phase 2's crew arrived *inside* it rather than around it. That held: phase
+// 2 added the context snapshot to a turn and changed nothing else here.
 //
 // This is the **ninth** caller of `ClaudeOneShot` (GL-26's one shared
 // `claude -p ... --output-format json` runner) and adds no new invocation
@@ -13,12 +14,14 @@
 //
 // What it deliberately does NOT copy from `SRELeadRunner`: the MCP config,
 // `--strict-mcp-config`, `--allowedTools` and `--permission-mode
-// bypassPermissions`. Phase 1's Luffy has no tools at all, so passing an
-// allowlist would be describing a capability that does not exist, and
-// `bypassPermissions` on a session with nothing to permit is a strictly
-// worse default. Read-only MCP tools are phase 2.5 (`luffy_stores_mcp.py`);
-// writes stay out of MCP entirely and always will - confirm cards are the
-// only write path this feature will ever have.
+// bypassPermissions`. The crew still has no tools - phase 2 gives them
+// *facts* (a bounded snapshot pushed into the prompt, `StrawHatContext`) and
+// a way to *propose* a write, never a tool call. So an allowlist would still
+// describe a capability that does not exist, and `bypassPermissions` on a
+// session with nothing to permit is still a strictly worse default.
+// Read-only MCP tools are phase 2.5 (`luffy_stores_mcp.py`); writes stay out
+// of MCP entirely and always will - confirm cards are the only write path
+// this feature will ever have.
 //
 // ## Stale `--resume`, and why the recovery is not just "drop it"
 //
@@ -40,9 +43,10 @@
 // session id mid-conversation recovers without losing the thread" - true
 // rather than aspirational.
 //
-// The transcript is in memory only. Phase 1 has no on-disk chat history by
-// explicit scope (the plan's M1.4 is deferred), so a conversation lives as
-// long as the app session does and no transcript is ever written anywhere.
+// The transcript is in memory only. There is no on-disk chat history by
+// explicit scope (the plan's M1.4 is still deferred through phase 2), so a
+// conversation lives as long as the app session does and no transcript is
+// ever written anywhere.
 
 import Foundation
 
@@ -54,11 +58,15 @@ import Foundation
 final class StrawHatRunner {
 
     /// One remembered turn, for the stale-resume recap only. Never written to
-    /// disk (phase 1 has no persistence) and never shown - the chat view keeps
-    /// its own copy of the messages it renders.
+    /// disk (there is no persistence yet) and never shown - the chat view
+    /// keeps its own copy of the messages it renders.
+    ///
+    /// `crew` is the reply's raw text, envelope and all. Deliberately not the
+    /// parsed sections: a recap's job is to remind the model what was already
+    /// said, and its own words are the most faithful form of that.
     private struct Turn {
         let captain: String
-        let luffy: String
+        let crew: String
     }
 
     /// How many past turns the recap may carry. Bounded because it is prepended
@@ -103,7 +111,9 @@ final class StrawHatRunner {
     /// subprocess and renders a reply, which is precisely the "shows or writes
     /// the captain's data while nobody is meant to be at the keyboard" rule in
     /// `AppLockGate`'s header.
-    func ask(_ message: String, completion: @escaping (Result<String, StrawHatError>) -> Void) {
+    func ask(_ message: String,
+             context: StrawHatContextSnapshot? = nil,
+             completion: @escaping (Result<String, StrawHatError>) -> Void) {
         let trimmed = message.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             completion(.failure(StrawHatError(message: "There was nothing to send.")))
@@ -117,8 +127,14 @@ final class StrawHatRunner {
         let token = SubprocessCancellation()
         inFlight = token
         let resume = sessionID
+        // Phase 2 (M2.3): the turn envelope's `[CONTEXT]` half. Captured by
+        // the caller, not here - this class owns `claude`, and a runner that
+        // reached into `ShiftStore`/`DocsRunbookStore` to build its own
+        // snapshot would be the second consumer of stores the page already
+        // holds (AGENTS.md's `CommandLibraryStore` lesson).
+        let prompt = StrawHatTurn.prompt(context: context, message: trimmed)
 
-        runOnce(prompt: trimmed, resumeSessionID: resume, token: token) { [weak self] result in
+        runOnce(prompt: prompt, resumeSessionID: resume, token: token) { [weak self] result in
             guard let self else { return }
             switch result {
             case .success(let reply):
@@ -134,7 +150,13 @@ final class StrawHatRunner {
                     return
                 }
                 AppLog.ai.error("straw hat: turn failed while resuming - retrying with a transcript recap")
-                let recapped = Self.promptWithRecap(message: trimmed, transcript: self.transcript)
+                // The recovered turn carries the same snapshot as the one it
+                // replaces: the thread is what was lost, not the context, and
+                // a recovery that silently dropped it would answer with less
+                // than the failed attempt had.
+                let recapped = StrawHatTurn.prompt(context: context,
+                                                   recap: Self.recapLines(self.transcript),
+                                                   message: trimmed)
                 self.runOnce(prompt: recapped, resumeSessionID: nil, token: token) { [weak self] retry in
                     guard let self else { return }
                     switch retry {
@@ -179,7 +201,7 @@ final class StrawHatRunner {
         // session because one reply omitted the field would break the thread
         // for no reason.
         if let sid = reply.sessionID { sessionID = sid }
-        transcript.append(Turn(captain: captain, luffy: reply.text))
+        transcript.append(Turn(captain: captain, crew: reply.text))
         if transcript.count > Self.maxRecapTurns {
             transcript.removeFirst(transcript.count - Self.maxRecapTurns)
         }
@@ -207,30 +229,26 @@ final class StrawHatRunner {
         }
     }
 
-    /// The recovery prompt: a labelled recap of the conversation so far,
-    /// then the captain's actual message.
+    /// The recovery prompt's recap half, kept as this class's own entry point
+    /// because `StrawHatSelfTest` asserts its shape directly and because
+    /// "how much of the transcript does a recovery carry" is this runner's
+    /// decision, not the envelope's.
     ///
-    /// Two labelled parts rather than one blob, so the recap can never be
-    /// mistaken for something the captain just typed - the same separation the
-    /// plan's phase-2 `[CONTEXT]`/`[MESSAGE]` turn envelope formalises, in the
-    /// one minimal form phase 1 genuinely needs. `internal` so
-    /// `StrawHatSelfTest` can assert its shape without spawning anything.
+    /// The labelling itself belongs to `StrawHatTurn.prompt`, which owns all
+    /// three of a turn's blocks - see its own note on why that is one place
+    /// rather than two. `internal` so the suite can call it with no
+    /// subprocess.
     static func promptWithRecap(message: String, transcript: [String]) -> String {
-        guard !transcript.isEmpty else { return message }
-        let recap = transcript.joined(separator: "\n")
-        return """
-        [RECAP OF THIS CONVERSATION SO FAR - the session was interrupted and had to be restarted. This is history, not something the captain just said. Do not reply to it, and do not mention the interruption unless asked.]
-        \(recap)
-
-        [MESSAGE FROM THE CAPTAIN - reply to this]
-        \(message)
-        """
+        StrawHatTurn.prompt(context: nil, recap: transcript, message: message)
     }
 
-    private static func promptWithRecap(message: String, transcript: [Turn]) -> String {
-        promptWithRecap(message: message, transcript: transcript.flatMap {
-            ["Captain: \($0.captain)", "\(StrawHatCrew.speaker.displayName): \($0.luffy)"]
-        })
+    /// The in-memory transcript flattened into the alternating speaker lines a
+    /// recap carries. Attributed to the crew as a whole rather than to Luffy
+    /// by name: phase 2's replies can carry several voices, and re-labelling
+    /// every past reply as his would tell a recovered session that Nami's
+    /// task proposals were his.
+    private static func recapLines(_ transcript: [Turn]) -> [String] {
+        transcript.flatMap { ["Captain: \($0.captain)", "Crew: \($0.crew)"] }
     }
 
     // MARK: Probe / self-test surface
