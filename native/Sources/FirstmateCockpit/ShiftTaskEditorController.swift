@@ -57,6 +57,19 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
     /// for a brand-new task or one with no attachment.
     private let existingAttachmentData: Data?
 
+    /// Seeds for a brand-new task opened with a starting point already in
+    /// hand - `defaultProjectID`'s own shape, extended by
+    /// `fm/straw-hat-task-proposal-full-editor` for the Straw Hat Pirates
+    /// confirm-card flow: a crew member's draft has a title, an optional due
+    /// date and optional free-text notes, and the captain reviews/adjusts
+    /// everything else (priority, project, tags) themselves before Save. All
+    /// four are ignored when `task` is non-nil - editing an existing task
+    /// already has its own values for each.
+    private let prefillTitle: String?
+    private let prefillDescription: String?
+    private let prefillDueDate: String?
+    private let prefillDueTime: String?
+
     /// Called with the assembled task and the captain's attachment decision
     /// on Save. The caller (`ShiftController`) persists both via
     /// `ShiftStore.addTask`/`updateTask`.
@@ -106,11 +119,17 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
     /// field, never a deliberate manual edit.
     private var dueManuallyEdited = false
 
-    init(task: ShiftTask?, projects: [ShiftProject], defaultProjectID: String? = nil, existingAttachmentData: Data? = nil) {
+    init(task: ShiftTask?, projects: [ShiftProject], defaultProjectID: String? = nil, existingAttachmentData: Data? = nil,
+         prefillTitle: String? = nil, prefillDescription: String? = nil,
+         prefillDueDate: String? = nil, prefillDueTime: String? = nil) {
         self.editing = task
         self.projects = projects
         self.defaultProjectID = defaultProjectID
         self.existingAttachmentData = existingAttachmentData
+        self.prefillTitle = prefillTitle
+        self.prefillDescription = prefillDescription
+        self.prefillDueDate = prefillDueDate
+        self.prefillDueTime = prefillDueTime
         self.selectedPriority = task?.priority ?? .normal
         let candidateProjectID = task?.projectID ?? defaultProjectID
         self.selectedProjectID = projects.contains { $0.id == candidateProjectID } ? candidateProjectID : nil
@@ -127,7 +146,7 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
 
         // MARK: Title + natural-language date hint
 
-        titleField.stringValue = editing?.title ?? ""
+        titleField.stringValue = editing?.title ?? prefillTitle ?? ""
         titleField.delegate = self
         form.addLead(titleField)
         hintLabel = form.addLeadHint(hintAttributedString(muted: .labelColor, emphasis: .labelColor))
@@ -158,7 +177,13 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
 
         dueDatePicker.target = self
         dueDatePicker.action = #selector(dueDatePickerChanged)
-        let existingDue = ShiftDateFormatting.dateTime(from: editing?.dueDate, time: editing?.dueTime)
+        // `editing?.dueDate` and `editing?.dueTime` are `String??` collapsed
+        // by optional chaining - genuinely `nil` when editing an existing
+        // task that has no due date, not merely "editing is nil". The prefill
+        // must never fill that in, so it only applies for a brand-new task.
+        let initialDueDate = editing != nil ? editing?.dueDate : prefillDueDate
+        let initialDueTime = editing != nil ? editing?.dueTime : prefillDueTime
+        let existingDue = ShiftDateFormatting.dateTime(from: initialDueDate, time: initialDueTime)
         if let existingDue {
             dueRow.isOn = true
             dueDatePicker.dateValue = existingDue
@@ -189,7 +214,7 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         // MARK: Description
 
         form.addSection("Description")
-        descriptionView.string = editing?.description ?? ""
+        descriptionView.string = editing?.description ?? prefillDescription ?? ""
         form.addRow(descriptionView)
 
         // MARK: Attachment (existing feature, unchanged)
@@ -425,4 +450,18 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
     @objc private func cancel() {
         dismiss(self)
     }
+
+    #if FM_SELFTESTS
+    /// The prefilled field values a suite cannot otherwise reach - `titleField`
+    /// etc. are `private`, and `presentAsSheet` cannot be relied on to work
+    /// headlessly (no self-test in this codebase does - see
+    /// `DaylightChromeSelfTest`'s own convention of mounting a sheet directly).
+    var debugTitleText: String { titleField.stringValue }
+    var debugDescriptionText: String { descriptionView.string }
+    var debugDueRowIsOn: Bool { dueRow.isOn }
+    var debugDueDateValue: Date { dueDatePicker.dateValue }
+    /// Triggers the real `save()` - the same method the footer's own Save
+    /// button target/action calls.
+    func debugTriggerSave() { save() }
+    #endif
 }

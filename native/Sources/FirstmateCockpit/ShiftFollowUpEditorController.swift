@@ -21,6 +21,15 @@ final class ShiftFollowUpEditorController: NSViewController {
     private let tasks: [ShiftTask]
     private let projects: [ShiftProject]
 
+    /// Seeds for a brand-new follow-up opened with a starting point already
+    /// in hand - `ShiftTaskEditorController`'s own prefill params, extended
+    /// here by `fm/straw-hat-task-proposal-full-editor` for the Straw Hat
+    /// Pirates confirm-card flow. Ignored when `followUp` is non-nil.
+    private let prefillTitle: String?
+    private let prefillNotes: String?
+    private let prefillFollowUpAt: String?
+    private let prefillFollowUpTime: String?
+
     /// Called with the assembled follow-up on Save.
     var onSave: ((ShiftFollowUp) -> Void)?
 
@@ -39,10 +48,16 @@ final class ShiftFollowUpEditorController: NSViewController {
     private var selectedTaskIndex = 0
     private var selectedProjectIndex = 0
 
-    init(followUp: ShiftFollowUp?, tasks: [ShiftTask], projects: [ShiftProject]) {
+    init(followUp: ShiftFollowUp?, tasks: [ShiftTask], projects: [ShiftProject],
+         prefillTitle: String? = nil, prefillNotes: String? = nil,
+         prefillFollowUpAt: String? = nil, prefillFollowUpTime: String? = nil) {
         self.editing = followUp
         self.tasks = tasks
         self.projects = projects
+        self.prefillTitle = prefillTitle
+        self.prefillNotes = prefillNotes
+        self.prefillFollowUpAt = prefillFollowUpAt
+        self.prefillFollowUpTime = prefillFollowUpTime
         self.selectedPriority = followUp?.priority ?? .normal
         super.init(nibName: nil, bundle: nil)
     }
@@ -54,11 +69,18 @@ final class ShiftFollowUpEditorController: NSViewController {
         view = form
         form.onApplyTheme = { [weak self] theme in self?.applyExtraTheme(theme) }
 
-        titleField.stringValue = editing?.title ?? ""
+        titleField.stringValue = editing?.title ?? prefillTitle ?? ""
         form.addLead(titleField)
 
         form.addSection("Details")
-        let existing = ShiftDateFormatting.dateTime(from: editing?.followUpAt, time: editing?.followUpTime)
+        // `editing?.followUpAt`/`.followUpTime` are `String??` collapsed by
+        // optional chaining - the prefill must only apply to a brand-new
+        // follow-up, never to one being edited that simply has no date yet
+        // (which cannot actually happen here, since every follow-up carries
+        // one, but the same discipline as the task editor's own guard).
+        let initialFollowUpAt = editing != nil ? editing?.followUpAt : prefillFollowUpAt
+        let initialFollowUpTime = editing != nil ? editing?.followUpTime : prefillFollowUpTime
+        let existing = ShiftDateFormatting.dateTime(from: initialFollowUpAt, time: initialFollowUpTime)
         followUpDatePicker.dateValue = existing
             ?? Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.date(bySettingHour: 9, minute: 0, second: 0, of: Date()) ?? Date())
             ?? Date()
@@ -85,7 +107,7 @@ final class ShiftFollowUpEditorController: NSViewController {
         form.addColumns([taskCard, projectCard])
 
         form.addSection("Notes")
-        notesView.string = editing?.notes ?? ""
+        notesView.string = editing?.notes ?? prefillNotes ?? ""
         form.addRow(notesView)
 
         form.setFooter(target: self,
@@ -148,4 +170,13 @@ final class ShiftFollowUpEditorController: NSViewController {
     @objc private func cancel() {
         dismiss(self)
     }
+
+    #if FM_SELFTESTS
+    var debugTitleText: String { titleField.stringValue }
+    var debugNotesText: String { notesView.string }
+    var debugFollowUpDateValue: Date { followUpDatePicker.dateValue }
+    /// Triggers the real `save()` - the same method the footer's own Save
+    /// button target/action calls.
+    func debugTriggerSave() { save() }
+    #endif
 }

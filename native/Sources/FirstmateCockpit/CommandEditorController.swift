@@ -249,4 +249,15 @@ final class CommandEditorController: NSViewController, NSTextFieldDelegate {
     }
 
     @objc private func cancelClicked() { dismiss(self) }
+
+    #if FM_SELFTESTS
+    var debugNameText: String { nameField.stringValue }
+    var debugDescriptionText: String { descriptionField.stringValue }
+    var debugTemplateText: String { templateTextView.string }
+    var debugSelectedCategoryID: String { CommandLibraryCategory.all[selectedCategoryIndex].id }
+    var debugSelectedRisk: CommandRiskLevel { selectedRisk }
+    /// Triggers the real `saveClicked()` - the same method the footer's own
+    /// Save button target/action calls.
+    func debugTriggerSave() { saveClicked() }
+    #endif
 }

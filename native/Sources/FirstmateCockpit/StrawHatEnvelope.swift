@@ -175,6 +175,56 @@ enum StrawHatProposalKind: String, CaseIterable {
         }
     }
 
+    /// Whether a confirmed proposal of this kind opens an existing "New X"
+    /// editor for the captain to review before anything is written, rather
+    /// than the confirm card writing it straight to the store.
+    ///
+    /// `fm/straw-hat-task-proposal-full-editor`: the captain's own complaint
+    /// - confirming a task proposal wrote it with a bare default priority and
+    /// no project, with no chance to set either, because `execute` only ever
+    /// had the fields the model supplied. Four kinds already have a real
+    /// "New X" sheet elsewhere in the app that exposes strictly more fields
+    /// than a proposal carries (`ShiftTaskEditorController`,
+    /// `ShiftFollowUpEditorController`, `CommandEditorController`,
+    /// `ScheduleEditorController`), so `StrawHatController.confirmProposal`
+    /// opens that same sheet, pre-filled from the proposal, instead of
+    /// calling `StrawHatProposalExecutor.execute` - see that controller's
+    /// `openEditorForReview`.
+    ///
+    /// The remaining two write kinds have no such reusable dialog: a runbook
+    /// draft already carries Robin's full generated body (there is nothing
+    /// missing to review the way a task's priority/project were), and a new
+    /// sticky note is edited in place on the corkboard rather than through any
+    /// modal at all - `StickyBoardController.newNoteTapped` creates a blank
+    /// note and hands it straight to the captain's own typing. Both keep
+    /// going through `execute` unchanged.
+    var opensEditor: Bool {
+        switch self {
+        case .addTask, .addFollowUp, .saveCommandDraft, .createScheduleDraft:
+            return true
+        case .createRunbookDraft, .addSticky, .openSRELead, .openDestination:
+            return false
+        }
+    }
+
+    /// The confirm card's wording once its editor has been opened - distinct
+    /// from `confirmedTitle`, which claims a write already happened. Nothing
+    /// has been written yet at this point: only the editor's own Save knows
+    /// whether the captain went on to save it, which is why this reads as an
+    /// invitation rather than a past-tense claim.
+    var openedForReviewLabel: String {
+        switch self {
+        case .addTask: return "Opened in the Task editor"
+        case .addFollowUp: return "Opened in the Follow-up editor"
+        case .saveCommandDraft: return "Opened in the Command editor"
+        case .createScheduleDraft: return "Opened in the Schedule editor"
+        case .createRunbookDraft, .addSticky, .openSRELead, .openDestination:
+            // Unreachable - `opensEditor` is false for these, so
+            // `StrawHatController` never asks them for this label.
+            return confirmedTitle
+        }
+    }
+
     /// Whether the model has to supply a `title`, or the app derives one.
     ///
     /// Derived is better wherever the title is a *function of already

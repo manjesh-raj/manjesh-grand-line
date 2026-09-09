@@ -447,6 +447,12 @@ final class StrawHatConfirmCard: NSView {
     private var theme: HelmTheme
     private var isConfirmed = false
     private var didFail = false
+    /// `.openedForReview` landed - a distinct third state from `isConfirmed`
+    /// (nothing has been written) and `didFail` (nothing went wrong either).
+    /// Styled with the accent hue rather than the "written" green, so the
+    /// card never implies a write that has not happened yet - the editor's
+    /// own Save is what decides that, entirely independent of this card.
+    private var openedForReview = false
 
     init(proposal: StrawHatProposal, theme: HelmTheme, now: Date = Date()) {
         self.proposal = proposal
@@ -629,7 +635,7 @@ final class StrawHatConfirmCard: NSView {
     @objc private func confirmTapped() {
         // Guarded as well as visually removed: a keyboard activation racing
         // the rebuild would otherwise be a second write.
-        guard !isConfirmed, let onConfirm else { return }
+        guard !isConfirmed, !openedForReview, let onConfirm else { return }
         switch onConfirm(proposal) {
         case .written:
             isConfirmed = true
@@ -647,6 +653,16 @@ final class StrawHatConfirmCard: NSView {
             // The button stays, because a retry is the useful next action.
             didFail = true
             detailLabel.stringValue = message
+        case .openedForReview(let message):
+            // Not `.written`: nothing has been saved by this card, only
+            // handed to a captain-facing editor. The button is hidden anyway
+            // - re-opening a second copy of the same editor for one proposal
+            // is not a useful retry the way it is for `.failed`.
+            openedForReview = true
+            didFail = false
+            confirmButton.isHidden = true
+            doneLabel.isHidden = false
+            doneLabel.stringValue = message
         }
         applyTheme(theme)
     }
@@ -656,7 +672,7 @@ final class StrawHatConfirmCard: NSView {
         icon.applyTheme(theme)
         layer?.backgroundColor = HelmField.fill(theme).cgColor
         let accent = HelmTheme.nsColor(theme.accentHex)
-        layer?.borderColor = isConfirmed
+        layer?.borderColor = (isConfirmed || openedForReview)
             ? HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6).cgColor
             : accent.withAlphaComponent(0.45).cgColor
         kicker.textColor = HelmTheme.mutedInk(theme)
@@ -669,12 +685,18 @@ final class StrawHatConfirmCard: NSView {
         detailLabel.textColor = didFail
             ? HelmContrast.legibleTintedText(tintHex: HelmTint.critical.hex(in: theme), over: fill, theme: theme)
             : HelmField.mutedInk(theme)
-        doneLabel.textColor = HelmContrast.legibleTintedText(tintHex: HelmTint.good.hex(in: theme), over: fill, theme: theme)
+        // `.openedForReview` takes the accent hue rather than `.good`'s green
+        // - green would read as "this was written", which is exactly the
+        // claim this state must not make (nothing has been saved yet).
+        doneLabel.textColor = openedForReview
+            ? HelmContrast.legibleTintedText(tintHex: HelmTint.accent.hex(in: theme), over: fill, theme: theme)
+            : HelmContrast.legibleTintedText(tintHex: HelmTint.good.hex(in: theme), over: fill, theme: theme)
     }
 
     #if FM_SELFTESTS
     var debugProposal: StrawHatProposal { proposal }
     var debugIsConfirmed: Bool { isConfirmed }
+    var debugOpenedForReview: Bool { openedForReview }
     var debugConfirmButton: HelmButton { confirmButton }
     var debugConfirmButtonHidden: Bool { confirmButton.isHidden }
     var debugDetailText: String { detailLabel.stringValue }

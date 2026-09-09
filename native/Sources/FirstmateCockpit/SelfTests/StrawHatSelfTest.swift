@@ -85,6 +85,7 @@ enum StrawHatSelfTest {
         checkPhase3Parsing(&ok)
         checkPhase3Execution(&ok)
         checkCommandDraftGate(&ok)
+        checkEditorRoutingCommandGate(&ok)
         checkRecapPrompt(&ok)
         checkLockGate(&ok)
         checkSingleTurn(&ok)
@@ -557,6 +558,28 @@ enum StrawHatSelfTest {
                 == ["add_task", "add_follow_up", "create_runbook_draft",
                     "add_sticky", "save_command_draft", "create_schedule_draft"],
               "and exactly six write, got \(StrawHatProposalKind.allCases.filter { !$0.isNavigation }.map(\.rawValue))", &ok)
+
+        // `fm/straw-hat-task-proposal-full-editor`: of the six writes, four
+        // now route through an existing "New X" editor for the captain to
+        // review before anything is written, rather than a confirm card
+        // writing it straight to the store - `StrawHatProposalKind.
+        // opensEditor`. Asserted as a literal on both sides, the same way the
+        // write/handoff split above is: a kind quietly moved off this list
+        // would go back to writing a bare default straight to the store with
+        // no review, which is the exact captain complaint this change fixes.
+        check(StrawHatProposalKind.allCases.filter(\.opensEditor).map(\.rawValue)
+                == ["add_task", "add_follow_up", "save_command_draft", "create_schedule_draft"],
+              "exactly four kinds open an editor for review, got \(StrawHatProposalKind.allCases.filter(\.opensEditor).map(\.rawValue))", &ok)
+        check(StrawHatProposalKind.allCases.filter { !$0.opensEditor }.map(\.rawValue)
+                == ["create_runbook_draft", "add_sticky", "open_sre_lead", "open_destination"],
+              "and the rest do not, got \(StrawHatProposalKind.allCases.filter { !$0.opensEditor }.map(\.rawValue))", &ok)
+        // Every editor-routed kind must actually say so on its card, or the
+        // captain presses "Add task" and sees nothing distinguish it from a
+        // write that already happened.
+        for kind in StrawHatProposalKind.allCases where kind.opensEditor {
+            check(!kind.openedForReviewLabel.isEmpty && kind.openedForReviewLabel != kind.confirmedTitle,
+                  "\(kind.rawValue) needs its own \"opened for review\" wording, distinct from a past-tense claim", &ok)
+        }
 
         // A navigation kind can never travel the write path, whatever the view
         // renders it as - `execute`'s own guard, asserted rather than trusted.
@@ -1963,6 +1986,51 @@ enum StrawHatSelfTest {
               "the stored risk must be re-derived from the text, never taken from the model", &ok)
         check(!code.contains("risk: .readOnly"),
               "a crew-authored command must never be stored readOnly", &ok)
+    }
+
+    /// The *production* half of that same gate, since `fm/straw-hat-task-
+    /// proposal-full-editor`: `save_command_draft` now routes through
+    /// `StrawHatController.openCommandEditor` (see `StrawHatProposalExecutor.
+    /// swift`'s header - `execute` is never called for this kind from the
+    /// confirm-card flow any more), so the check above alone would leave the
+    /// *real* gate unguarded - it only asserts the old, now production-dead
+    /// path still has its own internal structure right.
+    ///
+    /// Same reasoning as `checkCommandDraftGate`: a modal cannot be answered
+    /// from a headless suite, and a correctly pre-filled editor proves nothing
+    /// about whether the captain was asked to read the raw command text
+    /// first, so this is a source guard too.
+    private static func checkEditorRoutingCommandGate(_ ok: inout Bool) {
+        guard let sources = SelfTestSources.appSourceDirectory() else {
+            print("  NOTE: source tree not reachable - skipping the editor-routing command gate source guard")
+            return
+        }
+        guard let text = try? String(contentsOf: sources.appendingPathComponent("StrawHatController.swift"), encoding: .utf8) else {
+            check(false, "could not read StrawHatController.swift", &ok)
+            return
+        }
+        let code = text.split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+
+        guard let gateRange = code.range(of: "func openCommandEditor") else {
+            check(false, "openCommandEditor is gone - a crew-authored command has no route to the library at all", &ok)
+            return
+        }
+        let body = code[gateRange.lowerBound...]
+        guard let confirmRange = body.range(of: "CommandRiskConfirmation.confirmAIAuthored"),
+              let presentRange = body.range(of: "presentAsSheet(editor)") else {
+            check(false, "openCommandEditor must both gate with confirmAIAuthored and present the pre-filled editor", &ok)
+            return
+        }
+        check(confirmRange.lowerBound < presentRange.lowerBound,
+              "the AI-authored gate has to run before the editor ever opens, not after", &ok)
+        check(body.contains("intent: .saveTemplate"),
+              "...with the save intent, not the run intent a shell send would use", &ok)
+        // The editor is what lets the captain change everything else; the
+        // heuristic only has to seed a starting point.
+        check(body.contains("CommandRiskConfirmation.heuristicRisk(of: command)"),
+              "the prefilled risk must still come from the text, never invented", &ok)
     }
 
     // MARK: Harness
