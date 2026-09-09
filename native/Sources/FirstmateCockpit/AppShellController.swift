@@ -340,7 +340,7 @@ final class AppShellController: NSViewController {
         // one the Tasks page shows. F6: Overview's "Log" tab reads the task
         // half of its feed straight from Shift's own activity YAML rather
         // than a second copy of it (see `FleetLogFeed`'s header).
-        self.overview = FleetController(shiftStore: shiftStore)
+        self.overview = FleetController(shiftStore: shiftStore, commandLibraryRoot: commandLibraryStore.root)
         self.dictation = DictationController(store: dictationStore)
         // Phase 5 (cockpit-shift-power-features): `shiftStore` is now built
         // once by the app delegate and shared with the menu bar item, the

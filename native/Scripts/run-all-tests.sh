@@ -44,6 +44,18 @@
 # which works either way: the flags remain plain source text inside the
 # `#if FM_SELFTESTS` block.
 #
+# PYTHON SUITES. Two of this app's MCP servers are standalone stdlib-only
+# Python scripts with their own `unittest` suites next to them
+# (`Scripts/test_*.py`). Until phase 2.5 they ran only when somebody typed the
+# command by hand, so `test_sre_kubectl_mcp.py`'s read-only kubectl allowlist
+# and `test_luffy_stores_mcp.py`'s write-refusal proof - the two most
+# security-relevant assertions in this repo - were never once run by CI. They
+# are part of this run now, discovered by glob for the same reason the Swift
+# list is discovered from `main.swift`: a new one joins automatically. They
+# need no window, so they run in the default and `--ci` selections and not in
+# `--session-only`'s windowed subset, and they are skipped with a note rather
+# than failing when `python3` is absent.
+#
 # SAFETY: this runs the app's own binary, which is safe *because* every one of
 # these flags is handled before `NSApplication.shared` is ever touched - the
 # process runs headless and exits. Do NOT extend this script to launch the app
@@ -463,6 +475,44 @@ for flag in "${FLAGS[@]}"; do
   fi
 done
 
+# --- Python suites -------------------------------------------------------
+#
+# Only in a selection that is meant to be exhaustive: an explicit
+# `FM_RUN_...` argument means "just that suite", and `--session-only` is the
+# windowed complement, which these are not part of.
+PY_PASSED=()
+PY_FAILED=()
+PY_SKIPPED=()
+if [ ${#REQUESTED[@]} -eq 0 ] && [ "$SESSION_ONLY" -eq 0 ]; then
+  PY_SUITES=()
+  while IFS= read -r f; do
+    [ -n "$f" ] && PY_SUITES+=("$(basename "$f" .py)")
+  done < <(ls Scripts/test_*.py 2>/dev/null | sort)
+
+  if [ ${#PY_SUITES[@]} -gt 0 ]; then
+    echo ""
+    if ! command -v python3 >/dev/null 2>&1; then
+      # Skipped, never silently dropped: a run with no python3 must not read
+      # as one where these passed.
+      echo "python3 not found - skipping ${#PY_SUITES[@]} Python suite(s)"
+      PY_SKIPPED=("${PY_SUITES[@]}")
+    else
+      for suite in "${PY_SUITES[@]}"; do
+        py_out=$(mktemp)
+        if (cd Scripts && python3 -m unittest "$suite" -q) >"$py_out" 2>&1; then
+          printf 'PASS  %s (python)\n' "$suite"
+          PY_PASSED+=("$suite")
+        else
+          printf 'FAIL  %s (python)\n' "$suite"
+          PY_FAILED+=("$suite")
+          sed 's/^/      | /' "$py_out"
+        fi
+        rm -f "$py_out"
+      done
+    fi
+  fi
+fi
+
 echo ""
 echo "======================================================"
 printf '%d passed, %d failed, %d timed out, %d skipped (of %d)\n' \
@@ -473,8 +523,14 @@ fi
 if [ ${#TIMEDOUT[@]} -gt 0 ]; then
   printf 'timed out: %s\n' "${TIMEDOUT[*]}"
 fi
-if [ ${#FAILED[@]} -gt 0 ] || [ ${#TIMEDOUT[@]} -gt 0 ]; then
+if [ ${#PY_PASSED[@]} -gt 0 ] || [ ${#PY_FAILED[@]} -gt 0 ] || [ ${#PY_SKIPPED[@]} -gt 0 ]; then
+  printf 'python: %d passed, %d failed, %d skipped\n' \
+    "${#PY_PASSED[@]}" "${#PY_FAILED[@]}" "${#PY_SKIPPED[@]}"
+  [ ${#PY_SKIPPED[@]} -gt 0 ] && printf 'python skipped: %s\n' "${PY_SKIPPED[*]}"
+fi
+if [ ${#FAILED[@]} -gt 0 ] || [ ${#TIMEDOUT[@]} -gt 0 ] || [ ${#PY_FAILED[@]} -gt 0 ]; then
   [ ${#FAILED[@]} -gt 0 ] && printf 'failed:  %s\n' "${FAILED[*]}"
+  [ ${#PY_FAILED[@]} -gt 0 ] && printf 'python failed:  %s\n' "${PY_FAILED[*]}"
   exit 1
 fi
 echo "all good"

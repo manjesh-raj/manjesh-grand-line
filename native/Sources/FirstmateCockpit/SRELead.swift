@@ -250,7 +250,14 @@ enum SRELead {
             ?? resolveExecutable(name: "claude", commonPaths: ["/opt/homebrew/bin/claude", "/usr/local/bin/claude"])
     }
 
-    private static func resolvePython3() -> String? {
+    /// Not `private`: `StrawHatCrew.setUpTools` needs the same `python3` for
+    /// its own MCP server (`luffy_stores_mcp.py`), and one resolver is the
+    /// point - a GUI app launched from Finder inherits a minimal PATH, so
+    /// "where is python3" is a question with exactly one right answer here and
+    /// a second copy of it would be a second thing to get wrong. Same
+    /// layering `StrawHatCrew.resolveClaude()` already uses over
+    /// `SRELead.resolveClaude()`.
+    static func resolvePython3() -> String? {
         resolveExecutable(name: "python3", commonPaths: ["/usr/bin/python3", "/opt/homebrew/bin/python3", "/usr/local/bin/python3"])
     }
 

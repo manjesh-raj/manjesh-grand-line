@@ -58,6 +58,13 @@ if [ -f "Scripts/sre_kubectl_mcp.py" ]; then
   cp "Scripts/sre_kubectl_mcp.py" "$APP_DIR/Contents/Resources/sre_kubectl_mcp.py"
 fi
 
+# The Straw Hat crew's read-only stores MCP tools (phase 2.5) - resolved by
+# StrawHatCrew.resolveStoresScript() the same three ways, bundle Resources
+# first.
+if [ -f "Scripts/luffy_stores_mcp.py" ]; then
+  cp "Scripts/luffy_stores_mcp.py" "$APP_DIR/Contents/Resources/luffy_stores_mcp.py"
+fi
+
 # The Whiteboard destination's vendored Excalidraw bundle (WhiteboardAssets.swift
 # looks for it under Contents/Resources first, falling back to the source tree
 # for the swift run/swift build dev flow - the same three-step resolution
