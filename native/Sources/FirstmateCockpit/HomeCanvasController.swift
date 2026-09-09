@@ -108,6 +108,10 @@ final class HomeCanvasController: NSViewController {
     /// no subprocess, no network - and is what `DictationController` seeds
     /// its own state from.
     private var pushedDictationStatus: DictationStatus?
+    /// `nil` until the crew page has pushed one - i.e. until a conversation
+    /// has actually moved. The card then reads as "no conversation yet",
+    /// which is the honest state at launch rather than a fabricated summary.
+    private var strawHatState: StrawHatCanvasState?
 
     private let sources: Sources
     private var space: DaylightSpace = .overview
@@ -332,6 +336,22 @@ final class HomeCanvasController: NSViewController {
 
     /// The dictation engine already fans its status out to the Dictation page
     /// and the floating HUD; this is a third subscriber, not a new signal.
+    /// `fm/polish-straw-hat-overview-card-and-voice-c8d3`: the Straw Hat
+    /// Pirates card's summary, pushed from `StrawHatController`.
+    ///
+    /// Deliberately **not** gated on this page being visible, unlike
+    /// `applyDictationStatus` below. Every state change here happens while the
+    /// captain is on the crew page - i.e. while this canvas is hidden - so a
+    /// visibility gate would mean the card still showed the previous
+    /// conversation's summary when they came back. Phase 3 learned the same
+    /// thing about the background-signals observer for the same reason. The
+    /// stored value is always current; only the *render* waits.
+    func applyStrawHat(_ state: StrawHatCanvasState) {
+        strawHatState = state
+        guard isViewLoaded else { return }
+        setNeedsRender()
+    }
+
     func applyDictationStatus(_ status: DictationStatus) {
         pushedDictationStatus = status
         guard isViewLoaded, !view.isHidden else { return }
@@ -525,6 +545,7 @@ final class HomeCanvasController: NSViewController {
         switch module {
         case .briefing: fillBriefing(&content, cardWidth: cardWidth)
         case .fleet: fillFleet(&content)
+        case .strawHat: fillStrawHat(&content)
         case .tasks: fillTasks(&content)
         case .mergeQueue: fillMergeQueue(&content)
         case .console: fillConsole(&content)
@@ -685,6 +706,78 @@ final class HomeCanvasController: NSViewController {
                                      value: pr.checks == "none" ? "no checks" : pr.checks)
         }
         content.body = .peekRows(Array(rows))
+    }
+
+    /// The Straw Hat Pirates card.
+    ///
+    /// The crew's own Jolly Roger rather than an SF Symbol, which is the
+    /// captain's own ask: this card's job is to be recognisable as *the crew*
+    /// among a grid of otherwise-uniform hue tiles. `module.symbol` stays the
+    /// fallback if the payload ever stops decoding - see
+    /// `HelmGradientTile.configure(artwork:symbol:hue:)`.
+    ///
+    /// The body is a preview of what was last said, not a count of anything:
+    /// there is no "unread" concept here (the captain is the only other
+    /// participant, and a reply they have not read is one they asked for
+    /// seconds ago), so the useful thing to show is where the conversation
+    /// got to. Nothing is invented - with no conversation yet it says so and
+    /// names what the crew can be asked for.
+    private func fillStrawHat(_ content: inout HelmModuleCard.Content) {
+        content.artwork = StrawHatFlag.image
+        let aboard = "\(StrawHatMember.allCases.count) aboard"
+
+        guard let state = strawHatState, state.exchanges > 0 || state.isThinking else {
+            content.subtitle = aboard
+            // Short on purpose: a module note is one or two lines at a card's
+            // real width, so the invitation is the half that has to survive -
+            // "every write is yours to confirm" is already on this page's own
+            // drill subtitle and on the chat's empty state.
+            content.body = .note("Ask for a task, runbook or command.")
+            return
+        }
+
+        // **No chip on this card, and that is measured rather than an
+        // omission.** `HelmModuleCard`'s header gives its title `.defaultLow`
+        // compression resistance, so the title yields to a chip - and a real
+        // off-screen render showed "Straw Hat Pirates" (17 characters) cut to
+        // "Straw Hat Pira..." beside a chip as short as "Nami +1". Every
+        // other chipped module has a short title (`Merge queue`, `Console`,
+        // `Health`); the two longest, `Morning briefing` and this one, have
+        // no room for one. The card's own name is the more important text, so
+        // everything a chip would have said goes in the subtitle, which has
+        // the full width to itself.
+        if state.isThinking {
+            content.subtitle = "thinking\u{2026}"
+        } else {
+            let noun = state.exchanges == 1 ? "1 exchange" : "\(state.exchanges) exchanges"
+            // Who actually spoke, not the whole roster - the roster is a
+            // constant and would say nothing about this conversation.
+            if let who = Self.speakerChip(state.lastSpeakers) {
+                content.subtitle = "\(who) \u{00B7} \(noun)"
+            } else {
+                content.subtitle = noun
+            }
+        }
+
+        content.body = .note(state.lastLine ?? "The crew is on it.")
+    }
+
+    /// "Nami", or "Nami +1" when more than one crew member spoke - who led
+    /// the most recent reply.
+    ///
+    /// **A count rather than a list, and that is measured.** A real
+    /// off-screen render showed "Nami & Luffy" too wide for this card's
+    /// subtitle line beside "3 exchanges"; one name plus a count fits, says
+    /// the same thing, and keeps the lane the reply was about ("Nami" means
+    /// it was about tasks) which is the actually useful half.
+    ///
+    /// `nil` for an unattributed reply (the parser's rung 2), because naming a
+    /// crew member who did not speak is exactly the plausible-but-wrong the
+    /// whole ladder exists to avoid.
+    private static func speakerChip(_ members: [StrawHatMember]) -> String? {
+        guard let first = members.first else { return nil }
+        let others = members.count - 1
+        return others > 0 ? "\(first.displayName) +\(others)" : first.displayName
     }
 
     private func fillConsole(_ content: inout HelmModuleCard.Content) {

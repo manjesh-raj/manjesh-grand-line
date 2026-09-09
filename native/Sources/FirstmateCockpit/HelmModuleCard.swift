@@ -191,6 +191,17 @@ final class HelmModuleCard: NSView {
         var hue: HelmDomainHue
         var chip: HelmModuleChip?
         var body: Body
+        /// A full-colour raster asset for the header tile, instead of
+        /// `symbol`'s glyph on the hue gradient.
+        ///
+        /// `nil` for every card but one. `fm/polish-straw-hat-overview-card-
+        /// and-voice-c8d3` added it for the Straw Hat Pirates card, whose
+        /// whole point is being recognisable as *the crew* rather than as one
+        /// more tinted tile - see `HelmGradientTile.configure(artwork:symbol:hue:)`
+        /// for what changes in the tile and what deliberately does not.
+        /// `symbol` stays required either way: it is the fallback if the asset
+        /// fails to decode.
+        var artwork: NSImage? = nil
     }
 
     // Geometry (§2.7, §2.6).
@@ -420,7 +431,11 @@ final class HelmModuleCard: NSView {
 
     func configure(_ content: Content) {
         self.content = content
-        tile.configure(symbol: content.symbol, hue: content.hue)
+        if let artwork = content.artwork {
+            tile.configure(artwork: artwork, symbol: content.symbol, hue: content.hue)
+        } else {
+            tile.configure(symbol: content.symbol, hue: content.hue)
+        }
         titleLabel.stringValue = content.title
         subtitleLabel.stringValue = content.subtitle
 
@@ -854,6 +869,10 @@ final class HelmModuleCard: NSView {
         let shadowHostClipsToBounds: Bool
         let borderWidth: CGFloat
         let hasTile: Bool
+        /// Whether the tile is rendering a raster asset rather than an SF
+        /// Symbol glyph. `hasTile` cannot say: a resolved symbol is an image
+        /// too, so a check written against it passes for either.
+        let tileHasArtwork: Bool
         let title: String
         let subtitle: String
         let chipText: String?
@@ -886,6 +905,7 @@ final class HelmModuleCard: NSView {
                 shadowHostClipsToBounds: layer?.masksToBounds ?? true,
                 borderWidth: card.layer?.borderWidth ?? 0,
                 hasTile: tile.geometryForTests.hasImage,
+                tileHasArtwork: tile.geometryForTests.hasArtwork,
                 title: titleLabel.stringValue,
                 subtitle: subtitleLabel.stringValue,
                 chipText: chipView.isHidden ? nil : chipLabel.stringValue,

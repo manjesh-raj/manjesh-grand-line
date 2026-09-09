@@ -1,12 +1,18 @@
 // Manjesh Grand Line - native macOS app.
 //
-// Straw Hat Pirates phase 1, the rendering half.
+// Straw Hat Pirates, the rendering half.
 //
 // Separate from `StrawHatSelfTest` on purpose: that one is pure logic and
-// runs in CI's blocking job, this one mounts a real `FleetController` in a
+// runs in CI's blocking job, this one mounts a real `StrawHatController` in a
 // real `NSWindow` and drives real `NSButton` target/action clicks, so it
 // belongs in `Scripts/run-all-tests.sh`'s `NEEDS_SESSION` list with its
 // window-backed peers. `FleetReplyLayoutSelfTest` is the sibling this copies.
+//
+// `fm/polish-straw-hat-overview-card-and-voice-c8d3` re-pointed this suite:
+// the chat was a tab on `FleetController` for phases 1-3 and is its own
+// destination now, so what used to be "switch to the Crew tab and measure"
+// is "mount the page". The one case that still mounts a `FleetController` is
+// M3.3's quick-ask card, which stays on the fleet dashboard by design.
 //
 // This app cannot be launched from a worktree to look at the page - every
 // build shares one bundle identity, so a launched copy can disturb the
@@ -45,8 +51,10 @@ enum StrawHatViewSelfTest {
         defer { StrawHatCrew.claudePathOverrideForTests = nil }
 
         _ = NSApplication.shared
-        checkTabExists(&ok)
-        checkChatFillsTheTab(&ok)
+        checkOwnCardAndDestination(&ok)
+        checkChatFillsThePage(&ok)
+        checkChatIsNotBuiltUntilMounted(&ok)
+        checkCanvasCardSummary(&ok)
         checkTurnRoundTrip(&ok)
         checkMarkdownRenders(&ok)
         checkNewConversation(&ok)
@@ -75,12 +83,11 @@ enum StrawHatViewSelfTest {
     // MARK: Harness
 
     private struct Mounted {
-        let controller: FleetController
+        let controller: StrawHatController
         let window: NSWindow
     }
 
-    /// A real `FleetController` in a real off-screen window, switched to the
-    /// Crew tab through the same method a real pill click reaches.
+    /// A real `StrawHatController` in a real off-screen window.
     private static func mount(width: CGFloat = 1100, height: CGFloat = 800,
                               shiftStore: ShiftStore? = nil,
                               stickyStore: StickyBoardStore? = nil,
@@ -96,12 +103,12 @@ enum StrawHatViewSelfTest {
         // Phase 3's three write stores are passed only by the cases that then
         // assert what a confirmed proposal wrote - a `nil` one is the real
         // "this page has no such store" path, which must fail visibly.
-        let controller = FleetController(shiftStore: shiftStore ?? ShiftStore(),
-                                         commandLibraryRoot: FileManager.default.temporaryDirectory
-                                             .appendingPathComponent("fm-straw-hat-view-commands", isDirectory: true),
-                                         commandLibraryStore: commandLibraryStore,
-                                         stickyStore: stickyStore,
-                                         scheduleStore: scheduleStore)
+        let controller = StrawHatController(shiftStore: shiftStore ?? ShiftStore(),
+                                            commandLibraryRoot: FileManager.default.temporaryDirectory
+                                                .appendingPathComponent("fm-straw-hat-view-commands", isDirectory: true),
+                                            commandLibraryStore: commandLibraryStore,
+                                            stickyStore: stickyStore,
+                                            scheduleStore: scheduleStore)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
                               styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.contentViewController = controller
@@ -110,61 +117,139 @@ enum StrawHatViewSelfTest {
         return Mounted(controller: controller, window: window)
     }
 
+    /// The page *is* the crew now, so this only settles layout - there is no
+    /// tab to select and no height to derive. Kept as a named helper rather
+    /// than inlined so the diff that removed the tab is legible, and because
+    /// every case wants the same two lines.
     private static func showCrew(_ m: Mounted) {
-        m.controller.debugSelectTab("crew")
         m.controller.view.layoutSubtreeIfNeeded()
-        // `updateCrewChatHeight` runs from `viewDidLayout`, which a manual
-        // `layoutSubtreeIfNeeded` on a never-displayed window does not always
-        // drive - so ask for it directly too. Idempotent (epsilon-guarded).
-        m.controller.updateCrewChatHeight()
-        m.controller.view.layoutSubtreeIfNeeded()
+        m.controller.debugChat.layoutSubtreeIfNeeded()
     }
 
     // MARK: Cases
 
-    private static func checkTabExists(_ ok: inout Bool) {
-        let m = mount()
-        check(m.controller.debugTabIDs == ["overview", "log", "crew"],
-              "Overview offers exactly Overview/Log/Crew, got \(m.controller.debugTabIDs)", &ok)
-        // The captain's placement call: inside Overview, NOT a new rail
-        // destination. A future task adding one should have to change this
-        // line deliberately rather than by accident.
-        check(!RailDestination.allCases.contains { $0.title.lowercased().contains("straw") },
-              "phase 1 must not add a rail destination - the captain put this inside Overview", &ok)
+    /// The captain's own placement correction, asserted as the tables it
+    /// actually lives in.
+    ///
+    /// Phases 1-3 put this chat on a third tab inside `FleetController`, and
+    /// this case used to assert exactly that - plus that no rail destination
+    /// existed, with a comment saying a future task adding one "should have to
+    /// change this line deliberately rather than by accident". This is that
+    /// deliberate change: `fm/polish-straw-hat-overview-card-and-voice-c8d3`
+    /// is the captain asking for its own Overview card instead, so the
+    /// assertions are **inverted** rather than deleted - they had become a
+    /// record of the old behaviour, the same shape audit #2 §4.5 found in
+    /// `SessionRestoreSelfTest` and §1 found in
+    /// `checkSettingsTwoColumnLayout`.
+    ///
+    /// What is asserted, and why each half matters: the card exists on
+    /// Overview (the ask), it opens *its own* destination rather than Fleet's
+    /// (the substance of the ask - a card that opened Overview would look
+    /// right and change nothing), and Fleet's own tab strip no longer offers
+    /// it (a duplicate entry point would be its own confusion).
+    private static func checkOwnCardAndDestination(_ ok: inout Bool) {
+        check(DaylightModule.allCases.contains(.strawHat),
+              "there is a Straw Hat Pirates module - the captain asked for its own card", &ok)
+        check(DaylightModule.strawHat.appearsOnOverview,
+              "...and it renders on the Overview canvas", &ok)
+        check(DaylightModule.strawHat.isVisible(in: .overview),
+              "...which is what the canvas filter actually reads", &ok)
+        check(DaylightModule.strawHat.space == nil,
+              "...and nowhere else - it has no space of its own, like the briefing and Fleet", &ok)
+        check(DaylightModule.strawHat.opens == .strawHat,
+              "the card opens its own page, not Fleet's - got \(DaylightModule.strawHat.opens.rawValue)", &ok)
+        check(DaylightModule.strawHat.title == "Straw Hat Pirates",
+              "the card is named for the crew, got \(DaylightModule.strawHat.title)", &ok)
 
-        check(m.controller.debugActiveTabID == "overview", "Overview is still the default tab", &ok)
-        check(m.controller.debugCrewTabHidden, "the Crew tab's content starts hidden", &ok)
+        // The page it opens is a real, registered body slot of its own.
+        check(RailDestination.strawHat.slot == .strawHat,
+              "the destination has its own body slot rather than sharing one", &ok)
+        check(RailDestination.strawHat.bodyTitle == "Straw Hat Pirates",
+              "...titled for the crew, got \(RailDestination.strawHat.bodyTitle)", &ok)
 
-        showCrew(m)
-        check(!m.controller.debugCrewTabHidden, "selecting Crew shows its content", &ok)
-        check(m.controller.debugActiveTabID == "crew", "...and it becomes the active tab", &ok)
+        // Fleet is back to the two tabs F6 gave it. Asserted against the real
+        // strip, not against the enum, so a tab left in the UI would fail.
+        let fleet = FleetController(shiftStore: ShiftStore())
+        let fleetWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 800),
+                                   styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        fleetWindow.contentViewController = fleet
+        fleet.view.layoutSubtreeIfNeeded()
+        check(fleet.debugTabIDs == ["overview", "log"],
+              "Fleet's own page is back to Overview/Log - got \(fleet.debugTabIDs)", &ok)
+        check(findLabel(in: fleet.view, text: "Crew") == nil,
+              "...with no leftover Crew pill in its tab strip", &ok)
 
-        m.controller.debugSelectTab("overview")
-        m.controller.view.layoutSubtreeIfNeeded()
-        check(m.controller.debugCrewTabHidden, "switching away hides it again", &ok)
+        // The card's own tile: the captain asked for the crew's Jolly Roger
+        // on it, so this drives the *real* canvas and reads the real tile.
+        // `hasTile` would pass for the SF Symbol fallback, which is why the
+        // assertion is on the artwork path specifically.
+        // Every store below resolves through the scratch overrides
+        // `main.swift`'s own `#if FM_SELFTESTS` block sets for any `FM_RUN_*`
+        // process (`FM_SHIFT_DIR`, `FM_HOSTS_FILE`, `FM_SCHEDULES_FILE`,
+        // `FM_DOCS_RUNBOOKS_DIR`, `FM_CODE_PREVIEW_DIR`), so this reaches
+        // none of the captain's real data. Driving the *real* canvas rather
+        // than building a card by hand is the point: it is what proves the
+        // module actually renders there.
+        let canvas = HomeCanvasController(sources: .init(
+            shiftStore: ShiftStore(),
+            hostStore: HostStore(),
+            scheduleStore: ScheduleStore(),
+            logAnalyzerStore: LogAnalyzerStore(),
+            docsRunbookStore: DocsRunbookStore(),
+            codePreviewStore: CodePreviewStore()))
+        let canvasWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
+                                    styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        canvasWindow.contentViewController = canvas
+        canvas.view.layoutSubtreeIfNeeded()
+        canvas.debugRenderNow()
+        canvas.view.layoutSubtreeIfNeeded()
+        let crewCard = canvas.moduleCardsForTests.first { $0.anatomyForTests.title == "Straw Hat Pirates" }
+        guard let crewCard else {
+            check(false, "the Overview canvas must render a Straw Hat Pirates card, got "
+                    + "\(canvas.moduleCardsForTests.map { $0.anatomyForTests.title })", &ok)
+            return
+        }
+        let anatomy = crewCard.anatomyForTests
+        check(anatomy.tileHasArtwork,
+              "the card's tile carries the Jolly Roger artwork, not an SF Symbol glyph", &ok)
+        check(anatomy.isCardActivatable, "...and the card opens its page on a click", &ok)
+        // With no conversation yet it must say so rather than fabricating a
+        // summary of one (GL-14's rule, one more card).
+        check(anatomy.noteTexts.contains(where: { $0.contains("Ask for a task") }),
+              "a fresh card invites a question instead of inventing a summary, got \(anatomy.noteTexts)", &ok)
     }
 
-    /// The Crew tab's chat has to fill the viewport, or it renders as a small
-    /// box inside an otherwise-empty page and scrolls inside a scroll view -
-    /// the exact defect the audit found on Log Analyzer's own work area.
-    private static func checkChatFillsTheTab(_ ok: inout Bool) {
+    /// The chat has to fill the page, or it renders as a small box in an
+    /// otherwise-empty page - the exact defect the audit found on Log
+    /// Analyzer's own work area.
+    ///
+    /// Much simpler than it was: the chat used to derive its own height from
+    /// `FleetController`'s scroll viewport so the two scrollers did not fight
+    /// over the wheel, and on its own page there is no outer scroller to
+    /// fight - the chat is pinned to the page's edges. So what is asserted is
+    /// the pinning, at two window sizes, which is what that derivation was
+    /// approximating.
+    private static func checkChatFillsThePage(_ ok: inout Bool) {
+        for (label, size) in [("a tall window", CGSize(width: 1100, height: 800)),
+                              ("a short window", CGSize(width: 900, height: 420))] {
+            let m = mount(width: size.width, height: size.height)
+            showCrew(m)
+            let chat = m.controller.debugChat
+            let page = m.controller.view.bounds
+
+            check(chat.frame.height > page.height * 0.75,
+                  "\(label): the chat fills the page's height, got \(chat.frame) in \(page)", &ok)
+            check(chat.frame.width > page.width * 0.85,
+                  "\(label): ...and its width, got \(chat.frame) in \(page)", &ok)
+            // Inside the page, not overflowing it - a destination wider than
+            // its own page is how one caps the whole window (gotcha (13)).
+            check(chat.frame.maxX <= page.maxX + 0.5 && chat.frame.maxY <= page.maxY + 0.5,
+                  "\(label): the chat stays inside the page, got \(chat.frame) in \(page)", &ok)
+        }
+
         let m = mount(width: 1100, height: 800)
         showCrew(m)
-
-        let chat = m.controller.debugCrewChat
-        check(chat.frame.width > 700,
-              "the chat fills the page's content column, got width \(chat.frame.width)", &ok)
-        check(chat.frame.height > 500,
-              "the chat fills the remaining viewport height, got \(chat.frame.height)", &ok)
-        check(m.controller.debugCrewChatHeight >= FleetController.crewChatMinHeight,
-              "the derived height never drops below the floor", &ok)
-
-        // A short window degrades to the floor rather than to something
-        // unusable or negative.
-        let short = mount(width: 900, height: 420)
-        showCrew(short)
-        check(short.controller.debugCrewChatHeight >= FleetController.crewChatMinHeight,
-              "a short window clamps to the minimum height, got \(short.controller.debugCrewChatHeight)", &ok)
+        let chat = m.controller.debugChat
 
         // The empty state is what a captain sees before their first message -
         // a blank content area would read as broken. It has to *fill* the
@@ -187,6 +272,85 @@ enum StrawHatViewSelfTest {
         check(chat.debugSendEnabled, "Send enables once there is real text", &ok)
     }
 
+    /// A lazily mounted destination must not build its view at launch.
+    ///
+    /// `StrawHatController` is constructed in `AppShellController.init` on
+    /// every launch, and its chat is a `lazy var` for exactly this reason - a
+    /// stored view property would build the whole transcript and composer for
+    /// a page most sessions never open, which is the cost GL-37's laziness
+    /// exists to remove. Read off the lazy storage rather than the property,
+    /// because touching the property is what builds it.
+    private static func checkChatIsNotBuiltUntilMounted(_ ok: inout Bool) {
+        let controller = StrawHatController(shiftStore: ShiftStore(),
+                                            commandLibraryRoot: FileManager.default.temporaryDirectory
+                                                .appendingPathComponent("fm-straw-hat-lazy", isDirectory: true))
+        check(!controller.debugChatWasBuilt,
+              "constructing the controller must not build its chat - this destination is lazily mounted", &ok)
+        // The subtitle is what the shell asks an unmounted controller for, so
+        // it has to be answerable without a view.
+        check(controller.drillHeaderSubtitle?.contains("aboard") == true,
+              "...and its drill subtitle answers without one, got \(String(describing: controller.drillHeaderSubtitle))", &ok)
+        check(!controller.debugChatWasBuilt, "...still without building it", &ok)
+    }
+
+    /// What the Overview card says about the conversation.
+    ///
+    /// The card reads `canvasState`, which is plain data updated by the turn
+    /// cycle - never read off the chat view, because the canvas renders at
+    /// launch before this page has ever been mounted. So the assertions are
+    /// about that state moving with the transcript, and about the preview
+    /// extractor reducing a markdown reply to one honest line.
+    private static func checkCanvasCardSummary(_ ok: inout Bool) {
+        let m = mount()
+        showCrew(m)
+        check(m.controller.canvasState.exchanges == 0,
+              "a fresh page reports no exchanges - the card then says so rather than inventing a summary", &ok)
+        check(m.controller.canvasState.lastLine == nil, "...and has no preview line", &ok)
+
+        // One line, no embedded newline: a `\n` inside a JSON string needs
+        // double-escaping through Swift's own literal, and getting that wrong
+        // silently produces invalid JSON - i.e. rung 3, attributed to Luffy,
+        // which is what this fixture would then be testing instead. The
+        // markdown reduction is covered against the extractor directly below.
+        m.controller.debugRenderReply("""
+        {"sections":[{"speaker":"nami","text":"Two tasks are due today."}]}
+        """)
+        check(m.controller.canvasState.exchanges == 1,
+              "a reply counts as one exchange, got \(m.controller.canvasState.exchanges)", &ok)
+        check(m.controller.canvasState.lastSpeakers == [.nami],
+              "...credited to who actually spoke, got \(m.controller.canvasState.lastSpeakers.map(\.rawValue))", &ok)
+        check(m.controller.canvasState.lastLine == "Two tasks are due today.",
+              "...with the first line as the card's preview, got \(String(describing: m.controller.canvasState.lastLine))", &ok)
+
+        // An unattributed reply (the parser's rung 2) must credit nobody -
+        // naming a crew member who did not speak is the plausible-but-wrong
+        // the whole ladder exists to avoid.
+        m.controller.newConversationTapped()
+        m.controller.debugRenderReply("""
+        {"sections":[{"speaker":"sanji","text":"Dinner is ready."}]}
+        """)
+        check(m.controller.canvasState.lastSpeakers.isEmpty,
+              "an unaboard speaker credits nobody on the card, got \(m.controller.canvasState.lastSpeakers.map(\.rawValue))", &ok)
+
+        // "New conversation" resets the card too, or it would keep showing a
+        // thread the captain has just discarded.
+        m.controller.newConversationTapped()
+        check(m.controller.canvasState.exchanges == 0 && m.controller.canvasState.lastLine == nil,
+              "a new conversation resets the card's summary", &ok)
+
+        // The preview extractor: one line out of markdown, with the leading
+        // noise stripped, and nothing at all out of a reply that is only a
+        // fenced block.
+        check(StrawHatController.debugPreviewLine(of: "# Heading\nbody") == "Heading",
+              "a heading's marker is stripped, got \(String(describing: StrawHatController.debugPreviewLine(of: "# Heading\nbody")))", &ok)
+        check(StrawHatController.debugPreviewLine(of: "\n\n- `kubectl get pods`") == "kubectl get pods",
+              "leading blanks, a bullet and backticks are all stripped", &ok)
+        check(StrawHatController.debugPreviewLine(of: "```\ncode\n") == "code",
+              "a fence line is skipped rather than shown as the preview", &ok)
+        check(StrawHatController.debugPreviewLine(of: "   ") == nil,
+              "an empty reply has no preview rather than a blank one", &ok)
+    }
+
     /// One real turn, end to end: type, click the real Send button, and watch
     /// the transcript go captain -> status -> reply.
     private static func checkTurnRoundTrip(_ ok: inout Bool) {
@@ -200,9 +364,9 @@ enum StrawHatViewSelfTest {
 
         let m = mount()
         showCrew(m)
-        let chat = m.controller.debugCrewChat
+        let chat = m.controller.debugChat
 
-        check(!m.controller.debugCrewNewButton.isEnabled,
+        check(!m.controller.debugNewButton.isEnabled,
               "\"New conversation\" is pointless on an empty thread", &ok)
 
         chat.debugType("what should I do first?")
@@ -212,12 +376,12 @@ enum StrawHatViewSelfTest {
         check(chat.debugComposerText.isEmpty, "sending clears the composer", &ok)
         check(chat.debugEmptyStateHidden, "the empty state goes once there is a message", &ok)
         check(!chat.debugInputEnabled, "input is disabled while a turn is in flight", &ok)
-        check(m.controller.debugCrewTurnInFlight, "...and the controller knows a turn is running", &ok)
+        check(m.controller.debugTurnInFlight, "...and the controller knows a turn is running", &ok)
         // The status line is chrome, shown while `claude` runs.
         check(chat.debugMessageTexts().contains { $0.contains("thinking") },
               "a status line shows while the turn runs, got \(chat.debugMessageTexts())", &ok)
 
-        waitUntil(timeout: 20) { !m.controller.debugCrewTurnInFlight }
+        waitUntil(timeout: 20) { !m.controller.debugTurnInFlight }
 
         let texts = chat.debugMessageTexts()
         check(texts.contains("what should I do first?"), "the captain's message stays in the transcript, got \(texts)", &ok)
@@ -260,7 +424,7 @@ enum StrawHatViewSelfTest {
             check(false, "could not find the reply block's name/role labels", &ok)
         }
         check(chat.debugInputEnabled, "input is re-enabled once the turn lands", &ok)
-        check(m.controller.debugCrewNewButton.isEnabled,
+        check(m.controller.debugNewButton.isEnabled,
               "\"New conversation\" becomes available once there is a real exchange", &ok)
 
         // A second turn from the same page really resumes - the multi-turn
@@ -268,7 +432,7 @@ enum StrawHatViewSelfTest {
         // runner alone.
         chat.debugType("and after that?")
         chat.debugSendButton.performClick(nil)
-        waitUntil(timeout: 20) { !m.controller.debugCrewTurnInFlight }
+        waitUntil(timeout: 20) { !m.controller.debugTurnInFlight }
         let argv = readArgv(log)
         let printable = printableArgv(log)
         check(argv.contains("--resume"),
@@ -296,10 +460,10 @@ enum StrawHatViewSelfTest {
 
         let m = mount()
         showCrew(m)
-        let chat = m.controller.debugCrewChat
+        let chat = m.controller.debugChat
         chat.debugType("how do I check a rollout?")
         chat.debugSendButton.performClick(nil)
-        waitUntil(timeout: 20) { !m.controller.debugCrewTurnInFlight }
+        waitUntil(timeout: 20) { !m.controller.debugTurnInFlight }
         m.controller.view.layoutSubtreeIfNeeded()
 
         // Asserted through the shared parser the view actually calls, so this
@@ -331,23 +495,23 @@ enum StrawHatViewSelfTest {
 
         let m = mount()
         showCrew(m)
-        let chat = m.controller.debugCrewChat
+        let chat = m.controller.debugChat
         chat.debugType("first thread")
         chat.debugSendButton.performClick(nil)
-        waitUntil(timeout: 20) { !m.controller.debugCrewTurnInFlight }
+        waitUntil(timeout: 20) { !m.controller.debugTurnInFlight }
         check(chat.debugMessageCount >= 2, "a turn leaves the captain's message and the reply", &ok)
 
-        m.controller.debugCrewNewButton.performClick(nil)
+        m.controller.debugNewButton.performClick(nil)
         m.controller.view.layoutSubtreeIfNeeded()
         check(chat.debugMessageCount == 0, "\"New conversation\" clears the transcript", &ok)
         check(!chat.debugEmptyStateHidden, "...and brings the empty state back", &ok)
-        check(!m.controller.debugCrewNewButton.isEnabled, "...and disables itself again", &ok)
+        check(!m.controller.debugNewButton.isEnabled, "...and disables itself again", &ok)
 
         // The next turn genuinely starts a new session rather than resuming
         // a thread the captain just discarded.
         chat.debugType("second thread")
         chat.debugSendButton.performClick(nil)
-        waitUntil(timeout: 20) { !m.controller.debugCrewTurnInFlight }
+        waitUntil(timeout: 20) { !m.controller.debugTurnInFlight }
         check(!readArgv(log).contains("--resume"),
               "the turn after \"New conversation\" starts fresh, got \(printableArgv(log))", &ok)
     }
@@ -360,10 +524,10 @@ enum StrawHatViewSelfTest {
 
         let m = mount()
         showCrew(m)
-        let chat = m.controller.debugCrewChat
+        let chat = m.controller.debugChat
         chat.debugType("are you there?")
         chat.debugSendButton.performClick(nil)
-        waitUntil(timeout: 20) { !m.controller.debugCrewTurnInFlight }
+        waitUntil(timeout: 20) { !m.controller.debugTurnInFlight }
 
         check(chat.debugCrewSpeakers().isEmpty, "a failed turn renders no crew reply", &ok)
         check(chat.debugMessageTexts().count >= 2, "the failure is rendered, got \(chat.debugMessageTexts())", &ok)
@@ -391,10 +555,10 @@ enum StrawHatViewSelfTest {
 
         let m = mount()
         showCrew(m)
-        let chat = m.controller.debugCrewChat
+        let chat = m.controller.debugChat
         chat.debugType("hello")
         chat.debugSendButton.performClick(nil)
-        waitUntil(timeout: 20) { !m.controller.debugCrewTurnInFlight }
+        waitUntil(timeout: 20) { !m.controller.debugTurnInFlight }
 
         for id in ["daylight", "dusk", "helm-light", "helm-dark", "gruvbox-light"] {
             guard let theme = HelmTheme.allThemes.first(where: { $0.id == id }) else { continue }
@@ -424,7 +588,7 @@ enum StrawHatViewSelfTest {
     private static func checkMultiSectionReply(_ ok: inout Bool) {
         let m = mount()
         showCrew(m)
-        let chat = m.controller.debugCrewChat
+        let chat = m.controller.debugChat
 
         let envelope = """
         ```json
@@ -448,8 +612,8 @@ enum StrawHatViewSelfTest {
         // Through the real composer, so the whole turn cycle runs.
         chat.debugType("I need to fix the login issue tomorrow and ask Rahul about the Cognito configuration")
         chat.debugSendButton.performClick(nil)
-        waitUntil(timeout: 20) { !m.controller.debugCrewTurnInFlight }
-        guard !m.controller.debugCrewTurnInFlight else {
+        waitUntil(timeout: 20) { !m.controller.debugTurnInFlight }
+        guard !m.controller.debugTurnInFlight else {
             check(false, "the turn never completed - transcript is \(chat.debugMessageTexts())", &ok)
             return
         }
@@ -521,7 +685,7 @@ enum StrawHatViewSelfTest {
         let store = ShiftStore()
         let m = mount(shiftStore: store)
         showCrew(m)
-        let chat = m.controller.debugCrewChat
+        let chat = m.controller.debugChat
 
         let envelope = """
         {"sections":[
@@ -537,8 +701,8 @@ enum StrawHatViewSelfTest {
 
         chat.debugType("I need to fix the login issue tomorrow and ask Rahul about the Cognito configuration")
         chat.debugSendButton.performClick(nil)
-        waitUntil(timeout: 20) { !m.controller.debugCrewTurnInFlight }
-        guard !m.controller.debugCrewTurnInFlight else {
+        waitUntil(timeout: 20) { !m.controller.debugTurnInFlight }
+        guard !m.controller.debugTurnInFlight else {
             check(false, "the acceptance turn never completed", &ok)
             return
         }
@@ -613,7 +777,7 @@ enum StrawHatViewSelfTest {
         let store = ShiftStore()
         let m = mount(shiftStore: store)
         showCrew(m)
-        let chat = m.controller.debugCrewChat
+        let chat = m.controller.debugChat
 
         // Rung 2: a voice that is not aboard, carrying a proposal.
         //
@@ -623,7 +787,7 @@ enum StrawHatViewSelfTest {
         // old roster (the same shape audit #2 section 4.5 found in
         // `SessionRestoreSelfTest`: an assertion that had quietly become a
         // record of the old behaviour).
-        m.controller.debugRenderCrewReply("""
+        m.controller.debugRenderReply("""
         {"sections":[{"speaker":"brook","text":"I'd restart the pod.",
           "proposals":[{"kind":"run_kubectl","title":"rollout restart"}]}]}
         """)
@@ -647,7 +811,7 @@ enum StrawHatViewSelfTest {
         // Rung 3: prose with a fenced block that is not an envelope. The
         // direction that matters - this must not be shredded into a fragment.
         chat.clearMessages()
-        m.controller.debugRenderCrewReply("""
+        m.controller.debugRenderReply("""
         Your config needs a `logging` block:
 
         ```json
@@ -670,7 +834,7 @@ enum StrawHatViewSelfTest {
     private static func checkContributingGlow(_ ok: inout Bool) {
         let m = mount()
         showCrew(m)
-        let chat = m.controller.debugCrewChat
+        let chat = m.controller.debugChat
         let strip = chat.debugCrewStrip
 
         // Before anything is said: everyone aboard, nobody lit.
@@ -692,7 +856,7 @@ enum StrawHatViewSelfTest {
               "a turn in flight lights nobody, got \(strip.debugLitMembers.map(\.rawValue))", &ok)
 
         chat.removeTrailingStatus()
-        m.controller.debugRenderCrewReply("""
+        m.controller.debugRenderReply("""
         {"sections":[{"speaker":"chopper","text":"Schedules are failing."}]}
         """)
         check(strip.debugLitMembers == [.chopper],
@@ -723,7 +887,7 @@ enum StrawHatViewSelfTest {
               "a theme rebuild preserves who contributed, got \(strip.debugLitMembers.map(\.rawValue))", &ok)
 
         // A new conversation clears it.
-        m.controller.newCrewConversationTapped()
+        m.controller.newConversationTapped()
         check(strip.debugLitMembers.isEmpty, "a new conversation lights nobody again", &ok)
     }
 
@@ -760,9 +924,9 @@ enum StrawHatViewSelfTest {
     private static func checkHandoffRendersAsALink(_ ok: inout Bool) {
         let m = mount()
         showCrew(m)
-        let chat = m.controller.debugCrewChat
+        let chat = m.controller.debugChat
 
-        m.controller.debugRenderCrewReply("""
+        m.controller.debugRenderReply("""
         {"sections":[{"speaker":"zoro","text":"That needs a live session.","proposals":[
           {"kind":"open_sre_lead","host":"prod-bastion"},
           {"kind":"open_destination","destination":"logAnalyzer","notes":"paste the trace"}]}]}
@@ -795,8 +959,8 @@ enum StrawHatViewSelfTest {
 
         // And a section that carries both a write and a handoff renders one
         // of each, in order - the split is per proposal, not per section.
-        m.controller.newCrewConversationTapped()
-        m.controller.debugRenderCrewReply("""
+        m.controller.newConversationTapped()
+        m.controller.debugRenderReply("""
         {"sections":[{"speaker":"zoro","text":"Both:","proposals":[
           {"kind":"save_command_draft","title":"Tail it","command":"kubectl logs -f deploy/api"},
           {"kind":"open_destination","destination":"console"}]}]}
@@ -826,12 +990,12 @@ enum StrawHatViewSelfTest {
         let store = ShiftStore()
         let m = mount(shiftStore: store)
         showCrew(m)
-        let chat = m.controller.debugCrewChat
+        let chat = m.controller.debugChat
 
         var destinations: [RailDestination] = []
         var hints: [String?] = []
         var sreHints: [String?] = []
-        m.controller.onOpenCrewDestination = { dest, hint in
+        m.controller.onOpenDestination = { dest, hint in
             destinations.append(dest)
             hints.append(hint)
         }
@@ -843,7 +1007,7 @@ enum StrawHatViewSelfTest {
         let tasksBefore = store.activeTasks.count
         let followUpsBefore = store.followUps.count
 
-        m.controller.debugRenderCrewReply("""
+        m.controller.debugRenderReply("""
         {"sections":[{"speaker":"usopp","text":"Draw it?","proposals":[
           {"kind":"open_destination","destination":"whiteboard","notes":"three boxes and an arrow"}]}]}
         """)
@@ -861,8 +1025,8 @@ enum StrawHatViewSelfTest {
               "a handoff that worked says nothing in place - the app moved, got \(row.debugNote)", &ok)
 
         // The SRE Lead half, through the same path.
-        m.controller.newCrewConversationTapped()
-        m.controller.debugRenderCrewReply("""
+        m.controller.newConversationTapped()
+        m.controller.debugRenderReply("""
         {"sections":[{"speaker":"zoro","text":"Needs a session.","proposals":[
           {"kind":"open_sre_lead","host":"prod-bastion"}]}]}
         """)
@@ -876,8 +1040,8 @@ enum StrawHatViewSelfTest {
 
         // A refusal is shown in place rather than looking like it worked.
         m.controller.onOpenSRELead = { _ in "You don't have a live host session right now." }
-        m.controller.newCrewConversationTapped()
-        m.controller.debugRenderCrewReply("""
+        m.controller.newConversationTapped()
+        m.controller.debugRenderReply("""
         {"sections":[{"speaker":"zoro","text":"x","proposals":[{"kind":"open_sre_lead"}]}]}
         """)
         guard let refusing = chat.debugHandoffRows().first else {
@@ -891,31 +1055,38 @@ enum StrawHatViewSelfTest {
 
     // MARK: Phase 3 (M3.3) - "Ask your crew" on the dashboard
 
-    /// The quick-ask card is on the **Overview** tab, and one press starts a
-    /// new conversation on the Crew tab with the captain's message already
-    /// sent.
+    /// The quick-ask card stays on the **fleet dashboard**, and one press
+    /// starts a new conversation on the crew's own page with the captain's
+    /// message already sent.
     ///
-    /// Every assertion here is about the *placement and the routing*, because
-    /// that is the whole milestone: the field is one tab away from where the
-    /// friction was, and the message has to arrive in a conversation the
-    /// captain can then see.
+    /// `fm/polish-straw-hat-overview-card-and-voice-c8d3` split this across
+    /// two controllers - the card is `FleetController`'s, the chat is
+    /// `StrawHatController`'s - so this case wires the hop exactly as
+    /// `AppShellController` does (`overview.onAskCrew` -> `show(.strawHat)` +
+    /// `startNewConversation(with:)`) and asserts the real handoff rather
+    /// than a tab switch.
+    ///
+    /// It deliberately survived that task even though the "Crew" tab did not,
+    /// and the distinction is the point: the tab was a second place to *find
+    /// the chat*, which is confusing; this is a compose-and-go field that
+    /// lands on the one chat page, which is exactly the affordance a canvas
+    /// card cannot be. Every assertion is about placement and routing.
     private static func checkQuickAskCard(_ ok: inout Bool) {
-        let m = mount()
-        // Overview is the default tab, so the card is on screen with no tab
-        // switch at all - which is the point.
-        m.controller.view.layoutSubtreeIfNeeded()
-        guard let card = m.controller.debugCrewQuickAsk else {
-            check(false, "M3.3's quick-ask card must exist on the Overview tab", &ok)
+        let fleet = FleetController(shiftStore: ShiftStore())
+        let fleetWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 800),
+                                   styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        fleetWindow.contentViewController = fleet
+        fleet.view.layoutSubtreeIfNeeded()
+
+        guard let card = fleet.debugCrewQuickAsk else {
+            check(false, "M3.3's quick-ask card must exist on the fleet dashboard", &ok)
             return
         }
+        // The Overview tab is Fleet's default, so the card is on screen with
+        // no navigation at all - which is the point.
         check(!card.isHidden && card.frame.width > 0,
-              "...and be visible on the dashboard without switching tabs, got \(card.frame)", &ok)
-        // Not on the Crew tab, which already has the full composer - a second
-        // one there would be the duplication M3.3 is not.
-        check(card.isDescendant(of: m.controller.view),
-              "the card is part of this page", &ok)
-        check(!card.isDescendant(of: m.controller.debugCrewChat),
-              "the quick-ask card must not be inside the chat pane it is an alternative to", &ok)
+              "...and be visible on the dashboard with no navigation, got \(card.frame)", &ok)
+        check(card.isDescendant(of: fleet.view), "the card is part of the fleet page", &ok)
 
         // Nothing to send yet.
         check(!card.debugAskEnabled, "Ask starts disabled - there is nothing to ask", &ok)
@@ -927,13 +1098,13 @@ enum StrawHatViewSelfTest {
         // The row's own geometry: the field takes the slack, the button keeps
         // its width. Measured for the same reason the handoff row's is.
         card.debugType("a real question")
-        m.controller.view.layoutSubtreeIfNeeded()
+        fleet.view.layoutSubtreeIfNeeded()
         check(card.debugField.frame.width > card.debugAskButton.frame.width * 2,
               "the field takes the row's slack, not the button - \(card.debugFrames)", &ok)
         check(card.debugAskButton.frame.width > 0,
               "...and the button still has a real width - \(card.debugFrames)", &ok)
 
-        // ---- the press: switch, reset, send ----
+        // ---- the press: navigate, reset, send ----
         //
         // A fake `claude` so the turn is real end to end rather than stopping
         // at "a runner was built".
@@ -944,29 +1115,37 @@ enum StrawHatViewSelfTest {
         StrawHatCrew.claudePathOverrideForTests = script.path
         defer { StrawHatCrew.claudePathOverrideForTests = nil }
 
-        // Seed a conversation on the Crew tab first, so "starts a NEW
+        let m = mount()
+        showCrew(m)
+
+        // Seed a conversation on the crew page first, so "starts a NEW
         // conversation" is a real assertion rather than one about an already
         // empty thread.
-        showCrew(m)
-        m.controller.debugRenderCrewReply("""
-        {"sections":[{"speaker":"nami","text":"an older turn nobody can see from Overview"}]}
+        m.controller.debugRenderReply("""
+        {"sections":[{"speaker":"nami","text":"an older turn nobody can see from the dashboard"}]}
         """)
-        check(m.controller.debugCrewChat.debugMessageCount > 0, "the seeded turn is there", &ok)
-        m.controller.debugSelectTab("overview")
+        check(m.controller.debugChat.debugMessageCount > 0, "the seeded turn is there", &ok)
+
+        // The shell's own wiring, verbatim.
+        var navigated: [RailDestination] = []
+        fleet.onAskCrew = { text in
+            navigated.append(.strawHat)
+            m.controller.startNewConversation(with: text)
+        }
 
         card.debugType("what needs my attention?")
         card.debugPressAsk()
 
-        check(m.controller.debugCrewTabHidden == false,
-              "pressing Ask takes the captain to the Crew tab - the reply is not visible on Overview", &ok)
+        check(navigated == [.strawHat],
+              "pressing Ask navigates to the crew's own page - the reply is not visible on the dashboard, got \(navigated.map(\.rawValue))", &ok)
         check(card.debugText.isEmpty,
               "and clears the field, so it does not read as an unsent draft", &ok)
 
         let deadline = Date().addingTimeInterval(20)
-        while m.controller.debugCrewTurnInFlight && Date() < deadline {
+        while m.controller.debugTurnInFlight && Date() < deadline {
             RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
         }
-        let texts = m.controller.debugCrewChat.debugMessageTexts()
+        let texts = m.controller.debugChat.debugMessageTexts()
         check(texts.contains("what needs my attention?"),
               "the captain's own message is in the transcript, got \(texts)", &ok)
         check(texts.contains("Two things need you."),

@@ -69,6 +69,8 @@ enum StrawHatSelfTest {
         defer { StrawHatCrew.claudePathOverrideForTests = nil }
 
         checkPersona(&ok)
+
+        checkVoice(&ok)
         checkRoster(&ok)
         checkProposalVocabulary(&ok)
         checkRung1ValidatedEnvelope(&ok)
@@ -127,6 +129,8 @@ enum StrawHatSelfTest {
               "persona must say the rest of the crew is not aboard yet", &ok)
 
         // The reply discipline SRE Lead already had to be corrected into once.
+        // Both survive the voice pass below - character is meant to make a
+        // short answer sound like someone, not to make it longer.
         check(persona.contains("lead with the answer"),
               "persona must still ask for answer-first replies", &ok)
         check(persona.contains("terse"),
@@ -235,6 +239,118 @@ enum StrawHatSelfTest {
               "the persona must know what an `unavailable:` line means - GL-14, unknown is not empty", &ok)
     }
 
+    /// Each crew member's own manner of speaking, and the clamp that keeps it
+    /// from touching what a reply *claims*.
+    ///
+    /// `fm/polish-straw-hat-overview-card-and-voice-c8d3` is the captain's own
+    /// override of a clause this persona used to carry verbatim: "you are not
+    /// mascots ... never more than a light touch of character". He read a real
+    /// reply ("Hey - all quiet right now. No tasks due soon...") and said it
+    /// sounded like a generic assistant - he wants Luffy to sound like Luffy
+    /// and Zoro to sound like Zoro. So the old clamp is asserted **gone**
+    /// rather than being deleted quietly, and each voice is asserted present
+    /// by name.
+    ///
+    /// Why a literal table rather than something derived from the enum: a
+    /// test that reads the same source it is checking asserts nothing (the
+    /// reasoning `DaylightModuleSelfTest.lockedMembership` states for its own
+    /// tables). These hooks are the distinctive bits of each character's
+    /// speech, so flattening one member's voice back to a role description
+    /// fails by that member's name instead of silently passing.
+    private static let voiceHooks: [StrawHatMember: [String]] = [
+        .luffy: ["short, blunt, cheerful", "cool"],
+        .nami: ["bossy", "overdue, by the way", "interest"],
+        .robin: ["calm, precise", "morbid", "fufufu"],
+        .chopper: ["easily rattled", "flustered", "doctor"],
+        .zoro: ["terse to the point of rudeness", "fragments", "no idea where he is"],
+        .usopp: ["boastful", "captain usopp", "8,000 followers"],
+        .franky: ["super", "shipwright"],
+    ]
+
+    private static func checkVoice(_ ok: inout Bool) {
+        let persona = StrawHatCrew.persona.lowercased()
+
+        // The captain's override, stated as an absence. Left in, this clause
+        // actively argues against everything below it.
+        check(!persona.contains("light touch of character"),
+              "the captain overrode the \"light touch of character\" clamp - it must not be back", &ok)
+        check(!persona.contains("you are not mascots"),
+              "...and so must the \"not mascots\" clause it sat in", &ok)
+
+        // Every member has real voice guidance, not just a job description.
+        for member in StrawHatMember.allCases {
+            guard let hooks = voiceHooks[member] else {
+                check(false, "\(member.displayName) has no voice hooks listed in this suite", &ok)
+                continue
+            }
+            for hook in hooks {
+                check(persona.contains(hook.lowercased()),
+                      "\(member.displayName)'s voice must still say \"\(hook)\"", &ok)
+            }
+        }
+        // One "Voice:" line per member, so a voice added to the table above
+        // without one in the persona - or an eighth member with none - fails
+        // rather than passing on the hooks alone.
+        let voiceLines = StrawHatCrew.persona.components(separatedBy: "Voice:").count - 1
+        check(voiceLines == StrawHatMember.allCases.count,
+              "one Voice: line per crew member - expected \(StrawHatMember.allCases.count), found \(voiceLines)", &ok)
+
+        // **The load-bearing half.** Voice is a tone layer; a charismatic line
+        // that implies a write already happened is the single worst failure
+        // this feature can have, and the honesty rules above are what stop it.
+        // This asserts the persona says so *inside* the voice section, where a
+        // model reading for tone will actually see it.
+        check(persona.contains("voice is tone"),
+              "the persona must say voice is tone and never content", &ok)
+        check(persona.contains("it never changes what the sentence claims"),
+              "...spelled out, not just as a heading", &ok)
+        check(persona.contains("accuracy wins"),
+              "the persona must say accuracy wins when flavour and accuracy conflict", &ok)
+        // Each per-character clamp: the failure mode that character's own
+        // voice makes most likely. Usopp brags, so his is about bragging;
+        // Chopper frets, so his is about inventing something to fret about.
+        for clamp in ["he may not brag about the captain's task list",
+                      "he may not be casual about whether something was saved",
+                      "he may not invent one to fret about",
+                      "he may not say it is running",
+                      "she may not fill the gap",
+                      "he may not be certain about a machine he cannot see"] {
+            check(persona.contains(clamp),
+                  "the persona must keep the voice clamp \"\(clamp)\"", &ok)
+        }
+
+        // The good half of the old clause, kept: a crew member speaks, it does
+        // not narrate its own gestures.
+        // A real multi-turn `claude -p` run against the rewritten voices
+        // produced "Got it stuck to the board" (Usopp) and "I've written one
+        // from scratch" (Robin) - both past-tense claims about a record that
+        // did not exist yet, and both sailing straight past the five-word
+        // list because neither uses one of the five words. The rule is the
+        // claim, not the vocabulary, and voice is what makes a colourful past
+        // tense tempting - so this clause lives in the persona and is
+        // asserted here.
+        check(persona.contains("what is forbidden is the claim, not five particular words"),
+              "the persona must forbid the claim rather than only the five words", &ok)
+        check(persona.contains("stuck it on the board"),
+              "...with the real examples that got past the word list", &ok)
+        check(persona.contains("would still be true if the captain shut the app"),
+              "...and the test a crew member can actually apply to its own line", &ok)
+        check(persona.contains("the commonest way voice breaks honesty is tense"),
+              "the voice section must name tense as the way character breaks honesty", &ok)
+
+        check(persona.contains("no stage directions"),
+              "the persona must still forbid stage directions", &ok)
+        check(persona.contains("adjusts straw hat"),
+              "...with the example that made it concrete", &ok)
+
+        // A stale count in the format section sends the model looking for a
+        // roster that no longer exists. It said "four" through all of phase 3.
+        check(!persona.contains("one of the four ids above"),
+              "the reply-format section must not still say there are four speaker ids", &ok)
+        check(persona.contains("one of the seven ids above"),
+              "...it names the real roster size", &ok)
+    }
+
     private static func checkRoster(_ ok: inout Bool) {
         // Phase 3's full v1 roster. Asserted as a literal ordered list rather
         // than a count, so an eighth voice - or Sanji arriving on a role
@@ -265,6 +381,29 @@ enum StrawHatSelfTest {
                     && portrait.size.height == StrawHatPortraits.side,
                   "\(member.displayName)'s portrait is \(StrawHatPortraits.side)pt square, got \(portrait.size)", &ok)
         }
+
+        // The Jolly Roger, the captain's own ask for the Overview card. Same
+        // reasoning as the portraits above: `NSImage(data:)` returns nil on a
+        // corrupt payload, every call site degrades to the SF Symbol, so a
+        // bad regeneration is invisible to a build and nearly invisible on
+        // screen.
+        if let flag = StrawHatFlag.image {
+            check(flag.size.width == StrawHatFlag.side && flag.size.height == StrawHatFlag.side,
+                  "the Jolly Roger is \(StrawHatFlag.side)pt square, got \(flag.size)", &ok)
+            // `isTemplate` would draw it as a tintable mask, flattening the
+            // straw hat's tan and red and the skull's greys into one colour -
+            // i.e. throwing away the whole reason it is a raster asset.
+            check(!flag.isTemplate,
+                  "the Jolly Roger must not be a template image - it would render as one flat colour", &ok)
+        } else {
+            check(false, "the Jolly Roger payload failed to decode", &ok)
+        }
+        // Its fallback glyph has to resolve for the same reason every other
+        // one here does.
+        check(NSImage(systemSymbolName: RailDestination.strawHat.symbol, accessibilityDescription: nil) != nil,
+              "the crew destination's fallback symbol \"\(RailDestination.strawHat.symbol)\" resolves", &ok)
+        check(DaylightModule.strawHat.symbol == RailDestination.strawHat.symbol,
+              "the card and the page it opens agree on their fallback glyph", &ok)
 
         // A crew member's colour is an identity, so `.critical` - the app's
         // "something is wrong" hue - is not available to it. AGENTS.md records
@@ -690,7 +829,7 @@ enum StrawHatSelfTest {
     /// Half behavioural, half source guard, because neither alone is enough:
     /// `cancel()` genuinely stops a turn from delivering (observable), but
     /// whether the app's quit path *calls* it leaves nothing to observe in
-    /// process - and an unwired `shutdownCrew` is exactly the shape
+    /// process - and an unwired `shutdown` is exactly the shape
     /// `CodePreviewController.shutdown()` shipped in for its whole life with
     /// zero callers.
     private static func checkQuitCancelsAnInFlightTurn(_ ok: inout Bool) {
@@ -731,8 +870,8 @@ enum StrawHatSelfTest {
         }
         let shell = (try? String(contentsOf: sources.appendingPathComponent("AppShellController.swift"), encoding: .utf8)) ?? ""
         let main = (try? String(contentsOf: sources.appendingPathComponent("main.swift"), encoding: .utf8)) ?? ""
-        check(shell.contains("overview.shutdownCrew()"),
-              "AppShellController must forward the quit teardown to the Crew tab", &ok)
+        check(shell.contains("strawHat.shutdown()"),
+              "AppShellController must forward the quit teardown to the crew page", &ok)
         check(main.contains("appShell.shutdownStrawHatCrew()"),
               "applicationWillTerminate must call that forward - an unwired shutdown is invisible", &ok)
     }

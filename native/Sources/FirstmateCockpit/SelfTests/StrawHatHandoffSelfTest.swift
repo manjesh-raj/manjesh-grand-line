@@ -6,7 +6,7 @@
 //
 // ## Why this is its own suite
 //
-// `StrawHatViewSelfTest` mounts a `FleetController` and covers the handoff
+// `StrawHatViewSelfTest` mounts a `StrawHatController` and covers the handoff
 // end the chat owns: that a navigation proposal renders as a link rather
 // than a confirm card, that clicking it reaches the page's closure, and that
 // it writes nothing. What it cannot cover is what happens *after* that

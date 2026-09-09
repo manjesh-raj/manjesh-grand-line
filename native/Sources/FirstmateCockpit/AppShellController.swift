@@ -93,6 +93,11 @@ final class AppShellController: NSViewController {
     private let console: ConsoleController
     private let settings: SettingsController
     private let overview: FleetController
+    /// `fm/polish-straw-hat-overview-card-and-voice-c8d3`: the Straw Hat
+    /// Pirates chat, its own destination since the captain asked for it to be
+    /// its own Overview card rather than a tab inside Fleet's page. Lazily
+    /// mounted - the controller exists at launch, its view does not.
+    private let strawHat: StrawHatController
     private let shift: ShiftController
     private let review = ReviewController()
     /// `fm/grandline-log-analyzer-build`: the Log / Output Analyzer page.
@@ -347,11 +352,21 @@ final class AppShellController: NSViewController {
         // for exactly this reason, per audit section 6.5b): each one caches
         // its records as well as writing them, so a second instance would be
         // a second writer to the same file.
-        self.overview = FleetController(shiftStore: shiftStore,
-                                        commandLibraryRoot: commandLibraryStore.root,
-                                        commandLibraryStore: commandLibraryStore,
-                                        stickyStore: stickyBoard.store,
-                                        scheduleStore: scheduleStore)
+        self.overview = FleetController(shiftStore: shiftStore)
+        // The four store dependencies below were `FleetController`'s while the
+        // crew chat was a tab on that page; they came here with it. All three
+        // stores are the shared instances (`stickyBoard.store` is `internal`
+        // for exactly this reason, per audit section 6.5b): each caches its
+        // records as well as writing them, so a second instance would be a
+        // second writer to the same file. The command library is handed over
+        // as a *root* URL because the crew only ever reads it through their
+        // `command_search` tool - constructing a second store for that would
+        // be the mistake GL-24 fixed.
+        self.strawHat = StrawHatController(shiftStore: shiftStore,
+                                           commandLibraryRoot: commandLibraryStore.root,
+                                           commandLibraryStore: commandLibraryStore,
+                                           stickyStore: stickyBoard.store,
+                                           scheduleStore: scheduleStore)
         self.dictation = DictationController(store: dictationStore)
         // Phase 5 (cockpit-shift-power-features): `shiftStore` is now built
         // once by the app delegate and shared with the menu bar item, the
@@ -498,6 +513,7 @@ final class AppShellController: NSViewController {
         // destination's views goes through `show(_:)` first.
         mounter.register(DestinationSlot(id: .homeCanvas, title: RailDestination.homeCanvas.bodyTitle, mountsEagerly: true, controller: homeCanvas))
         mounter.register(DestinationSlot(id: .overview, title: RailDestination.overview.bodyTitle, mountsEagerly: true, controller: overview))
+        mounter.register(DestinationSlot(id: .strawHat, title: RailDestination.strawHat.bodyTitle, mountsEagerly: false, controller: strawHat))
         mounter.register(DestinationSlot(id: .console, title: RailDestination.console.bodyTitle, mountsEagerly: true, controller: console))
         mounter.register(DestinationSlot(id: .hosts, title: RailDestination.hosts.bodyTitle, mountsEagerly: false, controller: hostsPanel))
         mounter.register(DestinationSlot(id: .shift, title: RailDestination.shift.bodyTitle, mountsEagerly: false, controller: shift))
@@ -676,12 +692,31 @@ final class AppShellController: NSViewController {
         // are pass-throughs into navigation this object already owns - a
         // handoff writes nothing, which is what lets its link row run on a
         // single click with no confirm card in front of it.
-        overview.onOpenCrewDestination = { [weak self] dest, hint in
+        strawHat.onOpenDestination = { [weak self] dest, hint in
             self?.openDestinationForCrew(dest, hint: hint)
         }
-        overview.onOpenSRELead = { [weak self] hint in
+        strawHat.onOpenSRELead = { [weak self] hint in
             self?.openSRELeadForCrew(hostHint: hint)
                 ?? "I couldn't reach your host pages from here."
+        }
+        strawHat.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        // M3.3: one message typed into the fleet dashboard's quick-ask card.
+        // `show(_:)` first, so the page is mounted and laid out before its
+        // transcript gets a message - then a *new* conversation, because a
+        // field with no transcript above it cannot show the captain what they
+        // would be appending to (`StrawHatQuickAsk.swift`'s header).
+        overview.onAskCrew = { [weak self] text in
+            guard let self else { return }
+            self.show(.strawHat)
+            self.strawHat.startNewConversation(with: text)
+        }
+        // The Overview card's own summary line - see
+        // `StrawHatCanvasState`. Pushed rather than polled, the
+        // same shape `FleetController.onSnapshotChanged` already uses for the
+        // Fleet card.
+        strawHat.onCanvasStateChanged = { [weak self] in
+            guard let self else { return }
+            self.homeCanvas.applyStrawHat(self.strawHat.canvasState)
         }
         // cockpit-settings-sudo-touchid: Settings' "Touch ID for sudo" row
         // runs `sudo av harden sudo`, which needs a real interactive `sudo`
@@ -1848,7 +1883,7 @@ final class AppShellController: NSViewController {
     /// Safe on a page whose Crew tab was never opened: the runner is built
     /// lazily on the first send, so there is usually nothing to cancel.
     func shutdownStrawHatCrew() {
-        overview.shutdownCrew()
+        strawHat.shutdown()
     }
 
     func removeHostConsole(id: UUID) {

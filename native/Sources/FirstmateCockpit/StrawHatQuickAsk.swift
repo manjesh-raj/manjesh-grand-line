@@ -5,49 +5,49 @@
 //
 // ## The friction this removes, and where it therefore lives
 //
-// The full chat surface has been on Overview's **Crew** tab since phase 1.
-// This is the other half of that placement: a captain looking at the
-// dashboard who thinks of something has to click across to Crew, wait for
-// the pane, and then start typing. M3.3's whole scope is one field on the
-// page they are already on - type, press Return, and the app switches to the
-// Crew tab with a **new** conversation already under way.
+// A captain looking at the fleet dashboard who thinks of something has to
+// navigate to the crew's own page, wait for the pane, and then start typing.
+// M3.3's whole scope is one field on the page they are already on - type,
+// press Return, and the app opens the crew page with a **new** conversation
+// already under way.
 //
 // So this card sits in `FleetController`'s `overviewContainer`, beside the
 // morning briefing and the stat tiles, rather than on the Daylight canvas.
-// The brief points at `HomeCanvasController.swift` for "the existing Overview
-// card patterns", and that pointer was worth checking rather than following:
+// A canvas module is a `HelmModuleCard`, whose whole surface is a single
+// activatable `.button` with one of six fixed body kinds and one fixed
+// `standardHeight`. A live text field inside a button-role card would fight
+// both, and "quick capture" without a field is only navigation wearing its
+// name.
 //
-//  - Phase 1 never touched that file (the Crew tab is `FleetController`'s),
-//    and the friction M3.3 names is "navigate to the Crew tab" - which is
-//    friction felt from *this* page, one tab away, not from the canvas.
-//  - A canvas module is a `HelmModuleCard`, whose whole surface is a single
-//    activatable `.button` with one of six fixed body kinds and one fixed
-//    `standardHeight`. A live text field inside a button-role card would
-//    fight both, and "quick capture" without a field is only navigation
-//    wearing its name.
-//
-// A canvas card that merely *opened* this one would be a reasonable later
-// addition; it is not what the milestone asks for and is not built here.
+// **This card survived `fm/polish-straw-hat-overview-card-and-voice-c8d3`,
+// and the reason is worth stating.** That task moved the chat out of
+// Overview's own "Crew" tab into its own destination with its own Overview
+// *card*, and removed the tab so there is exactly one place to find the
+// chat. This is not a second such place: it is a compose-and-go field that
+// lands on the one chat page, which is precisely the affordance a canvas
+// card cannot be. What changed is only where it lands - `onSubmit` now goes
+// through `FleetController.onAskCrew` to `StrawHatController.
+// startNewConversation(with:)` instead of switching this page's own tab.
 //
 // ## Why a new conversation rather than the current one
 //
 // M3.3 says "quick capture into a new conversation", and that is the honest
 // behaviour for a field with no transcript above it: the captain cannot see
 // what was said before, so a message appended to a three-turn-old thread
-// would be answered in a context they are not looking at. `sendFromQuickAsk`
-// resets the runner first, exactly as the Crew tab's own "New conversation"
-// button does.
+// would be answered in a context they are not looking at.
+// `StrawHatController.startNewConversation(with:)` resets the runner first,
+// exactly as the crew page's own "New conversation" button does.
 //
 // ## What this view is not
 //
 // It holds no runner, no store and no session. It reports the captain's
 // trimmed text through `onSubmit` and nothing else - the same seam
 // `StrawHatChatView` documents for itself, so both entry points converge on
-// one turn cycle in `FleetController+Crew` rather than each owning a copy.
+// the one turn cycle in `StrawHatController` rather than each owning a copy.
 
 import AppKit
 
-/// Overview's own one-field way into a crew conversation.
+/// The fleet dashboard's one-field way into a crew conversation.
 final class StrawHatQuickAskCard: NSView {
 
     /// Fires with the captain's trimmed, non-empty message.
@@ -57,7 +57,7 @@ final class StrawHatQuickAskCard: NSView {
     private let field = HelmTextField(placeholder: "Ask the crew, or say what you need doing\u{2026}",
                                       style: .prominent)
     private let askButton = HelmButton(title: "Ask", variant: .primary, size: .small, symbol: "arrow.up")
-    private let hint = NSTextField(labelWithString: "Starts a new conversation on the Crew tab")
+    private let hint = NSTextField(labelWithString: "Starts a new conversation with the crew")
     private var theme: HelmTheme = ThemeManager.shared.theme
 
     override init(frame frameRect: NSRect) {

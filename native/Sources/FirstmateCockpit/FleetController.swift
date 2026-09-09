@@ -38,17 +38,6 @@ final class FleetController: NSViewController {
     // reads its due-task count from it, and F6's Log tab reads the task half
     // of its feed from the same store's activity YAML.
     private let shiftStore: ShiftStore
-    /// See `init` - the command library's folder, for the crew's read-only
-    /// `command_search` tool only. `internal` so `FleetController+Crew` can
-    /// build `StrawHatStoreRoots` from it (GL-36: `private` is file-scoped, so
-    /// anything that file reaches has to be internal on the core type).
-    let commandLibraryRoot: URL
-    /// Phase 3's three write targets - see `init` for why each is the shared
-    /// instance and never a second one. `internal` for GL-36's reason: the
-    /// code that uses them lives in `FleetController+Crew.swift`.
-    let commandLibraryStore: CommandLibraryStore?
-    let stickyStore: StickyBoardStore?
-    let scheduleStore: ScheduleStore?
     private let briefingCard = MorningBriefingCard()
     /// The `.quota` clause opens `QuotaUsageController`'s own popover,
     /// anchored on the briefing paragraph - this page's own instance, not
@@ -59,48 +48,15 @@ final class FleetController: NSViewController {
     private let quotaUsage = QuotaUsageController()
     private var isGeneratingBriefing = false
 
-    /// `commandLibraryRoot` is phase 2.5's one new dependency: the folder the
-    /// crew's read-only `command_search` tool is pointed at.
-    ///
-    /// A root URL rather than the store itself, deliberately. This page has no
-    /// use for a `CommandLibraryStore` - it never lists, searches or writes
-    /// commands - and constructing one here would be the mistake GL-24 fixed:
-    /// that instance is shared precisely because two caching copies diverged
-    /// in-session and raced each other's `recent.yaml`. `AppShellController`
-    /// already holds the shared one, so it hands over `.root` and nothing
-    /// more.
-    /// Phase 3's three new dependencies, and the reason they are *stores*
-    /// where the command library used to be only a root URL: two of the
-    /// crew's new proposal kinds write to them, and all three cache their
-    /// records in memory as well as writing them.
-    ///
-    /// That caching is what makes a shared instance mandatory rather than
-    /// tidy (GL-23's lesson, applied three times over):
-    ///
-    ///  - `CommandLibraryStore` is the instance GL-24 made shared after two
-    ///    caching copies diverged in-session and raced each other's
-    ///    `recent.yaml`. Phase 2.5 only needed its `.root`; a crew-saved
-    ///    command needs the store, and it has to be that one.
-    ///  - `StickyBoardStore` debounces its writes 1.5s and holds its notes in
-    ///    memory, so a second instance's next flush would overwrite whatever
-    ///    the board's own page had just written. That store is already
-    ///    `internal` on `StickyBoardController` for exactly this reason
-    ///    (audit section 6.5b did the same for the command palette).
-    ///  - `ScheduleStore` likewise caches, and its rows drive a live runner.
-    ///
-    /// All three are optional so this page still builds in a context that has
-    /// none of them - a confirmed proposal then fails with a real message
-    /// rather than silently doing nothing, exactly as a missing
-    /// `DocsRunbookStore` already does.
-    init(shiftStore: ShiftStore, commandLibraryRoot: URL,
-         commandLibraryStore: CommandLibraryStore? = nil,
-         stickyStore: StickyBoardStore? = nil,
-         scheduleStore: ScheduleStore? = nil) {
+    /// `fm/polish-straw-hat-overview-card-and-voice-c8d3` took four
+    /// dependencies back off this page: the command library's root and the
+    /// three phase-3 write stores. Every one of them existed only for the
+    /// Straw Hat crew - the command library's root for their read-only
+    /// `command_search` tool, the other three for their proposal kinds - and
+    /// they moved to `StrawHatController` with the chat. This page never
+    /// listed, searched or wrote a command, a sticky note or a schedule.
+    init(shiftStore: ShiftStore) {
         self.shiftStore = shiftStore
-        self.commandLibraryRoot = commandLibraryRoot
-        self.commandLibraryStore = commandLibraryStore
-        self.stickyStore = stickyStore
-        self.scheduleStore = scheduleStore
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -155,13 +111,20 @@ final class FleetController: NSViewController {
     /// reverse-chronological record of what has already happened. Same
     /// `HelmSegmentedTabs` shape Shift/Docs/Hosts already use; "Overview"
     /// stays the default.
+    ///
+    /// `fm/polish-straw-hat-overview-card-and-voice-c8d3` removed a third tab
+    /// ("Crew"). Phases 1-3 put the Straw Hat Pirates chat here; the captain's
+    /// own correction moved it to its own Overview card and its own page
+    /// (`StrawHatController`), so this page is back to the two tabs F6 gave
+    /// it. Note the two "crews" that had collided: this page's Overview tab is
+    /// Grand Line's own *dispatched crewmate* board, which is a different
+    /// thing entirely from an AI persona chat.
     private enum OverviewTab: String, CaseIterable {
-        case overview, log, crew
+        case overview, log
         var title: String {
             switch self {
             case .overview: return "Overview"
             case .log: return "Log"
-            case .crew: return "Crew"
             }
         }
     }
@@ -183,85 +146,36 @@ final class FleetController: NSViewController {
     private let logList = FleetLogListView()
     private var logFilterKind: FleetLogEventKind?
 
-    // MARK: Straw Hat Pirates phase 1 - the "Crew" tab
+    // MARK: Straw Hat Pirates - "Ask your crew" (M3.3)
     //
-    // The captain's placement call, overriding the plan's own phase-1 line
-    // ("new destination + rail icon"): "This will be inside overview
-    // section." So Luffy's chat is a third tab here rather than a
-    // twenty-fifth `RailDestination` - which also means it inherits this
-    // page's mount, theme observer and appearance forcing for free instead of
-    // repeating the five-touch destination recipe.
-    //
-    // Everything below is inert until the tab is first selected: the
-    // container is a hidden *arranged subview* of an `NSStackView` (so it
-    // leaves layout entirely, AGENTS.md gotcha (11)), the runner is built
-    // lazily on the first send, and no `claude` process exists until the
-    // captain actually types something.
-    //
-    // These are `internal` rather than `private` because `private` is
-    // file-scoped in Swift and the tab's own code lives in
-    // `FleetController+Crew.swift` - the same trade GL-36 made when it split
-    // `ConsoleController` into six files.
-    let crewContainer = NSStackView()
-    let crewChat = StrawHatChatView()
-    let crewNewButton = HelmButton(title: "New conversation", variant: .quiet, symbol: "plus.bubble")
-    /// The chat's own height, re-derived on every layout pass so the tab fills
-    /// the visible page instead of scrolling inside this page's scroll view -
-    /// see `updateCrewChatHeight()`.
-    var crewChatHeight: NSLayoutConstraint!
-    /// Built on the first send, not at `loadView` - resolving `claude` on a
-    /// page every launch renders is work for a feature most visits never use.
-    var crewRunner: StrawHatRunner?
-    var crewTurnInFlight = false
-    /// M3.3's quick-ask card, on the *Overview* tab rather than this one -
-    /// see `StrawHatQuickAsk.swift`'s header for why it lives there and not
-    /// on the Daylight canvas. Held so `applyTheme` can reach it.
+    // The chat itself is `StrawHatController`'s own destination now
+    // (`fm/polish-straw-hat-overview-card-and-voice-c8d3`). What stays on this
+    // page is M3.3's one-field quick-capture card, which is the half of that
+    // milestone that only makes sense *away* from the chat - see
+    // `StrawHatQuickAsk.swift`'s header. It reports the captain's text and
+    // owns no runner, no store and no session.
+
+    /// M3.3's quick-ask card, on the Overview tab. Held so `applyTheme` can
+    /// reach it (an extension cannot declare stored properties, and this
+    /// page's Straw Hat code used to live in one).
     var crewQuickAsk: StrawHatQuickAskCard?
 
-    /// M3.2: where a `open_destination` handoff goes, and the hint it carries.
+    /// One message typed into the quick-ask card.
     ///
-    /// Forwarded rather than owned, the same convention `onNavigateToDestination`
-    /// above already follows - this page knows nothing about the whiteboard's
-    /// composer or about which destination has an entry point worth landing
-    /// on. `AppShellController` wires it.
-    var onOpenCrewDestination: ((RailDestination, String?) -> Void)?
+    /// Forwarded rather than handled: `AppShellController` opens the crew page
+    /// and starts a new conversation there. This page deliberately holds no
+    /// part of the turn cycle any more - there is one of those, on
+    /// `StrawHatController`, reached by both entry points.
+    var onAskCrew: ((String) -> Void)?
 
-    /// M3.2: `open_sre_lead`. Returns a message when the handoff could not be
-    /// followed (no live session on that host, or no host matched what the
-    /// captain called it) and `nil` when the app moved.
-    ///
-    /// The *app* resolves which host, never the crew - the crew cannot see
-    /// hosts at all. See `AppShellController.openSRELeadForCrew`.
-    var onOpenSRELead: ((String?) -> String?)?
-
-    /// M3.3: switches this page's own tab strip to Crew. A closure rather
-    /// than a direct call because `switchTab` is `private` to
-    /// `FleetController.swift` and the quick-ask handler lives in
-    /// `FleetController+Crew.swift` (GL-36's file-scoped-`private` trade).
-    var onSelectCrewTab: (() -> Void)?
-    /// Backing storage for `crewDocsStore` (phase 2): a stored property cannot
-    /// live in the extension that uses it, the same GL-36 constraint the
-    /// labels below are here for. Built on first use - see that accessor.
-    var crewDocs: DocsRunbookStore?
-    /// Built inside `buildCrewSection()`, held here so `applyThemeToCrew` can
-    /// re-tint them (an extension cannot declare stored properties).
-    var crewTitleLabel: NSTextField?
-    var crewSubtitleLabel: NSTextField?
-
-    /// Narrow accessors for the Crew extension's height derivation - widening
-    /// `scroll` itself would hand it more than it needs.
-    var crewScrollDocumentView: NSView? { scroll.documentView }
-    var crewScrollViewportHeight: CGFloat { scroll.contentView.bounds.height }
-    /// `contentStack`'s own bottom inset inside the document view - the one
-    /// number `updateCrewChatHeight` cannot read back off a laid-out frame.
-    /// Keep in sync with `loadView`'s `contentStack.bottomAnchor` constant.
-    var crewDocumentBottomInset: CGFloat { 28 }
-    /// The shared `ShiftStore`, for the Crew extension's context snapshot and
-    /// its confirmed task/follow-up writes. A narrow accessor rather than
-    /// widening `shiftStore` itself, and deliberately *the shared instance* -
-    /// a second `ShiftStore()` would cache and write against the same files
-    /// (AGENTS.md's `CommandLibraryStore` lesson).
-    var crewShiftStore: ShiftStore { shiftStore }
+    /// The quick-ask card, built lazily so a captain who never types in it
+    /// costs nothing beyond one view.
+    private func buildCrewQuickAskCard() -> StrawHatQuickAskCard {
+        let card = StrawHatQuickAskCard()
+        card.onSubmit = { [weak self] text in self?.onAskCrew?(text) }
+        crewQuickAsk = card
+        return card
+    }
 
     /// fm/grandline-sidebar-badges: fires every time `render` recomputes the
     /// banner's "needs your call" set (`needs_decision`/`blocked` tasks) -
@@ -397,7 +311,6 @@ final class FleetController: NSViewController {
         // remove (see `StrawHatQuickAsk.swift`'s header).
         let quickAsk = buildCrewQuickAskCard()
         overviewContainer.addArrangedSubview(quickAsk)
-        onSelectCrewTab = { [weak self] in self?.switchTab(.crew) }
         overviewContainer.addArrangedSubview(loadingSection)
         overviewContainer.addArrangedSubview(bannerRow)
         // F7: the "Needs your call" list sits directly under the banner that
@@ -408,7 +321,6 @@ final class FleetController: NSViewController {
         overviewContainer.addArrangedSubview(inFlightSection)
 
         let logSection = buildLogSection()
-        let crewSection = buildCrewSection()
 
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
@@ -418,7 +330,6 @@ final class FleetController: NSViewController {
         contentStack.addArrangedSubview(tabs)
         contentStack.addArrangedSubview(overviewContainer)
         contentStack.addArrangedSubview(logSection)
-        contentStack.addArrangedSubview(crewSection)
 
         // The data sections stay hidden behind the loading skeleton until the
         // first successful `render(...)` - see `buildLoadingState`.
@@ -428,7 +339,6 @@ final class FleetController: NSViewController {
         needsSection.isHidden = true
         briefingCard.isHidden = true
         logSection.isHidden = true
-        crewSection.isHidden = true
 
         content.addSubview(contentStack)
         NSLayoutConstraint.activate([
@@ -439,7 +349,6 @@ final class FleetController: NSViewController {
             headerRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             overviewContainer.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             logSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            crewSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             briefingCard.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
             quickAsk.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
             loadingSection.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
@@ -718,18 +627,6 @@ final class FleetController: NSViewController {
         logContainer.isHidden = tab != .log
         if tab == .log { renderLog() }
         applyTheme()
-        // Last, and after `applyTheme`: showing the Crew tab measures real
-        // laid-out geometry, so it has to run once everything else has
-        // settled its own hidden state.
-        crewTabDidChangeVisibility(showing: tab == .crew)
-    }
-
-    /// The Crew tab's chat fills the viewport rather than scrolling inside
-    /// this page's own scroll view - which needs a real, laid-out height, so
-    /// it is re-derived here. A no-op on every other tab.
-    override func viewDidLayout() {
-        super.viewDidLayout()
-        updateCrewChatHeight()
     }
 
     /// Re-reads the feed and re-renders it. Called when the Log tab is shown,
@@ -1234,7 +1131,7 @@ final class FleetController: NSViewController {
         tabs.applyTheme(theme)
         logFilters.applyTheme(theme)
         logList.applyTheme(theme)
-        applyThemeToCrew(theme)
+        crewQuickAsk?.applyTheme(theme)
 
         for tile in statTiles { tile.applyTheme(theme) }
         for empty in emptyStates { empty.applyTheme(theme) }
@@ -1247,17 +1144,21 @@ final class FleetController: NSViewController {
 
     #if FM_SELFTESTS
     /// Switch tabs through the exact method a real pill click reaches -
-    /// `switchTab` and `OverviewTab` are both `private` to this file, so the
-    /// Crew extension's own `debugSelectTab` routes through this.
+    /// `switchTab` and `OverviewTab` are both `private` to this file.
     func debugSwitchTab(_ id: String) {
         guard let tab = OverviewTab(rawValue: id) else { return }
         switchTab(tab)
     }
 
-    /// Every tab id the strip offers, in order - so a suite can assert the
-    /// Crew tab exists at all rather than only that selecting it works.
+    /// Every tab id the strip offers, in order - so a suite can assert which
+    /// tabs exist at all rather than only that selecting one works. The
+    /// captain's own correction removed a third ("Crew"); this is what makes
+    /// re-adding it a deliberate act.
     var debugTabIDs: [String] { OverviewTab.allCases.map { $0.rawValue } }
 
     var debugActiveTabID: String { activeTab.rawValue }
+    /// M3.3's quick-ask card, which stayed on this page when the crew chat
+    /// moved to its own destination - see `StrawHatQuickAsk.swift`'s header.
+    var debugCrewQuickAsk: StrawHatQuickAskCard? { crewQuickAsk }
     #endif
 }
