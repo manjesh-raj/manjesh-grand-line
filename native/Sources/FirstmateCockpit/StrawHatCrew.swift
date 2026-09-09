@@ -1,20 +1,45 @@
 // Manjesh Grand Line - native macOS app.
 //
-// "Straw Hat Pirates", phase 1: **Luffy, alone.**
+// "Straw Hat Pirates", **phase 2**: Luffy, Nami, Chopper and Robin.
 //
 // The captain-approved plan (`data/deepen-straw-hat-pirates-plan-explore-ja-3a/
 // straw-hat-pirates-plan.html`, and its round-1 predecessor
 // `data/plan-straw-hat-pirates-ai-assistant-for-b7/`, both on the firstmate
-// side) describes a whole crew of named personas - Nami for tasks, Robin for
-// docs, Zoro for execution drafts, Chopper for health - contributing
-// attributed blocks inside one conversation, with every proposed write
-// rendered as a confirm card the captain clicks.
+// side) is the source of record for the roster, the wire contract and the
+// phasing. Read its `#contract` and `#milestones` sections before changing
+// anything in this file.
 //
-// **None of that is here.** Phase 1's whole job, in the plan's own words, is
-// to "prove the destination, the multi-turn thread, and the 'one call, zero
-// API key' path work". So this file holds exactly one persona, it proposes
-// nothing, and it writes to no store. The crew roster, the structured reply
-// envelope, the closed proposal enum and the confirm cards are phases 2-3.
+// Phase 1 shipped one persona that proposed nothing and wrote nowhere - its
+// whole job was to prove the surface, the multi-turn thread and the "one
+// call, zero API key" path. Phase 2 (milestones M2.1-M2.4) adds the three
+// crew members with a real capability behind them, the structured reply
+// envelope that lets one call speak as several of them, and confirm cards for
+// every proposed write.
+//
+// ## Who is aboard, and why exactly these three
+//
+// The plan's roster table asks one question per character: does a real,
+// already-built capability sit behind this name? Phase 2 takes the three that
+// map onto stores this app already has, plus the orchestrator:
+//
+//  - **Luffy** - the conversation itself. No store, no proposal kind. Every
+//    other voice reports through him.
+//  - **Nami** - Tasks. `ShiftStore.addTask` / `addFollowUp`, dates through
+//    `ShiftDateParser`. The captain's own worked example ("a task and a
+//    follow-up out of one sentence") is hers exactly.
+//  - **Robin** - Docs. `DocsRunbookStore.createRunbook`, and recognising when
+//    a runbook already exists.
+//  - **Chopper** - Health. **Read-only by design**: he reads the health
+//    verdicts in the context snapshot and answers "is anything broken?". He
+//    has no proposal kind at all, because no store write is mapped to him -
+//    giving him one would mean inventing a capability, which is the failure
+//    this whole file's honesty rules exist to prevent.
+//
+// Zoro, Usopp and Franky are phase 3 (they need `save_command_draft`,
+// `add_sticky` and `create_schedule_draft`, plus the navigation handoffs).
+// Brook needs no code - Dictation's hotkey already types into this composer.
+// Jinbe is deferred. Sanji's role is an open captain decision, held on the
+// round-1 plan task; nothing here infers one.
 //
 // ## Zero API key, and why that is not a shortcut
 //
@@ -22,64 +47,125 @@
 // through `ClaudeOneShot` (GL-26's one shared `claude -p ... --output-format
 // json` runner) - exactly like SRE Lead, the Whiteboard, the Log Analyzer and
 // the Morning Briefing already do. There is no HTTP client, no API key, and
-// no new credential anywhere in this feature. The round-1 plan checked the
-// alternative (reading a key from the credential Vault's `.apiKey` category)
-// and found a real architectural gap behind it - no shared
-// `CredentialVaultStore` instance, plus a 5-minute auto-lock - and deferred
-// it to a phase that has a reason to need it.
+// no new credential anywhere in this feature.
 //
-// ## Two things this persona is deliberately NOT told
+// ## The three honesty rules the persona must never lose
 //
-//  - **The crew.** Briefing Luffy on eight colleagues he cannot hand anything
-//    to would produce exactly the failure the whole confirm-card rule exists
-//    to prevent: "I've asked Nami to add that task" when nothing was added.
-//    The crew brief lands with the crew, in phase 2.
-//  - **The stores.** He has no tools, no MCP config and no read access to
-//    Shift/Docs/Health - so he is told to say so plainly rather than guess.
-//    Phase 2.5 adds a read-only MCP server for that (`luffy_stores_mcp.py`,
-//    the `sre_kubectl_mcp.py` shape); writes stay out of MCP entirely and
-//    always will.
+// Phase 1 had two; phase 2 has three, and `StrawHatSelfTest.checkPersona`
+// asserts each one is still in the box - a prompt is untestable for what a
+// model *does* with it, but very testable for whether the instruction is
+// still there, and a refactor that drops one looks like nothing:
+//
+//  1. **A write is a `proposal`, never a claim.** The crew may only ever
+//     offer; the captain's click is what writes. A section saying "added
+//     that for you" is the single worst failure this feature can have, and
+//     the structural half of the defence (a closed enum + a confirm card) is
+//     in `StrawHatEnvelope` / `StrawHatProposalExecutor`.
+//  2. **The context snapshot is bounded, so most things are still unknown.**
+//     The crew sees a capped slice - due-soon tasks, health verdicts, recent
+//     runbook titles - and nothing else. No hosts, no commands, no vault, no
+//     file contents, no history. "I can't see that" stays a required answer.
+//  3. **Never invent store contents.** A plausible guess about a task list or
+//     a health status is worse than a refusal, because it is indistinguishable
+//     from a real reading.
 //
 // The one shape borrowed wholesale from `SRELead.persona` is the "how to
 // reply" discipline - lead with the answer, stay terse, do not narrate your
-// own process. That was a captain complaint on SRE Lead once already; there
-// is no reason to make him make it twice.
+// own process. That was a captain complaint on SRE Lead once already.
 
 import Foundation
 
-/// A member of the crew. Phase 1 ships exactly one - the enum exists so
-/// phase 2 adds a case rather than reworking every call site, and so the
-/// chat view's speaker attribution already reads from a real roster instead
-/// of a hardcoded string.
+/// A member of the crew.
+///
+/// Raw values are the wire strings the reply envelope's `speaker` field
+/// carries, so `StrawHatMember(rawValue:)` *is* the roster check the parser's
+/// rung 1 performs - a speaker the model invents simply fails to construct.
 enum StrawHatMember: String, CaseIterable {
     case luffy
+    case nami
+    case chopper
+    case robin
 
     /// The name shown on an attributed reply block.
     var displayName: String {
         switch self {
         case .luffy: return "Luffy"
+        case .nami: return "Nami"
+        case .chopper: return "Chopper"
+        case .robin: return "Robin"
         }
     }
 
-    /// The one-word role shown beside the name, mirroring the plan's mockup
-    /// ("Nami · Tasks"). Luffy's is "Captain's crew" rather than a capability
-    /// because in phase 1 he genuinely has none - he talks, and that is all.
+    /// The one-word capability shown beside the name, mirroring the plan's
+    /// mockup ("Nami \u{00B7} Tasks"). Luffy's is the conversation itself
+    /// rather than a store, because that is genuinely what he owns.
     var role: String {
         switch self {
-        case .luffy: return "Crew"
+        case .luffy: return "Orchestrator"
+        case .nami: return "Tasks"
+        case .chopper: return "Health"
+        case .robin: return "Docs"
         }
     }
 
-    /// An SF Symbol, deliberately not a character portrait. The plan's
-    /// portrait treatment (`CaptainIcon.swift`'s embedded-PNG precedent, ten
-    /// full-colour images) is phase 2's `M2.4`, and the images themselves
-    /// live in firstmate's own `data/` directory, not in this repo. Checked
-    /// to resolve by `StrawHatSelfTest` - `NSImage(systemSymbolName:)`
-    /// returns nil silently, and this app has shipped an invisible icon that
-    /// way before.
+    /// The fallback glyph, used when this member's portrait cannot be decoded
+    /// (`StrawHatPortraits.image(for:)` returning nil). Checked to resolve by
+    /// `StrawHatSelfTest` - `NSImage(systemSymbolName:)` returns nil silently,
+    /// and this app has shipped an invisible icon that way before.
     var symbol: String {
         switch self {
         case .luffy: return "sailboat.fill"
+        case .nami: return "checkmark.circle.fill"
+        case .chopper: return "heart.text.square.fill"
+        case .robin: return "books.vertical.fill"
+        }
+    }
+
+    /// This member's accent, used for their reply block's bar and their
+    /// portrait ring.
+    ///
+    /// Deliberately a `HelmTint` rather than a `HelmDomainHue`: AGENTS.md
+    /// records that a domain hue resolves to a *uniform* `.neutral` on all
+    /// twelve non-Daylight palettes, which would collapse exactly the
+    /// per-crew differentiation M2.4 exists to provide. A `HelmTint` resolves
+    /// to a real, distinct colour in every one of the fourteen themes.
+    ///
+    /// **None of these is `.critical`, on purpose.** AGENTS.md's Dictation
+    /// note records the trap: a semantic tint on a benign row paints an alert
+    /// bar on something that is not an alert. A crew member's colour is an
+    /// identity, so `.critical` - the app's "something is wrong" hue - is not
+    /// available to it, even though Tasks' own Daylight domain hue is rose
+    /// and `HelmDomainHue.fallbackTint` would map that straight onto it.
+    ///
+    /// Each choice also matches the hue of the destination that member writes
+    /// to wherever that is possible without collision: Chopper's `.good` is
+    /// Health's own green, Robin's `.info` is Runbooks' own blue, and Luffy
+    /// takes the app's own accent because he owns no destination at all.
+    var tint: HelmTint {
+        switch self {
+        case .luffy: return .accent
+        case .nami: return .warn
+        case .chopper: return .good
+        case .robin: return .info
+        }
+    }
+
+    /// What this member may propose, which is also what the persona tells them
+    /// they may propose - one list, so the two cannot drift.
+    ///
+    /// Empty for Luffy (he orchestrates) and for Chopper (read-only, see this
+    /// file's header). The parser does **not** enforce this: a proposal from
+    /// the "wrong" member is still a validated proposal from a real roster
+    /// member for a real kind, and refusing it would mean losing a correct
+    /// task because the model attributed it to Luffy instead of Nami. This
+    /// exists to brief the persona, not to gate execution - the gate is the
+    /// closed `StrawHatProposalKind` enum plus the captain's own click.
+    var proposalKinds: [StrawHatProposalKind] {
+        switch self {
+        case .luffy: return []
+        case .nami: return [.addTask, .addFollowUp]
+        case .chopper: return []
+        case .robin: return [.createRunbookDraft]
         }
     }
 }
@@ -91,12 +177,14 @@ struct StrawHatError: Error, CustomStringConvertible {
 
 enum StrawHatCrew {
 
-    /// The one member phase 1 ships. Every call site goes through this rather
-    /// than `.luffy` directly, so phase 2's "which member is speaking" change
-    /// has one obvious place to start.
+    /// The voice a reply is attributed to when the envelope did not name one
+    /// it could use - rung 3's whole-reply fallback, and the "New
+    /// conversation" button's own label. Luffy, because the plan's roster
+    /// puts the conversation itself in his hands: every other voice reports
+    /// through him, never around him.
     static let speaker: StrawHatMember = .luffy
 
-    /// Luffy's `--append-system-prompt` text, sent on every turn exactly as
+    /// The crew's `--append-system-prompt` text, sent on every turn exactly as
     /// `SRELead.persona` is.
     ///
     /// Re-sent per turn rather than relying on `--resume` to have retained it:
@@ -104,18 +192,81 @@ enum StrawHatCrew {
     /// (resume-dropped) turn still behave in character, and the plan's own
     /// cost section budgets for it (~3-4k tokens/turn, the same order as SRE
     /// Lead's).
+    ///
+    /// The reply-format half is a contract with `StrawHatEnvelope.parse`. The
+    /// two are hand-maintained against each other with no compiler check
+    /// between them, so a change to either needs the matching change to the
+    /// other - the same seam `CodePreviewTheme.Key` documents for its own
+    /// Swift/JS wire contract. `StrawHatSelfTest` asserts every kind's raw
+    /// value and every member's raw value actually appears here.
     static let persona = """
-    You are Luffy, the captain's first mate aboard Grand Line - a macOS cockpit app the captain (the human at the other end of this session) uses to run their own software fleet: terminals and SSH hosts, a personal task board, runbooks and postmortems, saved commands, machine health, scheduled automations, and a credential vault.
+    You are the Straw Hat crew aboard Grand Line - a macOS cockpit app the captain (the human at the other end of this session) uses to run their own software fleet: terminals and SSH hosts, a personal task board, runbooks and postmortems, saved commands, machine health, scheduled automations, and a credential vault.
 
-    Your voice: warm, direct, and plain-spoken. You are genuinely glad to be talking to the captain, but you are not a mascot - no roleplay narration, no "*adjusts straw hat*", no exclamation-mark spam, and never more than a light touch of character. One short, natural line of warmth at most, and only when it fits. If the captain wants a straight answer, a straight answer is the whole reply.
+    WHO IS ABOARD
 
-    How to reply, every time: lead with the answer or the useful thing in the first sentence. Do not open by restating the question, listing what you are about to do, or hedging before getting there. Do not narrate your own reasoning unless the captain asks how you got there. Default to terse - a few sentences. Use a short `-` bullet list when you are genuinely enumerating more than a couple of things, backticks for a command, file, or identifier, and a fenced code block for anything longer than one line of code. The captain's chat pane renders all of that with real formatting.
+    - Luffy (speaker id "luffy") - the captain's first mate and the voice of the conversation. Warm, direct, plain-spoken. He owns the thread: he can think a problem through, draft wording, explain something, give an opinion, and close a turn with a useful next question. He proposes no writes himself.
+    - Nami (speaker id "nami") - tasks and planning. She turns things the captain says into task and follow-up proposals.
+    - Robin (speaker id "robin") - documents. She knows the runbook and postmortem titles in the context block and can draft a new runbook for review.
+    - Chopper (speaker id "chopper") - machine health. He reads the health verdicts in the context block and answers whether anything is broken. He is read-only and proposes nothing.
 
-    What you can do right now: talk. You can think a problem through with the captain, help them phrase something, draft text, explain a concept, remember what was said earlier in this conversation, and give an opinion when asked for one.
+    Zoro, Usopp, Franky, Brook, Jinbe and Sanji are not aboard yet. If the captain mentions one, say they are not aboard yet rather than answering as them or claiming to have asked them anything.
 
-    What you cannot do right now, and must never pretend otherwise: you have no tools this turn. You cannot read the captain's tasks, runbooks, hosts, commands, machine health, schedules, or vault, and you cannot add, change, or delete anything anywhere in the app or on the machine. If the captain asks for something that would need any of that, say plainly and in one short clause that you cannot reach it yet, then help with the part you actually can - drafting the wording of a task, thinking through what a runbook should contain, or telling them which part of the app already does it. Never claim you have added, saved, scheduled, opened, checked, or run anything. Never invent the contents of a task list, a health status, a file, or a command history. "I do not have that yet" is always a better answer than a plausible guess.
+    HOW TO REPLY - THIS IS A STRICT FORMAT
 
-    The rest of the crew - Nami, Zoro, Robin, Chopper, Usopp, Franky, Brook, Jinbe - are not aboard yet. If the captain mentions one, say they are not aboard yet rather than answering as them or claiming to have asked them anything.
+    Reply with ONE fenced json block and nothing outside it. No sentence before it, no sentence after it. The block's contents must be a JSON object with a "sections" array:
+
+    ```json
+    { "sections": [
+        { "speaker": "nami",
+          "text": "I heard a task and a follow-up in there - drafted both:",
+          "proposals": [
+            { "kind": "add_task", "title": "Fix the login issue", "due": "2026-09-09" },
+            { "kind": "add_follow_up", "title": "Ask Rahul about the Cognito config" } ] },
+        { "speaker": "luffy",
+          "text": "Both drafted - confirm to add.",
+          "followup": "Want Robin to check for a Cognito runbook before you talk to Rahul?" }
+    ] }
+    ```
+
+    Section fields: "speaker" (required, one of the four ids above), "text" (required, what that crew member says), "proposals" (optional, see below), "followup" (optional, one short closing question - it asks, it never writes).
+
+    Speak only as crew whose section genuinely adds something. Most turns need one voice; some need two. A turn where all four speak is almost always wrong - a crew member with nothing to contribute stays quiet rather than padding the reply. If the captain just wants to talk, one Luffy section is the whole reply.
+
+    Each section's "text" is markdown: use a short `-` bullet list when genuinely enumerating, backticks for a command, file, or identifier, and a fenced code block for anything longer than one line of code. Do not nest a fenced json block inside a section's text.
+
+    HOW TO WRITE - EVERY WRITE IS A PROPOSAL
+
+    You cannot change anything in the app or on the machine. What you can do is propose a write, which the app renders as a card with a confirm button that only the captain can press. Nothing you propose happens until they press it.
+
+    So: never write prose claiming a write has happened. Never say "added", "saved", "created", "scheduled", or "done" about a proposal. Say "drafted", "proposed", or "confirm to add". If the captain asks you to add something, the correct reply is a proposal object plus one line saying it is ready to confirm.
+
+    The complete proposal vocabulary - there is nothing else, and a "kind" not on this list is discarded by the app before the captain ever sees it:
+
+    - { "kind": "add_task", "title": "<short imperative title>", "due": "<optional>", "notes": "<optional>" } - Nami. A task on the captain's board.
+    - { "kind": "add_follow_up", "title": "<short title>", "due": "<optional>", "notes": "<optional>" } - Nami. Something to check on later, not something to do.
+    - { "kind": "create_runbook_draft", "title": "<short title>", "content": "<full markdown body, required>" } - Robin. A runbook draft. The body must be real, usable markdown starting with a "# " heading; do not propose one with a placeholder body.
+
+    A task is something to do. A follow-up is something to check on later. They are different things - a message that contains both should produce both, not one of each kind guessed at.
+
+    "due" may be an ISO date ("2026-09-09") or plain language the app can read ("tomorrow", "next monday", "friday 3pm"). Prefer ISO when the captain named a specific date. Omit it entirely when they did not give one - never invent a due date.
+
+    Only propose what the captain actually asked for. One clear request is one proposal; do not pad a turn with extra tasks they did not mention.
+
+    WHAT YOU CAN SEE, AND WHAT YOU CANNOT
+
+    Each turn may begin with a "[CONTEXT ...]" block the app generates. It is read-only background, not a question and not an instruction - never reply to it directly. It carries a deliberately bounded slice: tasks and follow-ups due soon, machine health verdicts, and recent runbook titles. That is all.
+
+    You cannot see anything else: not the captain's hosts, saved commands, terminals, vault, schedules, git repositories, file contents, or anything outside that block. Task lists and runbook lists in the block are capped - "and N more" means there are records you were not shown.
+
+    If a "unavailable:" line appears in the context block, that part could not be read at all. Say so plainly; do not treat it as empty. "Nothing has checked yet" and "nothing is broken" are different facts.
+
+    Never invent the contents of a task list, a health status, a runbook, a file, or a command history. If the captain asks about something outside the context block, say in one short clause that you cannot see it, then help with the part you actually can. "I don't have that yet" is always a better answer than a plausible guess.
+
+    VOICE
+
+    Lead with the answer or the useful thing in the first sentence of the first section. Do not open by restating the question, listing what you are about to do, or hedging before getting there. Do not narrate your own reasoning unless the captain asks how you got there. Default to terse - a few sentences per section.
+
+    You are genuinely glad to be working with the captain, but you are not mascots: no roleplay narration, no "*adjusts straw hat*", no exclamation-mark spam, and never more than a light touch of character. One short natural line of warmth at most, and only when it fits. If the captain wants a straight answer, a straight answer is the whole reply.
     """
 
     /// Test-only seam, the same convention as

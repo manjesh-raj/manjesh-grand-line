@@ -28,6 +28,28 @@ extension FleetController {
     /// correct degradation.
     static var crewChatMinHeight: CGFloat { HelmType.scaledRowHeight(320) }
 
+    /// This page's own `DocsRunbookStore`, for Robin's half of the context
+    /// snapshot and for a confirmed runbook draft.
+    ///
+    /// A per-page instance rather than a shared one, which is the established
+    /// convention for *this* store specifically: it is uncached (every call
+    /// re-reads its folder), so two instances cannot diverge the way two
+    /// `CommandLibraryStore`s once did - and `RunbooksController`,
+    /// `PostmortemsController`, `LogAnalyzerController` and
+    /// `CommandLibraryPageView` each already hold their own.
+    ///
+    /// Built lazily so a captain who never opens the Crew tab never pays for
+    /// it, and so the store's own `init` (which can reach `ShiftGitSync` when
+    /// no override is set) is not run at page construction. `FM_SHIFT_DIR`
+    /// and `FM_DOCS_RUNBOOKS_DIR` both redirect it, and `main.swift`'s
+    /// self-test block sets both.
+    var crewDocsStore: DocsRunbookStore {
+        if let existing = crewDocs { return existing }
+        let store = DocsRunbookStore()
+        crewDocs = store
+        return store
+    }
+
     // MARK: Building
 
     func buildCrewSection() -> NSView {
@@ -37,7 +59,7 @@ extension FleetController {
         title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         crewTitleLabel = title
 
-        let subtitle = NSTextField(labelWithString: "Phase 1 \u{00B7} Luffy is the only crew member aboard")
+        let subtitle = NSTextField(labelWithString: "Luffy, Nami, Chopper and Robin \u{00B7} every write is yours to confirm")
         subtitle.font = HelmType.captionSmall()
         subtitle.translatesAutoresizingMaskIntoConstraints = false
         subtitle.lineBreakMode = .byTruncatingTail
@@ -53,7 +75,7 @@ extension FleetController {
         crewNewButton.target = self
         crewNewButton.action = #selector(newCrewConversationTapped)
         crewNewButton.isEnabled = false
-        crewNewButton.toolTip = "Start a new conversation - Luffy forgets what was said before"
+        crewNewButton.toolTip = "Start a new conversation - the crew forgets what was said before"
         crewNewButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         crewNewButton.setContentHuggingPriority(.required, for: .horizontal)
 
@@ -82,6 +104,14 @@ extension FleetController {
         crewChat.layer?.masksToBounds = true
         crewChat.layer?.borderWidth = 1
         crewChat.onSubmit = { [weak self] text in self?.sendToCrew(text) }
+        // The single path from a proposal to a store. Set once here so there
+        // is one wiring to audit rather than one per rendered card.
+        crewChat.onConfirmProposal = { [weak self] proposal in
+            guard let self else {
+                return .failed(message: "This page went away before that could be saved.")
+            }
+            return self.confirmCrewProposal(proposal)
+        }
         crewChat.onMessagesChanged = { [weak self] in
             guard let self else { return }
             self.crewNewButton.isEnabled = self.crewChat.hasRealExchange && !self.crewTurnInFlight
@@ -149,8 +179,8 @@ extension FleetController {
         crewChat.focusComposer()
     }
 
-    /// One turn: the captain's message, a status line while `claude` runs,
-    /// then the reply in its place.
+    /// One turn: the captain's message, a status line while `claude` runs, then
+    /// the reply's sections in its place.
     ///
     /// The composer is disabled for the whole turn - `StrawHatRunner` is not
     /// built for concurrent `ask` calls and says so, the same contract
@@ -171,15 +201,21 @@ extension FleetController {
         crewTurnInFlight = true
         crewChat.setInputEnabled(false)
         crewNewButton.isEnabled = false
-        crewChat.append(.status("\(StrawHatCrew.speaker.displayName) is thinking\u{2026}"))
+        crewChat.append(.status("The crew is thinking\u{2026}"))
 
-        runner.ask(text) { [weak self] result in
+        // M2.3: captured here, fresh, once per turn - not inside the runner
+        // (which owns `claude` and should not reach into stores) and not
+        // cached (a snapshot from three turns ago would tell the crew a task
+        // is due that the captain has since completed).
+        let context = StrawHatContextSnapshot.capture(shift: crewShiftStore, docs: crewDocsStore)
+
+        runner.ask(text, context: context) { [weak self] result in
             guard let self else { return }
             self.crewTurnInFlight = false
             self.crewChat.removeTrailingStatus()
             switch result {
             case .success(let reply):
-                self.crewChat.append(.crew(StrawHatCrew.speaker, reply))
+                self.renderCrewReply(reply)
             case .failure(let error):
                 AppLog.ai.error("straw hat: turn failed: \(error.message, privacy: .public)")
                 self.crewChat.append(.error(error.message))
@@ -187,6 +223,56 @@ extension FleetController {
             self.crewChat.setInputEnabled(true)
             self.crewNewButton.isEnabled = self.crewChat.hasRealExchange
         }
+    }
+
+    /// M2.1's three rungs, at their one call site.
+    ///
+    /// The rungs themselves are `StrawHatEnvelope.parse`'s; all this does is
+    /// append what came back. Note there is **no** failure branch: the parser
+    /// cannot fail, by design - rung 3 renders the reply verbatim as one Luffy
+    /// block, which is exactly phase 1's behaviour. That is what makes a model
+    /// that stops emitting the envelope a cosmetic regression rather than a
+    /// chat that silently stops answering.
+    private func renderCrewReply(_ reply: String) {
+        switch StrawHatEnvelope.parse(reply) {
+        case .envelope(let sections):
+            for section in sections {
+                crewChat.append(.crew(section))
+            }
+        case .plain(let text):
+            crewChat.append(.crew(.text(StrawHatCrew.speaker, text)))
+        }
+    }
+
+    /// M2.2: the captain pressed a confirm card's button.
+    ///
+    /// The write itself is `StrawHatProposalExecutor`'s; this owns only the
+    /// stores it hands over and the feedback afterwards. Wired to the chat view
+    /// once, in `buildCrewSection` - so there is exactly one path from a
+    /// proposal to a store, and it starts at a real button press.
+    func confirmCrewProposal(_ proposal: StrawHatProposal) -> StrawHatProposalOutcome {
+        let outcome = StrawHatProposalExecutor.execute(proposal,
+                                                       shift: crewShiftStore,
+                                                       docs: crewDocsStore)
+        switch outcome {
+        case .written(let message, let undo):
+            // GL-33 / the house convention: a toast for a transient
+            // confirmation, and `showUndo` only where the undo genuinely
+            // restores. Two of the three kinds have no undo, and
+            // `StrawHatProposalExecutor`'s header records why (`ShiftStore` has
+            // no delete for a task or a follow-up, so an "Undo" there could
+            // only pretend). The card's own confirmed state names where the
+            // record went either way.
+            if let undo {
+                Toast.showUndo(in: view, message: message, onUndo: undo)
+            } else {
+                Toast.show(in: view, message: message)
+            }
+        case .failed(let message):
+            AppLog.ai.error("straw hat: a confirmed proposal failed: \(message, privacy: .public)")
+            Toast.show(in: view, message: message)
+        }
+        return outcome
     }
 
     // MARK: Lifecycle
@@ -225,6 +311,16 @@ extension FleetController {
     var debugCrewChatHeight: CGFloat { crewChatHeight?.constant ?? 0 }
     var debugCrewNewButton: HelmButton { crewNewButton }
     var debugCrewTurnInFlight: Bool { crewTurnInFlight }
+    /// Renders a raw reply through the real three-rung path, so a suite can
+    /// drive rung 2 and rung 3 without a fake `claude` able to produce them.
+    func debugRenderCrewReply(_ reply: String) { renderCrewReply(reply) }
+    /// Confirms a proposal through the real executor + toast path.
+    func debugConfirmCrewProposal(_ proposal: StrawHatProposal) -> StrawHatProposalOutcome {
+        confirmCrewProposal(proposal)
+    }
+    var debugCrewContext: StrawHatContextSnapshot {
+        StrawHatContextSnapshot.capture(shift: crewShiftStore, docs: crewDocsStore)
+    }
     /// Selects a tab through the same method a real pill click reaches.
     func debugSelectTab(_ id: String) { debugSwitchTab(id) }
     #endif
