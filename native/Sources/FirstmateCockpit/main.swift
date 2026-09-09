@@ -657,6 +657,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // pushed - i.e. absent from the next machine, which is the one property
         // this feature exists to guarantee.
         appShell.shutdownCredentialVault()
+        // Straw Hat Pirates phase 1: nothing to flush (no on-disk history yet
+        // by explicit scope) - this stops an in-flight `claude -p` child from
+        // outliving the app by up to its 300s bound.
+        appShell.shutdownStrawHatCrew()
         shiftHotkey.stop()
         tabShortcuts.stop()
         shiftNotifications.stop()
@@ -1512,6 +1516,23 @@ if ProcessInfo.processInfo.environment["FM_RUN_SRE_LEAD_BRIDGE_TESTS"] == "1" {
 // close) - see `SRELeadPerTabSelfTest.swift`'s header.
 if ProcessInfo.processInfo.environment["FM_RUN_SRE_LEAD_PER_TAB_TESTS"] == "1" {
     exit(SRELeadPerTabSelfTest.run() ? 0 : 1)
+}
+
+// Straw Hat Pirates phase 1 (`fm/implement-straw-hat-pirates-phase1-luffy-fb98`):
+// the pure-logic half - the persona's own safety clauses, `--resume`
+// threading proven from the argv a fake `claude` recorded, the stale-session
+// recap recovery, and the `.strawHatChat` lock gate. Runs in CI; the
+// window-backed half is `FM_RUN_STRAW_HAT_VIEW_TESTS`.
+if ProcessInfo.processInfo.environment["FM_RUN_STRAW_HAT_TESTS"] == "1" {
+    exit(StrawHatSelfTest.run() ? 0 : 1)
+}
+
+// The same feature's rendering half: the real `FleetController` Crew tab,
+// the real `StrawHatChatView`, and a real turn round trip against a fake
+// `claude`. Mounts a real `NSWindow`, so it is in `run-all-tests.sh`'s
+// `NEEDS_SESSION` list - see `StrawHatViewSelfTest.swift`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_STRAW_HAT_VIEW_TESTS"] == "1" {
+    exit(StrawHatViewSelfTest.run() ? 0 : 1)
 }
 
 // `fm/cockpit-sre-lead-reply-formatting`: same convention, for

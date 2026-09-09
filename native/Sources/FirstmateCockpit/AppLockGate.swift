@@ -112,6 +112,19 @@ enum AppLockedSurface {
     /// into the git-synced record, and "End Incident" starts postmortem
     /// generation.
     case incidentCard
+    /// Straw Hat Pirates phase 1: asking Luffy a question.
+    ///
+    /// The composer lives inside the main window, on Overview's Crew tab,
+    /// under the lock overlay - so like `crewReply` this is not reachable by a
+    /// walk-up click today. It is here because of what the call does: it ships
+    /// the captain's own typed words to a `claude -p` subprocess and renders
+    /// the reply, which is exactly this file's header rule ("shows the
+    /// captain's data or writes it" while nobody is meant to be at the
+    /// keyboard). Its own case rather than sharing `crewReply`'s, per that
+    /// same header: one sends into a running crewmate session via
+    /// `fm-send.sh`, the other spawns a local model turn, and a shared case
+    /// would let either lose its gate without a single test noticing.
+    case strawHatChat
     /// Audit #2 §5.2: the Console/Tools tab keystrokes (⌘T/⌘D/⌘W/⌘R/⇧⌘R and
     /// ⌘1-9).
     ///

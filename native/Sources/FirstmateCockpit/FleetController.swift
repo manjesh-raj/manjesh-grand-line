@@ -105,8 +105,14 @@ final class FleetController: NSViewController {
     /// `HelmSegmentedTabs` shape Shift/Docs/Hosts already use; "Overview"
     /// stays the default.
     private enum OverviewTab: String, CaseIterable {
-        case overview, log
-        var title: String { self == .overview ? "Overview" : "Log" }
+        case overview, log, crew
+        var title: String {
+            switch self {
+            case .overview: return "Overview"
+            case .log: return "Log"
+            case .crew: return "Crew"
+            }
+        }
     }
 
     private var activeTab: OverviewTab = .overview
@@ -125,6 +131,50 @@ final class FleetController: NSViewController {
                                                size: .compact)
     private let logList = FleetLogListView()
     private var logFilterKind: FleetLogEventKind?
+
+    // MARK: Straw Hat Pirates phase 1 - the "Crew" tab
+    //
+    // The captain's placement call, overriding the plan's own phase-1 line
+    // ("new destination + rail icon"): "This will be inside overview
+    // section." So Luffy's chat is a third tab here rather than a
+    // twenty-fifth `RailDestination` - which also means it inherits this
+    // page's mount, theme observer and appearance forcing for free instead of
+    // repeating the five-touch destination recipe.
+    //
+    // Everything below is inert until the tab is first selected: the
+    // container is a hidden *arranged subview* of an `NSStackView` (so it
+    // leaves layout entirely, AGENTS.md gotcha (11)), the runner is built
+    // lazily on the first send, and no `claude` process exists until the
+    // captain actually types something.
+    //
+    // These are `internal` rather than `private` because `private` is
+    // file-scoped in Swift and the tab's own code lives in
+    // `FleetController+Crew.swift` - the same trade GL-36 made when it split
+    // `ConsoleController` into six files.
+    let crewContainer = NSStackView()
+    let crewChat = StrawHatChatView()
+    let crewNewButton = HelmButton(title: "New conversation", variant: .quiet, symbol: "plus.bubble")
+    /// The chat's own height, re-derived on every layout pass so the tab fills
+    /// the visible page instead of scrolling inside this page's scroll view -
+    /// see `updateCrewChatHeight()`.
+    var crewChatHeight: NSLayoutConstraint!
+    /// Built on the first send, not at `loadView` - resolving `claude` on a
+    /// page every launch renders is work for a feature most visits never use.
+    var crewRunner: StrawHatRunner?
+    var crewTurnInFlight = false
+    /// Built inside `buildCrewSection()`, held here so `applyThemeToCrew` can
+    /// re-tint them (an extension cannot declare stored properties).
+    var crewTitleLabel: NSTextField?
+    var crewSubtitleLabel: NSTextField?
+
+    /// Narrow accessors for the Crew extension's height derivation - widening
+    /// `scroll` itself would hand it more than it needs.
+    var crewScrollDocumentView: NSView? { scroll.documentView }
+    var crewScrollViewportHeight: CGFloat { scroll.contentView.bounds.height }
+    /// `contentStack`'s own bottom inset inside the document view - the one
+    /// number `updateCrewChatHeight` cannot read back off a laid-out frame.
+    /// Keep in sync with `loadView`'s `contentStack.bottomAnchor` constant.
+    var crewDocumentBottomInset: CGFloat { 28 }
 
     /// fm/grandline-sidebar-badges: fires every time `render` recomputes the
     /// banner's "needs your call" set (`needs_decision`/`blocked` tasks) -
@@ -263,6 +313,7 @@ final class FleetController: NSViewController {
         overviewContainer.addArrangedSubview(inFlightSection)
 
         let logSection = buildLogSection()
+        let crewSection = buildCrewSection()
 
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
@@ -272,6 +323,7 @@ final class FleetController: NSViewController {
         contentStack.addArrangedSubview(tabs)
         contentStack.addArrangedSubview(overviewContainer)
         contentStack.addArrangedSubview(logSection)
+        contentStack.addArrangedSubview(crewSection)
 
         // The data sections stay hidden behind the loading skeleton until the
         // first successful `render(...)` - see `buildLoadingState`.
@@ -281,6 +333,7 @@ final class FleetController: NSViewController {
         needsSection.isHidden = true
         briefingCard.isHidden = true
         logSection.isHidden = true
+        crewSection.isHidden = true
 
         content.addSubview(contentStack)
         NSLayoutConstraint.activate([
@@ -291,6 +344,7 @@ final class FleetController: NSViewController {
             headerRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             overviewContainer.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             logSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            crewSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             briefingCard.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
             loadingSection.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
             bannerRow.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
@@ -568,6 +622,18 @@ final class FleetController: NSViewController {
         logContainer.isHidden = tab != .log
         if tab == .log { renderLog() }
         applyTheme()
+        // Last, and after `applyTheme`: showing the Crew tab measures real
+        // laid-out geometry, so it has to run once everything else has
+        // settled its own hidden state.
+        crewTabDidChangeVisibility(showing: tab == .crew)
+    }
+
+    /// The Crew tab's chat fills the viewport rather than scrolling inside
+    /// this page's own scroll view - which needs a real, laid-out height, so
+    /// it is re-derived here. A no-op on every other tab.
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        updateCrewChatHeight()
     }
 
     /// Re-reads the feed and re-renders it. Called when the Log tab is shown,
@@ -1072,6 +1138,7 @@ final class FleetController: NSViewController {
         tabs.applyTheme(theme)
         logFilters.applyTheme(theme)
         logList.applyTheme(theme)
+        applyThemeToCrew(theme)
 
         for tile in statTiles { tile.applyTheme(theme) }
         for empty in emptyStates { empty.applyTheme(theme) }
@@ -1079,4 +1146,22 @@ final class FleetController: NSViewController {
         // theme handed to it.
         for row in accentRows { row.applyTheme(theme) }
     }
+
+    // MARK: Probe / self-test surface
+
+    #if FM_SELFTESTS
+    /// Switch tabs through the exact method a real pill click reaches -
+    /// `switchTab` and `OverviewTab` are both `private` to this file, so the
+    /// Crew extension's own `debugSelectTab` routes through this.
+    func debugSwitchTab(_ id: String) {
+        guard let tab = OverviewTab(rawValue: id) else { return }
+        switchTab(tab)
+    }
+
+    /// Every tab id the strip offers, in order - so a suite can assert the
+    /// Crew tab exists at all rather than only that selecting it works.
+    var debugTabIDs: [String] { OverviewTab.allCases.map { $0.rawValue } }
+
+    var debugActiveTabID: String { activeTab.rawValue }
+    #endif
 }
