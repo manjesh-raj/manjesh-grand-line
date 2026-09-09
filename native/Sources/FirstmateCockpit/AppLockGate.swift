@@ -137,6 +137,20 @@ enum AppLockedSurface {
     /// evaporates the moment anything else holds focus (a Full Keyboard Access
     /// user tabbing to the unlock button; §5.1(c)'s own race).
     case tabShortcuts
+    /// Opening the Straw Hat Pirates menu-bar status item's own popover at
+    /// all (`fm/straw-hat-menubar-quick-chat-popover`).
+    ///
+    /// Mirrors `.menuBarPopover` exactly, and deliberately its own case
+    /// rather than sharing it: `ShiftMenuBarController` and
+    /// `StrawHatMenuBarController` are two independent status items, and a
+    /// shared case would let either lose its gate without a single test
+    /// noticing (this file's own header rule). Asking a question is already
+    /// covered by `.strawHatChat` (the popover forwards into
+    /// `StrawHatController.send(_:completion:)`, the same runner the crew
+    /// page's own composer uses) - this case is only about whether the
+    /// popover may open at all, since a reopened popover can still show a
+    /// previous reply from before the lock engaged.
+    case strawHatMenuBarPopover
 }
 
 final class AppLockGate {

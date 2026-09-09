@@ -171,6 +171,11 @@ NEEDS_SESSION=(
   "FM_RUN_STRAW_HAT_VIEW_TESTS"
   # Phase 3's handoff resolution mounts a real `AppShellController`.
   "FM_RUN_STRAW_HAT_HANDOFF_TESTS"
+  # `fm/straw-hat-menubar-quick-chat-popover`: the menu-bar popover's content
+  # controller and the roster sheet are both real, view-loaded `NSViewController`s
+  # (plus a real `NSStatusItem`/`NSPopover` pair) - window-backed for the same
+  # reason as the rest of this family.
+  "FM_RUN_STRAW_HAT_MENUBAR_TESTS"
   "FM_RUN_INPUT_SURFACE_TESTS"
   "FM_RUN_REVIEW_LOADING_STATE_TESTS"
   "FM_RUN_REVIEW_PR_LIST_VOLUME_TESTS"

@@ -55,6 +55,7 @@ enum StrawHatViewSelfTest {
         checkChatFillsThePage(&ok)
         checkChatIsNotBuiltUntilMounted(&ok)
         checkCanvasCardSummary(&ok)
+        checkOverviewSubtitleIsFixed(&ok)
         checkTurnRoundTrip(&ok)
         checkMarkdownRenders(&ok)
         checkNewConversation(&ok)
@@ -220,6 +221,15 @@ enum StrawHatViewSelfTest {
         // summary of one (GL-14's rule, one more card).
         check(anatomy.noteTexts.contains(where: { $0.contains("Ask for a task") }),
               "a fresh card invites a question instead of inventing a summary, got \(anatomy.noteTexts)", &ok)
+
+        // `fm/straw-hat-menubar-quick-chat-popover`: the captain's own
+        // replacement for the derived "Nami \u{00B7} 3 exchanges" subtitle -
+        // Luffy's own signature line, fixed, always, on this empty-thread
+        // card too. `checkCanvasCardSummary` below re-checks the same line
+        // while a real conversation is underway, which is the half that
+        // actually proves it is fixed rather than merely correct once.
+        check(anatomy.subtitle == "I'm gonna be King of the Pirates!",
+              "the card's subtitle is Luffy's own line, got \(anatomy.subtitle)", &ok)
     }
 
     /// The chat has to fill the page, or it renders as a small box in an
@@ -352,6 +362,46 @@ enum StrawHatViewSelfTest {
               "a fence line is skipped rather than shown as the preview", &ok)
         check(StrawHatController.debugPreviewLine(of: "   ") == nil,
               "an empty reply has no preview rather than a blank one", &ok)
+    }
+
+    /// The captain's own subtitle correction, driven all the way through the
+    /// real canvas rendering path (`HomeCanvasController.fillStrawHat`) and
+    /// across every state a live conversation moves through - proving the
+    /// line is genuinely fixed, not merely correct on a card nobody has
+    /// talked to yet (which `checkOwnCardAndDestination` already covers).
+    private static func checkOverviewSubtitleIsFixed(_ ok: inout Bool) {
+        let expected = "I'm gonna be King of the Pirates!"
+        let canvas = HomeCanvasController(sources: .init(
+            shiftStore: ShiftStore(),
+            hostStore: HostStore(),
+            scheduleStore: ScheduleStore(),
+            logAnalyzerStore: LogAnalyzerStore(),
+            docsRunbookStore: DocsRunbookStore(),
+            codePreviewStore: CodePreviewStore()))
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
+                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        window.contentViewController = canvas
+        canvas.view.layoutSubtreeIfNeeded()
+
+        func subtitle() -> String? {
+            canvas.debugRenderNow()
+            canvas.view.layoutSubtreeIfNeeded()
+            return canvas.moduleCardsForTests.first { $0.anatomyForTests.title == "Straw Hat Pirates" }?
+                .anatomyForTests.subtitle
+        }
+
+        canvas.applyStrawHat(StrawHatCanvasState())
+        check(subtitle() == expected, "an empty conversation's card still reads Luffy's line, got \(String(describing: subtitle()))", &ok)
+
+        canvas.applyStrawHat(StrawHatCanvasState(exchanges: 1, lastSpeakers: [.nami],
+                                                 lastLine: "Two tasks are due today.", isThinking: false))
+        check(subtitle() == expected,
+              "a populated conversation must not swap the line for a status readout, got \(String(describing: subtitle()))", &ok)
+
+        canvas.applyStrawHat(StrawHatCanvasState(exchanges: 1, lastSpeakers: [.nami],
+                                                 lastLine: "Two tasks are due today.", isThinking: true))
+        check(subtitle() == expected,
+              "...and neither does a turn in flight - \"thinking\" moved to the body line instead, got \(String(describing: subtitle()))", &ok)
     }
 
     /// One real turn, end to end: type, click the real Send button, and watch
