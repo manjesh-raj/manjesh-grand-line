@@ -62,6 +62,7 @@ enum DestinationMountingSelfTest {
             ("schedulesHasItsOwnSlotAndAutomationNoLongerRendersIt", test_schedulesIsSeparateFromAutomation),
             ("healthHasItsOwnSlotAndSettingsNoLongerRendersIt", test_healthIsSeparateFromSettings),
             ("runbooksAndPostmortemsHaveTheirOwnSlotsAndDocsNoLongerRendersThem", test_runbooksAndPostmortemsAreSeparateFromDocs),
+            ("poneglyphHasItsOwnSlotAndSetupNoLongerRendersIt", test_poneglyphIsSeparateFromSetup),
             ("mounterIsLazyAndBuildsEachSlotOnce", test_mounterUnitBehaviour),
             ("everyDestinationRendersRealContentOnFirstLoad", test_everyDestinationRendersRealContentOnFirstLoad),
             ("everyDestinationForcesItsOwnAppearance", test_everyDestinationForcesItsOwnAppearance),
@@ -94,17 +95,16 @@ enum DestinationMountingSelfTest {
     }
 
     private static func test_setupGroupSharesOneSlot() -> String? {
-        // `fm/implement-grand-line-secrets-vault-poneg-ad` added `.poneglyph`:
-        // the captain's own credential vault (Automic Vault's hardening panel
-        // at the time) moved out of the `.vault` destination into Setup as
-        // its fifth tab - unaffected by
-        // `fm/swap-vault-poneglyph-naming-in-grand-lin-1f` later swapping
-        // which feature `.vault`/`.poneglyph` each show, since the slot a
-        // destination maps to is independent of that. Listed explicitly
-        // rather than derived from `slot == .setup`, for this file's own
-        // reason - a test that reads the table it is checking asserts
-        // nothing.
-        let setupGroup: [RailDestination] = [.updates, .bootstrap, .automation, .githubSync, .poneglyph]
+        // `.poneglyph` (the captain's own credential vault) used to be a
+        // fifth tab of this shared slot (`fm/implement-grand-line-secrets-
+        // vault-poneg-ad`), unaffected by `fm/swap-vault-poneglyph-naming-in-
+        // grand-lin-1f` later swapping which feature `.vault`/`.poneglyph`
+        // each show. `fm/poneglyph-own-destination-and-strawhat-toolbar-
+        // shortcut` gave it its own slot instead (see
+        // `test_poneglyphIsSeparateFromSetup`) - listed explicitly rather
+        // than derived from `slot == .setup`, for this file's own reason - a
+        // test that reads the table it is checking asserts nothing.
+        let setupGroup: [RailDestination] = [.updates, .bootstrap, .automation, .githubSync]
         for dest in setupGroup {
             guard dest.slot == .setup else { return "\(dest) should map to the setup slot, got \(dest.slot.rawValue)" }
             guard dest.bodyTitle == "Setup" else { return "\(dest).bodyTitle should be \"Setup\", got \"\(dest.bodyTitle)\"" }
@@ -147,7 +147,7 @@ enum DestinationMountingSelfTest {
             // mounting it eagerly would start a WebKit content process at
             // launch for a page the captain may never open
             // (`fm/grand-line-whiteboard-excalidraw`).
-            let mustBeLazy: Set<DestinationSlotID> = [.docs, .runbooks, .postmortems, .tools, .whiteboard, .codePreview, .stickyBoard, .logAnalyzer, .vault, .dictation, .schedules, .health, .hosts, .shift, .settings]
+            let mustBeLazy: Set<DestinationSlotID> = [.docs, .runbooks, .postmortems, .tools, .whiteboard, .codePreview, .stickyBoard, .logAnalyzer, .vault, .poneglyph, .dictation, .schedules, .health, .hosts, .shift, .settings]
             let eagerlyBuilt = mounted.intersection(mustBeLazy)
             guard eagerlyBuilt.isEmpty else {
                 return "these should not be built at launch: \(eagerlyBuilt.map(\.rawValue).sorted())"
@@ -512,6 +512,58 @@ enum DestinationMountingSelfTest {
             }
             guard !labels.contains(where: { $0.localizedCaseInsensitiveContains("new runbook") }) else {
                 return "the Docs page still renders a runbook-creation control"
+            }
+            return nil
+        }
+    }
+
+    /// `fm/poneglyph-own-destination-and-strawhat-toolbar-shortcut`:
+    /// Poneglyph (the captain's own credential vault) used to be a fifth tab
+    /// of the shared Setup slot alongside Updates/Bootstrap/Automation/
+    /// GitHub Sync - opening it from its Stores card showed a page titled
+    /// "Setup" with all four of those pages' tab strip above it, which read
+    /// as though the vault were part of Engineering's setup pipeline rather
+    /// than the fully separate feature it is. Mirrors
+    /// `test_schedulesIsSeparateFromAutomation`/`test_healthIsSeparateFromSettings`
+    /// exactly: `.poneglyph` mounts to a slot of its own (not `.setup`), and
+    /// the real `SetupContainerController` root that the four remaining
+    /// Setup destinations show no longer contains a "Poneglyph" tab pill
+    /// anywhere in its view tree.
+    ///
+    /// Confirmed to catch a real regression, not just to pass: temporarily
+    /// re-adding `.poneglyph` to `SetupTab`/`SetupContainerController` (the
+    /// pre-move shape) makes this fail on the second assertion, naming the
+    /// leftover "Poneglyph" tab pill label, while every other case in this
+    /// file keeps passing.
+    private static func test_poneglyphIsSeparateFromSetup() -> String? {
+        withScratchEnv {
+            let (_, shell) = makeMountedShell()
+
+            guard RailDestination.poneglyph.slot != RailDestination.updates.slot else {
+                return "poneglyph must not share a slot with the Setup group"
+            }
+
+            shell.show(.poneglyph)
+            guard let poneglyphView = shell.destinationViewIfMountedForTests(.poneglyph) else {
+                return "show(.poneglyph) did not mount the poneglyph slot"
+            }
+            guard poneglyphView.isHidden == false else {
+                return "the poneglyph view should be visible right after show(.poneglyph)"
+            }
+
+            // Visiting Poneglyph must not have built the shared Setup slot as
+            // a side effect - it is a fully independent destination now.
+            guard shell.destinationViewIfMountedForTests(.setup) == nil else {
+                return "show(.poneglyph) unexpectedly mounted the setup slot too"
+            }
+
+            shell.show(.updates)
+            guard let setupView = shell.destinationViewIfMountedForTests(.setup) else {
+                return "show(.updates) did not mount the setup slot"
+            }
+            let labels = collectTextFieldValues(in: setupView)
+            guard !labels.contains("Poneglyph") else {
+                return "the Setup page still renders a \"Poneglyph\" tab pill - it should have moved to its own destination"
             }
             return nil
         }

@@ -875,8 +875,10 @@ enum DaylightModuleSelfTest {
     // `fm/grandline-sticky-code-preview-polish`: the captain reaches Sticky
     // Board and Code Preview often enough that a space switch plus a card
     // click is friction, so both get a bar icon. Tasks joined them in
-    // `fm/grandline-tasks-quick-access-icon`. Every one of them remains a full
-    // destination in its own space - this is a shortcut, not a relocation.
+    // `fm/grandline-tasks-quick-access-icon`, and Straw Hat Pirates/Poneglyph
+    // joined them in `fm/poneglyph-own-destination-and-strawhat-toolbar-
+    // shortcut`. Every one of them remains a full destination in its own
+    // space - this is a shortcut, not a relocation.
     //
     // The expected list is a literal here on purpose: a check that derived it
     // from `debugDestinationButtons()` would pass for any set of icons in any
@@ -884,13 +886,13 @@ enum DaylightModuleSelfTest {
     // icon the captain has muscle memory for.
 
     private static func checkBarDestinationIcons(_ ok: inout Bool) {
-        print("\n-- bar quick-access icons: Sticky Board, Code Preview, Tasks --")
+        print("\n-- bar quick-access icons: Sticky Board, Code Preview, Tasks, Straw Hat Pirates, Poneglyph --")
         let bar = DaylightBarController()
         bar.loadView()
         bar.view.frame = NSRect(x: 0, y: 0, width: 1200, height: DaylightBarController.height + DaylightBarController.topMargin)
         bar.view.layoutSubtreeIfNeeded()
 
-        let expected: [RailDestination] = [.stickyBoard, .codePreview, .shift]
+        let expected: [RailDestination] = [.stickyBoard, .codePreview, .shift, .strawHat, .poneglyph]
         let buttons = bar.debugDestinationButtons()
         guard buttons.count == expected.count else {
             fail("expected \(expected.count) quick-access icons, found \(buttons.count)", &ok)

@@ -36,8 +36,20 @@ import AppKit
 /// deals in; the mapping to `RailDestination` is one switch, in one place, so
 /// the rail flyout and this tab row can never disagree about what "Bootstrap"
 /// means.
+///
+/// `fm/poneglyph-own-destination-and-strawhat-toolbar-shortcut` removed the
+/// fifth `.poneglyph` case this once carried (`fm/implement-grand-line-
+/// secrets-vault-poneg-ad`): the captain's own personal credential vault
+/// shared this container's one slot for a while, but opening it from its
+/// Stores card showed a page titled "Setup" with an Updates/Bootstrap/
+/// Automation/GitHub Sync tab strip above it, which read as though the vault
+/// were part of Engineering's setup pipeline rather than the fully separate
+/// feature it is. `CredentialVaultController` now owns its own
+/// `DestinationSlotID.poneglyph` slot directly (see `DestinationRegistry.swift`
+/// and `AppShellController`'s own registration) - see
+/// `CredentialVaultController.swift`'s header for the full naming history.
 enum SetupTab: String, CaseIterable {
-    case updates, bootstrap, automation, githubSync, poneglyph
+    case updates, bootstrap, automation, githubSync
 
     var title: String {
         switch self {
@@ -45,13 +57,6 @@ enum SetupTab: String, CaseIterable {
         case .bootstrap: return "Bootstrap"
         case .automation: return "Automation"
         case .githubSync: return "GitHub Sync"
-        // `fm/implement-grand-line-secrets-vault-poneg-ad`: the captain's own
-        // personal credential vault, named "Poneglyph" by his own decision.
-        // It lived at the `.vault` destination briefly, then reclaimed this
-        // fifth Setup tab once `fm/swap-vault-poneglyph-naming-in-grand-lin-1f`
-        // gave `.vault`/Stores back to Automic Vault's hardening panel. See
-        // `CredentialVaultController.swift`'s header for the full history.
-        case .poneglyph: return "Poneglyph"
         }
     }
 
@@ -61,7 +66,6 @@ enum SetupTab: String, CaseIterable {
         case .bootstrap: return .bootstrap
         case .automation: return .automation
         case .githubSync: return .githubSync
-        case .poneglyph: return .poneglyph
         }
     }
 
@@ -71,7 +75,6 @@ enum SetupTab: String, CaseIterable {
         case .bootstrap: self = .bootstrap
         case .automation: self = .automation
         case .githubSync: self = .githubSync
-        case .poneglyph: self = .poneglyph
         default: return nil
         }
     }
@@ -83,7 +86,6 @@ final class SetupContainerController: NSViewController, DaylightDrillActions {
     let bootstrap: BootstrapController
     let automation: AutomationController
     let githubSync: GitHubSyncController
-    let poneglyph: CredentialVaultController
 
     private var tabs: HelmSegmentedTabs!
     private var activeTab: SetupTab = .updates
@@ -113,31 +115,26 @@ final class SetupContainerController: NSViewController, DaylightDrillActions {
     }
 
     /// **Deliberately empty**, for the same reason Console's is (slice 2):
-    /// every one of the five sub-pages carries its own actions in its own
+    /// every one of the four sub-pages carries its own actions in its own
     /// toolbar or card header, 44pt below this header - Updates' Refresh pill
     /// (which swaps for a progress bar and its count while a sweep runs),
     /// Bootstrap's "Run full setup" (which sits on its own progress track),
-    /// Automation's "Run Automation" (beside its live step line), GitHub
-    /// Sync's "Sync All" (above the summary line it writes into), and
-    /// Poneglyph's own Add/Lock/Settings cluster (which is why they're hidden
-    /// while locked - see `CredentialVaultController.drillHeaderActions`).
-    /// Hoisting a copy of any of them would either duplicate a control §6.4's
-    /// cluster exists to de-duplicate, or separate the button from the state
-    /// it reports. The header still earns its place through the live
-    /// subtitle above, which is the signal none of the five pages states in
-    /// one line.
+    /// Automation's "Run Automation" (beside its live step line), and GitHub
+    /// Sync's "Sync All" (above the summary line it writes into). Hoisting a
+    /// copy of any of them would either duplicate a control §6.4's cluster
+    /// exists to de-duplicate, or separate the button from the state it
+    /// reports. The header still earns its place through the live subtitle
+    /// above, which is the signal none of the four pages states in one line.
     var drillHeaderActions: [NSView] { [] }
 
     init(updates: UpdatesController,
          bootstrap: BootstrapController,
          automation: AutomationController,
-         githubSync: GitHubSyncController,
-         poneglyph: CredentialVaultController) {
+         githubSync: GitHubSyncController) {
         self.updates = updates
         self.bootstrap = bootstrap
         self.automation = automation
         self.githubSync = githubSync
-        self.poneglyph = poneglyph
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -145,8 +142,7 @@ final class SetupContainerController: NSViewController, DaylightDrillActions {
 
     private var pageViews: [SetupTab: NSView] {
         [.updates: updates.view, .bootstrap: bootstrap.view,
-         .automation: automation.view, .githubSync: githubSync.view,
-         .poneglyph: poneglyph.view]
+         .automation: automation.view, .githubSync: githubSync.view]
     }
 
     override func loadView() {
@@ -205,7 +201,6 @@ final class SetupContainerController: NSViewController, DaylightDrillActions {
         case .bootstrap: return bootstrap
         case .automation: return automation
         case .githubSync: return githubSync
-        case .poneglyph: return poneglyph
         }
     }
 

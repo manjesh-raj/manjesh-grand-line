@@ -1,7 +1,8 @@
 // Manjesh Grand Line - native macOS app.
 //
-// **Poneglyph** - the captain's personal credential vault, the fifth Setup
-// tab (`SetupContainerController`/`SetupTab.poneglyph`).
+// **Poneglyph** - the captain's personal credential vault. Its own standalone
+// destination (`DestinationSlotID.poneglyph`), reachable from its Stores card
+// - not a Setup sub-page any more, see below.
 //
 // **History, so the naming doesn't read as arbitrary.** This page originally
 // took over Automic Vault's `.vault` destination and was labeled "Vault"
@@ -13,10 +14,19 @@
 // captain judged that backwards - Automic Vault is the vault he already relies
 // on daily, so `fm/swap-vault-poneglyph-naming-in-grand-lin-1f` gave it back
 // the `.vault` destination and the "Vault" label (see `VaultController.swift`'s
-// header), and this page took the "Poneglyph" name in its place, moving here
-// under Setup. Automic Vault's actual job (gating what a CLI tool may do with
-// a credential) is genuinely useful and unchanged throughout; what it is not,
-// by its own written architecture decision, is a retrieval-based password
+// header), and this page took the "Poneglyph" name in its place, moving under
+// Setup as its fifth tab (`SetupContainerController`/`SetupTab.poneglyph`, at
+// the time). It shared that container's one slot with
+// Updates/Bootstrap/Automation/GitHub Sync for a while - which meant opening
+// it from its Stores card showed a page titled "Setup" with all four of those
+// pages' tab strip above it, reading as though the credential vault were part
+// of Engineering's setup pipeline rather than the fully separate feature it
+// is. `fm/poneglyph-own-destination-and-strawhat-toolbar-shortcut` gave it its
+// own destination slot instead (see `DestinationRegistry.swift`), the same
+// standalone shape `.strawHat` already has - `SetupTab.poneglyph` no longer
+// exists. Automic Vault's actual job (gating what a CLI tool may do with a
+// credential) is genuinely useful and unchanged throughout; what it is not, by
+// its own written architecture decision, is a retrieval-based password
 // manager, which is what this page is. Two very different things that have
 // spent this app's history trading names, never behaviour.
 //
