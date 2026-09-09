@@ -44,17 +44,63 @@
 //     inside a `.shell` tab. There is no "at launch" hook to thread a flag
 //     or env var through even if one existed.
 //
-// **`fm/grandline-herdr-reload-on-theme-sync`: live reload is wired up.**
-// After a successful, *changed* config write, `syncNow` also runs `herdr
-// server reload-config` so an already-running server picks up the new
-// colours immediately, without the captain having to restart it or find the
-// `prefix+shift+r` keybinding themselves. `herdr server reload-config` takes
-// no flags of its own and exposes no machine-parseable result on the CLI
-// surface (confirmed via `strings` and `herdr api schema --json`); only the
-// process's own exit status is a reliable signal from outside, and "no
-// server running" is detected client-side and exits non-zero, which this
-// treats like any other unsuccessful reload (log it, never crash, never
-// block the already-durable config write on it).
+// **`fm/grandline-herdr-reload-on-theme-sync`: live reload is wired up, but
+// `fix-herdr-theme-sync-regression-706b` found - and corrected - a mistaken
+// belief about what it actually covers, baked into this comment ever since.**
+// The original text here claimed `herdr server reload-config` makes "an
+// already-running server picks up the new colours immediately, without the
+// captain having to restart it or find the `prefix+shift+r` keybinding
+// themselves" - naming the very keybinding this call was believed to make
+// unnecessary. That claim was never verified against a real herdr server (the
+// prior task's own header already says why: the sanctioned `fm-herdr-lab.sh`
+// helper categorically refuses every `server ...` command, and the hard
+// safety contract separately forbids running one directly even against an
+// isolated lab session) - it was inferred from the subcommand's name.
+//
+// Herdr's own published docs say otherwise, in as many words
+// (`docs/configuration.mdx`, "## Reload config", confirmed live against the
+// real installed 0.9.0's `--help`/`herdr server --help` output and the
+// socket API's own `Raw methods` table, which lists only `client.window_
+// title.set`/`client.window_title.clear` under "Client" - nothing theme- or
+// reload-shaped): **theme, sidebar and other presentation settings are the
+// CLIENT's own local concern - loaded once at the client's own startup - and
+// belong to a DIFFERENT reload path than the one this app calls.**
+// `herdr server reload-config` (this app's own CLI call, and the only one
+// the socket API's `server.reload_config` method backs) reloads only
+// SERVER-owned settings - pane defaults, worktrees, integrations, custom
+// commands. The captain's own in-app "reload config" action (the global
+// menu item, or the `prefix+shift+r` keybinding this comment used to claim
+// was made unnecessary) is the one that "reloads both the client's local
+// settings and the selected server's config" - and there is no CLI or
+// socket-API equivalent of that combined action; `Client`'s own socket
+// methods don't include one, and no `herdr api`/`herdr` subcommand exposes
+// it either. This app has no reliable way to target which Console tab, if
+// any, is running a herdr client at all (`ConsoleController+Herdr.swift`'s
+// own doc comment already says so, for the unrelated `herdr server stop`
+// restart-button feature) - so there is no safe way to reach the client-side
+// half of "reload config" from here, and this app does not attempt to.
+//
+// What this means in practice, and what the corrected log message below now
+// says instead of implying "done": every write this file makes to
+// config.toml is durable and immediately correct, and a captain who OPENS A
+// NEW `herdr session attach ...` after that write sees the right colours
+// right away (a fresh client reads the file at its own startup, no reload
+// needed). An ALREADY-OPEN herdr pane's colours do not change until the
+// captain reloads config from herdr's OWN interface (its global menu, or
+// `prefix+shift+r`) or detaches and reattaches that pane - this app cannot
+// do either safely on the captain's behalf. `triggerLiveReload()` below is
+// kept (it is harmless, and genuinely reloads whatever settings the running
+// server itself owns) but is no longer described, in comments or in its own
+// log line, as solving "the panel updates with no captain action needed" -
+// it never did.
+//
+// `herdr server reload-config` takes no flags of its own and exposes no
+// machine-parseable result on the CLI surface (confirmed via `strings` and
+// `herdr api schema --json`); only the process's own exit status is a
+// reliable signal from outside, and "no server running" is detected
+// client-side and exits non-zero, which this treats like any other
+// unsuccessful reload (log it, never crash, never block the already-durable
+// config write on it).
 //
 // **`fix-herdr-panel-follows-grandline-theme`: the sync now covers herdr's
 // WHOLE colour set, not only `selection_bg`.** The captain reported that the
@@ -163,6 +209,37 @@
 // rewrite of the whole file, and refuses to touch anything it is not
 // confident it understands (see that type's own header for the exact
 // guarantees and what it deliberately does not attempt to parse).
+//
+// **`fix-herdr-theme-sync-regression-706b`: re-investigated a captain report
+// of the same visual symptom reappearing on a later rebuild - the write path
+// was never the problem.** Verified live against the captain's real,
+// unmodified `~/.config/herdr/config.toml`: it already held the full 19-field
+// shape (not the old narrow `selection_bg`-only one), every value matched
+// `HerdrThemeColors.derive(from: .catppuccinMocha)`'s own computed output
+// exactly (checked by hand for `active_row_bg`'s mix maths), `herdr config
+// check` validated it clean, and `herdr --version` still reported 0.9.0 - the
+// same version the field-widening task verified against, so no herdr update
+// silently changed the schema either. The real unified log (`log show
+// --predicate 'process == "FirstmateCockpit"' --info`, filtered for the app's
+// real launched PID rather than the many `fake-herdr-*.sh` self-test-suite
+// entries that otherwise dominate it on this shared dev machine) showed a
+// real, very recent app launch genuinely writing correct colours for BOTH
+// directions of a real theme toggle and genuinely succeeding at `server
+// reload-config` both times - so the write mechanism and the reload dispatch
+// were both already working exactly as designed. What was wrong was the
+// design's own understanding of what a successful `server reload-config`
+// call actually accomplishes - see the correction above and in
+// `triggerLiveReload`'s own doc comment. A real screenshot of the captain's
+// actual running herdr pane (captured via `screencapture`, never via
+// simulated clicks into the live pane itself - a stray `System Events`
+// UI-scripting click sequence used to *navigate Grand Line's own chrome* to
+// reach that screenshot triggered an unrelated macOS screen-lock, at which
+// point all further GUI interaction was abandoned rather than risk touching
+// the captain's real session or lock screen) showed colours consistent with
+// the currently-active dark theme, which is exactly the "no visible error,
+// nothing looks wrong at rest" signature this bug always had - the gap only
+// shows up on a THEME TOGGLE with an already-open herdr pane, which needs
+// herdr's own client-side "reload config" to actually repaint.
 
 import AppKit
 
@@ -667,19 +744,27 @@ final class HerdrThemeSync {
         triggerLiveReload()
     }
 
-    /// Best-effort: tells an ALREADY-RUNNING herdr server to re-read
-    /// `config.toml` right now, so a captain who never restarts/reattaches
-    /// still sees the new colours without delay. Called only after the
-    /// config write above has already succeeded - that write is the durable
-    /// source of truth regardless of what happens here, so nothing below is
-    /// allowed to be treated as fatal or to block the rest of Grand Line's
-    /// own theme-apply flow. Fires via `Subprocess.runAsync` (GL-04) rather
-    /// than blocking `syncNow`'s own caller - `ThemeManager.shared.observe`'s
-    /// callback fires synchronously on whichever thread the captain's theme
-    /// change happened on, almost always the main thread, so a blocking
-    /// subprocess call here would hold up the very theme-apply flow this
-    /// sync piggybacks on for as long as `reloadTimeout` if the running
-    /// server ever became unresponsive.
+    /// Best-effort: tells an ALREADY-RUNNING herdr server to reload
+    /// whatever settings IT owns from `config.toml` right now - pane
+    /// defaults, worktrees, integrations, custom commands. **This does
+    /// NOT make an already-open herdr pane's theme/presentation colours
+    /// update** (this file's header explains why, with the herdr docs that
+    /// confirm it) - that half is the captain's own client-side "reload
+    /// config" action (herdr's global menu, or `prefix+shift+r`) or a
+    /// detach/reattach, neither of which this app can safely trigger on
+    /// the captain's behalf (it has no reliable way to know which Console
+    /// tab, if any, is running a herdr client at all). Called only after
+    /// the config write above has already succeeded - that write is the
+    /// durable source of truth regardless of what happens here, so nothing
+    /// below is allowed to be treated as fatal or to block the rest of
+    /// Grand Line's own theme-apply flow. Fires via `Subprocess.runAsync`
+    /// (GL-04) rather than blocking `syncNow`'s own caller -
+    /// `ThemeManager.shared.observe`'s callback fires synchronously on
+    /// whichever thread the captain's theme change happened on, almost
+    /// always the main thread, so a blocking subprocess call here would
+    /// hold up the very theme-apply flow this sync piggybacks on for as
+    /// long as `reloadTimeout` if the running server ever became
+    /// unresponsive.
     ///
     /// `herdr server reload-config` is a no-op, not a failure, whenever no
     /// server happens to be running - the CLI itself detects that (a
@@ -706,20 +791,49 @@ final class HerdrThemeSync {
             arguments: ["server", "reload-config"],
             timeout: Self.reloadTimeout
         ) { result in
+            let message = Self.reloadOutcomeLogMessage(ok: result.ok, failureSummary: result.failureSummary)
             if result.ok {
-                AppLog.store.info("herdr theme sync: told the running server to reload config.toml")
+                AppLog.store.info("\(message, privacy: .public)")
             } else {
                 // Expected and harmless whenever no server is currently
                 // running - the captain's next `herdr` launch already reads
                 // the file this sync just wrote, so there is nothing left
                 // to do.
-                AppLog.store.notice("""
-                    herdr theme sync: could not reload a running server's config (\
-                    \(result.failureSummary ?? "unknown reason", privacy: .public)) - the file on \
-                    disk is already correct and will apply the next time herdr's own server starts
-                    """)
+                AppLog.store.notice("\(message, privacy: .public)")
             }
         }
+    }
+
+    /// Pure text-building, split out of `triggerLiveReload`'s completion
+    /// handler purely so `HerdrThemeSyncSelfTest` can assert its exact
+    /// wording directly (an `AppLog`/`os.Logger` call has no observable
+    /// return value a test could otherwise intercept). The one property this
+    /// message must NOT have - the exact property the success line got wrong
+    /// for the whole life of this file until `fix-herdr-theme-sync-
+    /// regression-706b` - is implying the captain has nothing further to do:
+    /// a real, live-loaded config write plus a real, successful `server
+    /// reload-config` call still leaves an already-open herdr pane showing
+    /// its OLD colours, because that reload is server-scoped only (see this
+    /// file's own header). Both branches therefore name the captain's own
+    /// remaining action (herdr's "reload config" / `prefix+shift+r`, or a
+    /// detach/reattach) explicitly, rather than staying silent about it.
+    static func reloadOutcomeLogMessage(ok: Bool, failureSummary: String?) -> String {
+        if ok {
+            return """
+                herdr theme sync: told the running server to reload its OWN settings (pane \
+                defaults, worktrees, integrations) - config.toml on disk is already correct, but \
+                herdr's theme/presentation colours are client-owned and this reload does not reach \
+                them; an already-open herdr pane still needs its own "reload config" (herdr's global \
+                menu, or prefix+shift+r) or a detach/reattach to show the new colours, while a freshly \
+                attached client already reads them at startup with no action needed
+                """
+        }
+        return """
+            herdr theme sync: could not reload a running server's own settings (\
+            \(failureSummary ?? "unknown reason")) - the file on disk is already correct and will \
+            apply to any newly-started herdr client regardless; an already-open pane still needs its \
+            own "reload config" (herdr's global menu, or prefix+shift+r) or a detach/reattach either way
+            """
     }
 
     /// Generous enough for a real reload round trip over the socket, short

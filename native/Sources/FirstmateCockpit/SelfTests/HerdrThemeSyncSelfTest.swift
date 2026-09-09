@@ -2,10 +2,12 @@
 //
 // Permanent, dependency-free self-test for `HerdrThemeColors`/
 // `HerdrConfigPatcher`/`HerdrThemeSync` (`fm/grandline-herdr-selection-color-sync`,
-// then `fm/grandline-herdr-reload-on-theme-sync`, then this task -
-// `fix-herdr-panel-follows-grandline-theme` - which widened the whole sync
-// from a single `selection_bg` field to `HerdrConfigPatcher.Field`'s full
-// 19-field set). Four halves:
+// then `fm/grandline-herdr-reload-on-theme-sync`, then `fix-herdr-panel-
+// follows-grandline-theme` - which widened the whole sync from a single
+// `selection_bg` field to `HerdrConfigPatcher.Field`'s full 19-field set -
+// then `fix-herdr-theme-sync-regression-706b`, which found the write/patch
+// path was never broken and instead corrected a false claim about what a
+// successful `server reload-config` call accomplishes). Five halves:
 //
 //   1. `HerdrConfigPatcher.apply(colors:to:)` against literal fixture
 //      strings - pure logic, no disk I/O, covering every insert/replace/
@@ -29,6 +31,19 @@
 //      crashing or blocking. Unaffected by the field-set widening above -
 //      the reload mechanism itself did not change in this task, and these
 //      cases are here unchanged to prove that.
+//   5. `HerdrThemeSync.reloadOutcomeLogMessage(ok:failureSummary:)` - the
+//      pure text-building `fix-herdr-theme-sync-regression-706b` split out
+//      of `triggerLiveReload`'s completion handler specifically so this
+//      claim is pinned rather than only described in a comment: NEITHER
+//      outcome (success or failure) may imply an already-open herdr pane's
+//      theme colours are now visible with no further captain action, because
+//      `server reload-config` cannot reach client-owned presentation
+//      settings at all (see `HerdrThemeSync.swift`'s own header for the
+//      herdr-documentation evidence). The success branch previously read
+//      "herdr theme sync: told the running server to reload config.toml" -
+//      true and yet misleading, since it reads as "job done" when an
+//      already-open pane's colours had not changed and, per herdr's own
+//      docs, categorically could not have from this call alone.
 //
 // Deliberately NOT covered here, and why: the real `herdr` process's own
 // live server-reload behaviour (does a running server's colours genuinely
@@ -42,8 +57,9 @@
 // could safely and honestly verify: the file gets patched correctly for
 // every field herdr's own `[theme.custom]` table accepts, the mapping from
 // each `HelmTheme` token to the right herdr field is correct, the reload
-// call is built and dispatched correctly, and neither a missing server nor
-// a failing reload call can crash the app or hold up the caller.
+// call is built and dispatched correctly, neither a missing server nor a
+// failing reload call can crash the app or hold up the caller, and neither
+// outcome's own log text overstates what that call actually achieved.
 //
 // `swift build && FM_RUN_HERDR_THEME_SYNC_TESTS=1 .build/debug/FirstmateCockpit`
 
@@ -662,6 +678,55 @@ enum HerdrThemeSyncSelfTest {
             let resolved = HerdrThemeSync.configPath()
             check(resolved.path == "/tmp/grandline-herdr-selftest-custom-path.toml",
                   "HERDR_CONFIG_PATH should win over the default, got \(resolved.path)", &ok)
+        }
+
+        // MARK: - Reload outcome messaging (fix-herdr-theme-sync-regression-706b)
+        //
+        // `HerdrThemeSync.reloadOutcomeLogMessage(ok:failureSummary:)` is
+        // pure text, so it's asserted directly rather than by intercepting a
+        // real `os.Logger` call (which has no test-observable return value).
+        // The property under test is the one this task's whole investigation
+        // was about: neither outcome may claim or imply an already-open
+        // herdr pane's colours are now visible with no further captain
+        // action - `server reload-config` cannot reach client-owned
+        // presentation settings, confirmed against herdr's own published
+        // docs (`HerdrThemeSync.swift`'s header has the full evidence).
+
+        // 28. A successful reload's message must name the captain's own
+        //     remaining action (`prefix+shift+r`, the literal keybinding the
+        //     original false claim named as made unnecessary) AND must
+        //     explicitly say the client/theme side is untouched by this
+        //     call. Both are required together on purpose: the OLD text
+        //     ("herdr theme sync: told the running server to reload
+        //     config.toml") would slip past a check that only looked for
+        //     the substring "reload config", since "reload config.toml"
+        //     contains it coincidentally - confirmed live by reverting to
+        //     that exact old wording and finding a "reload config"-only
+        //     check still passed. `prefix+shift+r` never appears anywhere
+        //     in the old wording, so it is what actually discriminates.
+        do {
+            let message = HerdrThemeSync.reloadOutcomeLogMessage(ok: true, failureSummary: nil)
+            check(message.contains("prefix+shift+r"),
+                  "a successful reload's message must name the captain's own prefix+shift+r reload action, got:\n\(message)", &ok)
+            check(message.lowercased().contains("client-owned") || message.lowercased().contains("does not reach"),
+                  "a successful reload's message must say the client/theme side is not reached by this call, got:\n\(message)", &ok)
+            check(!message.lowercased().contains("without the captain") &&
+                  !message.lowercased().contains("no further action") &&
+                  !message.lowercased().contains("nothing further"),
+                  "a successful reload's message must not claim no captain action remains, got:\n\(message)", &ok)
+        }
+
+        // 29. A failed reload's message must not claim the (unreachable)
+        //     client-side theme half either - the failure path can't
+        //     accidentally overstate what a SUCCESSFUL call would have done.
+        //     Same discriminating marker as case 28, for the same reason.
+        do {
+            let message = HerdrThemeSync.reloadOutcomeLogMessage(ok: false, failureSummary: "server unavailable")
+            check(message.contains("server unavailable"), "the failure reason should appear verbatim, got:\n\(message)", &ok)
+            check(message.contains("prefix+shift+r"),
+                  "a failed reload's message should still point at the captain's own prefix+shift+r reload action, got:\n\(message)", &ok)
+            check(!message.lowercased().contains("colours are now") && !message.lowercased().contains("colours are visible"),
+                  "a failed reload's message must not claim the pane's colours changed, got:\n\(message)", &ok)
         }
 
         print(ok ? "HerdrThemeSyncSelfTest: all checks passed" : "HerdrThemeSyncSelfTest: FAILED")
