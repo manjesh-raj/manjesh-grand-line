@@ -217,6 +217,28 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
     private var runner: StrawHatRunner?
     private var turnInFlight = false
 
+    /// Every proposal this page has already resolved, keyed by
+    /// `StrawHatProposal.id`. See `confirmProposal` for what this is for.
+    ///
+    /// Cleared by "New conversation" along with the transcript itself - a
+    /// thread the captain has thrown away has no proposals left to dedup
+    /// against, and the ids are gone with it either way.
+    private var resolvedProposals: [UUID: ResolvedProposal] = [:]
+
+    /// A recorded terminal outcome, without the `undo` closure `.written`
+    /// carries - see `record(_:for:)`.
+    private enum ResolvedProposal {
+        case written(message: String)
+        case openedForReview(message: String)
+
+        var outcome: StrawHatProposalOutcome {
+            switch self {
+            case .written(let message): return .written(message: message, undo: nil)
+            case .openedForReview(let message): return .openedForReview(message: message)
+            }
+        }
+    }
+
     // MARK: Forwarded closures
     //
     // Each of these is navigation or state this page does not own. The
@@ -356,6 +378,7 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
     @objc func newConversationTapped() {
         runner?.reset()
         turnInFlight = false
+        resolvedProposals.removeAll()
         chat.clearMessages()
         chat.setInputEnabled(true)
         canvasState = StrawHatCanvasState()
@@ -563,8 +586,25 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
     /// view once, in `chat`'s own initializer - so there is exactly one path
     /// from a proposal to a store, and it starts at a real button press.
     func confirmProposal(_ proposal: StrawHatProposal) -> StrawHatProposalOutcome {
+        // One proposal, one write. This is the *write* half of the fix for a
+        // real HIGH-severity defect (`StrawHatProposal.id`'s own note has the
+        // mechanism): the transcript is rebuilt from its data on any theme or
+        // chrome-font-scale change, so a card whose confirmed state lived only
+        // on the view came back armed and a second press wrote a second
+        // identical record to the captain's stores.
+        //
+        // `StrawHatChatView.proposalResolutions` re-renders an already-resolved
+        // card in its done state, which is what the captain sees; this is the
+        // guarantee that holds even if it does not - a keyboard activation
+        // racing a rebuild, or any future renderer. The stored outcome is
+        // replayed verbatim so the card lands in the same state it would have,
+        // and deliberately *without* a second toast or a second `execute`.
+        if let already = resolvedProposals[proposal.id] {
+            AppLog.ai.info("straw hat: ignoring a repeat confirm of an already-resolved proposal")
+            return already.outcome
+        }
         guard !proposal.kind.opensEditor else {
-            return openEditorForReview(proposal)
+            return record(openEditorForReview(proposal), for: proposal)
         }
         let outcome = StrawHatProposalExecutor.execute(proposal, stores: stores)
         switch outcome {
@@ -587,6 +627,29 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
         case .openedForReview:
             // Unreachable: `execute` never returns this case - the guard above
             // already diverted every kind that could.
+            break
+        }
+        return record(outcome, for: proposal)
+    }
+
+    /// Remember a *terminal* outcome against the proposal's own id, so a
+    /// repeat confirm replays it instead of re-executing.
+    ///
+    /// `.failed` is deliberately not recorded: nothing was written, so a retry
+    /// is exactly what should happen next (and the card keeps its button for
+    /// that reason).
+    private func record(_ outcome: StrawHatProposalOutcome,
+                        for proposal: StrawHatProposal) -> StrawHatProposalOutcome {
+        switch outcome {
+        case .written(let message, _):
+            // The `undo` closure is deliberately dropped rather than stored: a
+            // replay shows no toast, so nothing would ever call it, and keeping
+            // it alive would hold a closure that removes a record the captain
+            // may have edited since.
+            resolvedProposals[proposal.id] = .written(message: message)
+        case .openedForReview(let message):
+            resolvedProposals[proposal.id] = .openedForReview(message: message)
+        case .failed:
             break
         }
         return outcome

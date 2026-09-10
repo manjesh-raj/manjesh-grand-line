@@ -61,6 +61,7 @@ enum CredentialVaultSelfTest {
         checkOlderFileStillDecodes(scratch: scratch, check)
         checkPasswordChange(scratch: scratch, check)
         checkPasswordChangeRollsBackOnWriteFailure(scratch: scratch, check)
+        checkPasswordChangeStaysOnMain(scratch: scratch, check)
         checkClipboardChangeCountGuard(check)
         checkOverrideOrder(scratch: scratch, check)
         checkGitPortability(scratch: scratch, check)
@@ -561,8 +562,7 @@ enum CredentialVaultSelfTest {
         try? fm.removeItem(at: store.fileURL)
         try? fm.createDirectory(at: store.fileURL, withIntermediateDirectories: true)
 
-        if case .success = store.changeMasterPassword(currentPassword: "old-master-password",
-                                                      newPassword: "new-master-password") {
+        if case .success = changePassword(store, from: "old-master-password", to: "new-master-password") {
             check(false, "a re-key whose write fails must report failure")
         }
         // Put the real file back and confirm which password opens it.
@@ -577,6 +577,118 @@ enum CredentialVaultSelfTest {
         }
         check(outcome == .unlocked,
               "after a failed re-key the vault must still be openable, got \(String(describing: outcome))")
+    }
+
+    /// A password change must mutate state and fire `onChange` on the **main
+    /// thread**, and must refuse rather than corrupt anything if the vault
+    /// locks under it.
+    ///
+    /// **The HIGH-severity defect this closes**, found by an end-to-end review:
+    /// the Settings sheet ran the whole (then-synchronous) store method on
+    /// `DispatchQueue.global`, and the method did its state mutation and its
+    /// `onChange?()` inline on that background thread. `onChange` is
+    /// `CredentialVaultController.render()` - a full AppKit view rebuild - so
+    /// that was undefined behaviour on every password change. And the auto-lock
+    /// `Timer` runs in `.common` mode (it fires even while the modal Settings
+    /// sheet is up) and locks on **main**, mutating the same
+    /// `vaultKey`/`file`/`auditLog` concurrently: a genuine data race on a
+    /// Swift array and two optionals during the app's most security-sensitive
+    /// operation.
+    ///
+    /// Both halves are asserted, and the second is the one a thread check
+    /// alone would miss:
+    ///
+    ///  1. `onChange` and the completion both arrive on main - and, because
+    ///     `onChange` is fired from the same statement sequence as the
+    ///     mutation, that is also the assertion that the mutation is on main.
+    ///  2. Locking the vault *while the derivation is in flight* makes the
+    ///     change refuse (there is no key left to replace), and the vault is
+    ///     still openable by the original password afterwards. Deterministic
+    ///     rather than a race to win: two PBKDF2 derivations at 600k rounds
+    ///     take hundreds of milliseconds, and `lock` is called synchronously on
+    ///     main immediately after the call returns - long before the hop back.
+    private static func checkPasswordChangeStaysOnMain(scratch: URL, _ check: (Bool, String) -> Void) {
+        let (store, root) = makeVault(scratch, name: "pwchange-threading", password: "old-master-password")
+        _ = store.add(VaultCredential(title: "Kept", secret: "kept-value"))
+
+        // ---- 1. Everything observable happens on main ----
+        var onChangeThreads: [Bool] = []
+        store.onChange = { onChangeThreads.append(Thread.isMainThread) }
+        var completionOnMain: Bool?
+        var result: Result<Void, Error>?
+        waitFor(timeout: 30) { done in
+            store.changeMasterPassword(currentPassword: "old-master-password",
+                                       newPassword: "new-master-password") { r in
+                completionOnMain = Thread.isMainThread
+                result = r
+                done()
+            }
+        }
+        store.onChange = nil
+        guard case .success = result else {
+            check(false, "the change should have succeeded, got \(String(describing: result))")
+            return
+        }
+        check(completionOnMain == true,
+              "the completion must be delivered on the main thread, was \(String(describing: completionOnMain))")
+        check(!onChangeThreads.isEmpty,
+              "a successful change must fire onChange - that is what re-renders the page")
+        check(onChangeThreads.allSatisfy { $0 },
+              "onChange is render(); every fire must be on the main thread, got \(onChangeThreads)")
+
+        // ---- 2. A lock landing during the derivation refuses, safely ----
+        let (racy, racyRoot) = makeVault(scratch, name: "pwchange-race", password: "race-password")
+        _ = racy.add(VaultCredential(title: "Kept", secret: "kept-value"))
+        var racyThreads: [Bool] = []
+        racy.onChange = { racyThreads.append(Thread.isMainThread) }
+        var racyResult: Result<Void, Error>?
+        waitFor(timeout: 30) { done in
+            racy.changeMasterPassword(currentPassword: "race-password",
+                                      newPassword: "never-applied-password") { r in
+                racyResult = r
+                done()
+            }
+            // The auto-lock timer's own call, on main, while the two
+            // derivations are still running on the background queue.
+            racy.lock(reason: "test: auto-lock during a password change")
+        }
+        racy.onChange = nil
+        if case .success = racyResult {
+            check(false, "a change whose vault locked under it must not report success")
+        }
+        check(!racy.isUnlocked, "the lock stands - the change does not resurrect the key")
+        check(racyThreads.allSatisfy { $0 },
+              "every onChange in the racing case is on main too, got \(racyThreads)")
+
+        // The vault on disk is untouched by the refused change: the original
+        // password still opens it and the never-applied one does not.
+        let reopened = CredentialVaultStore(root: racyRoot)
+        var reopenOutcome: VaultUnlockOutcome?
+        waitFor(timeout: 30) { done in
+            reopened.unlock(masterPassword: "race-password") { o in reopenOutcome = o; done() }
+        }
+        check(reopenOutcome == .unlocked,
+              "a refused change must leave the original password working, got \(String(describing: reopenOutcome))")
+        check(reopened.credentials.first?.secret == "kept-value",
+              "...with every value intact")
+
+        let withNever = CredentialVaultStore(root: racyRoot)
+        var neverOutcome: VaultUnlockOutcome?
+        waitFor(timeout: 30) { done in
+            withNever.unlock(masterPassword: "never-applied-password") { o in neverOutcome = o; done() }
+        }
+        if case .wrongPassword = neverOutcome {} else {
+            check(false, "the never-applied password must not open the vault, got \(String(describing: neverOutcome))")
+        }
+
+        // And the successful change from part 1 really did land on disk.
+        let withNew = CredentialVaultStore(root: root)
+        var newOutcome: VaultUnlockOutcome?
+        waitFor(timeout: 30) { done in
+            withNew.unlock(masterPassword: "new-master-password") { o in newOutcome = o; done() }
+        }
+        check(newOutcome == .unlocked,
+              "the changed password opens the vault, got \(String(describing: newOutcome))")
     }
 
     /// Seals a literal JSON string as-is, so a test can write a payload in the
@@ -616,11 +728,10 @@ enum CredentialVaultSelfTest {
 
         // The wrong current password is refused - otherwise an unlocked window
         // left open would let anyone re-key the vault.
-        if case .success = store.changeMasterPassword(currentPassword: "not-it", newPassword: "new-master-password") {
+        if case .success = changePassword(store, from: "not-it", to: "new-master-password") {
             check(false, "changeMasterPassword must verify the current password")
         }
-        guard case .success = store.changeMasterPassword(currentPassword: "old-master-password",
-                                                         newPassword: "new-master-password") else {
+        guard case .success = changePassword(store, from: "old-master-password", to: "new-master-password") else {
             check(false, "changeMasterPassword should succeed with the right current password")
             return
         }
@@ -839,6 +950,24 @@ enum CredentialVaultSelfTest {
     /// `unlock` deliberately derives on a background queue and calls back on
     /// main, so a suite has to actually turn the run loop - a `DispatchSemaphore`
     /// here would deadlock against the main-queue completion.
+    /// `changeMasterPassword` takes a completion and derives on a background
+    /// queue (its own doc comment has the HIGH-severity defect that shape
+    /// fixes), so every case here goes through the same run-loop pump the
+    /// `unlock` waits already use. A timeout reports as a failure rather than
+    /// as a silent `nil`.
+    private static func changePassword(_ store: CredentialVaultStore,
+                                       from current: String,
+                                       to new: String) -> Result<Void, Error>? {
+        var result: Result<Void, Error>?
+        waitFor(timeout: 30) { done in
+            store.changeMasterPassword(currentPassword: current, newPassword: new) { r in
+                result = r
+                done()
+            }
+        }
+        return result
+    }
+
     private static func waitFor(timeout: TimeInterval, _ body: (@escaping () -> Void) -> Void) {
         var finished = false
         body { finished = true }

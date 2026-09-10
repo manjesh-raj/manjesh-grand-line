@@ -172,6 +172,26 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var messages: [StrawHatMessage] = []
 
+    /// What has already been done to each proposal in the transcript, keyed by
+    /// `StrawHatProposal.id`.
+    ///
+    /// **Why this lives on the view and not on the card.** `applyTheme` rebuilds
+    /// every block from `messages` (styling is a pure function of the data), so
+    /// a confirmed card's state cannot live on the card - it is thrown away and
+    /// a fresh, armed one takes its place. That was a real HIGH-severity defect:
+    /// a theme or chrome-font-scale change re-armed an already-confirmed
+    /// proposal and a second press wrote a duplicate record. Keyed by the
+    /// model's own id, so it survives the rebuild that replays the same
+    /// `messages`.
+    ///
+    /// This is the *render* half. The write half is
+    /// `StrawHatController.resolvedProposals`, and the two are deliberately
+    /// separate guarantees rather than redundancy: this one is "the card comes
+    /// back in its done state", that one is "no second write can happen at all"
+    /// - which still has to hold for a keyboard activation racing a rebuild, or
+    /// for a bare view with no controller behind it.
+    private var proposalResolutions: [UUID: StrawHatConfirmCard.Resolution] = [:]
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
@@ -412,12 +432,33 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         onMessagesChanged?()
     }
 
+    /// Drops the whole thread - the controller's "New conversation".
+    ///
+    /// Clears `proposalResolutions` too, which is exactly what separates it
+    /// from `rebuildTranscript()`: a *new* conversation has no confirmed
+    /// proposals to remember, while a theme change must remember every one.
     func clearMessages() {
         messages.removeAll()
-        stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        proposalResolutions.removeAll()
+        removeAllBlocks()
         updateEmptyState()
         refreshCrewStrip()
         onMessagesChanged?()
+    }
+
+    private func removeAllBlocks() {
+        stack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+    }
+
+    /// Re-render every block from `messages` without touching the thread
+    /// itself. What `applyTheme` calls - `clearMessages()` would drop the
+    /// confirmed-proposal record along with the views and re-arm every card
+    /// the captain had already pressed.
+    private func rebuildTranscript() {
+        let saved = messages
+        messages.removeAll()
+        removeAllBlocks()
+        for message in saved { append(message) }
     }
 
     /// Whether the captain and the crew have actually exchanged anything -
@@ -630,12 +671,19 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
                 add(row)
                 continue
             }
-            let card = StrawHatConfirmCard(proposal: proposal, theme: theme)
+            // A proposal the captain already dealt with is built in its done
+            // state rather than armed - `proposalResolutions`' own note has the
+            // defect this closes.
+            let card = StrawHatConfirmCard(proposal: proposal, theme: theme,
+                                           resolution: proposalResolutions[proposal.id])
             card.onConfirm = { [weak self] proposal in
                 guard let handler = self?.onConfirmProposal else {
                     return .failed(message: "This chat isn't connected to your stores right now.")
                 }
                 return handler(proposal)
+            }
+            card.onResolved = { [weak self] proposal, resolution in
+                self?.proposalResolutions[proposal.id] = resolution
             }
             add(card)
         }
@@ -954,10 +1002,11 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
 
         // Rebuild every block rather than re-deriving each one's role from its
         // current styling: `messages` is the source of truth and styling is a
-        // pure function of it. Same call `SRELeadChatView.applyTheme` makes.
-        let saved = messages
-        clearMessages()
-        for message in saved { append(message) }
+        // pure function of it. Same call `SRELeadChatView.applyTheme` makes -
+        // but through `rebuildTranscript()`, never `clearMessages()`, which
+        // would also forget which proposals the captain has already confirmed
+        // (see `proposalResolutions`).
+        rebuildTranscript()
     }
 
     // MARK: Probe / self-test surface
