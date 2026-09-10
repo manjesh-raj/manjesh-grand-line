@@ -242,22 +242,33 @@ jobs:
       # changing a source asset) and shipping a stale artifact was a human
       # remembering to run the script by hand.
       #
-      # Three generators are in scope, and they are exactly the ones whose
+      # Four generators are in scope, and they are exactly the ones whose
       # inputs live in this repository:
       #
       #   build-card-shortcut-icons.py   4 icons, sources in Scripts/assets/
       #   build-rail-icons-batch2.py    15 icons, sources in Scripts/assets/
+      #   build-straw-hat-flag.py        the Jolly Roger, source in
+      #                                  Scripts/assets/straw-hat-flag/
       #   build-whisper-metal-shader.py  the Metal shader, merged from the
       #                                  vendored whisper.cpp sources
       #
+      # The flag generator joined that list in the review's own L1 fix: its
+      # `--source` used to default into firstmate's `data/` directory, outside
+      # this repository, which is exactly why it was excluded here. Its one
+      # 110KB reference PNG is now committed beside the two icon batches'
+      # sources, so the whole regenerate-and-diff loop is reproducible from a
+      # clean clone and the exclusion no longer applies.
+      #
       # Deliberately NOT in scope, with reasons rather than silence:
       #
-      #   build-straw-hat-flag.py / build-straw-hat-portraits.py - their source
-      #     images live in firstmate's own `data/` directory, outside this
-      #     repository (they are inputs to a plan artifact, not app assets), so
-      #     `--check` here would fail for the environment rather than for
-      #     drift. This is the review's own L1 finding; closing it needs a
-      #     decision about committing those images, not a CI step.
+      #   build-straw-hat-portraits.py - its inputs are seven base64 portraits
+      #     embedded in a ~12MB plan-artifact HTML on the firstmate side, so
+      #     `--check` here would still fail for the environment rather than for
+      #     drift. Committing a 12MB HTML document is a materially different
+      #     decision from committing the flag's single 110KB PNG, and one this
+      #     job should not make on the captain's behalf. Its `--check` is
+      #     in-memory now either way (L1's other half), so a local run leaves
+      #     nothing behind.
       #   build-monaco-web.sh / build-excalidraw-web.sh - a rebuild-and-diff
       #     needs node + a full npm install of an upstream package whose
       #     transitive tree is not pinned by this repo, so a "drift" failure
@@ -269,6 +280,9 @@ jobs:
 
       - name: Rail icons (batch 2)
         run: python3 Scripts/build-rail-icons-batch2.py --check
+
+      - name: Straw Hat Jolly Roger
+        run: python3 Scripts/build-straw-hat-flag.py --check
 
       - name: Whisper Metal shader
         run: python3 Scripts/build-whisper-metal-shader.py --check

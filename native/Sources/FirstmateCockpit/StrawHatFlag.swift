@@ -2,12 +2,13 @@
 //
 // GENERATED FILE - do not hand-edit. Produced by
 // `native/Scripts/build-straw-hat-flag.py` from the captain's v2 Jolly
-// Roger reference image (`data/straw-hat-voice-order-composer-polish-8dd2/
-// straw-hat-card-icon-v2-reference.png`, on the firstmate side - an input
-// to that task, not an app asset, so it is not committed here). This
-// replaced the original flag-in-sky photo reference with a flat-style
-// icon already composed on its own card backdrop; see the script's own
-// docstring for why the crop changed to "the whole image" as a result.
+// Roger reference image, committed in this repo at
+// `native/Scripts/assets/straw-hat-flag/straw-hat-card-icon-v2-
+// reference.png` so the regenerate-and-diff loop is reproducible from a
+// clean clone. That reference replaced the original flag-in-sky photo with
+// a flat-style icon already composed on its own card backdrop; see the
+// script's own docstring for why the crop is "the whole image" as a
+// result.
 // Re-run that script to change the crop or the size; see its own docstring
 // for why this is a base64 literal rather than an asset catalog or an SPM
 // resource bundle and why the background is kept rather than cut out.

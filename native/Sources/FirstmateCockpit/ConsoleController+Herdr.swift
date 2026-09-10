@@ -134,6 +134,18 @@ extension ConsoleController {
     /// applies to the kube-context bridge (3.2 of the full-app audit) -
     /// nothing here shells out while this page is hidden, minimized, or the
     /// app is backgrounded.
+    ///
+    /// **That predicate is the idle gate too, which is worth spelling out
+    /// because it has already been re-filed as missing once.** Its third
+    /// clause is `!AppActivityState.shared.isBackgrounded` - the same
+    /// activity state `BackgroundSignalsPoller`/`FleetNotifier`/`ShiftGitSync`
+    /// consult - so this poll stops entirely after the app has been
+    /// continuously inactive for `AppActivityState.backgroundThreshold`,
+    /// rather than merely slowing the way those three do. The end-to-end
+    /// review's L6 read the call site as visibility-only and recommended
+    /// adding `AppActivityState` here; re-checked against the reviewed commit
+    /// itself, the gate was already present one call in, and a second check
+    /// beside it would be the same condition written twice.
     func startHerdrStatusPolling() {
         guard herdrRestartPollTimer == nil else { return }
         let t = Timer.scheduledTimer(withTimeInterval: Self.herdrRestartPollInterval, repeats: true) { [weak self] _ in

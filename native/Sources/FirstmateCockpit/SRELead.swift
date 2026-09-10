@@ -24,8 +24,10 @@
 //
 // `fm/cockpit-sre-lead-ux-fixes` then replaced *this file's* own execution
 // model: it used to spawn a persistent, detached tmux session running the
-// interactive `claude` TUI, mirrored into the pane via `TmuxMirror` exactly
-// like the Firstmate Herdr tab - which meant the pane showed the raw
+// interactive `claude` TUI, mirrored into the pane via `TmuxMirror` (a type
+// since deleted with the rest of the mirror feature - this sentence is
+// history, not a pointer to something greppable) exactly like the
+// Firstmate Herdr tab - which meant the pane showed the raw
 // interactive CLI (permission-mode banner, box-drawing borders, ANSI chrome)
 // instead of anything native to this app. `setUp()` now only prepares the
 // MCP config + a scratch/working directory; there is no tmux session, no
@@ -242,8 +244,12 @@ enum SRELead {
     /// network/auth dependency. `nil` in production.
     static var claudePathOverrideForTests: String?
 
-    /// Find the `claude` binary the same way `TmuxMirror.resolveTmux()` finds
-    /// `tmux` - a Finder-launched GUI app inherits a minimal PATH. Not
+    /// Find the `claude` binary by checking the usual Homebrew/`/usr/local`
+    /// locations as well as `PATH` - a Finder-launched GUI app inherits a
+    /// minimal `PATH` that often has neither. (This used to point at
+    /// `TmuxMirror.resolveTmux()` as the precedent; that type went with the
+    /// mirror feature, so the reasoning is stated here rather than left as a
+    /// reference to a symbol that no longer exists - the review's L10.) Not
     /// `private`: `SRELeadRunner` resolves this once per session too.
     static func resolveClaude() -> String? {
         claudePathOverrideForTests

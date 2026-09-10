@@ -8,7 +8,8 @@
 //
 //   - Connection: the working-directory chooser. E1 removed the mirror-target
 //     field and its `TmuxMirror.listSessions()` "Detect" tmux-pane picker
-//     along with the whole Mirror abstraction; `fm/grand-line-remove-
+//     along with the whole Mirror abstraction (both symbols are gone from the
+//     tree - this is history, not a live pointer); `fm/grand-line-remove-
 //     firstmate-mirror` later removed the herdr-attached tab that
 //     abstraction had been simplified down to, outright - see that task's
 //     PR for what went and why.

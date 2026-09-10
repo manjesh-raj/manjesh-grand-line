@@ -485,6 +485,21 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
         window?.makeFirstResponder(textView) ?? false
     }
 
+    /// Put text into the composer as though the captain had typed it.
+    ///
+    /// The notification is not decoration: the send button's enablement and
+    /// the placeholder's visibility are both driven from `textDidChange`, so
+    /// setting `string` alone leaves a composer holding real text with a
+    /// disabled Send beside it.
+    ///
+    /// One caller today - `StrawHatController.startNewConversation(with:)`'s
+    /// turn-already-in-flight branch (the review's L7), which hands the
+    /// captain their own message back rather than dropping it.
+    func setComposerText(_ text: String) {
+        textView.string = text
+        textDidChange(Notification(name: NSText.didChangeNotification, object: textView))
+    }
+
     private func updateEmptyState() {
         emptyState.isHidden = !messages.isEmpty
     }

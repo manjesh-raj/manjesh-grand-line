@@ -49,6 +49,7 @@ enum E2ETestingPolicySelfTest {
         checkTheScriptStillOffersBothModes(&ok)
         checkThisProcessCannotReachTheCaptainsRealData(&ok)
         checkEveryGrandLineDocsStoreHonoursShiftDir(&ok)
+        checkTheReadmeEnvTableIsComplete(&ok)
         print(ok ? "E2ETestingPolicySelfTest: all checks passed"
                  : "E2ETestingPolicySelfTest: FAILED")
         return ok
@@ -76,6 +77,15 @@ enum E2ETestingPolicySelfTest {
             .deletingLastPathComponent()    // Sources
             .deletingLastPathComponent()    // native
             .appendingPathComponent("Scripts/run-all-tests.sh")
+    }
+
+    private static var repoRootReadme: URL {
+        selfTestsDirectory
+            .deletingLastPathComponent()    // Sources/FirstmateCockpit
+            .deletingLastPathComponent()    // Sources
+            .deletingLastPathComponent()    // native
+            .deletingLastPathComponent()    // repo root
+            .appendingPathComponent("README.md")
     }
 
     private static var mainSwift: URL {
@@ -381,6 +391,115 @@ enum E2ETestingPolicySelfTest {
     /// `.github/workflows/ci.yml` invokes `--ci` and `--session-only` by name.
     /// Renaming either in the script is a green local run and a broken CI job,
     /// which is the kind of breakage worth catching before the push.
+    // MARK: L8 - the README's env-var table against the code
+
+    /// Every `FM_*` variable the app reads is in the repo-root README's
+    /// environment table, and nothing in that table is unread.
+    ///
+    /// **This is the L8 fix's own guard, and the reason it exists is that the
+    /// table had gone stale in both directions at once**: eight variables the
+    /// app genuinely read were missing (five of them the newest stores'
+    /// overrides - the ones a future suite most needs to find), while two
+    /// documented a removed feature and promised an override that does
+    /// nothing. Neither direction is visible from anywhere else: a stale docs
+    /// table compiles, passes every other suite, and only costs somebody an
+    /// afternoon when they go looking for the override that should exist.
+    ///
+    /// Same shape as `checkWindowBackedSuitesAreDeclared` one section up - a
+    /// list kept in one file, cross-checked against the code it describes,
+    /// rather than a convention nobody can enforce.
+    private static func checkTheReadmeEnvTableIsComplete(_ ok: inout Bool) {
+        guard let readme = try? String(contentsOf: repoRootReadme, encoding: .utf8) else {
+            fail("could not read the repo-root README - the env-table guard cannot run", &ok)
+            return
+        }
+        guard let sources = SelfTestSources.appSourceFiles() else {
+            fail("could not enumerate the app's sources - the env-table guard cannot run", &ok)
+            return
+        }
+
+        // Read by production code, i.e. anything named in a string literal
+        // outside `SelfTests/` (which `appSourceFiles` already excludes) and
+        // outside the per-suite flags.
+        var read: Set<String> = []
+        for file in sources {
+            guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            for match in envNames(in: strippingComments(text)) where !match.hasPrefix("FM_RUN_") {
+                read.insert(match)
+            }
+        }
+        // `FM_SELFTESTS` is a compilation condition, never an environment
+        // read, so it is documented but legitimately absent from the sweep.
+        read.remove("FM_SELFTESTS")
+
+        // Documented, i.e. named in a table row. Only rows count: this file's
+        // own prose explains why `FM_MIRROR_TARGET`/`FM_BACKEND` were dropped,
+        // and a guard that reads that explanation as a row would insist the
+        // dead variables come back.
+        var documented: Set<String> = []
+        for line in readme.split(separator: "\n", omittingEmptySubsequences: false)
+        where line.hasPrefix("| `FM_") {
+            for match in envNames(in: String(line)) { documented.insert(match) }
+        }
+
+        let missing = read.subtracting(documented).sorted()
+        if !missing.isEmpty {
+            fail("read by the app but missing from the README's env table: \(missing.joined(separator: ", "))", &ok)
+        }
+
+        // The other direction, scoped to the two tables' own subject: a row
+        // for something nothing reads. Suite opt-ins (`FM_WHISPER_TEST_*`) are
+        // read from `SelfTests/`, which the sweep above deliberately does not
+        // scan, so they are exempt by name rather than by a looser rule.
+        let suiteOptIns: Set<String> = ["FM_WHISPER_TEST_MODEL_PATH", "FM_WHISPER_TEST_AUDIO_PATH"]
+        let unread = documented.subtracting(read).subtracting(suiteOptIns).sorted()
+        if !unread.isEmpty {
+            fail("in the README's env table but read nowhere in the app: \(unread.joined(separator: ", "))", &ok)
+        }
+    }
+
+    /// Whole-line `//` comments removed, the same way `Audit2SecurityFixes`'
+    /// own source guards do it - and here it is load-bearing rather than
+    /// tidiness, in **both** directions. The app's sources discuss two kinds
+    /// of variable name in prose that is not a read: a removed one, named in
+    /// order to explain that it is removed (`FM_MIRROR_TARGET`, L10's own fix
+    /// note), and a handful of temporary `FM_DEBUG_*` probes that were
+    /// reverted before commit and survive only in the comment recording what
+    /// they measured. Without this, the guard demands README rows for three
+    /// variables nothing reads - and the first of them is one this very batch
+    /// deliberately deleted.
+    private static func strippingComments(_ text: String) -> String {
+        text.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line -> String in
+                let trimmed = line.trimmingCharacters(in: CharacterSet.whitespaces)
+                return trimmed.hasPrefix("//") ? "" : String(line)
+            }
+            .joined(separator: "\n")
+    }
+
+    /// Every `FM_...` token inside a double-quoted or backticked span.
+    private static func envNames(in text: String) -> Set<String> {
+        var out: Set<String> = []
+        var current = ""
+        var collecting = false
+        // A hand-rolled scan rather than a regex: this runs over every app
+        // source file, and the token shape is trivially simple.
+        for ch in text {
+            if collecting {
+                if ch.isUppercase || ch.isNumber || ch == "_" {
+                    current.append(ch)
+                    continue
+                }
+                if current.count > 3 { out.insert(current) }
+                collecting = false
+                current = ""
+            }
+            if ch == "F" { collecting = true; current = "F" }
+        }
+        if collecting && current.count > 3 { out.insert(current) }
+        return out.filter { $0.hasPrefix("FM_") }
+    }
+
     private static func checkTheScriptStillOffersBothModes(_ ok: inout Bool) {
         guard let script = try? String(contentsOf: runnerScript, encoding: .utf8) else {
             fail("could not read \(runnerScript.path)", &ok)

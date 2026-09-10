@@ -107,6 +107,12 @@ Follow any existing `*SelfTest.swift`. The convention that matters:
 
 Behaviour overrides. Everything here is optional; the app has working defaults for all of it.
 
+This table is **complete** as of the end-to-end review's L8 fix: every `FM_*` variable the app reads is listed, and nothing listed is unread. The two that were unread - `FM_MIRROR_TARGET` and `FM_BACKEND` - documented the removed mirror/backend-detection feature and were dropped rather than left promising an override that does nothing. To re-check after adding one, diff the code against this file:
+
+```bash
+grep -rhoE '"FM_[A-Z0-9_]+"' native/Sources/FirstmateCockpit/*.swift | tr -d '"' | grep -v '^FM_RUN_' | sort -u
+```
+
 ### Data locations (point these at scratch paths in tests)
 
 | Variable | What it overrides |
@@ -116,8 +122,11 @@ Behaviour overrides. Everything here is optional; the app has working defaults f
 | `FM_KEYS_FILE` | `keys.json` (SSH key *metadata*; key material is Keychain-only) |
 | `FM_SNIPPETS_FILE` | `snippets.json` |
 | `FM_SCHEDULES_FILE` | `schedules.json` (the Automation page's scheduled automations) |
+| `FM_SCHEDULE_HISTORY_DIR` | The Schedules page's 7-day run history (`schedule-history/runs.jsonl`) |
 | `FM_SHIFT_DIR` | Shift's data root. Setting it bypasses git sync entirely, and is also the fallback root for the command library and incident records |
 | `FM_COMMAND_LIBRARY_DIR` | The DevOps command library only |
+| `FM_STICKY_BOARD_DIR` | The Sticky Board's `notes.yaml`. Falls back to `FM_SHIFT_DIR`, then the synced clone |
+| `FM_CODE_PREVIEW_DIR` | The Code Preview panel's snippet files. Falls back to `FM_SHIFT_DIR`, then the synced clone |
 | `FM_SHIFT_GIT_CLONE_PATH` | Where the `manjesh-config` clone lives |
 | `FM_SHIFT_REMOTE_URL` | The remote Shift clones/pulls/pushes (point at a disposable local bare repo for tests) |
 | `FM_DICTATION_DIR` | Dictation history + vocabulary |
@@ -130,15 +139,18 @@ Behaviour overrides. Everything here is optional; the app has working defaults f
 | `FM_WHISPER_MODEL_DIR` | Where the local Whisper model is downloaded |
 | `FM_INSTANCE_LOCK_FILE` | The single-instance lock file |
 | `FM_WHITEBOARD_WEB_DIR` | The vendored Excalidraw bundle the Whiteboard destination loads (checked after `Contents/Resources`, before the source-tree walk-up) |
+| `FM_CODE_PREVIEW_WEB_DIR` | The vendored Monaco bundle the Code Preview panel loads (same lookup order) |
+| `FM_GITHUB_SYNC_CLONE_ROOT` | Where GitHub Sync keeps its scratch clones (never the captain's own working copies) |
 
 ### Behaviour
 
 | Variable | Effect |
 | --- | --- |
 | `FM_SHELL_CWD` | Working directory for new shell tabs (wins over Settings) |
-| `FM_MIRROR_TARGET` | The tmux/herdr session the Mirror tab attaches to (wins over Settings) |
-| `FM_BACKEND` | Force `tmux` or `herdr` instead of live detection |
+| `FM_CAPTAIN` | The name the fleet pages greet (default `Manjesh`) |
 | `FM_BLOCK_VIEW_ENABLED` | Enables Block View at all (still needs a per-host opt-in) |
+| `FM_SRE_KUBECTL_SCRIPT` | Path to SRE Lead's read-only kubectl MCP server, instead of the bundled `sre_kubectl_mcp.py` |
+| `FM_LUFFY_STORES_SCRIPT` | Path to the Straw Hat crew's read-only store MCP server, instead of the bundled `luffy_stores_mcp.py` |
 | `FM_APP_LOCK_IDLE_SECONDS` | Idle re-lock threshold (default 1h) - verification only |
 | `FM_APP_LOCK_SESSION_SECONDS` | Hard-logout threshold (default 12h) - verification only |
 | `FM_APP_LOCK_POLL_SECONDS` | Lock timer poll interval (default 30s) - verification only |

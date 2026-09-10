@@ -2,10 +2,18 @@
 //
 // App-level preferences, backed by `UserDefaults`. Before the Settings panel
 // (Fix 3), these lived as ad-hoc environment-variable reads scattered across
-// `TerminalEnvironment.swift` (`FM_SHELL_CWD`, `FM_MIRROR_TARGET`), with no
-// UI to change them. The env vars still win when set (so existing dev/CI
-// workflows that export them keep working unchanged); otherwise the persisted
-// value here applies, editable from Settings > General.
+// `TerminalEnvironment.swift`, with no UI to change them. The env vars still
+// win when set (so existing dev/CI workflows that export them keep working
+// unchanged); otherwise the persisted value here applies, editable from
+// Settings > General.
+//
+// `FM_SHELL_CWD` is the live example of that. This used to name
+// `FM_MIRROR_TARGET` beside it, which was the review's L10 finding: the
+// mirror feature was removed twice over (PR #291's E1 collapsed the
+// abstraction, `fm/grand-line-remove-firstmate-mirror` deleted what was left)
+// and nothing has read that variable since, so listing it under "the env vars
+// still win when set" promised an override that does nothing. The README's
+// env-var table is the authoritative list of what is actually read.
 
 import Foundation
 

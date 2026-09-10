@@ -44,6 +44,9 @@ enum VaultUnlockOutcome: Equatable {
     case wrongPassword(attemptsUntilDelay: Int)
     /// Too many wrong attempts: the report's "five failed unlock attempts
     /// trigger an escalating delay".
+    ///
+    /// **Live-session only** - see `attemptsBeforeThrottle`'s own note for the
+    /// scope this deliberately does and does not claim.
     case throttled(retryAfter: TimeInterval)
     /// The file exists but could not be read or decoded. Never treated as
     /// "start a fresh vault" - see `LoadState`.
@@ -103,7 +106,40 @@ final class CredentialVaultStore {
     // MARK: Throttling
 
     /// The report's own number: five failed attempts before a delay starts.
+    ///
+    /// **Scope, stated rather than left to be assumed: this is a live-session
+    /// speed bump, not a persistent control.** Both counters below are
+    /// in-memory, so quitting and relaunching resets them - the end-to-end
+    /// review's L4 finding. It is recorded here rather than fixed, and the
+    /// reasoning is worth keeping so nobody "completes" it by accident:
+    ///
+    ///   * The only place this store keeps *cleartext* metadata is the vault
+    ///     file's own header (`kdf`/`verifier`) - and that file is committed
+    ///     and pushed to `manjesh-config` on every change. Persisting the
+    ///     throttle there would publish a failed-attempt count and timestamp
+    ///     to a git host in cleartext, against the posture `settings`' own
+    ///     comment states ("'auto-lock is off' is itself a fact worth not
+    ///     publishing to a git host"), and would produce a commit **and a
+    ///     push** on every mistyped password.
+    ///   * It cannot go in the encrypted `settings` blob instead: sealing that
+    ///     needs the vault key, which a *failed* unlock by definition does not
+    ///     have.
+    ///   * A separate local sidecar avoids both, but is trivially deleted by
+    ///     anyone who can reach the file - so it would not make this a control
+    ///     either, while adding a new persisted file, its own GL-01 load-
+    ///     failure handling, an `FM_*` override and a `main.swift` self-test
+    ///     redirect entry.
+    ///
+    /// And the reason none of that is worth it: an attacker with the file does
+    /// not use this code path at all - they run PBKDF2 against the ciphertext
+    /// offline, where no in-app delay exists to hit. What the throttle
+    /// genuinely buys is stopping a *shoulder-surfing* guesser at a live,
+    /// already-unlocked-and-relocked Mac, and that is exactly a live session.
+    /// If it should ever become a real control, the honest version is a
+    /// deliberately slower KDF (the rounds are already in the file and
+    /// tunable), not a counter.
     static let attemptsBeforeThrottle = 5
+    /// In-memory by design - see the note above.
     private var failedAttempts = 0
     private var throttledUntil: Date?
 
@@ -766,7 +802,6 @@ final class CredentialVaultStore {
         // does; never neither, and never "it depends what you do next".
         let previousKey = vaultKey
         let previousFile = file
-        let previousTouchID = settings.touchIDUnlockEnabled
         vaultKey = newKey
         file = CredentialVaultFile(kdf: .init(salt: newSalt),
                                    // Sealed on the background queue with
@@ -789,7 +824,6 @@ final class CredentialVaultStore {
         } catch {
             vaultKey = previousKey
             file = previousFile
-            settings.touchIDUnlockEnabled = previousTouchID
             if !auditLog.isEmpty { auditLog.removeLast() }
             PersistenceFailureReporter.report(what: "the credential vault's new master password",
                                               path: fileURL.path, error: error)
@@ -798,6 +832,17 @@ final class CredentialVaultStore {
             // code no longer has that key to write back. Re-enabling Touch
             // ID is one toggle, and a stale key that opens nothing would be
             // worse than none.
+            //
+            // **Which is exactly why the flag is forced off rather than
+            // rolled back** - the review's L5 finding. This used to restore
+            // the pre-change value, so a rollback with Touch ID previously on
+            // left `touchIDUnlockEnabled == true` with no Keychain key behind
+            // it: the Settings toggle read "on" while the unlock button did
+            // nothing, until the captain happened to cycle it. The key is
+            // gone either way, so `false` is the only value that describes
+            // what is actually on this machine. `previousTouchID` is gone
+            // with it - there is no state left for it to restore.
+            settings.touchIDUnlockEnabled = false
             return .failure(error)
         }
         gitSync?.markDirty()

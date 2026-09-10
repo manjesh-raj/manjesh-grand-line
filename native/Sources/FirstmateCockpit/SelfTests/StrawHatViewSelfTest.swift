@@ -71,6 +71,8 @@ enum StrawHatViewSelfTest {
         checkHandoffRendersAsALink(&ok)
         checkHandoffWritesNothing(&ok)
         checkQuickAskCard(&ok)
+        checkQuickAskWhileATurnIsRunning(&ok)
+        checkContributorCaptionPlural(&ok)
         checkConfirmedProposalSurvivesARebuild(&ok)
         checkThemeSweep(&ok)
 
@@ -1242,6 +1244,7 @@ enum StrawHatViewSelfTest {
         check(strip.debugLitMembers == [.chopper],
               "the reply's own speaker lights, got \(strip.debugLitMembers.map(\.rawValue))", &ok)
 
+
         // The pulse is the motion half, and Reduce Motion gets the end state
         // instantly - never the same motion slower. A gate that is read and
         // then ignored is invisible from every other angle, which is why this
@@ -1535,6 +1538,112 @@ enum StrawHatViewSelfTest {
               "a quick ask starts a new conversation - the old thread must be cleared, got \(texts)", &ok)
     }
 
+    /// L9: the crew strip's caption reads differently for one speaker and for
+    /// several.
+    ///
+    /// Its own mount rather than an extra reply inside `checkContributingGlow`
+    /// - that case goes on to assert who is lit across a theme rebuild, and a
+    /// second reply appended into the same transcript changes what "the most
+    /// recent reply" means for every assertion after it (found the hard way:
+    /// the first draft of this check broke three of them).
+    ///
+    /// What was wrong: both arms of the ternary were byte-identical, and the
+    /// condition was the **character** count of the already-joined names - so
+    /// the "plural" arm ran for a single member too, since no crew name is one
+    /// character long. A ternary whose arms match is a decision nobody made.
+    private static func checkContributorCaptionPlural(_ ok: inout Bool) {
+        let one = mount()
+        showCrew(one)
+        one.controller.debugRenderReply("""
+        {"sections":[{"speaker":"chopper","text":"Schedules are failing."}]}
+        """)
+        let singular = one.controller.debugChat.debugCrewStrip.debugCaption
+        check(singular.contains(StrawHatMember.chopper.displayName) && singular.contains("replied"),
+              "one speaker reads as that speaker, got \(singular)", &ok)
+        check(!singular.contains(" and "),
+              "...with no dangling conjunction for a list of one, got \(singular)", &ok)
+
+        let two = mount()
+        showCrew(two)
+        two.controller.debugRenderReply("""
+        {"sections":[{"speaker":"nami","text":"Two things."},{"speaker":"robin","text":"Three, actually."}]}
+        """)
+        let plural = two.controller.debugChat.debugCrewStrip.debugCaption
+        check(plural != singular,
+              "the plural caption differs from the singular one - the whole point of L9", &ok)
+        check(plural.contains("\(StrawHatMember.nami.displayName) and \(StrawHatMember.robin.displayName)"),
+              "...and reads as a real list rather than a bare comma join, got \(plural)", &ok)
+
+        // Roster order, not reply order, so the same reply reads the same way
+        // twice. Robin is declared after Nami, so a reply that names her
+        // first must still render "Nami and Robin".
+        let reversed = mount()
+        showCrew(reversed)
+        reversed.controller.debugRenderReply("""
+        {"sections":[{"speaker":"robin","text":"Three, actually."},{"speaker":"nami","text":"Two things."}]}
+        """)
+        check(reversed.controller.debugChat.debugCrewStrip.debugCaption == plural,
+              "the caption is roster-ordered, got \(reversed.controller.debugChat.debugCrewStrip.debugCaption)", &ok)
+    }
+
+    /// L7: a quick ask that arrives while the crew is already answering.
+    ///
+    /// The whole finding is about what the captain *sees*, so this asserts on
+    /// the transcript and the composer rather than on a return value: before
+    /// the fix `startNewConversation(with:)` returned on its guard, so the
+    /// captain pressed Ask, landed on this page, and found their message gone
+    /// with nothing said - indistinguishable from a dropped keystroke.
+    private static func checkQuickAskWhileATurnIsRunning(_ ok: inout Bool) {
+        // A deliberately slow fake, so the first turn is genuinely still in
+        // flight when the second message arrives.
+        let script = writeFakeClaude(reply: """
+        {"sections":[{"speaker":"luffy","text":"Still working on the first one."}]}
+        """, argvLog: nil, sessionID: nil, delay: 2)
+        defer { try? FileManager.default.removeItem(at: script) }
+        StrawHatCrew.claudePathOverrideForTests = script.path
+        defer { StrawHatCrew.claudePathOverrideForTests = nil }
+
+        let m = mount()
+        showCrew(m)
+        let chat = m.controller.debugChat
+
+        m.controller.send("the first question")
+        check(m.controller.debugTurnInFlight,
+              "the first turn is in flight - the rest of this case is meaningless otherwise", &ok)
+
+        let before = chat.debugMessageCount
+        m.controller.startNewConversation(with: "the second question")
+
+        // Nothing was reset: the running turn's own conversation is intact.
+        check(m.controller.debugTurnInFlight, "the running turn is left alone", &ok)
+        check(chat.debugMessageTexts().contains("the first question"),
+              "...and so is its message, got \(chat.debugMessageTexts())", &ok)
+
+        // The two halves of the fix.
+        check(chat.debugMessageCount > before,
+              "the captain is told something happened rather than nothing", &ok)
+        let texts = chat.debugMessageTexts()
+        check(texts.contains(where: { $0.contains("still answering something else") }),
+              "...and it says why the message was not sent, got \(texts)", &ok)
+        check(chat.debugComposerText == "the second question",
+              "the message itself is handed back into the composer rather than dropped, got \"\(chat.debugComposerText)\"", &ok)
+        check(!texts.contains("the second question"),
+              "it is NOT appended as though it had been asked - it has not been", &ok)
+
+        // Let the first turn finish so the fake process is not left running
+        // into the next case.
+        let deadline = Date().addingTimeInterval(20)
+        while m.controller.debugTurnInFlight && Date() < deadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
+        }
+        // And once it has: the held message is still there, so Send is all
+        // that is left to do.
+        check(chat.debugComposerText == "the second question",
+              "the held message survives the running turn resolving", &ok)
+        check(chat.debugSendEnabled,
+              "...with Send enabled, so recovery is one press - `setComposerText` has to drive the delegate path for this", &ok)
+    }
+
     private static func findLabel(in view: NSView, text: String) -> NSTextField? {
         if let field = view as? NSTextField, field.stringValue == text { return field }
         for sub in view.subviews { if let hit = findLabel(in: sub, text: text) { return hit } }
@@ -1590,7 +1699,12 @@ enum StrawHatViewSelfTest {
         readArgv(log).map { $0 == StrawHatCrew.persona ? "<persona>" : $0 }
     }
 
-    private static func writeFakeClaude(reply: String, argvLog: URL?, sessionID: String?) -> URL {
+    /// `delay` holds the fake process open so a case can observe the app
+    /// *while* a turn is in flight - which is the only way to reach
+    /// `startNewConversation`'s turn-already-running branch (L7) through the
+    /// real code path rather than by poking `turnInFlight` directly.
+    private static func writeFakeClaude(reply: String, argvLog: URL?, sessionID: String?,
+                                        delay: TimeInterval = 0) -> URL {
         var obj: [String: Any] = ["result": reply, "is_error": false]
         if let sessionID { obj["session_id"] = sessionID }
         let data = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data()
@@ -1598,6 +1712,7 @@ enum StrawHatViewSelfTest {
         let escaped = payload.replacingOccurrences(of: "'", with: "'\\''")
         var body = ""
         if let argvLog { body += "printf '%s\\0' \"$@\" > \"\(argvLog.path)\"\n" }
+        if delay > 0 { body += "sleep \(delay)\n" }
         body += "printf '%s\\n' '\(escaped)'\nexit 0\n"
 
         let path = FileManager.default.temporaryDirectory
