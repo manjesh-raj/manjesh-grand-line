@@ -383,6 +383,32 @@ enum StrawHatHandoff: Equatable {
 /// field that kind *requires* is present and non-empty. A proposal that fails
 /// either test never becomes one of these - it is counted as dropped instead.
 struct StrawHatProposal: Equatable {
+
+    /// A stable identity for this one proposal, minted when the parser builds
+    /// it and carried for as long as it is in the transcript.
+    ///
+    /// **This is the fix for a real HIGH-severity defect, not bookkeeping for
+    /// its own sake.** The confirmed state used to live *only* on the
+    /// `StrawHatConfirmCard` view instance, and `StrawHatChatView.applyTheme`
+    /// rebuilds the whole transcript from `messages` on any theme or
+    /// chrome-font-scale change - both ordinary user actions. So a proposal the
+    /// captain had already confirmed came back as a fresh, fully-armed card
+    /// (its own `guard !isConfirmed` passing, because it was a *new* object)
+    /// and a second press wrote a second identical record to his stores.
+    ///
+    /// A rebuild replays the same `messages`, so an id carried in the model is
+    /// what lets both the renderer and the controller recognise "this exact
+    /// proposal, already dealt with" across it. See
+    /// `StrawHatChatView.proposalResolutions` and
+    /// `StrawHatController.resolvedProposals`.
+    ///
+    /// **Deliberately not part of `==`.** Equality here is about *content* -
+    /// what a suite asserts when it constructs an expected proposal - and a
+    /// synthesised `==` would compare two fresh UUIDs and never match. The same
+    /// call the vendored `Yaml` type makes for its own `quoted` field
+    /// (AGENTS.md records it), and it means `Hashable` is not derived either:
+    /// nothing keys a collection on a whole proposal, only on `id`.
+    let id: UUID
     let kind: StrawHatProposalKind
     let title: String
     /// The due/follow-up date exactly as the model wrote it - `"2026-09-09"`,
@@ -422,7 +448,9 @@ struct StrawHatProposal: Equatable {
          notes: String? = nil, content: String? = nil, command: String? = nil,
          scheduleAction: ScheduledActionKind? = nil,
          scheduleCadence: ScheduleCadence? = nil,
-         handoff: StrawHatHandoff? = nil) {
+         handoff: StrawHatHandoff? = nil,
+         id: UUID = UUID()) {
+        self.id = id
         self.kind = kind
         self.title = title
         self.due = due
@@ -432,6 +460,21 @@ struct StrawHatProposal: Equatable {
         self.scheduleAction = scheduleAction
         self.scheduleCadence = scheduleCadence
         self.handoff = handoff
+    }
+
+    /// Content equality, with `id` deliberately excluded - see `id`'s own
+    /// note. Written out rather than synthesised so the exclusion is a stated
+    /// decision a reader can find, not an accident of field order.
+    static func == (lhs: StrawHatProposal, rhs: StrawHatProposal) -> Bool {
+        lhs.kind == rhs.kind
+            && lhs.title == rhs.title
+            && lhs.due == rhs.due
+            && lhs.notes == rhs.notes
+            && lhs.content == rhs.content
+            && lhs.command == rhs.command
+            && lhs.scheduleAction == rhs.scheduleAction
+            && lhs.scheduleCadence == rhs.scheduleCadence
+            && lhs.handoff == rhs.handoff
     }
 
     /// The `("YYYY-MM-DD", "HH:MM"?)` pair `ShiftTask`/`ShiftFollowUp`

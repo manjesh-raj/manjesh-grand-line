@@ -88,6 +88,7 @@ enum CredentialVaultViewSelfTest {
         checkSearchAndCategoryFilter(scratch: scratch, window: window, check)
         checkDeleteConfirmAndUndo(scratch: scratch, window: window, check)
         checkAutoLock(scratch: scratch, window: window, check)
+        checkLockDismissesOpenSheets(scratch: scratch, window: window, check)
         checkUnreadableNeverOffersCreate(scratch: scratch, window: window, check)
         checkEditorRoundTrip(check)
         checkThemeSweep(scratch: scratch, window: window, check)
@@ -372,6 +373,124 @@ enum CredentialVaultViewSelfTest {
         // The whole app locking DOES lock it.
         nav.lockForAppLock()
         check(!navStore.isUnlocked, "the app locking should lock the vault")
+    }
+
+    /// Every lock path must take the open sheets with it.
+    ///
+    /// **The HIGH-severity defect this closes**, found by an end-to-end review:
+    /// all three lock paths cleared the key, dropped the reveal state and
+    /// re-rendered the page - and left every presented sheet up. A sheet is its
+    /// own child window layered *above* the app's lock overlay (which is only a
+    /// subview of the main window), and `CredentialVaultDetailController`
+    /// captures the plaintext credential at construction and toggles
+    /// masked/plaintext display of that already-in-memory value with no
+    /// reference to vault state at all. So locking - by idle, by the Lock
+    /// button, or by the whole app locking - left a floating sheet that still
+    /// held, and could still Reveal, the decrypted secret.
+    ///
+    /// Driven per path, each on its own page, because the three are three
+    /// separate call sites and a fix applied to one is exactly the shape of
+    /// regression worth catching.
+    private static func checkLockDismissesOpenSheets(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {
+        print("\n-- locking dismisses every open sheet --")
+
+        /// Opens a real detail sheet on a fresh page and hands both back.
+        func openDetail(_ name: String) -> (controller: CredentialVaultController, store: CredentialVaultStore)? {
+            let (controller, store) = mounted(scratch, name: name, window: window) { store in
+                _ = store.add(VaultCredential(title: "Prod DB", secret: "super-secret-value"))
+            }
+            guard let id = store.credentials.first?.id else {
+                check(false, "\(name): the page needs a seeded credential to open")
+                return nil
+            }
+            controller.debugOpenDetail(id: id)
+            guard controller.debugPresentedSheetCount == 1 else {
+                // A headless process cannot always establish a real sheet
+                // presentation; say so rather than reporting a pass that
+                // asserted nothing (`WhiteboardViewSelfTest`'s own convention
+                // for the half of a claim its environment cannot reach).
+                print("  NOTE: this process could not present a real sheet - skipping \(name)")
+                return nil
+            }
+            return (controller, store)
+        }
+
+        // ---- Path 1: the Lock button ----
+        if let (controller, store) = openDetail("lock-sheet-manual") {
+            check(controller.debugPresentedDetail != nil,
+                  "the presented sheet should be the detail controller")
+            controller.debugLockTapped()
+            check(controller.debugPresentedSheetCount == 0,
+                  "the Lock button must dismiss the open detail sheet, \(controller.debugPresentedSheetCount) left")
+            check(!store.isUnlocked, "...and still lock the vault")
+        }
+
+        // ---- Path 2: the auto-lock timer ----
+        if let (controller, store) = openDetail("lock-sheet-idle") {
+            controller.debugSetLastInteraction(Date().addingTimeInterval(-100_000))
+            controller.debugCheckAutoLock()
+            check(controller.debugPresentedSheetCount == 0,
+                  "auto-locking must dismiss the open detail sheet, \(controller.debugPresentedSheetCount) left")
+            check(!store.isUnlocked, "...and still lock the vault")
+        }
+
+        // ---- Path 3: the whole app locking ----
+        if let (controller, store) = openDetail("lock-sheet-app") {
+            controller.lockForAppLock()
+            check(controller.debugPresentedSheetCount == 0,
+                  "the app locking must dismiss the open detail sheet, \(controller.debugPresentedSheetCount) left")
+            check(!store.isUnlocked, "...and still lock the vault")
+        }
+
+        // ---- Path 3b: a sheet that outlived the vault's own lock ----
+        //
+        // `lockForAppLock` used to return early on an already-locked store,
+        // which is precisely the case that left a plaintext secret over the
+        // lock screen: the auto-lock timer locks the vault, the captain walks
+        // away, the app locks - and the sheet from before is still up.
+        if let (controller, store) = openDetail("lock-sheet-already-locked") {
+            store.lock(reason: "test")
+            check(controller.debugPresentedSheetCount == 1,
+                  "setup: locking the store directly leaves the sheet up - that is the hole under test")
+            controller.lockForAppLock()
+            check(controller.debugPresentedSheetCount == 0,
+                  "an app lock must dismiss a sheet that outlived the vault's own lock, \(controller.debugPresentedSheetCount) left")
+        }
+
+        // ---- Path 4: the app-lock gate on its own ----
+        //
+        // The page registers with `AppLockGate` as well, so any future path
+        // that locks the app without going through `lockForAppLock` is covered.
+        if let (controller, _) = openDetail("lock-sheet-gate") {
+            AppLockGate.shared.setLocked(true)
+            check(controller.debugPresentedSheetCount == 0,
+                  "the app-lock gate alone must dismiss the sheet, \(controller.debugPresentedSheetCount) left")
+            AppLockGate.shared.setLocked(false)
+        }
+
+        // ---- Defence in depth: a sheet that somehow survives cannot reveal ----
+        //
+        // The detail sheet holds its own copy of the credential, so the
+        // dismissal above is not the only thing standing between a locked vault
+        // and a plaintext secret on screen. Driven through the sheet's own real
+        // Reveal button on a controller whose store is locked.
+        let (revealController, revealStore) = mounted(scratch, name: "lock-sheet-reveal", window: window) { store in
+            _ = store.add(VaultCredential(title: "Prod DB", secret: "super-secret-value"))
+        }
+        if let id = revealStore.credentials.first?.id {
+            revealController.debugOpenDetail(id: id)
+            if let detail = revealController.debugPresentedDetail {
+                revealStore.lock(reason: "test")
+                detail.debugRevealButton.performClick(nil)
+                check(!detail.debugIsRevealed,
+                      "a locked vault must refuse a reveal even from a sheet that is still up")
+                check(!detail.debugSecretLabel.stringValue.contains("super-secret-value"),
+                      "...and the plaintext must not be on screen, got \(detail.debugSecretLabel.stringValue)")
+                revealController.dismiss(detail)
+            } else {
+                print("  NOTE: this process could not present a real sheet - skipping the reveal-after-lock check")
+            }
+        }
     }
 
     private static func checkUnreadableNeverOffersCreate(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {

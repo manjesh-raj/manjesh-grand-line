@@ -190,6 +190,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         // bug class - see `HelmFormSheet`'s own note).
         themeObservation = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
         applyTheme(ThemeManager.shared.theme)
+        registerWithAppLockGate()
         render()
     }
 
@@ -504,6 +505,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
 
     @objc private func lockTapped() {
         store.lock(reason: "manual")
+        dismissOpenSheets()
         revealedIDs.removeAll()
         render()
         unlockView.focusPasswordField()
@@ -527,6 +529,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         guard Date().timeIntervalSince(lastInteraction) >= TimeInterval(store.settings.autoLockSeconds) else { return }
         let minutes = store.settings.autoLockSeconds / 60
         store.lock(reason: "\(minutes) minute\(minutes == 1 ? "" : "s") idle")
+        dismissOpenSheets()
         revealedIDs.removeAll()
         render()
     }
@@ -655,6 +658,14 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         detail.onDelete = { [weak self] toDelete in self?.confirmDelete(id: toDelete.id) }
         detail.onReveal = { [weak self] toReveal, completion in
             guard let self else { return completion(false) }
+            // Defence in depth for the same defect the sheet-dismissal above
+            // fixes: the detail sheet holds its own copy of the credential and
+            // its Reveal button knew nothing about vault state, so a sheet that
+            // somehow outlives a lock must still refuse to put the value on
+            // screen. Both halves are needed - this one alone would leave an
+            // already-revealed value visible, and the dismissal alone would
+            // leave any future non-dismissing path open.
+            guard self.store.isUnlocked else { return completion(false) }
             self.gateForReveal(toReveal) { allowed in
                 if allowed { self.store.recordReveal(id: toReveal.id) }
                 completion(allowed)
@@ -689,12 +700,18 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         }
         settings.onChangeMasterPassword = { [weak self] current, new, completion in
             guard let self else { return completion(.failure(CredentialVaultStoreError.locked)) }
-            // Two PBKDF2 derivations - off the main thread, like every other
-            // one in this feature.
-            DispatchQueue.global(qos: .userInitiated).async {
-                let result = self.store.changeMasterPassword(currentPassword: current, newPassword: new)
-                DispatchQueue.main.async { completion(result) }
-            }
+            // Two PBKDF2 derivations, off the main thread - but that hop is the
+            // *store's* to make, not this closure's, and the difference was a
+            // real HIGH-severity defect. This used to be
+            // `DispatchQueue.global { let r = store.changeMasterPassword(...) }`,
+            // which put the store's own state mutation and its `onChange` -
+            // i.e. `render()`, a full AppKit view rebuild - on a background
+            // thread, racing the auto-lock timer's `lock()` on main over the
+            // same key/file/audit-log state. `changeMasterPassword` takes a
+            // completion now and owns the split itself (see its own doc
+            // comment), so everything this page can observe happens on main.
+            self.store.changeMasterPassword(currentPassword: current, newPassword: new,
+                                            completion: completion)
         }
         presentAsSheet(settings)
     }
@@ -762,6 +779,12 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
 
     /// Called by the shell on quit and when the whole app locks.
     func lockForAppLock() {
+        // Deliberately *before* the `isUnlocked` guard below. A sheet can
+        // outlive the vault's own lock - the auto-lock timer or the Lock button
+        // can have locked the store while a detail sheet was up - so returning
+        // early on an already-locked store would be exactly the case that
+        // leaves a plaintext secret floating over the app's lock screen.
+        dismissOpenSheets()
         guard store.isUnlocked else { return }
         store.lock(reason: "app locked")
         revealedIDs.removeAll()
@@ -772,6 +795,60 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
     /// before quitting is still pushed.
     func shutdown() {
         store.flushForTermination()
+    }
+
+    // MARK: Locking the sheets down
+    //
+    // Every one of this page's three sheets (detail, editor, settings) is a
+    // `presentAsSheet` child *window*, layered above the app's own lock overlay
+    // - the overlay is only a subview of the main window, so a sheet renders on
+    // top of it. And `CredentialVaultDetailController` captures the plaintext
+    // credential at construction and toggles masked/plaintext display of that
+    // already-in-memory value, entirely independent of vault state. So before
+    // this, locking (by any of the three paths) cleared the key and re-rendered
+    // the page behind a sheet that was still holding - and could still Reveal -
+    // the decrypted secret.
+
+    /// Dismiss every sheet this page has up. Called from all three lock paths
+    /// and from the app-lock gate.
+    ///
+    /// `dismiss(_:)` rather than ordering the sheet's window out: a sheet is a
+    /// *presentation*, and ordering its window out behind AppKit's back leaves
+    /// `presentedViewControllers` believing it is still up - the same class of
+    /// mistake `AppLockGate.registerLockDismissiblePopover` documents for an
+    /// `NSPopover`'s own `isShown`.
+    ///
+    /// Iterated over a snapshot because `dismiss` mutates the array it reads.
+    private func dismissOpenSheets() {
+        let open = presentedViewControllers ?? []
+        guard !open.isEmpty else { return }
+        AppLog.keychain.info("credential vault: dismissing \(open.count, privacy: .public) open sheet(s) on lock")
+        for presented in open { dismiss(presented) }
+        openDetailID = nil
+    }
+
+    /// The gate registration for the sheets, and why it is `observe` rather
+    /// than `registerSecondaryWindow`.
+    ///
+    /// Those two registrations take a window or an `NSPopover` and dismiss it
+    /// *for* the caller, with `orderOut`/`performClose`. Neither is correct for
+    /// a sheet: `orderOut` on a sheet's window is the stale-presentation bug
+    /// above, and a sheet is not an `NSPopover`. What a sheet needs is its
+    /// presenter's own `dismiss(_:)`, so this page registers the *action*
+    /// instead - which is a real `AppLockGate` registration either way, and the
+    /// gate is the one place that knows the app has locked.
+    ///
+    /// Belt as well as braces: `AppShellController.showLock` already calls
+    /// `lockForAppLock()`, which dismisses. This covers any future path that
+    /// sets the gate without going through that method, and costs nothing when
+    /// there is no sheet up. `observe` fires synchronously at registration
+    /// (with the gate's own locked-at-launch default), which dismisses the zero
+    /// sheets a just-built page has.
+    private func registerWithAppLockGate() {
+        AppLockGate.shared.observe { [weak self] locked in
+            guard locked else { return }
+            self?.dismissOpenSheets()
+        }
     }
 
     // MARK: Theme
@@ -817,6 +894,17 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
     func debugStartAutoLockTimer() { startAutoLockTimer() }
     var debugAutoLockTimerRunning: Bool { autoLockTimer?.isValid == true }
     func debugMakeRow(for credential: VaultCredential) -> CredentialVaultListSection.Item { row(for: credential) }
+    /// How many sheets this page currently has presented - the only way a
+    /// suite can assert "the lock actually dismissed the detail sheet" without
+    /// reaching into AppKit's presentation bookkeeping itself.
+    var debugPresentedSheetCount: Int { (presentedViewControllers ?? []).count }
+    /// The presented detail sheet, if one is up - so a suite can drive its real
+    /// Reveal button and check what it does once the vault is locked.
+    var debugPresentedDetail: CredentialVaultDetailController? {
+        (presentedViewControllers ?? []).compactMap { $0 as? CredentialVaultDetailController }.first
+    }
+    func debugOpenDetail(id: String) { openDetail(id: id) }
+    func debugLockTapped() { lockTapped() }
     #endif
 }
 

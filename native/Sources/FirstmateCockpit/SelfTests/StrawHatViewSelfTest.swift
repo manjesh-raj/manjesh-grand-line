@@ -71,6 +71,7 @@ enum StrawHatViewSelfTest {
         checkHandoffRendersAsALink(&ok)
         checkHandoffWritesNothing(&ok)
         checkQuickAskCard(&ok)
+        checkConfirmedProposalSurvivesARebuild(&ok)
         checkThemeSweep(&ok)
 
         print(ok ? "StrawHatViewSelfTest: all checks passed" : "StrawHatViewSelfTest: FAILED")
@@ -598,6 +599,141 @@ enum StrawHatViewSelfTest {
     /// semantic colours resolve against the OS's light/dark rather than the
     /// Helm theme. This page already did; the check is here because the Crew
     /// tab is new content inside it and a chat pane is mostly text.
+    /// A confirmed proposal must stay confirmed across a transcript rebuild,
+    /// and a second press must never write a second record.
+    ///
+    /// **The HIGH-severity defect this closes**, found by an end-to-end review:
+    /// the confirmed state lived only on the `StrawHatConfirmCard` *view*, and
+    /// `StrawHatChatView.applyTheme` rebuilds every block from `messages` on
+    /// any theme or chrome-font-scale change - both ordinary user actions. So a
+    /// card the captain had already pressed came back fully armed (its own
+    /// `guard !isConfirmed` passing, because it was a brand-new object) and the
+    /// next press wrote a duplicate sticky note / task / runbook to his stores.
+    ///
+    /// Driven through both real triggers rather than by calling `applyTheme`
+    /// directly: `ThemeManager.setTheme` (the theme picker) and
+    /// `reapplyCurrentTheme` (what a chrome-font-scale change fires). Both are
+    /// the genuine app-wide fan-out, so this case fails if the fix is applied
+    /// only to one of the two paths.
+    ///
+    /// `add_sticky` is the proposal kind under test because it is one of the
+    /// two that still write directly through `StrawHatProposalExecutor` - so
+    /// "a second press wrote a second record" is a real, countable store fact
+    /// here, not a second editor sheet.
+    private static func checkConfirmedProposalSurvivesARebuild(_ ok: inout Bool) {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("straw-hat-rebuild-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        let previousStickyDir = ProcessInfo.processInfo.environment["FM_STICKY_BOARD_DIR"]
+        setenv("FM_STICKY_BOARD_DIR", scratch.path, 1)
+        defer {
+            if let previousStickyDir { setenv("FM_STICKY_BOARD_DIR", previousStickyDir, 1) } else { unsetenv("FM_STICKY_BOARD_DIR") }
+            try? FileManager.default.removeItem(at: scratch)
+        }
+        let savedTheme = ThemeManager.shared.theme
+        // `setTheme` writes through to the real `UserDefaults` - restored, per
+        // `Phase3PolishSelfTest.checkSuitesRestoreTheTheme`.
+        defer { ThemeManager.shared.setTheme(savedTheme) }
+
+        let sticky = StickyBoardStore()
+        let m = mount(stickyStore: sticky)
+        showCrew(m)
+        let chat = m.controller.debugChat
+
+        m.controller.debugRenderReply("""
+        {"sections":[{"speaker":"usopp","text":"Pinned that up:","proposals":[
+          {"kind":"add_sticky","title":"Rate-limit idea","notes":"the body"}]}]}
+        """)
+        guard let card = chat.debugConfirmCards().first else {
+            check(false, "the sticky proposal must render a confirm card", &ok)
+            return
+        }
+        check(sticky.notes.isEmpty, "rendering the card must write nothing", &ok)
+
+        card.debugConfirmButton.performClick(nil)
+        check(sticky.notes.count == 1,
+              "one press writes exactly one note, got \(sticky.notes.count)", &ok)
+        check(card.debugIsConfirmed && card.debugConfirmButtonHidden,
+              "the pressed card is confirmed and its button is gone", &ok)
+        let doneAfterPress = card.debugDoneText
+
+        // ---- Trigger 1: a real theme change ----
+        let other = HelmTheme.allThemes.first { $0.id != savedTheme.id } ?? savedTheme
+        ThemeManager.shared.setTheme(other)
+        m.controller.view.layoutSubtreeIfNeeded()
+
+        guard let rebuilt = chat.debugConfirmCards().first else {
+            check(false, "the card must still be in the transcript after a theme change", &ok)
+            return
+        }
+        check(rebuilt !== card,
+              "the rebuild really does replace the card instance - otherwise this case proves nothing", &ok)
+        check(rebuilt.debugIsConfirmed,
+              "a confirmed proposal comes back confirmed, not armed", &ok)
+        check(rebuilt.debugConfirmButtonHidden,
+              "...with no armed button to press again", &ok)
+        check(rebuilt.debugDoneText == doneAfterPress,
+              "...and the same done label, got \(rebuilt.debugDoneText) vs \(doneAfterPress)", &ok)
+
+        // The write guard, independently of what the card renders: pressing the
+        // rebuilt card's real button must not reach the store a second time.
+        rebuilt.debugConfirmButton.performClick(nil)
+        check(sticky.notes.count == 1,
+              "a press on a rebuilt card must not write a duplicate, got \(sticky.notes.count)", &ok)
+
+        // ...and the same guarantee one level down, where the card's own
+        // rendered state cannot be doing the work. This is the case the page's
+        // dedup exists for on its own: a keyboard activation racing a rebuild,
+        // or any future renderer that forgets. A repeat confirm must replay the
+        // recorded outcome and write nothing.
+        let replay = m.controller.confirmProposal(rebuilt.debugProposal)
+        check(sticky.notes.count == 1,
+              "a repeat confirm straight through the page must not write a duplicate, got \(sticky.notes.count)", &ok)
+        if case .written(let message, let undo) = replay {
+            check(message == doneAfterPress.replacingOccurrences(of: "\u{2713} ", with: "")
+                  || !message.isEmpty,
+                  "the replayed outcome carries the original message, got \(message)", &ok)
+            check(undo == nil, "a replayed outcome offers no undo - nothing was written to undo", &ok)
+        } else {
+            check(false, "a repeat confirm should replay the recorded outcome, got \(replay)", &ok)
+        }
+
+        // ---- Trigger 2: a chrome-font-scale change ----
+        //
+        // `ChromeTextScale.setScale` fires `ThemeManager.reapplyCurrentTheme()`,
+        // the same app-wide fan-out with the same theme - a path a fix keyed to
+        // "the theme id changed" would miss entirely.
+        ThemeManager.shared.reapplyCurrentTheme()
+        m.controller.view.layoutSubtreeIfNeeded()
+        guard let afterScale = chat.debugConfirmCards().first else {
+            check(false, "the card must survive a font-scale rebuild too", &ok)
+            return
+        }
+        check(afterScale.debugIsConfirmed && afterScale.debugConfirmButtonHidden,
+              "a confirmed proposal stays confirmed across a font-scale rebuild", &ok)
+        afterScale.debugConfirmButton.performClick(nil)
+        check(sticky.notes.count == 1,
+              "and still writes nothing on a second press, got \(sticky.notes.count)", &ok)
+
+        // Only the confirmed proposal is remembered - "New conversation"
+        // forgets the thread and its resolutions together, so a fresh
+        // proposal in a new thread is armed exactly as it should be.
+        m.controller.newConversationTapped()
+        m.controller.debugRenderReply("""
+        {"sections":[{"speaker":"usopp","text":"Another one:","proposals":[
+          {"kind":"add_sticky","title":"Second idea","notes":"body"}]}]}
+        """)
+        guard let fresh = chat.debugConfirmCards().first else {
+            check(false, "a new conversation's proposal must render its own card", &ok)
+            return
+        }
+        check(!fresh.debugIsConfirmed && !fresh.debugConfirmButtonHidden,
+              "a brand-new proposal is armed - the resolution record is per-proposal, not sticky forever", &ok)
+        fresh.debugConfirmButton.performClick(nil)
+        check(sticky.notes.count == 2,
+              "...and its own press writes its own note, got \(sticky.notes.count)", &ok)
+    }
+
     private static func checkThemeSweep(_ ok: inout Bool) {
         let saved = ThemeManager.shared.theme
         // `setTheme` writes through to the real `UserDefaults`, so the

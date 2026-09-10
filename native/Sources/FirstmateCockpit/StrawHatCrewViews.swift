@@ -428,10 +428,31 @@ final class StrawHatHandoffRow: NSView {
 /// actually happened. See this file's header.
 final class StrawHatConfirmCard: NSView {
 
+    /// What already happened to this proposal, when the card is being built
+    /// for a proposal the captain has *already* dealt with.
+    ///
+    /// The card is rebuilt from scratch on every theme/font-scale change (the
+    /// transcript is a pure function of `StrawHatChatView.messages`), so
+    /// without this a confirmed proposal came back armed and a second press
+    /// wrote a second record - the HIGH-severity defect `StrawHatProposal.id`
+    /// exists to fix. `.failed` is deliberately **not** a case: a failure
+    /// wrote nothing, so re-arming the button on rebuild is the correct
+    /// behaviour there (a retry is the useful next action).
+    enum Resolution {
+        case written(message: String)
+        case openedForReview(message: String)
+    }
+
     /// Called on the captain's press. Returns the outcome so the card can
     /// render it - a synchronous call because every write behind it is a
     /// synchronous store method on the main thread.
     var onConfirm: ((StrawHatProposal) -> StrawHatProposalOutcome)?
+
+    /// Fires once a press has resolved the proposal for good (written, or
+    /// handed to an editor). The transcript records it against
+    /// `StrawHatProposal.id` so a rebuilt card comes back in this state
+    /// instead of armed - see `Resolution`.
+    var onResolved: ((StrawHatProposal, Resolution) -> Void)?
 
     private let proposal: StrawHatProposal
     private let icon: IconTileView
@@ -454,7 +475,8 @@ final class StrawHatConfirmCard: NSView {
     /// own Save is what decides that, entirely independent of this card.
     private var openedForReview = false
 
-    init(proposal: StrawHatProposal, theme: HelmTheme, now: Date = Date()) {
+    init(proposal: StrawHatProposal, theme: HelmTheme, now: Date = Date(),
+         resolution: Resolution? = nil) {
         self.proposal = proposal
         self.theme = theme
         self.icon = IconTileView(size: 24, cornerRadius: 7)
@@ -627,7 +649,26 @@ final class StrawHatConfirmCard: NSView {
             // The card is never shorter than its own action control.
             heightAnchor.constraint(greaterThanOrEqualTo: actionColumn.heightAnchor, constant: gap * 2),
         ])
+        if let resolution { apply(resolution) }
         applyTheme(theme)
+    }
+
+    /// Render an already-resolved proposal in its done state. One function for
+    /// both entry points - a live press (`confirmTapped`) and a rebuild - so
+    /// the two states cannot drift into looking different.
+    private func apply(_ resolution: Resolution) {
+        switch resolution {
+        case .written(let message):
+            isConfirmed = true
+            didFail = false
+            doneLabel.stringValue = message
+        case .openedForReview(let message):
+            openedForReview = true
+            didFail = false
+            doneLabel.stringValue = message
+        }
+        confirmButton.isHidden = true
+        doneLabel.isHidden = false
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -638,19 +679,16 @@ final class StrawHatConfirmCard: NSView {
         guard !isConfirmed, !openedForReview, let onConfirm else { return }
         switch onConfirm(proposal) {
         case .written:
-            isConfirmed = true
-            didFail = false
-            confirmButton.isHidden = true
-            doneLabel.isHidden = false
-            doneLabel.stringValue = "\u{2713} \(proposal.kind.confirmedTitle)"
             // The detail line is deliberately left alone. An earlier version
             // replaced it with the toast's own message, which both duplicated
             // the toast a few points away and threw away the one thing the
             // card still usefully states - the due date it was about to write
             // ("Tasks \u{00B7} Tomorrow"). The confirmation is the done
             // label's job; the detail's job is to say what the record is.
+            resolve(.written(message: "\u{2713} \(proposal.kind.confirmedTitle)"))
         case .failed(let message):
-            // The button stays, because a retry is the useful next action.
+            // The button stays, because a retry is the useful next action -
+            // and nothing is recorded, so a rebuild correctly re-arms it.
             didFail = true
             detailLabel.stringValue = message
         case .openedForReview(let message):
@@ -658,13 +696,17 @@ final class StrawHatConfirmCard: NSView {
             // handed to a captain-facing editor. The button is hidden anyway
             // - re-opening a second copy of the same editor for one proposal
             // is not a useful retry the way it is for `.failed`.
-            openedForReview = true
-            didFail = false
-            confirmButton.isHidden = true
-            doneLabel.isHidden = false
-            doneLabel.stringValue = message
+            resolve(.openedForReview(message: message))
         }
         applyTheme(theme)
+    }
+
+    /// Apply a resolution *and* report it, so the transcript can rebuild this
+    /// card in the same state later. Reported rather than assumed: the card
+    /// itself does not survive a theme change.
+    private func resolve(_ resolution: Resolution) {
+        apply(resolution)
+        onResolved?(proposal, resolution)
     }
 
     func applyTheme(_ theme: HelmTheme) {

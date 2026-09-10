@@ -607,66 +607,164 @@ final class CredentialVaultStore {
     /// than re-wrapped, because there is no key-wrapping indirection here to
     /// re-wrap (the report's "envelope" is the per-item HKDF subkey, which is
     /// derived from the vault key rather than stored beside it).
-    @discardableResult
-    func changeMasterPassword(currentPassword: String, newPassword: String) -> Result<Void, Error> {
-        guard isUnlocked, let onDisk = file else { return .failure(CredentialVaultStoreError.locked) }
-        do {
-            let currentKey = try CredentialVaultCrypto.deriveKey(password: currentPassword,
-                                                                 salt: onDisk.kdf.salt,
-                                                                 rounds: onDisk.kdf.rounds,
-                                                                 algorithm: onDisk.kdf.algorithm)
-            guard CredentialVaultCrypto.verifierOpens(onDisk.verifier, with: currentKey) else {
-                return .failure(CredentialVaultCryptoError.wrongPassword)
-            }
-            let newSalt = CredentialVaultCrypto.newSalt()
-            let newKey = try CredentialVaultCrypto.deriveKey(password: newPassword, salt: newSalt)
-
-            // The re-key is all-or-nothing. `persist()` is what actually writes
-            // the new-key file, so if it throws, the previous key and file
-            // header are put back - otherwise memory would be holding the new
-            // key while disk still had the old one, and the captain would be
-            // told "failed" about a vault that had in fact half-changed its
-            // password. Either the old password still works or the new one
-            // does; never neither, and never "it depends what you do next".
-            let previousKey = vaultKey
-            let previousFile = file
-            let previousTouchID = settings.touchIDUnlockEnabled
-            vaultKey = newKey
-            file = CredentialVaultFile(kdf: .init(salt: newSalt),
-                                       verifier: try CredentialVaultCrypto.makeVerifier(newKey),
-                                       items: [],
-                                       auditLog: Data(),
-                                       settings: Data())
-            append(.init(kind: .passwordChanged))
-            // Any stored Touch ID key was the *old* derived key and no longer
-            // opens anything - forgetting it is correctness, not tidiness.
-            let hadStoredKey = CredentialVaultKeyStore.hasStoredKey
-            if hadStoredKey {
-                CredentialVaultKeyStore.remove()
-                settings.touchIDUnlockEnabled = false
-            }
+    ///
+    /// **Takes a completion and derives on a background queue, exactly like
+    /// `unlock` - and that shape is the fix for a real HIGH-severity defect
+    /// rather than a stylistic choice.** This used to be a plain synchronous
+    /// `Result`-returning method, which the Settings sheet's own closure then
+    /// ran *whole* on `DispatchQueue.global` (two PBKDF2 derivations at
+    /// 600k rounds each are genuinely too slow for the main thread). But every
+    /// line after the derivations - `vaultKey = newKey`, `file = ...`, the
+    /// audit `append`, `persist()`, the Keychain removal and `onChange?()` -
+    /// ran inline on that background thread, and `onChange` is
+    /// `CredentialVaultController.render()`: **a full AppKit view rebuild off
+    /// the main thread**, which is undefined behaviour. Worse, the auto-lock
+    /// `Timer` runs in `.common` mode (so it fires even while the modal
+    /// Settings sheet is up) and its `lock(reason:)` mutates the same
+    /// `vaultKey`/`file`/`auditLog` on **main** - a genuine data race on a
+    /// Swift array and two optionals during the app's most security-sensitive
+    /// operation.
+    ///
+    /// So the split here is the same one `unlock`/`finishUnlock` already
+    /// established, and it keeps this store's "public API = main-thread"
+    /// contract intact: **only the two derivations and the new verifier's seal
+    /// happen off-main** (all three are pure functions of their inputs and
+    /// touch none of this object's state), and every state mutation, the
+    /// verifier check, `persist()`, the Keychain removal and `onChange?()`
+    /// happen back on main in `finishPasswordChange`.
+    ///
+    /// The completion is always delivered on the main thread.
+    func changeMasterPassword(currentPassword: String, newPassword: String,
+                              completion: @escaping (Result<Void, Error>) -> Void) {
+        // The entry point is main-thread, like every other public method here.
+        // Stated rather than assumed: the whole point of this method's shape is
+        // that the caller must *not* be the one hopping to a background queue.
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard isUnlocked, let onDisk = file else {
+            completion(.failure(CredentialVaultStoreError.locked))
+            return
+        }
+        // Only the KDF parameters cross the thread boundary - never `self`'s
+        // state, and never the `CredentialVaultFile` itself (the copy could be
+        // stale by the time the derivation finishes, which is exactly what
+        // `finishPasswordChange` re-checks for).
+        let kdf = onDisk.kdf
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let derived: Result<DerivedRekey, Error>
             do {
-                try persist()
+                let currentKey = try CredentialVaultCrypto.deriveKey(password: currentPassword,
+                                                                     salt: kdf.salt,
+                                                                     rounds: kdf.rounds,
+                                                                     algorithm: kdf.algorithm)
+                let newSalt = CredentialVaultCrypto.newSalt()
+                let newKey = try CredentialVaultCrypto.deriveKey(password: newPassword, salt: newSalt)
+                derived = .success(DerivedRekey(currentKey: currentKey,
+                                                newKey: newKey,
+                                                newSalt: newSalt,
+                                                newVerifier: try CredentialVaultCrypto.makeVerifier(newKey)))
             } catch {
-                vaultKey = previousKey
-                file = previousFile
-                settings.touchIDUnlockEnabled = previousTouchID
-                if !auditLog.isEmpty { auditLog.removeLast() }
-                PersistenceFailureReporter.report(what: "the credential vault's new master password",
-                                                  path: fileURL.path, error: error)
-                // The Keychain key is deliberately NOT restored: it was removed
-                // because the *old* derived key is the one it held, and this
-                // code no longer has that key to write back. Re-enabling Touch
-                // ID is one toggle, and a stale key that opens nothing would be
-                // worse than none.
-                return .failure(error)
+                derived = .failure(error)
             }
-            gitSync?.markDirty()
-            onChange?()
-            return .success(())
+            DispatchQueue.main.async {
+                guard let self else {
+                    completion(.failure(CredentialVaultStoreError.locked))
+                    return
+                }
+                completion(self.finishPasswordChange(derived, derivedAgainstSalt: kdf.salt))
+            }
+        }
+    }
+
+    /// What the background derivation produced. A value type carrying nothing
+    /// but pure outputs, so the hop back to main hands over no shared state.
+    private struct DerivedRekey {
+        let currentKey: CredentialVaultKey
+        let newKey: CredentialVaultKey
+        let newSalt: Data
+        let newVerifier: Data
+    }
+
+    /// The main-thread half of a password change: the verifier check and every
+    /// mutation. `finishUnlock`'s counterpart, and for the same reason.
+    private func finishPasswordChange(_ derived: Result<DerivedRekey, Error>,
+                                      derivedAgainstSalt: Data) -> Result<Void, Error> {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let rekey: DerivedRekey
+        switch derived {
+        case .failure(let error): return .failure(error)
+        case .success(let value): rekey = value
+        }
+        // The vault can have moved under the derivation: the auto-lock timer
+        // fires in `.common` mode, so it runs even while the modal Settings
+        // sheet is up, and a lock in that window drops the key this change was
+        // about to replace. Re-checked here rather than trusted from before the
+        // hop - and by salt, because that is the one field a *concurrent*
+        // password change would have moved (an ordinary write re-persists the
+        // items and leaves the KDF header alone), so it is the exact test for
+        // "is the key I derived still the key this file needs".
+        guard isUnlocked, let onDisk = file else {
+            return .failure(CredentialVaultStoreError.locked)
+        }
+        guard onDisk.kdf.salt == derivedAgainstSalt else {
+            return .failure(CredentialVaultStoreError.locked)
+        }
+        // No `do`/`catch` around the block below any more: the only throwing
+        // calls a password change makes (the two derivations and the new
+        // verifier's seal) now happen on the background queue, and `persist()`
+        // keeps its own inner `do` because its failure is the one this method
+        // has to roll back rather than merely report.
+        guard CredentialVaultCrypto.verifierOpens(onDisk.verifier, with: rekey.currentKey) else {
+            return .failure(CredentialVaultCryptoError.wrongPassword)
+        }
+        let newSalt = rekey.newSalt
+        let newKey = rekey.newKey
+
+        // The re-key is all-or-nothing. `persist()` is what actually writes
+        // the new-key file, so if it throws, the previous key and file
+        // header are put back - otherwise memory would be holding the new
+        // key while disk still had the old one, and the captain would be
+        // told "failed" about a vault that had in fact half-changed its
+        // password. Either the old password still works or the new one
+        // does; never neither, and never "it depends what you do next".
+        let previousKey = vaultKey
+        let previousFile = file
+        let previousTouchID = settings.touchIDUnlockEnabled
+        vaultKey = newKey
+        file = CredentialVaultFile(kdf: .init(salt: newSalt),
+                                   // Sealed on the background queue with
+                                   // the derivations - it is a pure
+                                   // function of `newKey`.
+                                   verifier: rekey.newVerifier,
+                                   items: [],
+                                   auditLog: Data(),
+                                   settings: Data())
+        append(.init(kind: .passwordChanged))
+        // Any stored Touch ID key was the *old* derived key and no longer
+        // opens anything - forgetting it is correctness, not tidiness.
+        let hadStoredKey = CredentialVaultKeyStore.hasStoredKey
+        if hadStoredKey {
+            CredentialVaultKeyStore.remove()
+            settings.touchIDUnlockEnabled = false
+        }
+        do {
+            try persist()
         } catch {
+            vaultKey = previousKey
+            file = previousFile
+            settings.touchIDUnlockEnabled = previousTouchID
+            if !auditLog.isEmpty { auditLog.removeLast() }
+            PersistenceFailureReporter.report(what: "the credential vault's new master password",
+                                              path: fileURL.path, error: error)
+            // The Keychain key is deliberately NOT restored: it was removed
+            // because the *old* derived key is the one it held, and this
+            // code no longer has that key to write back. Re-enabling Touch
+            // ID is one toggle, and a stale key that opens nothing would be
+            // worse than none.
             return .failure(error)
         }
+        gitSync?.markDirty()
+        onChange?()
+        return .success(())
     }
 
     /// Store the current derived key for Touch ID unlock. Only reachable while
