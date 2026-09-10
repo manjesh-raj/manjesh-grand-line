@@ -142,10 +142,30 @@ enum SingleInstanceGuard {
     /// intentionally leaked for the process's lifetime; the kernel drops the
     /// lock when the process dies, however it dies, so a crashed instance
     /// never leaves the app permanently unlaunchable.
+    ///
+    /// **The fd is marked close-on-exec, and that is load-bearing, not
+    /// hygiene.** Reproduced live: every Console `.shell`/`.ssh` tab is a
+    /// `forkpty()` + `execve()` (vendored `SwiftTerm/Pty.swift`) with nothing
+    /// in between that closes an inherited fd, so without `FD_CLOEXEC` this
+    /// lock fd is inherited by every shell tab the app ever opens - and,
+    /// transitively, by anything that shell itself launches (e.g. `herdr`).
+    /// Quitting the app does not kill those descendants (they get reparented
+    /// to `launchd`, not reaped), so the flock stayed held by leftover
+    /// shell/subprocess descendants long after the owning app process had
+    /// fully exited - `lsof` on the real lock file showed a `zsh` and two
+    /// `herdr` processes still holding it minutes after the app quit, and the
+    /// *next* launch's `flock()` failed and silently `exit(0)`d, attributing
+    /// the block to a pid that was itself already dead (the one recorded in
+    /// the file's own content, from whoever last acquired it). Only a full
+    /// restart - which kills every process holding a copy of the fd - cleared
+    /// it. `O_CLOEXEC` here means `execve()` closes this fd automatically in
+    /// any child, so a forked shell (or anything it launches) can never
+    /// inherit it in the first place, regardless of how many generations of
+    /// fork/exec separate it from this process.
     private static func acquireLockFile() -> Outcome {
         let url = lockFileURL()
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        let fd = open(url.path, O_CREAT | O_RDWR, 0o644)
+        let fd = open(url.path, O_CREAT | O_RDWR | O_CLOEXEC, 0o644)
         guard fd >= 0 else {
             // Cannot create/open the lock file at all (a read-only container,
             // a permissions problem). Failing *open* here is deliberate: a
@@ -181,6 +201,25 @@ enum SingleInstanceGuard {
     static func releaseForTests() {
         guard let fd = lockDescriptor else { return }
         flock(fd, LOCK_UN)
+        close(fd)
+        lockDescriptor = nil
+    }
+
+    /// Test-only simulation of a real app quitting: just `close()` the fd,
+    /// with **no** explicit `flock(LOCK_UN)` first - deliberately, because
+    /// nothing in this codebase ever calls an explicit unlock on quit (the
+    /// header comment on `acquireLockFile()` says so: the fd is "leaked for
+    /// the process's lifetime" and released only by the kernel tearing down
+    /// the process's fd table). That distinction matters here: an explicit
+    /// `LOCK_UN` releases the lock state associated with the shared open
+    /// file description regardless of which fd issues it, which would drop
+    /// the lock even while a leaked child fd is still open - defeating a
+    /// test of exactly that leak. A bare `close()` on only this process's own
+    /// fd, while another fd elsewhere still references the same open file
+    /// description, must leave the lock held - which is the property this
+    /// method exists to let a test exercise.
+    static func closeWithoutUnlockingForTests() {
+        guard let fd = lockDescriptor else { return }
         close(fd)
         lockDescriptor = nil
     }
