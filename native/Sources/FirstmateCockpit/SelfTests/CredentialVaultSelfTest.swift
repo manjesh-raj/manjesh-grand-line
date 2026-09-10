@@ -579,6 +579,54 @@ enum CredentialVaultSelfTest {
         }
         check(outcome == .unlocked,
               "after a failed re-key the vault must still be openable, got \(String(describing: outcome))")
+
+        // L5: the rollback must leave Touch ID **off**, never restore whatever
+        // it was before.
+        //
+        // The forward path removes the stored Keychain key unconditionally (it
+        // held the *old* derived key and no longer opens anything), and this
+        // code no longer has that key to write back - so on a failed persist
+        // the honest value is `false`. It used to restore a captured
+        // `previousTouchID`, which left `touchIDUnlockEnabled == true` with no
+        // key behind it: the Settings toggle read "on" while the unlock button
+        // did nothing, until the captain happened to cycle it.
+        //
+        // Asserted two ways, because neither alone is enough here. The
+        // post-condition below holds for any starting state and is what a
+        // reader would check; the source guard after it is what actually
+        // catches a regression, because reaching the interesting case
+        // (`hadStoredKey == true`) needs a **real login-Keychain write** and
+        // this suite deliberately never makes one - it is pure logic and runs
+        // in CI, where there is no unlocked keychain (the same rule
+        // `FM_RUN_CREDENTIAL_PATH_TESTS` states for itself).
+        check(store.settings.touchIDUnlockEnabled == false,
+              "a failed re-key must leave Touch ID off, got \(store.settings.touchIDUnlockEnabled)")
+        checkTouchIDRollbackSource(check)
+    }
+
+    /// The source half of L5 - see the note at its call site for why the
+    /// behavioural half cannot reach the case that matters.
+    private static func checkTouchIDRollbackSource(_ check: (Bool, String) -> Void) {
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let raw = try? String(contentsOf: dir.appendingPathComponent("CredentialVaultStore.swift"),
+                                    encoding: .utf8) else {
+            print("  NOTE: could not read CredentialVaultStore.swift - skipping L5's source guard")
+            return
+        }
+        // Comments stripped first: this fix's own note names the removed
+        // `previousTouchID` in order to explain why it is gone, and a guard
+        // that trips on the comment documenting it is worse than no guard.
+        let code = raw.split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line -> String in
+                let trimmed = line.trimmingCharacters(in: CharacterSet.whitespaces)
+                return trimmed.hasPrefix("//") ? "" : String(line)
+            }
+            .joined(separator: "\n")
+
+        check(!code.contains("previousTouchID"),
+              "the rollback must not capture-and-restore the Touch ID flag - that is L5's defect")
+        check(code.contains("settings.touchIDUnlockEnabled = false"),
+              "...it must force it off instead")
     }
 
     /// A password change must mutate state and fire `onChange` on the **main

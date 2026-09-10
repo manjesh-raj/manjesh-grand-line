@@ -1464,6 +1464,37 @@ enum StrawHatSelfTest {
         let noDocs = StrawHatContextSnapshot.capture(shift: shift, docs: nil, now: now)
         check(noDocs.unavailable.contains(where: { $0.contains("runbooks") }),
               "an unreadable docs folder is stated rather than reported empty", &ok)
+
+        // L2: ...and it must not *also* print a confident zero. The gap line
+        // above was already there and was not enough on its own - the render
+        // carried `runbooks: 0 - postmortems: 0` a few lines above it, so the
+        // crew could read the number and miss the note, which is the exact
+        // unknown-as-zero seam this whole snapshot exists to avoid. Asserted
+        // on the rendered prompt, because the rendered prompt is the only
+        // thing the model ever sees.
+        check(!noDocs.docsAvailable, "an unreadable docs folder is flagged unavailable", &ok)
+        check(!noDocs.render().contains("runbooks:"),
+              "an unreadable docs folder prints NO count line, got: \(noDocs.render())", &ok)
+        check(!noDocs.render().contains("postmortems:"),
+              "...neither half of it", &ok)
+
+        // And the fix is not "never print the count": a folder that genuinely
+        // holds nothing is a real, useful fact ("you have no runbooks yet"),
+        // so an *empty but readable* store still reports its zero. Built the
+        // same way this case builds its own stores - `DocsRunbookStore` has
+        // no root parameter, only the env overrides, and pointing them at a
+        // second scratch path is what keeps this store empty while the one
+        // above still has the runbook the earlier assertions need.
+        let emptyScratch = scratch.appendingPathComponent("empty-docs", isDirectory: true)
+        setenv("FM_DOCS_RUNBOOKS_DIR", emptyScratch.path, 1)
+        let emptyDocs = DocsRunbookStore()
+        setenv("FM_DOCS_RUNBOOKS_DIR", scratch.appendingPathComponent("runbooks").path, 1)
+        let readableButEmpty = StrawHatContextSnapshot.capture(shift: shift, docs: emptyDocs, now: now)
+        check(readableButEmpty.docsAvailable, "a readable docs folder is available even when empty", &ok)
+        check(readableButEmpty.render().contains("runbooks: 0"),
+              "a readable-but-empty docs folder still states its real zero, got: \(readableButEmpty.render())", &ok)
+        check(!readableButEmpty.unavailable.contains(where: { $0.contains("runbooks") }),
+              "...and is not reported as a gap", &ok)
     }
 
     // MARK: M2.3 - the turn envelope

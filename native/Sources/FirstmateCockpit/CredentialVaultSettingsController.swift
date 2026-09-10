@@ -111,6 +111,17 @@ final class CredentialVaultSettingsController: NSViewController {
         sheet.addSection("Master password", number: "04")
         _ = sheet.addInfoCard(symbol: "key.fill",
                               text: "Changing it re-encrypts every credential under a new key. Your old password stops working immediately, and any Touch ID key on this Mac is forgotten because it can no longer open anything.")
+        // L3 (end-to-end review): the re-key is all-or-nothing for the file on
+        // disk, but the vault is committed and pushed to `manjesh-config` on
+        // every change - so **every earlier commit still holds the old
+        // ciphertext under the old key**, and rewriting that history is not
+        // something this button can offer. A captain rotating "because it may
+        // have leaked" is therefore protecting future writes only, which is
+        // exactly the case where they most need to know it. Said here, next to
+        // the action, rather than left to be inferred from the sync section
+        // three sections up.
+        _ = sheet.addInfoCard(symbol: "exclamationmark.triangle.fill",
+                              text: "If you think this password may have leaked, rotate the underlying secrets too. Earlier commits in your config repo still hold the old encrypted vault, and the old password still opens those - changing it here protects everything written from now on, not what is already in that history.")
         sheet.addRow(currentPasswordField)
         sheet.addRow(newPasswordField)
         sheet.addRow(confirmPasswordField)

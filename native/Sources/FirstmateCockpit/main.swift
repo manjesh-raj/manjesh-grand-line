@@ -517,7 +517,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "Manjesh Grand Line"
+        window.title = Self.windowTitle()
         // **`contentViewController` first, then the frame.** Assigning a
         // content view controller makes AppKit re-derive the window's frame
         // from that content's Auto Layout fitting size (AGENTS.md's
@@ -624,6 +624,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// captain dragging the window down to a size where the destinations
     /// stop being readable.
     static let minContentSize = NSSize(width: 960, height: 620)
+
+    /// The window's title, from the running bundle rather than a literal.
+    ///
+    /// The end-to-end review's INFO finding: this was hardcoded
+    /// `"Manjesh Grand Line"`, so the sanctioned probe app
+    /// (`Scripts/build-probe-app.sh`, its own bundle id and 17 scratch store
+    /// overrides) put the *real* app's name in its own title bar - and a probe
+    /// screenshot was then indistinguishable from a screenshot of the
+    /// captain's live instance. That is a genuine review hazard rather than a
+    /// cosmetic one: this app has no process isolation between builds sharing
+    /// a bundle identity, so "which instance is this?" is exactly the question
+    /// a screenshot has to answer. The probe's plist already says "Grand Line
+    /// Probe", so reading the bundle makes it say so with no per-build flag.
+    ///
+    /// The fallback chain matters because a plain `swift build` binary has no
+    /// `Info.plist` at all (the dev flow this repo documents), which is why
+    /// the literal survives as the last resort rather than leaving a dev
+    /// window titled "FirstmateCockpit" or blank.
+    static func windowTitle() -> String {
+        let info = Bundle.main.infoDictionary
+        for key in ["CFBundleDisplayName", "CFBundleName"] {
+            if let name = info?[key] as? String,
+               !name.trimmingCharacters(in: .whitespaces).isEmpty {
+                return name
+            }
+        }
+        return "Manjesh Grand Line"
+    }
 
     /// The screen's usable area - menu bar and Dock excluded. This is the
     /// *window* frame (title bar included), so the title bar stays on screen.

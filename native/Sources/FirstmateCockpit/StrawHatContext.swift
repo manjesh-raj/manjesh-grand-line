@@ -97,6 +97,17 @@ struct StrawHatContextSnapshot {
     var runbookTitles: [String] = []
     var runbookCount: Int = 0
     var postmortemCount: Int = 0
+    /// Whether the docs folder was readable at all this turn.
+    ///
+    /// Explicit rather than inferred from the two counts, for exactly
+    /// `healthAvailable`'s reason one field up: a genuinely empty docs folder
+    /// and an unreadable one both leave `runbookCount == 0`, and those are
+    /// different facts. `render()` skips the count line entirely when this is
+    /// false, so a "0" the crew could read as certain never appears beside the
+    /// `unavailable:` line that contradicts it - the end-to-end review's own
+    /// L2 finding, and the exact unknown-as-zero seam this type's header
+    /// claims to uphold.
+    var docsAvailable: Bool = false
     /// Anything the snapshot could not read, stated rather than reported as
     /// empty - GL-14. Rendered into the context block so the crew says "I
     /// couldn't read your runbooks" instead of "you have no runbooks".
@@ -191,6 +202,7 @@ struct StrawHatContextSnapshot {
 
         // --- Docs (Robin) ---
         if let docs {
+            snapshot.docsAvailable = true
             let runbooks = docs.listRunbooks()
             snapshot.runbookCount = runbooks.count
             snapshot.runbookTitles = runbooks
@@ -277,12 +289,18 @@ struct StrawHatContextSnapshot {
             lines.append("health: " + health.map { "\($0.service)=\($0.verdict)" }.joined(separator: " "))
         }
 
-        lines.append("runbooks: \(runbookCount) \u{00B7} postmortems: \(postmortemCount)")
-        for title in runbookTitles {
-            lines.append("  - \(title)")
-        }
-        if runbookCount > runbookTitles.count {
-            lines.append("  - ...and \(runbookCount - runbookTitles.count) more")
+        // Only when the folder was genuinely readable: a `runbooks: 0` the
+        // crew has no reason to doubt, printed a few lines above an
+        // `unavailable:` note it may not connect to that zero, is worse than
+        // printing nothing and letting the note speak for itself (L2).
+        if docsAvailable {
+            lines.append("runbooks: \(runbookCount) \u{00B7} postmortems: \(postmortemCount)")
+            for title in runbookTitles {
+                lines.append("  - \(title)")
+            }
+            if runbookCount > runbookTitles.count {
+                lines.append("  - ...and \(runbookCount - runbookTitles.count) more")
+            }
         }
 
         // GL-14, made explicit in the prompt itself: the crew is told what it

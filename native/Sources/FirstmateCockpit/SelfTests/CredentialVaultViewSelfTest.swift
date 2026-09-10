@@ -91,6 +91,7 @@ enum CredentialVaultViewSelfTest {
         checkLockDismissesOpenSheets(scratch: scratch, window: window, check)
         checkUnreadableNeverOffersCreate(scratch: scratch, window: window, check)
         checkEditorRoundTrip(check)
+        checkPasswordChangeWarnsAboutGitHistory(check)
         checkThemeSweep(scratch: scratch, window: window, check)
 
         window.contentView = nil
@@ -533,6 +534,58 @@ enum CredentialVaultViewSelfTest {
         let offersCreate = buttonTitles.contains { $0.lowercased().contains("create") }
         check(!offersCreate,
               "an unreadable vault must offer NO create action - it would write over real credentials. Visible buttons: \(buttonTitles)")
+    }
+
+    /// L3: the change-password section says that rotating the master password
+    /// does not reach the old ciphertext already in the config repo's history.
+    ///
+    /// The re-key is all-or-nothing for the file on disk, but the vault is
+    /// committed and pushed on every change - so every earlier commit still
+    /// holds the old `vault.enc.json` under the old key, and the old password
+    /// still opens *those*. Rewriting that history is not something this
+    /// button can offer, so the captain has to be told: the common reason to
+    /// rotate is a suspected leak, which is exactly the case where "future
+    /// writes only" is not the protection they think they bought.
+    ///
+    /// Driven the same way `checkEditorRoundTrip` drives the editor - the
+    /// sheet's `loadView` builds the whole form, no real presentation needed.
+    private static func checkPasswordChangeWarnsAboutGitHistory(_ check: (Bool, String) -> Void) {
+        print("\n-- the settings sheet's master-password warning --")
+        let settings = CredentialVaultSettingsController(settings: .default,
+                                                         auditEvents: [],
+                                                         syncSummary: "Synced.",
+                                                         touchIDAvailable: false)
+        _ = settings.view
+        let text = allLabelText(in: settings.view)
+
+        // The warning itself. Asserted on the rendered text rather than on a
+        // stored property, because a card built but never added to the tree
+        // reads identically from the outside.
+        check(text.contains(where: { $0.lowercased().contains("rotate the underlying secrets") }),
+              "the section must tell the captain to rotate the secrets themselves after a suspected leak")
+        check(text.contains(where: { $0.lowercased().contains("earlier commits") }),
+              "...and say why - the old encrypted vault is still in the repo's history")
+
+        // Next to the action, not three sections away: a warning the captain
+        // has to scroll to find is one they will not read.
+        guard let warning = text.firstIndex(where: { $0.lowercased().contains("earlier commits") }),
+              let button = text.firstIndex(where: { $0 == "Change master password" }) else {
+            // The button's title is drawn by `HelmButton`'s `attributedTitle`
+            // rather than a child label, so it may not appear in a label
+            // sweep. The warning above is the load-bearing half either way.
+            print("  NOTE: the change button's title is not a scanned label - ordering not asserted")
+            return
+        }
+        check(warning < button,
+              "the warning precedes the action it is about, got warning at \(warning), button at \(button)")
+    }
+
+    /// Every non-empty label string in a view tree, in tree order.
+    private static func allLabelText(in view: NSView) -> [String] {
+        var out: [String] = []
+        if let field = view as? NSTextField, !field.stringValue.isEmpty { out.append(field.stringValue) }
+        for sub in view.subviews { out.append(contentsOf: allLabelText(in: sub)) }
+        return out
     }
 
     private static func checkEditorRoundTrip(_ check: (Bool, String) -> Void) {

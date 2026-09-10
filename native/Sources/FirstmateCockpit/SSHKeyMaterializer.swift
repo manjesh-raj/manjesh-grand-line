@@ -53,9 +53,14 @@ enum SSHKeyMaterializer {
     }
 
     /// Remove a materialized key's whole scratch directory (the identity file
-    /// and, if present, its `-cert.pub`). Best-effort - a leftover 0700 temp
-    /// dir under `/tmp` after a crash is the same tradeoff `TmuxMirror` already
-    /// accepts for stale `cockpit_*` tmux groups.
+    /// and, if present, its `-cert.pub`). Best-effort: a crash between
+    /// materializing and cleaning up leaves a 0700 temp dir under `/tmp`,
+    /// which is an accepted tradeoff - the directory is unreadable by any
+    /// other account and the OS reaps `/tmp` on its own, whereas a
+    /// launch-time sweep would have to tell "abandoned" from "in use by
+    /// another tab" and could delete the identity file out from under a live
+    /// `ssh`. (This used to cite `TmuxMirror`'s own stale-`cockpit_*`-group
+    /// tradeoff as the precedent; that type is gone - the review's L10.)
     static func cleanup(privateKeyPath: String) {
         let dir = (privateKeyPath as NSString).deletingLastPathComponent
         try? FileManager.default.removeItem(atPath: dir)

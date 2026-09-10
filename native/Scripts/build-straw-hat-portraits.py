@@ -41,8 +41,20 @@ each original, then checked at the real 26pt circular size.
 Usage:
     python3 native/Scripts/build-straw-hat-portraits.py [--plan PATH] [--check]
 
-`--check` regenerates into a temp file and diffs, so CI or a reviewer can
-confirm the committed file matches its inputs without rewriting it.
+`--check` regenerates in memory and diffs against the committed file, writing
+nothing anywhere, so CI or a reviewer can confirm the committed file matches
+its inputs. It used to drop the regenerated copy into a
+`NamedTemporaryFile(delete=False)` on a mismatch and print its path, which
+leaked a ~220KB temp file per failing run; a stale file is diagnosed well
+enough by "re-run without --check", and a `--check` that litters is a
+`--check` nobody wants to wire into CI.
+
+Note this script's inputs are **not** committed here (see above), unlike
+`build-straw-hat-flag.py`'s single reference image, which was moved into
+`native/Scripts/assets/straw-hat-flag/` for exactly that reason. The plan
+artifact these portraits come from is a ~12MB HTML document, so committing it
+is a materially different decision from committing a 110KB PNG - hence this
+`--check` is in-memory but still only runnable where the artifact is.
 """
 
 import argparse
@@ -51,7 +63,6 @@ import io
 import os
 import re
 import sys
-import tempfile
 
 try:
     from PIL import Image
@@ -225,15 +236,14 @@ def main() -> None:
     target = os.path.normpath(target)
 
     if args.check:
-        with tempfile.NamedTemporaryFile("w", suffix=".swift", delete=False, encoding="utf-8") as handle:
-            handle.write(source)
-            temp = handle.name
-        existing = open(target, encoding="utf-8").read() if os.path.exists(target) else ""
-        if existing == source:
-            print(f"StrawHatPortraits.swift is up to date ({len(source)} bytes)")
-            os.unlink(temp)
-            return
-        sys.exit(f"StrawHatPortraits.swift is stale - regenerated copy at {temp}")
+        if not os.path.exists(target):
+            sys.exit(f"{target} does not exist yet - run without --check first.")
+        with open(target, "r", encoding="utf-8") as handle:
+            committed = handle.read()
+        if committed != source:
+            sys.exit(f"{target} is out of date - re-run this script without --check.")
+        print(f"{target} matches its inputs ({len(source)} bytes).")
+        return
 
     with open(target, "w", encoding="utf-8") as handle:
         handle.write(source)

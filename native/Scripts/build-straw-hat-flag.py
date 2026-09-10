@@ -59,8 +59,10 @@ that size costs a few tens of KB.
 Usage:
     python3 native/Scripts/build-straw-hat-flag.py [--source PATH] [--check]
 
-`--check` regenerates into a temp file and diffs, so CI or a reviewer can
-confirm the committed file matches its input without rewriting it.
+`--check` regenerates in memory and diffs against the committed file, writing
+nothing anywhere, so CI or a reviewer can confirm the committed file matches
+its input. It leaves no temp file behind on a mismatch - a `--check` that
+litters is a `--check` nobody wants to wire into CI.
 """
 
 import argparse
@@ -68,7 +70,6 @@ import base64
 import io
 import os
 import sys
-import tempfile
 
 try:
     from PIL import Image
@@ -76,16 +77,22 @@ except ImportError:  # pragma: no cover - a clear message beats a traceback
     sys.exit("This script needs Pillow: python3 -m pip install --user Pillow")
 
 # The captain's v2 reference image (a flat-style Jolly Roger already composed
-# on a dark rounded-square card backdrop). It lives in firstmate's own
-# `data/` directory, outside this repo - it is an input to the task, not an
-# app asset, so only the derived payload is committed here. The v1 photo this
-# replaced (`data/polish-straw-hat-overview-card-and-voice-c8d3/straw-hat-
-# jolly-roger-reference.png`) is untouched and left as historical record on
-# the firstmate side; this script no longer reads it.
-DEFAULT_SOURCE = os.path.expanduser(
-    "~/manjesh/firstmate/data/straw-hat-voice-order-composer-polish-8dd2/"
-    "straw-hat-card-icon-v2-reference.png"
-)
+# on a dark rounded-square card backdrop), committed **in this repo** beside
+# the two icon-batch generators' own sources.
+#
+# It used to default to a path inside firstmate's `data/` directory, outside
+# this repo, which made `--check` unrunnable anywhere but the captain's own
+# machine - so a CI drift guard could only ever fail for the environment
+# rather than for real drift. The newer `build-card-shortcut-icons.py` /
+# `build-rail-icons-batch2.py` had already established the fix: keep a
+# generator's source image under `native/Scripts/assets/<generator>/` so the
+# whole regenerate-and-diff loop is reproducible from a clean clone. The v1
+# photo this reference replaced (`data/polish-straw-hat-overview-card-and-
+# voice-c8d3/straw-hat-jolly-roger-reference.png`) stays on the firstmate side
+# as historical record; this script no longer reads it.
+ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          "assets", "straw-hat-flag")
+DEFAULT_SOURCE = os.path.join(ASSETS_DIR, "straw-hat-card-icon-v2-reference.png")
 
 # The whole source, as fractions (l, t, r, b) - the v2 reference is already
 # the finished icon with no emblem to pick out of a larger scene. See the
@@ -132,12 +139,13 @@ def swift_source(payload: bytes) -> str:
         "//",
         "// GENERATED FILE - do not hand-edit. Produced by",
         "// `native/Scripts/build-straw-hat-flag.py` from the captain's v2 Jolly",
-        "// Roger reference image (`data/straw-hat-voice-order-composer-polish-8dd2/",
-        "// straw-hat-card-icon-v2-reference.png`, on the firstmate side - an input",
-        "// to that task, not an app asset, so it is not committed here). This",
-        "// replaced the original flag-in-sky photo reference with a flat-style",
-        "// icon already composed on its own card backdrop; see the script's own",
-        "// docstring for why the crop changed to \"the whole image\" as a result.",
+        "// Roger reference image, committed in this repo at",
+        "// `native/Scripts/assets/straw-hat-flag/straw-hat-card-icon-v2-",
+        "// reference.png` so the regenerate-and-diff loop is reproducible from a",
+        "// clean clone. That reference replaced the original flag-in-sky photo with",
+        "// a flat-style icon already composed on its own card backdrop; see the",
+        "// script's own docstring for why the crop is \"the whole image\" as a",
+        "// result.",
         "// Re-run that script to change the crop or the size; see its own docstring",
         "// for why this is a base64 literal rather than an asset catalog or an SPM",
         "// resource bundle and why the background is kept rather than cut out.",
@@ -207,7 +215,8 @@ def main() -> None:
     if not os.path.exists(args.source):
         sys.exit(
             f"Reference image not found at {args.source}\n"
-            "It lives in firstmate's data/ directory, outside this repo - pass --source."
+            "It is committed under native/Scripts/assets/straw-hat-flag/ - pass "
+            "--source to generate from a different image."
         )
 
     source = swift_source(render(args.source))

@@ -269,12 +269,29 @@ final class StrawHatCrewStrip: NSView {
         if members.isEmpty {
             caption.stringValue = "\(StrawHatMember.allCases.count) crew aboard"
         } else {
+            // Roster order, not set order, so the caption reads the same way
+            // twice for the same reply.
             let names = StrawHatMember.allCases
                 .filter { members.contains($0) }
                 .map(\.displayName)
-                .joined(separator: ", ")
-            caption.stringValue = names.count > 1 ? "\(names) replied" : "\(names) replied"
+            caption.stringValue = "\(Self.list(names)) replied"
         }
+    }
+
+    /// "Luffy", "Luffy and Nami", "Luffy, Nami and Robin".
+    ///
+    /// The review's L9: this used to be
+    /// `names.count > 1 ? "\(names) replied" : "\(names) replied"` over the
+    /// already-`joined` string - two byte-identical branches, chosen by the
+    /// **character** count of the joined names (so the "plural" arm ran for a
+    /// single member too, since no crew name is one character long). Both
+    /// halves are fixed here rather than only the condition: a ternary whose
+    /// arms match is a decision that was never made, so it needed a real
+    /// difference to select between, not a working test of nothing.
+    private static func list(_ names: [String]) -> String {
+        guard let last = names.last else { return "" }
+        guard names.count > 1 else { return last }
+        return names.dropLast().joined(separator: ", ") + " and " + last
     }
 
     func applyTheme(_ theme: HelmTheme) {
