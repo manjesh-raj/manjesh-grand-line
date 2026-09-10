@@ -136,7 +136,12 @@ final class CredentialVaultGitSync {
         let ok = sharesProductionWorkingTree
             ? ShiftGitSync.shared.ensureWorkingTreeNow()
             : ensureStandaloneWorkingTreeNow()
-        try? FileManager.default.createDirectory(at: dataRoot, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(
+            at: dataRoot,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: SensitiveFile.directoryMode]
+        )
+        SensitiveFile.restrictDirectory(dataRoot)
         let dirty = !uncommittedFiles().isEmpty
         setStatus(dirty ? .localChanges : .synced)
         if dirty { markDirty() }
@@ -152,7 +157,12 @@ final class CredentialVaultGitSync {
         try? fm.createDirectory(at: workingTree.deletingLastPathComponent(), withIntermediateDirectories: true)
         let clone = runGit(["clone", remoteURL, workingTree.path], cwd: nil, authenticated: true)
         guard clone.status == 0 else {
-            try? fm.createDirectory(at: dataRoot, withIntermediateDirectories: true)
+            try? fm.createDirectory(
+                at: dataRoot,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: SensitiveFile.directoryMode]
+            )
+            SensitiveFile.restrictDirectory(dataRoot)
             setStatus(.failed("Could not clone \(remoteURL): \(clone.stderr.isEmpty ? "unknown error" : clone.stderr)"))
             return false
         }

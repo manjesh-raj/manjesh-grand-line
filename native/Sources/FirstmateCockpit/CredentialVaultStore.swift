@@ -149,7 +149,7 @@ final class CredentialVaultStore {
             adoptLocalOnlyVaultIfNeeded()
             return
         }
-        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        Self.createVaultRoot(root)
     }
 
     /// An explicit root, for self-tests and for any future caller that wants a
@@ -157,7 +157,29 @@ final class CredentialVaultStore {
     init(root: URL) {
         self.root = root
         self.gitSync = nil
-        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        Self.createVaultRoot(root)
+    }
+
+    /// Create the vault's own directory at 0700 (M3), and tighten it if an
+    /// earlier version of this app already made it 0755.
+    ///
+    /// Only ever the vault's *own* leaf directory. The
+    /// `withIntermediateDirectories` parents are deliberately left alone: on
+    /// the git-synced path they are the captain's config clone and its working
+    /// tree, which other tooling (`rebuild.sh`, git itself) reaches into, and
+    /// narrowing somebody else's directory is not this store's call to make.
+    ///
+    /// It uses `try?` where one caller previously used `try` inside a
+    /// `do`/`catch`. That caller (`adoptLocalOnlyVaultIfNeeded`) still reports
+    /// the same failure the same way: if the directory genuinely could not be
+    /// made, the `moveItem` on the very next line throws into the same catch.
+    private static func createVaultRoot(_ root: URL) {
+        try? FileManager.default.createDirectory(
+            at: root,
+            withIntermediateDirectories: true,
+            attributes: [.posixPermissions: SensitiveFile.directoryMode]
+        )
+        SensitiveFile.restrictDirectory(root)
     }
 
     /// The local-only fallback path, used before a clone exists. Resolved the
@@ -192,8 +214,11 @@ final class CredentialVaultStore {
             return
         }
         do {
-            try fm.createDirectory(at: root, withIntermediateDirectories: true)
+            Self.createVaultRoot(root)
             try fm.moveItem(at: localFile, to: repoFile)
+            // A move carries the source file's own mode across, which for a
+            // vault written by a pre-M3 build is 0644.
+            SensitiveFile.restrict(repoFile)
             AppLog.store.info("credential vault: adopted the local-only vault into the config clone - it syncs from now on")
             gitSync?.markDirty()
         } catch {
@@ -482,9 +507,22 @@ final class CredentialVaultStore {
         credentials = []
         auditLog = []
         settings = .default
-        // A locked vault has no business clearing a pasteboard the captain may
-        // since have filled from elsewhere - see that method's own note.
-        CredentialVaultClipboard.shared.abandonPendingClear()
+        // M1: run the guarded clear rather than abandoning it.
+        //
+        // This used to call `abandonPendingClear()`, on the reasoning that a
+        // locked vault has no business reaching into a pasteboard the captain
+        // may since have filled from elsewhere. That concern is real and it is
+        // *already* handled - one level down, and better: `clearIfUntouched`
+        // no-ops unless `changeCount` still reports this app's own copy, so it
+        // physically cannot clear somebody else's clipboard content.
+        //
+        // Abandoning instead had the exact inverted effect: copy a secret, lock
+        // within the clear window, and the pending clear was cancelled while
+        // the secret stayed on the pasteboard until something else happened to
+        // overwrite it. Locking - the one action whose entire purpose is to
+        // stop disclosing secrets - made the clipboard *less* safe than not
+        // locking at all.
+        CredentialVaultClipboard.shared.clearNow()
         onChange?()
     }
 
@@ -846,7 +884,13 @@ final class CredentialVaultStore {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         let data = try encoder.encode(updated)
-        try AtomicWrite.data(data, to: fileURL)
+        // M3: 0600/0700. The item payloads, the audit log and the settings are
+        // all AES-GCM sealed, but the KDF descriptor beside them (salt, round
+        // count, algorithm) is cleartext by necessity - a legitimate unlock
+        // needs it to derive the key at all - and handing that plus the
+        // ciphertext to every other local account is an offline brute-force
+        // starter kit rather than a defensible default.
+        try AtomicWrite.data(data, to: fileURL, sensitive: true)
         file = updated
     }
 

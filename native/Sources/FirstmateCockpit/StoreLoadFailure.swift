@@ -45,6 +45,30 @@ enum StoreLoadFailure {
             .appendingPathComponent("\(url.lastPathComponent).corrupt-\(Int(Date().timeIntervalSince1970))")
         do {
             try FileManager.default.copyItem(at: url, to: backupURL)
+            // M3: `copyItem` carries the source's own mode across, so once a
+            // store writes at 0600 its backups follow for free - but a file
+            // written by a pre-M3 build is still 0644, and this copy of it
+            // would keep that mode forever, because **nothing ever rewrites a
+            // `.corrupt-` file**. That one-shot, orphaned quality is why this
+            // is unconditional rather than taking a `sensitive:` flag like
+            // `AtomicWrite.data` does.
+            //
+            // Be clear that this is a deliberate, small over-reach: this helper
+            // serves the sensitive stores (`keys.json`, `snippets.json`, the
+            // vault) *and* benign ones (Shift, dictation, sticky notes,
+            // schedules, the fleet log), so a corrupt sticky-note backup gets
+            // 0600 too. Nothing else needs to read any of them, erring tight on
+            // a file that will never be rewritten is the safe direction, and
+            // the alternative - threading a flag through `decodeJSON` to ten
+            // call sites - buys precision nobody benefits from. The scope rule
+            // M3 actually cares about is about each store's *live* file, which
+            // is decided per store and asserted both ways in
+            // `StoreDurabilitySelfTest`.
+            //
+            // `HostStore` does not route through here - it predates this helper
+            // and keeps its own backup path, which needed the same one-line fix
+            // (a self-test case is what caught that second copy).
+            SensitiveFile.restrict(backupURL)
             AppLog.store.error("\(name, privacy: .public) failed to decode - backed up to \(backupURL.path, privacy: .public)")
             return backupURL.path
         } catch {

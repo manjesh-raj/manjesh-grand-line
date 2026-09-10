@@ -103,14 +103,15 @@ final class SSHKeyStore {
 
     private func persist() {
         do {
-            try FileManager.default.createDirectory(
-                at: fileURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(keys)
-            try data.write(to: fileURL, options: .atomic)
+            // M3: 0600/0700 rather than the default 0644/0755. This file holds
+            // public keys, SHA256 fingerprints and OpenSSH certificates - a
+            // complete inventory of how this machine authenticates.
+            // See `SensitiveFile` for the (narrow, honestly stated) threat
+            // model, and note the ordering it relies on.
+            try AtomicWrite.data(data, to: fileURL, sensitive: true)
         } catch {
             PersistenceFailureReporter.report(what: "SSH key metadata", path: fileURL.path, error: error)
         }

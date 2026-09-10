@@ -3,9 +3,9 @@
 // `swift build && FM_RUN_STORE_DURABILITY_TESTS=1 .build/debug/FirstmateCockpit`
 //
 // Permanent regression coverage for GL-01 (store decode failure silently
-// destroys user data) and GL-21 (`CommandLibraryStore` re-seeds over a failed
-// directory read) - the two findings in phase 1 whose failure mode is
-// *invisible*. A regression here does not crash, does not log, and does not
+// destroys user data), GL-21 (`CommandLibraryStore` re-seeds over a failed
+// directory read) and M3 of the end-to-end review (the sensitive stores landed
+// world-readable) - findings whose failure mode is *invisible*. A regression here does not crash, does not log, and does not
 // look wrong on screen: it just quietly removes data the captain trusted the
 // app with, which is exactly why it needs a test rather than a code read.
 //
@@ -67,6 +67,9 @@ enum StoreDurabilitySelfTest {
         shiftDistinguishesMissingFromCorrupt(scratch: scratch)
         shiftRefusesWritesWhileLoadFailed(scratch: scratch)
         commandLibraryDoesNotSeedOverAFailedRead(scratch: scratch)
+        sensitiveStoresAreOwnerOnly(scratch: scratch)
+        benignStoresAreLeftAlone(scratch: scratch)
+        aCorruptBackupOfASensitiveStoreIsOwnerOnly(scratch: scratch)
 
         print(failures.isEmpty
             ? "== PASS (store durability) =="
@@ -281,6 +284,140 @@ enum StoreDurabilitySelfTest {
             check(stillAFile, "the unreadable path was left exactly as it was - no seed files written")
         }
     }
+
+    // MARK: - M3: the sensitive stores are owner-only on disk
+
+    /// The mode of `path`, or nil if it cannot be read.
+    private static func mode(of url: URL) -> Int? {
+        (try? FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber)?.intValue
+    }
+
+    private static func modeString(_ mode: Int?) -> String {
+        guard let mode else { return "unreadable" }
+        return String(format: "0%o", mode)
+    }
+
+    /// Every store that holds credential or connection material writes its file
+    /// 0600 in a 0700 directory.
+    ///
+    /// **This asserts the bytes on disk, not the call site**, deliberately: the
+    /// finding was that `.atomic` writes take the umask, and the whole risk in
+    /// fixing it is the ordering (a rename cannot carry a mode, so the file can
+    /// only be tightened *after* it lands). A source check would pass against a
+    /// chmod that silently failed; only reading the real mode back proves it.
+    private static func sensitiveStoresAreOwnerOnly(scratch: URL) {
+        print("- M3: hosts/keys/snippets and the vault land 0600 in a 0700 directory")
+
+        let dir = scratch.appendingPathComponent("m3-sensitive", isDirectory: true)
+        let hosts = dir.appendingPathComponent("hosts.json")
+        let keys = dir.appendingPathComponent("keys.json")
+        let snippets = dir.appendingPathComponent("snippets.json")
+
+        withEnv([
+            "FM_HOSTS_FILE": hosts.path,
+            "FM_KEYS_FILE": keys.path,
+            "FM_SNIPPETS_FILE": snippets.path,
+        ]) {
+            // Each store writes on its first mutation, so add one real record.
+            let hostStore = HostStore()
+            hostStore.add(Host(label: "m3-host", address: "bastion.example.internal", username: "ops"))
+            let snippetStore = SnippetStore()
+            snippetStore.add(Snippet(label: "m3-snippet", command: "echo hello"))
+            // `SSHKeyStore`'s metadata path only - no Keychain item, per this
+            // file's own header.
+            let keyStore = SSHKeyStore()
+            keyStore.add(SSHKey(label: "m3-key", type: .ed25519,
+                                publicKey: "ssh-ed25519 AAAA", fingerprint: "SHA256:abc", certificate: nil))
+
+            for (label, url) in [("hosts.json", hosts), ("keys.json", keys), ("snippets.json", snippets)] {
+                check(FileManager.default.fileExists(atPath: url.path), "\(label) was written")
+                check(mode(of: url) == SensitiveFile.fileMode,
+                      "\(label) is 0600 (was \(modeString(mode(of: url))))")
+            }
+            check(mode(of: dir) == SensitiveFile.directoryMode,
+                  "the stores' directory is 0700 (was \(modeString(mode(of: dir))))")
+        }
+
+        // The vault, on its own explicit-root path (never git sync).
+        let vaultRoot = scratch.appendingPathComponent("m3-vault", isDirectory: true)
+        let store = CredentialVaultStore(root: vaultRoot)
+        // Before any write: `CredentialVaultStore` hardens its own root at
+        // construction, and this is the only window where that is the *only*
+        // thing doing so - once a vault file is written, `AtomicWrite`'s own
+        // directory pass would cover it anyway. Removing the store's own
+        // hardening produced no failure until this assertion existed, which is
+        // exactly the kind of overlap that leaves a fix untested.
+        check(mode(of: vaultRoot) == SensitiveFile.directoryMode,
+              "the vault directory is 0700 from construction, before anything is written "
+              + "(was \(modeString(mode(of: vaultRoot))))")
+        switch store.createVault(masterPassword: "m3-correct-horse-battery") {
+        case .failure(let error):
+            check(false, "could not create the vault for the permissions case: \(error)")
+            return
+        case .success:
+            break
+        }
+        _ = store.add(VaultCredential(title: "m3", account: "ops", secret: "s3cr3t"))
+        let vaultFile = vaultRoot.appendingPathComponent(CredentialVaultGitSync.vaultFileName)
+        check(FileManager.default.fileExists(atPath: vaultFile.path), "the vault file was written")
+        check(mode(of: vaultFile) == SensitiveFile.fileMode,
+              "the vault file is 0600 (was \(modeString(mode(of: vaultFile))))")
+        check(mode(of: vaultRoot) == SensitiveFile.directoryMode,
+              "the vault directory is 0700 (was \(modeString(mode(of: vaultRoot))))")
+
+        // A repeat write must not loosen what the first one tightened - the
+        // no-op fast path in `SensitiveFile.apply` is easy to get inverted.
+        _ = store.add(VaultCredential(title: "m3-second", account: "ops", secret: "another"))
+        check(mode(of: vaultFile) == SensitiveFile.fileMode,
+              "a second write leaves the vault file at 0600")
+    }
+
+    /// The scope half, and it matters as much as the fix: M3 is about
+    /// credential and connection material, and quietly tightening every store
+    /// in the app would be churn presented as security. A benign store keeps
+    /// whatever the umask gives it.
+    private static func benignStoresAreLeftAlone(scratch: URL) {
+        print("- M3: a benign store is deliberately NOT tightened")
+
+        let dir = scratch.appendingPathComponent("m3-benign", isDirectory: true)
+        let schedules = dir.appendingPathComponent("schedules.json")
+        withEnv(["FM_SCHEDULES_FILE": schedules.path]) {
+            let store = ScheduleStore()
+            store.add(AutomationSchedule(action: .driftCheck, cadence: .daily(hour: 3, minute: 0)))
+            check(FileManager.default.fileExists(atPath: schedules.path), "schedules.json was written")
+            check(mode(of: schedules) != SensitiveFile.fileMode,
+                  "schedules.json keeps its default mode (\(modeString(mode(of: schedules)))) - it holds no credential material")
+        }
+    }
+
+    /// A `.corrupt-` backup is as sensitive as the file it copies, and unlike
+    /// that file **nothing ever rewrites it** - so if it were left at the
+    /// source's pre-fix 0644 it would stay readable forever. `copyItem` carries
+    /// the source mode across, which is why this needs a file that starts at
+    /// 0644 to be a real test rather than a tautology.
+    private static func aCorruptBackupOfASensitiveStoreIsOwnerOnly(scratch: URL) {
+        print("- M3: the .corrupt- backup of a sensitive store is 0600 even from a 0644 original")
+
+        let dir = scratch.appendingPathComponent("m3-backup", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let hosts = dir.appendingPathComponent("hosts.json")
+        try? Data("this is not host json".utf8).write(to: hosts)
+        // Explicitly world-readable, as a pre-M3 build would have left it.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o644], ofItemAtPath: hosts.path)
+        check(mode(of: hosts) == 0o644, "the original starts 0644, so the copy's mode is a real question")
+
+        withEnv(["FM_HOSTS_FILE": hosts.path]) {
+            let store = HostStore()
+            check(store.hosts.isEmpty, "the undecodable file loads as an empty list")
+            let backups = corruptBackupPaths(besides: hosts)
+            check(backups.count == 1, "exactly one .corrupt- backup was written")
+            if let backup = backups.first {
+                check(mode(of: backup) == SensitiveFile.fileMode,
+                      "the backup is 0600 (was \(modeString(mode(of: backup))))")
+            }
+        }
+    }
+
 }
 
 #endif

@@ -63,6 +63,8 @@ enum CredentialVaultSelfTest {
         checkPasswordChangeRollsBackOnWriteFailure(scratch: scratch, check)
         checkPasswordChangeStaysOnMain(scratch: scratch, check)
         checkClipboardChangeCountGuard(check)
+        checkLockClearsTheClipboard(scratch: scratch, check)
+        checkClipboardSourceGuards(check)
         checkOverrideOrder(scratch: scratch, check)
         checkGitPortability(scratch: scratch, check)
 
@@ -801,18 +803,150 @@ enum CredentialVaultSelfTest {
         check(pasteboard.string(forType: .string) == "something-the-captain-copied-from-a-browser",
               "a pasteboard written by someone else since the copy must NOT be cleared")
 
-        // Abandoning a pending clear (what `lock` does) leaves the pasteboard
-        // untouched too.
+        // M1, and this assertion used to say the opposite. `lock` called
+        // `abandonPendingClear()`, and this case asserted that leaving the
+        // secret on the pasteboard was correct - i.e. it encoded the finding as
+        // the expected behaviour, which is exactly why the bug survived a
+        // suite this thorough. `abandonPendingClear` no longer exists (it had
+        // no other caller, and leaving it would be a loaded gun pointed at
+        // this same regression); `clearNow()` is the guarded clear `lock`
+        // runs now.
         clipboard.copy("third-vault-value", clearAfter: 60)
-        clipboard.abandonPendingClear()
-        check(pasteboard.string(forType: .string) == "third-vault-value",
-              "abandonPendingClear should cancel the timer without touching the pasteboard")
-        check(clipboard.secondsRemaining == nil, "abandonPendingClear should leave no countdown")
+        clipboard.clearNow()
+        check(pasteboard.string(forType: .string) != "third-vault-value",
+              "clearNow should take a still-ours pasteboard back off the board")
+        check(clipboard.secondsRemaining == nil, "clearNow should leave no countdown")
 
         // `clearAfter: 0` copies without scheduling anything.
         clipboard.copy("no-timer-value", clearAfter: 0)
         check(clipboard.secondsRemaining == nil, "clearAfter: 0 should schedule no clear")
         check(pasteboard.string(forType: .string) == "no-timer-value", "clearAfter: 0 should still copy")
+
+        // M2: every copy carries the concealment markers, and the string is
+        // still where a plain reader expects it.
+        //
+        // Asserting the *types on the pasteboard* rather than the call site is
+        // the point: the marker payload is empty `Data`, so a `setData` that
+        // silently did nothing would look identical in a diff and identical on
+        // screen. This is the only place the effect is observable.
+        clipboard.copy("marked-secret", clearAfter: 60)
+        let declared = pasteboard.types ?? []
+        for marker in ["org.nspasteboard.ConcealedType", "org.nspasteboard.TransientType", "com.apple.is-sensitive"] {
+            check(declared.contains(NSPasteboard.PasteboardType(marker)),
+                  "a copied secret declares \(marker)")
+        }
+        check(pasteboard.string(forType: .string) == "marked-secret",
+              "the markers do not displace the value itself")
+        check(clipboard.copiedChangeCountForTests == pasteboard.changeCount,
+              "the markers share one changeCount with the string - clearContents is what increments it, "
+              + "and the clear guard depends on having recorded exactly this one")
+
+        // The same writer is what the account-copy path uses, so it inherits
+        // the markers rather than needing its own.
+        let accountCount = CredentialVaultClipboard.writeConcealed("ops-account", to: pasteboard)
+        check(pasteboard.string(forType: .string) == "ops-account", "writeConcealed writes the value")
+        check(accountCount == pasteboard.changeCount, "writeConcealed returns the changeCount its write produced")
+        check((pasteboard.types ?? []).contains(NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")),
+              "an account copy is concealed too - it is half a credential")
+    }
+
+    /// M1, end to end through the real store: locking clears a just-copied
+    /// secret, and still cannot clear somebody else's clipboard.
+    ///
+    /// The clipboard case above proves `clearNow`'s own behaviour; this proves
+    /// `lock` actually calls it. Those are different failures - the shipped bug
+    /// was a correct clear function that `lock` never invoked - so a source
+    /// guard backs it up: nothing observable distinguishes "locked and cleared"
+    /// from "locked, and the pasteboard happened to be empty already".
+    private static func checkLockClearsTheClipboard(scratch: URL, _ check: (Bool, String) -> Void) {
+        let pasteboard = NSPasteboard.general
+        let captainsClipboard = pasteboard.string(forType: .string)
+        defer {
+            pasteboard.clearContents()
+            if let captainsClipboard { pasteboard.setString(captainsClipboard, forType: .string) }
+        }
+
+        let root = scratch.appendingPathComponent("m1-lock-\(UUID().uuidString)", isDirectory: true)
+        let store = CredentialVaultStore(root: root)
+        guard case .success = store.createVault(masterPassword: "m1-master-password") else {
+            check(false, "could not create the vault for the lock-clears-clipboard case")
+            return
+        }
+        guard case .success(let item) = store.add(VaultCredential(title: "M1", secret: "the-secret-value")) else {
+            check(false, "could not add a credential for the lock-clears-clipboard case")
+            return
+        }
+
+        // The real copy path, with a real timeout pending.
+        CredentialVaultClipboard.shared.copy(item.secret, clearAfter: 60)
+        check(pasteboard.string(forType: .string) == "the-secret-value", "the secret is on the pasteboard before the lock")
+
+        store.lock(reason: "self-test")
+        check(pasteboard.string(forType: .string) != "the-secret-value",
+              "locking takes the copied secret back off the pasteboard (M1)")
+        check(CredentialVaultClipboard.shared.secondsRemaining == nil, "locking leaves no pending countdown")
+
+        // And the guard the old `abandonPendingClear` reasoning was worried
+        // about still holds - it is enforced one level down, in the clear
+        // itself, which is why lock can safely run it.
+        var reunlocked: VaultUnlockOutcome?
+        waitFor(timeout: 30) { done in
+            store.unlock(masterPassword: "m1-master-password") { outcome in
+                reunlocked = outcome
+                done()
+            }
+        }
+        guard reunlocked == .unlocked else {
+            check(false, "could not re-unlock for the guard half of the case, got \(String(describing: reunlocked))")
+            return
+        }
+        CredentialVaultClipboard.shared.copy("second-secret", clearAfter: 60)
+        pasteboard.clearContents()
+        pasteboard.setString("a-url-the-captain-copied", forType: .string)
+        store.lock(reason: "self-test, someone else's clipboard")
+        check(pasteboard.string(forType: .string) == "a-url-the-captain-copied",
+              "locking must NOT clear a pasteboard written by someone else since the copy")
+    }
+
+    /// The source half of M1/M2: that `lock` routes through the guarded clear,
+    /// and that no copy path writes a bare `setString` of its own.
+    ///
+    /// Both are invisible to a behavioural check. A reintroduced
+    /// `abandonPendingClear`-shaped call would leave a pasteboard that is
+    /// *usually* already empty by the time a test looks; a second copy path
+    /// added later would work perfectly and just be unmarked.
+    private static func checkClipboardSourceGuards(_ check: (Bool, String) -> Void) {
+        func source(_ name: String) -> String? {
+            let here = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            let app = here.deletingLastPathComponent().appendingPathComponent(name)
+            guard var text = try? String(contentsOf: app, encoding: .utf8) else { return nil }
+            // Strip whole-line comments: this fix's own notes name the very
+            // things being grepped for, which is how a guard like this trips
+            // on the explanation of the bug it guards.
+            text = text.split(separator: "\n", omittingEmptySubsequences: false)
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+                .joined(separator: "\n")
+            return text
+        }
+
+        guard let store = source("CredentialVaultStore.swift"),
+              let controller = source("CredentialVaultController.swift"),
+              let clipboard = source("CredentialVaultClipboard.swift") else {
+            check(false, "could not read the vault sources for the clipboard source guards")
+            return
+        }
+
+        check(store.contains("CredentialVaultClipboard.shared.clearNow()"),
+              "lock runs the guarded clear")
+        check(!store.contains("abandonPendingClear"),
+              "nothing reintroduced the abandon-without-clearing path")
+        check(controller.contains("CredentialVaultClipboard.writeConcealed("),
+              "the account copy goes through the shared concealed writer")
+        check(!controller.contains("NSPasteboard.general.setString"),
+              "no vault copy path writes a bare, unmarked string of its own")
+        // One `setString` only, inside the shared writer.
+        check(clipboard.components(separatedBy: "setString(").count - 1 == 1,
+              "exactly one place in this feature puts a string on a pasteboard")
     }
 
     // MARK: Overrides

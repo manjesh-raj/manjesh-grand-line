@@ -110,7 +110,21 @@ enum VaultRecipeGit {
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(recipe)
-            try data.write(to: URL(fileURLWithPath: filePath), options: .atomic)
+            // M3: 0600. This is the most exposed of the sensitive writes, and
+            // the only one measured to be genuinely world-readable today: the
+            // dotfiles repo it lands in sits under a `drwxr-xr-x` home
+            // directory, so unlike the Application Support stores it gets no
+            // protection from macOS's own 0700 `~/Library`. The content is the
+            // captain's full secret-name inventory (see this method's GL-22
+            // note below).
+            //
+            // The *folder* is deliberately left at its default mode: it is a
+            // tracked directory inside the captain's own config repo, which
+            // `rebuild.sh` and git both reach into, and the filename is not
+            // the secret - the inventory inside it is.
+            let fileURL = URL(fileURLWithPath: filePath)
+            try data.write(to: fileURL, options: .atomic)
+            SensitiveFile.restrict(fileURL)
         } catch {
             return VaultRecipeExportResult(ok: false, message: "Failed to write recipe file: \(error.localizedDescription)", filePath: nil)
         }
