@@ -67,6 +67,7 @@ enum Phase1HardeningSelfTest {
         backupImportRefusesUnsafeHosts()
         instanceLockExcludesASecondHolder()
         staleRunningApplicationPidIsNotTrusted()
+        instanceLockFdIsNotInheritedByAForkedChild()
 
         print(failures.isEmpty
             ? "== PASS (phase 1 hardening) =="
@@ -274,6 +275,92 @@ sys.exit(0)
         } catch {
             print("  ! could not spawn the /usr/bin/true probe (\(error.localizedDescription)) - skipped")
         }
+    }
+
+    /// GL-05, a second live-reproduced incident: `acquireLockFile()`'s
+    /// `open()` used to have no `O_CLOEXEC`, so every Console `.shell`/`.ssh`
+    /// tab - a `forkpty()` + `execve()` in vendored `SwiftTerm/Pty.swift`,
+    /// with nothing in between that closes an inherited fd - inherited the
+    /// lock fd, and so did anything launched from within that shell (e.g.
+    /// `herdr`). Quitting the app does not kill those descendants (they get
+    /// reparented to `launchd`, not reaped), so `lsof` on the real lock file
+    /// showed a leftover `zsh` and two `herdr` processes still holding it
+    /// minutes after the owning app process had cleanly exited - the next
+    /// launch's `flock()` failed and it silently `exit(0)`'d, forever, until
+    /// a full restart killed every leaked holder. See
+    /// `data/grandline-rebuild-relaunch-hang-scout/report.md` for the full
+    /// incident evidence.
+    ///
+    /// This has to fork()+exec() a real child rather than use
+    /// `Foundation.Process` - checked live, `Process` on Darwin already
+    /// closes non-standard fds by default in the child (almost certainly via
+    /// `POSIX_SPAWN_CLOEXEC_DEFAULT`), so it would never reproduce this bug
+    /// at all and this test would pass whether or not the fix is present.
+    /// Only a bare `fork()` + `execv()`, matching the vulnerable PTY path
+    /// exactly, actually exercises it.
+    ///
+    /// `closeWithoutUnlockingForTests()` (not `releaseForTests()`) simulates
+    /// the "app quits" half: nothing in this codebase ever calls an explicit
+    /// `flock(LOCK_UN)` on quit, and an explicit unlock would release the
+    /// lock for everyone regardless of a leaked child fd (the lock state
+    /// lives on the shared open file description, not per-fd), which would
+    /// make this test pass even with the leak still present.
+    private static func instanceLockFdIsNotInheritedByAForkedChild() {
+        print("- SingleInstanceGuard: a forked+exec'd child does not inherit the lock fd")
+
+        let scratch = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("fm-instance-lock-fdleak-\(UUID().uuidString)")
+        setenv("FM_INSTANCE_LOCK_FILE", scratch.path, 1)
+        defer {
+            unsetenv("FM_INSTANCE_LOCK_FILE")
+            try? FileManager.default.removeItem(at: scratch)
+        }
+
+        switch SingleInstanceGuard.acquire(activateExisting: false) {
+        case .acquired:
+            check(true, "the app-role process acquires the lock")
+        case .alreadyRunning:
+            check(false, "the app-role process acquires the lock")
+            return
+        }
+
+        // Stand in for a Console tab's shell (or anything launched from
+        // within it) using `forkpty()` + `execve()` directly - the *exact*
+        // pair vendored `SwiftTerm/Pty.swift` calls, not a re-implementation
+        // of it. (Swift's Darwin overlay marks the bare `fork()` symbol
+        // `unavailable`; `forkpty()` is a distinct libc entry point and is
+        // not affected, which is also why the real vulnerable code calls it
+        // rather than `fork()` directly.) The child just sleeps briefly so
+        // it reliably outlives the "app" process below.
+        var master: Int32 = 0
+        let childPid = forkpty(&master, nil, nil, nil)
+        if childPid == 0 {
+            var argv: [UnsafeMutablePointer<CChar>?] = [strdup("/bin/sleep"), strdup("5"), nil]
+            execv("/bin/sleep", &argv)
+            _exit(127) // exec failed - should not happen
+        }
+        guard childPid > 0 else {
+            check(false, "forked a stand-in shell-tab child")
+            return
+        }
+
+        SingleInstanceGuard.closeWithoutUnlockingForTests()
+
+        // A fresh acquire, from this same process, must succeed while the
+        // stand-in child is still alive (its 5s sleep has not elapsed) -
+        // otherwise the lock fd leaked into it exactly like it leaked into
+        // the captain's real zsh/herdr processes.
+        switch SingleInstanceGuard.acquire(activateExisting: false) {
+        case .acquired:
+            check(true, "a fresh acquire succeeds while the leftover shell-tab child is still alive")
+        case .alreadyRunning:
+            check(false, "a fresh acquire succeeds while the leftover shell-tab child is still alive")
+        }
+
+        kill(childPid, SIGKILL)
+        var status: Int32 = 0
+        waitpid(childPid, &status, 0)
+        SingleInstanceGuard.releaseForTests()
     }
 }
 
