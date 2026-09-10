@@ -304,10 +304,23 @@ enum RailDestination: String, CaseIterable {
     /// matching `content.artwork` set in `HomeCanvasController`'s own
     /// `fillPoneglyph`/`fillTasks`/`fillCodePreview`/`fillStickyBoard` - the
     /// card and the shortcut/drill header always agree because both read from
-    /// the captain's same source image. `nil` for every other case,
-    /// exhaustively enumerated per this file's own house style (see
-    /// `flyoutTint`) so a future artwork-carrying destination has to be added
-    /// here deliberately.
+    /// the captain's same source image.
+    ///
+    /// `fm/grandline-rail-icons-batch2` extended this to fifteen more
+    /// destinations (`native/Scripts/build-rail-icons-batch2.py`): `.console`,
+    /// `.health`, `.schedules`, `.hosts`, `.logAnalyzer`, `.kubernetes`,
+    /// `.docs`, `.runbooks`, `.postmortems`, `.tools`, `.whiteboard`,
+    /// `.updates`, `.automation`, `.githubSync` and `.settings` each get their
+    /// own artwork too, matching `content.artwork` set in
+    /// `HomeCanvasController`'s own `fillConsole`/`fillHealth`/
+    /// `fillSchedules`/`fillHosts`/`fillLogAnalyzer`/`fillKubernetes`/
+    /// `fillDocs`/`fillRunbooks`/`fillPostmortems`/`fillTools`/
+    /// `fillWhiteboard`/`fillUpdates`/`fillAutomation`/`fillGitHubSync`/
+    /// `fillSettings` where each of those has a home-canvas card.
+    ///
+    /// `nil` for every other case, exhaustively enumerated per this file's own
+    /// house style (see `flyoutTint`) so a future artwork-carrying destination
+    /// has to be added here deliberately.
     var drillHeaderArtwork: NSImage? {
         switch self {
         case .strawHat: return StrawHatFlag.image
@@ -315,9 +328,22 @@ enum RailDestination: String, CaseIterable {
         case .shift: return TasksIcon.image
         case .codePreview: return CodePreviewIcon.image
         case .stickyBoard: return StickyNotesIcon.image
-        case .homeCanvas, .overview, .console, .hosts, .review, .logAnalyzer, .kubernetes, .tools,
-             .whiteboard, .vault, .dictation, .schedules, .health, .docs,
-             .runbooks, .postmortems, .updates, .bootstrap, .automation, .githubSync, .settings:
+        case .console: return ConsoleIcon.image
+        case .health: return HealthIcon.image
+        case .schedules: return SchedulesIcon.image
+        case .hosts: return HostsIcon.image
+        case .logAnalyzer: return LogAnalyzerIcon.image
+        case .kubernetes: return KubernetesIcon.image
+        case .docs: return DocsAppIcon.image
+        case .runbooks: return RunbooksIcon.image
+        case .postmortems: return PostmortemsIcon.image
+        case .tools: return ToolsAppIcon.image
+        case .whiteboard: return WhiteboardAppIcon.image
+        case .updates: return UpdatesIcon.image
+        case .automation: return AutomationIcon.image
+        case .githubSync: return GithubSyncIcon.image
+        case .settings: return SettingsAppIcon.image
+        case .homeCanvas, .overview, .review, .vault, .dictation, .bootstrap:
             return nil
         }
     }
