@@ -762,6 +762,10 @@ final class HomeCanvasController: NSViewController {
     }
 
     private func fillConsole(_ content: inout HelmModuleCard.Content) {
+        // `fm/grandline-rail-icons-batch2`: the captain's own console
+        // artwork, replacing the plain `terminal` glyph - matches
+        // `RailDestination.drillHeaderArtwork`'s `.console` case.
+        content.artwork = ConsoleIcon.image
         let rows = consoleTabsProvider?() ?? []
         content.subtitle = rows.isEmpty ? "no tabs open" : "\(rows.count) tab\(rows.count == 1 ? "" : "s") open"
         let connected = connectedHostIDs?() ?? []
@@ -772,6 +776,10 @@ final class HomeCanvasController: NSViewController {
     }
 
     private func fillHealth(_ content: inout HelmModuleCard.Content) {
+        // `fm/grandline-rail-icons-batch2`: the captain's own health
+        // artwork, replacing the plain `waveform.path.ecg` glyph - matches
+        // `RailDestination.drillHeaderArtwork`'s `.health` case.
+        content.artwork = HealthIcon.image
         let services = ServiceHealthRegistry.shared.knownServices()
         let healthy = services.filter { service in
             switch ServiceHealthRegistry.shared.state(service).verdict {
@@ -797,6 +805,10 @@ final class HomeCanvasController: NSViewController {
     }
 
     private func fillHosts(_ content: inout HelmModuleCard.Content) {
+        // `fm/grandline-rail-icons-batch2`: the captain's own hosts
+        // artwork, replacing the plain `server.rack` glyph - matches
+        // `RailDestination.drillHeaderArtwork`'s `.hosts` case.
+        content.artwork = HostsIcon.image
         let hosts = sources.hostStore.hosts
         let connected = connectedHostIDs?() ?? []
         content.subtitle = "\(hosts.count) saved"
@@ -838,6 +850,10 @@ final class HomeCanvasController: NSViewController {
     /// Updates: how many catalog tools have a newer version available. The
     /// exact count `UpdatesController`'s own "Updates Available" tile shows.
     private func fillUpdates(_ content: inout HelmModuleCard.Content) {
+        // `fm/grandline-rail-icons-batch2`: the captain's own updates
+        // artwork, replacing the plain `steeringwheel` glyph - matches
+        // `RailDestination.drillHeaderArtwork`'s `.updates` case.
+        content.artwork = UpdatesIcon.image
         content.subtitle = "tools & packages"
         guard let updates = BackgroundSignalsPoller.shared.lastCounts.toolUpdates else {
             fillPendingSetupSignal(&content,
@@ -884,6 +900,10 @@ final class HomeCanvasController: NSViewController {
     /// the question each card answers: Bootstrap's is "does my machine match?",
     /// this one's is "is there anything for a run to do?".
     private func fillAutomation(_ content: inout HelmModuleCard.Content) {
+        // `fm/grandline-rail-icons-batch2`: the captain's own automation
+        // artwork, replacing the plain `bolt.fill` glyph - matches
+        // `RailDestination.drillHeaderArtwork`'s `.automation` case.
+        content.artwork = AutomationIcon.image
         content.subtitle = "one-click setup"
         guard let drift = BackgroundSignalsPoller.shared.lastCounts.setupDrift else {
             fillPendingSetupSignal(&content,
@@ -904,6 +924,10 @@ final class HomeCanvasController: NSViewController {
     /// GitHub Sync: how many of the captain's forks are behind upstream. The
     /// same count `GitHubSyncController`'s own rows show a Sync button for.
     private func fillGitHubSync(_ content: inout HelmModuleCard.Content) {
+        // `fm/grandline-rail-icons-batch2`: the captain's own GitHub Sync
+        // artwork, replacing the plain `arrow.2.squarepath` glyph - matches
+        // `RailDestination.drillHeaderArtwork`'s `.githubSync` case.
+        content.artwork = GithubSyncIcon.image
         content.subtitle = "forks"
         guard let drift = BackgroundSignalsPoller.shared.lastCounts.forkDrift else {
             fillPendingSetupSignal(&content,
@@ -924,6 +948,10 @@ final class HomeCanvasController: NSViewController {
     }
 
     private func fillSchedules(_ content: inout HelmModuleCard.Content) {
+        // `fm/grandline-rail-icons-batch2`: the captain's own schedules
+        // artwork, replacing the plain `calendar` glyph - matches
+        // `RailDestination.drillHeaderArtwork`'s `.schedules` case.
+        content.artwork = SchedulesIcon.image
         let schedules = sources.scheduleStore.schedules
         content.subtitle = "unattended"
         guard !schedules.isEmpty else {
@@ -951,6 +979,10 @@ final class HomeCanvasController: NSViewController {
     }
 
     private func fillLogAnalyzer(_ content: inout HelmModuleCard.Content) {
+        // `fm/grandline-rail-icons-batch2`: the captain's own log-analyzer
+        // artwork, replacing the plain `text.magnifyingglass` glyph -
+        // matches `RailDestination.drillHeaderArtwork`'s `.logAnalyzer` case.
+        content.artwork = LogAnalyzerIcon.image
         // Memoised inside the store (GL-35) - this is not a fresh disk walk
         // on every canvas render.
         let history = sources.logAnalyzerStore.history()
@@ -971,6 +1003,10 @@ final class HomeCanvasController: NSViewController {
     /// guard on exactly that), and this page's own data needs a feed tab the
     /// canvas has no business creating.
     private func fillKubernetes(_ content: inout HelmModuleCard.Content) {
+        // `fm/grandline-rail-icons-batch2`: the captain's own kubernetes
+        // artwork, replacing the plain `cube.transparent` glyph - matches
+        // `RailDestination.drillHeaderArtwork`'s `.kubernetes` case.
+        content.artwork = KubernetesIcon.image
         let live = connectedHostIDs?().count ?? 0
         content.subtitle = live == 0 ? "no live session" : (live == 1 ? "1 live session" : "\(live) live sessions")
         guard live > 0 else {
@@ -1058,6 +1094,10 @@ final class HomeCanvasController: NSViewController {
     /// what `DocsController.drillHeaderSubtitle`'s own Playbook branch reads -
     /// the real sync state, never a fabricated "offline copy" claim.
     private func fillDocs(_ content: inout HelmModuleCard.Content) {
+        // `fm/grandline-rail-icons-batch2`: the captain's own docs
+        // artwork, replacing the plain `book.closed` glyph - matches
+        // `RailDestination.drillHeaderArtwork`'s `.docs` case.
+        content.artwork = DocsAppIcon.image
         content.subtitle = "DevOps Playbook"
         if DocsStore.isSynced {
             content.chip = .ok("Synced")
@@ -1072,6 +1112,10 @@ final class HomeCanvasController: NSViewController {
     /// split above - moved verbatim, since Runbooks is now its own module
     /// with its own destination.
     private func fillRunbooks(_ content: inout HelmModuleCard.Content) {
+        // `fm/grandline-rail-icons-batch2`: the captain's own runbooks
+        // artwork, replacing the plain `list.bullet.rectangle` glyph -
+        // matches `RailDestination.drillHeaderArtwork`'s `.runbooks` case.
+        content.artwork = RunbooksIcon.image
         let runbooks = sources.docsRunbookStore.listRunbooks()
         content.subtitle = "step-by-step procedures"
         guard !runbooks.isEmpty else {
@@ -1089,6 +1133,10 @@ final class HomeCanvasController: NSViewController {
     /// The Postmortems sibling of `fillRunbooks` above - same shape, reading
     /// `listPostmortems()` instead.
     private func fillPostmortems(_ content: inout HelmModuleCard.Content) {
+        // `fm/grandline-rail-icons-batch2`: the captain's own postmortems
+        // artwork, replacing the plain `doc.text.magnifyingglass` glyph -
+        // matches `RailDestination.drillHeaderArtwork`'s `.postmortems` case.
+        content.artwork = PostmortemsIcon.image
         let postmortems = sources.docsRunbookStore.listPostmortems()
         content.subtitle = "incident write-ups"
         guard !postmortems.isEmpty else {
@@ -1116,6 +1164,10 @@ final class HomeCanvasController: NSViewController {
     }
 
     private func fillTools(_ content: inout HelmModuleCard.Content) {
+        // `fm/grandline-rail-icons-batch2`: the captain's own tools
+        // artwork, replacing the plain `wrench.and.screwdriver` glyph -
+        // matches `RailDestination.drillHeaderArtwork`'s `.tools` case.
+        content.artwork = ToolsAppIcon.image
         content.subtitle = "\(ToolKind.allCases.count) utilities"
         content.body = .note(ToolKind.allCases.prefix(5).map { $0.shortName }.joined(separator: " \u{00B7} ") + " and more")
     }
@@ -1126,6 +1178,10 @@ final class HomeCanvasController: NSViewController {
     /// must never do that - the whole point of the destination being lazy is
     /// that the canvas can be on screen with no canvas process running.
     private func fillWhiteboard(_ content: inout HelmModuleCard.Content) {
+        // `fm/grandline-rail-icons-batch2`: the captain's own whiteboard
+        // artwork, replacing the plain `scribble.variable` glyph - matches
+        // `RailDestination.drillHeaderArtwork`'s `.whiteboard` case.
+        content.artwork = WhiteboardAppIcon.image
         content.subtitle = "Excalidraw, offline"
         content.body = .note("Sketch by hand, or describe a diagram and have Claude draw it.")
     }
@@ -1168,6 +1224,10 @@ final class HomeCanvasController: NSViewController {
     }
 
     private func fillSettings(_ content: inout HelmModuleCard.Content) {
+        // `fm/grandline-rail-icons-batch2`: the captain's own settings
+        // artwork, replacing the plain `gearshape` glyph - matches
+        // `RailDestination.drillHeaderArtwork`'s `.settings` case.
+        content.artwork = SettingsAppIcon.image
         content.subtitle = "this machine"
         content.body = .note("Connection \u{00B7} Appearance \u{00B7} Terminal \u{00B7} Security \u{00B7} Backup")
     }
