@@ -17,6 +17,11 @@
 #           ~50 suites that mount real `NSWindow`s and drive real AppKit
 #           layout, accessibility presses, contrast measurement, terminal
 #           rendering and WebKit visibility gating.
+#   generated - M4 of the end-to-end review: the `--check` mode of the
+#           self-contained generator scripts, so drift in a committed
+#           generated artifact fails a PR instead of waiting for somebody to
+#           remember. See that job's own comment for which generators are in
+#           scope and, more importantly, which are deliberately not.
 #
 # The full-app audit's §7.1 finding is why the third job exists: before it, a
 # PR merge exercised *none* of that coverage. Every one of those suites was
@@ -193,3 +198,77 @@ jobs:
         # CI_UNSUPPORTED in the script, where each entry carries its measured
         # reason).
         run: ./Scripts/run-all-tests.sh --session-only --ci --no-build
+
+  generated:
+    name: generated files match their inputs
+    runs-on: macos-14
+    # Minutes, not tens of minutes: no Swift build, no app, three scripts.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Pillow
+        # The two icon generators decode and re-encode the committed source
+        # PNGs to rebuild their base64 payloads. The shader generator needs
+        # nothing beyond the standard library.
+        #
+        # **The version is pinned, and this job's first run is why.** A
+        # byte-for-byte `--check` re-encodes each PNG, and PNG *compression*
+        # output depends on the Pillow build - so an unpinned install turns a
+        # drift guard into a coin flip. Measured, not guessed: the committed
+        # icons match under 11.3.0 and Pillow **12.3.0 changes exactly one** of
+        # the 19 rail icons (`PostmortemsIcon.swift`) with identical pixels and
+        # an identical source PNG. Unpinned, this job failed on its very first
+        # run for that reason alone - the same "a drift failure would as often
+        # mean the toolchain moved" flakiness this job's own comment above
+        # rejects the npm bundle rebuilds for.
+        #
+        # So the pin is the version the committed artifacts were generated
+        # with. **Regenerating them with a newer Pillow means bumping this pin
+        # in the same commit** - otherwise CI will report drift that is real
+        # (the bytes did change) but attribute it to the wrong thing.
+        run: python3 -m pip install --quiet 'Pillow==11.3.0'
+
+      # M4 (end-to-end review): ~20 base64-embedded Swift files, the vendored
+      # Monaco/Excalidraw bundles and the merged Metal shader are all generated
+      # artifacts, and nothing anywhere ran their `--check`. Drift in one of
+      # them **compiles cleanly** - it is a valid Swift file either way - so the
+      # only thing standing between a hand-edit (or a forgotten regen after
+      # changing a source asset) and shipping a stale artifact was a human
+      # remembering to run the script by hand.
+      #
+      # Three generators are in scope, and they are exactly the ones whose
+      # inputs live in this repository:
+      #
+      #   build-card-shortcut-icons.py   4 icons, sources in Scripts/assets/
+      #   build-rail-icons-batch2.py    15 icons, sources in Scripts/assets/
+      #   build-whisper-metal-shader.py  the Metal shader, merged from the
+      #                                  vendored whisper.cpp sources
+      #
+      # Deliberately NOT in scope, with reasons rather than silence:
+      #
+      #   build-straw-hat-flag.py / build-straw-hat-portraits.py - their source
+      #     images live in firstmate's own `data/` directory, outside this
+      #     repository (they are inputs to a plan artifact, not app assets), so
+      #     `--check` here would fail for the environment rather than for
+      #     drift. This is the review's own L1 finding; closing it needs a
+      #     decision about committing those images, not a CI step.
+      #   build-monaco-web.sh / build-excalidraw-web.sh - a rebuild-and-diff
+      #     needs node + a full npm install of an upstream package whose
+      #     transitive tree is not pinned by this repo, so a "drift" failure
+      #     would as often mean "npm resolved a different patch version today".
+      #     Worth doing as a scheduled job with a pinned lockfile; not worth
+      #     making every PR wait for it, and not worth a flaky red X.
+      - name: Card shortcut icons
+        run: python3 Scripts/build-card-shortcut-icons.py --check
+
+      - name: Rail icons (batch 2)
+        run: python3 Scripts/build-rail-icons-batch2.py --check
+
+      - name: Whisper Metal shader
+        run: python3 Scripts/build-whisper-metal-shader.py --check

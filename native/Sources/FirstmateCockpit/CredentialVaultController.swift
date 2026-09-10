@@ -580,14 +580,23 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
     /// The account is not a secret, so this needs no gate, no audit event and
     /// no clipboard timer - it is the "Copy Name"-shaped convenience the old
     /// panel had, kept because it is genuinely useful when filling a login form.
+    ///
+    /// It does still go out **concealed** (M2), even though it is not the
+    /// secret half. An account is one half of a credential, and there is no
+    /// upside to letting Universal Clipboard put the captain's production
+    /// usernames on other devices or to letting a clipboard-history manager
+    /// archive them. Routing it through `CredentialVaultClipboard`'s shared
+    /// writer rather than touching `NSPasteboard` here is the point: one
+    /// function being the only way this app puts credential material on a
+    /// pasteboard is what stops the *next* copy path shipping unmarked, which
+    /// is exactly how this one did.
     private func copyAccount(id: String) {
         noteInteraction()
         guard let credential = store.credential(id: id), !credential.account.isEmpty else {
             Toast.show(in: view, message: "No account recorded for that credential")
             return
         }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(credential.account, forType: .string)
+        CredentialVaultClipboard.writeConcealed(credential.account, to: NSPasteboard.general)
         Toast.show(in: view, message: "Copied the account")
     }
 

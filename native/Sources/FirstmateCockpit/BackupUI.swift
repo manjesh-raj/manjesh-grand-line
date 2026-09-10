@@ -68,6 +68,16 @@ enum BackupUI {
         do {
             let data = try GrandLineBackupFile.encode(bundle)
             try data.write(to: url, options: .atomic)
+            // M3: 0600 on the bundle itself. It aggregates every host, every
+            // snippet and all SSH key metadata into one file, so it is at
+            // least as sensitive as the stores it is assembled from.
+            //
+            // The containing directory is emphatically NOT touched: the
+            // captain picked it in an `NSSavePanel` and it is their own
+            // Documents/Downloads folder, not this app's to narrow. A captain
+            // who wants to hand this file to another account can chmod it -
+            // that is a deliberate act, which is the right way round.
+            SensitiveFile.restrict(url)
             Toast.show(in: viewController.view, message: "Exported \(bundle.hosts.count) host(s), \(bundle.snippets.count) snippet(s)")
         } catch {
             presentError(error, in: viewController)

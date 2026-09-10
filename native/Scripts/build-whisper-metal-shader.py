@@ -22,6 +22,7 @@ the three input files below are already vendored in this repo, this script
 does not fetch anything from the network.
 """
 
+import argparse
 import base64
 import re
 import sys
@@ -67,7 +68,7 @@ def merge() -> str:
     )
 
 
-def write_swift(merged_source: str) -> None:
+def render_swift(merged_source: str) -> str:
     encoded = base64.b64encode(merged_source.encode("utf-8")).decode("ascii")
     # Wrap at a fixed width so the generated file isn't one gigantic line -
     # purely for readability/diffability, has no effect on the decoded value.
@@ -114,13 +115,43 @@ enum WhisperMetalShaderSource {{
     ]
 }}
 '''
-    OUT_SWIFT.write_text(swift_source)
+    return swift_source
+
+
+def write_swift(merged_source: str) -> None:
+    OUT_SWIFT.write_text(render_swift(merged_source))
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    # M4 (end-to-end review): before this flag existed there was no way for CI
+    # - or a reviewer - to ask whether the committed
+    # `WhisperMetalShaderSource.swift` still matches the vendored Metal sources
+    # it is generated from. Drift here compiles perfectly and fails only at
+    # runtime, when the shader will not build on a real GPU.
+    #
+    # Unlike the two icon generators, this one needs no Pillow and no input
+    # from outside the repo (its three inputs are the vendored whisper.cpp
+    # sources), which makes it the cheapest drift check of the four.
+    parser.add_argument("--check", action="store_true",
+                        help="diff against the committed file instead of writing it")
+    args = parser.parse_args()
+
     merged = merge()
-    write_swift(merged)
     print(f"Merged shader source: {len(merged)} bytes")
+
+    if args.check:
+        if not OUT_SWIFT.exists():
+            sys.exit(f"{OUT_SWIFT} does not exist yet - run without --check first.")
+        if OUT_SWIFT.read_text() != render_swift(merged):
+            sys.exit(
+                f"{OUT_SWIFT} is out of date: it does not match the vendored Metal "
+                "sources it is generated from. Re-run this script without --check."
+            )
+        print(f"{OUT_SWIFT} matches the vendored Metal sources.")
+        return
+
+    write_swift(merged)
     print(f"Wrote {OUT_SWIFT}")
 
 

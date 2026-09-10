@@ -118,6 +118,16 @@ final class HostStore {
             .appendingPathComponent("hosts.json.corrupt-\(Int(Date().timeIntervalSince1970))")
         do {
             try FileManager.default.copyItem(at: fileURL, to: backupURL)
+            // M3: `copyItem` carries the source's mode across, so a `hosts.json`
+            // written by a pre-M3 build backs up as 0644 - and nothing ever
+            // rewrites a `.corrupt-` file, so it would keep that mode forever.
+            //
+            // This store keeps its own backup path rather than using
+            // `StoreLoadFailure.backUp` (it predates that helper, and its own
+            // logging is a little more specific), which is exactly why the fix
+            // has to be applied here too - a self-test case caught this second
+            // copy of the same code.
+            SensitiveFile.restrict(backupURL)
             loadFailureBackupPath = backupURL.path
             AppLog.store.error("hosts.json failed to decode - backed up to \(backupURL.path, privacy: .public)")
         } catch {
@@ -127,14 +137,15 @@ final class HostStore {
 
     private func persist() {
         do {
-            try FileManager.default.createDirectory(
-                at: fileURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(hosts)
-            try data.write(to: fileURL, options: .atomic)
+            // M3: 0600/0700 rather than the default 0644/0755. This file holds
+            // addresses, usernames, ports, jump hosts and port forwards -
+            // plaintext, and a map of how the captain reaches production.
+            // See `SensitiveFile` for the (narrow, honestly stated) threat
+            // model, and note the ordering it relies on.
+            try AtomicWrite.data(data, to: fileURL, sensitive: true)
         } catch {
             PersistenceFailureReporter.report(what: "saved hosts", path: fileURL.path, error: error)
         }

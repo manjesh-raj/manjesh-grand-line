@@ -78,14 +78,16 @@ final class SnippetStore {
 
     private func persist() {
         do {
-            try FileManager.default.createDirectory(
-                at: fileURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             let data = try encoder.encode(snippets)
-            try data.write(to: fileURL, options: .atomic)
+            // M3: 0600/0700 rather than the default 0644/0755. This file holds
+            // captain-authored shell text, which in practice carries
+            // hostnames, usernames and pasted tokens even though no field is
+            // declared secret.
+            // See `SensitiveFile` for the (narrow, honestly stated) threat
+            // model, and note the ordering it relies on.
+            try AtomicWrite.data(data, to: fileURL, sensitive: true)
         } catch {
             PersistenceFailureReporter.report(what: "snippets", path: fileURL.path, error: error)
         }
