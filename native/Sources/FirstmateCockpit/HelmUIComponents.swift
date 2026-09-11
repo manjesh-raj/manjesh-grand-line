@@ -1279,6 +1279,10 @@ enum ToolRowLayout {
         stack.setClippingResistancePriority(.required, for: .horizontal)
     }
 
+    /// D1's reveal policy - see `HelmAccentRow.ActionReveal`, which this
+    /// mirrors so the two row components answer the question the same way.
+    enum ActionReveal { case always, onAim }
+
     /// Assembles `views` into one row and returns the top-level view to place
     /// in a stack. `trailingViews` (e.g. a status pill plus Check/Update/
     /// Install buttons or a spinner) are inserted into `views.trailingStack`
@@ -1320,6 +1324,12 @@ enum ToolRowLayout {
         trailingViews: [NSView] = [],
         detailsTarget: AnyObject? = nil,
         detailsAction: Selector? = nil,
+        /// D1: when this row's action buttons (`trailingViews`) are visible.
+        /// `.always` for a short list or the first row of a long one - the
+        /// finding's own discoverability mitigation - and `.onAim` otherwise.
+        /// Only the buttons move; the status pill stays visible at rest,
+        /// which is the whole point.
+        actionReveal: ToolRowLayout.ActionReveal = .always,
         identifier: String,
         showDetails: Bool = true,
         cardStyle: Bool = false
@@ -1413,6 +1423,24 @@ enum ToolRowLayout {
             v.setContentHuggingPriority(.required, for: .horizontal)
             v.setContentCompressionResistancePriority(.required, for: .horizontal)
             views.trailingStack.addArrangedSubview(v)
+        }
+        // D1: quiet until aimed at. `alphaValue`, never `isHidden` - see
+        // `HelmAccentRow.applyActionReveal` for the three reasons, all of
+        // which apply identically here (the actions stay in the a11y tree and
+        // the row's columns never re-flow on hover).
+        if actionReveal == .onAim, !trailingViews.isEmpty {
+            views.trailingStack.alphaValue = 0
+            let reveal: (Bool) -> Void = { [weak stack = views.trailingStack] revealed in
+                guard let stack else { return }
+                HelmMotion.fade(stack, to: revealed ? 1 : 0,
+                                duration: HelmAccentRow.actionRevealDuration, animated: true)
+            }
+            views.rowContainer.onHoverChange = reveal
+            // Focus-within: a captain who tabs to "Check" has to see it.
+            // The registration's target is weak and `HelmFocusSensing` prunes
+            // dead ones, which is what makes this safe for a row the page
+            // rebuilds (Bootstrap tears its rows down on every render).
+            HelmFocusSensing.shared.register(views.trailingStack, includesDescendants: true, onChange: reveal)
         }
 
         // The gap between the text column and the status column - and the one

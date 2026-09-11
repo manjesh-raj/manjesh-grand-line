@@ -46,7 +46,9 @@ private final class GitHubSyncRow {
     let detailLabel = NSTextField(labelWithString: "")
     let pill = NSView()
     let pillLabel = NSTextField(labelWithString: "")
-    let spinner = NSProgressIndicator()
+    /// D3: a redacted pill in the shape of the status that is coming - see
+    /// `UpdatesController`'s own `statusSkeleton` for the reasoning.
+    let statusSkeleton = HelmSkeletonRow(shape: .pill)
     let progressLabel = NSTextField(labelWithString: "")
     let syncButton = HelmButton(title: "", variant: .secondary)
     let detailsButton = NSButton()
@@ -271,10 +273,6 @@ final class GitHubSyncController: NSViewController, SetupPageSummary {
         row.syncButton.action = #selector(syncTapped(_:))
         row.syncButton.identifier = NSUserInterfaceItemIdentifier(row.repo.fullName)
 
-        row.spinner.style = .spinning
-        row.spinner.controlSize = .small
-        row.spinner.isIndeterminate = true
-        row.spinner.translatesAutoresizingMaskIntoConstraints = false
         row.progressLabel.font = .systemFont(ofSize: 11, weight: .medium)
 
         let view = ToolRowLayout.build(
@@ -282,7 +280,7 @@ final class GitHubSyncController: NSViewController, SetupPageSummary {
             iconSymbol: "point.3.connected.trianglepath.dotted",
             tint: .neutral,
             name: row.repo.fullName,
-            statusViews: [row.pill, row.spinner, row.progressLabel],
+            statusViews: [row.pill, row.statusSkeleton, row.progressLabel],
             trailingViews: [row.syncButton],
             detailsTarget: self,
             detailsAction: #selector(detailsTapped(_:)),
@@ -427,10 +425,9 @@ final class GitHubSyncController: NSViewController, SetupPageSummary {
         let busy = row.status == .checking || row.status == .syncing
         row.pill.isHidden = busy
         row.syncButton.isHidden = busy || !row.status.showsSyncButton
-        row.spinner.isHidden = !busy
+        row.statusSkeleton.isHidden = !busy
         row.progressLabel.isHidden = !busy
         row.progressLabel.stringValue = row.status == .syncing ? "Syncing\u{2026}" : "Checking\u{2026}"
-        if busy { row.spinner.startAnimation(nil) } else { row.spinner.stopAnimation(nil) }
 
         row.syncButton.isEnabled = !row.isBusy
         row.rowContainer.alphaValue = row.isBusy ? 0.6 : 1.0

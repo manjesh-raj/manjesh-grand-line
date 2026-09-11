@@ -92,6 +92,10 @@ final class HostsListSection: NSObject, NSTableViewDataSource, NSTableViewDelega
 
     private let table = HelmTableView()
     private let scroll = NSScrollView()
+    /// D5(a): the hairline at the top of this card's list.
+    private var scrollEdge: HelmScrollEdgeHairline?
+    /// D5(b): true until this list has introduced its rows once.
+    private var needsRowEntrance = true
     private var items: [Item] = []
     private var theme: HelmTheme = ThemeManager.shared.theme
 
@@ -149,6 +153,11 @@ final class HostsListSection: NSObject, NSTableViewDataSource, NSTableViewDelega
 
         card.setBody(scroll, insets: NSEdgeInsets(top: HelmMetrics.s3, left: HelmMetrics.s3,
                                                   bottom: HelmMetrics.s3, right: HelmMetrics.s3))
+
+        // D5(a): the same scroll-edge treatment A3 gave the window chrome,
+        // applied to this card's own list - a hairline once the rows have
+        // scrolled under the card's top edge. Reuses `ScrollEdgeObserver`.
+        scrollEdge = HelmScrollEdgeHairline(over: scroll, in: card)
     }
 
     deinit { NotificationCenter.default.removeObserver(self) }
@@ -157,8 +166,19 @@ final class HostsListSection: NSObject, NSTableViewDataSource, NSTableViewDelega
 
     func setItems(_ items: [Item]) {
         let previouslySelected = table.selectedRow
+        // D5(b): introduce the rows once, when this list first has any -
+        // never on the reloads that a selection change, a theme switch or an
+        // unrelated store write cause, which would make the list twitch.
+        if self.items.isEmpty, !items.isEmpty { needsRowEntrance = true }
         self.items = items
         table.reloadData()
+        if needsRowEntrance {
+            // `reloadData()` does not necessarily build the cell views before
+            // it returns, so the flag is cleared one runloop turn later -
+            // after this pass's visible rows have asked for their entrance,
+            // and before any scroll-driven dequeue can ask for another.
+            DispatchQueue.main.async { [weak self] in self?.needsRowEntrance = false }
+        }
         // Keep a selection where one is still meaningful (a reload fires on
         // every store change, including one the captain caused from a
         // different row), but never leave it pointing at a group header or an
@@ -291,7 +311,15 @@ final class HostsListSection: NSObject, NSTableViewDataSource, NSTableViewDelega
         case .record:
             let cell = (tableView.makeView(withIdentifier: Self.recordID, owner: nil) as? HostsListRecordView)
                 ?? { let v = HostsListRecordView(); v.identifier = Self.recordID; return v }()
-            cell.configure(item, theme: theme, selected: tableView.selectedRowIndexes.contains(row))
+            // D1: quiet the per-row "Connect" until the row is aimed at,
+            // keeping the first record's visible so the affordance is never
+            // invisible. The index is counted among *records*, not among all
+            // rows, so a group header does not spend the visible slot.
+            let recordIndex = items[..<row].filter { if case .record = $0.kind { return true }; return false }.count
+            let recordCount = items.filter { if case .record = $0.kind { return true }; return false }.count
+            cell.configure(item, theme: theme, selected: tableView.selectedRowIndexes.contains(row),
+                           actionReveal: ReviewPRListView.actionReveal(row: recordIndex, of: recordCount))
+            if needsRowEntrance { HelmRowEntrance.play(cell, row: row) }
             return cell
         }
     }
@@ -401,7 +429,12 @@ private final class HostsListRecordView: NSView {
         // `Host.accentHex`"). Opt-in on this list only: the tile follows the
         // record's own literal hue when it has one, and off Daylight the row
         // renders byte-identically to before.
-        row = HelmAccentRow(trailingAccessory: actions, gradientBadge: true)
+        // D2: a record row's content column is capped so the label and its
+        // action stay readable together on a wide window. The card and the
+        // page behind it stay gutter-to-gutter - that is the captain's own
+        // reframe, "cap rows, not pages".
+        row = HelmAccentRow(trailingAccessory: actions, gradientBadge: true,
+                            maxContentWidth: HelmAccentRow.recordContentWidth)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
 
@@ -422,7 +455,9 @@ private final class HostsListRecordView: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
-    func configure(_ item: HostsListSection.Item, theme: HelmTheme, selected: Bool) {
+    func configure(_ item: HostsListSection.Item, theme: HelmTheme, selected: Bool,
+                   actionReveal: HelmAccentRow.ActionReveal = .always) {
+        row.actionReveal = actionReveal
         primary = item.primary
         overflow = item.overflow
 

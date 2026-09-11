@@ -410,7 +410,10 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
                 button.action = #selector(openHostsTapped)
                 return button
             }(),
-            hue: RailDestination.hosts.domainHue)
+            hue: RailDestination.hosts.domainHue,
+            // D4: this scope wall is the whole content area of a full-width
+            // page - exactly the "big pages open onto beige silence" case.
+            artwork: RailDestination.kubernetes.drillHeaderArtwork)
         scopeEmptyState.translatesAutoresizingMaskIntoConstraints = false
 
         buildFeedSection()

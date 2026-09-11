@@ -40,9 +40,15 @@ final class HelmFocusRegistration {
     fileprivate weak var target: NSView?
     fileprivate let onChange: (Bool) -> Void
     fileprivate var isFocused = false
+    /// Whether focus *anywhere inside* `target` counts, rather than `target`
+    /// itself holding it - D1's "focus-within". A row's action buttons are
+    /// descendants of the accessory container, so a keyboard user tabbing to
+    /// one has to keep them visible.
+    fileprivate let includesDescendants: Bool
 
-    fileprivate init(target: NSView, onChange: @escaping (Bool) -> Void) {
+    fileprivate init(target: NSView, includesDescendants: Bool, onChange: @escaping (Bool) -> Void) {
         self.target = target
+        self.includesDescendants = includesDescendants
         self.onChange = onChange
     }
 }
@@ -82,11 +88,15 @@ final class HelmFocusSensing {
     /// whenever its focused state changes. Fires once immediately with the
     /// current state, matching `ThemeManager.observe`'s own convention.
     @discardableResult
-    func register(_ view: NSView, onChange: @escaping (Bool) -> Void) -> HelmFocusRegistration {
-        let registration = HelmFocusRegistration(target: view, onChange: onChange)
+    func register(_ view: NSView,
+                  includesDescendants: Bool = false,
+                  onChange: @escaping (Bool) -> Void) -> HelmFocusRegistration {
+        let registration = HelmFocusRegistration(target: view,
+                                                 includesDescendants: includesDescendants,
+                                                 onChange: onChange)
         registrations.append(registration)
         observeWindow(of: view)
-        let focused = Self.isFocused(view)
+        let focused = Self.isFocused(view, includesDescendants: includesDescendants)
         registration.isFocused = focused
         onChange(focused)
         return registration
@@ -112,6 +122,28 @@ final class HelmFocusSensing {
     /// Two cases, both real: the view *is* the first responder (a real
     /// `NSTextView`, e.g. `HelmTextView`'s), or the first responder is the
     /// window's field editor standing in for it (every `NSTextField`).
+    /// D1's focus-within: does the first responder sit anywhere inside
+    /// `view`'s subtree?
+    ///
+    /// Deliberately a mode on the existing single window observation rather
+    /// than a second mechanism - this class already owns one KVO per window
+    /// and one definition of "what counts as focus", field editors included,
+    /// and a row's hover-reveal has no business growing a second answer to
+    /// the same question.
+    static func isFocused(_ view: NSView, includesDescendants: Bool) -> Bool {
+        guard includesDescendants else { return isFocused(view) }
+        guard let window = view.window, let responder = window.firstResponder else { return false }
+        guard let responderView = responder as? NSView else { return false }
+        if responderView.isDescendant(of: view) { return true }
+        // A field editor stands in for whichever control it is serving, so
+        // ask that control instead - the same substitution `isFocused` makes.
+        if let editor = responderView as? NSTextView, editor.isFieldEditor,
+           let served = editor.delegate as? NSView {
+            return served.isDescendant(of: view)
+        }
+        return false
+    }
+
     static func isFocused(_ view: NSView) -> Bool {
         guard let window = view.window, let responder = window.firstResponder else { return false }
         // A real first responder: `HelmTextView`'s text view, and the brief
@@ -147,7 +179,7 @@ final class HelmFocusSensing {
         registrations.removeAll { $0.target == nil }
         for registration in registrations {
             guard let target = registration.target else { continue }
-            let focused = Self.isFocused(target)
+            let focused = Self.isFocused(target, includesDescendants: registration.includesDescendants)
             guard focused != registration.isFocused else { continue }
             registration.isFocused = focused
             registration.onChange(focused)

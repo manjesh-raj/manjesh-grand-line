@@ -97,7 +97,8 @@ final class FleetController: NSViewController {
     /// Shown in place of the data sections above until the first
     /// `render(...)` lands - see the loading-state note on `buildLoadingState`.
     private let loadingContainer = NSView()
-    private let loadingSpinner = NSProgressIndicator()
+    /// D3: a layout-shaped placeholder, not a spinner. See `HelmSkeleton.swift`.
+    private let loadingSkeleton = HelmSkeletonList()
     private let loadingLabel = NSTextField(labelWithString: "Loading fleet data\u{2026}")
     private var inFlightSectionView: NSView!
     private var hasLoadedOnce = false
@@ -485,19 +486,15 @@ final class FleetController: NSViewController {
     /// collapsed, empty-looking stack of cards while `refresh()`'s
     /// background fetch (real `gh`/Bitbucket network calls) is in flight.
     private func buildLoadingState() -> NSView {
-        loadingSpinner.style = .spinning
-        loadingSpinner.isIndeterminate = true
-        loadingSpinner.controlSize = .regular
-        loadingSpinner.translatesAutoresizingMaskIntoConstraints = false
-        loadingSpinner.startAnimation(nil)
-
-        loadingLabel.font = .systemFont(ofSize: 12)
+        // D3: the page arrives in the shape of the content that is coming,
+        // rather than as a grey system spinner over a sentence.
+        loadingLabel.font = HelmType.caption()
         loadingLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [loadingSpinner, loadingLabel])
+        let stack = NSStackView(views: [loadingLabel, loadingSkeleton])
         stack.orientation = .vertical
-        stack.alignment = .centerX
-        stack.spacing = 10
+        stack.alignment = .leading
+        stack.spacing = HelmMetrics.s3
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         loadingContainer.wantsLayer = true
@@ -505,9 +502,10 @@ final class FleetController: NSViewController {
         loadingContainer.translatesAutoresizingMaskIntoConstraints = false
         loadingContainer.addSubview(stack)
         NSLayoutConstraint.activate([
-            stack.centerXAnchor.constraint(equalTo: loadingContainer.centerXAnchor),
-            stack.topAnchor.constraint(equalTo: loadingContainer.topAnchor, constant: 40),
-            stack.bottomAnchor.constraint(equalTo: loadingContainer.bottomAnchor, constant: -40),
+            stack.leadingAnchor.constraint(equalTo: loadingContainer.leadingAnchor, constant: HelmMetrics.s3),
+            stack.trailingAnchor.constraint(equalTo: loadingContainer.trailingAnchor, constant: -HelmMetrics.s3),
+            stack.topAnchor.constraint(equalTo: loadingContainer.topAnchor, constant: HelmMetrics.s4),
+            stack.bottomAnchor.constraint(equalTo: loadingContainer.bottomAnchor, constant: -HelmMetrics.s4),
         ])
         return loadingContainer
     }
@@ -732,7 +730,6 @@ final class FleetController: NSViewController {
     private func render(snapshot: FleetSnapshot, mergedPRs: [MergedPR]?, prFetchFailure: String? = nil) {
         if !hasLoadedOnce {
             hasLoadedOnce = true
-            loadingSpinner.stopAnimation(nil)
             loadingContainer.isHidden = true
             bannerRow.isHidden = false
             statsRow.isHidden = false
@@ -1109,6 +1106,7 @@ final class FleetController: NSViewController {
         loadingContainer.layer?.borderWidth = 1
         loadingContainer.layer?.borderColor = line.withAlphaComponent(0.4).cgColor
         loadingLabel.textColor = muted
+        loadingSkeleton.applyTheme(theme)
 
         bannerRow.applyTheme(theme)
         briefingCard.applyTheme(theme)

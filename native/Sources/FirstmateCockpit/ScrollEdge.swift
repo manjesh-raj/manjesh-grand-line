@@ -78,6 +78,30 @@ final class ScrollEdgeObserver {
         update(force: true)
     }
 
+    /// Watch one specific scroll view, rather than discovering a
+    /// destination's own.
+    ///
+    /// D5(a) asks for the same scroll-edge treatment "at the top of each
+    /// card's list", and a card's list is *not* pinned to its destination's
+    /// top edge - which is exactly what `pageScrollViews(in:)` looks for, and
+    /// correctly so for A3's own job. Rather than grow a second observer, the
+    /// same class takes an explicit target: one definition of "is this away
+    /// from its own top edge", one notification subscription, one `onChange`
+    /// contract.
+    func observe(scrollView: NSScrollView?) {
+        stopWatching()
+        guard let scrollView else {
+            update(force: true)
+            return
+        }
+        watched = [scrollView]
+        scrollView.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(boundsChanged),
+            name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
+        update(force: true)
+    }
+
     /// Re-read the current offsets without re-discovering the scroll views -
     /// for a caller that changed something the observer cannot see (a page
     /// that just replaced its content, a theme rebuild).

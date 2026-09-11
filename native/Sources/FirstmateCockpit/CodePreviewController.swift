@@ -914,7 +914,8 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         overlayState?.removeFromSuperview()
         let state = HelmEmptyState(symbol: symbol, title: title, body: body,
                                    size: .standard, boxed: false,
-                                   hue: RailDestination.codePreview.domainHue)
+                                   hue: RailDestination.codePreview.domainHue,
+                                   artwork: RailDestination.codePreview.drillHeaderArtwork)
         state.translatesAutoresizingMaskIntoConstraints = false
         overlay.addSubview(state)
         NSLayoutConstraint.activate([

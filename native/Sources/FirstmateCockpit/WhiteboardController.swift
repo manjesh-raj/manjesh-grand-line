@@ -361,7 +361,8 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
         overlayState?.removeFromSuperview()
         let state = HelmEmptyState(symbol: symbol, title: title, body: body,
                                    size: .standard, boxed: false,
-                                   hue: RailDestination.whiteboard.domainHue)
+                                   hue: RailDestination.whiteboard.domainHue,
+                                   artwork: RailDestination.whiteboard.drillHeaderArtwork)
         state.translatesAutoresizingMaskIntoConstraints = false
         overlay.addSubview(state)
         NSLayoutConstraint.activate([

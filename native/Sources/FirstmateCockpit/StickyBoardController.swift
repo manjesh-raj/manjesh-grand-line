@@ -450,7 +450,8 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
                 title: "Your board is empty",
                 body: "Click \u{201C}New Note\u{201D} above to add your first sticky note.",
                 size: .standard, boxed: false,
-                hue: RailDestination.stickyBoard.domainHue)
+                hue: RailDestination.stickyBoard.domainHue,
+                artwork: RailDestination.stickyBoard.drillHeaderArtwork)
             state.translatesAutoresizingMaskIntoConstraints = false
             overlayContainer.addSubview(state)
             NSLayoutConstraint.activate([
