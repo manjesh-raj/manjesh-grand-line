@@ -2137,6 +2137,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_WHITEBOARD_TESTS"] == "1" {
 if ProcessInfo.processInfo.environment["FM_RUN_WHITEBOARD_VIEW_TESTS"] == "1" {
     exit(WhiteboardViewSelfTest.run() ? 0 : 1)
 }
+// `fm/grandline-devops-space-and-diagram-tool`: the deterministic
+// text-to-diagram layer beside the AI one. Pure logic and **CI-runnable** -
+// unlike its AI sibling, which needs a fake `claude` on disk, the whole point
+// of this layer is that no such thing is involved.
+if ProcessInfo.processInfo.environment["FM_RUN_WHITEBOARD_DSL_TESTS"] == "1" {
+    exit(WhiteboardDSLSelfTest.run() ? 0 : 1)
+}
 
 // `fm/grandline-quota-percent-fix`: same convention, for `QuotaSource.parse`
 // against `quota-axi`'s real `percentRemaining`-keyed output - see
