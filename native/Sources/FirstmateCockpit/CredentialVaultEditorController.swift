@@ -48,7 +48,13 @@ final class CredentialVaultEditorController: NSViewController {
     private let locationField = HelmTextField(placeholder: "console.aws.amazon.com, an endpoint\u{2026}")
     private let tagsInput = HelmChipInput(placeholder: "Add a tag and press Return")
     private let notesView = HelmTextView(height: 90)
-    private let touchIDToggle = HelmToggle()
+    // `HelmToggleRow` already builds and owns its own switch (laid out beside
+    // the title/subtitle) - it is a self-contained control, not a label that
+    // needs an external toggle handed to it via `trailing:`. A prior version
+    // of this row passed a second, separate `HelmToggle` into `trailing:`,
+    // which rendered two switches for one setting (and, since nothing ever
+    // called that `HelmToggle`'s own `applyTheme`, left it untethered from
+    // theme changes too). `touchIDRow.isOn` is the single source of truth.
     private var touchIDRow: HelmToggleRow!
 
     private var selectedCategory: CredentialCategory
@@ -111,8 +117,7 @@ final class CredentialVaultEditorController: NSViewController {
 
         form.addSection("Protection", number: "04")
         touchIDRow = HelmToggleRow(title: "Require Touch ID to reveal",
-                                   subtitle: "An extra gate on top of unlocking the vault, for your most sensitive items.",
-                                   trailing: touchIDToggle)
+                                   subtitle: "An extra gate on top of unlocking the vault, for your most sensitive items.")
         form.addRow(touchIDRow)
 
         if let existing {
@@ -123,7 +128,7 @@ final class CredentialVaultEditorController: NSViewController {
             locationField.stringValue = existing.location
             tagsInput.setTokens(existing.tags)
             notesView.string = existing.notes
-            touchIDToggle.isOn = existing.requiresTouchIDToReveal
+            touchIDRow.isOn = existing.requiresTouchIDToReveal
         }
 
         form.setFooter(target: self,
@@ -188,7 +193,7 @@ final class CredentialVaultEditorController: NSViewController {
         credential.location = locationField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         credential.tags = tagsInput.tokens
         credential.notes = notesView.string
-        credential.requiresTouchIDToReveal = touchIDToggle.isOn
+        credential.requiresTouchIDToReveal = touchIDRow.isOn
 
         onSave?(credential)
         closeSheet()
@@ -223,7 +228,7 @@ final class CredentialVaultEditorController: NSViewController {
     var debugShowSecretButton: HelmButton { showSecretButton }
     var debugNotesView: HelmTextView { notesView }
     var debugTagsInput: HelmChipInput { tagsInput }
-    var debugTouchIDToggle: HelmToggle { touchIDToggle }
+    var debugTouchIDRow: HelmToggleRow { touchIDRow }
     var debugSecretIsVisible: Bool { secretIsVisible }
     func debugSave() { save() }
     func debugSelectCategory(_ category: CredentialCategory) { selectedCategory = category }
