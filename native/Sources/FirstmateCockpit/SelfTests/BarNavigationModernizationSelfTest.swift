@@ -329,7 +329,8 @@ enum BarNavigationModernizationSelfTest {
             window.contentView?.layoutSubtreeIfNeeded()
             shell.updateKeyViewLoop()
 
-            guard let initial = window.initialFirstResponder as? NSView else {
+            // `initialFirstResponder` is already `NSView?` - no cast.
+            guard let initial = window.initialFirstResponder else {
                 return "the window has no initial first responder at all - Tab would start nowhere"
             }
             // The reported bug, stated directly: it used to be `chain.first`,
