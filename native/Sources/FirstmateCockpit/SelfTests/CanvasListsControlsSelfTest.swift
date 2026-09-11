@@ -643,21 +643,42 @@ enum CanvasListsControlsSelfTest {
     private static func test_e5ToggleEverywhere() -> String? {
         let saved = ThemeManager.shared.theme
         defer { ThemeManager.shared.setTheme(saved) }
+        // `HelmToggleRow` is the surface that never adopted `HelmToggle`, so it
+        // is swept alongside the bare control rather than checked once - and it
+        // is built ONCE, before the loop, on purpose. A `HelmToggle` themes
+        // itself at construction, so a row rebuilt per theme would render
+        // correctly even if the row never forwarded a thing; only a row that
+        // outlives a theme change can show whether the forward is real.
+        let row = HelmToggleRow(title: "Require Touch ID", subtitle: "Ask before revealing")
         for theme in HelmTheme.allThemes {
             ThemeManager.shared.setTheme(theme)
             let toggle = HelmToggle()
             toggle.applyTheme(theme)
-            let geometry = toggle.debugGeometry
-            if !geometry.showsPill || geometry.showsFallbackSwitch {
-                return "\(theme.id) still renders the stock NSSwitch (pill=\(geometry.showsPill), "
-                     + "switch=\(geometry.showsFallbackSwitch)) - E5 settled this"
+            row.applyTheme(theme)
+            let surfaces = [("a bare HelmToggle", toggle.debugGeometry),
+                            ("HelmToggleRow's own toggle", row.toggle.debugGeometry)]
+            for (label, geometry) in surfaces where !geometry.showsPill || geometry.showsFallbackSwitch {
+                return "\(theme.id): \(label) still renders the stock NSSwitch "
+                     + "(pill=\(geometry.showsPill), switch=\(geometry.showsFallbackSwitch)) "
+                     + "- E5 settled this, and 'everywhere' has to include the row"
             }
-        }
-        // And the row that never adopted it, adopted it.
-        let row = HelmToggleRow(title: "Require Touch ID", subtitle: "Ask before revealing")
-        if !(row.toggle is HelmToggle) {
-            return "HelmToggleRow still holds a stock NSSwitch - it was the one surface that never "
-                 + "picked up HelmToggle, and 'everywhere' has to include it"
+            // The row's pill has to be the same colour a freshly themed control
+            // resolves to, or the row is holding a `HelmToggle` it never themes
+            // - which renders in whatever theme was active when it was built.
+            // Compared component-wise: `HelmContrast.ratio` is a *luminance*
+            // comparison, so two different hues of similar brightness pass it.
+            guard let expected = toggle.debugGeometry.pillFill,
+                  let actual = row.toggle.debugGeometry.pillFill else {
+                return "\(theme.id): a toggle's pill has no fill to compare"
+            }
+            let want = HelmContrast.components(expected)
+            let got = HelmContrast.components(actual)
+            let drift = max(abs(want.0 - got.0), abs(want.1 - got.1), abs(want.2 - got.2))
+            if drift > 0.01 {
+                return "\(theme.id): HelmToggleRow's pill is rgb\(got) where a freshly themed "
+                     + "HelmToggle resolves rgb\(want) - the row is not forwarding applyTheme "
+                     + "to the toggle it owns"
+            }
         }
         return nil
     }
