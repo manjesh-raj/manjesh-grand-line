@@ -59,6 +59,28 @@ enum DaylightSpace: String, CaseIterable {
         }
     }
 
+    /// C1's hero badge for this space.
+    ///
+    /// Only Overview's hero reports a *verdict* (it renders
+    /// `FleetGreeting.Answer`, badge and all); every other space's hero says
+    /// what the space is, so this is an identity glyph rather than a state
+    /// one - see `HomeCanvasController.setHero`.
+    ///
+    /// Every symbol here is asserted to resolve by
+    /// `CanvasListsControlsSelfTest.checkC1HeroSymbolsResolve`, for the
+    /// reason `DaylightModule.symbol` already carries: `NSImage(
+    /// systemSymbolName:)` returns nil silently and this app has shipped an
+    /// invisible icon exactly that way before.
+    var heroSymbol: String {
+        switch self {
+        case .overview: return "sailboat.fill"
+        case .command: return "terminal.fill"
+        case .operations: return "gauge.with.dots.needle.33percent"
+        case .stores: return "archivebox.fill"
+        case .engineering: return "hammer.fill"
+        }
+    }
+
     /// The 1-based index this space's `⌘N` shortcut carries.
     var shortcutIndex: Int { (Self.allCases.firstIndex(of: self) ?? 0) + 1 }
 }

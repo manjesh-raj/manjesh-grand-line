@@ -129,6 +129,21 @@ final class HomeCanvasController: NSViewController {
     private let stack = NSStackView()
     private let greetingLabel = NSTextField(labelWithString: "")
     private let subtitleLabel = NSTextField(labelWithString: "")
+    /// C1's hero: the state badge and its uppercase kicker.
+    ///
+    /// The audit's fix for "one top-left row and then 80% empty paper" is to
+    /// give the hub a focal point - "the briefing/answer banner spanning full
+    /// width with real presence (bigger type, the boat mark, weather-report
+    /// energy) above the uniform card grid". The captain's approved visual
+    /// shows exactly that: a mark, "Nothing needs you right now", the crew/PR
+    /// detail line, and Refresh.
+    ///
+    /// It renders `FleetGreeting.Answer`, which Overview's own banner already
+    /// computes - the same three-state decision and the same copy, not a
+    /// second one - so the hero and the page it links to can never disagree.
+    private let heroBadge = IconTileView(size: 40, cornerRadius: 12)
+    private let kickerLabel = NSTextField(labelWithString: "")
+    private var heroTint: HelmTint = .accent
     /// A filled accent pill, matching Setup > Updates' own "Refresh" - one
     /// real, shared, theme-aware definition rather than a page-local muted
     /// `.quiet` look.
@@ -140,6 +155,9 @@ final class HomeCanvasController: NSViewController {
     private var signalCountsToken: BackgroundSignalsPoller.CountsObservation?
     private var windowResizeObserver: NSObjectProtocol?
     private var lastGridWidth: CGFloat = 0
+    /// C1: the content column's preferred width, retuned on every grid
+    /// rebuild from the column count the grid actually used.
+    private var contentWidthConstraint: NSLayoutConstraint?
     /// Coalesces the render requests that arrive in bursts.
     ///
     /// Three of this page's inputs fire several times in quick succession by
@@ -185,10 +203,17 @@ final class HomeCanvasController: NSViewController {
             label.setContentHuggingPriority(.defaultLow, for: .horizontal)
         }
 
-        let textStack = NSStackView(views: [greetingLabel, subtitleLabel])
+        kickerLabel.font = HelmType.kicker()
+        kickerLabel.lineBreakMode = .byTruncatingTail
+        kickerLabel.translatesAutoresizingMaskIntoConstraints = false
+        kickerLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        kickerLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let textStack = NSStackView(views: [kickerLabel, greetingLabel, subtitleLabel])
         textStack.orientation = .vertical
         textStack.alignment = .leading
         textStack.spacing = 2
+        textStack.setCustomSpacing(4, after: kickerLabel)
         textStack.translatesAutoresizingMaskIntoConstraints = false
         textStack.setHuggingPriority(.defaultLow, for: .horizontal)
         textStack.setClippingResistancePriority(.defaultLow, for: .horizontal)
@@ -198,7 +223,7 @@ final class HomeCanvasController: NSViewController {
         refreshButton.setContentHuggingPriority(.required, for: .horizontal)
         refreshButton.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        let greetingRow = NSStackView(views: [textStack, refreshButton])
+        let greetingRow = NSStackView(views: [heroBadge, textStack, refreshButton])
         greetingRow.orientation = .horizontal
         greetingRow.alignment = .centerY
         greetingRow.distribution = .fill
@@ -240,14 +265,53 @@ final class HomeCanvasController: NSViewController {
             document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
             document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
 
-            stack.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: Self.gutter),
-            stack.trailingAnchor.constraint(equalTo: document.trailingAnchor, constant: -Self.gutter),
-            stack.topAnchor.constraint(equalTo: document.topAnchor, constant: HelmMetrics.s2),
-            stack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -44),
+            // C1's horizontal half: the content column is centred and capped
+            // to the width the grid actually needs, so a space with four
+            // cards reads composed instead of left-flushed against a
+            // one-sided void.
+            //
+            // Inequalities plus a 499 preferred width, never a required `==`
+            // tie (gotcha (3)): a required equality here is a window-size
+            // trap, and 499 keeps it under `NSLayoutPriorityWindowSizeStayPut`
+            // (gotcha (13)). The cap is derived from the grid's own column
+            // arithmetic rather than being a literal, so card size never
+            // changes - only how much empty column is left over.
+            stack.leadingAnchor.constraint(greaterThanOrEqualTo: document.leadingAnchor, constant: Self.gutter),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: document.trailingAnchor, constant: -Self.gutter),
+            stack.centerXAnchor.constraint(equalTo: document.centerXAnchor),
+
+            // C1: the content *composes* the space instead of flushing to
+            // the top-left of it.
+            //
+            // The audit's measurement was a space with four cards rendering
+            // one row and then ~80% empty paper. The dead space it names is
+            // vertical, so this is the vertical half of its fix (a) plus (c)
+            // in effect: the document is at least as tall as the viewport, the
+            // content sits within it by inequality, and a centring constraint
+            // at 499 decides where. Content shorter than the viewport centres;
+            // content taller than it breaks the 499 tie, the inequalities
+            // win, and the page scrolls exactly as it always did.
+            //
+            // 499 for the same reason every width on this page is 499 -
+            // gotcha (13): nothing here may out-rank
+            // `NSLayoutPriorityWindowSizeStayPut` and start driving the
+            // window's own size.
+            document.heightAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.heightAnchor),
+            stack.topAnchor.constraint(greaterThanOrEqualTo: document.topAnchor, constant: HelmMetrics.s2),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: document.bottomAnchor, constant: -44),
 
             greetingRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             gridStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
+
+        let verticalCentring = stack.centerYAnchor.constraint(equalTo: document.centerYAnchor)
+        verticalCentring.priority = HelmDaylightPriority.contentTie
+        verticalCentring.isActive = true
+
+        let contentWidth = stack.widthAnchor.constraint(equalToConstant: HelmResponsiveGrid.fallbackContainerWidth)
+        contentWidth.priority = HelmDaylightPriority.contentTie
+        contentWidth.isActive = true
+        contentWidthConstraint = contentWidth
 
         // GL-20: registered globally (`object: nil`) the same way
         // `ToolsController.containerWidthMayHaveChanged` is, and gated on
@@ -390,22 +454,60 @@ final class HomeCanvasController: NSViewController {
     /// functions, not a second implementation - and every other space shows
     /// its own fixed pair.
     private func renderGreeting() {
+        // C1: on every space the hero is badge + kicker + headline + detail.
+        // Off Overview there is no fleet answer to report, so the space names
+        // itself and the badge carries that space's own identity hue - never
+        // a semantic tint, which would be claiming a state this page has not
+        // measured.
         guard space == .overview else {
-            greetingLabel.stringValue = space.title
-            subtitleLabel.stringValue = space.subtitle
+            setHero(tint: nil,
+                    symbol: space.heroSymbol,
+                    kicker: "",
+                    title: space.title,
+                    detail: space.subtitle)
             return
         }
         guard let snapshot = fleetSnapshot else {
-            greetingLabel.stringValue = FleetGreeting.timeOfDay()
-            subtitleLabel.stringValue = space.subtitle
+            // GL-14: nothing has been measured yet, so the hero says so
+            // rather than rendering an all-clear it cannot stand behind.
+            setHero(tint: nil,
+                    symbol: space.heroSymbol,
+                    kicker: "",
+                    title: FleetGreeting.timeOfDay(),
+                    detail: space.subtitle)
             return
         }
-        greetingLabel.stringValue = FleetGreeting.greeting(captain: snapshot.captain)
         let answer = FleetGreeting.answer(tasks: snapshot.tasks,
                                           readyCount: mergedPRs?.count ?? 0,
                                           prFetchFailure: prFetchFailure,
                                           homeOk: snapshot.homeOk)
-        subtitleLabel.stringValue = answer.canvasLine
+        setHero(tint: answer.tint,
+                symbol: answer.badgeSymbol,
+                kicker: answer.kicker,
+                title: answer.title,
+                detail: answer.meta)
+    }
+
+    /// The hero's four strings and its badge, from one place.
+    ///
+    /// A `nil` tint means "this is an identity, not a verdict": the badge
+    /// takes the space's own domain hue and the kicker is dropped, so a space
+    /// that has measured nothing cannot look like it is reporting good news.
+    private func setHero(tint: HelmTint?,
+                         symbol: String,
+                         kicker: String,
+                         title: String,
+                         detail: String) {
+        // `.neutral` is the one slot that claims nothing - deliberately not
+        // a domain hue's `fallbackTint`, which resolves rose to `.critical`
+        // and would paint an alert bar on a space that has reported nothing.
+        heroTint = tint ?? .neutral
+        heroBadge.configure(symbol: symbol, tint: heroTint, pointSize: 17)
+        kickerLabel.stringValue = kicker.uppercased()
+        kickerLabel.isHidden = kicker.isEmpty
+        greetingLabel.stringValue = title
+        subtitleLabel.stringValue = detail
+        heroBadge.applyTheme(ThemeManager.shared.theme)
     }
 
     private func visibleModules() -> [DaylightModule] {
@@ -419,9 +521,21 @@ final class HomeCanvasController: NSViewController {
         }
         cards.removeAll()
 
-        let width = gridContainerWidth()
-        lastGridWidth = width
+        let available = gridContainerWidth()
+        lastGridWidth = available
         let modules = visibleModules()
+
+        // C1: use only as many columns as this space has cards to fill, and
+        // let the column that is left over become margin on both sides
+        // instead of a one-sided void on the right.
+        //
+        // The card *size* is unchanged - `unit` is still derived from the
+        // full available width and the full column count, which is what the
+        // captain's uniform-height decision (and the uniform-width rule that
+        // came with it) rests on. Only how many of those columns the content
+        // occupies changes.
+        let width = Self.composedContentWidth(available: available, modules: modules)
+        contentWidthConstraint?.constant = width
 
         // `spanningRows(_:)`, not `rows(_:)`: the Morning briefing spans two
         // columns and every other module spans one (`DaylightModule.gridSpan`).
@@ -487,6 +601,28 @@ final class HomeCanvasController: NSViewController {
 
     // MARK: Layout
 
+    /// The width C1's content column should occupy: the grid's own column
+    /// arithmetic, capped at the number of columns this space's cards can
+    /// actually fill.
+    ///
+    /// Pure and `static` so the self-test can assert the arithmetic without
+    /// mounting a page - the interesting cases are "fewer cards than columns"
+    /// (Command: compose) and "more cards than columns" (Overview: unchanged,
+    /// full width), and neither needs a window to check.
+    static func composedContentWidth(available: CGFloat, modules: [DaylightModule]) -> CGFloat {
+        guard available > 0, !modules.isEmpty else { return max(available, 0) }
+        let maxColumns = HelmResponsiveGrid.columns(containerWidth: available,
+                                                    minItemWidth: minModuleWidth,
+                                                    spacing: gridSpacing)
+        let spansNeeded = modules.reduce(0) { $0 + max(1, $1.gridSpan) }
+        let used = min(maxColumns, spansNeeded)
+        guard used < maxColumns else { return available }
+        let unit = HelmResponsiveGrid.itemWidth(containerWidth: available,
+                                                columns: maxColumns,
+                                                spacing: gridSpacing)
+        return unit * CGFloat(used) + gridSpacing * CGFloat(used - 1)
+    }
+
     private func gridContainerWidth() -> CGFloat {
         let clip = scroll.contentView.bounds.width
         let usable = clip - Self.gutter * 2
@@ -532,6 +668,14 @@ final class HomeCanvasController: NSViewController {
         greetingLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         subtitleLabel.font = HelmType.body()
         subtitleLabel.textColor = HelmTheme.mutedInk(theme)
+        // C1's hero. The kicker is `mutedInk`, never the hero's own tint:
+        // a `HelmTint` is safe as a fill or a bar and is *not* automatically
+        // safe as text (`HelmContrast`'s own rule, and the §5.7 defect this
+        // app has fixed three times). The tint reaches the badge, which is
+        // contrast-guarded by `IconTileView`, and stops there.
+        kickerLabel.font = HelmType.kicker()
+        kickerLabel.textColor = HelmTheme.mutedInk(theme)
+        heroBadge.applyTheme(theme)
         for card in cards { card.applyTheme(theme) }
     }
 
@@ -1281,9 +1425,18 @@ final class HomeCanvasController: NSViewController {
 
     var moduleCardsForTests: [HelmModuleCard] { cards }
     var visibleModulesForTests: [DaylightModule] { visibleModules() }
-    var greetingForTests: (title: String, subtitle: String) {
-        (greetingLabel.stringValue, subtitleLabel.stringValue)
+    var greetingForTests: (title: String, subtitle: String, kicker: String) {
+        (greetingLabel.stringValue, subtitleLabel.stringValue, kickerLabel.stringValue)
     }
+    /// C1's hero badge, for the suite that asserts it reports a verdict on
+    /// Overview and only an identity elsewhere.
+    var heroTintForTests: HelmTint { heroTint }
+    var heroBadgeHiddenForTests: Bool { heroBadge.isHidden }
+    /// C1's composed layout: where the content column actually sits inside
+    /// the (at-least-viewport-tall) document.
+    var contentFrameForTests: CGRect { stack.frame }
+    var documentHeightForTests: CGFloat { document.frame.height }
+    var viewportHeightForTests: CGFloat { scroll.contentView.bounds.height }
     var gridRowCountForTests: Int { gridStack.arrangedSubviews.count }
     /// Force one synchronous render, bypassing the coalescing hop - so a
     /// self-test can establish a known starting state before driving the

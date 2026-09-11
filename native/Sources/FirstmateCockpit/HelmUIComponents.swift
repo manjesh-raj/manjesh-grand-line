@@ -610,6 +610,48 @@ class HoverHighlightView: NSView {
         didSet { layer?.cornerRadius = cornerRadius }
     }
 
+    // MARK: Press state (C2)
+
+    /// How far this view compresses while the mouse is held down on it -
+    /// the UI modernization audit's C2
+    /// (`data/grandline-ui-modernization-audit/report.md` §3C: "modern cards
+    /// depress slightly (scale 0.985 or translate back to 0) on mouse-down,
+    /// then the navigation animates; without it, clicks feel dead").
+    ///
+    /// `1` opts out, and is the default: this class backs ~40 controls, and
+    /// a press compression is right for a *card or row you activate* and
+    /// wrong for, say, a pill that is only a hover highlight. A caller opts
+    /// in by setting this, which is also what makes the state assertable -
+    /// see `isPressedForTests`.
+    var pressScale: CGFloat = 1
+
+    /// A transform the *owner* of this view composes underneath the press
+    /// compression.
+    ///
+    /// This exists because `HelmModuleCard` already drives its own 3pt hover
+    /// lift by assigning `card.layer?.transform` directly, and two
+    /// independent writers of one `transform` property silently overwrite
+    /// each other - the lift would cancel the press or vice versa depending
+    /// purely on which fired last. Routing the lift through here keeps one
+    /// owner of the layer's transform and lets the two states *compose*
+    /// (pressed while hovering = lifted and compressed), which is what the
+    /// finding asks for.
+    var baseTransform: CATransform3D = CATransform3DIdentity {
+        didSet { applyPressTransform(animated: false) }
+    }
+
+    private var isPressed = false
+
+    /// Fires on every hover transition, whatever the colors are doing.
+    ///
+    /// D1's hover-reveal needs this and cannot use `hoverColor`: most of the
+    /// button-bearing rows in this app pass `hover: false` to
+    /// `HelmAccentRow`, so their `normalColor` and `hoverColor` are
+    /// deliberately equal and a color-based hook would never fire for
+    /// exactly the rows that need it. `DaylightBarController` already owns
+    /// the same shape of hook for its own rows.
+    var onHoverChange: ((Bool) -> Void)?
+
     private var isHovering = false
     private var trackingArea: NSTrackingArea?
 
@@ -679,6 +721,18 @@ class HoverHighlightView: NSView {
 
     #if FM_SELFTESTS
     deinit { Self.debugLiveInstanceCount -= 1 }
+
+    /// C2: drives the press state without synthesizing a real mouse event,
+    /// so a suite can assert the *composition* of press and hover rather than
+    /// the event plumbing (which `mouseDown` sharing its path with the click
+    /// recognizer already covers).
+    func debugSetPressed(_ pressed: Bool) {
+        guard pressed != isPressed else { return }
+        isPressed = pressed
+        applyPressTransform(animated: !HelmMotion.isReduced)
+    }
+    var debugIsPressed: Bool { isPressed }
+    var debugIsHovering: Bool { isHovering }
     #endif
 
     /// The one definition of "this view does something when pressed": an
@@ -813,12 +867,56 @@ class HoverHighlightView: NSView {
     override func mouseEntered(with event: NSEvent) {
         isHovering = true
         setBackground(hoverColor, animated: true)
+        onHoverChange?(true)
     }
 
     override func mouseExited(with event: NSEvent) {
         isHovering = false
         setBackground(normalColor, animated: true)
+        // A drag that leaves the view ends the press: the click will not
+        // fire, so the view must not be left looking held down.
+        if isPressed { isPressed = false; applyPressTransform(animated: true) }
+        onHoverChange?(false)
     }
+
+    // MARK: C2 - the pressed state
+
+    // Both of these call `super`, which is what keeps the existing click
+    // path intact: activation here runs through an `NSClickGestureRecognizer`
+    // (or `onAccessibilityPress`), and a recognizer sees the event through
+    // `NSWindow.sendEvent` on its own path. Swallowing the event instead
+    // would break every caller's click while looking like a pure visual
+    // change.
+    override func mouseDown(with event: NSEvent) {
+        if pressScale != 1 {
+            isPressed = true
+            applyPressTransform(animated: true)
+        }
+        super.mouseDown(with: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if isPressed {
+            isPressed = false
+            applyPressTransform(animated: true)
+        }
+        super.mouseUp(with: event)
+    }
+
+    /// Composes `baseTransform` (the owner's, e.g. a card's hover lift) with
+    /// the press compression, and is the only writer of `layer.transform`.
+    private func applyPressTransform(animated: Bool) {
+        guard let layer else { return }
+        let scale = isPressed ? pressScale : 1
+        let next = CATransform3DScale(baseTransform, scale, scale, 1)
+        // Reduce Motion gets the end state instantly - never the same motion,
+        // slower (`HelmMotion`'s own rule).
+        HelmMotion.animate(animated, duration: Self.pressDuration) {
+            layer.transform = next
+        }
+    }
+
+    static let pressDuration: TimeInterval = 0.09
 
     private func setBackground(_ color: NSColor, animated: Bool) {
         guard let layer else { return }

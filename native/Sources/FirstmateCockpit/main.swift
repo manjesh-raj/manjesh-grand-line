@@ -1852,6 +1852,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_BAR_NAV_MODERNIZATION_TESTS"] == 
     exit(BarNavigationModernizationSelfTest.run() ? 0 : 1)
 }
 
+// The same audit's C, D and E - the canvas and its cards, row/list density,
+// and the reusable controls. Window-backed: hover, press, focus and a real
+// scroll offset all need a real window.
+// See CanvasListsControlsSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_CANVAS_LISTS_CONTROLS_TESTS"] == "1" {
+    exit(CanvasListsControlsSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_MODULE_TESTS"] == "1" {
     exit(DaylightModuleSelfTest.run() ? 0 : 1)
 }

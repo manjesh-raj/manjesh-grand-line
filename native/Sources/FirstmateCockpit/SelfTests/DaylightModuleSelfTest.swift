@@ -1200,21 +1200,35 @@ enum DaylightModuleSelfTest {
                      + "is not being deallocated", &ok)
             }
 
-            // Overview's greeting comes from `FleetGreeting`, shared with the
+            // Overview's hero comes from `FleetGreeting`, shared with the
             // Overview page - not a second implementation.
+            //
+            // C1 changed *which* of that type's values the hero renders, and
+            // this assertion is inverted rather than deleted for the reason
+            // this codebase has had to relearn several times: an assertion
+            // left pinning the old shape is a record of the old behaviour,
+            // and silently keeps passing for the wrong reason. Before C1 the
+            // hero was a time-of-day greeting over `answer.canvasLine`; it is
+            // now the answer banner itself - badge, kicker, headline, detail -
+            // which is what gives the hub the focal point §3C asks for.
             shell.selectSpace(.overview)
             let snapshot = FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
                                          queuedCount: 0, doneCount: 0, projectsCount: 0,
                                          watcher: WatcherHealth(status: "healthy"))
             canvas.applyFleet(snapshot: snapshot, mergedPRs: [], prFetchFailure: nil)
             let greeting = canvas.greetingForTests
-            if greeting.title != FleetGreeting.greeting(captain: "Manjesh") {
-                fail("Overview greeting is '\(greeting.title)', expected FleetGreeting's own", &ok)
+            let expected = FleetGreeting.answer(tasks: [], readyCount: 0,
+                                                prFetchFailure: nil, homeOk: true)
+            if greeting.title != expected.title {
+                fail("Overview hero headline is '\(greeting.title)', expected the answer banner's own "
+                     + "'\(expected.title)'", &ok)
             }
-            let expectedAnswer = FleetGreeting.answer(tasks: [], readyCount: 0,
-                                                      prFetchFailure: nil, homeOk: true).canvasLine
-            if greeting.subtitle != expectedAnswer {
-                fail("Overview subtitle is '\(greeting.subtitle)', expected the answer banner's own line", &ok)
+            if greeting.subtitle != expected.meta {
+                fail("Overview hero detail is '\(greeting.subtitle)', expected the answer banner's own "
+                     + "'\(expected.meta)'", &ok)
+            }
+            if greeting.kicker != expected.kicker.uppercased() {
+                fail("Overview hero kicker is '\(greeting.kicker)', expected '\(expected.kicker.uppercased())'", &ok)
             }
             // GL-14: a failed PR scan must not read as a confident zero.
             canvas.applyFleet(snapshot: snapshot, mergedPRs: nil, prFetchFailure: "no network")
