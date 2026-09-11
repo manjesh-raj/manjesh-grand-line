@@ -543,6 +543,32 @@ enum StrawHatSelfTest {
                     "open_sre_lead", "open_destination"],
               "phase 3's vocabulary is exactly these eight kinds, got \(StrawHatProposalKind.allCases.map(\.rawValue))", &ok)
 
+        // `fm/grandline-strawhat-task-direct-create` added two optional
+        // fields to `add_task`, and both are a hand-maintained wire contract
+        // between the persona and `StrawHatEnvelope.proposal(from:)` with no
+        // compiler check across it (the same seam `CodePreviewTheme.Key`
+        // documents for its own Swift/JS pair). A parser that reads a key the
+        // persona never mentions is a field no model will ever send.
+        // Anchored on the `add_task` vocabulary line itself, not on the word
+        // appearing anywhere in the persona: the paragraph explaining these
+        // two fields names them as well, so a looser check would keep passing
+        // with the field stripped off the line a model actually copies.
+        let persona = StrawHatCrew.persona
+        // The vocabulary line, not the worked example a few paragraphs up -
+        // that one legitimately carries only the fields its own scenario needs.
+        let addTaskLine = persona.split(separator: "\n")
+            .first { $0.contains("\"kind\": \"add_task\"") && $0.contains("<short imperative title>") }
+            .map(String.init) ?? ""
+        check(addTaskLine.contains("\"project\""),
+              "add_task's own vocabulary line has to name \"project\", or the parser reads a key nobody writes", &ok)
+        check(addTaskLine.contains("\"priority\"") && addTaskLine.contains("\"low\" | \"normal\" | \"high\""),
+              "...and \"priority\", with exactly the three levels the parser resolves", &ok)
+        // The captain asked to be asked about the project *by the app*, on the
+        // card. A crew member asking in prose instead is the "quick question
+        // back to me" arriving as a conversation the captain then has to have.
+        check(persona.contains("The app asks the captain which project on the card itself"),
+              "the persona must tell the crew the app asks about the project, not them", &ok)
+
         // The write/handoff split, as a literal list on both sides.
         //
         // This is the assertion that matters most in this file. A handoff runs
@@ -559,20 +585,31 @@ enum StrawHatSelfTest {
                     "add_sticky", "save_command_draft", "create_schedule_draft"],
               "and exactly six write, got \(StrawHatProposalKind.allCases.filter { !$0.isNavigation }.map(\.rawValue))", &ok)
 
-        // `fm/straw-hat-task-proposal-full-editor`: of the six writes, four
-        // now route through an existing "New X" editor for the captain to
-        // review before anything is written, rather than a confirm card
-        // writing it straight to the store - `StrawHatProposalKind.
+        // `fm/straw-hat-task-proposal-full-editor`, then
+        // `fm/grandline-strawhat-task-direct-create`: of the six writes,
+        // *three* route through an existing "New X" editor for the captain to
+        // review before anything is written - `StrawHatProposalKind.
         // opensEditor`. Asserted as a literal on both sides, the same way the
-        // write/handoff split above is: a kind quietly moved off this list
-        // would go back to writing a bare default straight to the store with
-        // no review, which is the exact captain complaint this change fixes.
+        // write/handoff split above is, and in both directions on purpose:
+        //
+        //  - A kind added to this list silently starts handing the captain a
+        //    whole form back when he asked the crew to do the thing, which is
+        //    the complaint `.addTask` was moved *off* it to fix.
+        //  - A kind removed from it starts writing straight to a store with
+        //    whatever defaults the model did not supply, which is the
+        //    complaint it was moved *on* to fix.
+        //
+        // `.addTask` is off it because neither happens there any more: it
+        // writes on the press, and the one field that needed a decision is a
+        // picker on the card itself.
         check(StrawHatProposalKind.allCases.filter(\.opensEditor).map(\.rawValue)
-                == ["add_task", "add_follow_up", "save_command_draft", "create_schedule_draft"],
-              "exactly four kinds open an editor for review, got \(StrawHatProposalKind.allCases.filter(\.opensEditor).map(\.rawValue))", &ok)
+                == ["add_follow_up", "save_command_draft", "create_schedule_draft"],
+              "exactly three kinds open an editor for review, got \(StrawHatProposalKind.allCases.filter(\.opensEditor).map(\.rawValue))", &ok)
         check(StrawHatProposalKind.allCases.filter { !$0.opensEditor }.map(\.rawValue)
-                == ["create_runbook_draft", "add_sticky", "open_sre_lead", "open_destination"],
+                == ["add_task", "create_runbook_draft", "add_sticky", "open_sre_lead", "open_destination"],
               "and the rest do not, got \(StrawHatProposalKind.allCases.filter { !$0.opensEditor }.map(\.rawValue))", &ok)
+        check(!StrawHatProposalKind.addTask.opensEditor,
+              "a confirmed task proposal writes the task - it must never hand the captain the New Task form back", &ok)
         // Every editor-routed kind must actually say so on its card, or the
         // captain presses "Add task" and sees nothing distinguish it from a
         // write that already happened.
@@ -970,6 +1007,32 @@ enum StrawHatSelfTest {
         check(sections.first?.proposals.first?.kind == .addTask, "a task first", &ok)
         check(sections.first?.proposals.first?.title == "Fix the login issue", "with the captain's own wording", &ok)
         check(sections.first?.proposals.last?.kind == .addFollowUp, "then a follow-up", &ok)
+        // The worked example names neither of the two optional task fields,
+        // and a parser that invented one would be exactly as wrong as a model
+        // that did.
+        check(sections.first?.proposals.first?.project == nil
+                && sections.first?.proposals.first?.priority == nil,
+              "a task the captain said nothing about carries no project and no priority", &ok)
+
+        // `fm/grandline-strawhat-task-direct-create`'s two optional fields.
+        // The hint is carried verbatim (only the app can resolve it - the crew
+        // cannot see projects at all); the priority is resolved into the real
+        // enum *here*, so a level this app does not have never reaches a write.
+        guard case .envelope(let extras) = StrawHatEnvelope.parse("""
+        {"sections":[{"speaker":"nami","text":"drafted","proposals":[
+          {"kind":"add_task","title":"Ship it","project":"  Grand Line  ","priority":"HIGH"},
+          {"kind":"add_task","title":"Also this","priority":"P0"}]}]}
+        """), let carried = extras.first?.proposals.first,
+              let invented = extras.first?.proposals.last else {
+            check(false, "a task proposal carrying a project and priority must still parse", &ok)
+            return
+        }
+        check(carried.project == "Grand Line",
+              "the project hint is carried as the captain's own words, got \(carried.project ?? "nil")", &ok)
+        check(carried.priority == .high,
+              "a real priority resolves to the enum regardless of case, got \(carried.priority?.rawValue ?? "nil")", &ok)
+        check(invented.priority == nil,
+              "and an invented level resolves to nothing rather than the nearest one - the task lands normal", &ok)
         check(sections.first?.droppedProposalCount == 0, "nothing was dropped from a valid envelope", &ok)
         check(sections.last?.followup?.contains("Cognito runbook") == true,
               "the closing question survives as a followup, not as a proposal", &ok)
@@ -1592,6 +1655,11 @@ enum StrawHatSelfTest {
               "parsing a reply must never write - only a captain's press does", &ok)
 
         // ---- add_task ----
+        //
+        // `fm/grandline-strawhat-task-direct-create`: confirming this card
+        // writes the task. It routed through the New Task sheet for one
+        // release in between - see `StrawHatProposalExecutor`'s header for the
+        // captain's own reason for both moves.
         let taskProposal = StrawHatProposal(kind: .addTask, title: "Fix the login issue",
                                             due: "2026-09-09", notes: "from the crew")
         guard case .written(let taskMessage, let taskUndo) =
@@ -1600,19 +1668,16 @@ enum StrawHatSelfTest {
             return
         }
         check(taskMessage.contains("Fix the login issue"), "the toast names what landed", &ok)
-        // GL-33: an undo must genuinely restore. `ShiftStore` has no delete
-        // for a task, so there is deliberately none here - see
-        // `StrawHatProposalExecutor`'s header.
-        check(taskUndo == nil,
-              "a task add offers no undo - ShiftStore cannot delete one, and a fake undo would be a lie", &ok)
         guard let written = shift.activeTasks.first(where: { $0.title == "Fix the login issue" }) else {
             check(false, "the task must actually be in the store", &ok)
             return
         }
         check(written.dueDate == "2026-09-09", "with its due date, got \(written.dueDate ?? "nil")", &ok)
         check(written.notes == "from the crew", "and its notes", &ok)
-        // Nothing invented: the model was asked for neither, so neither is set.
-        check(written.projectID == nil, "no project is invented", &ok)
+        // Nothing invented: the captain picked no project on the card and the
+        // model signalled no priority, so neither is set beyond the store's
+        // own default - the same value the New Task sheet opens on.
+        check(written.projectID == nil, "no project is invented when the captain picked none", &ok)
         check(written.priority == ShiftTask.fresh(now: now).priority,
               "and the priority stays the store's own default rather than a guess", &ok)
 
@@ -1620,6 +1685,77 @@ enum StrawHatSelfTest {
         let reloaded = ShiftStore()
         check(reloaded.activeTasks.contains(where: { $0.title == "Fix the login issue" }),
               "a confirmed task must survive a fresh store - otherwise it never reached disk", &ok)
+
+        // GL-33, and the half this kind did NOT have until `ShiftStore.
+        // deleteTask` landed in `grandline-tasks-kanban-devops-split`: an undo
+        // must genuinely restore, so a task add that offers one has to really
+        // remove the record - and be seen to, through a fresh store rather
+        // than the in-memory array it just mutated.
+        guard let taskUndo else {
+            check(false, "a confirmed task DOES get an undo now - `ShiftStore.deleteTask` exists and the id is in hand", &ok)
+            return
+        }
+        taskUndo()
+        check(!shift.activeTasks.contains(where: { $0.title == "Fix the login issue" }),
+              "and that undo genuinely removes the task it wrote", &ok)
+        check(!ShiftStore().activeTasks.contains(where: { $0.title == "Fix the login issue" }),
+              "...on disk too, not just in the array it was holding", &ok)
+
+        // ---- add_task: the captain's own inline choices ----
+        //
+        // The project is theirs, made on the card before the press, and the
+        // priority is the model's only when the captain signalled one. Both
+        // are the fields whose silent defaulting was the original complaint,
+        // so both are asserted to arrive from where they honestly come from.
+        let project = ShiftProject(id: "proj-grand-line", name: "Grand Line", description: "",
+                                   status: .inProgress, startDate: nil, dueDate: nil,
+                                   createdAt: ShiftStore.iso8601(now))
+        shift.addProject(project)
+        let pickedProposal = StrawHatProposal(kind: .addTask, title: "Wire the picker",
+                                              priority: .high)
+        guard case .written = StrawHatProposalExecutor.execute(
+                pickedProposal, stores: .init(shift: shift, docs: docs),
+                choices: .init(projectID: project.id), now: now),
+              let picked = shift.activeTasks.first(where: { $0.title == "Wire the picker" }) else {
+            check(false, "a task confirmed with an inline project pick must write", &ok)
+            return
+        }
+        check(picked.projectID == project.id,
+              "the captain's own inline project lands on the task, got \(picked.projectID ?? "nil")", &ok)
+        check(picked.priority == .high,
+              "and a priority the captain signalled is used, got \(picked.priority.rawValue)", &ok)
+
+        // A project id that is not one of the captain's real projects is
+        // refused rather than written: the card cannot produce one, but this
+        // is `internal` and a stale id would file the task under a project
+        // the Tasks page would never show it beneath.
+        let ghostProposal = StrawHatProposal(kind: .addTask, title: "Ghost project")
+        _ = StrawHatProposalExecutor.execute(ghostProposal, stores: .init(shift: shift, docs: docs),
+                                             choices: .init(projectID: "no-such-project"), now: now)
+        check(shift.activeTasks.first(where: { $0.title == "Ghost project" })?.projectID == nil,
+              "an unknown project id is dropped rather than written onto the task", &ok)
+
+        // ---- the project hint resolver ----
+        //
+        // Exactly the shape `openSRELeadForCrew` uses for a host hint, and for
+        // the same reason - it refuses to choose between two.
+        let projects = [
+            project,
+            ShiftProject(id: "proj-v2", name: "Grand Line v2", description: "", status: .inProgress,
+                         startDate: nil, dueDate: nil, createdAt: ShiftStore.iso8601(now)),
+        ]
+        check(StrawHatProposalExecutor.resolveProject(hint: "Grand Line", among: projects)?.id == project.id,
+              "an exact name wins over a longer project that merely contains it", &ok)
+        check(StrawHatProposalExecutor.resolveProject(hint: "  grand line v2 ", among: projects)?.id == "proj-v2",
+              "matching is case- and whitespace-insensitive", &ok)
+        check(StrawHatProposalExecutor.resolveProject(hint: "v2", among: projects)?.id == "proj-v2",
+              "a unique substring resolves", &ok)
+        check(StrawHatProposalExecutor.resolveProject(hint: "line", among: projects) == nil,
+              "and an ambiguous one resolves to nothing rather than a coin flip", &ok)
+        check(StrawHatProposalExecutor.resolveProject(hint: "Atlas", among: projects) == nil
+                && StrawHatProposalExecutor.resolveProject(hint: nil, among: projects) == nil
+                && StrawHatProposalExecutor.resolveProject(hint: "  ", among: projects) == nil,
+              "an unknown, absent or blank hint resolves to nothing", &ok)
 
         // ---- add_follow_up ----
         let followUpProposal = StrawHatProposal(kind: .addFollowUp,

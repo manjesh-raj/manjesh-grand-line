@@ -79,7 +79,7 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     /// `StrawHatProposalExecutor`, reached through `FleetController+Crew`.
     /// Unset (as in a bare view with no controller) means a press reports a
     /// real failure rather than silently doing nothing.
-    var onConfirmProposal: ((StrawHatProposal) -> StrawHatProposalOutcome)?
+    var onConfirmProposal: ((StrawHatProposal, StrawHatConfirmChoices) -> StrawHatProposalOutcome)?
 
     /// Fires when the captain clicks a navigation handoff's link row, and
     /// returns a message to show *only* when the handoff could not be
@@ -191,6 +191,21 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     /// - which still has to hold for a keyboard activation racing a rebuild, or
     /// for a bare view with no controller behind it.
     private var proposalResolutions: [UUID: StrawHatConfirmCard.Resolution] = [:]
+
+    /// Which project the captain picked on a still-unconfirmed task card,
+    /// keyed by `StrawHatProposal.id`.
+    ///
+    /// The same rebuild problem `proposalResolutions` solves, one step earlier:
+    /// a selection made and then lost to a theme change would file the task
+    /// somewhere the captain did not choose, with nothing on screen to say so.
+    /// `[UUID: String?]` rather than `[UUID: String]` because "they explicitly
+    /// picked No project" and "they have not picked yet" are different states -
+    /// only the second should fall back to the crew's own hint.
+    private var proposalProjectSelections: [UUID: String?] = [:]
+
+    /// The captain's real projects, for a task card's own inline picker. Set
+    /// by the page; empty until then, which simply means no card asks.
+    private var projects: [ShiftProject] = []
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -440,6 +455,7 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     func clearMessages() {
         messages.removeAll()
         proposalResolutions.removeAll()
+        proposalProjectSelections.removeAll()
         removeAllBlocks()
         updateEmptyState()
         refreshCrewStrip()
@@ -470,6 +486,19 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
             case .status, .error: return false
             }
         }
+    }
+
+    /// The captain's projects, for a task card's own inline project picker.
+    ///
+    /// Pushed by the page rather than read from a store here: this view holds
+    /// no store (see this file's header), and the list is small enough that
+    /// re-rendering the transcript on a change is cheaper than the plumbing to
+    /// avoid it. Only re-renders when the list genuinely differs, so an
+    /// ordinary refresh does not churn every card.
+    func setProjects(_ projects: [ShiftProject]) {
+        guard projects != self.projects else { return }
+        self.projects = projects
+        rebuildTranscript()
     }
 
     func setInputEnabled(_ enabled: Bool) {
@@ -690,15 +719,20 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
             // state rather than armed - `proposalResolutions`' own note has the
             // defect this closes.
             let card = StrawHatConfirmCard(proposal: proposal, theme: theme,
-                                           resolution: proposalResolutions[proposal.id])
-            card.onConfirm = { [weak self] proposal in
+                                           resolution: proposalResolutions[proposal.id],
+                                           projects: projects,
+                                           selectedProjectID: proposalProjectSelections[proposal.id])
+            card.onConfirm = { [weak self] proposal, choices in
                 guard let handler = self?.onConfirmProposal else {
                     return .failed(message: "This chat isn't connected to your stores right now.")
                 }
-                return handler(proposal)
+                return handler(proposal, choices)
             }
             card.onResolved = { [weak self] proposal, resolution in
                 self?.proposalResolutions[proposal.id] = resolution
+            }
+            card.onProjectSelectionChanged = { [weak self] proposal, projectID in
+                self?.proposalProjectSelections[proposal.id] = projectID
             }
             add(card)
         }

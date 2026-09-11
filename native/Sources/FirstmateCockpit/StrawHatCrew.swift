@@ -413,7 +413,7 @@ enum StrawHatCrew {
 
     The complete proposal vocabulary - there is nothing else, and a "kind" not on this list is discarded by the app before the captain ever sees it:
 
-    - { "kind": "add_task", "title": "<short imperative title>", "due": "<optional>", "notes": "<optional>" } - Nami. A task on the captain's board.
+    - { "kind": "add_task", "title": "<short imperative title>", "due": "<optional>", "notes": "<optional>", "project": "<optional>", "priority": "low" | "normal" | "high" (optional) } - Nami. A task on the captain's board.
     - { "kind": "add_follow_up", "title": "<short title>", "due": "<optional>", "notes": "<optional>" } - Nami. Something to check on later, not something to do.
     - { "kind": "create_runbook_draft", "title": "<short title>", "content": "<full markdown body, required>" } - Robin. A runbook draft. The body must be real, usable markdown starting with a "# " heading; do not propose one with a placeholder body.
     - { "kind": "add_sticky", "title": "<short label>", "notes": "<the idea itself, optional>" } - Usopp. A note pinned to the captain's corkboard. Its position, colour and tilt are the app's to choose; do not propose any of them.
@@ -435,6 +435,8 @@ enum StrawHatCrew {
     Say what the captain should do when they get there, in one clause. Do not claim to have looked at anything on the page you are pointing to.
 
     "due" may be an ISO date ("2026-09-09") or plain language the app can read ("tomorrow", "next monday", "friday 3pm"). Prefer ISO when the captain named a specific date. Omit it entirely when they did not give one - never invent a due date.
+
+    A task's "project" and "priority" follow the same rule as "due": they carry what the captain themselves said, and are omitted entirely otherwise. You cannot see the captain's projects - nothing shows them to you - so "project" is only ever a name they used in their own message ("add a task to Grand Line to fix the login issue" -> "project": "Grand Line"). The app matches it against their real projects and ignores it when it matches none, so a guessed name costs nothing and buys nothing. The app asks the captain which project on the card itself, so never ask them in prose. "priority" must be exactly "low", "normal" or "high" - anything else is discarded and the task is created at normal - and only when they signalled urgency themselves; a task nobody called urgent is a normal one.
 
     Only propose what the captain actually asked for. One clear request is one proposal; do not pad a turn with extra tasks they did not mention.
 

@@ -62,6 +62,8 @@ enum StrawHatViewSelfTest {
         checkFailureIsShown(&ok)
         checkMultiSectionReply(&ok)
         checkAcceptanceScenario(&ok)
+        checkTaskWritesDirectlyWithARealUndo(&ok)
+        checkProjectPickSurvivesARebuild(&ok)
         checkEditorRoutedScheduleDraft(&ok)
         checkEditorRoutedMissingStoresFailVisibly(&ok)
         checkSalvageRendersButNeverExecutes(&ok)
@@ -892,6 +894,14 @@ enum StrawHatViewSelfTest {
         }
 
         let store = ShiftStore()
+        // A real project, so the task card has a real question to ask. The
+        // captain's own pick on that card is the whole point of this case:
+        // `fm/grandline-strawhat-task-direct-create` replaced the New Task
+        // sheet with exactly this one inline control.
+        let project = ShiftProject(id: "proj-grand-line", name: "Grand Line", description: "",
+                                   status: .inProgress, startDate: nil, dueDate: nil,
+                                   createdAt: ShiftStore.iso8601(Date()))
+        store.addProject(project)
         let m = mount(shiftStore: store)
         showCrew(m)
         let chat = m.controller.debugChat
@@ -926,65 +936,68 @@ enum StrawHatViewSelfTest {
             return
         }
 
-        // ---- The task: press opens the real editor, pre-filled ----
+        // ---- The task: the captain picks a project, presses once, and the
+        // task exists ----
         //
+        // This is the captain's own acceptance bar, in his words: "when I ask
+        // the agent to create, confirming should create it" - not reopen the
+        // New Task form. The one thing it asks him first is the project, on
+        // the card, which is what he asked for instead of the form.
+        guard let picker = taskCard.debugProjectPicker else {
+            check(false, "a task card must offer an inline project picker when the captain has projects", &ok)
+            return
+        }
+        check(picker.numberOfItems == 2 && picker.itemTitle(at: 0) == "No project",
+              "the picker offers \"No project\" plus each real project, got \(picker.itemTitles)", &ok)
+        check(picker.indexOfSelectedItem == 0,
+              "and starts on \"No project\" - the crew named none, so nothing is pre-picked for him", &ok)
+        check(taskCard.debugChoices.projectID == nil,
+              "a press right now would carry no project, matching what he can see", &ok)
+
+        // His pick, through the picker's own target/action.
+        check(taskCard.debugSelectProject(id: project.id), "the captain can pick his real project", &ok)
+        check(taskCard.debugChoices.projectID == project.id,
+              "and the card now carries it, got \(taskCard.debugChoices.projectID ?? "nil")", &ok)
+        check(store.activeTasks.isEmpty, "picking a project must not write anything by itself", &ok)
+
         // Through the real button's own target/action, exactly as a mouse
         // would - not `confirmProposal` called directly.
         taskCard.debugConfirmButton.performClick(nil)
 
-        check(store.activeTasks.isEmpty,
-              "opening the editor must not write anything by itself", &ok)
-        check(taskCard.debugOpenedForReview && !taskCard.debugIsConfirmed,
-              "the card shows \"opened for review\", not \"written\" - nothing has been saved yet", &ok)
+        check(m.controller.debugLastRoutedEditor == nil,
+              "confirming a task must NOT open an editor - that is the whole complaint this change fixes", &ok)
+        guard let written = store.activeTasks.first(where: { $0.title == "Fix the login issue" }) else {
+            check(false, "one press must create the task, got \(store.activeTasks.map(\.title))", &ok)
+            return
+        }
+        check(written.projectID == project.id,
+              "in the project he picked on the card, got \(written.projectID ?? "nil")", &ok)
+        check(written.notes == "from the crew", "carrying the crew's own notes", &ok)
+        check(written.dueDate != nil, "and the due date they drafted", &ok)
+        check(written.priority == .normal,
+              "at normal priority - nobody called it urgent, and the app does not guess one", &ok)
+
+        check(taskCard.debugIsConfirmed && !taskCard.debugOpenedForReview,
+              "the card reads as written, not as handed to an editor", &ok)
         check(taskCard.debugConfirmButtonHidden,
-              "and the button is gone, so a second press cannot open a second editor", &ok)
-        check(taskCard.debugDoneText == StrawHatProposalKind.addTask.openedForReviewLabel,
-              "the card names what happened, got \(taskCard.debugDoneText)", &ok)
+              "and the button is gone, so a second press cannot write a second copy", &ok)
+        check(picker.superview?.isHidden == true,
+              "the picker goes with it - the question has been answered and the task is already filed", &ok)
         // The detail line still names the record, unaffected by any of this -
         // it was never the toast's job either way.
         check(taskCard.debugDetailText.contains("Tomorrow") == true,
-              "a routed card keeps its own detail line, got \(taskCard.debugDetailText)", &ok)
+              "the card keeps its own detail line, got \(taskCard.debugDetailText)", &ok)
         // ...and its own label is not truncated, the same geometry concern
-        // the old "Added to Tasks" wording was checked against.
+        // every state of this card is checked against.
         m.controller.view.layoutSubtreeIfNeeded()
         let done = taskCard.debugDoneLabel
         let slack = done.frame.width - done.intrinsicContentSize.width
         check(slack >= -0.5,
-              "the opened-for-review label has room for its own text - short by \(-slack)pt [\(taskCard.debugFrames)]", &ok)
-
-        guard let taskEditor = m.controller.debugLastRoutedEditor as? ShiftTaskEditorController else {
-            check(false, "confirming the task proposal must open a real ShiftTaskEditorController", &ok)
-            return
-        }
-        check(taskEditor.debugTitleText == "Fix the login issue",
-              "the editor's title field is pre-filled with the crew's own wording, got \(taskEditor.debugTitleText)", &ok)
-        // The crew's notes land in the visible Description field - not
-        // `ShiftTask.notes`, which this editor has no UI for at all.
-        check(taskEditor.debugDescriptionText == "from the crew",
-              "the crew's notes are pre-filled into the editor's visible Description field, got \(taskEditor.debugDescriptionText)", &ok)
-        check(taskEditor.debugDueRowIsOn,
-              "the due-date toggle is pre-enabled from the proposal's own \"tomorrow\"", &ok)
-        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
-        check(Calendar.current.isDate(taskEditor.debugDueDateValue, inSameDayAs: tomorrow),
-              "the due date resolves to tomorrow, got \(taskEditor.debugDueDateValue)", &ok)
-        // Nothing invented beyond what the proposal carried: priority/project
-        // stay whatever a brand-new task's own default is, exactly as they
-        // did before this change - the whole point is that the captain, not
-        // the app, is now the one who would change them.
-        check(store.activeTasks.isEmpty,
-              "reading the editor's pre-filled fields must still write nothing", &ok)
-
-        // The captain reviews, then presses the editor's own real Save -
-        // never `StrawHatProposalExecutor.execute`.
-        taskEditor.debugTriggerSave()
-        check(store.activeTasks.contains(where: { $0.title == "Fix the login issue" }),
-              "the editor's own Save is what actually writes the task, got \(store.activeTasks.map(\.title))", &ok)
-        check(store.activeTasks.first(where: { $0.title == "Fix the login issue" })?.description == "from the crew",
-              "...with the notes landing where the editor showed them", &ok)
+              "the confirmed label has room for its own text - short by \(-slack)pt [\(taskCard.debugFrames)]", &ok)
 
         // A second click on the same (now hidden) confirm button must not
-        // open a second editor or write a second copy - guarded the same way
-        // the old direct-write flow guarded a re-press.
+        // write a second copy - the duplicate-write defect `resolvedProposals`
+        // exists to stop, now that this kind writes on the press again.
         let tasksAfter = store.activeTasks.count
         taskCard.debugConfirmButton.performClick(nil)
         check(store.activeTasks.count == tasksAfter,
@@ -1011,7 +1024,131 @@ enum StrawHatViewSelfTest {
               "a saved follow-up survives a fresh store", &ok)
     }
 
-    /// Franky's `create_schedule_draft`: the fourth editor-routed kind, and
+    /// `fm/grandline-strawhat-task-direct-create`, as a regression case in its
+    /// own right rather than only as part of the acceptance scenario.
+    ///
+    /// Two separate things, each of which shipped wrong once:
+    ///
+    ///  1. A confirmed task must NOT be "opened for review". That state means
+    ///     "nothing was written, a form is now yours to fill in", which is the
+    ///     captain's exact complaint - and it renders plausibly either way, so
+    ///     only an assertion can tell them apart.
+    ///  2. The toast's undo must genuinely remove the task. GL-33's rule, and
+    ///     one this kind could not keep until `ShiftStore.deleteTask` existed -
+    ///     so it is asserted through a **fresh store**, where an undo that only
+    ///     mutated the array it was handed would fail.
+    private static func checkTaskWritesDirectlyWithARealUndo(_ ok: inout Bool) {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("straw-hat-task-direct-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        let previous = ProcessInfo.processInfo.environment["FM_SHIFT_DIR"]
+        setenv("FM_SHIFT_DIR", scratch.path, 1)
+        defer {
+            if let previous { setenv("FM_SHIFT_DIR", previous, 1) } else { unsetenv("FM_SHIFT_DIR") }
+            try? FileManager.default.removeItem(at: scratch)
+        }
+
+        let store = ShiftStore()
+        let m = mount(shiftStore: store)
+        showCrew(m)
+        let chat = m.controller.debugChat
+
+        m.controller.debugRenderReply("""
+        {"sections":[{"speaker":"nami","text":"drafted","proposals":[
+          {"kind":"add_task","title":"Rotate the staging certs"}]}]}
+        """)
+        guard let card = chat.debugConfirmCards().first else {
+            check(false, "the task proposal must render a confirm card", &ok)
+            return
+        }
+
+        // Straight through the page, so the *outcome* - and therefore the undo
+        // the toast is handed - is the thing under test, not the card's
+        // rendering of it.
+        let outcome = m.controller.debugConfirmProposal(card.debugProposal)
+        guard case .written(let message, let undo) = outcome else {
+            check(false, "confirming a task must write it, got \(outcome)", &ok)
+            return
+        }
+        check(message.contains("Rotate the staging certs"), "the toast names what landed, got \(message)", &ok)
+        check(store.activeTasks.contains(where: { $0.title == "Rotate the staging certs" }),
+              "and the task is really in the store", &ok)
+        check(ShiftStore().activeTasks.contains(where: { $0.title == "Rotate the staging certs" }),
+              "...on disk, not just in the array", &ok)
+        check(m.controller.debugLastRoutedEditor == nil,
+              "and no editor was opened - a task proposal must never hand the New Task form back", &ok)
+
+        guard let undo else {
+            check(false, "a written task must offer a real undo - `ShiftStore.deleteTask` exists", &ok)
+            return
+        }
+        undo()
+        check(!store.activeTasks.contains(where: { $0.title == "Rotate the staging certs" }),
+              "the undo genuinely removes the task, got \(store.activeTasks.map(\.title))", &ok)
+        check(!ShiftStore().activeTasks.contains(where: { $0.title == "Rotate the staging certs" }),
+              "...through `deleteTask`, so a fresh store agrees", &ok)
+    }
+
+    /// The captain's project pick has to survive a transcript rebuild.
+    ///
+    /// The same mechanism behind the HIGH-severity duplicate-write defect
+    /// (`applyTheme` rebuilds every card from `messages`), one step earlier in
+    /// the flow: a selection living only on the card would silently revert to
+    /// the default between picking a project and pressing Confirm, and the
+    /// task would land somewhere the captain did not choose with nothing on
+    /// screen to say so. A theme change is an ordinary thing to do mid-read.
+    private static func checkProjectPickSurvivesARebuild(_ ok: inout Bool) {
+        let scratch = FileManager.default.temporaryDirectory
+            .appendingPathComponent("straw-hat-pick-rebuild-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        let previous = ProcessInfo.processInfo.environment["FM_SHIFT_DIR"]
+        setenv("FM_SHIFT_DIR", scratch.path, 1)
+        let savedTheme = ThemeManager.shared.theme
+        defer {
+            ThemeManager.shared.setTheme(savedTheme)
+            if let previous { setenv("FM_SHIFT_DIR", previous, 1) } else { unsetenv("FM_SHIFT_DIR") }
+            try? FileManager.default.removeItem(at: scratch)
+        }
+
+        let store = ShiftStore()
+        let project = ShiftProject(id: "proj-atlas", name: "Atlas", description: "",
+                                   status: .inProgress, startDate: nil, dueDate: nil,
+                                   createdAt: ShiftStore.iso8601(Date()))
+        store.addProject(project)
+        let m = mount(shiftStore: store)
+        showCrew(m)
+        let chat = m.controller.debugChat
+
+        m.controller.debugRenderReply("""
+        {"sections":[{"speaker":"nami","text":"drafted","proposals":[
+          {"kind":"add_task","title":"Pin the base image"}]}]}
+        """)
+        guard let card = chat.debugConfirmCards().first else {
+            check(false, "the task proposal must render a confirm card", &ok)
+            return
+        }
+        check(card.debugSelectProject(id: project.id), "the captain picks a project", &ok)
+
+        let other = HelmTheme.allThemes.first { $0.id != savedTheme.id } ?? savedTheme
+        ThemeManager.shared.setTheme(other)
+        m.controller.view.layoutSubtreeIfNeeded()
+
+        guard let rebuilt = chat.debugConfirmCards().first else {
+            check(false, "the card must still be in the transcript after a theme change", &ok)
+            return
+        }
+        check(rebuilt !== card,
+              "the rebuild really does replace the card instance - otherwise this case proves nothing", &ok)
+        check(rebuilt.debugChoices.projectID == project.id,
+              "the captain's pick survives the rebuild, got \(rebuilt.debugChoices.projectID ?? "nil")", &ok)
+
+        // ...and it is the pick that actually lands, through the real button.
+        rebuilt.debugConfirmButton.performClick(nil)
+        check(store.activeTasks.first(where: { $0.title == "Pin the base image" })?.projectID == project.id,
+              "and it is what the task is written with, got \(store.activeTasks.first(where: { $0.title == "Pin the base image" })?.projectID ?? "nil")", &ok)
+    }
+
+    /// Franky's `create_schedule_draft`: the third editor-routed kind, and
     /// the one that (unlike `save_command_draft`) has no `NSAlert` gate in
     /// front of it - so this is the one editor-routed write this suite can
     /// drive fully end to end, confirm press through Save, with no modal to
@@ -1118,6 +1255,14 @@ enum StrawHatViewSelfTest {
         }
 
         let store = ShiftStore()
+        // A real project, so the task card has a real question to ask. The
+        // captain's own pick on that card is the whole point of this case:
+        // `fm/grandline-strawhat-task-direct-create` replaced the New Task
+        // sheet with exactly this one inline control.
+        let project = ShiftProject(id: "proj-grand-line", name: "Grand Line", description: "",
+                                   status: .inProgress, startDate: nil, dueDate: nil,
+                                   createdAt: ShiftStore.iso8601(Date()))
+        store.addProject(project)
         let m = mount(shiftStore: store)
         showCrew(m)
         let chat = m.controller.debugChat
@@ -1373,6 +1518,14 @@ enum StrawHatViewSelfTest {
         }
 
         let store = ShiftStore()
+        // A real project, so the task card has a real question to ask. The
+        // captain's own pick on that card is the whole point of this case:
+        // `fm/grandline-strawhat-task-direct-create` replaced the New Task
+        // sheet with exactly this one inline control.
+        let project = ShiftProject(id: "proj-grand-line", name: "Grand Line", description: "",
+                                   status: .inProgress, startDate: nil, dueDate: nil,
+                                   createdAt: ShiftStore.iso8601(Date()))
+        store.addProject(project)
         let m = mount(shiftStore: store)
         showCrew(m)
         let chat = m.controller.debugChat

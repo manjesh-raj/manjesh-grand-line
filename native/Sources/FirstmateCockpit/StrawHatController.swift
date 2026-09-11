@@ -162,11 +162,11 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
         chat.onSubmit = { [weak self] text in self?.send(text) }
         // The single path from a proposal to a store. Set once here so there
         // is one wiring to audit rather than one per rendered card.
-        chat.onConfirmProposal = { [weak self] proposal in
+        chat.onConfirmProposal = { [weak self] proposal, choices in
             guard let self else {
                 return .failed(message: "This page went away before that could be saved.")
             }
-            return self.confirmProposal(proposal)
+            return self.confirmProposal(proposal, choices: choices)
         }
         // M3.2's other half, and deliberately its own closure rather than a
         // second branch inside `onConfirmProposal`: a handoff writes nothing,
@@ -322,6 +322,7 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
             self?.applyTheme(theme)
         }
         applyTheme(ThemeManager.shared.theme)
+        refreshProjects()
     }
 
     deinit {
@@ -330,7 +331,23 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
 
     override func viewDidAppear() {
         super.viewDidAppear()
+        // A project created on the Tasks page since this page was last open
+        // has to be pickable here, and appearing is the only moment it can
+        // have happened - this page is showing for every other moment.
+        refreshProjects()
         chat.focusComposer()
+    }
+
+    /// Hands the chat the captain's current projects, for a task card's own
+    /// inline picker.
+    ///
+    /// Reads the shared `ShiftStore`'s own in-memory list rather than forcing
+    /// a reload: it is the same instance the Tasks page writes through, so a
+    /// project created there is already here, and a disk read on every appear
+    /// would buy nothing. `setProjects` is a no-op when the list has not
+    /// changed, so this costs nothing on a repeat visit either.
+    private func refreshProjects() {
+        chat.setProjects(shiftStore.projects)
     }
 
     func applyTheme(_ theme: HelmTheme) {
@@ -596,11 +613,19 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
     /// A kind that has an existing "New X" editor to review through
     /// (`StrawHatProposalKind.opensEditor`) never reaches
     /// `StrawHatProposalExecutor.execute` at all - `openEditorForReview` owns
-    /// it end to end, including its own write once the captain saves. The two
-    /// remaining kinds keep the original path unchanged. Wired to the chat
-    /// view once, in `chat`'s own initializer - so there is exactly one path
-    /// from a proposal to a store, and it starts at a real button press.
-    func confirmProposal(_ proposal: StrawHatProposal) -> StrawHatProposalOutcome {
+    /// it end to end, including its own write once the captain saves. The
+    /// three remaining write kinds - `.addTask` among them again, see that
+    /// executor's header - take the direct path and write on this press.
+    /// Wired to the chat view once, in `chat`'s own initializer - so there is
+    /// exactly one path from a proposal to a store, and it starts at a real
+    /// button press.
+    ///
+    /// - Parameter choices: what the captain picked on the card before
+    ///   pressing it (today: which project a task lands in). Handed through
+    ///   rather than read back off the card, so the write can never depend on
+    ///   a view that a theme change may already have rebuilt.
+    func confirmProposal(_ proposal: StrawHatProposal,
+                         choices: StrawHatConfirmChoices = .init()) -> StrawHatProposalOutcome {
         // One proposal, one write. This is the *write* half of the fix for a
         // real HIGH-severity defect (`StrawHatProposal.id`'s own note has the
         // mechanism): the transcript is rebuilt from its data on any theme or
@@ -621,16 +646,17 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
         guard !proposal.kind.opensEditor else {
             return record(openEditorForReview(proposal), for: proposal)
         }
-        let outcome = StrawHatProposalExecutor.execute(proposal, stores: stores)
+        let outcome = StrawHatProposalExecutor.execute(proposal, stores: stores, choices: choices)
         switch outcome {
         case .written(let message, let undo):
             // GL-33 / the house convention: a toast for a transient
             // confirmation, and `showUndo` only where the undo genuinely
-            // restores. Two kinds have no undo, and
-            // `StrawHatProposalExecutor`'s header records why (`ShiftStore`
-            // has no delete for a task or a follow-up, so an "Undo" there
-            // could only pretend). The card's own confirmed state names where
-            // the record went either way.
+            // restores. Every kind that reaches here in production now has a
+            // real one - `.addTask` included, since `ShiftStore.deleteTask`
+            // exists (see `StrawHatProposalExecutor`'s header) - but the
+            // branch stays, because `undo` is the executor's decision to make
+            // per kind and a future one may honestly have none. The card's own
+            // confirmed state names where the record went either way.
             if let undo {
                 Toast.showUndo(in: view, message: message, onUndo: undo)
             } else {
@@ -676,26 +702,25 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
     // "New X" sheet the app's own hand-created-record flows use, pre-filled
     // from the proposal, and wires that sheet's own Save to the real store
     // write - so the captain reviews/adjusts every field that sheet exposes
-    // (priority, project, tags, category, cadence, ...) before anything lands
+    // (linked task, category, parameters, cadence, ...) before anything lands
     // anywhere. See `StrawHatProposalExecutor.swift`'s header for why this
-    // deliberately never calls `execute` for these four kinds.
+    // deliberately never calls `execute` for these three kinds - and why
+    // `.addTask`, which used to be a fourth, no longer routes here at all.
 
-    /// One dispatch point for the four editor-routed kinds - kept separate
+    /// One dispatch point for the three editor-routed kinds - kept separate
     /// from `confirmProposal` so the "does this kind open an editor at all"
     /// question and "which editor, with which fields" are two different
     /// switches, each exhaustive on its own.
     private func openEditorForReview(_ proposal: StrawHatProposal) -> StrawHatProposalOutcome {
         switch proposal.kind {
-        case .addTask:
-            return openTaskEditor(proposal)
         case .addFollowUp:
             return openFollowUpEditor(proposal)
         case .saveCommandDraft:
             return openCommandEditor(proposal)
         case .createScheduleDraft:
             return openScheduleEditor(proposal)
-        case .createRunbookDraft, .addSticky, .openSRELead, .openDestination:
-            // Unreachable - `opensEditor` is false for all four, so
+        case .addTask, .createRunbookDraft, .addSticky, .openSRELead, .openDestination:
+            // Unreachable - `opensEditor` is false for all five, so
             // `confirmProposal`'s guard never sends them here. Kept explicit
             // rather than folded into `default:` so adding a kind is a
             // compile error in both switches.
@@ -703,35 +728,13 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
         }
     }
 
-    /// Nami's `add_task`: opens the real New Task sheet pre-filled with the
-    /// title, due date and notes the crew drafted - the captain sets
-    /// priority, project, tags and description themselves, exactly as they
-    /// would for a hand-created task.
+    /// Nami's `add_follow_up`. `.addTask` used to sit here too, in the same
+    /// shape; `fm/grandline-strawhat-task-direct-create` removed it, and
+    /// `StrawHatProposalExecutor`'s header has the captain's own reasoning.
     ///
-    /// The crew's `notes` land in the sheet's **Description** field, not
-    /// `ShiftTask.notes` - `ShiftTaskEditorController` has no UI for the
-    /// latter at all (it is written but never shown anywhere in the app), so
-    /// putting the crew's words there would be the exact "silently defaulted,
-    /// no chance to see or edit it" complaint this whole change exists to fix.
-    private func openTaskEditor(_ proposal: StrawHatProposal) -> StrawHatProposalOutcome {
-        let due = proposal.resolvedDue()
-        let editor = ShiftTaskEditorController(
-            task: nil, projects: shiftStore.projects,
-            prefillTitle: proposal.title, prefillDescription: proposal.notes,
-            prefillDueDate: due?.date, prefillDueTime: due?.time)
-        editor.onSave = { [weak self] task, attachmentChange in
-            guard let self else { return }
-            self.shiftStore.addTask(task, attachment: attachmentChange)
-            Toast.show(in: self.view, message: "Added \u{201C}\(task.title)\u{201D} to Tasks")
-        }
-        presentAsSheet(editor)
-        #if FM_SELFTESTS
-        debugLastRoutedEditor = editor
-        #endif
-        return .openedForReview(message: proposal.kind.openedForReviewLabel)
-    }
-
-    /// Nami's `add_follow_up`: same shape as the task editor above.
+    /// The crew's `notes` land in this sheet's own visible field rather than
+    /// in a model property with no UI behind it - the same "silently set, never
+    /// shown" complaint the routing exists to avoid.
     private func openFollowUpEditor(_ proposal: StrawHatProposal) -> StrawHatProposalOutcome {
         let due = proposal.resolvedDue()
         let editor = ShiftFollowUpEditorController(

@@ -180,29 +180,42 @@ enum StrawHatProposalKind: String, CaseIterable {
     /// than the confirm card writing it straight to the store.
     ///
     /// `fm/straw-hat-task-proposal-full-editor`: the captain's own complaint
-    /// - confirming a task proposal wrote it with a bare default priority and
-    /// no project, with no chance to set either, because `execute` only ever
-    /// had the fields the model supplied. Four kinds already have a real
-    /// "New X" sheet elsewhere in the app that exposes strictly more fields
-    /// than a proposal carries (`ShiftTaskEditorController`,
+    /// - confirming a proposal wrote it with a bare default priority and no
+    /// project, with no chance to set either, because `execute` only ever had
+    /// the fields the model supplied. Four kinds already have a real "New X"
+    /// sheet elsewhere in the app that exposes strictly more fields than a
+    /// proposal carries (`ShiftTaskEditorController`,
     /// `ShiftFollowUpEditorController`, `CommandEditorController`,
     /// `ScheduleEditorController`), so `StrawHatController.confirmProposal`
     /// opens that same sheet, pre-filled from the proposal, instead of
     /// calling `StrawHatProposalExecutor.execute` - see that controller's
     /// `openEditorForReview`.
     ///
-    /// The remaining two write kinds have no such reusable dialog: a runbook
-    /// draft already carries Robin's full generated body (there is nothing
-    /// missing to review the way a task's priority/project were), and a new
-    /// sticky note is edited in place on the corkboard rather than through any
-    /// modal at all - `StickyBoardController.newNoteTapped` creates a blank
-    /// note and hands it straight to the captain's own typing. Both keep
-    /// going through `execute` unchanged.
+    /// **`fm/grandline-strawhat-task-direct-create` took `.addTask` back off
+    /// this list, and that is the captain's own correction rather than a
+    /// regression.** Routing it here fixed the missing fields and introduced a
+    /// worse problem in their place: "I am asking the agent to create, but it
+    /// is just giving me the task queue again so that I am going to create."
+    /// A crew member handing back the whole New Task form is not an agent
+    /// doing the thing. So a confirmed task proposal writes the task, and the
+    /// one field that genuinely needed a decision - which project - is a
+    /// picker on the confirm card itself (`StrawHatConfirmCard`), not a sheet.
+    /// The other three kinds keep this route: a command draft's own risk gate
+    /// and category, a schedule's cadence and a follow-up's linked task are
+    /// each more than one inline control's worth of review.
+    ///
+    /// The two write kinds that never routed here have no such reusable
+    /// dialog either: a runbook draft already carries Robin's full generated
+    /// body (there is nothing missing to review the way a task's
+    /// priority/project were), and a new sticky note is edited in place on the
+    /// corkboard rather than through any modal at all -
+    /// `StickyBoardController.newNoteTapped` creates a blank note and hands it
+    /// straight to the captain's own typing.
     var opensEditor: Bool {
         switch self {
-        case .addTask, .addFollowUp, .saveCommandDraft, .createScheduleDraft:
+        case .addFollowUp, .saveCommandDraft, .createScheduleDraft:
             return true
-        case .createRunbookDraft, .addSticky, .openSRELead, .openDestination:
+        case .addTask, .createRunbookDraft, .addSticky, .openSRELead, .openDestination:
             return false
         }
     }
@@ -214,11 +227,10 @@ enum StrawHatProposalKind: String, CaseIterable {
     /// invitation rather than a past-tense claim.
     var openedForReviewLabel: String {
         switch self {
-        case .addTask: return "Opened in the Task editor"
         case .addFollowUp: return "Opened in the Follow-up editor"
         case .saveCommandDraft: return "Opened in the Command editor"
         case .createScheduleDraft: return "Opened in the Schedule editor"
-        case .createRunbookDraft, .addSticky, .openSRELead, .openDestination:
+        case .addTask, .createRunbookDraft, .addSticky, .openSRELead, .openDestination:
             // Unreachable - `opensEditor` is false for these, so
             // `StrawHatController` never asks them for this label.
             return confirmedTitle
@@ -418,6 +430,27 @@ struct StrawHatProposal: Equatable {
     /// meant.
     let due: String?
     let notes: String?
+    /// Which project the captain named, **exactly as they said it** - a hint,
+    /// never an id, and never a project the model picked for them.
+    ///
+    /// The crew genuinely cannot see the captain's projects: nothing in
+    /// `StrawHatContextSnapshot` carries them and no read-only tool lists
+    /// them. So this is only ever a name that appeared in the captain's own
+    /// message ("add a task to Grand Line to fix the login issue"), and the
+    /// app resolves it - or refuses to guess - through
+    /// `StrawHatProposalExecutor.resolveProject(hint:among:)`. The same shape
+    /// `open_sre_lead`'s host hint already uses, for the same reason.
+    ///
+    /// A hint that resolves only pre-selects the confirm card's own project
+    /// picker; the captain still decides. One that resolves to nothing (or to
+    /// two projects at once) simply leaves that picker on "No project".
+    let project: String?
+    /// A priority the captain themselves signalled ("urgent", "low
+    /// priority"), already resolved to the real enum by the parser so a model
+    /// cannot invent a fourth level - the same treatment `scheduleAction`
+    /// gets. `nil` when they did not say, which leaves `ShiftTask.fresh`'s own
+    /// `.normal` in place rather than the app guessing a level up or down.
+    let priority: ShiftPriority?
     /// A runbook draft's markdown body. Required for `.createRunbookDraft`
     /// and meaningless for every other kind.
     let content: String?
@@ -445,7 +478,9 @@ struct StrawHatProposal: Equatable {
     let handoff: StrawHatHandoff?
 
     init(kind: StrawHatProposalKind, title: String, due: String? = nil,
-         notes: String? = nil, content: String? = nil, command: String? = nil,
+         notes: String? = nil, project: String? = nil,
+         priority: ShiftPriority? = nil,
+         content: String? = nil, command: String? = nil,
          scheduleAction: ScheduledActionKind? = nil,
          scheduleCadence: ScheduleCadence? = nil,
          handoff: StrawHatHandoff? = nil,
@@ -455,6 +490,8 @@ struct StrawHatProposal: Equatable {
         self.title = title
         self.due = due
         self.notes = notes
+        self.project = project
+        self.priority = priority
         self.content = content
         self.command = command
         self.scheduleAction = scheduleAction
@@ -470,6 +507,8 @@ struct StrawHatProposal: Equatable {
             && lhs.title == rhs.title
             && lhs.due == rhs.due
             && lhs.notes == rhs.notes
+            && lhs.project == rhs.project
+            && lhs.priority == rhs.priority
             && lhs.content == rhs.content
             && lhs.command == rhs.command
             && lhs.scheduleAction == rhs.scheduleAction
@@ -777,6 +816,14 @@ enum StrawHatEnvelope {
 
         let due = optionalString(dict["due"]) ?? optionalString(dict["follow_up_at"])
         let notes = optionalString(dict["notes"]) ?? optionalString(dict["text"])
+        let project = optionalString(dict["project"])
+        // Resolved here rather than carried as text, the same call
+        // `scheduledAction` makes: a model writing "critical" or "P0" names a
+        // level this app does not have, and the honest answer to that is no
+        // priority at all (the store's own `.normal`), never the nearest one.
+        let priority = optionalString(dict["priority"])
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .flatMap(ShiftPriority.init(rawValue:))
         let content = optionalString(dict["content"]) ?? optionalString(dict["body"])
         let command = optionalString(dict["command"]) ?? optionalString(dict["template"])
 
@@ -855,6 +902,7 @@ enum StrawHatEnvelope {
             ?? kind.label
 
         return StrawHatProposal(kind: kind, title: title, due: due, notes: notes,
+                                project: project, priority: priority,
                                 content: content, command: command,
                                 scheduleAction: scheduleAction, scheduleCadence: scheduleCadence,
                                 handoff: handoff)
