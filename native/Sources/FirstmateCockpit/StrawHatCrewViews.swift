@@ -460,10 +460,24 @@ final class StrawHatConfirmCard: NSView {
         case openedForReview(message: String)
     }
 
-    /// Called on the captain's press. Returns the outcome so the card can
-    /// render it - a synchronous call because every write behind it is a
-    /// synchronous store method on the main thread.
-    var onConfirm: ((StrawHatProposal) -> StrawHatProposalOutcome)?
+    /// Called on the captain's press, carrying whatever they chose on the
+    /// card itself. Returns the outcome so the card can render it - a
+    /// synchronous call because every write behind it is a synchronous store
+    /// method on the main thread.
+    var onConfirm: ((StrawHatProposal, StrawHatConfirmChoices) -> StrawHatProposalOutcome)?
+
+    /// Fires when the captain changes the project picker, so the transcript
+    /// can remember it against `StrawHatProposal.id`.
+    ///
+    /// **Not bookkeeping.** This card is thrown away and rebuilt from
+    /// `StrawHatChatView.messages` on any theme or chrome-font-scale change -
+    /// the mechanism behind the HIGH-severity duplicate-write defect
+    /// `proposalResolutions` exists to fix. A selection living only on the
+    /// view would silently revert to the default between the captain picking a
+    /// project and pressing Confirm, which is the same class of bug one step
+    /// short of a write: they would file the task somewhere they did not
+    /// choose and have no way to see that it happened.
+    var onProjectSelectionChanged: ((StrawHatProposal, String?) -> Void)?
 
     /// Fires once a press has resolved the proposal for good (written, or
     /// handed to an editor). The transcript records it against
@@ -482,6 +496,14 @@ final class StrawHatConfirmCard: NSView {
     private let doneLabel = NSTextField(labelWithString: "")
     private let actionColumn = NSView()
     private let textColumn = NSStackView()
+    /// The captain's own "which project?" control, built only for `.addTask`
+    /// and only when they actually have projects - see `buildProjectPicker`.
+    private var projectPicker: HelmPopUpButton?
+    /// The ids behind `projectPicker`'s items, parallel to its menu: index 0 is
+    /// always "No project" (`nil`). Kept beside the control rather than read
+    /// back off `NSMenuItem.representedObject`, so the mapping is one array a
+    /// reader can see rather than an untyped payload.
+    private var projectIDs: [String?] = []
     private var theme: HelmTheme
     private var isConfirmed = false
     private var didFail = false
@@ -492,8 +514,17 @@ final class StrawHatConfirmCard: NSView {
     /// own Save is what decides that, entirely independent of this card.
     private var openedForReview = false
 
+    /// - Parameters:
+    ///   - projects: the captain's real projects, for `.addTask`'s own inline
+    ///     picker. Empty (the default) simply means no picker is built - a
+    ///     popup whose only item is "No project" is noise, not a choice.
+    ///   - selectedProjectID: a selection already made for this proposal and
+    ///     remembered across a rebuild. `nil` falls back to whatever the
+    ///     crew's own `project` hint resolves to, which is usually nothing.
     init(proposal: StrawHatProposal, theme: HelmTheme, now: Date = Date(),
-         resolution: Resolution? = nil) {
+         resolution: Resolution? = nil,
+         projects: [ShiftProject] = [],
+         selectedProjectID: String?? = nil) {
         self.proposal = proposal
         self.theme = theme
         self.icon = IconTileView(size: 24, cornerRadius: 7)
@@ -605,6 +636,13 @@ final class StrawHatConfirmCard: NSView {
         collapseAction.isActive = true
 
         for v in [kicker, titleLabel, detailLabel] { textColumn.addArrangedSubview(v) }
+        // The captain's one inline question, under the detail line and inside
+        // the same column - so the card grows by exactly one control's height
+        // and the three-column row's own geometry is untouched.
+        if let row = buildProjectPicker(projects: projects, selectedProjectID: selectedProjectID) {
+            textColumn.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: textColumn.widthAnchor).isActive = true
+        }
         textColumn.orientation = .vertical
         textColumn.alignment = .leading
         textColumn.spacing = 2
@@ -670,6 +708,95 @@ final class StrawHatConfirmCard: NSView {
         applyTheme(theme)
     }
 
+    /// The captain's "which project?" control, or `nil` when there is nothing
+    /// to ask.
+    ///
+    /// `fm/grandline-strawhat-task-direct-create`. The captain asked for
+    /// exactly this shape: *"If it needs to ask me the project or something,
+    /// it can ask like some sort of radio button or an input - a quick
+    /// question back to me - but not hand the whole task creation form back to
+    /// me."*
+    ///
+    /// A `HelmPopUpButton` rather than `HelmSegmentedTabs` or a
+    /// `HelmFieldCard`, on this app's own stated rule: card for a form field,
+    /// popup for a dense inline choice. A confirm card is a dense row inside a
+    /// chat transcript - a 50pt field card would dominate it, and a segmented
+    /// control is bounded by the caption width while a captain's project list
+    /// is not.
+    ///
+    /// Built **only** for `.addTask`: it is the one kind whose write this card
+    /// performs and whose record has a project. And only when at least one
+    /// project exists - a popup offering nothing but "No project" asks a
+    /// question with one answer.
+    private func buildProjectPicker(projects: [ShiftProject],
+                                    selectedProjectID: String??) -> NSView? {
+        guard proposal.kind == .addTask, !projects.isEmpty else { return nil }
+
+        let picker = HelmPopUpButton()
+        picker.translatesAutoresizingMaskIntoConstraints = false
+        picker.controlSize = .small
+        picker.font = .systemFont(ofSize: HelmType.scaled(11))
+        picker.addItem(withTitle: "No project")
+        projectIDs = [nil]
+        for project in projects {
+            picker.addItem(withTitle: project.name)
+            projectIDs.append(project.id)
+        }
+        // A rebuilt card restores what the captain already picked; a fresh one
+        // falls back to the crew's own hint, which is only ever a name the
+        // captain themselves used and which resolves to nothing far more often
+        // than it resolves to something.
+        let initialID = selectedProjectID
+            ?? StrawHatProposalExecutor.resolveProject(hint: proposal.project, among: projects)?.id
+        if let initialID, let index = projectIDs.firstIndex(where: { $0 == initialID }) {
+            picker.selectItem(at: index)
+        } else {
+            picker.selectItem(at: 0)
+        }
+        picker.target = self
+        picker.action = #selector(projectPicked)
+        picker.toolTip = "Which project this task lands in. Nothing is written until you confirm."
+        picker.setAccessibilityLabel("Project for this task")
+        // Gotcha (13): a long project name must never become a window-width
+        // floor. An `NSPopUpButton` sizes itself to its **widest menu item**,
+        // so this is a real risk here rather than a theoretical one - low
+        // compression resistance lets it shrink, and the `<=` tie below can
+        // only ever narrow it.
+        picker.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        picker.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        projectPicker = picker
+
+        // A leading-aligned wrapper, because `textColumn` ties each of its
+        // children to its own full width and a popup stretched across the card
+        // reads as a form field rather than a quick question.
+        let row = NSView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(picker)
+        NSLayoutConstraint.activate([
+            picker.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            picker.trailingAnchor.constraint(lessThanOrEqualTo: row.trailingAnchor),
+            picker.topAnchor.constraint(equalTo: row.topAnchor, constant: 3),
+            picker.bottomAnchor.constraint(equalTo: row.bottomAnchor),
+        ])
+        return row
+    }
+
+    /// The captain's pick, reported up so it survives a rebuild.
+    @objc private func projectPicked() {
+        guard let projectPicker else { return }
+        let index = projectPicker.indexOfSelectedItem
+        guard index >= 0, index < projectIDs.count else { return }
+        onProjectSelectionChanged?(proposal, projectIDs[index])
+    }
+
+    /// What the captain has chosen on this card right now.
+    private var currentChoices: StrawHatConfirmChoices {
+        guard let projectPicker else { return .init() }
+        let index = projectPicker.indexOfSelectedItem
+        guard index >= 0, index < projectIDs.count else { return .init() }
+        return .init(projectID: projectIDs[index])
+    }
+
     /// Render an already-resolved proposal in its done state. One function for
     /// both entry points - a live press (`confirmTapped`) and a rebuild - so
     /// the two states cannot drift into looking different.
@@ -686,6 +813,17 @@ final class StrawHatConfirmCard: NSView {
         }
         confirmButton.isHidden = true
         doneLabel.isHidden = false
+        // The question has been answered. Leaving a live picker on a written
+        // card would invite a change that goes nowhere - the task is already
+        // filed, and this control has no path to it any more.
+        //
+        // Hiding is enough *and* is the right tool here: an `NSStackView`
+        // drops a hidden arranged subview out of layout entirely (unlike an
+        // ordinary hidden `NSView`, gotcha (11)), so the card shrinks back to
+        // the height it would have had if it had never asked.
+        if let row = projectPicker?.superview {
+            row.isHidden = true
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -694,7 +832,7 @@ final class StrawHatConfirmCard: NSView {
         // Guarded as well as visually removed: a keyboard activation racing
         // the rebuild would otherwise be a second write.
         guard !isConfirmed, !openedForReview, let onConfirm else { return }
-        switch onConfirm(proposal) {
+        switch onConfirm(proposal, currentChoices) {
         case .written:
             // The detail line is deliberately left alone. An earlier version
             // replaced it with the toast's own message, which both duplicated
@@ -765,6 +903,23 @@ final class StrawHatConfirmCard: NSView {
     var debugDoneLabel: NSTextField { doneLabel }
     var debugTitleLabel: NSTextField { titleLabel }
     var debugActionColumnWidth: CGFloat { actionColumn.frame.width }
+    /// The real inline picker, or `nil` when the card asks nothing - so a
+    /// suite drives the captain's own control rather than a copy of it.
+    var debugProjectPicker: HelmPopUpButton? { projectPicker }
+    /// What a press right now would carry, read the same way `confirmTapped`
+    /// reads it.
+    var debugChoices: StrawHatConfirmChoices { currentChoices }
+    /// Selects a project by id through the picker's own target/action, exactly
+    /// as a click on its menu would - `false` when this card has no picker or
+    /// no such project in it.
+    @discardableResult
+    func debugSelectProject(id: String?) -> Bool {
+        guard let projectPicker,
+              let index = projectIDs.firstIndex(where: { $0 == id }) else { return false }
+        projectPicker.selectItem(at: index)
+        projectPicked()
+        return true
+    }
     /// A compact dump of the row's three resolved columns, for a failure
     /// message. Two separate attempts to get this row's slack distribution
     /// right were diagnosed in one run each because the message carried the

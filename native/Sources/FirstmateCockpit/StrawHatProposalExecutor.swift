@@ -60,33 +60,61 @@
 // through to a default, so even a view that mis-rendered a handoff as a
 // confirm card could not turn a press into a write.
 //
-// ## Four kinds route through an existing editor instead, and never reach
-// `execute` at all
+// ## Three kinds route through an existing editor instead, and never reach
+// `execute` at all - and `add_task` used to be a fourth
 //
 // `fm/straw-hat-task-proposal-full-editor`: `execute`'s `addTask` used to
 // build a `ShiftTask` straight from the proposal and write it - no priority,
 // no project, no tags, because the model was never asked for any of them and
 // the captain never got a chance to set them either. That is honest ("nothing
-// invented") but it is not what the captain wants: a task/follow-up/command/
-// schedule draft each has a real "New X" sheet elsewhere in the app exposing
-// strictly more fields than a proposal carries, so `StrawHatController.
-// confirmProposal` opens that same sheet, pre-filled, for `.addTask`,
-// `.addFollowUp`, `.saveCommandDraft` and `.createScheduleDraft`
-// (`StrawHatProposalKind.opensEditor`) - and never calls `execute` for them at
-// all, because the write that happens once the captain reviews and presses
-// that sheet's own Save must use *their* edited values, not a fresh
-// re-derivation from the original proposal.
+// invented") but it left him with a task carrying decisions he never made, so
+// four kinds were re-pointed at the real "New X" sheet each already has,
+// pre-filled, instead of at `execute`.
 //
-// `execute`'s own branches for those four kinds are therefore untouched on
-// purpose (see the file's own tests, which still drive them directly) rather
-// than deleted: they remain the honest "what would this look like with
-// nothing added" reference this file's header always described, now reachable
-// only from a test calling `execute` directly, never from the confirm-card
-// flow. `createRunbookDraft` and `addSticky` are the two kinds `execute` still
-// serves in production - see `opensEditor`'s own doc comment for why neither
-// has an equivalent dialog to route through instead.
+// **`fm/grandline-strawhat-task-direct-create` moved `add_task` back here,
+// and that is the captain's own correction rather than a revert.** Routing it
+// through the editor solved the missing fields and replaced them with a worse
+// problem: *"I am asking the agent to create, but it is just giving me the
+// task queue again so that I am going to create. It doesn't make sense for me.
+// If it needs to ask me the project or something, it can ask like some sort of
+// radio button or an input - a quick question back to me - but not hand the
+// whole task creation form back to me."* An agent that answers "create a task"
+// with the manual creation form has not done the thing.
 //
-// ## Undo: real for four kinds, deliberately absent for two
+// So the original defect is fixed at its actual root instead - the two fields
+// that were being silently defaulted now have honest sources, neither of which
+// is a sheet:
+//
+//  - **Project** is the captain's own inline choice on the confirm card
+//    (`StrawHatConfirmChoices.projectID`, rendered by `StrawHatConfirmCard` as
+//    a popup of their real projects plus "No project"). It is *their* pick,
+//    made before they press, exactly the "quick question back to me" they
+//    asked for. A `project` hint on the proposal only pre-selects it - see
+//    `resolveProject(hint:among:)`.
+//  - **Priority** comes from the proposal when the captain themselves
+//    signalled one, and is otherwise `ShiftTask.fresh`'s own `.normal` - the
+//    identical value the New Task sheet starts at, so nothing is defaulted
+//    here that is not defaulted there. It gets no second inline control: the
+//    captain asked to be asked about "the project or something", and a task
+//    created at normal priority is a task he can re-prioritise in one click on
+//    a page he is already going to look at.
+//
+// The three kinds still routed to an editor each need more review than one
+// inline control can carry: a command draft has its own risk gate, category
+// and parameters; a schedule has an action and a cadence; a follow-up has a
+// linked task. `StrawHatProposalKind.opensEditor` is the list, and
+// `StrawHatSelfTest` asserts its membership literally.
+//
+// `execute`'s own branches for those three kinds are untouched on purpose (see
+// the file's own tests, which still drive them directly) rather than deleted:
+// they remain the honest "what would this look like with nothing added"
+// reference this file's header always described, now reachable only from a
+// test calling `execute` directly, never from the confirm-card flow.
+// `addTask`, `createRunbookDraft` and `addSticky` are the three kinds `execute`
+// serves in production - see `opensEditor`'s own doc comment for why the last
+// two have no equivalent dialog to route through instead.
+//
+// ## Undo: real for five kinds, deliberately absent for one
 //
 // GL-33's rule is that `onUndo` must restore the value the caller already had
 // in hand - which is why AGENTS.md records it as *not* wired to an SSH key
@@ -105,18 +133,49 @@
 //    the schedule's own id, both in hand.
 //  - `save_command_draft` **gets one** - `CommandLibraryStore.deleteCommand(id:)`
 //    removes the file it just wrote.
-//  - `add_task` / `add_follow_up` get a **plain toast, no undo.** `ShiftStore`
-//    has no delete method for either (checked - it has `add`, `update`,
-//    `setTaskCompleted`, `setFollowUpStatus`, `snooze`, and no remove), so an
-//    "Undo" here could only pretend. Adding a real Shift delete is a genuine
-//    new capability across that store, its YAML layer, its git sync and its
-//    conflict resolver - well outside a phase whose job is the crew - and a
-//    half-implemented one (mark it done? clear its title?) would be worse
-//    than the honest confirmation the captain gets instead. The card's own
-//    confirmed state names where the record went, so it is one click away on
-//    the Tasks page.
+//  - `add_task` **gets one now**, which it did not when this list said four.
+//    The blocker was real and is gone: `ShiftStore` genuinely had no delete
+//    for a task, so an "Undo" could only have pretended. The Kanban board
+//    task (`grandline-tasks-kanban-devops-split`) added
+//    `ShiftStore.deleteTask(id:)` - a real delete that also removes the
+//    task's attachment file and clears any follow-up pointing at it - so the
+//    undo here genuinely removes the record it just wrote, the same pairing
+//    `create_runbook_draft` has always had. It matters more for this kind
+//    than for most: this is the one write the captain reaches by confirming
+//    a card rather than by pressing Save on a form he has just read.
+//  - `add_follow_up` is the one that still gets a **plain toast, no undo** -
+//    not because a delete is missing (`ShiftStore.deleteFollowUp(id:)` landed
+//    in the same task) but because it never reaches `execute` in production
+//    at all: it routes through its own editor, whose Save is an ordinary
+//    hand-created record with no toast of this file's to attach an undo to.
+//    If it is ever un-routed, wire one the same way `addTask` does.
 
 import Foundation
+
+/// The captain's own inline choices on a confirm card, made before they press
+/// it - never anything the model proposed.
+///
+/// A struct rather than a bare parameter so the distinction survives at every
+/// call site: a `StrawHatProposal` is what the crew drafted, and this is what
+/// the captain decided about it. The two must not be conflated, because only
+/// one of them is a human's choice.
+///
+/// One field today (`fm/grandline-strawhat-task-direct-create`). It is a
+/// struct rather than a lone `String?` argument so adding a second inline
+/// control later is one field rather than a re-threaded signature through the
+/// card, the chat view and the controller.
+struct StrawHatConfirmChoices: Equatable {
+    /// Which project a confirmed `.addTask` lands in - `nil` for "No project",
+    /// which is a real, ordinary state (`ShiftTask.projectID` is optional and
+    /// the New Task sheet itself starts there).
+    ///
+    /// Meaningless to every other kind, and ignored by them.
+    var projectID: String?
+
+    init(projectID: String? = nil) {
+        self.projectID = projectID
+    }
+}
 
 /// What a confirmed proposal did, so the caller can phrase the toast and wire
 /// the right undo without re-deriving the proposal's kind.
@@ -131,7 +190,7 @@ enum StrawHatProposalOutcome {
     /// The proposal's own kind opens an existing editor for the captain to
     /// review before anything is written (`StrawHatProposalKind.opensEditor`)
     /// - never returned by `execute` itself, only by
-    /// `StrawHatController.openEditorForReview`, which intercepts those four
+    /// `StrawHatController.openEditorForReview`, which intercepts those three
     /// kinds before they would otherwise reach here. The real write, if the
     /// captain goes through with it, happens inside that editor's own Save
     /// action, entirely independent of this outcome.
@@ -180,8 +239,12 @@ enum StrawHatProposalExecutor {
         }
     }
 
+    /// - Parameter choices: what the captain picked on the card itself before
+    ///   pressing it. Defaulted so every kind that has nothing to pick - and
+    ///   every test driving one - reads unchanged.
     static func execute(_ proposal: StrawHatProposal,
                         stores: Stores,
+                        choices: StrawHatConfirmChoices = .init(),
                         now: Date = Date()) -> StrawHatProposalOutcome {
         dispatchPrecondition(condition: .onQueue(.main))
 
@@ -196,7 +259,7 @@ enum StrawHatProposalExecutor {
 
         switch proposal.kind {
         case .addTask:
-            return addTask(proposal, shift: stores.shift, now: now)
+            return addTask(proposal, shift: stores.shift, choices: choices, now: now)
         case .addFollowUp:
             return addFollowUp(proposal, shift: stores.shift, now: now)
         case .createRunbookDraft:
@@ -218,15 +281,21 @@ enum StrawHatProposalExecutor {
 
     // MARK: The six write kinds
 
+    /// Nami's kind, and the one the captain reaches most: confirming the card
+    /// writes the task. See this file's header for why it does that again.
+    ///
+    /// Every field has an honest source. Title, notes and due date are the
+    /// crew's draft; the project is the captain's own pick on the card
+    /// (`choices`), never the model's; the priority is theirs only when they
+    /// signalled one, and otherwise the store's own default. Nothing is
+    /// guessed by the app in between.
     private static func addTask(_ proposal: StrawHatProposal,
                                 shift: ShiftStore,
+                                choices: StrawHatConfirmChoices,
                                 now: Date) -> StrawHatProposalOutcome {
         // `ShiftTask.fresh()` is the same starting point the New Task sheet
         // uses, so a crew-created task is indistinguishable from a
         // hand-created one - same id shape, same defaults, same `createdAt`.
-        // Nothing here sets a priority or a project: the model was not asked
-        // for either, and defaulting them would be the app inventing a
-        // decision the captain never made.
         var task = ShiftTask.fresh(now: now)
         task.title = proposal.title
         if let notes = proposal.notes { task.notes = notes }
@@ -234,9 +303,59 @@ enum StrawHatProposalExecutor {
             task.dueDate = due.date
             task.dueTime = due.time
         }
+        // The captain's own choice, and only ever one of their real projects:
+        // the card builds its picker from `ShiftStore.projects`, so an id that
+        // is not in that list cannot come from a press. Re-checked here anyway
+        // - this is `internal` and a stale id would file the task under a
+        // project that no longer exists, where the Tasks page would never show
+        // it.
+        if let projectID = choices.projectID,
+           shift.projects.contains(where: { $0.id == projectID }) {
+            task.projectID = projectID
+        }
+        // Only when the captain themselves signalled one. `nil` deliberately
+        // leaves `.normal` - the value `ShiftTask.fresh` already set and the
+        // value the New Task sheet opens on - rather than the app picking a
+        // level nobody asked for.
+        if let priority = proposal.priority { task.priority = priority }
+
         shift.addTask(task)
         AppLog.ai.info("straw hat: captain confirmed a task proposal")
-        return .written(message: "Added \u{201C}\(proposal.title)\u{201D} to Tasks", undo: nil)
+        let id = task.id
+        return .written(message: "Added \u{201C}\(proposal.title)\u{201D} to Tasks", undo: {
+            // GL-33: a real undo, not a gesture. `deleteTask` removes the row
+            // from whichever file it now lives in, drops its attachment and
+            // clears any follow-up that pointed at it - so this genuinely
+            // restores the state the captain had before the press.
+            _ = shift.deleteTask(id: id)
+        })
+    }
+
+    /// The captain's own project name, matched against their real projects -
+    /// or `nil`, which is an honest answer rather than a failure.
+    ///
+    /// The crew cannot see projects at all (`StrawHatProposal.project`'s own
+    /// note has the reason), so a hint is only ever a name the captain used in
+    /// their own message. This resolves it the same way
+    /// `AppShellController.openSRELeadForCrew` resolves a host hint, and for
+    /// the same reason: **exact name first, then a unique substring, and it
+    /// refuses to choose between two.** A project called "Grand Line" must not
+    /// become ambiguous just because "Grand Line v2" also exists, and an
+    /// ambiguous hint must leave the picker alone rather than pre-selecting a
+    /// coin flip the captain would have to notice to correct.
+    ///
+    /// This only ever *pre-selects* a picker the captain can still change, so
+    /// the cost of returning `nil` is one click, and the cost of guessing
+    /// wrong is a task filed somewhere they did not look.
+    static func resolveProject(hint: String?, among projects: [ShiftProject]) -> ShiftProject? {
+        guard let hint = hint?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !hint.isEmpty else { return nil }
+        let needle = hint.lowercased()
+        let exact = projects.filter { $0.name.lowercased() == needle }
+        if exact.count == 1 { return exact.first }
+        let partial = projects.filter { $0.name.lowercased().contains(needle) }
+        if partial.count == 1 { return partial.first }
+        return nil
     }
 
     private static func addFollowUp(_ proposal: StrawHatProposal,
