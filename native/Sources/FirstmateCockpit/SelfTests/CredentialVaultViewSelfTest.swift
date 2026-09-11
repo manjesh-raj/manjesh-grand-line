@@ -91,6 +91,7 @@ enum CredentialVaultViewSelfTest {
         checkLockDismissesOpenSheets(scratch: scratch, window: window, check)
         checkUnreadableNeverOffersCreate(scratch: scratch, window: window, check)
         checkEditorRoundTrip(check)
+        checkExactlyOneSwitchPerToggleRow(check)
         checkPasswordChangeWarnsAboutGitHistory(check)
         checkThemeSweep(scratch: scratch, window: window, check)
 
@@ -605,7 +606,7 @@ enum CredentialVaultViewSelfTest {
         editor.debugSecretField.stringValue = "  token-with-spaces  "
         editor.debugNotesView.string = "Rotate every 90 days."
         editor.debugTagsInput.setTokens(["ci"])
-        editor.debugTouchIDToggle.isOn = true
+        editor.debugTouchIDRow.isOn = true
         editor.debugSelectCategory(.apiKey)
         editor.debugSave()
         guard let saved else {
@@ -640,6 +641,43 @@ enum CredentialVaultViewSelfTest {
         check(resaved?.secret == "edited-in-plain-view",
               "a value edited while unmasked should be what saves, got \(String(describing: resaved?.secret))")
         check(resaved?.id == saved.id, "editing must keep the same id, not create a second record")
+    }
+
+    /// A captain-reported bug: the editor's "Require Touch ID to reveal" row
+    /// and the settings sheet's "Unlock with Touch ID" row each once passed a
+    /// second, separate switch into `HelmToggleRow`'s `trailing:` slot on top
+    /// of the row's own built-in one - rendering two switches for one
+    /// setting. `isOn` alone cannot see a stray extra control sitting beside
+    /// the one actually wired up, so this walks the real, rendered view tree.
+    private static func checkExactlyOneSwitchPerToggleRow(_ check: (Bool, String) -> Void) {
+        print("\n-- exactly one switch per toggle row --")
+
+        let editor = CredentialVaultEditorController(editing: nil)
+        _ = editor.view
+        let editorSwitches = countSwitchControls(in: editor.debugTouchIDRow)
+        check(editorSwitches == 1,
+              "the editor's Touch ID row should render exactly one switch, found \(editorSwitches)")
+
+        let settings = CredentialVaultSettingsController(settings: .default,
+                                                          auditEvents: [],
+                                                          syncSummary: "Synced.",
+                                                          touchIDAvailable: true)
+        _ = settings.view
+        let settingsSwitches = countSwitchControls(in: settings.debugTouchIDRow)
+        check(settingsSwitches == 1,
+              "the settings sheet's Touch ID row should render exactly one switch, found \(settingsSwitches)")
+    }
+
+    /// Every `NSSwitch`/`HelmToggle` in a view's subtree. `HelmToggle` is
+    /// treated as one atomic control rather than recursed into - it builds an
+    /// internal `NSSwitch` of its own (its pre-Daylight fallback shape), so
+    /// counting that too would double-count a single, correctly-used
+    /// `HelmToggle`.
+    private static func countSwitchControls(in view: NSView) -> Int {
+        if view is HelmToggle { return 1 }
+        var count = view is NSSwitch ? 1 : 0
+        for sub in view.subviews { count += countSwitchControls(in: sub) }
+        return count
     }
 
     private static func checkThemeSweep(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {

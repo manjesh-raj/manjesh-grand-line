@@ -35,7 +35,13 @@ final class CredentialVaultSettingsController: NSViewController {
 
     private let autoLockCard = HelmFieldCard(label: "Lock the vault after")
     private let clipboardCard = HelmFieldCard(label: "Clear clipboard after")
-    private let touchIDToggle = HelmToggle()
+    // `HelmToggleRow` already builds and owns its own switch - it is a
+    // self-contained control, not a label that needs an external toggle
+    // handed to it via `trailing:`. A prior version of this row passed a
+    // second, separate `HelmToggle` into `trailing:`, which rendered two
+    // switches for one setting. `touchIDRow.isOn` (and its own `.toggle` for
+    // the `isEnabled` gate) is the single source of truth.
+    private var touchIDRow: HelmToggleRow!
     private let currentPasswordField = HelmSecureTextField(placeholder: "Current master password")
     private let newPasswordField = HelmSecureTextField(placeholder: "New master password")
     private let confirmPasswordField = HelmSecureTextField(placeholder: "Confirm new master password")
@@ -71,16 +77,15 @@ final class CredentialVaultSettingsController: NSViewController {
         }
         sheet.addRow(autoLockCard)
 
-        touchIDToggle.isOn = settings.touchIDUnlockEnabled
-        touchIDToggle.isEnabled = touchIDAvailable
-        touchIDToggle.target = self
-        touchIDToggle.action = #selector(touchIDToggled)
         let touchIDRow = HelmToggleRow(
             title: "Unlock with Touch ID",
             subtitle: touchIDAvailable
                 ? "Stores your derived key - never your password - in this Mac's Keychain, for this device only. It does not travel to another machine, so the first unlock there is always your password."
-                : "This Mac has no biometry available.",
-            trailing: touchIDToggle)
+                : "This Mac has no biometry available.")
+        touchIDRow.isOn = settings.touchIDUnlockEnabled
+        touchIDRow.toggle.isEnabled = touchIDAvailable
+        touchIDRow.onToggle = { [weak self] in self?.touchIDToggled() }
+        self.touchIDRow = touchIDRow
         sheet.addRow(touchIDRow)
 
         sheet.addSection("Clipboard", number: "02")
@@ -192,8 +197,8 @@ final class CredentialVaultSettingsController: NSViewController {
 
     // MARK: Actions
 
-    @objc private func touchIDToggled() {
-        let wanted = touchIDToggle.isOn
+    private func touchIDToggled() {
+        let wanted = touchIDRow.isOn
         onSetTouchIDUnlock?(wanted) { [weak self] result in
             guard let self else { return }
             switch result {
@@ -201,7 +206,7 @@ final class CredentialVaultSettingsController: NSViewController {
                 self.settings.touchIDUnlockEnabled = wanted
             case .failure(let error):
                 // Spring back rather than showing a state that isn't real.
-                self.touchIDToggle.isOn = !wanted
+                self.touchIDRow.isOn = !wanted
                 self.showPasswordMessage(error.localizedDescription, tint: .critical)
             }
         }
@@ -233,7 +238,7 @@ final class CredentialVaultSettingsController: NSViewController {
                 self.currentPasswordField.stringValue = ""
                 self.newPasswordField.stringValue = ""
                 self.confirmPasswordField.stringValue = ""
-                self.touchIDToggle.isOn = false
+                self.touchIDRow.isOn = false
                 self.showPasswordMessage("Master password changed. Every credential is now encrypted under the new key.", tint: .good)
             case .failure(let error):
                 self.showPasswordMessage(error.localizedDescription, tint: .critical)
@@ -256,7 +261,7 @@ final class CredentialVaultSettingsController: NSViewController {
     }
 
     #if FM_SELFTESTS
-    var debugTouchIDToggle: HelmToggle { touchIDToggle }
+    var debugTouchIDRow: HelmToggleRow { touchIDRow }
     var debugCurrentPasswordField: HelmSecureTextField { currentPasswordField }
     var debugNewPasswordField: HelmSecureTextField { newPasswordField }
     var debugConfirmPasswordField: HelmSecureTextField { confirmPasswordField }
