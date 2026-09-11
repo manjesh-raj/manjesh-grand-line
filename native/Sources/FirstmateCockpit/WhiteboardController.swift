@@ -56,11 +56,19 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
     private var overlayState: HelmEmptyState?
 
     private let composer = WhiteboardComposerController()
+    /// The deterministic sibling of `composer` - same canvas, same sink, no
+    /// model. See `WhiteboardDSLPopover.swift`'s header for why it is a second
+    /// popover on this page rather than a destination of its own.
+    private let dsl = WhiteboardDSLController()
 
     private lazy var generateButton = HelmPageToolbar.labeledButton(
         symbol: "sparkles", title: "Generate diagram",
         tooltip: "Describe a diagram and have Claude draw it here",
         target: self, action: #selector(generateTapped))
+    private lazy var dslButton = HelmPageToolbar.labeledButton(
+        symbol: "point.topleft.down.to.point.bottomright.curvepath", title: "Draw from text",
+        tooltip: "Type a flowchart or sequence diagram and draw it instantly - no model, no waiting",
+        target: self, action: #selector(dslTapped))
     private lazy var fitButton = HelmPageToolbar.iconButton(
         symbol: "arrow.up.left.and.arrow.down.right",
         tooltip: "Fit the board to the window",
@@ -78,7 +86,10 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
 
     var onDrillSubtitleChanged: (() -> Void)?
 
-    var drillHeaderActions: [NSView] { [generateButton, fitButton, clearButton] }
+    /// `dslButton` leads, ahead of its AI sibling: it is the faster path and
+    /// the one that works offline, so it is the one to reach for first when
+    /// the captain already knows what connects to what.
+    var drillHeaderActions: [NSView] { [dslButton, generateButton, fitButton, clearButton] }
 
     var drillHeaderSubtitle: String? {
         if let lastError { return lastError }
@@ -131,6 +142,13 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
         composer.onBoardSnapshot = { [weak self] done in
             self?.snapshotBoard(completion: done)
         }
+        // The *same* sink the AI path uses, deliberately: one place turns a
+        // skeleton into elements on this canvas, so the two paths cannot drift
+        // apart about what "insert" means or how a canvas-side refusal is
+        // reported.
+        dsl.onInsert = { [weak self] elements, append, done in
+            self?.load(elements: elements, append: append, completion: done)
+        }
 
         ThemeManager.shared.observe { [weak self] theme in
             self?.theme = theme
@@ -149,6 +167,7 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
             showOverlay(symbol: "exclamationmark.triangle",
                         title: "No whiteboard bundle",
                         body: WhiteboardAssets.missingBundleMessage)
+            dslButton.isEnabled = false
             generateButton.isEnabled = false
             fitButton.isEnabled = false
             clearButton.isEnabled = false
@@ -167,6 +186,7 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
     override func viewWillDisappear() {
         super.viewWillDisappear()
         composer.close()
+        dsl.close()
     }
 
     // MARK: Canvas
@@ -236,7 +256,16 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
     // MARK: Actions
 
     @objc private func generateTapped() {
+        // One popover at a time: they write to the same board and both want
+        // the keyboard, so a second one opening over the first is confusing
+        // rather than useful.
+        dsl.close()
         composer.toggle(relativeTo: generateButton)
+    }
+
+    @objc private func dslTapped() {
+        composer.close()
+        dsl.toggle(relativeTo: dslButton)
     }
 
     /// The Straw Hat crew's "draw it out" handoff (phase 3, M3.1 / M3.2) -
