@@ -660,6 +660,13 @@ class HoverHighlightView: NSView {
         // `focusRingType = .none` on real controls, which is why even the
         // focusable ones showed nothing; a view that is a button by role has
         // to show where the keyboard is.
+        //
+        // B3 re-decides this on every `becomeFirstResponder` - see there -
+        // so this is only the value a view wears before it has ever been
+        // focused. It stays `.exterior` rather than `.none` so that a
+        // subclass or a future call site that focuses a view without going
+        // through `becomeFirstResponder` still shows a ring: erring toward
+        // *showing* focus is the direction GL-16 spent a phase establishing.
         focusRingType = .exterior
         #if FM_SELFTESTS
         Self.debugLiveInstanceCount += 1
@@ -755,7 +762,15 @@ class HoverHighlightView: NSView {
     override var acceptsFirstResponder: Bool { isActivatable }
     override var canBecomeKeyView: Bool { isActivatable && !isHiddenOrHasHiddenAncestor }
 
+    /// B3 (UI modernization audit §3B): a ring is for focus the captain
+    /// *moved*, never for focus the app handed out.
+    ///
+    /// Decided here rather than in `drawFocusRingMask` because that runs in a
+    /// later draw pass, by which point `NSApp.currentEvent` is no longer the
+    /// key event that moved focus - see `HelmFocusVisibility`'s header for the
+    /// whole mechanism, and for why this one class is the right scope.
     override func becomeFirstResponder() -> Bool {
+        focusRingType = HelmFocusVisibility.ringTypeForFocusBeingTaken
         noteFocusRingMaskChanged()
         return super.becomeFirstResponder()
     }

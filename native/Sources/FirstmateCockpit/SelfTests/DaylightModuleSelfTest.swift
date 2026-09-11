@@ -808,17 +808,30 @@ enum DaylightModuleSelfTest {
     // MARK: 6 - bar anatomy
 
     private static func checkBarAnatomy(_ ok: inout Bool) {
-        print("\n-- floating bar: \u{00A7}6.3's geometry, five pills, and no vibrancy --")
+        print("\n-- floating bar: \u{00A7}6.3's geometry, five pills, and no `.behindWindow` vibrancy --")
         let bar = DaylightBarController()
         bar.loadView()
         bar.view.frame = NSRect(x: 0, y: 0, width: 1200, height: DaylightBarController.height + DaylightBarController.topMargin)
         bar.view.layoutSubtreeIfNeeded()
 
         let geometry = bar.geometryForTests
-        // gotcha (8): the single most-repeated bug class in this codebase, and
-        // \u{00A7}6.3 rules it out by name for this exact surface.
-        if geometry.usesVisualEffect {
-            fail("the bar contains an NSVisualEffectView - \u{00A7}6.3 and AGENTS.md gotcha (8) both forbid it", &ok)
+        // gotcha (8): the single most-repeated bug class in this codebase.
+        //
+        // **This used to assert the bar contained no `NSVisualEffectView` at
+        // all.** The UI modernization audit's B1 corrected that reading:
+        // gotcha (8) is a finding about `.behindWindow`, which composites
+        // against the *desktop* and therefore renders the wrong tint on every
+        // theme. `.withinWindow` composites against this window's own content
+        // and is what the audit asks for here, with its own §6 constraint list
+        // keeping the `.behindWindow` ban intact by name. So the assertion is
+        // inverted to the thing that was actually true all along - and made
+        // stronger, because it now names the mode rather than the class.
+        //
+        // `checkBarMaterial` (in `BarNavigationModernizationSelfTest`) carries
+        // the other half: that the material is *present* on the Daylight
+        // family and *absent* on the twelve legacy palettes.
+        if geometry.visualEffectBlendingModes.contains(.behindWindow) {
+            fail("the bar contains a `.behindWindow` NSVisualEffectView - AGENTS.md gotcha (8) forbids it, and the audit's own \u{00A7}6 keeps that ban", &ok)
         }
         if abs(geometry.cornerRadius - HelmMetrics.dBar) > 0.01 {
             fail("bar radius \(geometry.cornerRadius), expected \(HelmMetrics.dBar)", &ok)
@@ -907,23 +920,28 @@ enum DaylightModuleSelfTest {
             fail("quick-access icons are \(buttons.map { $0.destination.title }), expected \(expected.map(\.title))", &ok)
         }
 
-        // The glyph is each destination's OWN symbol - or, for a destination
-        // carrying `drillHeaderArtwork` (only Straw Hat Pirates today), its
-        // own raster artwork - so the bar icon and the card it opens can
-        // never drift apart. A symbol name that does not resolve renders as
-        // an invisible button with no error anywhere, which this app has
-        // shipped before ("anchor", which is not an SF Symbol at all) - and
-        // `fm/strawhat-toolbar-shortcut-use-jolly-roger-icon-69c3` shipped a
-        // second flavour of the same class of bug: the bar icon silently
-        // falling back to a generic `person.3.fill` glyph instead of the
-        // Jolly Roger the drill header and the Overview card both show.
+        // The glyph is each destination's OWN symbol, so the bar icon and the
+        // page it opens can never drift apart. A symbol name that does not
+        // resolve renders as an invisible button with no error anywhere,
+        // which this app has shipped before ("anchor", which is not an SF
+        // Symbol at all).
+        //
+        // **This used to also assert `debugUsesArtwork == (drillHeaderArtwork
+        // != nil)`, i.e. that Straw Hat Pirates' bar icon rendered the Jolly
+        // Roger raster** (`fm/strawhat-toolbar-shortcut-use-jolly-roger-icon-
+        // 69c3`). The UI modernization audit's B2 reverses that deliberately:
+        // five saturated raster tiles between grey symbol squares is what it
+        // calls "the noisiest thing in the app", and its preferred fix
+        // reserves the artwork for the destination *pages*. So the assertion
+        // is inverted rather than deleted - every shortcut is a symbol now,
+        // and the artwork still has to be reachable from the same
+        // `RailDestination`, which is what the earlier fix was really about.
         for button in buttons {
             if !button.debugHasIcon {
                 fail("\(button.destination.title): its icon (symbol '\(button.destination.symbol)') did not resolve - the icon is invisible", &ok)
             }
-            let expectsArtwork = button.destination.drillHeaderArtwork != nil
-            if button.debugUsesArtwork != expectsArtwork {
-                fail("\(button.destination.title): debugUsesArtwork=\(button.debugUsesArtwork), expected \(expectsArtwork) to match RailDestination.drillHeaderArtwork", &ok)
+            if button.debugSymbolName != button.destination.symbol {
+                fail("\(button.destination.title): renders '\(button.debugSymbolName)', expected its own RailDestination.symbol '\(button.destination.symbol)'", &ok)
             }
             if button.accessibilityLabel() != button.destination.title {
                 fail("\(button.destination.title): accessibility label is \(button.accessibilityLabel() ?? "nil"), expected the destination title", &ok)

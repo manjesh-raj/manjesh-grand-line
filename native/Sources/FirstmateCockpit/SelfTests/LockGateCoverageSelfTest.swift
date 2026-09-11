@@ -176,7 +176,17 @@ enum LockGateCoverageSelfTest {
             if popoverExemptions.contains(where: { $0.file == name }) { continue }
             offenders.append(name)
         }
-        guard owners.count >= 9 else {
+        // 8, down from 9. The UI modernization audit's B5 turned the floating
+        // bar's three dropdowns (Recents, notifications, the avatar menu) into
+        // borderless `HelmBarPanel`s, so `RecentDestinationsPopover.swift`,
+        // `NotificationCenterPopover.swift` and `DaylightBarController.swift`
+        // no longer own an `NSPopover` at all - they register a secondary
+        // *window* instead, which is the correct gate for a panel and is
+        // asserted by `BarNavigationModernizationSelfTest`. This floor exists
+        // to catch "is this check looking in the wrong place", so the honest
+        // response to three genuine conversions is to lower it and say so
+        // rather than to leave a guard that now fails for the wrong reason.
+        guard owners.count >= 8 else {
             return "found only \(owners.count) files owning an NSPopover - has the app shrunk, "
                 + "or is this check looking in the wrong place?"
         }

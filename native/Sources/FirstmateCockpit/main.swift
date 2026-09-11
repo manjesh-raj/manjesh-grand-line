@@ -1843,6 +1843,15 @@ if ProcessInfo.processInfo.environment["FM_RUN_WINDOW_CHROME_FUSION_TESTS"] == "
     exit(WindowChromeFusionSelfTest.run() ? 0 : 1)
 }
 
+// The UI modernization audit's B1-B5: the bar's material, its icon row, the
+// launch-time focus ring, the navigation transition, and the three bar
+// dropdowns becoming borderless panels. Window-backed - the focus ring, the
+// panel anchoring and the transition are all questions about a real window.
+// See BarNavigationModernizationSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_BAR_NAV_MODERNIZATION_TESTS"] == "1" {
+    exit(BarNavigationModernizationSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_MODULE_TESTS"] == "1" {
     exit(DaylightModuleSelfTest.run() ? 0 : 1)
 }

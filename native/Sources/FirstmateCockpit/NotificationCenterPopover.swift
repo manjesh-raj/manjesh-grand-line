@@ -1,14 +1,15 @@
 // Manjesh Grand Line - native macOS app.
 //
-// The topbar bell + its dropdown panel (`fm/grandline-notification-center`,
+// The bar's bell + its dropdown panel (`fm/grandline-notification-center`,
 // captain-approved design: `data/grandline-notification-center/design-
-// reference.html`). Sits between `TopBarController`'s existing `searchPill`
-// and `themeButton` - the design doc's own annotated screenshot shows
-// exactly this gap. Structurally mirrors `ConsoleComposerPopover.swift`/
-// `QuotaUsagePopover.swift` (transient `NSPopover`, live `ThemeManager`
-// observation, a `wantsLayer` root with an explicit theme background per
-// AGENTS.md gotcha #8) - the same "small card off a topbar/toolbar icon"
-// idiom this app already uses twice, not a new UI pattern.
+// reference.html`). Sits between the theme toggle and the avatar - the design
+// doc's own annotated screenshot shows exactly this gap.
+//
+// **B5 (UI modernization audit §3B): the chrome is a `HelmBarPanel` now, not
+// an `NSPopover`** - a borderless, radius-16, arrow-less panel anchored under
+// the bell, styled like the ⌘K palette. The panel content below is unchanged;
+// only what draws the box around it moved. See `HelmBarPanel`'s header for
+// why, and for where the lock gate went.
 //
 // `NotificationBellButton` is a plain `NSButton` styled like `TopBarController.
 // themeButton`, with a small badge overlay reusing `IconRailController.
@@ -17,29 +18,35 @@
 // per that method's own doc comment) rather than inventing a second badge
 // visual language.
 //
-// `fm/grandline-notification-bell-badge-fix` shipped the badge 2pt outside
-// the button's own top-right corner (down from an original 5pt) - still not
-// enough, per a second captain screenshot: at a 34x34 box with a 9pt corner
-// radius, the rounded curve starts well before the flat edges, so *any*
-// small overlap positioned at that diagonal corner point cuts across the
-// curve itself. This is the exact same lesson `IconRailController.
-// attachBadge` already learned the hard way (see its own doc comment/
-// AGENTS.md's `fm/grandline-rail-followup-fixes` history) - two overlap-
-// tuning attempts there still collided with an icon's ink, and the only fix
-// that actually worked was to stop overlapping the icon's box at all.
-// `fm/grandline-notification-bell-badge-fix-2` applies that same shape here:
-// the *visible bordered square* (`iconBackground`) stays a fixed 34x34 -
-// matching `themeButton` exactly - while the button's own overall frame
-// (`NotificationBellButton.controlWidth`) is widened so the badge
-// (`badgeContainer`) can sit fully to the icon's right (`iconBackground.
-// trailingAnchor + 3`, never overlapping its frame) with its vertical
-// center pinned near the icon's own top edge, mirroring `attachBadge`'s
-// `iconAnchor.trailingAnchor + 3` / `iconAnchor.topAnchor + 2` constants
-// exactly. `TopBarController`'s width constant for the bell grew to match;
-// its leading/trailing anchor formulas relative to `searchPill`/`themeButton`
-// were deliberately left untouched (see that file's own comment) so the
-// bell's visible icon square keeps the same 10pt gap to `searchPill` it
-// always had - only the reserved zone to the icon's right changed.
+// **The badge, and why it moved twice.** `fm/grandline-notification-bell-
+// badge-fix` shipped it 2pt outside the button's own top-right corner (down
+// from 5pt) and that still collided with the square's rounded curve: at a
+// 34x34 box with a 9pt corner radius the curve starts well before the flat
+// edges, so *any* small overlap positioned at that diagonal corner cuts
+// across it. `fm/grandline-notification-bell-badge-fix-2` took the lesson
+// `IconRailController.attachBadge` had already learned the hard way and
+// stopped overlapping the square at all - widening the button's own frame
+// (`controlWidth`) so the badge could sit entirely to the icon's right.
+//
+// **B2 (UI modernization audit §3B) moves it back inside, and the distinction
+// that makes that work is the one both earlier fixes were missing**: the
+// audit asks for "a Tahoe-style small dot/count attached to the **symbol's**
+// corner", and a symbol's corner is not the square's corner. The glyph is a
+// 14pt image centred in a 34pt tile, so its top-trailing corner sits well
+// inside the tile's flat edges - nowhere near the radius that defeated both
+// previous attempts. A 1.5pt ring in the tile's own fill separates the badge
+// from whatever it overlaps, which is the standard treatment and is what lets
+// it sit *on* the glyph rather than beside it.
+//
+// That also delivers the other half of B2 for free: with the outboard badge
+// zone gone, `controlWidth == iconSize`, so the bell, the theme toggle and
+// the Recents button are three identical 34x34 squares - "the History and
+// theme buttons should match the bell's square", by construction rather than
+// by three constants agreeing.
+//
+// The count is abbreviated at 10 ("9+") rather than 100 ("99+"): a badge that
+// has to stay inside a 34pt tile has room for one digit, and the exact number
+// is still spoken by the accessibility label and listed in full in the panel.
 //
 // The panel itself is a plain `NSStackView` of rows, rebuilt in place on
 // every `GrandLineNotificationCenter.observe` firing (the list is always
@@ -74,32 +81,33 @@ import AppKit
 /// The bell icon itself - lives in `TopBarController`, badge count driven by
 /// `NotificationCenterController`.
 ///
-/// The button's own frame (`NotificationBellButton.controlWidth` wide) is
-/// deliberately wider than the visible icon square: `iconBackground` is the
-/// real, bordered 34x34 surface (matching `themeButton` exactly, so the two
-/// read as the same shape), pinned to the button's leading edge, and the
-/// badge lives entirely in the extra width to its right - see the file
-/// header comment for why an overlapping badge can never look clean at this
-/// corner radius. The whole widened frame stays the click target (same as
-/// before this fix, when the whole 34x34 square was one button) - clicking
-/// in the reserved badge zone still opens the panel.
+/// B2: the button's frame *is* the 34x34 square, the same shape every other
+/// icon control on the bar wears, and the badge sits on the glyph's own
+/// top-trailing corner inside it - see the file header for why that corner
+/// works where the tile's own corner did not.
 final class NotificationBellButton: NSButton {
     /// The visible, bordered icon square's fixed size - matches
-    /// `TopBarController.themeButton` exactly.
+    /// `DaylightBarIconButton.side` exactly.
     static let iconSize: CGFloat = 34
-    /// Real clearance between the icon square's own trailing edge and the
-    /// badge, mirroring `IconRailController.attachBadge`'s `+ 3` gap.
-    private static let badgeGap: CGFloat = 3
-    /// Reserved width for the badge zone - comfortably fits "99+" at the
-    /// badge's own 9pt bold monospaced-digit font with room to spare, so the
-    /// badge never needs to grow into (or short of) exactly this space.
-    /// Measured live: a real "99+" badge (4pt padding each side) renders
-    /// ~31pt wide - 32pt leaves a hair of clearance with no overflow past
-    /// the button's own declared frame.
-    private static let badgeZoneWidth: CGFloat = 32
-    /// The button's total width: the icon square, the gap, and the reserved
-    /// badge zone. `TopBarController` sizes the bell to exactly this.
-    static let controlWidth: CGFloat = iconSize + badgeGap + badgeZoneWidth
+    /// B2: the button *is* the square now. The outboard badge zone this used
+    /// to reserve is gone, which is what makes the bell, the theme toggle and
+    /// the Recents button one shape rather than three that happen to share a
+    /// fill. Kept as its own name because `DaylightBarController` sizes the
+    /// bell by it and reads better saying what it means.
+    static let controlWidth: CGFloat = iconSize
+    /// The badge's diameter. Small enough to sit on the glyph's corner inside
+    /// a 34pt tile and still carry a digit at `badgeFontSize`.
+    static let badgeSide: CGFloat = 15
+    private static let badgeFontSize: CGFloat = 9
+    /// The ring that separates the badge from whatever it overlaps, drawn in
+    /// the tile's own fill. Without it a red disc on a bell glyph reads as
+    /// part of the glyph.
+    private static let badgeRingWidth: CGFloat = 1.5
+    /// How far the badge is inset from the tile's top/trailing edges. Puts it
+    /// on the *symbol's* corner - the 14pt glyph's own bounds - rather than on
+    /// the tile's 9pt radius, which is what defeated both previous attempts at
+    /// an attached badge (see the file header).
+    private static let badgeInset: CGFloat = 3
 
     private let iconBackground = NSView()
     private let iconImageView = NSImageView()
@@ -128,14 +136,19 @@ final class NotificationBellButton: NSButton {
         iconImageView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(iconImageView)
 
-        badgeLabel.font = .monospacedDigitSystemFont(ofSize: 9, weight: .bold)
+        badgeLabel.font = .monospacedDigitSystemFont(ofSize: Self.badgeFontSize, weight: .bold)
         badgeLabel.textColor = .white
         badgeLabel.alignment = .center
         badgeLabel.translatesAutoresizingMaskIntoConstraints = false
 
         badgeContainer.wantsLayer = true
-        badgeContainer.layer?.cornerRadius = 8
+        badgeContainer.layer?.cornerRadius = Self.badgeSide / 2
+        // Fixed white-on-systemRed, never a theme tint - `IconRailController.
+        // attachBadge`'s own convention, kept verbatim: an alert should read
+        // the same way regardless of which of the 14 palettes is active, the
+        // way macOS never re-tints a Dock badge either.
         badgeContainer.layer?.backgroundColor = NSColor.systemRed.cgColor
+        badgeContainer.layer?.borderWidth = Self.badgeRingWidth
         badgeContainer.translatesAutoresizingMaskIntoConstraints = false
         badgeContainer.isHidden = true
         badgeContainer.addSubview(badgeLabel)
@@ -150,18 +163,17 @@ final class NotificationBellButton: NSButton {
             iconImageView.centerXAnchor.constraint(equalTo: iconBackground.centerXAnchor),
             iconImageView.centerYAnchor.constraint(equalTo: iconBackground.centerYAnchor),
 
-            badgeLabel.leadingAnchor.constraint(equalTo: badgeContainer.leadingAnchor, constant: 4),
-            badgeLabel.trailingAnchor.constraint(equalTo: badgeContainer.trailingAnchor, constant: -4),
-            badgeLabel.topAnchor.constraint(equalTo: badgeContainer.topAnchor, constant: 1),
-            badgeLabel.bottomAnchor.constraint(equalTo: badgeContainer.bottomAnchor, constant: -1),
-            badgeContainer.heightAnchor.constraint(equalToConstant: 16),
-            badgeContainer.widthAnchor.constraint(greaterThanOrEqualToConstant: 16),
-            // Entirely to the icon square's right, never overlapping its
-            // frame - the same shape as `IconRailController.attachBadge`'s
-            // own fix for this exact class of bug (see the file header and
-            // that method's own doc comment for the full history).
-            badgeContainer.leadingAnchor.constraint(equalTo: iconBackground.trailingAnchor, constant: Self.badgeGap),
-            badgeContainer.centerYAnchor.constraint(equalTo: iconBackground.topAnchor, constant: 2),
+            badgeLabel.centerXAnchor.constraint(equalTo: badgeContainer.centerXAnchor),
+            badgeLabel.centerYAnchor.constraint(equalTo: badgeContainer.centerYAnchor),
+            badgeContainer.heightAnchor.constraint(equalToConstant: Self.badgeSide),
+            badgeContainer.widthAnchor.constraint(equalToConstant: Self.badgeSide),
+            // B2: on the glyph's corner, inside the tile. A fixed square
+            // (rather than a width that grows with the label) is what keeps it
+            // a *badge* - the count is abbreviated to fit, see `setBadgeCount`.
+            badgeContainer.trailingAnchor.constraint(equalTo: iconBackground.trailingAnchor,
+                                                     constant: -Self.badgeInset),
+            badgeContainer.topAnchor.constraint(equalTo: iconBackground.topAnchor,
+                                                constant: Self.badgeInset),
         ])
     }
 
@@ -174,7 +186,10 @@ final class NotificationBellButton: NSButton {
     func setBadgeCount(_ count: Int) {
         badgeContainer.isHidden = count <= 0
         if count > 0 {
-            badgeLabel.stringValue = count > 99 ? "99+" : "\(count)"
+            // One digit is what fits on a 15pt badge sitting inside a 34pt
+            // tile; the exact count is spoken below and listed in full in the
+            // panel, so nothing is lost that the captain cannot reach.
+            badgeLabel.stringValue = count > 9 ? "9+" : "\(count)"
         }
         // A1: the badge is the app's primary "something needs you" signal, and
         // it used to be sighted-only - the label was set once at construction,
@@ -200,47 +215,55 @@ final class NotificationBellButton: NSButton {
     }
 
     func applyTheme(ink: NSColor, line: NSColor, surface: NSColor) {
-        iconImageView.contentTintColor = ink.withAlphaComponent(0.75)
+        iconImageView.contentTintColor = ink.withAlphaComponent(DaylightBarIconButton.restingGlyphAlpha)
         iconBackground.layer?.backgroundColor = surface.cgColor
         iconBackground.layer?.borderWidth = 1
         iconBackground.layer?.borderColor = line.withAlphaComponent(0.5).cgColor
+        // The badge's ring is the tile it sits on, so the badge reads as
+        // floating above the glyph rather than merged into it. Theme-derived
+        // for that reason only - the disc itself stays systemRed on all 14.
+        badgeContainer.layer?.borderColor = surface.cgColor
     }
+
+    #if FM_SELFTESTS
+    /// B2: the badge's real frame in the button's own coordinates, so a suite
+    /// can assert it sits inside the tile rather than beside it.
+    var debugBadgeFrame: NSRect { badgeContainer.frame }
+    var debugBadgeIsHidden: Bool { badgeContainer.isHidden }
+    var debugBadgeText: String { badgeLabel.stringValue }
+    var debugIconFrame: NSRect { iconBackground.frame }
+    var debugIconFrameRadius: CGFloat { iconBackground.layer?.cornerRadius ?? -1 }
+    #endif
 }
 
 /// Owns the popover, the bell's live badge count, and the panel content -
 /// the topbar's counterpart to `ConsoleComposerController`/
 /// `QuotaUsageController`.
-final class NotificationCenterController: NSObject, NSPopoverDelegate {
+final class NotificationCenterController: NSObject {
     let bell = NotificationBellButton()
 
-    private let popover = NSPopover()
+    /// B5: a borderless `HelmBarPanel` rather than a stock `NSPopover` - see
+    /// that type's header. It owns the window chrome, the theme, the lock
+    /// registration and dismissal; this controller keeps what it always
+    /// had - the bell, its badge count, and the panel content.
+    private let panel: HelmBarPanel
     private let content = NotificationPanelViewController()
     private var themeObservation: ThemeObservation?
     private var storeObservation: NotificationCenterObservation?
 
     override init() {
+        panel = HelmBarPanel(content: content)
         super.init()
-        // Audit 2 §2.7/§6.2: a popover is its own window, layered above the
-        // lock overlay, so anything open when the lock fires would stay
-        // readable and interactive over the lock screen (§5.1(b)'s harm, of
-        // which the incident card was one instance). Weak, because there is
-        // no unregister.
-        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.popover }
-        popover.contentViewController = content
-        popover.behavior = .transient
-        popover.delegate = self
         bell.target = self
         bell.action = #selector(bellClicked)
         content.onSizeChanged = { [weak self] size in
-            self?.popover.contentSize = size
+            self?.panel.setContentSize(size)
         }
         content.onRequestClose = { [weak self] in
-            self?.popover.performClose(nil)
+            self?.panel.close()
         }
         themeObservation = ThemeManager.shared.observe { [weak self] theme in
-            guard let self else { return }
-            self.popover.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
-            self.content.applyTheme(theme)
+            self?.content.applyTheme(theme)
         }
         // Fires immediately on registration too, so the bell's badge is
         // correct before the captain ever opens the panel - every source's
@@ -249,28 +272,24 @@ final class NotificationCenterController: NSObject, NSPopoverDelegate {
         storeObservation = GrandLineNotificationCenter.shared.observe { [weak self] in
             guard let self else { return }
             self.bell.setBadgeCount(GrandLineNotificationCenter.shared.badgeCount)
-            if self.popover.isShown { self.content.reload() }
+            if self.panel.isShown { self.content.reload() }
         }
     }
 
     @objc private func bellClicked() {
-        if popover.isShown {
-            popover.performClose(nil)
+        if panel.isShown {
+            panel.close()
         } else {
             content.reload()
-            // Anchor on the visible icon square, not the wider control frame
-            // (which now includes the reserved badge zone) - keeps the panel
-            // lined up under the icon exactly like before this fix.
-            popover.show(relativeTo: bell.visibleIconFrame, of: bell, preferredEdge: .minY)
+            panel.show(under: bell)
         }
     }
 
-    func popoverDidClose(_ notification: Notification) {}
-
     #if FM_SELFTESTS
     /// The panel content itself, so a suite can drive the real header action
-    /// and the real rows without having to show a popover.
+    /// and the real rows without having to put a real window on screen.
     var debugPanelController: NSViewController { content }
+    var debugPanel: HelmBarPanel { panel }
     #endif
 }
 

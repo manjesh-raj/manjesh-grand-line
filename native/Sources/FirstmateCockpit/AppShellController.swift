@@ -1412,6 +1412,11 @@ final class AppShellController: NSViewController {
     /// after connecting the Firstmate console, so the new tab is visible
     /// immediately instead of landing silently in the background.
     func show(_ dest: RailDestination) {
+        // B4 (UI modernization audit §3B): the report asks for the transition
+        // to be "skipped when the destination is already visible", and this is
+        // the only point where that is still knowable - `hideAllDestinations()`
+        // one line down erases it.
+        let wasAlreadyShowing = currentDestinationKind == .rail(dest)
         hideAllDestinations()
 
         // GL-37: one table lookup replaces the fifteen-case switch this used
@@ -1478,9 +1483,131 @@ final class AppShellController: NSViewController {
             bar.setSelectedSpace(homeCanvas.selectedSpace)
         }
 
+        // B2: light this destination's own quick-access shortcut, if it has
+        // one, and darken whichever was lit before. Pushed from here for the
+        // same reason `setSelectedSpace` is - the bar draws state, it does not
+        // track navigation.
+        bar.setActiveDestination(dest)
+
+        // B4: the page arrives rather than teleporting. Nothing above this
+        // line knows or cares that it animates; see `animateDestinationEntrance`.
+        animateDestinationEntrance(slot.controller.view,
+                                   direction: dest == .homeCanvas ? .back : .drillIn,
+                                   skip: wasAlreadyShowing)
+
         // §8 Phase 6: which destination is showing decides where the bar's
         // chain hands off, so the loop is re-derived on every navigation.
         updateKeyViewLoop()
+    }
+
+    // MARK: B4 - the navigation transition
+
+    /// Which way a navigation reads, and therefore which way the incoming page
+    /// slides in from.
+    enum TransitionDirection {
+        /// Going deeper: the page enters from the trailing side and settles
+        /// leftward, the way a push reads.
+        case drillIn
+        /// Coming back out to the hub: the mirror image.
+        case back
+
+        var entryOffset: CGFloat {
+            switch self {
+            case .drillIn: return AppShellController.destinationTransitionOffset
+            case .back: return -AppShellController.destinationTransitionOffset
+            }
+        }
+    }
+
+    /// §3B B4's spec, measured from its own text: "a 150-200ms crossfade + 8-12pt
+    /// slide".
+    static let destinationTransitionDuration: TimeInterval = 0.18
+    static let destinationTransitionOffset: CGFloat = 10
+
+    #if FM_SELFTESTS
+    /// What the last navigation decided. The *decision* (which direction, and
+    /// whether it was skipped) is not otherwise observable once the animation
+    /// has settled, and "was this skipped?" is exactly what B4's own text asks
+    /// to be true - so it is recorded rather than inferred from a frame read
+    /// that would be identical either way a moment later.
+    /// `entryOffset` is what was actually applied, not what the direction
+    /// *would* give: a frame read cannot answer this, because
+    /// `NSAnimationContext.runAnimationGroup`'s body runs synchronously, so
+    /// the model transform is already back at identity by the time this method
+    /// returns. The animation's own existence on the layer is what the suite
+    /// checks alongside this.
+    private(set) var lastTransitionForTests: (direction: TransitionDirection, skipped: Bool,
+                                              reducedMotion: Bool, entryOffset: CGFloat)?
+    #endif
+
+    /// B4: fade and slide a freshly-shown destination in.
+    ///
+    /// **What the report asks for, and the one place this deviates.** §3B B4
+    /// describes "outgoing view fades to 0 / incoming from 0". This animates
+    /// the incoming page only, and hides the outgoing one immediately exactly
+    /// as `hideAllDestinations()` always did. The reason is not effort: three
+    /// things in this shell ask "which destination is on screen?" by looking
+    /// for the one mounted view that is not hidden -
+    /// `visibleDestinationView()` (which feeds `firstBodyKeyView()` and
+    /// therefore the whole key view loop, and which returns the *first* match),
+    /// plus accessibility and hit-testing. Keeping a second destination
+    /// visible for 180ms makes all three temporarily answer wrong, and the
+    /// alternative - snapshotting the outgoing page into a throwaway layer -
+    /// puts a full-page `cacheDisplay` on the main thread on every single
+    /// navigation, which is precisely the class of cost the same audit's §3
+    /// energy work went looking for. Both pages are opaque and cover the same
+    /// rect, so a true crossfade would render them muddled through each other
+    /// for those 180ms rather than reading cleaner; a page fading and sliding
+    /// in over the app's own ground is the motion the finding describes,
+    /// minus a double render.
+    ///
+    /// Gated through `HelmMotion`, which per its own rule means the end state
+    /// *instantly* - never the same motion, slower.
+    private func animateDestinationEntrance(_ destinationView: NSView,
+                                            direction: TransitionDirection,
+                                            skip: Bool) {
+        // A navigation to the page already showing is not a navigation. It
+        // still re-runs everything else `show(_:)` does (a Setup tab switch, a
+        // drill-header refresh), it just does not re-announce itself.
+        #if FM_SELFTESTS
+        lastTransitionForTests = (direction: direction, skipped: skip,
+                                  reducedMotion: HelmMotion.isReduced,
+                                  entryOffset: skip || HelmMotion.isReduced ? 0 : direction.entryOffset)
+        #endif
+        guard !skip else {
+            destinationView.alphaValue = 1
+            destinationView.layer?.transform = CATransform3DIdentity
+            return
+        }
+        guard !HelmMotion.isReduced else {
+            destinationView.alphaValue = 1
+            destinationView.layer?.transform = CATransform3DIdentity
+            return
+        }
+
+        // Snap to the entry state. `CATransaction` with actions disabled,
+        // because a view-backed layer's `transform` would otherwise pick up
+        // Core Animation's default implicit animation and slide *into* the
+        // start position (`HelmMotion.withoutImplicitAnimation` is the same
+        // mechanism, but it is deliberately Reduce-Motion-gated and this has
+        // to happen in both states).
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        destinationView.alphaValue = 0
+        destinationView.layer?.transform = CATransform3DMakeTranslation(direction.entryOffset, 0, 0)
+        CATransaction.commit()
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Self.destinationTransitionDuration
+            // One ease-out, which is the audit's §3L motion spec's own second
+            // curve ("one spring ... and one ease-out (0.15s) as the only two
+            // curves"). A spring belongs on a gesture-driven or interruptible
+            // move; a 180pt-per-second settle into place does not need one.
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            context.allowsImplicitAnimation = true
+            destinationView.animator().alphaValue = 1
+            destinationView.layer?.transform = CATransform3DIdentity
+        }
     }
 
     // MARK: Key view loop (Daylight section 8, Phase 6)
@@ -1513,8 +1640,35 @@ final class AppShellController: NSViewController {
         // when collapsed, because `keyViewChain` filters hidden views.
         let chain = bar.keyViewChain + (sessionStrip.isHidden ? [] : sessionStrip.keyViewChain)
         for (from, to) in zip(chain, chain.dropFirst()) { from.nextKeyView = to }
-        chain.last?.nextKeyView = firstBodyKeyView()
-        if window.initialFirstResponder == nil { window.initialFirstResponder = chain.first }
+        let body = firstBodyKeyView()
+        chain.last?.nextKeyView = body
+
+        // B3 (UI modernization audit §3B, and its own bug appendix item 3):
+        // the *page*, not the chrome.
+        //
+        // This used to be `chain.first`, set once - and `chain` starts with
+        // the bar, so the first space pill became the window's initial first
+        // responder at launch and wore a focus ring beside a differently
+        // decorated *selected* pill. The audit's report puts it plainly: "a
+        // launch-time ring on a mouse-driven UI reads as a glitch", and it is
+        // visible in every one of its ~95 captures.
+        //
+        // Two halves, and both are needed. This is the first: focus lands on
+        // the showing destination (the canvas at launch), which is where a
+        // captain reaching for the keyboard actually wants to start, and
+        // leaves the navigation chrome to be *reached* by Tab rather than
+        // occupied by default. The second is `HelmFocusVisibility`, which
+        // stops any of this painting a ring for focus nobody moved - without
+        // it, this change would only move the stray launch ring from a pill
+        // onto the canvas's first module card.
+        //
+        // Re-set on every navigation rather than only when nil: it is read
+        // when the window first becomes key, so the value that matters is
+        // whatever was showing by then, and writing it again afterwards is
+        // harmless. `chain.first` remains the fallback for a destination with
+        // nothing focusable in it yet (a page still fetching) - which is safe
+        // now precisely because of that second half.
+        window.initialFirstResponder = body ?? chain.first
     }
 
     /// The first thing below the bar the keyboard should reach: the showing
@@ -1999,8 +2153,15 @@ final class AppShellController: NSViewController {
     /// the registry's active session and the focused terminal can never
     /// disagree about which of them is showing.
     private func revealHostConsole(_ controller: ConsoleController, hostID: UUID, label: String) {
+        let wasAlreadyShowing = currentDestinationKind == .host(id: hostID, label: label)
         hideAllDestinations()
         controller.view.isHidden = false
+        // B2: a host page is not a `RailDestination` at all, so no quick-access
+        // shortcut corresponds to it - clear whichever was lit rather than
+        // leaving the last visited destination's icon asserting it is current.
+        bar.setActiveDestination(nil)
+        // B4: a host page is a drill-in like any other.
+        animateDestinationEntrance(controller.view, direction: .drillIn, skip: wasAlreadyShowing)
         // `fm/grandline-recents-navigation`: a saved host's own page is one of
         // the destinations the captain explicitly wants tracked - this is the
         // one place both a fresh connect and switching back into a live
