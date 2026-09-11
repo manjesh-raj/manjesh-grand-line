@@ -15,13 +15,41 @@
 // owns navigation. That split is what keeps §5.3's rule true - "no store,
 // poller or registry knows spaces exist".
 //
-// **No `NSVisualEffectView`, and this is not a stylistic call.** The
-// prototype's bar is blurred glass; AGENTS.md gotcha (8) is this codebase's
-// single most-repeated bug class, and `.behindWindow` vibrancy composites
-// against the *desktop*, not against the window's own content, so a bar built
-// that way renders the wrong tint on every theme. §6.3 says so explicitly:
-// "a solid fill with a shadow reads 95% the same. The blur in the prototype
-// is a web nicety, not a requirement."
+// **The material, and the gotcha it is careful not to be** (UI modernization
+// audit B1, `data/grandline-ui-modernization-audit/report.md` §3B).
+//
+// This bar shipped with a flat opaque fill and a comment explaining why: the
+// prototype's bar is blurred glass, AGENTS.md gotcha (8) is this codebase's
+// single most-repeated bug class, and §6.3 concluded "a solid fill with a
+// shadow reads 95% the same. The blur in the prototype is a web nicety."
+//
+// That reasoning holds for exactly the material it was about. Gotcha (8) is a
+// finding about **`.behindWindow`** vibrancy on a full-size root: that mode
+// composites against the *desktop*, so a bar built with it renders whatever
+// is behind the window rather than the theme. `.withinWindow` is a different
+// mode that composites against **this window's own content**, which is the
+// correct behaviour for chrome floating over a page - and the audit's own §6
+// constraint list keeps gotcha (8) intact by name while asking for this one.
+//
+// So: `materialView` is an `NSVisualEffectView(.withinWindow)` behind the
+// bar's rounded mask, **on the Daylight family only**. The twelve legacy
+// palettes keep the byte-for-byte opaque fill they have always had - B1 says
+// so explicitly ("their surfaces are already near-black; translucency buys
+// little and risks the documented tint bugs"), and it is also what keeps this
+// out of the contrast suite's way on the twelve palettes whose chrome/page
+// tokens are furthest apart.
+//
+// **What it composites against today, stated rather than implied.**
+// `AppShellController` still starts `bodyContainer` at
+// `reservedTopHeight`, so a page's content does not yet slide *under* this
+// bar - the material blends against the page ground this controller's own
+// root paints. On the Daylight family that ground (`paper`) and the bar's own
+// fill (`card`) are near neighbours by design, which is what keeps the bar's
+// text contrast where `HelmContrastSelfTest` already measured it while the
+// material still does its own luminance/vibrancy work. Making content
+// genuinely scroll beneath the bar means starting `bodyContainer` at the
+// window's top edge and insetting ~24 destinations, which no finding in §3B
+// asks for; the material is correct now and correct then.
 //
 // **Window-size safety (AGENTS.md gotcha (13)).** A window only holds its own
 // size at priority 500, so any content constraint above that is a window-width
@@ -139,6 +167,24 @@ final class DaylightBarController: NSViewController {
     let notificationCenter = NotificationCenterController()
 
     private let bar = NSView()
+    /// B1: the `.withinWindow` material behind the bar's own rounded mask.
+    ///
+    /// Hidden outright on the twelve legacy palettes, so those keep the exact
+    /// opaque fill they always had - see this file's header for why that split
+    /// is the finding's own, not a hedge.
+    private let materialView = NSVisualEffectView()
+    /// B1: how much of the bar's own `chromeBackgroundHex` sits on top of the
+    /// material on the Daylight family.
+    ///
+    /// Not a guess at "how glassy should it look" - it is the number that lets
+    /// the material read while keeping the bar's text contrast inside the
+    /// margin `HelmContrastSelfTest` already measured against a fully opaque
+    /// `chromeBackgroundHex`. The material composites against the page ground
+    /// (`paper`), and on this family `paper` and `card` are near neighbours, so
+    /// the worst case for any label on this bar is a fill somewhere on the
+    /// short segment between them. `checkBarMaterial` measures that rather
+    /// than trusting it.
+    static let daylightFillAlpha: CGFloat = 0.72
     private let logoTile = HelmGradientTile(size: .logo)
     private let wordmark = NSTextField(labelWithString: "Grand Line")
     /// A2: the drill page's back-chevron + tile + title, in the leading area
@@ -209,7 +255,10 @@ final class DaylightBarController: NSViewController {
     var onSelectDestination: ((RailDestination) -> Void)?
     private let avatar = HoverTrackingButton()
     private let avatarGradient = CAGradientLayer()
-    private let avatarPopover = NSPopover()
+    /// B5: a borderless `HelmBarPanel`, like the bell's and Recents' - see
+    /// that type's header. Built lazily because it hosts a view controller and
+    /// this one is constructed before `loadView`.
+    private var avatarPanel: HelmBarPanel?
 
     private var pills: [SpacePill] = []
     private var selectedSpace: DaylightSpace = .overview
@@ -236,10 +285,6 @@ final class DaylightBarController: NSViewController {
     // MARK: Build
 
     override func loadView() {
-        // Audit 2 §2.7/§6.2: closed on the way into the lock like every
-        // other popover in the app - a popover is its own window, layered
-        // above the lock overlay. Weak, because there is no unregister.
-        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.avatarPopover }
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 1100, height: Self.height + Self.topMargin))
         root.wantsLayer = true
         view = root
@@ -253,6 +298,47 @@ final class DaylightBarController: NSViewController {
         bar.layer?.cornerRadius = HelmMetrics.dBar
         bar.layer?.borderWidth = 1
         root.addSubview(bar)
+
+        // B1. Added first, so it sits behind every control the bar carries.
+        // `bar` itself must not clip (it is the shadow host), so the material
+        // carries its own rounded mask - the same two-layer arrangement
+        // `HelmComposerCard`/`HelmModuleCard` already use for "a shadow
+        // outside, a clip inside".
+        materialView.blendingMode = .withinWindow
+        // `.headerView`, where B1's own text says ".hudWindow-ish". That
+        // "-ish" is doing real work: `.hudWindow` is the material for HUD
+        // *panels*, which macOS renders dark by convention, and this bar is
+        // light on the flagship theme. `.headerView` is the documented
+        // semantic for a bar across the top of a window - which is exactly
+        // what this is - and resolves light in `.aqua` and dark in
+        // `.darkAqua`, matching the family split the bar already forces
+        // through `followHelmTheme`.
+        //
+        // Stated because it could not be checked by eye:
+        // `NSVisualEffectView` is composited by the window server, so
+        // `cacheDisplay` (this repo's screenshot substitute) captures a flat
+        // placeholder for it, and launching a real build is forbidden here -
+        // the captain's own instance shares this bundle identity. So the
+        // material is chosen by semantics and the *risk* is bounded by
+        // measurement instead: see `daylightFillAlpha`, and
+        // `BarNavigationModernizationSelfTest`'s contrast check, which holds
+        // for any blend of `card` and `paper` this material can produce.
+        materialView.material = .headerView
+        // `.active`, not the default `.followsWindowActiveState`: this is
+        // window chrome, and chrome that goes flat the moment the captain
+        // clicks another app reads as broken rather than as inactive.
+        materialView.state = .active
+        materialView.wantsLayer = true
+        materialView.layer?.cornerRadius = HelmMetrics.dBar
+        materialView.layer?.masksToBounds = true
+        materialView.translatesAutoresizingMaskIntoConstraints = false
+        bar.addSubview(materialView)
+        NSLayoutConstraint.activate([
+            materialView.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
+            materialView.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
+            materialView.topAnchor.constraint(equalTo: bar.topAnchor),
+            materialView.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
+        ])
 
         logoTile.configure(symbol: "sailboat.fill", hue: .blue)
         wordmark.font = HelmType.rounded(HelmType.scaled(14.5), .heavy)
@@ -686,6 +772,30 @@ final class DaylightBarController: NSViewController {
         return chain.filter { !$0.isHiddenOrHasHiddenAncestor }
     }
 
+    /// Every plain icon square on this bar, in visual order. `notificationCenter.bell`
+    /// is deliberately not here - it is a `NotificationBellButton`, which owns
+    /// its own badge geometry and its own `applyTheme`.
+    private var iconSquares: [DaylightBarIconButton] {
+        [recentDestinations.button, stickyBoardButton, codePreviewButton,
+         tasksButton, strawHatButton, poneglyphButton, themeToggleButton]
+    }
+
+    /// B2's "active": light the shortcut for the destination the captain is
+    /// actually looking at, and only that one.
+    ///
+    /// Forwarded from `AppShellController` on every navigation - the bar is
+    /// told which destination is showing, exactly as it is told which space is
+    /// selected (`setSelectedSpace`), and owns neither piece of state itself.
+    /// `nil` clears every one, which is what a host page (not a
+    /// `RailDestination` at all) and any destination with no shortcut get.
+    func setActiveDestination(_ destination: RailDestination?) {
+        guard isViewLoaded else { return }
+        for button in iconSquares {
+            let isActive = (button as? DaylightDestinationButton)?.destination == destination
+            button.setActiveDestination(destination != nil && isActive)
+        }
+    }
+
     private func buildAvatar() {
         avatar.title = ""
         avatar.isBordered = false
@@ -706,17 +816,18 @@ final class DaylightBarController: NSViewController {
         // Below the title, which AppKit draws in the button's own layer.
         avatar.layer?.insertSublayer(avatarGradient, at: 0)
 
-        let popoverContent = AvatarLogoutPopoverController()
-        popoverContent.onSettings = { [weak self] in
-            self?.avatarPopover.performClose(nil)
+        let panelContent = AvatarLogoutPopoverController()
+        panelContent.onSettings = { [weak self] in
+            self?.avatarPanel?.close()
             self?.onSelectSettings?()
         }
-        popoverContent.onLogout = { [weak self] in
-            self?.avatarPopover.performClose(nil)
+        panelContent.onLogout = { [weak self] in
+            self?.avatarPanel?.close()
             self?.logoutClicked()
         }
-        avatarPopover.contentViewController = popoverContent
-        avatarPopover.behavior = .transient
+        // B5: the panel registers itself with the lock gate and follows the
+        // theme on its own - see `HelmBarPanel`.
+        avatarPanel = HelmBarPanel(content: panelContent)
     }
 
     // MARK: Selection
@@ -773,13 +884,13 @@ final class DaylightBarController: NSViewController {
     // MARK: Avatar
 
     @objc private func avatarClicked() {
-        if avatarPopover.isShown {
-            avatarPopover.performClose(nil)
+        guard let avatarPanel else { return }
+        if avatarPanel.isShown {
+            avatarPanel.close()
         } else {
-            (avatarPopover.contentViewController as? AvatarLogoutPopoverController)?
+            (avatarPanel.content as? AvatarLogoutPopoverController)?
                 .applyTheme(ThemeManager.shared.theme)
-            avatarPopover.appearance = NSAppearance(named: ThemeManager.shared.theme.mode == .dark ? .darkAqua : .aqua)
-            avatarPopover.show(relativeTo: avatar.bounds, of: avatar, preferredEdge: .minY)
+            avatarPanel.show(under: avatar)
         }
     }
 
@@ -839,7 +950,13 @@ final class DaylightBarController: NSViewController {
         // backing show through (AGENTS.md gotcha (8)'s other half).
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
 
-        bar.layer?.backgroundColor = surface.cgColor
+        // B1: on the Daylight family the fill is a tint *over* the material;
+        // on the twelve legacy palettes the material is not there at all and
+        // this is the same opaque fill it has always been.
+        materialView.isHidden = !theme.isDaylight
+        bar.layer?.backgroundColor = theme.isDaylight
+            ? surface.withAlphaComponent(Self.daylightFillAlpha).cgColor
+            : surface.cgColor
         // A3: the border and the elevation both depend on whether the
         // showing page is scrolled, so one method owns them - otherwise a
         // theme change would silently reset the bar to its resting depth
@@ -869,14 +986,11 @@ final class DaylightBarController: NSViewController {
         }
 
         searchPill.applyTheme(theme)
-        let iconSurface = theme.isDaylight ? HelmTheme.nsColor(theme.daylightTokens.inset) : surface
-        themeToggleButton.applyTheme(ink: muted, line: line, surface: iconSurface)
-        recentDestinations.button.applyTheme(ink: muted, line: line, surface: iconSurface)
-        stickyBoardButton.applyTheme(ink: muted, line: line, surface: iconSurface)
-        codePreviewButton.applyTheme(ink: muted, line: line, surface: iconSurface)
-        tasksButton.applyTheme(ink: muted, line: line, surface: iconSurface)
-        strawHatButton.applyTheme(ink: muted, line: line, surface: iconSurface)
-        poneglyphButton.applyTheme(ink: muted, line: line, surface: iconSurface)
+        // B2: every icon square resolves its own rest/hover/active colours
+        // from the theme now, rather than being handed one flat set here -
+        // that is what lets a shortcut light up in its destination's own hue
+        // without this method knowing which hue that is.
+        for button in iconSquares { button.applyTheme(theme) }
         notificationCenter.bell.applyTheme(ink: muted, line: line, surface: theme.isDaylight
             ? HelmTheme.nsColor(theme.daylightTokens.inset) : surface)
 
@@ -896,7 +1010,19 @@ final class DaylightBarController: NSViewController {
     struct Geometry {
         let barFrame: NSRect
         let cornerRadius: CGFloat
+        /// B1: a **rendering** material, i.e. one that is actually visible.
+        /// The view exists on every theme; it is hidden on the twelve legacy
+        /// palettes, and a hidden material is not one the captain can see.
         let usesVisualEffect: Bool
+        /// Every blending mode any visual effect view in this bar's subtree
+        /// is set to, visible or not. `checkBarMaterial` asserts
+        /// `.behindWindow` never appears here - that, and not "no material at
+        /// all", is what AGENTS.md gotcha (8) is actually a finding about.
+        let visualEffectBlendingModes: [NSVisualEffectView.BlendingMode]
+        /// The bar fill's own alpha. 1 on the legacy palettes (byte-for-byte
+        /// what it always was), `daylightFillAlpha` on the Daylight family, so
+        /// the material below it reads.
+        let fillAlpha: CGFloat
         let pillCount: Int
         let selected: String
         let shadowOpacity: Float
@@ -905,15 +1031,24 @@ final class DaylightBarController: NSViewController {
     var geometryForTests: Geometry {
         Geometry(barFrame: bar.frame,
                  cornerRadius: bar.layer?.cornerRadius ?? 0,
-                 usesVisualEffect: containsVisualEffectView(view),
+                 usesVisualEffect: containsVisibleVisualEffectView(view),
+                 visualEffectBlendingModes: visualEffectBlendingModes(view),
+                 fillAlpha: bar.layer?.backgroundColor?.alpha ?? 0,
                  pillCount: pills.count,
                  selected: selectedSpace.rawValue,
                  shadowOpacity: bar.layer?.shadowOpacity ?? 0)
     }
 
-    private func containsVisualEffectView(_ root: NSView) -> Bool {
-        if root is NSVisualEffectView { return true }
-        return root.subviews.contains { containsVisualEffectView($0) }
+    private func containsVisibleVisualEffectView(_ root: NSView) -> Bool {
+        if root is NSVisualEffectView, !root.isHiddenOrHasHiddenAncestor { return true }
+        return root.subviews.contains { containsVisibleVisualEffectView($0) }
+    }
+
+    private func visualEffectBlendingModes(_ root: NSView) -> [NSVisualEffectView.BlendingMode] {
+        var out: [NSVisualEffectView.BlendingMode] = []
+        if let effect = root as? NSVisualEffectView { out.append(effect.blendingMode) }
+        for sub in root.subviews { out += visualEffectBlendingModes(sub) }
+        return out
     }
 
     /// The pill views, so a test can drive a real click/press through the
@@ -925,6 +1060,29 @@ final class DaylightBarController: NSViewController {
     }
 
     func debugThemeToggleButton() -> DaylightThemeToggleButton { themeToggleButton }
+
+    // GL-27: these two are guarded, unlike the older accessors above them.
+    // That is not inconsistency for its own sake - they reach into
+    // `debugPanel` on the two panel controllers, which *is* guarded, so an
+    // unguarded accessor here fails the release build outright. Which is
+    // exactly how this was found.
+    #if FM_SELFTESTS
+    /// B2: every plain icon square on the bar, in visual order. Reads the same
+    /// `iconSquares` the theming and the active-state push do, so a suite
+    /// cannot assert against a list that has drifted from the real one.
+    func debugIconSquares() -> [DaylightBarIconButton] { iconSquares }
+
+    /// B5: the bar's three dropdown panels, by name. The avatar's is built in
+    /// `buildAvatar`, so this is `nil`-safe rather than force-unwrapped.
+    func debugBarPanels() -> [(String, HelmBarPanel)] {
+        var out: [(String, HelmBarPanel)] = [
+            ("notifications", notificationCenter.debugPanel),
+            ("recents", recentDestinations.debugPanel),
+        ]
+        if let avatarPanel { out.append(("avatar", avatarPanel)) }
+        return out
+    }
+    #endif
 
     func debugSearchPill() -> NSView { searchPill }
 
@@ -1144,28 +1302,69 @@ final class DaylightSearchPill: HoverHighlightView {
 /// copies of the same chrome is how this app ends up with the "five card
 /// recipes"/"two icon-button languages" findings its own UI audit spent a
 /// phase undoing. `NotificationBellButton` deliberately stays separate: it
-/// carries a badge and therefore a wider control frame (see its own note on
-/// why the badge sits beside the square rather than overlapping its rounded
-/// corner).
+/// carries a badge, so it owns the badge's own geometry.
+///
+/// **B2 (UI modernization audit §3B): one icon language at rest, state on
+/// hover and on the page you are looking at.**
+///
+/// The audit called this row "the noisiest thing in the app" - three icon
+/// languages side by side (grey SF Symbol squares, five saturated raster app
+/// icons carrying their own dark backgrounds, a gradient disc), reading "like
+/// a browser extension row". Its preferred fix, option (a), is what this
+/// implements: every shortcut is a **monochrome SF Symbol** at rest, and the
+/// full-colour artwork is reserved for the destination pages themselves,
+/// where it still renders on the drill header's tile and on the Overview
+/// canvas card (`RailDestination.drillHeaderArtwork`, untouched).
+///
+/// **The hue is `HelmDomainHue.identityHex(in:)`, not `baseColor(in:)`**, and
+/// that choice is this app's own existing rule rather than a new one. On the
+/// Daylight family the two agree. On the twelve legacy palettes `baseColor`
+/// resolves through `fallbackTint`, which is a *semantic* slot - so hovering
+/// the Tasks icon (`.rose` -> `.critical`) would turn it red, and the icon
+/// would be making a claim about Tasks rather than identifying it. That is
+/// exactly the defect `identityHex` was written for. The cost is that hue
+/// differentiation lands only where the design language it belongs to lives;
+/// the twelve still get a real state response (muted at rest, full ink on
+/// hover/active), which is the half B2 is actually about.
 class DaylightBarIconButton: NSButton {
-    /// Matches `NotificationBellButton.iconSize` exactly.
+    /// Matches `NotificationBellButton.iconSize` exactly - B2's "the History
+    /// and theme buttons should match the bell's square" is true by
+    /// construction, and stayed true when the bell shed its outboard badge
+    /// zone (see `NotificationBellButton`).
     static let side: CGFloat = NotificationBellButton.iconSize
+
+    /// Resting glyph alpha. The icon row is chrome: it should recede until
+    /// the captain is either pointing at it or on the page it opens.
+    static let restingGlyphAlpha: CGFloat = 0.7
+
+    /// How much of the active shortcut's own hue is washed into its tile.
+    ///
+    /// Flattened with `HelmContrast.mix` rather than set as a translucent
+    /// layer colour, and that is deliberate: `mix` is a straight sRGB blend,
+    /// which is what alpha compositing over an opaque backdrop actually does,
+    /// whereas `NSColor.blended(withFraction:of:)` converts both operands into
+    /// a *calibrated* space first and drifts from it. This codebase has been
+    /// bitten by that difference before (see the segmented-tabs correction in
+    /// AGENTS.md).
+    static let activeWashFraction: Double = 0.16
 
     private let iconBackground = NSView()
     private let iconImageView = NSImageView()
-    private let usesArtwork: Bool
+    private let symbolName: String
+    /// The hue this button takes on hover/active, or `nil` for a control that
+    /// is not a destination shortcut (the theme toggle, Recents) and so has
+    /// no domain of its own - those brighten to plain ink instead.
+    private let hue: HelmDomainHue?
 
-    /// - Parameter artwork: when non-nil, this raster image fills the tile
-    ///   edge to edge (clipped to the tile's own rounded corners) instead of
-    ///   a small centred SF Symbol glyph - the same "artwork replaces the
-    ///   glyph" idiom `HelmGradientTile.configure(artwork:symbol:hue:)`
-    ///   already establishes for the drill header / module card tiles this
-    ///   button shortcuts to. `symbol` is still required: it is what renders
-    ///   when `artwork` is nil (every caller but Straw Hat Pirates) or fails
-    ///   to decode, matching `RailDestination.drillHeaderArtwork`'s own
-    ///   "a corrupt payload degrades to the glyph" contract.
-    init(symbol: String, tooltip: String, accessibilityLabel: String, artwork: NSImage? = nil) {
-        usesArtwork = artwork != nil
+    private var hoverArea: NSTrackingArea?
+    private var isHovering = false
+    /// Set by the bar when this button's own destination is the one showing.
+    private(set) var isActiveDestination = false
+    private var theme: HelmTheme = ThemeManager.shared.theme
+
+    init(symbol: String, tooltip: String, accessibilityLabel: String, hue: HelmDomainHue? = nil) {
+        self.symbolName = symbol
+        self.hue = hue
         super.init(frame: .zero)
         title = ""
         isBordered = false
@@ -1182,69 +1381,109 @@ class DaylightBarIconButton: NSButton {
         addSubview(iconBackground)
 
         iconImageView.translatesAutoresizingMaskIntoConstraints = false
+        // A symbol name that does not resolve returns nil and renders as an
+        // invisible button with no error anywhere - this app has shipped that
+        // exact bug before (the Hosts list's "anchor", which is not an SF
+        // Symbol at all). Every caller's symbol is a `RailDestination.symbol`
+        // already rendering elsewhere in the app, and
+        // `DaylightModuleSelfTest.checkBarDestinationIcons` asserts each one
+        // resolves.
+        iconImageView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 14, weight: .regular))
+        iconImageView.imageScaling = .scaleProportionallyDown
         addSubview(iconImageView)
 
-        if let artwork {
-            iconImageView.image = artwork
-            iconImageView.imageScaling = .scaleProportionallyUpOrDown
-            // `iconImageView` is a sibling of `iconBackground`, not its
-            // subview (both hang off the button directly), so
-            // `iconBackground.layer?.masksToBounds` clips nothing here - the
-            // artwork needs its own clip to read as a rounded tile rather
-            // than a square corner poking out past the background.
-            iconImageView.wantsLayer = true
-            iconImageView.layer?.cornerRadius = iconBackground.layer?.cornerRadius ?? 0
-            iconImageView.layer?.masksToBounds = true
-            NSLayoutConstraint.activate([
-                iconBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
-                iconBackground.centerYAnchor.constraint(equalTo: centerYAnchor),
-                iconBackground.widthAnchor.constraint(equalToConstant: Self.side),
-                iconBackground.heightAnchor.constraint(equalToConstant: Self.side),
+        NSLayoutConstraint.activate([
+            iconBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
+            iconBackground.centerYAnchor.constraint(equalTo: centerYAnchor),
+            iconBackground.widthAnchor.constraint(equalToConstant: Self.side),
+            iconBackground.heightAnchor.constraint(equalToConstant: Self.side),
 
-                iconImageView.leadingAnchor.constraint(equalTo: iconBackground.leadingAnchor),
-                iconImageView.trailingAnchor.constraint(equalTo: iconBackground.trailingAnchor),
-                iconImageView.topAnchor.constraint(equalTo: iconBackground.topAnchor),
-                iconImageView.bottomAnchor.constraint(equalTo: iconBackground.bottomAnchor),
-            ])
-        } else {
-            // A symbol name that does not resolve returns nil and renders as
-            // an invisible button with no error anywhere - this app has
-            // shipped that exact bug before (the Hosts list's "anchor",
-            // which is not an SF Symbol at all). Every caller's symbol is a
-            // `RailDestination.symbol` already rendering elsewhere in the
-            // app, and `DaylightBarDestinationButtonSelfTest` asserts each
-            // one resolves.
-            iconImageView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 14, weight: .regular))
-            iconImageView.imageScaling = .scaleProportionallyDown
-            NSLayoutConstraint.activate([
-                iconBackground.leadingAnchor.constraint(equalTo: leadingAnchor),
-                iconBackground.centerYAnchor.constraint(equalTo: centerYAnchor),
-                iconBackground.widthAnchor.constraint(equalToConstant: Self.side),
-                iconBackground.heightAnchor.constraint(equalToConstant: Self.side),
-
-                iconImageView.centerXAnchor.constraint(equalTo: iconBackground.centerXAnchor),
-                iconImageView.centerYAnchor.constraint(equalTo: iconBackground.centerYAnchor),
-            ])
-        }
+            iconImageView.centerXAnchor.constraint(equalTo: iconBackground.centerXAnchor),
+            iconImageView.centerYAnchor.constraint(equalTo: iconBackground.centerYAnchor),
+        ])
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    func applyTheme(ink: NSColor, line: NSColor, surface: NSColor) {
-        // A no-op in artwork mode - `contentTintColor` only affects a
-        // template image, and `StrawHatFlag.image` explicitly sets
-        // `isTemplate = false` so its own colours are never flattened.
-        iconImageView.contentTintColor = ink.withAlphaComponent(0.75)
-        iconBackground.layer?.backgroundColor = surface.cgColor
+    // MARK: Hover (B2)
+
+    /// `NSButton` has no built-in hover callback, so this is the same tracking
+    /// area `HoverTrackingButton` installs - inlined rather than inherited
+    /// because that class exists to *forward* hover to a caller, and this one
+    /// consumes it itself.
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverArea { removeTrackingArea(hoverArea) }
+        let area = NSTrackingArea(rect: bounds,
+                                  options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverArea = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovering = true
+        restyle()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovering = false
+        restyle()
+    }
+
+    /// The bar calls this on every navigation so the shortcut for the page the
+    /// captain is looking at reads as the current one - B2's "active" half.
+    func setActiveDestination(_ active: Bool) {
+        guard active != isActiveDestination else { return }
+        isActiveDestination = active
+        restyle()
+    }
+
+    func applyTheme(_ theme: HelmTheme) {
+        self.theme = theme
+        restyle()
+    }
+
+    private func restyle() {
+        let ink = HelmTheme.nsColor(theme.chromeInkHex)
+        let muted = HelmTheme.mutedInk(theme)
+        let line = HelmTheme.nsColor(theme.chromeLineHex)
+        let surface = theme.isDaylight
+            ? HelmTheme.nsColor(theme.daylightTokens.inset)
+            : HelmTheme.nsColor(theme.chromeBackgroundHex)
+
+        let lit = isHovering || isActiveDestination
+        let accent = hue.map { HelmTheme.nsColor($0.identityHex(in: theme)) } ?? ink
+        let glyph = lit ? accent : muted.withAlphaComponent(Self.restingGlyphAlpha)
+
+        // The active shortcut also carries a faint wash of its own hue, so
+        // "this is the page you are on" survives the captain's cursor leaving
+        // the bar. Hover alone is a glyph change only - a background that
+        // appeared under the pointer would make the whole row twitch as it
+        // crosses.
+        let fill = isActiveDestination
+            ? HelmContrast.color(HelmContrast.mix(HelmContrast.components(accent),
+                                                  HelmContrast.components(surface),
+                                                  Self.activeWashFraction))
+            : surface
+
+        iconImageView.contentTintColor = glyph
+        iconBackground.layer?.backgroundColor = fill.cgColor
         iconBackground.layer?.borderWidth = 1
-        iconBackground.layer?.borderColor = line.withAlphaComponent(0.5).cgColor
+        iconBackground.layer?.borderColor = (isActiveDestination ? accent.withAlphaComponent(0.5) : line.withAlphaComponent(0.5)).cgColor
     }
 
     #if FM_SELFTESTS
     var debugHasIcon: Bool { iconImageView.image != nil }
     var debugIconBackground: NSView { iconBackground }
-    var debugUsesArtwork: Bool { usesArtwork }
+    var debugSymbolName: String { symbolName }
+    var debugGlyphColor: NSColor? { iconImageView.contentTintColor }
+    var debugIsHovering: Bool { isHovering }
+    func debugSetHovering(_ hovering: Bool) {
+        isHovering = hovering
+        restyle()
+    }
     #endif
 }
 
@@ -1262,17 +1501,30 @@ final class DaylightThemeToggleButton: DaylightBarIconButton {
 /// toggle (`fm/grandline-sticky-code-preview-polish`).
 ///
 /// The captain asked for Sticky Board and Code Preview first, then Tasks
-/// (`fm/grandline-tasks-quick-access-icon`). Every one of them stays a full
-/// destination in its own space; this is purely a shortcut for pages reached
-/// often enough that a space switch plus a card click is friction. The glyph
-/// is each destination's **own** `RailDestination.symbol` rather than new
-/// iconography, so the bar icon and the page it opens can never drift apart -
-/// and `RailDestination.drillHeaderArtwork` is honoured the same way (only
-/// Straw Hat Pirates carries one today): the bar shortcut, the drill header
-/// and the Overview canvas card all render the identical Jolly Roger, rather
-/// than the bar alone falling back to a generic `person.3.fill` placeholder
-/// for a destination whose real identity is a raster asset (`fm/strawhat-
-/// toolbar-shortcut-use-jolly-roger-icon-69c3`).
+/// (`fm/grandline-tasks-quick-access-icon`), then Straw Hat Pirates and
+/// Poneglyph (`fm/poneglyph-own-destination-and-strawhat-toolbar-shortcut`).
+/// Every one of them stays a full destination in its own space; this is purely
+/// a shortcut for pages reached often enough that a space switch plus a card
+/// click is friction. The glyph is each destination's **own**
+/// `RailDestination.symbol` rather than new iconography, so the bar icon and
+/// the page it opens can never drift apart.
+///
+/// **B2 moved the raster artwork off this button**, and that reverses one
+/// earlier decision on purpose rather than by accident.
+/// `fm/strawhat-toolbar-shortcut-use-jolly-roger-icon-69c3` gave this button
+/// `RailDestination.drillHeaderArtwork`, because Straw Hat Pirates' bar icon
+/// was falling back to a generic `person.3.fill` while its own drill header
+/// and canvas card rendered the crew's Jolly Roger. The audit looked at the
+/// finished row and found the opposite problem one level up: five saturated
+/// raster tiles, each with its own dark background, sitting between grey
+/// symbol squares and a gradient disc - "the noisiest thing in the app". Its
+/// §3B B2 names the Jolly Roger among the five it wants quietened, and the
+/// captain approved that fix, so the artwork now lives only where it reads as
+/// identity rather than as noise: the destination's own page and its canvas
+/// card, both of which still take it from the same
+/// `RailDestination.drillHeaderArtwork` this button used to. The bar icon and
+/// the page therefore still cannot drift - they are two renderings of one
+/// `RailDestination`, which was that fix's actual requirement.
 final class DaylightDestinationButton: DaylightBarIconButton {
     let destination: RailDestination
 
@@ -1281,7 +1533,7 @@ final class DaylightDestinationButton: DaylightBarIconButton {
         super.init(symbol: destination.symbol,
                    tooltip: "Open \(destination.title)",
                    accessibilityLabel: destination.title,
-                   artwork: destination.drillHeaderArtwork)
+                   hue: destination.domainHue)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }

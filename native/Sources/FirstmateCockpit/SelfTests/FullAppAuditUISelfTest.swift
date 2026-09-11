@@ -171,6 +171,13 @@ enum FullAppAuditUISelfTest {
                 offenders.append(name)
             }
         }
+        // Exactly 8 today, and this floor is deliberately left where it is
+        // even though it now sits on that number: the UI modernization
+        // audit's B5 converted the bar's three dropdowns to borderless
+        // `HelmBarPanel`s (which force their own appearance in
+        // `HelmBarPanel.applyTheme` - the same property, one mechanism over),
+        // so a ninth conversion should have to come back here and think about
+        // this check rather than slip past a floor lowered pre-emptively.
         guard owners.count >= 8 else {
             return "found only \(owners.count) files owning an NSPopover - has the app shrunk, or is "
                 + "this check looking in the wrong place?"

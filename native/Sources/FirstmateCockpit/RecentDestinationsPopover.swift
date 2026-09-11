@@ -1,11 +1,15 @@
 // Manjesh Grand Line - native macOS app.
 //
-// The topbar "Recents" button + its dropdown panel
+// The bar's "Recents" button + its dropdown panel
 // (`fm/grandline-recents-navigation`). Structurally mirrors
-// `NotificationCenterPopover.swift` (transient `NSPopover`, live
-// `ThemeManager` observation, a `wantsLayer` root with an explicit theme
-// background per AGENTS.md gotcha #8) - the same "small card off a topbar
-// icon" idiom this app already uses more than once, not a new UI pattern.
+// `NotificationCenterPopover.swift` - the same "small card off a bar icon"
+// idiom this app already uses more than once, not a new UI pattern.
+//
+// **B5 (UI modernization audit §3B): the chrome is a `HelmBarPanel` now, not
+// an `NSPopover`.** The content controller below is unchanged - same rows,
+// same empty state, same `onSizeChanged`/`onRequestClose` wiring - and only
+// what draws the box around it moved. See `HelmBarPanel`'s header for why,
+// and for where the lock gate went.
 //
 // The one structural difference from the notification popover: that one
 // reads a global singleton (`GrandLineNotificationCenter.shared`, fed by many
@@ -38,34 +42,28 @@ final class RecentDestinationsButton: DaylightBarIconButton {
 /// Owns the button, the popover, and the panel content - the bar's
 /// counterpart to `NotificationCenterController`/`ConsoleComposerController`/
 /// `QuotaUsageController`.
-final class RecentDestinationsController: NSObject, NSPopoverDelegate {
+final class RecentDestinationsController: NSObject {
     let button = RecentDestinationsButton()
 
-    private let popover = NSPopover()
+    /// B5: a borderless `HelmBarPanel` rather than a stock `NSPopover` - see
+    /// that type's header. The panel owns its own theme, lock registration and
+    /// dismissal; this controller keeps exactly what it always had, the button
+    /// and the content.
+    private let panel: HelmBarPanel
     private let content = RecentDestinationsPanelViewController()
     private var themeObservation: ThemeObservation?
     private var registryToken: UUID?
     private weak var registry: RecentDestinations?
 
     override init() {
+        panel = HelmBarPanel(content: content)
         super.init()
-        // Audit 2 §2.7/§6.2: a popover is its own window, layered above the
-        // lock overlay, so anything open when the lock fires would stay
-        // readable and interactive over the lock screen (§5.1(b)'s harm, of
-        // which the incident card was one instance). Weak, because there is
-        // no unregister.
-        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.popover }
-        popover.contentViewController = content
-        popover.behavior = .transient
-        popover.delegate = self
         button.target = self
         button.action = #selector(buttonClicked)
-        content.onSizeChanged = { [weak self] size in self?.popover.contentSize = size }
-        content.onRequestClose = { [weak self] in self?.popover.performClose(nil) }
+        content.onSizeChanged = { [weak self] size in self?.panel.setContentSize(size) }
+        content.onRequestClose = { [weak self] in self?.panel.close() }
         themeObservation = ThemeManager.shared.observe { [weak self] theme in
-            guard let self else { return }
-            self.popover.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
-            self.content.applyTheme(theme)
+            self?.content.applyTheme(theme)
         }
     }
 
@@ -81,20 +79,19 @@ final class RecentDestinationsController: NSObject, NSPopoverDelegate {
     }
 
     @objc private func buttonClicked() {
-        if popover.isShown {
-            popover.performClose(nil)
+        if panel.isShown {
+            panel.close()
         } else {
             content.reload()
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            panel.show(under: button)
         }
     }
 
-    func popoverDidClose(_ notification: Notification) {}
-
     #if FM_SELFTESTS
     /// The panel content itself, so a suite can drive the real rows without
-    /// having to show a popover (popovers do not reliably render off-screen).
+    /// having to put a real window on screen.
     var debugPanelController: NSViewController { content }
+    var debugPanel: HelmBarPanel { panel }
     #endif
 }
 

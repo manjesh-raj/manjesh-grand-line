@@ -137,6 +137,9 @@ NEEDS_SESSION=(
   # chrome, a real laid-out bar, and a real scroll offset. None of the three
   # is answerable without a window.
   "FM_RUN_WINDOW_CHROME_FUSION_TESTS"
+  # The same audit's B1-B5: a real window's initial first responder, a real
+  # panel anchored under a real control, and a real navigation transition.
+  "FM_RUN_BAR_NAV_MODERNIZATION_TESTS"
   # The session switcher mounts a real `AppShellController` in a real window.
   "FM_RUN_SESSION_SWITCHER_TESTS"
   # `fm/grandline-k8s-cluster-tail`: mounts the real `.kubernetes` destination
