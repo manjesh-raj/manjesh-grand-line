@@ -54,7 +54,9 @@ final class ScheduleEditorController: NSViewController {
     private let cadenceCard = HelmFieldCard(label: "Repeats")
     private let weekdayCard = HelmFieldCard(label: "Day")
     private let notifyCard = HelmFieldCard(label: "Notify me")
-    private let timePicker = NSDatePicker()
+    /// E6: the last raw `NSDatePicker` in a form. Time only, so the field
+    /// reads "9:00 AM" and pops a clock.
+    private let timePicker = HelmDateField(elements: [.hourMinute])
     private var explanationLabel: NSTextField!
     private var remoteWriteCard: NSView?
     private var form: HelmFormSheet!
@@ -131,8 +133,7 @@ final class ScheduleEditorController: NSViewController {
         }
         weekdayCard.isHidden = !isWeekly
 
-        timePicker.datePickerStyle = .textFieldAndStepper
-        timePicker.datePickerElements = [.hourMinute]
+        // E6: style and elements are fixed at init now - see `HelmDateField`.
         timePicker.dateValue = Self.date(hour: initialHour, minute: initialMinute)
         timePicker.translatesAutoresizingMaskIntoConstraints = false
 

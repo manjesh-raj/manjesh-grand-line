@@ -203,7 +203,8 @@ final class SchedulesCardView: NSObject {
             control.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
 
-        let row = HelmAccentRow(trailingAccessory: actions, hover: false)
+        let row = HelmAccentRow(trailingAccessory: actions, hover: false,
+                                maxContentWidth: HelmAccentRow.recordContentWidth)
         row.configure(rowContent(schedule, now: now, isRunning: isRunning), theme: theme)
         if let next = ScheduleDueCalculator.nextOccurrence(of: schedule.cadence, after: now, calendar: .current),
            schedule.isEnabled {

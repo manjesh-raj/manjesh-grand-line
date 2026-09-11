@@ -908,7 +908,17 @@ final class HelmButton: NSButton {
     /// from `DaylightPalette.primaryButtonGradient`, which corrects them so a
     /// white label clears 4.5:1 anywhere on the ramp - see that method for why
     /// a raw pair is not usable behind a label.
-    var gradientFill: Bool = false {
+    /// E1 flipped this default to `true`: "give `.primary` a subtle
+    /// bottom-edge shade or gradient (Daylight's `gradientFill` already
+    /// exists - adopt it as the default `.primary` look)". The approved
+    /// visual calls it "a whisper of gradient on the primary".
+    ///
+    /// The scope above is unchanged and is what makes that safe: `.secondary`,
+    /// `.quiet`, `.destructive` and all twelve pre-Daylight palettes still
+    /// render byte-identically, because `showsGradient` also requires
+    /// `variant == .primary` and `theme.isDaylight`. A caller that wants a
+    /// flat primary under Daylight sets this to `false`.
+    var gradientFill: Bool = true {
         didSet { if gradientFill != oldValue { restyle() } }
     }
 
@@ -1066,12 +1076,15 @@ final class HelmButton: NSButton {
 
     override func mouseDown(with event: NSEvent) {
         isPressed = true
-        restyle()
+        // E1: only a *state* change animates. A theme switch and the first
+        // paint stay instant - a page whose every button cross-faded on a
+        // theme change would read as a glitch, not as polish.
+        restyle(animated: true)
         // `super` runs AppKit's own tracking loop, so click-cancel-by-dragging
         // -out and the action dispatch itself stay exactly as they were.
         super.mouseDown(with: event)
         isPressed = false
-        restyle()
+        restyle(animated: true)
     }
 
     override func updateTrackingAreas() {
@@ -1087,12 +1100,12 @@ final class HelmButton: NSButton {
 
     override func mouseEntered(with event: NSEvent) {
         isHovering = true
-        restyle()
+        restyle(animated: true)
     }
 
     override func mouseExited(with event: NSEvent) {
         isHovering = false
-        restyle()
+        restyle(animated: true)
     }
 
     // MARK: Chrome
@@ -1305,7 +1318,59 @@ final class HelmButton: NSButton {
         return HelmContrast.legibleTintedText(tintHex: tint.hex(in: theme), over: surface, theme: theme)
     }
 
-    private func restyle() {
+    /// E1's micro-states.
+    ///
+    /// The UI modernization audit (§3E): "state changes that *snap* read as
+    /// CSS from 2014. Modern buttons ease 100-150ms between fills, depress
+    /// 1px/2% scale on press". `animated` is true only for a hover or press
+    /// transition; a theme change, a title change and the first paint all
+    /// stay instant, which is what keeps a theme switch from cross-fading
+    /// every button on the page at once.
+    static let stateChangeDuration: TimeInterval = 0.12
+    /// The approved visual's "2% press compression".
+    static let pressScale: CGFloat = 0.98
+
+    private func restyle(animated: Bool = false) {
+        // The layer's own fill/border writes below are implicit-animation
+        // free for a view-backed layer, so easing them means asking.
+        let ease = animated && !HelmMotion.isReduced
+        if ease {
+            CATransaction.begin()
+            CATransaction.setAnimationDuration(Self.stateChangeDuration)
+            CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+        }
+        defer {
+            if ease { CATransaction.commit() }
+            applyPressTransform(animated: ease)
+        }
+        restyleBody()
+    }
+
+    #if FM_SELFTESTS
+    /// E1: drives the press state without an event, so a suite can read the
+    /// compression rather than infer it.
+    func debugSetPressed(_ pressed: Bool) {
+        isPressed = pressed
+        restyle(animated: false)
+    }
+    var debugShowsGradient: Bool { !fillGradient.isHidden }
+    #endif
+
+    /// E1: the press compression. On the layer, so it composes with nothing
+    /// else this class sets there.
+    private func applyPressTransform(animated: Bool) {
+        guard let layer else { return }
+        let scale = (isPressed && isEnabled && !HelmMotion.isReduced) ? Self.pressScale : 1
+        let target = CATransform3DMakeScale(scale, scale, 1)
+        guard !CATransform3DEqualToTransform(layer.transform, target) else { return }
+        guard animated else { layer.transform = target; return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Self.stateChangeDuration
+            layer.transform = target
+        }
+    }
+
+    private func restyleBody() {
         let theme = ThemeManager.shared.theme
         let p = Self.palette(variant: variant, tint: tint, theme: theme, domainHue: domainHue)
 
@@ -1459,6 +1524,11 @@ final class HelmPopUpButton: NSPopUpButton {
         if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }
     }
 
+    /// E2's single chevron - see `commonSetup`.
+    private let chevron = NSImageView()
+    static let chevronInset: CGFloat = 9
+    static let chevronPointSize: CGFloat = 9
+
     private func commonSetup() {
         isBordered = false
         // GL-16, same reasoning as `HelmButton`: the bezel goes, the focus
@@ -1466,7 +1536,44 @@ final class HelmPopUpButton: NSPopUpButton {
         focusRingType = .exterior
         wantsLayer = true
         layer?.masksToBounds = true
+
+        // E2: the stock double-chevron stepper cell is, in the audit's words
+        // (§3E), "one of the most instantly dated AppKit fingerprints". Its
+        // fix is the `HelmFieldCard` idiom - "label + single chevron glyph,
+        // pops the same NSMenu" - promoted to the toolbar and table contexts
+        // where this class still lives.
+        //
+        // Done by suppressing the cell's own arrows and drawing one
+        // `chevron.down`, rather than by converting the ~14 call sites to
+        // `HelmFieldCard`: every one of them depends on this being an
+        // `NSPopUpButton` (`menu`, `selectItem…`, `titleOfSelectedItem`,
+        // `indexOfSelectedItem`), and a 50pt field card is absurd in a
+        // toolbar or a dense parameter row - which is exactly the split
+        // `HelmFieldCard`'s own header already draws.
+        (cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
+        chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: Self.chevronPointSize,
+                                                                 weight: .semibold))
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        // Decoration: the popup itself is the control, and announcing a
+        // chevron beside it would only be noise.
+        chevron.setAccessibilityElement(false)
+        addSubview(chevron)
+        NSLayoutConstraint.activate([
+            chevron.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.chevronInset),
+            chevron.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+
         themeObservation = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
+    }
+
+    override func layout() {
+        super.layout()
+        // E2: re-assert the suppression. Setting it once in `commonSetup` is
+        // not enough - measured: a real popup has the cell's own arrows back
+        // by the time its items have been added, so the only reliable place
+        // is somewhere that runs after any mutation.
+        (cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
     }
 
     override var focusRingMaskBounds: NSRect { bounds }
@@ -1493,6 +1600,7 @@ final class HelmPopUpButton: NSPopUpButton {
         layer?.borderWidth = 1
         layer?.borderColor = p.border.cgColor
         contentTintColor = p.label
+        chevron.contentTintColor = p.label
         // The menu itself is AppKit chrome drawn outside this view; matching
         // its light/dark side to the theme is all a view can do for it.
         appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
@@ -1502,6 +1610,10 @@ final class HelmPopUpButton: NSPopUpButton {
         var s = super.intrinsicContentSize
         // The stock bezel supplied this padding; an unbordered cell does not.
         s.width += 10
+        // E2: `.noArrow` also takes back the width the cell reserved for its
+        // own stepper, so the single chevron has to ask for its own - or a
+        // long title runs straight underneath it.
+        s.width += Self.chevronInset * 2 + Self.chevronPointSize
         s.height = max(s.height, 24)
         return s
     }
@@ -1735,6 +1847,49 @@ final class HelmAccentRow: NSView {
     private let chipPlacement: ChipPlacement
     private let hoverEnabled: Bool
     private var content: Content?
+
+    // MARK: D1 - actions that are quiet until aimed at
+
+    /// When this row's `trailingAccessory` is visible.
+    ///
+    /// The UI modernization audit's D1
+    /// (`data/grandline-ui-modernization-audit/report.md` §3D): "a visible
+    /// bordered button per row x 50 is 2010s enterprise-web. Modern lists
+    /// show state at rest and reveal actions on hover/selection ... which
+    /// collapses visual noise and makes the one hovered row feel alive."
+    /// The status pill stays; only the buttons go quiet.
+    enum ActionReveal {
+        /// Always visible. The finding's own discoverability mitigation - a
+        /// short list, or the first row of a long one - plus every row whose
+        /// accessory is not an action at all (a schedule's time column, a
+        /// key's fingerprint).
+        case always
+        /// Visible on hover, on focus-within, and never otherwise.
+        case onAim
+    }
+
+    var actionReveal: ActionReveal = .always {
+        didSet { if actionReveal != oldValue { applyActionReveal(animated: false) } }
+    }
+
+    /// D2: the widest this row's own content column may be, or `nil` for
+    /// "fill the card" (every non-record row - a task, a notification, an
+    /// Overview peek). Fixed at init like every other structural knob here.
+    private let maxContentWidth: CGFloat?
+
+    /// The column width D2 settled on. Wide enough that the captain's own
+    /// 1512pt window is essentially unaffected below the card's insets, and
+    /// narrow enough that a 1900pt window stops reading as a table with a
+    /// dead middle.
+    static let recordContentWidth: CGFloat = 900
+
+    /// D2's probe surface: the row's own content column, which is what the
+    /// cap applies to - as against the card, which keeps filling the page.
+    private weak var contentRow: NSStackView?
+
+    private var isRowHovered = false
+    private var accessoryHoldsFocus = false
+    private var accessoryFocusRegistration: HelmFocusRegistration?
     /// The theme the row was last painted with, so `isRowSelected` can repaint
     /// without the caller having to hand the theme back in.
     private var lastTheme: HelmTheme = ThemeManager.shared.theme
@@ -1751,6 +1906,55 @@ final class HelmAccentRow: NSView {
     var isRowSelected: Bool = false {
         didSet { if isRowSelected != oldValue { applyTheme(lastTheme) } }
     }
+
+    deinit {
+        // The registration's own target is weak and `refresh()` prunes dead
+        // ones, so this is belt to that brace - but a row is created per
+        // table cell and this app's convention is that an observation is
+        // unregistered where it was made.
+        if let accessoryFocusRegistration {
+            HelmFocusSensing.shared.unregister(accessoryFocusRegistration)
+        }
+    }
+
+    /// D1: fade the action column in and out.
+    ///
+    /// `alphaValue`, deliberately not `isHidden`:
+    ///
+    ///   - `accessibilityChildren()` on this row returns the trailing
+    ///     accessory, so hiding it would take the row's actions out of
+    ///     VoiceOver entirely. The finding is explicit that keyboard and
+    ///     VoiceOver users keep them.
+    ///   - `isHidden` removes the view from layout, so every row would
+    ///     re-flow its text column on hover - a whole list twitching as the
+    ///     mouse crosses it.
+    ///   - The invisible-but-clickable window this leaves is negligible by
+    ///     construction: the only way to reach the buttons with a mouse is to
+    ///     be inside the row, which is exactly what reveals them. That is the
+    ///     finding's own "the click target is the same, it is just quiet
+    ///     until aimed at".
+    ///
+    /// Worth knowing for any probe of this: `alphaValue = 0` still *renders*
+    /// under `cacheDisplay`, this repo's screenshot substitute, so a render
+    /// cannot prove the reveal either way - read the alpha.
+    private func applyActionReveal(animated: Bool) {
+        guard let trailingAccessory else { return }
+        let revealed = actionReveal == .always || isRowHovered || accessoryHoldsFocus
+        HelmMotion.fade(trailingAccessory, to: revealed ? 1 : 0,
+                        duration: Self.actionRevealDuration, animated: animated)
+    }
+
+    static let actionRevealDuration: TimeInterval = 0.12
+
+    /// D1's discoverability floor: a list this short or shorter keeps every
+    /// row's actions visible.
+    ///
+    /// The finding's own mitigation ("keep the *primary* action visible on
+    /// the top/first row or when the list has <=3 rows") - the cost of
+    /// hiding actions is that a captain who has never hovered a row cannot
+    /// tell the row has any, and on a three-row list there is no noise worth
+    /// trading that for.
+    static let alwaysRevealRowCount = 3
 
     /// Set to make the whole row clickable. Left nil for a row whose
     /// interaction lives elsewhere (a table's own double-click, a nested
@@ -1782,7 +1986,15 @@ final class HelmAccentRow: NSView {
          contentView: NSView? = nil,
          trailingAccessory: NSView? = nil,
          hover: Bool = true,
-         gradientBadge: Bool = false) {
+         gradientBadge: Bool = false,
+         /// D2: pass `HelmAccentRow.recordContentWidth` for a *record* list
+         /// (Hosts, Keys, Snippets, Schedules, Vault) - a row whose whole
+         /// content is one label and one action, which is what reads as an
+         /// unstyled table once the window is wide. Left `nil` everywhere
+         /// else, so a task row, a notification and an Overview peek row are
+         /// byte-for-byte unchanged.
+         maxContentWidth: CGFloat? = nil) {
+        self.maxContentWidth = maxContentWidth
         self.chipPlacement = chipPlacement
         self.leadingControl = leadingControl
         self.customContent = contentView
@@ -1908,9 +2120,28 @@ final class HelmAccentRow: NSView {
                 stack.setClippingResistancePriority(.required, for: .horizontal)
             }
             rowViews.append(trailingAccessory)
+
+            // D1: the row already tracks hover; `onHoverChange` fires whatever
+            // the colours are doing, which matters because most
+            // button-bearing rows in this app pass `hover: false` and so have
+            // `normalColor == hoverColor`. Focus-within is the keyboard half -
+            // a captain who tabs to a button must be able to see it.
+            card.onHoverChange = { [weak self] hovering in
+                guard let self else { return }
+                self.isRowHovered = hovering
+                self.applyActionReveal(animated: true)
+            }
+            accessoryFocusRegistration = HelmFocusSensing.shared.register(
+                trailingAccessory, includesDescendants: true
+            ) { [weak self] focused in
+                guard let self else { return }
+                self.accessoryHoldsFocus = focused
+                self.applyActionReveal(animated: true)
+            }
         }
 
         let row = NSStackView(views: rowViews)
+        contentRow = row
         row.orientation = .horizontal
         // A `.belowBody` row's badge sits beside the *first* line rather than
         // the middle of a wrapping paragraph.
@@ -1935,10 +2166,53 @@ final class HelmAccentRow: NSView {
             accentBar.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -Self.barVerticalInset),
 
             row.leadingAnchor.constraint(equalTo: accentBar.trailingAnchor, constant: Self.contentLeading),
-            row.trailingAnchor.constraint(equalTo: card.trailingAnchor, constant: -Self.contentTrailing),
+            // D2 caps this trailing pin for a record list - see below.
+            row.trailingAnchor.constraint(lessThanOrEqualTo: card.trailingAnchor, constant: -Self.contentTrailing),
             row.topAnchor.constraint(equalTo: card.topAnchor, constant: Self.contentVertical),
             row.bottomAnchor.constraint(equalTo: card.bottomAnchor, constant: -Self.contentVertical),
         ])
+
+        // D2: a record row's own content column, capped.
+        //
+        // The UI modernization audit measured Hosts/Schedules/Vault rows
+        // stretching gutter-to-gutter at 1440-1900pt with a label on the left
+        // and one button on the right - "unbounded line length + dead middle
+        // reads like an unstyled table". It also flagged that its first
+        // suggestion (a max width on the *page*) re-opens a captain decision:
+        // AGENTS.md records him removing exactly that cap from Hosts once,
+        // because it left ~370pt of dead gutter on a 1512pt window.
+        //
+        // The captain's answer was the reframe - cap *rows*, not pages. So
+        // the card, the page and every surface behind it stay gutter-to-
+        // gutter, and only the text-and-actions pair inside a record row is
+        // held to a readable column so the two stay legible together.
+        //
+        // Leading-pinned rather than centred: a centred column would float
+        // the content away from the card's own edge and read as a second,
+        // narrower page. And 499, never required (gotcha (13)) - a required
+        // width cap on a row is a window-width floor, which this app has
+        // shipped four separate times.
+        if let maxContentWidth {
+            let cap = row.widthAnchor.constraint(lessThanOrEqualToConstant: maxContentWidth)
+            cap.priority = HelmDaylightPriority.contentTie
+            cap.isActive = true
+            // ...and it still *fills* the card up to that cap. Without this
+            // the row only has a `<=` trailing pin, so it hugs its own
+            // content and every row in a list ends up a different width -
+            // which is exactly what pulled Schedules' mono time column out of
+            // its column (`DaylightDrillPageSlice3SelfTest` caught it).
+            //
+            // One below the cap, so a card wider than the cap resolves to the
+            // cap and a narrower one resolves to the card. Both stay under
+            // `NSLayoutPriorityWindowSizeStayPut` (gotcha (13)).
+            let fill = row.trailingAnchor.constraint(equalTo: card.trailingAnchor,
+                                                     constant: -Self.contentTrailing)
+            fill.priority = HelmDaylightPriority.contentTie - 1
+            fill.isActive = true
+        } else {
+            row.trailingAnchor.constraint(equalTo: card.trailingAnchor,
+                                          constant: -Self.contentTrailing).isActive = true
+        }
 
         if let customContent {
             // A caller-owned body has to be told it may use the whole column,
@@ -2268,6 +2542,24 @@ final class HelmAccentRow: NSView {
     /// control is a real `NSButton` - a test drives the actual target/action
     /// path (`performClick(nil)`) rather than reaching into the controller
     /// that built it.
+    /// D1: drives the hover reveal without synthesizing a real mouse event.
+    func debugSetHovered(_ hovered: Bool) {
+        isRowHovered = hovered
+        applyActionReveal(animated: false)
+    }
+    /// D2: the row's own content column, which is what the cap applies to -
+    /// as against the card, which must keep filling the page.
+    var debugContentColumnWidth: CGFloat { contentRow?.frame.width ?? 0 }
+    /// D2: the *card*, which must keep filling the page - as against the
+    /// content column inside it, which is what the cap applies to. Measured
+    /// separately because a cap applied to the wrong one of the two is
+    /// invisible to a check that only reads the outer view.
+    var debugCardWidth: CGFloat { card.frame.width }
+    /// D1: the accessory itself, so a suite can read the reveal's alpha -
+    /// `cacheDisplay` renders an alpha-0 view visibly, so a render cannot
+    /// answer this either way.
+    var debugTrailingAccessory: NSView? { trailingAccessory }
+
     func debugClickTrailingAccessory() {
         (trailingAccessory as? NSButton)?.performClick(nil)
     }
@@ -2563,6 +2855,19 @@ final class HelmEmptyState: NSView {
     private let tile = HelmGradientTile(size: .hero)
     private let titleLabel = NSTextField(labelWithString: "")
     private let bodyLabel = NSTextField(labelWithString: "")
+    /// D4's watermark - the destination's own artwork, faint, behind the copy.
+    private let watermark = NSImageView()
+
+    /// The finding's own "25-30% scale/opacity" band. 0.26 measured legible
+    /// with body copy over it in both registers; higher starts competing.
+    static let watermarkOpacity: CGFloat = 0.26
+    static let watermarkSide: CGFloat = 116
+
+    /// D4's entrance: "a 250ms fade+rise on first appearance".
+    static let entranceDuration: TimeInterval = 0.25
+    static let entranceRise: CGFloat = 8
+    private var hasPlayedEntrance = false
+
     private let stack: NSStackView
     private let size: Size
     private let boxed: Bool
@@ -2597,7 +2902,17 @@ final class HelmEmptyState: NSView {
          size: Size = .compact,
          boxed: Bool = false,
          accessory: NSView? = nil,
-         hue: HelmDomainHue = .teal) {
+         hue: HelmDomainHue = .teal,
+         /// D4: the destination's own artwork, rendered as a faint watermark
+         /// behind the copy.
+         ///
+         /// The UI modernization audit (§3D): "the rendering is static and
+         /// identical everywhere, so big pages open onto beige silence ...
+         /// add the destination's own artwork (the base64 icons already
+         /// exist) at 25-30% scale/opacity". `RailDestination.
+         /// drillHeaderArtwork` is where those icons live, so a page passes
+         /// its own and nothing new ships.
+         artwork: NSImage? = nil) {
         self.size = size
         self.boxed = boxed
         self.accessory = accessory
@@ -2638,6 +2953,27 @@ final class HelmEmptyState: NSView {
         stack.spacing = size.spacing
         stack.translatesAutoresizingMaskIntoConstraints = false
         if accessory != nil { stack.setCustomSpacing(HelmMetrics.s4, after: bodyLabel) }
+        // D4: the watermark goes in first, so the copy always renders on top
+        // of it. Kept faint enough that it reads as the page's own identity
+        // rather than as content - `watermarkOpacity` is the finding's own
+        // 25-30% band.
+        if let artwork {
+            watermark.image = artwork
+            watermark.imageScaling = .scaleProportionallyUpOrDown
+            watermark.alphaValue = Self.watermarkOpacity
+            watermark.translatesAutoresizingMaskIntoConstraints = false
+            // Decoration: the copy beside it already says everything this
+            // says, so announcing it again would only be noise.
+            watermark.setAccessibilityElement(false)
+            addSubview(watermark)
+            NSLayoutConstraint.activate([
+                watermark.centerXAnchor.constraint(equalTo: centerXAnchor),
+                watermark.centerYAnchor.constraint(equalTo: centerYAnchor),
+                watermark.widthAnchor.constraint(equalToConstant: Self.watermarkSide),
+                watermark.heightAnchor.constraint(equalToConstant: Self.watermarkSide),
+            ])
+        }
+
         addSubview(stack)
         NSLayoutConstraint.activate([
             stack.centerXAnchor.constraint(equalTo: centerXAnchor),
@@ -2672,8 +3008,49 @@ final class HelmEmptyState: NSView {
     /// was a real, fixed bug: every pre-existing caller happened to pass short
     /// or explicitly `\n`-broken copy, which hid it. Handing the label the real
     /// available width each pass is a no-op for text that already fits.
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        playEntranceIfNeeded()
+    }
+
+    /// D4: "a 250ms fade+rise on first appearance".
+    ///
+    /// Once per instance, and only when there is a window to be seen in -
+    /// these views are reused as table cells, so replaying on every
+    /// `setText` would make a list flicker every time its data changed.
+    ///
+    /// `HelmMotion`'s rule applies: Reduce Motion gets the end state
+    /// instantly, which here means the state it already has - so the guard
+    /// marks the entrance played and returns.
+    private func playEntranceIfNeeded() {
+        guard !hasPlayedEntrance, window != nil, bounds.width > 0 else { return }
+        hasPlayedEntrance = true
+        guard !HelmMotion.isReduced else { return }
+        stack.wantsLayer = true
+        guard let layer = stack.layer else { return }
+
+        let rise = CABasicAnimation(keyPath: "transform.translation.y")
+        // A flipped parent counts down from the top, so "rise" is the
+        // opposite sign there. Asking the view rather than assuming keeps
+        // this right both on a page and inside a table cell.
+        rise.fromValue = isFlipped ? Self.entranceRise : -Self.entranceRise
+        rise.toValue = 0
+        rise.duration = Self.entranceDuration
+        rise.timingFunction = CAMediaTimingFunction(name: .easeOut)
+
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 0
+        fade.toValue = 1
+        fade.duration = Self.entranceDuration
+        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+
+        layer.add(rise, forKey: "entrance.rise")
+        layer.add(fade, forKey: "entrance.fade")
+    }
+
     override func layout() {
         super.layout()
+        playEntranceIfNeeded()
         let cap: CGFloat = size == .compact ? .greatestFiniteMagnitude : 360
         let available = min(bounds.width - 2 * HelmMetrics.s3, cap)
         if available > 0, bodyLabel.preferredMaxLayoutWidth != available {
@@ -2831,6 +3208,18 @@ final class HelmSegmentedTabs: NSView {
     }
 
     private let capsule = NSView()
+    /// E3's sliding selection.
+    ///
+    /// The audit (§3E): "selection jumps between pills instantly; the ink
+    /// capsule teleports ... slide the selection capsule between pills (a
+    /// single animated 'thumb' layer under the labels, spring 250ms) - the
+    /// one micro-animation with the highest perceived-quality yield in tab
+    /// controls."
+    ///
+    /// One thumb that moves, rather than each pill painting its own fill: a
+    /// fill that appears here while another disappears there is a cut, not a
+    /// movement, however it is timed.
+    private let thumb = NSView()
     private var pills: [Pill] = []
     private let size: Size
     private var selectedID: String
@@ -2887,6 +3276,10 @@ final class HelmSegmentedTabs: NSView {
         capsule.wantsLayer = true
         capsule.layer?.cornerRadius = size.capsuleRadius
         capsule.translatesAutoresizingMaskIntoConstraints = false
+        // Below the pills, so the labels always render on top of it.
+        thumb.wantsLayer = true
+        thumb.translatesAutoresizingMaskIntoConstraints = true
+        capsule.addSubview(thumb)
         capsule.addSubview(row)
         addSubview(capsule)
         NSLayoutConstraint.activate([
@@ -2918,9 +3311,50 @@ final class HelmSegmentedTabs: NSView {
     override func layout() {
         super.layout()
         let theme = ThemeManager.shared.theme
-        guard theme.isDaylight else { return }
-        for pill in pills {
-            pill.container.cornerRadius = size.daylightPillRadius(for: pill.container)
+        if theme.isDaylight {
+            for pill in pills {
+                pill.container.cornerRadius = size.daylightPillRadius(for: pill.container)
+            }
+        }
+        // E3: a layout pass repositions the thumb instantly. Only a genuine
+        // selection change slides it - otherwise a window resize would send
+        // it skating across the control.
+        //
+        // The pill row has to be laid out *first*: `layout()` runs top-down,
+        // so when this view's own runs, its descendants still carry the
+        // frames they had a pass ago - zero, on the first one. Measured:
+        // without this the thumb sits at `.zero` forever, because nothing
+        // else ever re-runs it.
+        capsule.layoutSubtreeIfNeeded()
+        moveThumb(animated: false)
+    }
+
+    #if FM_SELFTESTS
+    /// E3: where the selection thumb actually is, and whether any pill is
+    /// still painting a selected fill of its own.
+    var debugThumbFrame: NSRect { thumb.frame }
+    var debugPillFillsAreClear: Bool {
+        pills.allSatisfy { $0.container.normalColor.alphaComponent == 0 }
+    }
+    #endif
+
+    /// E3: put the thumb under the selected pill.
+    private func moveThumb(animated: Bool) {
+        guard let pill = pills.first(where: { $0.id == selectedID }) else {
+            thumb.isHidden = true
+            return
+        }
+        thumb.isHidden = false
+        let target = capsule.convert(pill.container.bounds, from: pill.container)
+        guard thumb.frame != target else { return }
+        guard animated, !HelmMotion.isReduced else {
+            thumb.frame = target
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = HelmMotion.springDuration
+            context.timingFunction = HelmMotion.spring()
+            thumb.animator().frame = target
         }
     }
 
@@ -2956,8 +3390,13 @@ final class HelmSegmentedTabs: NSView {
     /// Moves the active pill without firing `onSelect` - for a page whose
     /// view changed from somewhere else (a menu item, the search palette).
     func select(_ id: String) {
+        let changed = id != selectedID
         selectedID = id
         applyTheme(ThemeManager.shared.theme)
+        // Only a real change slides; re-selecting what is already selected
+        // (which `applyTheme` and a page's own restore both do) must not
+        // re-animate.
+        moveThumb(animated: changed)
     }
 
     var selected: String { selectedID }
@@ -3020,12 +3459,19 @@ final class HelmSegmentedTabs: NSView {
             // GL-16: the same place the active pill is painted is the only
             // place that can keep its announced value honest.
             pill.container.accessibilityValueOverride = isActive ? "selected" : "not selected"
-            pill.container.normalColor = isActive ? activeWash : .clear
-            pill.container.hoverColor = isActive ? activeWash : line.withAlphaComponent(0.25)
+            // E3: the active fill lives on the thumb now, so the pills
+            // themselves paint only their hover. The colour and the contrast
+            // correction are exactly what they were - only which view carries
+            // the fill changed.
+            pill.container.normalColor = .clear
+            pill.container.hoverColor = isActive ? .clear : line.withAlphaComponent(0.25)
             pill.label.textColor = isActive ? activeInk : muted
             pill.label.font = .systemFont(ofSize: size.labelSize, weight: isActive ? .semibold : .medium)
             pill.container.cornerRadius = size.pillRadius
         }
+        thumb.layer?.backgroundColor = activeWash.cgColor
+        thumb.layer?.cornerRadius = size.pillRadius
+        moveThumb(animated: false)
     }
 
     /// §7's Daylight resolution: the space-pill recipe, so the tab strip on a
@@ -3054,11 +3500,18 @@ final class HelmSegmentedTabs: NSView {
             let isActive = pill.id == selectedID
             pill.container.accessibilityValueOverride = isActive ? "selected" : "not selected"
             pill.container.cornerRadius = size.daylightPillRadius(for: pill.container)
-            pill.container.normalColor = isActive ? ink : .clear
-            pill.container.hoverColor = isActive ? ink : inset
+            // E3: see the twelve-palette recipe above - the fill moved to the
+            // thumb, the colour did not change.
+            pill.container.normalColor = .clear
+            pill.container.hoverColor = isActive ? .clear : inset
             pill.label.textColor = isActive ? activeInk : muted
             pill.label.font = HelmType.rounded(size.labelSize, isActive ? .semibold : .medium)
         }
+        thumb.layer?.backgroundColor = ink.cgColor
+        if let active = pills.first(where: { $0.id == selectedID }) {
+            thumb.layer?.cornerRadius = size.daylightPillRadius(for: active.container)
+        }
+        moveThumb(animated: false)
     }
 
     // MARK: Probe / self-test surface
@@ -3086,7 +3539,14 @@ final class HelmSegmentedTabs: NSView {
                         pillCount: pills.count,
                         pillRadii: pills.map { $0.container.cornerRadius },
                         activeID: selectedID,
-                        activeFill: active?.container.normalColor,
+                        // E3: the selected fill lives on the sliding thumb
+                        // now, not on the pill. The question this answers -
+                        // "what does the active label actually sit on?" - is
+                        // unchanged; only which view carries the answer moved,
+                        // so this follows it rather than reporting the pill's
+                        // now-clear fill and measuring a label against nothing.
+                        activeFill: active == nil ? nil
+                            : thumb.layer?.backgroundColor.map { NSColor(cgColor: $0) ?? .clear },
                         activeInk: active?.label.textColor,
                         inactiveInk: inactive?.label.textColor,
                         labelPointSizes: pills.compactMap { $0.label.font?.pointSize })

@@ -605,10 +605,27 @@ enum DaylightDrillPageSlice6SelfTest {
             ok = false
         }
 
+        // Inverted by the UI modernization audit's E5, which settles the open
+        // captain decision this assertion used to record.
+        //
+        // Phase 4 slice 6 shipped the pill on Daylight/Dusk only and kept the
+        // stock `NSSwitch` on the twelve legacy palettes deliberately -
+        // answering "should every theme get a bespoke toggle?" was not that
+        // slice's to make. §3E made the case (the stock switch beside themed
+        // everything is chrome bleed-through, and the captain's own daily
+        // palette is a legacy dark one) and the captain asked for the fix, so
+        // the pill now renders on all fourteen. Kept as an assertion rather
+        // than deleted, because "every theme shows the pill" is exactly what
+        // a future regression would quietly undo.
         toggle.applyTheme(otherTheme)
         geometry = toggle.debugGeometry
-        if geometry.showsPill || !geometry.showsFallbackSwitch {
-            print("  FAIL \(otherTheme.id) does not keep the real NSSwitch")
+        if !geometry.showsPill || geometry.showsFallbackSwitch {
+            print("  FAIL \(otherTheme.id) does not show the pill (pill=\(geometry.showsPill), "
+                  + "switch=\(geometry.showsFallbackSwitch)) - E5 settled this: HelmToggle everywhere")
+            ok = false
+        }
+        if !sameColor(geometry.pillFill, HelmTheme.nsColor(HelmTint.good.hex(in: otherTheme))) {
+            print("  FAIL \(otherTheme.id)'s on state is not the theme's own `.good` fill")
             ok = false
         }
 
@@ -651,7 +668,7 @@ enum DaylightDrillPageSlice6SelfTest {
             print("  FAIL a bare NSSwitch is still visible on Daylight")
             ok = false
         }
-        if ok { print("  ok   pill on Daylight, NSSwitch on \(otherTheme.id), 3 wired toggles") }
+        if ok { print("  ok   the pill on Daylight and on \(otherTheme.id) (E5), 3 wired toggles") }
     }
 
     // MARK: 8. Settings' pill is the shared one (§6.7)

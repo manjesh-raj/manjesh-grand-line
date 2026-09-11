@@ -237,7 +237,8 @@ final class DocsController: NSViewController, DaylightDrillActions {
                                    body: "The DevOps Playbook hasn't been synced to this Mac yet. Sync it once to browse it here, fully offline afterward.",
                                    size: .standard,
                                    accessory: actionRow,
-                                   hue: RailDestination.docs.domainHue)
+                                   hue: RailDestination.docs.domainHue,
+                                   artwork: RailDestination.docs.drillHeaderArtwork)
         playbookEmptyState = empty
         emptyStateContainer.addSubview(empty)
         NSLayoutConstraint.activate([

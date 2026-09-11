@@ -53,7 +53,13 @@ private final class UpdateRow {
     let detailLabel = NSTextField(labelWithString: "")
     let pill = NSView()
     let pillLabel = NSTextField(labelWithString: "")
-    let spinner = NSProgressIndicator()
+    /// D3: the status column's placeholder is a redacted pill in the shape
+    /// of the status that is coming, not a grey system spinner. The finding's
+    /// own scope limit is kept - a spinner inside a button the captain just
+    /// pressed is feedback for *their* action and stays - but this one was
+    /// standing in for a *status* that had not arrived, which is exactly the
+    /// case skeletons are for.
+    let statusSkeleton = HelmSkeletonRow(shape: .pill)
     let progressLabel = NSTextField(labelWithString: "Updating\u{2026}")
     let checkButton = HelmButton(title: "Check", variant: .secondary, size: .small)
     let updateButton = HelmButton(title: "Update", variant: .primary, size: .small)
@@ -564,7 +570,12 @@ final class UpdatesController: NSViewController, SetupPageSummary {
         var rowViews: [NSView] = []
         var sectionSeparators: [NSView] = []
         for (index, row) in categoryRows.enumerated() {
-            rowViews.append(buildRow(row))
+            // D1's mitigation: a short category keeps every row's buttons,
+            // and a long one keeps its first row's, so the affordance is
+            // never invisible.
+            rowViews.append(buildRow(row,
+                                     actionReveal: ReviewPRListView.actionReveal(
+                                        row: index, of: categoryRows.count)))
             if index < categoryRows.count - 1 {
                 let sep = separator()
                 rowViews.append(sep)
@@ -596,7 +607,8 @@ final class UpdatesController: NSViewController, SetupPageSummary {
 
     // MARK: Row
 
-    private func buildRow(_ row: UpdateRow) -> NSView {
+    private func buildRow(_ row: UpdateRow,
+                          actionReveal: HelmAccentRow.ActionReveal = .always) -> NSView {
         // Check / Update
         row.checkButton.target = self
         row.checkButton.action = #selector(checkTapped(_:))
@@ -620,10 +632,6 @@ final class UpdatesController: NSViewController, SetupPageSummary {
         row.installInBootstrapButton.isHidden = true
 
         // Busy state
-        row.spinner.style = .spinning
-        row.spinner.controlSize = .small
-        row.spinner.isIndeterminate = true
-        row.spinner.translatesAutoresizingMaskIntoConstraints = false
         row.progressLabel.font = .systemFont(ofSize: 11, weight: .medium)
 
         let view = ToolRowLayout.build(
@@ -634,10 +642,13 @@ final class UpdatesController: NSViewController, SetupPageSummary {
             // Status column: the pill, and the spinner/label that replace
             // it while a check or update runs. Actions stay in their own
             // trailing column (audit §5.4).
-            statusViews: [row.pill, row.spinner, row.progressLabel],
+            statusViews: [row.pill, row.statusSkeleton, row.progressLabel],
             trailingViews: [row.checkButton, row.updateButton, row.installInBootstrapButton],
             detailsTarget: self,
             detailsAction: #selector(detailsTapped(_:)),
+            // D1: thirteen rows each carrying a permanent "Check" button is
+            // what the audit measured here. The status pill stays.
+            actionReveal: actionReveal == .always ? .always : .onAim,
             identifier: row.item.id
         )
         row.logContainer.isHidden = true // collapsed until the details chevron is tapped.
@@ -837,10 +848,9 @@ final class UpdatesController: NSViewController, SetupPageSummary {
         // keeps its existing Update button unchanged.
         row.updateButton.isHidden = busy || !row.status.showsUpdateButton || row.status == .notInstalled
         row.installInBootstrapButton.isHidden = busy || row.status != .notInstalled
-        row.spinner.isHidden = !busy
+        row.statusSkeleton.isHidden = !busy
         row.progressLabel.isHidden = !busy
         row.progressLabel.stringValue = row.status == .updating ? "Updating\u{2026}" : "Checking\u{2026}"
-        if busy { row.spinner.startAnimation(nil) } else { row.spinner.stopAnimation(nil) }
 
         let disabled = row.isBusy
         row.checkButton.isEnabled = !disabled

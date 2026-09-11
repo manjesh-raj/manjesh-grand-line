@@ -750,11 +750,11 @@ enum CodePreviewViewSelfTest {
         defer { FontSizeManager.shared.setSize(original) }
 
         FontSizeManager.shared.setSize(14)
-        controller.debugZoomInButton.performClick(nil)
+        controller.debugZoomStepper.debugTapLarger()
         check(FontSizeManager.shared.size == 15,
               "zoom in should step the shared monospace size 14 -> 15, got \(FontSizeManager.shared.size)")
-        controller.debugZoomOutButton.performClick(nil)
-        controller.debugZoomOutButton.performClick(nil)
+        controller.debugZoomStepper.debugTapSmaller()
+        controller.debugZoomStepper.debugTapSmaller()
         check(FontSizeManager.shared.size == 13,
               "zoom out should step back down, got \(FontSizeManager.shared.size)")
 
@@ -764,11 +764,21 @@ enum CodePreviewViewSelfTest {
         check(abs(AppSettings.shared.fontSize - 13) < 0.01,
               "the chosen size should persist through AppSettings.fontSize, got \(AppSettings.shared.fontSize)")
 
+        // E7: the readout says what the size is - the question two bare
+        // magnifying-glass glyphs raised and never answered - and clicking it
+        // is the reset, which had no on-screen affordance at all before.
+        check(controller.debugZoomStepper.debugReadout == "13pt",
+              "the stepper should read 13pt, got '\(controller.debugZoomStepper.debugReadout)'")
+        FontSizeManager.shared.setSize(20)
+        controller.debugZoomStepper.debugTapReadout()
+        check(FontSizeManager.shared.size == HelmZoomStepper.resetSize,
+              "clicking the readout should reset to \(HelmZoomStepper.resetSize), got \(FontSizeManager.shared.size)")
+
         // Clamped at the shared bounds rather than growing without limit.
-        for _ in 0..<40 { controller.debugZoomInButton.performClick(nil) }
+        for _ in 0..<40 { controller.debugZoomStepper.debugTapLarger() }
         check(FontSizeManager.shared.size == FontSizeManager.maxSize,
               "zooming in past the ceiling should clamp to \(FontSizeManager.maxSize), got \(FontSizeManager.shared.size)")
-        for _ in 0..<60 { controller.debugZoomOutButton.performClick(nil) }
+        for _ in 0..<60 { controller.debugZoomStepper.debugTapSmaller() }
         check(FontSizeManager.shared.size == FontSizeManager.minSize,
               "zooming out past the floor should clamp to \(FontSizeManager.minSize), got \(FontSizeManager.shared.size)")
 

@@ -47,8 +47,12 @@ extension ConsoleController {
         // (`fm/grandline-daylight-theme-toggle-relocate`) - it is an
         // app-wide preference, not something scoped to Console.
         findButton = makeLabeledButton(symbol: "magnifyingglass", title: "Find", tooltip: "Find (⌘F)", action: #selector(showFind))
-        zoomOutButton = makeIconButton(symbol: "minus.magnifyingglass", tooltip: "Zoom Out (⌘−)", action: #selector(zoomOut))
-        zoomInButton = makeIconButton(symbol: "plus.magnifyingglass", tooltip: "Zoom In (⌘+)", action: #selector(zoomIn))
+        // E7: one compact stepper capsule with a readout, replacing two bare
+        // magnifying-glass squares that never said what the size was. The
+        // readout is also the reset, which `zoomReset` previously had no
+        // on-screen affordance for at all.
+        zoomStepper = HelmZoomStepper()
+
         blockViewToggleButton = makeLabeledButton(symbol: "rectangle.grid.1x2", title: "Blocks", tooltip: "Show Parsed Blocks (Stage 0)", action: #selector(toggleBlockView))
         blockViewRefreshButton = makeIconButton(symbol: "arrow.clockwise", tooltip: "Refresh Blocks", action: #selector(refreshBlockView))
         composeButton = makeLabeledButton(symbol: "sparkles", title: "Compose", tooltip: "Compose a command…", action: #selector(toggleComposer))
@@ -163,7 +167,7 @@ extension ConsoleController {
             incidentButton = button
             toolViews.append(button)
         }
-        toolViews += [findButton, zoomOutButton, zoomInButton]
+        toolViews += [findButton, zoomStepper]
         if !isFirstmateConsole {
             toolViews += [blockViewToggleButton, blockViewRefreshButton]
         }
@@ -479,9 +483,14 @@ extension ConsoleController {
 
     // MARK: Font zoom
 
+    // E7: the toolbar reaches these through `HelmZoomStepper` now rather than
+    // through two icon buttons of its own. Kept `@objc` and kept here because
+    // they are the console's own named zoom actions - a menu item or a future
+    // key equivalent binds to them, not to a view's internals - and because
+    // `zoomReset` is what the stepper's readout resets *to*.
     @objc func zoomIn() { FontSizeManager.shared.step(by: 1) }
     @objc func zoomOut() { FontSizeManager.shared.step(by: -1) }
-    @objc func zoomReset() { FontSizeManager.shared.setSize(13) }
+    @objc func zoomReset() { FontSizeManager.shared.setSize(HelmZoomStepper.resetSize) }
 
     /// The Settings panel's font-size stepper (Fix 3) - now a thin forward
     /// to `FontSizeManager`, which is the source of truth (`fm/cockpit-

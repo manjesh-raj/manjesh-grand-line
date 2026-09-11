@@ -575,7 +575,8 @@ final class VaultController: NSViewController, DaylightDrillActions {
     /// which is exactly the distinction `HelmAccentRow`'s own doc comment
     /// draws between the two components.
     private func secretRowView(_ secret: VaultSecret) -> NSView {
-        let row = HelmAccentRow(trailingAccessory: secretRowActions(for: secret), hover: false)
+        let row = HelmAccentRow(trailingAccessory: secretRowActions(for: secret), hover: false,
+                                maxContentWidth: HelmAccentRow.recordContentWidth)
         row.configure(HelmAccentRow.Content(
             tint: .good,
             kicker: "Hardened",

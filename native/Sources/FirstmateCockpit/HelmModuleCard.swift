@@ -206,6 +206,24 @@ final class HelmModuleCard: NSView {
 
     // Geometry (§2.7, §2.6).
     static let ribbonHeight: CGFloat = 6
+
+    /// C3: how tall and how present the hue ribbon is *at rest*, against
+    /// `ribbonHeight`/full opacity when it blooms.
+    ///
+    /// The UI modernization audit
+    /// (`data/grandline-ui-modernization-audit/report.md` §3C) measured the
+    /// real cost of seven saturated 6pt ribbons on one canvas: "all 7 ribbons
+    /// at once form a rainbow strip effect ... decoration, not signal - it
+    /// competes with the one thing PRODUCT.md says should dominate (the
+    /// needs-you state)". Its fix is to "quiet the ribbon at rest (2-3pt, 60%
+    /// saturation ...), let it bloom on hover/attention".
+    ///
+    /// The hue itself is untouched - only its height and presence change - so
+    /// this stays a pure rendering change and the domain-hue identity the
+    /// canvas is built on still reads at a glance.
+    static let ribbonRestHeight: CGFloat = 2
+    static let ribbonRestOpacity: Float = 0.55
+    static let ribbonBloomDuration: TimeInterval = 0.16
     static let headerInsetTop: CGFloat = 13
     static let horizontalInset: CGFloat = 16
     static let bodyInsetTop: CGFloat = 10
@@ -214,6 +232,11 @@ final class HelmModuleCard: NSView {
     /// alone is acceptable motion, per that section's own note.
     static let hoverLift: CGFloat = 3
     static let hoverDuration: TimeInterval = 0.14
+
+    /// C2's "scale 0.985 ... on mouse-down". The approved visual calls it
+    /// "a 2% press compression", so 0.98 - the midpoint of the two, and the
+    /// smallest compression that is still legible at a 176pt card's size.
+    static let pressScale: CGFloat = 0.98
 
     /// **Every module card is exactly this tall, on every space.**
     ///
@@ -339,6 +362,11 @@ final class HelmModuleCard: NSView {
         card.layer?.masksToBounds = true
         card.layer?.borderWidth = 1
         card.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(cardClicked)))
+        // C2: a module card is the canonical "press me" surface on the hub,
+        // so it opts into the shared press compression. `HoverHighlightView`
+        // composes it with the hover lift this class hands it through
+        // `baseTransform`.
+        card.pressScale = Self.pressScale
         addSubview(card)
 
         card.layer?.addSublayer(ribbon)
@@ -737,6 +765,38 @@ final class HelmModuleCard: NSView {
         applyHoverState(animated: true)
     }
 
+    /// C3: the ribbon's height and presence, from one place.
+    ///
+    /// Blooms to its full 6pt when the card is hovered, and - deliberately -
+    /// also whenever the card's own chip says the card is *bad*. That is the
+    /// finding's own carve-out ("a card whose chip is `.critical` may keep a
+    /// loud edge - color as signal, not as wallpaper"): quieting the ribbon
+    /// is about stopping seven equal-weight hues competing, not about hiding
+    /// the one card that needs the captain.
+    private func applyRibbonGeometry(animated: Bool) {
+        let bloomed = isHovering || content?.chip?.kind == .bad
+        let height = bloomed ? Self.ribbonHeight : Self.ribbonRestHeight
+        let opacity: Float = bloomed ? 1 : Self.ribbonRestOpacity
+        let frame = CGRect(x: 0, y: card.bounds.height - height,
+                           width: card.bounds.width, height: height)
+
+        guard animated, !HelmMotion.isReduced else {
+            // A standalone (non-view-backed) `CALayer` animates `frame` and
+            // `opacity` implicitly, so "instant" has to be asked for.
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            ribbon.frame = frame
+            ribbon.opacity = opacity
+            CATransaction.commit()
+            return
+        }
+        CATransaction.begin()
+        CATransaction.setAnimationDuration(Self.ribbonBloomDuration)
+        ribbon.frame = frame
+        ribbon.opacity = opacity
+        CATransaction.commit()
+    }
+
     private func applyHoverState(animated: Bool) {
         let theme = ThemeManager.shared.theme
         applyShadow(theme, raised: isHovering)
@@ -746,15 +806,18 @@ final class HelmModuleCard: NSView {
         // AppKit's y grows upward in an unflipped view, so lifting a card is a
         // *positive* translate.
         let lift: CGFloat = (isHovering && allowMotion) ? Self.hoverLift : 0
-        let transform = CATransform3DMakeTranslation(0, lift, 0)
-        guard animated, allowMotion else {
-            card.layer?.transform = transform
-            return
+        // C2: the lift is handed to the card's own `baseTransform` rather than
+        // written straight onto `card.layer.transform`, because the press
+        // compression now writes that same property. `HoverHighlightView` is
+        // the single owner and composes the two, so a card pressed while
+        // hovered reads as lifted *and* compressed instead of one state
+        // silently cancelling the other.
+        HelmMotion.animate(animated && allowMotion, duration: Self.hoverDuration) {
+            card.baseTransform = CATransform3DMakeTranslation(0, lift, 0)
         }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = Self.hoverDuration
-            card.layer?.transform = transform
-        }
+        // C3: the ribbon blooms with the hover instead of sitting loud at
+        // rest - see `applyRibbonGeometry`.
+        applyRibbonGeometry(animated: animated && allowMotion)
     }
 
     #if FM_SELFTESTS
@@ -792,10 +855,11 @@ final class HelmModuleCard: NSView {
         // A standalone sublayer's `frame` change animates implicitly, so a
         // window resize would slide the ribbon into place behind the card's
         // own instant relayout - see `HelmMotion`'s header, finding 2.
-        HelmMotion.withoutImplicitAnimation {
-            ribbon.frame = CGRect(x: 0, y: card.bounds.height - Self.ribbonHeight,
-                                  width: card.bounds.width, height: Self.ribbonHeight)
-        }
+        // C3: one writer of the ribbon's geometry, so a layout pass and a
+        // hover bloom can never disagree about how tall it currently is.
+        // Always instant here - a window resize must not slide the ribbon
+        // behind the card's own relayout.
+        applyRibbonGeometry(animated: false)
         for label in noteLabels { label.preferredMaxLayoutWidth = bodyContainer.bounds.width }
         applyShadow(ThemeManager.shared.theme, raised: isHovering)
     }
@@ -828,6 +892,10 @@ final class HelmModuleCard: NSView {
         HelmMotion.withoutImplicitAnimation {
             ribbon.colors = [pair.h1.cgColor, pair.h2.cgColor]
         }
+        // C3: re-read the rest/bloom state here too. `configure` routes
+        // through this method, so a card whose chip just became `.bad` picks
+        // up its loud edge without waiting for a hover or a layout pass.
+        applyRibbonGeometry(animated: false)
 
         titleLabel.font = HelmType.moduleTitle()
         titleLabel.textColor = ink
@@ -894,6 +962,19 @@ final class HelmModuleCard: NSView {
         /// What the body actually needs. Greater than `bodyAreaHeight` means
         /// this body kind has outgrown `standardHeight` and would be clipped.
         let bodyContentHeight: CGFloat
+    }
+
+    /// C2/C3: the inner `HoverHighlightView` (which owns the transform) and
+    /// the ribbon's live geometry, so the rest/bloom state is read off the
+    /// real layer rather than recomputed by the test.
+    var debugCardView: HoverHighlightView { card }
+    var debugRibbonGeometry: (height: CGFloat, opacity: Float, stopCount: Int) {
+        (ribbon.frame.height, ribbon.opacity, ribbon.colors?.count ?? 0)
+    }
+    /// Drives hover without synthesizing a real mouse event.
+    func debugSetHovering(_ hovering: Bool) {
+        isHovering = hovering
+        applyHoverState(animated: false)
     }
 
     var anatomyForTests: Anatomy {

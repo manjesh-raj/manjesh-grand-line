@@ -610,6 +610,49 @@ class HoverHighlightView: NSView {
         didSet { layer?.cornerRadius = cornerRadius }
     }
 
+    // MARK: Press state (C2)
+
+    /// How far this view compresses while the mouse is held down on it -
+    /// the UI modernization audit's C2
+    /// (`data/grandline-ui-modernization-audit/report.md` §3C: "modern cards
+    /// depress slightly (scale 0.985 or translate back to 0) on mouse-down,
+    /// then the navigation animates; without it, clicks feel dead").
+    ///
+    /// `1` opts out, and is the default: this class backs ~40 controls, and
+    /// a press compression is right for a *card or row you activate* and
+    /// wrong for, say, a pill that is only a hover highlight. A caller opts
+    /// in by setting this, which is also what makes the state assertable -
+    /// see `isPressedForTests`.
+    var pressScale: CGFloat = 1
+
+    /// A transform the *owner* of this view composes underneath the press
+    /// compression.
+    ///
+    /// This exists because `HelmModuleCard` already drives its own 3pt hover
+    /// lift by assigning `card.layer?.transform` directly, and two
+    /// independent writers of one `transform` property silently overwrite
+    /// each other - the lift would cancel the press or vice versa depending
+    /// purely on which fired last. Routing the lift through here keeps one
+    /// owner of the layer's transform and lets the two states *compose*
+    /// (pressed while hovering = lifted and compressed), which is what the
+    /// finding asks for.
+    var baseTransform: CATransform3D = CATransform3DIdentity {
+        didSet { applyPressTransform(animated: false) }
+    }
+
+    private var isPressed = false
+    private var pressMonitor: Any?
+
+    /// Fires on every hover transition, whatever the colors are doing.
+    ///
+    /// D1's hover-reveal needs this and cannot use `hoverColor`: most of the
+    /// button-bearing rows in this app pass `hover: false` to
+    /// `HelmAccentRow`, so their `normalColor` and `hoverColor` are
+    /// deliberately equal and a color-based hook would never fire for
+    /// exactly the rows that need it. `DaylightBarController` already owns
+    /// the same shape of hook for its own rows.
+    var onHoverChange: ((Bool) -> Void)?
+
     private var isHovering = false
     private var trackingArea: NSTrackingArea?
 
@@ -677,8 +720,25 @@ class HoverHighlightView: NSView {
         fatalError("init(coder:) not supported")
     }
 
+    deinit {
+        if let pressMonitor { NSEvent.removeMonitor(pressMonitor) }
+        #if FM_SELFTESTS
+        Self.debugLiveInstanceCount -= 1
+        #endif
+    }
+
     #if FM_SELFTESTS
-    deinit { Self.debugLiveInstanceCount -= 1 }
+
+    /// C2: drives the press state without synthesizing a real mouse event,
+    /// so a suite can assert the *composition* of press and hover rather than
+    /// the local-monitor plumbing.
+    func debugSetPressed(_ pressed: Bool) {
+        guard pressed != isPressed else { return }
+        isPressed = pressed
+        applyPressTransform(animated: !HelmMotion.isReduced)
+    }
+    var debugIsPressed: Bool { isPressed }
+    var debugIsHovering: Bool { isHovering }
     #endif
 
     /// The one definition of "this view does something when pressed": an
@@ -813,12 +873,87 @@ class HoverHighlightView: NSView {
     override func mouseEntered(with event: NSEvent) {
         isHovering = true
         setBackground(hoverColor, animated: true)
+        beginWatchingForPress()
+        onHoverChange?(true)
     }
 
     override func mouseExited(with event: NSEvent) {
         isHovering = false
         setBackground(normalColor, animated: true)
+        // A drag that leaves the view ends the press: the click will not
+        // fire, so the view must not be left looking held down.
+        stopWatchingForPress()
+        onHoverChange?(false)
     }
+
+    // MARK: C2 - the pressed state
+
+    /// **Neither `mouseDown` nor `mouseUp` is overridden here, and that is
+    /// measured rather than stylistic.**
+    ///
+    /// C2's first draft ended the press in `mouseDown`/`mouseUp` overrides
+    /// that both called `super`, which looks entirely inert. It is not: with
+    /// either in place, a real click on an `NSButton` nested *inside* a
+    /// `HoverHighlightView` stops firing that button's action - the session
+    /// strip's per-pill ✕ went dead, caught by
+    /// `SessionSwitcherSelfTest.realClickOnCloseEndsTheSessionAndDoesNotSwitchToIt`
+    /// and bisected to `mouseDown` over three clean runs each way. This class
+    /// backs ~40 controls, several of which nest real controls inside
+    /// themselves, so *participating in mouse routing at all* is the thing to
+    /// avoid.
+    ///
+    /// So the press is driven by a **local event monitor**, which observes
+    /// the stream and returns every event untouched - it cannot change which
+    /// view AppKit delivers to. The monitor lives only while the pointer is
+    /// inside this view (installed from `mouseEntered`, removed from
+    /// `mouseExited`), so at most the one or two views under the cursor ever
+    /// have one, and a view that never opted into a press never installs one
+    /// at all.
+    private func beginWatchingForPress() {
+        guard pressScale != 1, pressMonitor == nil else { return }
+        pressMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) {
+            [weak self] event in
+            guard let self else { return event }
+            if event.type == .leftMouseDown {
+                // Only when the press genuinely lands on this view - a
+                // mouse-down anywhere else is not ours to react to.
+                let point = self.convert(event.locationInWindow, from: nil)
+                if self.bounds.contains(point) { self.setPressed(true) }
+            } else {
+                self.setPressed(false)
+            }
+            return event
+        }
+    }
+
+    private func stopWatchingForPress() {
+        if let pressMonitor {
+            NSEvent.removeMonitor(pressMonitor)
+            self.pressMonitor = nil
+        }
+        setPressed(false)
+    }
+
+    private func setPressed(_ pressed: Bool) {
+        guard pressed != isPressed else { return }
+        isPressed = pressed
+        applyPressTransform(animated: true)
+    }
+
+    /// Composes `baseTransform` (the owner's, e.g. a card's hover lift) with
+    /// the press compression, and is the only writer of `layer.transform`.
+    private func applyPressTransform(animated: Bool) {
+        guard let layer else { return }
+        let scale = isPressed ? pressScale : 1
+        let next = CATransform3DScale(baseTransform, scale, scale, 1)
+        // Reduce Motion gets the end state instantly - never the same motion,
+        // slower (`HelmMotion`'s own rule).
+        HelmMotion.animate(animated, duration: Self.pressDuration) {
+            layer.transform = next
+        }
+    }
+
+    static let pressDuration: TimeInterval = 0.09
 
     private func setBackground(_ color: NSColor, animated: Bool) {
         guard let layer else { return }
@@ -1181,6 +1316,10 @@ enum ToolRowLayout {
         stack.setClippingResistancePriority(.required, for: .horizontal)
     }
 
+    /// D1's reveal policy - see `HelmAccentRow.ActionReveal`, which this
+    /// mirrors so the two row components answer the question the same way.
+    enum ActionReveal { case always, onAim }
+
     /// Assembles `views` into one row and returns the top-level view to place
     /// in a stack. `trailingViews` (e.g. a status pill plus Check/Update/
     /// Install buttons or a spinner) are inserted into `views.trailingStack`
@@ -1222,6 +1361,12 @@ enum ToolRowLayout {
         trailingViews: [NSView] = [],
         detailsTarget: AnyObject? = nil,
         detailsAction: Selector? = nil,
+        /// D1: when this row's action buttons (`trailingViews`) are visible.
+        /// `.always` for a short list or the first row of a long one - the
+        /// finding's own discoverability mitigation - and `.onAim` otherwise.
+        /// Only the buttons move; the status pill stays visible at rest,
+        /// which is the whole point.
+        actionReveal: ToolRowLayout.ActionReveal = .always,
         identifier: String,
         showDetails: Bool = true,
         cardStyle: Bool = false
@@ -1315,6 +1460,24 @@ enum ToolRowLayout {
             v.setContentHuggingPriority(.required, for: .horizontal)
             v.setContentCompressionResistancePriority(.required, for: .horizontal)
             views.trailingStack.addArrangedSubview(v)
+        }
+        // D1: quiet until aimed at. `alphaValue`, never `isHidden` - see
+        // `HelmAccentRow.applyActionReveal` for the three reasons, all of
+        // which apply identically here (the actions stay in the a11y tree and
+        // the row's columns never re-flow on hover).
+        if actionReveal == .onAim, !trailingViews.isEmpty {
+            views.trailingStack.alphaValue = 0
+            let reveal: (Bool) -> Void = { [weak stack = views.trailingStack] revealed in
+                guard let stack else { return }
+                HelmMotion.fade(stack, to: revealed ? 1 : 0,
+                                duration: HelmAccentRow.actionRevealDuration, animated: true)
+            }
+            views.rowContainer.onHoverChange = reveal
+            // Focus-within: a captain who tabs to "Check" has to see it.
+            // The registration's target is weak and `HelmFocusSensing` prunes
+            // dead ones, which is what makes this safe for a row the page
+            // rebuilds (Bootstrap tears its rows down on every render).
+            HelmFocusSensing.shared.register(views.trailingStack, includesDescendants: true, onChange: reveal)
         }
 
         // The gap between the text column and the status column - and the one

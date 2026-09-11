@@ -280,8 +280,8 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// overwritten on the next theme change - `tint` is the seam.
     var plusButton: HelmButton!
     var findButton: HelmButton!
-    var zoomInButton: HelmButton!
-    var zoomOutButton: HelmButton!
+    /// E7's stepper capsule - see `HelmZoomStepper`.
+    var zoomStepper: HelmZoomStepper!
     /// `fm/cockpit-block-view-stage0` - only ever shown for the one opted-in
     /// host's tab, see `updateBlockViewControls`.
     var blockViewToggleButton: HelmButton!

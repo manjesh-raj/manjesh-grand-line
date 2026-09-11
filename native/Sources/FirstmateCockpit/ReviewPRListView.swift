@@ -151,7 +151,12 @@ private final class ReviewPRRowCellView: NSView {
     /// (`pr.checks == "green"`, #226's fix) and actually mergeable through
     /// this action (`pr.taskID != nil`) - never revert this back to
     /// `pr.source == "work"` alone.
-    func configure(pr: MergedPR, checksVisuals: (String) -> (tint: HelmTint, chipLabel: String), theme: HelmTheme) {
+    func configure(pr: MergedPR, checksVisuals: (String) -> (tint: HelmTint, chipLabel: String),
+                   theme: HelmTheme, actionReveal: HelmAccentRow.ActionReveal) {
+        // D1: fifty rows each shouting a bordered "Review" button is what the
+        // audit measured. The row's own state stays visible (the signal dot
+        // and the checks chip); the buttons go quiet until aimed at.
+        accentRow.actionReveal = actionReveal
         let visuals = checksVisuals(pr.checks)
 
         var kickerParts: [String] = []
@@ -362,6 +367,13 @@ final class ReviewPRListView: NSView {
 extension ReviewPRListView: NSTableViewDataSource, NSTableViewDelegate {
     func numberOfRows(in tableView: NSTableView) -> Int { prs.isEmpty ? 1 : prs.count }
 
+    /// D1's discoverability rule, shared by every list that hides its row
+    /// actions: a short list keeps them, and a long one keeps them on its
+    /// first row so the affordance is never invisible.
+    static func actionReveal(row: Int, of count: Int) -> HelmAccentRow.ActionReveal {
+        (count <= HelmAccentRow.alwaysRevealRowCount || row == 0) ? .always : .onAim
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard !prs.isEmpty else {
             if let unavailableMessage {
@@ -396,7 +408,11 @@ extension ReviewPRListView: NSTableViewDataSource, NSTableViewDelegate {
                 }
                 return v
             }()
-        cell.configure(pr: prs[row], checksVisuals: checksVisuals, theme: theme)
+        // D1's own discoverability mitigation, verbatim: "keep the *primary*
+        // action visible on the top/first row or when the list has <=3 rows".
+        // A captain who has never hovered a row still sees what a row can do.
+        cell.configure(pr: prs[row], checksVisuals: checksVisuals, theme: theme,
+                       actionReveal: Self.actionReveal(row: row, of: prs.count))
         return cell
     }
 }

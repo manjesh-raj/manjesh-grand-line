@@ -365,7 +365,8 @@ private final class CredentialVaultRecordView: NSView {
             actions.addArrangedSubview(button)
         }
 
-        row = HelmAccentRow(trailingAccessory: actions, gradientBadge: true)
+        row = HelmAccentRow(trailingAccessory: actions, gradientBadge: true,
+                                  maxContentWidth: HelmAccentRow.recordContentWidth)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
 
