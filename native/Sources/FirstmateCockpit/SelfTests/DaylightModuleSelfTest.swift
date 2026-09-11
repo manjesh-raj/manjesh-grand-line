@@ -1106,9 +1106,17 @@ enum DaylightModuleSelfTest {
             // and its back button returns to the canvas with the space intact.
             shell.selectSpace(.stores)
             shell.show(.homeCanvas)
-            if !shell.drillHeaderIsHiddenForTests || shell.drillHeaderHeightForTests != 0 {
-                fail("the canvas shows a drill header (hidden=\(shell.drillHeaderIsHiddenForTests), "
-                     + "height=\(shell.drillHeaderHeightForTests)) - the hub has no back", &ok)
+            if !shell.drillHeaderIsHiddenForTests {
+                fail("the canvas shows a drill cluster in the bar - the hub has no back", &ok)
+            }
+            // A2: the wordmark and the space pills are the canvas's own
+            // leading area, and they only come back if the swap is genuinely
+            // two-way.
+            if shell.bar.wordmarkIsHiddenForTests {
+                fail("the canvas hides the wordmark - the leading swap is one-way", &ok)
+            }
+            if shell.bar.pillsAreHiddenForTests {
+                fail("the canvas hides the space pills - they only collapse on a drill page", &ok)
             }
 
             for dest in RailDestination.allCases where dest != .homeCanvas {
@@ -1116,8 +1124,14 @@ enum DaylightModuleSelfTest {
                 if shell.drillHeaderIsHiddenForTests {
                     fail("\(dest) has no drill header - it would have no way back", &ok)
                 }
-                if abs(shell.drillHeaderHeightForTests - HelmDrillHeader.height) > 0.01 {
-                    fail("\(dest)'s drill header is \(shell.drillHeaderHeightForTests)pt tall", &ok)
+                // A2: a drill page collapses the pills to make room for the
+                // cluster and the page's own actions - measured, they do not
+                // all fit (see `DaylightBarController`'s header).
+                if !shell.bar.pillsAreHiddenForTests {
+                    fail("\(dest) leaves the space pills showing beside the drill cluster", &ok)
+                }
+                if !shell.bar.wordmarkIsHiddenForTests {
+                    fail("\(dest) shows the wordmark and the drill title at once", &ok)
                 }
                 if shell.drillHeaderForTests.titleForTests != dest.bodyTitle {
                     fail("\(dest)'s drill header says '\(shell.drillHeaderForTests.titleForTests)', "
@@ -1191,7 +1205,7 @@ enum DaylightModuleSelfTest {
             }
 
             if ok {
-                print("  OK - eager canvas, per-space filtering and copy, drill headers on "
+                print("  OK - eager canvas, per-space filtering and copy, drill navigation in the bar on "
                       + "\(RailDestination.allCases.count - 1) destinations, back preserves the space")
             }
         }

@@ -255,7 +255,15 @@ enum HelmType {
     static func heroTitle() -> NSFont { rounded(scaled(30), .heavy) }
 
     /// A drill page's h1. Rounded 26 heavy.
-    static func drillTitle() -> NSFont { rounded(scaled(26), .heavy) }
+    /// The drill navigation's page title.
+    ///
+    /// Was 26 while `HelmDrillHeader` was a 56pt strip of its own; the UI
+    /// modernization audit's A2 merged that cluster into the 50pt floating
+    /// bar, where 26 would swamp the row and leave no space for the subtitle
+    /// beneath it. 15 is one step above the wordmark it literally replaces
+    /// (`rounded(14.5, .heavy)`), so the page's name reads as the louder of
+    /// the two without becoming a hero title inside a toolbar.
+    static func drillTitle() -> NSFont { rounded(scaled(15), .heavy) }
 
     /// A canvas module's header title. Rounded 13.5 bold.
     static func moduleTitle() -> NSFont { rounded(scaled(13.5), .bold) }

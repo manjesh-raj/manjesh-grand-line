@@ -161,18 +161,27 @@ enum AppShellDrillHeaderTitleSelfTest {
     /// ordered-front) window - the direct, minimal harness that actually
     /// reproduced the bug, independent of `AppShellController`'s much larger
     /// dependency graph.
+    /// The row height the cluster now lives in: the audit's A2 merged it
+    /// into the floating bar, so there is no `HelmDrillHeader.height` any
+    /// more.
+    private static let rowHeight = DaylightBarController.height
+
     private static func makeMountedHeader(width: CGFloat = 500) -> (window: NSWindow, header: HelmDrillHeader) {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: HelmDrillHeader.height),
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: rowHeight),
                               styleMask: [.borderless], backing: .buffered, defer: false)
         let header = HelmDrillHeader()
         header.translatesAutoresizingMaskIntoConstraints = false
         let root = window.contentView!
         root.addSubview(header)
+        // Leading- and trailing-pinned, which is how the *bar* squeezes it in
+        // production: the cluster's own width is its content
+        // (`textColumn.trailing == trailing`), so a container narrower than
+        // that content is exactly the pressure the real bar applies.
         NSLayoutConstraint.activate([
             header.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             header.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            header.topAnchor.constraint(equalTo: root.topAnchor),
-            header.heightAnchor.constraint(equalToConstant: HelmDrillHeader.height),
+            header.centerYAnchor.constraint(equalTo: root.centerYAnchor),
+            header.heightAnchor.constraint(equalToConstant: rowHeight),
         ])
         return (window, header)
     }
@@ -219,27 +228,23 @@ enum AppShellDrillHeaderTitleSelfTest {
     /// destination switch. There is now plenty of room for the new content;
     /// the title must render in full.
     private static func test_titleFitsAfterSqueezeClearsWithDifferentContent() -> String? {
-        let (window, header) = makeMountedHeader(width: 500)
+        // A2: the squeeze comes from the container being narrower than the
+        // cluster's content, which is exactly how the bar applies it - there
+        // is no actions cluster inside this view any more to squeeze with.
+        let (window, header) = makeMountedHeader(width: 260)
         header.configure(title: "A Genuinely Very Long Title That Needs Lots Of Room",
                          subtitle: "short", symbol: "sailboat.fill", hue: .teal)
-        let wideAction = NSView()
-        wideAction.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            wideAction.widthAnchor.constraint(equalToConstant: 300),
-            wideAction.heightAnchor.constraint(equalToConstant: 30),
-        ])
-        header.setActions([wideAction])
         window.displayIfNeeded()
         guard header.titleLabelForTests.frame.width < 200 else {
             return "setup failed: expected a genuine squeeze (title well under 200pt) before switching, "
                 + "got \(header.titleLabelForTests.frame.width)pt - the reproduction needs a real squeeze first"
         }
 
-        // The real production sequence: a brand-new destination's title and
-        // (now-empty) actions, both changed together.
+        // The real production sequence: a brand-new destination's title, at a
+        // width that now has plenty of room for it.
+        window.setFrame(NSRect(x: 0, y: 0, width: 500, height: rowHeight), display: true)
         header.configure(title: "Console", subtitle: "2 tabs \u{00B7} Shell 2",
                          symbol: "terminal", hue: .teal)
-        header.setActions([])
         window.displayIfNeeded()
 
         if let failure = titleFitsFailure(header, context: "right after the squeeze clears") {
@@ -248,7 +253,7 @@ enum AppShellDrillHeaderTitleSelfTest {
         // A later, completely idle pass and a much wider window should not
         // be needed to fit - but confirm neither regresses it either.
         window.displayIfNeeded()
-        window.setFrame(NSRect(x: 0, y: 0, width: 1500, height: HelmDrillHeader.height), display: true)
+        window.setFrame(NSRect(x: 0, y: 0, width: 1500, height: rowHeight), display: true)
         return titleFitsFailure(header, context: "after a later idle pass and a much wider window")
     }
 
@@ -258,25 +263,18 @@ enum AppShellDrillHeaderTitleSelfTest {
     /// rather than running under them") - this fix must not turn the `<=`
     /// tie into a no-op.
     private static func test_titleYieldsToGenuineSqueeze() -> String? {
-        let (window, header) = makeMountedHeader(width: 500)
-        let wideAction = NSView()
-        wideAction.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            wideAction.widthAnchor.constraint(equalToConstant: 300),
-            wideAction.heightAnchor.constraint(equalToConstant: 30),
-        ])
+        let (window, header) = makeMountedHeader(width: 220)
         header.configure(title: "A Genuinely Very Long Title That Needs Lots Of Room",
                          subtitle: "short", symbol: "sailboat.fill", hue: .teal)
-        header.setActions([wideAction])
         window.displayIfNeeded()
 
         let title = header.titleLabelForTests
-        let actions = header.actionsStackForTests
-        // The title must not run underneath/past the actions cluster - the
-        // documented intent this constraint exists for.
-        guard title.frame.maxX <= actions.frame.minX + 0.5 else {
-            return "title (maxX \(title.frame.maxX)) overlaps the actions cluster "
-                + "(minX \(actions.frame.minX)) - the yield-to-actions constraint is not holding"
+        // The title must not run past the cluster's own trailing edge - in
+        // the bar, that edge is where the space pills or the action cluster
+        // begin, so running past it means running underneath them.
+        guard title.frame.maxX <= header.frame.maxX + 0.5 else {
+            return "title (maxX \(title.frame.maxX)) runs past the cluster's own trailing edge "
+                + "(\(header.frame.maxX)) - it would render under whatever the bar puts next to it"
         }
         // And it must be genuinely narrower than its own natural need, since
         // there truly isn't room for both at this window width.

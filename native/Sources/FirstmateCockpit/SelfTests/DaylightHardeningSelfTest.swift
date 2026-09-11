@@ -261,35 +261,50 @@ enum DaylightHardeningSelfTest {
     private static func test_keyLoopFollowsDestination() -> String? {
         withScratchEnv {
             let (window, shell) = makeShell()
-            // A drill page: the back button is the first thing below the bar,
-            // because it is the way out and the topmost control.
+            // A drill page: the audit's A2 moved the back button *into* the
+            // bar, so it is the head of the bar's own chain rather than the
+            // first thing below it - which is the same reading order it
+            // always had, one row up.
             shell.show(.review)
             window.contentView?.layoutSubtreeIfNeeded()
             shell.updateKeyViewLoop()
-            guard let handoff = shell.firstBodyKeyViewForTests else {
-                return "a drill page offers nothing below the bar for Tab to reach"
-            }
             let header = shell.drillHeaderForTests
-            var ancestor: NSView? = handoff
+            guard let barHead = shell.barKeyViewChainForTests.first else {
+                return "the bar offers nothing for Tab to reach on a drill page"
+            }
+            var ancestor: NSView? = barHead
             while let current = ancestor, current !== header { ancestor = current.superview }
             guard ancestor === header else {
-                return "on a drill page the hand-off is not the drill header's own control"
+                return "on a drill page the bar's chain does not start at the back button"
             }
-            // Back on the canvas the header is collapsed, so the hand-off must
-            // move rather than pointing at a hidden view.
+            // A page whose own content is all static (Review before its
+            // fetch lands is cards and labels) legitimately offers nothing
+            // below the bar - that used to be masked, because the hand-off
+            // was the drill header's back button and the header was below
+            // the bar. What must still hold is that anything it *does* offer
+            // is real and visible.
+            if let handoff = shell.firstBodyKeyViewForTests, handoff.isHiddenOrHasHiddenAncestor {
+                return "the drill page's hand-off points at a hidden view"
+            }
+
+            // Back on the canvas the cluster is hidden, so the bar's chain
+            // must drop it rather than handing focus to an invisible control.
             shell.show(.homeCanvas)
             window.contentView?.layoutSubtreeIfNeeded()
             shell.updateKeyViewLoop()
+            for view in shell.barKeyViewChainForTests where view.isHiddenOrHasHiddenAncestor {
+                return "the canvas's bar chain includes a hidden control"
+            }
+            var inHeader: NSView? = shell.barKeyViewChainForTests.first
+            while let current = inHeader, current !== header { inHeader = current.superview }
+            if inHeader === header {
+                return "the canvas's bar chain still starts at the hidden drill cluster"
+            }
             guard let canvasHandoff = shell.firstBodyKeyViewForTests else {
                 return "the canvas offers nothing below the bar for Tab to reach"
             }
             if canvasHandoff.isHiddenOrHasHiddenAncestor {
                 return "the hand-off points at a hidden view"
-            }
-            var inHeader: NSView? = canvasHandoff
-            while let current = inHeader, current !== header { inHeader = current.superview }
-            if inHeader === header {
-                return "the hand-off is still the collapsed drill header's control"
             }
             return nil
         }
