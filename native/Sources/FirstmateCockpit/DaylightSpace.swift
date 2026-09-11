@@ -135,6 +135,12 @@ enum DaylightModule: String, CaseIterable {
     case whiteboard
     case stickyBoard
     case codePreview
+    // `fm/grandline-tasks-kanban-devops-split`: declared here, beside its
+    // Stores-space siblings, because `canvasOrder` is `allCases` (declaration
+    // order) - see `.poneglyph`'s own note above for the same lesson, learned
+    // the hard way when a space reassignment alone left a card rendering
+    // first on a canvas it had just joined.
+    case commandLibrary
     case settings
     // `fm/straw-hat-voice-order-composer-polish-8dd2`: the captain's second
     // correction. `fm/polish-straw-hat-overview-card-and-voice-c8d3` had
@@ -187,7 +193,7 @@ enum DaylightModule: String, CaseIterable {
         // asked for Poneglyph to move out of Engineering into Stores
         // (`fm/move-poneglyph-to-stores-space-282a`), so it sits here now
         // rather than beside the other four Setup pages.
-        case .vault, .poneglyph, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview: return .stores
+        case .vault, .poneglyph, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview, .commandLibrary: return .stores
         case .updates, .bootstrap, .automation, .githubSync, .settings: return .engineering
         }
     }
@@ -232,6 +238,10 @@ enum DaylightModule: String, CaseIterable {
              // `DaylightModuleSelfTest`'s literal `overviewVisibleModules` list,
              // which is exactly why that list is typed out rather than derived.
              .poneglyph,
+             // `fm/grandline-tasks-kanban-devops-split`: same rule - a new
+             // module has to opt out explicitly, because `default` returns
+             // `true` and Overview's card count is a locked captain decision.
+             .commandLibrary,
              .settings:
             return false
         default:
@@ -297,6 +307,7 @@ enum DaylightModule: String, CaseIterable {
         case .whiteboard: return .whiteboard
         case .stickyBoard: return .stickyBoard
         case .codePreview: return .codePreview
+        case .commandLibrary: return .commandLibrary
         case .settings: return .settings
         }
     }
@@ -348,6 +359,10 @@ enum DaylightModule: String, CaseIterable {
         case .whiteboard: return "scribble.variable"
         case .stickyBoard: return "note.text"
         case .codePreview: return "chevron.left.forwardslash.chevron.right"
+        // Kept in sync with `RailDestination.commandLibrary.symbol` by hand,
+        // like `.strawHat` above - a card and the page it opens should not
+        // disagree even in their fallback.
+        case .commandLibrary: return "books.vertical"
         case .settings: return "slider.horizontal.3"
         }
     }
@@ -397,6 +412,7 @@ enum DaylightModule: String, CaseIterable {
         case .whiteboard: return "Whiteboard"
         case .stickyBoard: return "Sticky Board"
         case .codePreview: return "Code Preview"
+        case .commandLibrary: return "DevOps Commands"
         case .settings: return "Settings"
         }
     }

@@ -406,6 +406,80 @@ enum ShiftStoreSelfTest {
         }
         check(settled, "M2: an unraced reloadAllAsync no longer applies at all")
 
+        // MARK: Deletion (fm/grandline-tasks-kanban-devops-split)
+        //
+        // The captain's own report: a task typed by mistake could never be
+        // removed. Every assertion below reloads through a fresh `ShiftStore()`
+        // - an in-memory check would pass against a delete that never reached
+        // the file.
+
+        let deleteStore = ShiftStore()
+
+        var doomed = ShiftTask.fresh()
+        doomed.title = "Delete me"
+        doomed.subtasks = [ShiftSubtask(id: UUID().uuidString, title: "sub", done: false)]
+        deleteStore.addTask(doomed)
+
+        var keeper = ShiftTask.fresh()
+        keeper.title = "Keep me"
+        deleteStore.addTask(keeper)
+
+        // A follow-up pointing at the doomed task: its pointer must be
+        // cleared, never the follow-up removed with the task.
+        var linked = ShiftFollowUp.fresh()
+        linked.title = "Check on the doomed task"
+        linked.relatedTaskID = doomed.id
+        deleteStore.addFollowUp(linked)
+
+        check(deleteStore.deleteTask(id: doomed.id), "deleteTask should report that it removed the task")
+        check(!deleteStore.activeTasks.contains { $0.id == doomed.id }, "the task should be gone in memory")
+
+        let afterDelete = ShiftStore()
+        check(!afterDelete.activeTasks.contains { $0.id == doomed.id },
+              "the deleted task should be gone from active.yaml after a reload")
+        check(afterDelete.activeTasks.contains { $0.id == keeper.id },
+              "deleting one task must not touch its neighbours")
+        check(afterDelete.followUps.contains { $0.id == linked.id },
+              "a follow-up that referenced the deleted task must survive it")
+        check(afterDelete.followUps.first { $0.id == linked.id }?.relatedTaskID == nil,
+              "the surviving follow-up's relatedTaskID should have been cleared, not left dangling")
+
+        check(!deleteStore.deleteTask(id: doomed.id),
+              "deleting an already-deleted task should report that nothing was removed")
+        check(!deleteStore.deleteTask(id: "no-such-task"),
+              "deleting an unknown id should report that nothing was removed")
+
+        // A *completed* task lives in a month file, not active.yaml - the case
+        // a delete that only swept the active list would silently no-op on,
+        // and the one a captain tidying up is most likely to hit.
+        var finished = ShiftTask.fresh()
+        finished.title = "Finished then deleted"
+        deleteStore.addTask(finished)
+        deleteStore.setTaskCompleted(id: finished.id, completed: true)
+        check(deleteStore.allCompletedTasks().contains { $0.id == finished.id },
+              "the completed task should be in a month file before it is deleted")
+        check(deleteStore.deleteTask(id: finished.id), "a completed task should be deletable")
+
+        let afterCompletedDelete = ShiftStore()
+        check(!afterCompletedDelete.allCompletedTasks().contains { $0.id == finished.id },
+              "the deleted completed task should be gone from its month file after a reload")
+        check(!afterCompletedDelete.activeTasks.contains { $0.id == finished.id },
+              "a deleted completed task must not reappear in active.yaml")
+
+        // Follow-up deletion, the symmetric half.
+        var doomedFollowUp = ShiftFollowUp.fresh()
+        doomedFollowUp.title = "Delete this follow-up"
+        deleteStore.addFollowUp(doomedFollowUp)
+        check(deleteStore.deleteFollowUp(id: doomedFollowUp.id),
+              "deleteFollowUp should report that it removed the follow-up")
+        let afterFollowUpDelete = ShiftStore()
+        check(!afterFollowUpDelete.followUps.contains { $0.id == doomedFollowUp.id },
+              "the deleted follow-up should be gone from follow-ups.yaml after a reload")
+        check(afterFollowUpDelete.followUps.contains { $0.id == linked.id },
+              "deleting one follow-up must not touch its neighbours")
+        check(!deleteStore.deleteFollowUp(id: doomedFollowUp.id),
+              "deleting an already-deleted follow-up should report that nothing was removed")
+
         return report(failures)
     }
 

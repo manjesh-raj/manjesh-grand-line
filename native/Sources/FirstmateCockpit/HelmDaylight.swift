@@ -573,6 +573,13 @@ extension RailDestination {
         // own, distinct from Whiteboard's AI-feature violet (Sticky Board has
         // no AI in it at all).
         case .stickyBoard: return .amber
+        // `fm/grandline-tasks-kanban-devops-split`: teal is the "running
+        // systems" hue this app already gives Console, Hosts, Log Analyzer
+        // and Kubernetes, and a library of saved shell commands is what gets
+        // typed into exactly those. Deliberately not its Stores neighbours'
+        // blue (reading material) - these are things you *run*, kept on the
+        // reference shelf rather than read there.
+        case .commandLibrary: return .teal
         // `fm/grandline-monaco-code-preview`: blue is the "reading material"
         // hue in §2.2's table (Docs, Runbooks, the Fleet overview), and a
         // panel whose whole job is reading a snippet properly belongs there.

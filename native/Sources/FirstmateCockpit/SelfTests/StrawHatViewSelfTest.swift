@@ -203,7 +203,8 @@ enum StrawHatViewSelfTest {
             scheduleStore: ScheduleStore(),
             logAnalyzerStore: LogAnalyzerStore(),
             docsRunbookStore: DocsRunbookStore(),
-            codePreviewStore: CodePreviewStore()))
+            codePreviewStore: CodePreviewStore(),
+            commandLibraryStore: CommandLibraryStore()))
         let canvasWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
                                     styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         canvasWindow.contentViewController = canvas
@@ -380,7 +381,8 @@ enum StrawHatViewSelfTest {
             scheduleStore: ScheduleStore(),
             logAnalyzerStore: LogAnalyzerStore(),
             docsRunbookStore: DocsRunbookStore(),
-            codePreviewStore: CodePreviewStore()))
+            codePreviewStore: CodePreviewStore(),
+            commandLibraryStore: CommandLibraryStore()))
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
                               styleMask: [.titled, .resizable], backing: .buffered, defer: false)
         window.contentViewController = canvas

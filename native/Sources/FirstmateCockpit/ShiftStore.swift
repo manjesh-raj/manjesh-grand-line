@@ -567,6 +567,96 @@ final class ShiftStore {
         writeListGuarded(path: followUpsPath, key: "follow_ups", items: followUps.map(ShiftYaml.toYaml))
     }
 
+    // MARK: Deletion (fm/grandline-tasks-kanban-devops-split)
+
+    /// Removes a task permanently - from `active.yaml` or from whichever
+    /// `tasks/completed/<YYYY-MM>.yaml` it was filed into, plus its
+    /// attachment file if it had one.
+    ///
+    /// **The captain asked for this because there was no way back from a
+    /// mistyped task.** Until now `ShiftStore` could create, edit and
+    /// complete a task but never remove one, which
+    /// `ShiftController.renderProjectsSection` even had a comment about
+    /// ("not possible in this phase - there's no delete action yet").
+    ///
+    /// Three things worth knowing about the shape:
+    ///
+    ///   - **It searches both homes.** A completed task no longer lives in
+    ///     `active.yaml` (see `setTaskCompleted`), so a delete that only
+    ///     swept the active list would silently do nothing for exactly the
+    ///     tasks a captain is most likely to be tidying up.
+    ///   - **A follow-up pointing at the deleted task has its pointer
+    ///     cleared, never deleted with it.** `ShiftFollowUp.relatedTaskID` is
+    ///     a reference, not ownership - cascading would throw away a record
+    ///     the captain never asked to lose, while leaving the id would dangle
+    ///     against a task that no longer exists. Clearing it is the only
+    ///     option that loses nothing.
+    ///   - **The attachment file goes with it.** `removeAttachmentFile` is a
+    ///     no-op when there is none, so this needs no `hasAttachment` guard;
+    ///     leaving the PNG behind would orphan it in the git-synced tree with
+    ///     nothing left to reference it.
+    ///
+    /// Returns whether anything was actually removed, so a caller driving
+    /// this from a stale row id can tell "deleted" from "already gone".
+    @discardableResult
+    func deleteTask(id: String, now: Date = Date()) -> Bool {
+        let removed: ShiftTask
+        if let idx = activeTasks.firstIndex(where: { $0.id == id }) {
+            removed = activeTasks[idx]
+            activeTasks.remove(at: idx)
+            persistActiveTasks()
+        } else if let found = findCompletedTask(id: id) {
+            removed = found.task
+            removeFromCompletedMonth(id: id, month: found.month)
+        } else {
+            return false
+        }
+
+        removeAttachmentFile(taskID: id)
+        clearRelatedTaskPointers(to: id)
+        logActivity(kind: "task_deleted", summary: "Deleted \"\(removed.title)\"", targetID: id, now: now)
+        notify()
+        return true
+    }
+
+    /// Removes a follow-up permanently from `follow-ups.yaml`.
+    ///
+    /// Added alongside `deleteTask` rather than deferred: a follow-up has no
+    /// month-split completed file and no attachment, so this is the whole of
+    /// it, and leaving the follow-up list as the one row type in this page
+    /// with no way to remove a mistyped entry would have been an odd place to
+    /// stop.
+    ///
+    /// **`deleteProject` is deliberately NOT here.** Tasks reference a
+    /// project by `projectID`, so removing one either orphans every task that
+    /// pointed at it or deletes them too - that is a product decision about
+    /// the captain's own data, not a symmetry to fill in while nobody is
+    /// looking.
+    @discardableResult
+    func deleteFollowUp(id: String, now: Date = Date()) -> Bool {
+        guard let idx = followUps.firstIndex(where: { $0.id == id }) else { return false }
+        let removed = followUps[idx]
+        followUps.remove(at: idx)
+        persistFollowUps()
+        logActivity(kind: "follow_up_deleted", summary: "Deleted follow-up \"\(removed.title)\"", targetID: id, now: now)
+        notify()
+        return true
+    }
+
+    /// Clears `relatedTaskID` on every follow-up that pointed at a task that
+    /// has just been deleted - see `deleteTask`'s own header for why the
+    /// pointer is cleared rather than the follow-up removed. Writes only if
+    /// something actually pointed there, so an ordinary delete costs no extra
+    /// file write.
+    private func clearRelatedTaskPointers(to taskID: String) {
+        var changed = false
+        for idx in followUps.indices where followUps[idx].relatedTaskID == taskID {
+            followUps[idx].relatedTaskID = nil
+            changed = true
+        }
+        if changed { persistFollowUps() }
+    }
+
     // MARK: Projects (phase 3)
 
     /// Appends a brand-new project to `projects/projects.yaml` and persists
@@ -735,6 +825,13 @@ final class ShiftStore {
     private static func iso8601Date(_ s: String) -> Date? {
         isoFormatter.date(from: s)
     }
+
+    /// The public half of `iso8601Date`, for a caller that needs to reason
+    /// about a task's own `createdAt`/`completedAt` in real dates rather than
+    /// by comparing the strings - the board's Done column, which only shows
+    /// what was finished recently. Deliberately the same formatter that wrote
+    /// them, so a round trip cannot drift.
+    static func date(fromISO8601 s: String) -> Date? { iso8601Date(s) }
 
     // GL-P3: built once. `DateFormatter`/`ISO8601DateFormatter` construction
     // is measurably expensive and none of these carry per-call state - the

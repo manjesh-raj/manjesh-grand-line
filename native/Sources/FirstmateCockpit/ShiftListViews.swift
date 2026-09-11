@@ -53,6 +53,10 @@ final class ShiftTaskListView: NSObject {
     /// Double-clicking a row (anywhere but the checkbox) opens the Edit Task
     /// sheet, pre-filled - phase 2's "clicking an existing task" behavior.
     var onOpen: ((ShiftTask) -> Void)?
+    /// `fm/grandline-tasks-kanban-devops-split`: the list's half of the new
+    /// delete action - the board's cards carry the same item in their own
+    /// menu, and both end up at `ShiftController.confirmDeleteTask`.
+    var onDelete: ((ShiftTask) -> Void)?
 
     private static let columnID = NSUserInterfaceItemIdentifier("shiftTaskCol")
     private static let rowViewID = NSUserInterfaceItemIdentifier("shiftTaskRow")
@@ -74,7 +78,30 @@ final class ShiftTaskListView: NSObject {
         tableView.delegate = self
         tableView.target = self
         tableView.doubleAction = #selector(rowDoubleClicked)
+        tableView.menu = rowMenu()
     }
+
+    /// The same shape `ShiftFollowUpListView` already uses below: one menu
+    /// built once, its items acting on whichever row was right-clicked
+    /// (`clickedTask`), with `menuNeedsUpdate` doing the per-row work.
+    private func rowMenu() -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(NSMenuItem(title: "Open\u{2026}", action: #selector(openClicked), keyEquivalent: ""))
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Delete Task\u{2026}", action: #selector(deleteClicked), keyEquivalent: ""))
+        for item in menu.items { item.target = self }
+        menu.delegate = self
+        return menu
+    }
+
+    private var clickedTask: ShiftTask? {
+        let row = tableView.clickedRow
+        guard row >= 0, row < tasks.count else { return nil }
+        return tasks[row]
+    }
+
+    @objc private func openClicked() { if let task = clickedTask { onOpen?(task) } }
+    @objc private func deleteClicked() { if let task = clickedTask { onDelete?(task) } }
 
     /// Three text lines (kicker/title/meta) plus card padding - see the file
     /// header for the card redesign this replaced a flat 44pt row with.
@@ -110,6 +137,16 @@ final class ShiftTaskListView: NSObject {
         // clipping its descenders at "Larger".
         tableView.rowHeight = Self.rowHeight
         tableView.reloadData()
+    }
+}
+
+extension ShiftTaskListView: NSMenuDelegate {
+    /// An empty list still renders one row - the `HelmEmptyState` placeholder
+    /// - and a right-click on that must not offer to open or delete a task
+    /// that is not there.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let hasTask = clickedTask != nil
+        for item in menu.items where !item.isSeparatorItem { item.isEnabled = hasTask }
     }
 }
 
@@ -286,6 +323,9 @@ final class ShiftFollowUpListView: NSObject {
 
     /// Edit (double-click, or the context menu's Edit item).
     var onEdit: ((ShiftFollowUp) -> Void)?
+    /// See `ShiftTaskListView.onDelete` - the same action, for the record
+    /// type that sits beside it.
+    var onDelete: ((ShiftFollowUp) -> Void)?
     /// Done (toggles pending <-> done).
     var onToggleDone: ((ShiftFollowUp) -> Void)?
     /// Snooze - the concrete recompute/persist happens in `ShiftController`,
@@ -365,6 +405,8 @@ final class ShiftFollowUpListView: NSObject {
         menu.addItem(snooze)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Edit\u{2026}", action: #selector(editClicked), keyEquivalent: ""))
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Delete Follow-up\u{2026}", action: #selector(deleteClicked), keyEquivalent: ""))
         for item in menu.items { item.target = self }
         menu.delegate = self
         return menu
@@ -378,6 +420,7 @@ final class ShiftFollowUpListView: NSObject {
     @objc private func snoozeTomorrow() { if let item = clickedItem { onSnooze?(item, .tomorrow) } }
     @objc private func snoozeNextWeek() { if let item = clickedItem { onSnooze?(item, .nextWeek) } }
     @objc private func snoozeCustom() { if let item = clickedItem { onSnooze?(item, .custom) } }
+    @objc private func deleteClicked() { if let item = clickedItem { onDelete?(item) } }
 }
 
 extension ShiftFollowUpListView: NSMenuDelegate {

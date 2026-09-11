@@ -61,6 +61,12 @@ final class HomeCanvasController: NSViewController {
         let logAnalyzerStore: LogAnalyzerStore
         let docsRunbookStore: DocsRunbookStore
         let codePreviewStore: CodePreviewStore
+        /// `fm/grandline-tasks-kanban-devops-split`: the shell's own shared
+        /// instance, injected like every other store here - the canvas never
+        /// *constructs* one (`checkCanvasConstructsNoStores` forbids exactly
+        /// that), and this one caches its records in memory, so the card's
+        /// count is a field read rather than a directory scan.
+        let commandLibraryStore: CommandLibraryStore
     }
 
     /// §6.1's grid: minimum column width 255, gap 16.
@@ -568,6 +574,7 @@ final class HomeCanvasController: NSViewController {
         case .whiteboard: fillWhiteboard(&content)
         case .stickyBoard: fillStickyBoard(&content)
         case .codePreview: fillCodePreview(&content)
+        case .commandLibrary: fillCommandLibrary(&content)
         case .settings: fillSettings(&content)
         }
         return content
@@ -1222,6 +1229,35 @@ final class HomeCanvasController: NSViewController {
                               value: CodePreviewLanguage.forFilename($0).displayName)
         })
     }
+
+    /// Reads the store's already-loaded `commands` array and its favourites -
+    /// both in-memory field reads on a store the shell already owns, so this
+    /// costs nothing per canvas render. The peek rows are the captain's own
+    /// recently-used commands, which is the one thing about this library that
+    /// changes between visits.
+    private func fillCommandLibrary(_ content: inout HelmModuleCard.Content) {
+        let total = commandLibrarySources.commands.count
+        content.subtitle = "saved commands"
+        guard total > 0 else {
+            content.body = .note("Your DevOps command library - searchable, parameterised, one click from a terminal.")
+            return
+        }
+        content.chip = .mute("\(total)")
+        let recent = commandLibrarySources.recentlyUsedCommands(limit: HelmModuleCard.maxPeekRows)
+        guard !recent.isEmpty else {
+            content.body = .metric(value: "\(total)",
+                                   unit: total == 1 ? "command" : "commands",
+                                   note: "Nothing run yet - open the library to find one.")
+            return
+        }
+        content.body = .peekRows(recent.map {
+            HelmModulePeekRow(state: .idle, text: $0.name, value: $0.category)
+        })
+    }
+
+    /// Spelled out rather than reaching through `sources` inline, purely so
+    /// the store's role in this one card is obvious at its use site.
+    private var commandLibrarySources: CommandLibraryStore { sources.commandLibraryStore }
 
     private func fillSettings(_ content: inout HelmModuleCard.Content) {
         // `fm/grandline-rail-icons-batch2`: the captain's own settings

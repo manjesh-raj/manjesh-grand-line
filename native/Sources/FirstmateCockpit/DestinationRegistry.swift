@@ -56,8 +56,8 @@
 //   - `.homeCanvas` is the launch landing and the target of every drill
 //     page's back button, so it can never wait for a first visit.
 //
-// Everything else - Hosts, Tasks, Log Analyzer, Tools, Vault, Dictation,
-// Docs, Setup (all four pages) and Settings - is lazy.
+// Everything else - Hosts, Tasks, DevOps Commands, Log Analyzer, Tools,
+// Vault, Dictation, Docs, Setup (all four pages) and Settings - is lazy.
 
 import AppKit
 
@@ -108,7 +108,7 @@ enum DestinationSlotID: String, CaseIterable {
     /// launch landing and the target of every drill page's back button.
     case homeCanvas
     case overview, strawHat, console, hosts, shift, review, logAnalyzer, kubernetes
-    case tools, whiteboard, codePreview, stickyBoard, vault, dictation, schedules, health, docs, runbooks, postmortems, setup, poneglyph, settings
+    case tools, whiteboard, codePreview, stickyBoard, commandLibrary, vault, dictation, schedules, health, docs, runbooks, postmortems, setup, poneglyph, settings
 }
 
 extension RailDestination {
@@ -128,6 +128,7 @@ extension RailDestination {
         case .whiteboard: return .whiteboard
         case .stickyBoard: return .stickyBoard
         case .codePreview: return .codePreview
+        case .commandLibrary: return .commandLibrary
         case .vault: return .vault
         case .dictation: return .dictation
         case .schedules: return .schedules
@@ -172,7 +173,11 @@ extension RailDestination {
         case .strawHat: return "Ask the crew - every write is yours to confirm"
         case .console: return "Terminals, hosts and the shared Firstmate session"
         case .hosts: return "Saved hosts, SSH keys and snippets"
-        case .shift: return "Tasks, follow-ups, projects and DevOps commands"
+        // `fm/grandline-tasks-kanban-devops-split` narrowed this: DevOps
+        // Commands is its own destination now. In practice this static string
+        // is a fallback only - `ShiftController` conforms to
+        // `DaylightDrillActions` and always supplies its own live subtitle.
+        case .shift: return "A task board, follow-ups and projects"
         case .review: return "Open pull requests, ready to merge"
         case .logAnalyzer: return "Collect, analyse and explain captured output"
         case .kubernetes: return "Read-only cluster browsing and multi-pod log tailing"
@@ -180,6 +185,7 @@ extension RailDestination {
         case .whiteboard: return "An Excalidraw canvas, offline, with AI diagrams"
         case .stickyBoard: return "A freeform corkboard of quick sticky notes"
         case .codePreview: return "Paste code and read it properly, synced to your config repo"
+        case .commandLibrary: return "Your saved shell commands, parameterised and ready to run"
         // `fm/swap-vault-poneglyph-naming-in-grand-lin-1f` reclaimed `.vault`
         // for Automic Vault's hardening panel - the credential vault's own
         // line moved to `.poneglyph` below. In practice this static string is
