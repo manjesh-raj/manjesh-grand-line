@@ -641,6 +641,7 @@ class HoverHighlightView: NSView {
     }
 
     private var isPressed = false
+    private var pressMonitor: Any?
 
     /// Fires on every hover transition, whatever the colors are doing.
     ///
@@ -719,13 +720,18 @@ class HoverHighlightView: NSView {
         fatalError("init(coder:) not supported")
     }
 
+    deinit {
+        if let pressMonitor { NSEvent.removeMonitor(pressMonitor) }
+        #if FM_SELFTESTS
+        Self.debugLiveInstanceCount -= 1
+        #endif
+    }
+
     #if FM_SELFTESTS
-    deinit { Self.debugLiveInstanceCount -= 1 }
 
     /// C2: drives the press state without synthesizing a real mouse event,
     /// so a suite can assert the *composition* of press and hover rather than
-    /// the event plumbing (which `mouseDown` sharing its path with the click
-    /// recognizer already covers).
+    /// the local-monitor plumbing.
     func debugSetPressed(_ pressed: Bool) {
         guard pressed != isPressed else { return }
         isPressed = pressed
@@ -867,6 +873,7 @@ class HoverHighlightView: NSView {
     override func mouseEntered(with event: NSEvent) {
         isHovering = true
         setBackground(hoverColor, animated: true)
+        beginWatchingForPress()
         onHoverChange?(true)
     }
 
@@ -875,32 +882,62 @@ class HoverHighlightView: NSView {
         setBackground(normalColor, animated: true)
         // A drag that leaves the view ends the press: the click will not
         // fire, so the view must not be left looking held down.
-        if isPressed { isPressed = false; applyPressTransform(animated: true) }
+        stopWatchingForPress()
         onHoverChange?(false)
     }
 
     // MARK: C2 - the pressed state
 
-    // Both of these call `super`, which is what keeps the existing click
-    // path intact: activation here runs through an `NSClickGestureRecognizer`
-    // (or `onAccessibilityPress`), and a recognizer sees the event through
-    // `NSWindow.sendEvent` on its own path. Swallowing the event instead
-    // would break every caller's click while looking like a pure visual
-    // change.
-    override func mouseDown(with event: NSEvent) {
-        if pressScale != 1 {
-            isPressed = true
-            applyPressTransform(animated: true)
+    /// **Neither `mouseDown` nor `mouseUp` is overridden here, and that is
+    /// measured rather than stylistic.**
+    ///
+    /// C2's first draft ended the press in `mouseDown`/`mouseUp` overrides
+    /// that both called `super`, which looks entirely inert. It is not: with
+    /// either in place, a real click on an `NSButton` nested *inside* a
+    /// `HoverHighlightView` stops firing that button's action - the session
+    /// strip's per-pill ✕ went dead, caught by
+    /// `SessionSwitcherSelfTest.realClickOnCloseEndsTheSessionAndDoesNotSwitchToIt`
+    /// and bisected to `mouseDown` over three clean runs each way. This class
+    /// backs ~40 controls, several of which nest real controls inside
+    /// themselves, so *participating in mouse routing at all* is the thing to
+    /// avoid.
+    ///
+    /// So the press is driven by a **local event monitor**, which observes
+    /// the stream and returns every event untouched - it cannot change which
+    /// view AppKit delivers to. The monitor lives only while the pointer is
+    /// inside this view (installed from `mouseEntered`, removed from
+    /// `mouseExited`), so at most the one or two views under the cursor ever
+    /// have one, and a view that never opted into a press never installs one
+    /// at all.
+    private func beginWatchingForPress() {
+        guard pressScale != 1, pressMonitor == nil else { return }
+        pressMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .leftMouseUp]) {
+            [weak self] event in
+            guard let self else { return event }
+            if event.type == .leftMouseDown {
+                // Only when the press genuinely lands on this view - a
+                // mouse-down anywhere else is not ours to react to.
+                let point = self.convert(event.locationInWindow, from: nil)
+                if self.bounds.contains(point) { self.setPressed(true) }
+            } else {
+                self.setPressed(false)
+            }
+            return event
         }
-        super.mouseDown(with: event)
     }
 
-    override func mouseUp(with event: NSEvent) {
-        if isPressed {
-            isPressed = false
-            applyPressTransform(animated: true)
+    private func stopWatchingForPress() {
+        if let pressMonitor {
+            NSEvent.removeMonitor(pressMonitor)
+            self.pressMonitor = nil
         }
-        super.mouseUp(with: event)
+        setPressed(false)
+    }
+
+    private func setPressed(_ pressed: Bool) {
+        guard pressed != isPressed else { return }
+        isPressed = pressed
+        applyPressTransform(animated: true)
     }
 
     /// Composes `baseTransform` (the owner's, e.g. a card's hover lift) with

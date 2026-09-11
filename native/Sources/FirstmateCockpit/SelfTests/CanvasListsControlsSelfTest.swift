@@ -65,6 +65,7 @@ enum CanvasListsControlsSelfTest {
             ("C1 the content column uses only the columns it can fill", test_c1ComposedContentWidth),
             ("C2 a card press compresses, and composes with the hover lift", test_c2PressComposesWithHover),
             ("C2 Reduce Motion gets the end state instantly", test_c2ReduceMotionIsInstant),
+            ("C2 a nested button inside a pressable view still fires", test_c2NestedButtonStillFires),
             ("C3 the ribbon is quiet at rest and blooms on hover", test_c3RibbonQuietAtRest),
             ("C3 a card that needs the captain keeps its loud edge", test_c3CriticalCardKeepsItsEdge),
             ("D1 a row's actions are quiet until aimed at", test_d1ActionsQuietUntilAimed),
@@ -77,6 +78,15 @@ enum CanvasListsControlsSelfTest {
             ("D4 an empty state carries its destination's artwork", test_d4EmptyStateArtwork),
             ("D5 a card's list gets A3's own scroll edge", test_d5ScrollEdgeReusesTheObserver),
             ("D5 the row entrance is capped and plays once", test_d5RowEntranceCappedAndOnce),
+            ("E1 a pressed button compresses, and Reduce Motion does not", test_e1PressCompression),
+            ("E1 a primary button carries the gradient, others do not", test_e1PrimaryGradient),
+            ("E2 the popup shows one chevron, not the stock stepper", test_e2SingleChevron),
+            ("E3 the selection is one thumb that moves", test_e3ThumbMoves),
+            ("E4 a selected chip is a surface, not an accent wash", test_e4SelectedChipIsASurface),
+            ("E4 the close x appears on hover only", test_e4CloseOnHoverOnly),
+            ("E5 every theme gets the pill, none gets the stock switch", test_e5ToggleEverywhere),
+            ("E6 the date reads as words and pops a calendar", test_e6DateFieldReadsAsWords),
+            ("E7 the zoom stepper reads out, steps and resets", test_e7ZoomStepper),
         ]
 
         var failures: [String] = []
@@ -449,6 +459,278 @@ enum CanvasListsControlsSelfTest {
         return nil
     }
 
+    // MARK: - E
+
+    /// E1's "depress 1px/2% scale on press". The interesting half is the
+    /// Reduce Motion one - a compression is decorative, so it is skipped
+    /// outright rather than done faster.
+    private static func test_e1PressCompression() -> String? {
+        HelmMotion.reducedOverrideForTests = false
+        defer { HelmMotion.reducedOverrideForTests = nil }
+        let button = HelmButton(title: "Save", variant: .primary)
+        let window = makeWindow(button, size: NSSize(width: 160, height: 40))
+        defer { window.orderOut(nil) }
+
+        if button.layer?.transform.m11 != 1 {
+            return "a button at rest is already compressed (\(button.layer?.transform.m11 ?? -1))"
+        }
+        button.debugSetPressed(true)
+        guard let pressed = button.layer?.transform.m11 else { return "no backing layer" }
+        if pressed >= 1 {
+            return "pressing did not compress the button (scale \(pressed))"
+        }
+        button.debugSetPressed(false)
+        if button.layer?.transform.m11 != 1 {
+            return "releasing left the button compressed (\(button.layer?.transform.m11 ?? -1))"
+        }
+
+        HelmMotion.reducedOverrideForTests = true
+        button.debugSetPressed(true)
+        if button.layer?.transform.m11 != 1 {
+            return "Reduce Motion still compressed the button - a press compression is decoration, so it "
+                 + "is skipped, not slowed"
+        }
+        return nil
+    }
+
+    /// E1: "give `.primary` a subtle bottom-edge shade or gradient (Daylight's
+    /// `gradientFill` already exists - adopt it as the default `.primary`
+    /// look)". The scope is the half worth pinning: every other variant, and
+    /// all twelve legacy palettes, must be untouched.
+    private static func test_e1PrimaryGradient() -> String? {
+        guard let daylight = HelmTheme.allThemes.first(where: { $0.id == "daylight" }),
+              let legacy = HelmTheme.allThemes.first(where: { $0.id == "helm-dark" }) else {
+            return "could not resolve the two themes this case needs"
+        }
+        let saved = ThemeManager.shared.theme
+        defer { ThemeManager.shared.setTheme(saved) }
+
+        ThemeManager.shared.setTheme(daylight)
+        let primary = HelmButton(title: "Save", variant: .primary)
+        let secondary = HelmButton(title: "Cancel", variant: .secondary)
+        let window = makeWindow(NSStackView(views: [primary, secondary]), size: NSSize(width: 300, height: 60))
+        defer { window.orderOut(nil) }
+        if !primary.debugShowsGradient {
+            return "a Daylight primary is flat - E1 adopts the gradient as its default look"
+        }
+        if secondary.debugShowsGradient {
+            return "a secondary button picked up the gradient; the finding scopes it to `.primary`"
+        }
+        ThemeManager.shared.setTheme(legacy)
+        if primary.debugShowsGradient {
+            return "a legacy palette rendered the gradient - all twelve must be byte-identical"
+        }
+        return nil
+    }
+
+    /// E2: "the double-chevron popup cell is one of the most instantly dated
+    /// AppKit fingerprints". Asserted structurally, because the cell draws its
+    /// arrows itself and a render cannot tell them from any other glyph.
+    private static func test_e2SingleChevron() -> String? {
+        let popup = HelmPopUpButton()
+        popup.addItems(withTitles: ["Shell", "Bash", "Zsh"])
+        let window = makeWindow(popup, size: NSSize(width: 200, height: 40))
+        defer { window.orderOut(nil) }
+
+        guard let cell = popup.cell as? NSPopUpButtonCell else { return "not an NSPopUpButtonCell" }
+        if cell.arrowPosition != .noArrow {
+            return "the stock stepper arrows are still drawn (arrowPosition \(cell.arrowPosition.rawValue))"
+        }
+        let chevrons = popup.subviews.compactMap { $0 as? NSImageView }
+        if chevrons.count != 1 {
+            return "expected exactly one chevron glyph, found \(chevrons.count)"
+        }
+        // And it still pops the same menu - the finding says "pops the same
+        // NSMenu", so replacing the indicator must not have replaced the
+        // control.
+        if popup.numberOfItems != 3 || popup.titleOfSelectedItem != "Shell" {
+            return "the popup stopped behaving like a popup (\(popup.numberOfItems) items, "
+                 + "selected '\(popup.titleOfSelectedItem ?? "nil")')"
+        }
+        return nil
+    }
+
+    /// E3: "selection jumps between pills instantly; the ink capsule
+    /// teleports". One thumb that *moves* - so what is asserted is that the
+    /// pills no longer paint the selection themselves, and that the thumb
+    /// lands on whichever pill is selected.
+    private static func test_e3ThumbMoves() -> String? {
+        let tabs = HelmSegmentedTabs(items: [.init(id: "a", title: "Board"),
+                                             .init(id: "b", title: "List"),
+                                             .init(id: "c", title: "Log")],
+                                     selected: "a")
+        let window = makeWindow(tabs, size: NSSize(width: 320, height: 44))
+        defer { window.orderOut(nil) }
+        tabs.layoutSubtreeIfNeeded()
+
+        let first = tabs.debugThumbFrame
+        if first.width <= 0 {
+            return "the selection thumb has no size"
+        }
+        tabs.select("c")
+        tabs.layoutSubtreeIfNeeded()
+        let last = tabs.debugThumbFrame
+        if abs(last.minX - first.minX) < 1 {
+            return "selecting a different pill did not move the thumb (\(first.minX) -> \(last.minX))"
+        }
+        // The pills must not also paint a selected fill, or the "movement" is
+        // a fill appearing here while another disappears there.
+        if tabs.debugPillFillsAreClear == false {
+            return "a pill is still painting its own selected fill, so the thumb is not the selection"
+        }
+        return nil
+    }
+
+    /// E4: "the selected 'deploy-check.sh' chip is pale indigo with white
+    /// text" - a real contrast defect, not only a dated look. A card fill is a
+    /// surface the palette already guarantees ink against.
+    private static func test_e4SelectedChipIsASurface() -> String? {
+        let saved = ThemeManager.shared.theme
+        defer { ThemeManager.shared.setTheme(saved) }
+        for theme in HelmTheme.allThemes {
+            ThemeManager.shared.setTheme(theme)
+            let chip = TabChipView(tabID: UUID(), name: "deploy-check.sh")
+            let window = makeWindow(chip, size: NSSize(width: 200, height: 40))
+            defer { window.orderOut(nil) }
+            let accent = HelmTheme.nsColor(theme.accentHex)
+            chip.applyStyle(selected: true, accent: accent,
+                            muted: HelmTheme.mutedInk(theme),
+                            tint: accent.withAlphaComponent(0.18))
+            chip.layoutSubtreeIfNeeded()
+
+            guard let fill = chip.layer?.backgroundColor.map({ NSColor(cgColor: $0) ?? .clear }),
+                  let ink = chip.debugLabelColor else {
+                return "\(theme.id): could not read the selected chip's own colours"
+            }
+            let ratio = HelmContrast.ratio(ink, fill)
+            if ratio < 4.5 {
+                return "\(theme.id): a selected chip's label measures \(String(format: "%.2f", ratio)) "
+                     + "against its own fill - the accent-wash-under-accent-label defect E4 names"
+            }
+            if !chip.debugAccentDotVisible {
+                return "\(theme.id): the selected chip shows no accent dot, so the host's own hue is gone"
+            }
+        }
+        return nil
+    }
+
+    private static func test_e4CloseOnHoverOnly() -> String? {
+        let chip = TabChipView(tabID: UUID(), name: "Shell")
+        let window = makeWindow(chip, size: NSSize(width: 200, height: 40))
+        defer { window.orderOut(nil) }
+        let theme = ThemeManager.shared.theme
+        chip.applyStyle(selected: true, accent: HelmTheme.nsColor(theme.accentHex),
+                        muted: HelmTheme.mutedInk(theme),
+                        tint: HelmTheme.nsColor(theme.accentHex).withAlphaComponent(0.18))
+        if !chip.debugCloseButtonHidden {
+            return "the close x is visible at rest - a strip of always-visible x's is most of what makes "
+                 + "a chip row read as a 2010s browser"
+        }
+        chip.debugSetHovering(true)
+        if chip.debugCloseButtonHidden {
+            return "hovering the chip did not reveal its close x"
+        }
+        chip.debugSetHovering(false)
+        if !chip.debugCloseButtonHidden {
+            return "leaving the chip left its close x behind"
+        }
+        return nil
+    }
+
+    /// E5 settles a recorded captain decision, so this asserts the decision
+    /// rather than a look: every theme gets the pill, and its on-fill comes
+    /// from that theme's own `.good`.
+    private static func test_e5ToggleEverywhere() -> String? {
+        let saved = ThemeManager.shared.theme
+        defer { ThemeManager.shared.setTheme(saved) }
+        for theme in HelmTheme.allThemes {
+            ThemeManager.shared.setTheme(theme)
+            let toggle = HelmToggle()
+            toggle.applyTheme(theme)
+            let geometry = toggle.debugGeometry
+            if !geometry.showsPill || geometry.showsFallbackSwitch {
+                return "\(theme.id) still renders the stock NSSwitch (pill=\(geometry.showsPill), "
+                     + "switch=\(geometry.showsFallbackSwitch)) - E5 settled this"
+            }
+        }
+        // And the row that never adopted it, adopted it.
+        let row = HelmToggleRow(title: "Require Touch ID", subtitle: "Ask before revealing")
+        if !(row.toggle is HelmToggle) {
+            return "HelmToggleRow still holds a stock NSSwitch - it was the one surface that never "
+                 + "picked up HelmToggle, and 'everywhere' has to include it"
+        }
+        return nil
+    }
+
+    /// E6: "the text-field-with-tiny-steppers date control is the single most
+    /// dated AppKit control still visible in the app". Two halves: it reads as
+    /// words, and the stepper is genuinely gone.
+    private static func test_e6DateFieldReadsAsWords() -> String? {
+        let field = HelmDateField()
+        let window = makeWindow(field, size: NSSize(width: 240, height: 40))
+        defer { window.orderOut(nil) }
+
+        let tomorrow = Calendar.current.date(byAdding: .day, value: 1, to: Date()) ?? Date()
+        let at3 = Calendar.current.date(bySettingHour: 15, minute: 0, second: 0, of: tomorrow) ?? tomorrow
+        field.dateValue = at3
+        let text = field.debugValueText
+        if !text.hasPrefix("Tomorrow") {
+            return "the field reads '\(text)'; E6's own example is 'Tomorrow 3:00 PM'"
+        }
+        if !text.contains("3:00") {
+            return "the field dropped the time: '\(text)'"
+        }
+        // No stepper survives anywhere in the control.
+        var steppers = 0
+        func walk(_ v: NSView) {
+            if let picker = v as? NSDatePicker, picker.datePickerStyle == .textFieldAndStepper { steppers += 1 }
+            v.subviews.forEach(walk)
+        }
+        walk(field)
+        if steppers > 0 {
+            return "\(steppers) stepper-style date picker(s) survive inside the field"
+        }
+        // A pick reports once and updates the words.
+        var reported: Date?
+        field.onChange = { reported = $0 }
+        let next = Calendar.current.date(byAdding: .day, value: 2, to: at3) ?? at3
+        field.debugPick(next)
+        if reported == nil { return "picking a date reported nothing" }
+        if field.debugValueText == text { return "picking a date did not update the field's words" }
+        return nil
+    }
+
+    /// E7: "icon-only +/- with no readout on Console". The readout is the
+    /// feature; the reset behind it had no on-screen affordance at all.
+    private static func test_e7ZoomStepper() -> String? {
+        let saved = FontSizeManager.shared.size
+        defer { FontSizeManager.shared.setSize(saved) }
+
+        let stepper = HelmZoomStepper()
+        let window = makeWindow(stepper, size: NSSize(width: 140, height: 40))
+        defer { window.orderOut(nil) }
+
+        FontSizeManager.shared.setSize(14)
+        if stepper.debugReadout != "14pt" {
+            return "the readout says '\(stepper.debugReadout)', expected '14pt'"
+        }
+        stepper.debugTapLarger()
+        if FontSizeManager.shared.size != 15 || stepper.debugReadout != "15pt" {
+            return "stepping up gave \(FontSizeManager.shared.size)/'\(stepper.debugReadout)'"
+        }
+        stepper.debugTapSmaller()
+        stepper.debugTapSmaller()
+        if FontSizeManager.shared.size != 13 {
+            return "stepping down gave \(FontSizeManager.shared.size)"
+        }
+        FontSizeManager.shared.setSize(20)
+        stepper.debugTapReadout()
+        if FontSizeManager.shared.size != HelmZoomStepper.resetSize {
+            return "the readout did not reset the size (got \(FontSizeManager.shared.size))"
+        }
+        return nil
+    }
+
     // MARK: - Harness
 
     /// A window far off-screen and merely ordered front - never
@@ -724,6 +1006,54 @@ enum CanvasListsControlsSelfTest {
             return "Reduce Motion still animated the press (\(layer.animationKeys() ?? []))"
         }
         return nil
+    }
+
+    /// The regression C2 shipped twice before it shipped right.
+    ///
+    /// `HoverHighlightView` backs ~40 controls and several of them nest a
+    /// real `NSButton` inside themselves (the session strip's per-pill ✕, a
+    /// row's own action column). Ending the press in a `mouseDown` or
+    /// `mouseUp` override - even one that dutifully calls `super` - stops
+    /// that nested button's action firing, which looks like nothing at all in
+    /// a diff and like a dead control in use. Bisected over three clean runs
+    /// each way against `SessionSwitcherSelfTest`; this is the cheap,
+    /// local version of the same claim, so the next person to reach for a
+    /// responder override here finds out immediately.
+    private static func test_c2NestedButtonStillFires() -> String? {
+        let host = HoverHighlightView(frame: NSRect(x: 0, y: 0, width: 200, height: 44))
+        host.pressScale = 0.98
+        var hostClicks = 0
+        host.onAccessibilityPress = { hostClicks += 1 }
+
+        var buttonClicks = 0
+        let sink = ClickSink { buttonClicks += 1 }
+        let button = NSButton(title: "x", target: sink, action: #selector(ClickSink.fire))
+        button.frame = NSRect(x: 150, y: 12, width: 20, height: 20)
+        host.addSubview(button)
+        let window = makeWindow(host, size: NSSize(width: 200, height: 44))
+        defer { window.orderOut(nil) }
+        host.layoutSubtreeIfNeeded()
+
+        button.performClick(nil)
+        if buttonClicks != 1 {
+            return "a button nested inside a pressable view did not fire (\(buttonClicks) clicks) - the "
+                 + "press must observe the event stream, never participate in routing"
+        }
+        if hostClicks != 0 {
+            return "the nested button's click also fired the host's own action"
+        }
+        // And the host must not be left looking held down by it.
+        if host.debugIsPressed {
+            return "the host is stuck in its pressed state after a nested click"
+        }
+        return nil
+    }
+
+    /// A target for a real `NSButton` action, since a closure cannot be one.
+    private final class ClickSink: NSObject {
+        private let body: () -> Void
+        init(_ body: @escaping () -> Void) { self.body = body }
+        @objc func fire() { body() }
     }
 
     // MARK: - C3

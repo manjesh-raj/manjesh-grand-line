@@ -908,7 +908,17 @@ final class HelmButton: NSButton {
     /// from `DaylightPalette.primaryButtonGradient`, which corrects them so a
     /// white label clears 4.5:1 anywhere on the ramp - see that method for why
     /// a raw pair is not usable behind a label.
-    var gradientFill: Bool = false {
+    /// E1 flipped this default to `true`: "give `.primary` a subtle
+    /// bottom-edge shade or gradient (Daylight's `gradientFill` already
+    /// exists - adopt it as the default `.primary` look)". The approved
+    /// visual calls it "a whisper of gradient on the primary".
+    ///
+    /// The scope above is unchanged and is what makes that safe: `.secondary`,
+    /// `.quiet`, `.destructive` and all twelve pre-Daylight palettes still
+    /// render byte-identically, because `showsGradient` also requires
+    /// `variant == .primary` and `theme.isDaylight`. A caller that wants a
+    /// flat primary under Daylight sets this to `false`.
+    var gradientFill: Bool = true {
         didSet { if gradientFill != oldValue { restyle() } }
     }
 
@@ -1066,12 +1076,15 @@ final class HelmButton: NSButton {
 
     override func mouseDown(with event: NSEvent) {
         isPressed = true
-        restyle()
+        // E1: only a *state* change animates. A theme switch and the first
+        // paint stay instant - a page whose every button cross-faded on a
+        // theme change would read as a glitch, not as polish.
+        restyle(animated: true)
         // `super` runs AppKit's own tracking loop, so click-cancel-by-dragging
         // -out and the action dispatch itself stay exactly as they were.
         super.mouseDown(with: event)
         isPressed = false
-        restyle()
+        restyle(animated: true)
     }
 
     override func updateTrackingAreas() {
@@ -1087,12 +1100,12 @@ final class HelmButton: NSButton {
 
     override func mouseEntered(with event: NSEvent) {
         isHovering = true
-        restyle()
+        restyle(animated: true)
     }
 
     override func mouseExited(with event: NSEvent) {
         isHovering = false
-        restyle()
+        restyle(animated: true)
     }
 
     // MARK: Chrome
@@ -1305,7 +1318,59 @@ final class HelmButton: NSButton {
         return HelmContrast.legibleTintedText(tintHex: tint.hex(in: theme), over: surface, theme: theme)
     }
 
-    private func restyle() {
+    /// E1's micro-states.
+    ///
+    /// The UI modernization audit (§3E): "state changes that *snap* read as
+    /// CSS from 2014. Modern buttons ease 100-150ms between fills, depress
+    /// 1px/2% scale on press". `animated` is true only for a hover or press
+    /// transition; a theme change, a title change and the first paint all
+    /// stay instant, which is what keeps a theme switch from cross-fading
+    /// every button on the page at once.
+    static let stateChangeDuration: TimeInterval = 0.12
+    /// The approved visual's "2% press compression".
+    static let pressScale: CGFloat = 0.98
+
+    private func restyle(animated: Bool = false) {
+        // The layer's own fill/border writes below are implicit-animation
+        // free for a view-backed layer, so easing them means asking.
+        let ease = animated && !HelmMotion.isReduced
+        if ease {
+            CATransaction.begin()
+            CATransaction.setAnimationDuration(Self.stateChangeDuration)
+            CATransaction.setAnimationTimingFunction(CAMediaTimingFunction(name: .easeOut))
+        }
+        defer {
+            if ease { CATransaction.commit() }
+            applyPressTransform(animated: ease)
+        }
+        restyleBody()
+    }
+
+    #if FM_SELFTESTS
+    /// E1: drives the press state without an event, so a suite can read the
+    /// compression rather than infer it.
+    func debugSetPressed(_ pressed: Bool) {
+        isPressed = pressed
+        restyle(animated: false)
+    }
+    var debugShowsGradient: Bool { !fillGradient.isHidden }
+    #endif
+
+    /// E1: the press compression. On the layer, so it composes with nothing
+    /// else this class sets there.
+    private func applyPressTransform(animated: Bool) {
+        guard let layer else { return }
+        let scale = (isPressed && isEnabled && !HelmMotion.isReduced) ? Self.pressScale : 1
+        let target = CATransform3DMakeScale(scale, scale, 1)
+        guard !CATransform3DEqualToTransform(layer.transform, target) else { return }
+        guard animated else { layer.transform = target; return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Self.stateChangeDuration
+            layer.transform = target
+        }
+    }
+
+    private func restyleBody() {
         let theme = ThemeManager.shared.theme
         let p = Self.palette(variant: variant, tint: tint, theme: theme, domainHue: domainHue)
 
@@ -1459,6 +1524,11 @@ final class HelmPopUpButton: NSPopUpButton {
         if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }
     }
 
+    /// E2's single chevron - see `commonSetup`.
+    private let chevron = NSImageView()
+    static let chevronInset: CGFloat = 9
+    static let chevronPointSize: CGFloat = 9
+
     private func commonSetup() {
         isBordered = false
         // GL-16, same reasoning as `HelmButton`: the bezel goes, the focus
@@ -1466,7 +1536,44 @@ final class HelmPopUpButton: NSPopUpButton {
         focusRingType = .exterior
         wantsLayer = true
         layer?.masksToBounds = true
+
+        // E2: the stock double-chevron stepper cell is, in the audit's words
+        // (§3E), "one of the most instantly dated AppKit fingerprints". Its
+        // fix is the `HelmFieldCard` idiom - "label + single chevron glyph,
+        // pops the same NSMenu" - promoted to the toolbar and table contexts
+        // where this class still lives.
+        //
+        // Done by suppressing the cell's own arrows and drawing one
+        // `chevron.down`, rather than by converting the ~14 call sites to
+        // `HelmFieldCard`: every one of them depends on this being an
+        // `NSPopUpButton` (`menu`, `selectItem…`, `titleOfSelectedItem`,
+        // `indexOfSelectedItem`), and a 50pt field card is absurd in a
+        // toolbar or a dense parameter row - which is exactly the split
+        // `HelmFieldCard`'s own header already draws.
+        (cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
+        chevron.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: Self.chevronPointSize,
+                                                                 weight: .semibold))
+        chevron.translatesAutoresizingMaskIntoConstraints = false
+        // Decoration: the popup itself is the control, and announcing a
+        // chevron beside it would only be noise.
+        chevron.setAccessibilityElement(false)
+        addSubview(chevron)
+        NSLayoutConstraint.activate([
+            chevron.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.chevronInset),
+            chevron.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+
         themeObservation = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
+    }
+
+    override func layout() {
+        super.layout()
+        // E2: re-assert the suppression. Setting it once in `commonSetup` is
+        // not enough - measured: a real popup has the cell's own arrows back
+        // by the time its items have been added, so the only reliable place
+        // is somewhere that runs after any mutation.
+        (cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
     }
 
     override var focusRingMaskBounds: NSRect { bounds }
@@ -1493,6 +1600,7 @@ final class HelmPopUpButton: NSPopUpButton {
         layer?.borderWidth = 1
         layer?.borderColor = p.border.cgColor
         contentTintColor = p.label
+        chevron.contentTintColor = p.label
         // The menu itself is AppKit chrome drawn outside this view; matching
         // its light/dark side to the theme is all a view can do for it.
         appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
@@ -1502,6 +1610,10 @@ final class HelmPopUpButton: NSPopUpButton {
         var s = super.intrinsicContentSize
         // The stock bezel supplied this padding; an unbordered cell does not.
         s.width += 10
+        // E2: `.noArrow` also takes back the width the cell reserved for its
+        // own stepper, so the single chevron has to ask for its own - or a
+        // long title runs straight underneath it.
+        s.width += Self.chevronInset * 2 + Self.chevronPointSize
         s.height = max(s.height, 24)
         return s
     }
@@ -2084,6 +2196,19 @@ final class HelmAccentRow: NSView {
             let cap = row.widthAnchor.constraint(lessThanOrEqualToConstant: maxContentWidth)
             cap.priority = HelmDaylightPriority.contentTie
             cap.isActive = true
+            // ...and it still *fills* the card up to that cap. Without this
+            // the row only has a `<=` trailing pin, so it hugs its own
+            // content and every row in a list ends up a different width -
+            // which is exactly what pulled Schedules' mono time column out of
+            // its column (`DaylightDrillPageSlice3SelfTest` caught it).
+            //
+            // One below the cap, so a card wider than the cap resolves to the
+            // cap and a narrower one resolves to the card. Both stay under
+            // `NSLayoutPriorityWindowSizeStayPut` (gotcha (13)).
+            let fill = row.trailingAnchor.constraint(equalTo: card.trailingAnchor,
+                                                     constant: -Self.contentTrailing)
+            fill.priority = HelmDaylightPriority.contentTie - 1
+            fill.isActive = true
         } else {
             row.trailingAnchor.constraint(equalTo: card.trailingAnchor,
                                           constant: -Self.contentTrailing).isActive = true
@@ -3083,6 +3208,18 @@ final class HelmSegmentedTabs: NSView {
     }
 
     private let capsule = NSView()
+    /// E3's sliding selection.
+    ///
+    /// The audit (§3E): "selection jumps between pills instantly; the ink
+    /// capsule teleports ... slide the selection capsule between pills (a
+    /// single animated 'thumb' layer under the labels, spring 250ms) - the
+    /// one micro-animation with the highest perceived-quality yield in tab
+    /// controls."
+    ///
+    /// One thumb that moves, rather than each pill painting its own fill: a
+    /// fill that appears here while another disappears there is a cut, not a
+    /// movement, however it is timed.
+    private let thumb = NSView()
     private var pills: [Pill] = []
     private let size: Size
     private var selectedID: String
@@ -3139,6 +3276,10 @@ final class HelmSegmentedTabs: NSView {
         capsule.wantsLayer = true
         capsule.layer?.cornerRadius = size.capsuleRadius
         capsule.translatesAutoresizingMaskIntoConstraints = false
+        // Below the pills, so the labels always render on top of it.
+        thumb.wantsLayer = true
+        thumb.translatesAutoresizingMaskIntoConstraints = true
+        capsule.addSubview(thumb)
         capsule.addSubview(row)
         addSubview(capsule)
         NSLayoutConstraint.activate([
@@ -3170,9 +3311,50 @@ final class HelmSegmentedTabs: NSView {
     override func layout() {
         super.layout()
         let theme = ThemeManager.shared.theme
-        guard theme.isDaylight else { return }
-        for pill in pills {
-            pill.container.cornerRadius = size.daylightPillRadius(for: pill.container)
+        if theme.isDaylight {
+            for pill in pills {
+                pill.container.cornerRadius = size.daylightPillRadius(for: pill.container)
+            }
+        }
+        // E3: a layout pass repositions the thumb instantly. Only a genuine
+        // selection change slides it - otherwise a window resize would send
+        // it skating across the control.
+        //
+        // The pill row has to be laid out *first*: `layout()` runs top-down,
+        // so when this view's own runs, its descendants still carry the
+        // frames they had a pass ago - zero, on the first one. Measured:
+        // without this the thumb sits at `.zero` forever, because nothing
+        // else ever re-runs it.
+        capsule.layoutSubtreeIfNeeded()
+        moveThumb(animated: false)
+    }
+
+    #if FM_SELFTESTS
+    /// E3: where the selection thumb actually is, and whether any pill is
+    /// still painting a selected fill of its own.
+    var debugThumbFrame: NSRect { thumb.frame }
+    var debugPillFillsAreClear: Bool {
+        pills.allSatisfy { $0.container.normalColor.alphaComponent == 0 }
+    }
+    #endif
+
+    /// E3: put the thumb under the selected pill.
+    private func moveThumb(animated: Bool) {
+        guard let pill = pills.first(where: { $0.id == selectedID }) else {
+            thumb.isHidden = true
+            return
+        }
+        thumb.isHidden = false
+        let target = capsule.convert(pill.container.bounds, from: pill.container)
+        guard thumb.frame != target else { return }
+        guard animated, !HelmMotion.isReduced else {
+            thumb.frame = target
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = HelmMotion.springDuration
+            context.timingFunction = HelmMotion.spring()
+            thumb.animator().frame = target
         }
     }
 
@@ -3208,8 +3390,13 @@ final class HelmSegmentedTabs: NSView {
     /// Moves the active pill without firing `onSelect` - for a page whose
     /// view changed from somewhere else (a menu item, the search palette).
     func select(_ id: String) {
+        let changed = id != selectedID
         selectedID = id
         applyTheme(ThemeManager.shared.theme)
+        // Only a real change slides; re-selecting what is already selected
+        // (which `applyTheme` and a page's own restore both do) must not
+        // re-animate.
+        moveThumb(animated: changed)
     }
 
     var selected: String { selectedID }
@@ -3272,12 +3459,19 @@ final class HelmSegmentedTabs: NSView {
             // GL-16: the same place the active pill is painted is the only
             // place that can keep its announced value honest.
             pill.container.accessibilityValueOverride = isActive ? "selected" : "not selected"
-            pill.container.normalColor = isActive ? activeWash : .clear
-            pill.container.hoverColor = isActive ? activeWash : line.withAlphaComponent(0.25)
+            // E3: the active fill lives on the thumb now, so the pills
+            // themselves paint only their hover. The colour and the contrast
+            // correction are exactly what they were - only which view carries
+            // the fill changed.
+            pill.container.normalColor = .clear
+            pill.container.hoverColor = isActive ? .clear : line.withAlphaComponent(0.25)
             pill.label.textColor = isActive ? activeInk : muted
             pill.label.font = .systemFont(ofSize: size.labelSize, weight: isActive ? .semibold : .medium)
             pill.container.cornerRadius = size.pillRadius
         }
+        thumb.layer?.backgroundColor = activeWash.cgColor
+        thumb.layer?.cornerRadius = size.pillRadius
+        moveThumb(animated: false)
     }
 
     /// §7's Daylight resolution: the space-pill recipe, so the tab strip on a
@@ -3306,11 +3500,18 @@ final class HelmSegmentedTabs: NSView {
             let isActive = pill.id == selectedID
             pill.container.accessibilityValueOverride = isActive ? "selected" : "not selected"
             pill.container.cornerRadius = size.daylightPillRadius(for: pill.container)
-            pill.container.normalColor = isActive ? ink : .clear
-            pill.container.hoverColor = isActive ? ink : inset
+            // E3: see the twelve-palette recipe above - the fill moved to the
+            // thumb, the colour did not change.
+            pill.container.normalColor = .clear
+            pill.container.hoverColor = isActive ? .clear : inset
             pill.label.textColor = isActive ? activeInk : muted
             pill.label.font = HelmType.rounded(size.labelSize, isActive ? .semibold : .medium)
         }
+        thumb.layer?.backgroundColor = ink.cgColor
+        if let active = pills.first(where: { $0.id == selectedID }) {
+            thumb.layer?.cornerRadius = size.daylightPillRadius(for: active.container)
+        }
+        moveThumb(animated: false)
     }
 
     // MARK: Probe / self-test surface
@@ -3338,7 +3539,14 @@ final class HelmSegmentedTabs: NSView {
                         pillCount: pills.count,
                         pillRadii: pills.map { $0.container.cornerRadius },
                         activeID: selectedID,
-                        activeFill: active?.container.normalColor,
+                        // E3: the selected fill lives on the sliding thumb
+                        // now, not on the pill. The question this answers -
+                        // "what does the active label actually sit on?" - is
+                        // unchanged; only which view carries the answer moved,
+                        // so this follows it rather than reporting the pill's
+                        // now-clear fill and measuring a label against nothing.
+                        activeFill: active == nil ? nil
+                            : thumb.layer?.backgroundColor.map { NSColor(cgColor: $0) ?? .clear },
                         activeInk: active?.label.textColor,
                         inactiveInk: inactive?.label.textColor,
                         labelPointSizes: pills.compactMap { $0.label.font?.pointSize })

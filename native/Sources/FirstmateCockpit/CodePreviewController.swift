@@ -141,12 +141,10 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     // removed that whole menu - nothing in `main.swift` binds either key any
     // more. (Console's own two zoom tooltips still promise them and are stale
     // for the same reason; left alone here rather than edited in passing.)
-    private lazy var zoomOutButton = HelmPageToolbar.iconButton(
-        symbol: "minus.magnifyingglass", tooltip: "Smaller editor text",
-        target: self, action: #selector(zoomOutTapped))
-    private lazy var zoomInButton = HelmPageToolbar.iconButton(
-        symbol: "plus.magnifyingglass", tooltip: "Larger editor text",
-        target: self, action: #selector(zoomInTapped))
+    /// E7: the shared stepper capsule, so Console and this page show the
+    /// same zoom idiom (and a readout) instead of two bare glyph squares
+    /// each.
+    private lazy var zoomStepper = HelmZoomStepper()
     private lazy var copyButton = HelmPageToolbar.labeledButton(
         symbol: "doc.on.doc", title: "Copy",
         tooltip: "Copy this snippet to the clipboard",
@@ -264,7 +262,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
             showOverlay(symbol: "exclamationmark.triangle",
                         title: "No editor bundle",
                         body: CodePreviewAssets.missingBundleMessage)
-            for control in [plusButton, findButton, wrapButton, zoomOutButton, zoomInButton, copyButton, clearButton] {
+            for control in [plusButton, findButton, wrapButton, copyButton, clearButton] {
                 control.isEnabled = false
             }
             languagePicker.isEnabled = false
@@ -374,7 +372,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         languagePicker.widthAnchor.constraint(equalToConstant: 150).isActive = true
 
         toolbar.setTrailing(HelmPageToolbar.group([
-            languagePicker, findButton, wrapButton, zoomOutButton, zoomInButton, copyButton, clearButton,
+            languagePicker, findButton, wrapButton, zoomStepper, copyButton, clearButton,
         ]))
 
         NSLayoutConstraint.activate([
@@ -1021,8 +1019,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     var debugCurrentLanguage: String? { currentSnippet?.language.id }
     var debugStatusLine: String { "\(cursorLabel.stringValue) | \(languageLabel.stringValue) | \(encodingLabel.stringValue) | \(syncLabel.stringValue)" }
     var debugEditorCard: NSView { editorCard }
-    var debugZoomInButton: NSButton { zoomInButton }
-    var debugZoomOutButton: NSButton { zoomOutButton }
+    var debugZoomStepper: HelmZoomStepper { zoomStepper }
     func debugRestore() { restoreSnippetsIfNeeded() }
     func debugNewSnippet() { newSnippetTapped() }
     func debugSimulateEdit(name: String, content: String) {

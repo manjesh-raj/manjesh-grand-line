@@ -34,7 +34,8 @@ final class ShiftFollowUpEditorController: NSViewController {
     var onSave: ((ShiftFollowUp) -> Void)?
 
     private let titleField = HelmTextField(placeholder: "What needs checking on?", style: .lead)
-    private let followUpDatePicker = HelmDatePicker()
+    /// E6 - see `ShiftTaskEditorController.dueDatePicker`.
+    private let followUpDatePicker = HelmDateField()
     private let priorityDot = HelmDotAccessory()
     private lazy var priorityCard = HelmFieldCard(label: "Priority", accessory: priorityDot)
     private let taskCard = HelmFieldCard(label: "Related task")

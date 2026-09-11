@@ -160,9 +160,15 @@ final class HelmSkeletonRow: NSView {
         // reads as a highlight passing across the bars rather than as a
         // second colour this component invented.
         let highlight = HelmTheme.nsColor(theme.chromeInkHex).withAlphaComponent(0.06)
-        shimmer.colors = [fill.withAlphaComponent(0).cgColor, highlight.cgColor,
-                          fill.withAlphaComponent(0).cgColor]
-        shimmer.locations = [0, 0.5, 1]
+        // Daylight Phase 6's rule, enforced by `DaylightHardeningSelfTest`: a
+        // standalone (non view-backed) `CAGradientLayer` animates `colors`
+        // implicitly, so a theme change would cross-fade every skeleton on
+        // the page - motion nobody designed and nothing gated.
+        HelmMotion.withoutImplicitAnimation {
+            shimmer.colors = [fill.withAlphaComponent(0).cgColor, highlight.cgColor,
+                              fill.withAlphaComponent(0).cgColor]
+            shimmer.locations = [0, 0.5, 1]
+        }
         refreshShimmer()
     }
 

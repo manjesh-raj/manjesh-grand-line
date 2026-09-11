@@ -38,6 +38,15 @@ final class TabChipView: NSView, NSTextFieldDelegate {
 
     private let label = NSTextField()
     private let closeButton = NSButton()
+    /// E4: the accent moved off the chip's whole fill and onto a leading dot,
+    /// which is what still carries a dedicated host page's own `accentHex`.
+    private let accentDot = NSView()
+    private lazy var accentDotWidth = accentDot.widthAnchor.constraint(equalToConstant: 0)
+    private lazy var closeButtonWidth = closeButton.widthAnchor.constraint(equalToConstant: Self.closeButtonSide)
+    private var isHovering = false
+    private var hoverTracking: NSTrackingArea?
+    static let accentDotSide: CGFloat = 6
+    static let closeButtonSide: CGFloat = 15
     /// `fm/grandline-herdr-selection-theme-fix`: a small indicator shown only
     /// while this tab's `forwardDragsToChild` is on - the one thing that can
     /// make an otherwise-correct `.shell` tab's plain drag paint a
@@ -149,6 +158,12 @@ final class TabChipView: NSView, NSTextFieldDelegate {
         closeButton.translatesAutoresizingMaskIntoConstraints = false
         addSubview(closeButton)
 
+        accentDot.wantsLayer = true
+        accentDot.layer?.cornerRadius = Self.accentDotSide / 2
+        accentDot.translatesAutoresizingMaskIntoConstraints = false
+        accentDot.setAccessibilityElement(false)
+        addSubview(accentDot)
+
         // A small, always-legible tinted badge, not a bare glyph -
         // `wantsLayer`/`cornerRadius` here draw the badge's own opaque fill
         // (set by `refreshForwardDragsIndicator()` below), which is what
@@ -194,7 +209,12 @@ final class TabChipView: NSView, NSTextFieldDelegate {
             heightAnchor.constraint(equalToConstant: 28),
             widthAnchor.constraint(lessThanOrEqualToConstant: 240),
 
-            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 12),
+            accentDot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 9),
+            accentDot.centerYAnchor.constraint(equalTo: centerYAnchor),
+            accentDotWidth,
+            accentDot.heightAnchor.constraint(equalToConstant: Self.accentDotSide),
+
+            label.leadingAnchor.constraint(equalTo: accentDot.trailingAnchor, constant: 5),
             label.centerYAnchor.constraint(equalTo: centerYAnchor),
 
             forwardDragsIndicator.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 4),
@@ -210,8 +230,8 @@ final class TabChipView: NSView, NSTextFieldDelegate {
             closeButton.leadingAnchor.constraint(equalTo: machineReadableIndicator.trailingAnchor, constant: 6),
             closeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             closeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
-            closeButton.widthAnchor.constraint(equalToConstant: 15),
-            closeButton.heightAnchor.constraint(equalToConstant: 15),
+            closeButtonWidth,
+            closeButton.heightAnchor.constraint(equalToConstant: Self.closeButtonSide),
         ])
 
         // GL-16. A chip is the console's own tab selector, and before this it
@@ -307,21 +327,93 @@ final class TabChipView: NSView, NSTextFieldDelegate {
     /// audit's §5.7 defect (see `HelmContrast`'s doc comment).
     func applyStyle(selected: Bool, accent: NSColor, muted: NSColor, tint: NSColor) {
         isSelectedChip = selected
-        let daylight = ThemeManager.shared.theme.isDaylight
+        let theme = ThemeManager.shared.theme
+        let daylight = theme.isDaylight
         // A capsule needs the chip's own height, which is 0 before the first
         // layout pass - `layout()` re-derives it once real geometry exists.
         layer?.cornerRadius = daylight ? Self.daylightRadius(forHeight: bounds.height) : 7
-        layer?.backgroundColor = (selected ? tint : .clear).cgColor
-        let selectedInk = daylight ? HelmContrast.legible(accent, over: tint) : accent
+
+        // E4: "selected tab = elevated surface (card fill + hairline + slight
+        // shadow), unselected = flat ... selected chip takes `card` fill +
+        // border (not an accent wash), accent shows as a 2px underline or
+        // leading dot for the host's hue".
+        //
+        // This also fixes a real defect the audit names: the old accent wash
+        // put a corrected-accent label on a wash *of that same accent*, which
+        // under Daylight rendered as pale indigo on pale indigo. A card fill
+        // is a surface this palette already guarantees ink against, so the
+        // selected label is simply the page's own ink - nothing to correct,
+        // and nothing to get wrong.
+        let cardFill = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        let ink = HelmTheme.nsColor(theme.chromeInkHex)
+        layer?.backgroundColor = (selected ? cardFill : .clear).cgColor
+        layer?.borderWidth = selected ? 1 : 0
+        layer?.borderColor = HelmTheme.nsColor(theme.chromeLineHex).cgColor
+        // The accent has not gone - it moved from the whole fill to a leading
+        // dot, which is what still carries a *host's own* `accentHex` when a
+        // dedicated host page's chip has one.
+        accentDot.layer?.backgroundColor = accent.cgColor
+        accentDot.isHidden = !selected
+        accentDotWidth.constant = selected ? Self.accentDotSide : 0
+
         if !isRenaming {
-            label.textColor = selected ? selectedInk : muted
+            label.textColor = selected ? ink : muted
             let size = HelmType.scaled(13)
             label.font = daylight
                 ? HelmType.rounded(size, selected ? .semibold : .medium)
                 : .systemFont(ofSize: HelmType.scaled(13), weight: selected ? .semibold : .regular)
         }
-        closeButton.contentTintColor = selected ? selectedInk : muted
+        closeButton.contentTintColor = selected ? ink : muted
+        refreshCloseButton()
         refreshForwardDragsIndicator()
+    }
+
+    #if FM_SELFTESTS
+    /// E4's probe surface: what the selected chip actually paints, and the
+    /// hover-only close.
+    var debugLabelColor: NSColor? { label.textColor }
+    var debugAccentDotVisible: Bool { !accentDot.isHidden && accentDotWidth.constant > 0 }
+    var debugCloseButtonHidden: Bool { closeButton.isHidden }
+    func debugSetHovering(_ hovering: Bool) {
+        isHovering = hovering
+        refreshCloseButton()
+    }
+    #endif
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let hoverTracking { removeTrackingArea(hoverTracking) }
+        let area = NSTrackingArea(rect: bounds,
+                                  options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverTracking = area
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovering = true
+        refreshCloseButton()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovering = false
+        refreshCloseButton()
+    }
+
+    /// E4: "close button appears on hover only". The chip's own × was
+    /// permanently visible on every tab, which is most of what made a strip of
+    /// them read as a 2010s browser.
+    ///
+    /// `isHidden` rather than an alpha here, unlike D1's row actions: this
+    /// button has a real collapsible width constraint already (the indicators
+    /// next to it use the same mechanism), so hiding it lets the chip shrink
+    /// to fit its title instead of reserving a permanent hole. It is exposed
+    /// to VoiceOver through the chip's own `accessibilityChildren`, and the
+    /// chip's right-click menu carries Close as well, so nothing is lost.
+    private func refreshCloseButton() {
+        let visible = isHovering || isRenaming
+        closeButton.isHidden = !visible
+        closeButtonWidth.constant = visible ? Self.closeButtonSide : 0
     }
 
     /// Show/hide the indicator against this tab's *current*

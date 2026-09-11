@@ -90,6 +90,21 @@ enum HelmMotion {
         CATransaction.commit()
     }
 
+    /// The app's one spring curve.
+    ///
+    /// The audit's motion spec is explicit that there are "two curves total -
+    /// one spring, one ease-out - all through the existing Reduce Motion
+    /// gate", and the captain-approved visual gives the spring's own control
+    /// points. It overshoots slightly (the 1.4), which is what makes a
+    /// sliding selection read as a physical thing arriving rather than as a
+    /// rectangle being repositioned.
+    static func spring() -> CAMediaTimingFunction {
+        CAMediaTimingFunction(controlPoints: 0.3, 1.4, 0.45, 1)
+    }
+
+    /// The spring's duration, from the same spec ("spring 250ms").
+    static let springDuration: TimeInterval = 0.25
+
     /// Fades a view to `target`, animating only when it should.
     ///
     /// **Do not reach for `view.animator().alphaValue` outside an animation

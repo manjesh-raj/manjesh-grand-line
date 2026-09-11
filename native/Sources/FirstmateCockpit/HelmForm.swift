@@ -631,47 +631,14 @@ final class HelmTextView: NSView {
     }
 }
 
-/// `NSDatePicker` in the same chrome.
-///
-/// §6.5 puts *reimplementing* AppKit controls out of scope ("reimplementing a
-/// date picker is not worth it") but re-tinting one is exactly what it says is
-/// buildable: `isBezeled = false` plus `drawsBackground`/`backgroundColor`/
-/// `textColor` are all documented `NSDatePicker` API, so the stepper still
-/// works and only the grey frame goes away.
-final class HelmDatePicker: NSDatePicker {
-    private var observation: ThemeObservation?
-
-    init(elements: NSDatePicker.ElementFlags = [.yearMonthDay, .hourMinute]) {
-        super.init(frame: .zero)
-        translatesAutoresizingMaskIntoConstraints = false
-        datePickerStyle = .textFieldAndStepper
-        datePickerElements = elements
-        isBezeled = false
-        isBordered = false
-        drawsBackground = true
-        focusRingType = .none
-        font = HelmType.body()
-        HelmField.makeSunken(self)
-        observation = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
-
-    deinit {
-        if let observation { ThemeManager.shared.unobserve(observation) }
-    }
-
-    var chromeView: NSView { self }
-
-    func applyTheme(_ theme: HelmTheme) {
-        HelmField.applySunken(to: self, theme: theme)
-        backgroundColor = HelmField.fill(theme)
-        textColor = HelmField.ink(theme)
-        // The stepper arrows are cell-drawn system chrome; matching the
-        // light/dark side is all a view can do for them.
-        appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
-    }
-}
+// `HelmDatePicker` lived here until the UI modernization audit's E6
+// (`data/grandline-ui-modernization-audit/report.md` §3E) replaced it with
+// `HelmDateField`. It was a re-tinted `.textFieldAndStepper` `NSDatePicker` -
+// the audit's "single most dated AppKit control still visible in the app",
+// and its own doc comment conceded that the stepper arrows were cell-drawn
+// system chrome nothing could theme. Deleted rather than left unused: it had
+// no callers left, and a themed-looking date well sitting in this file is a
+// loaded gun aimed at exactly the control E6 removed.
 
 // MARK: - HelmSearchField
 
@@ -1392,7 +1359,17 @@ final class HelmFieldCard: NSView {
 /// bespoke toggle out of scope, and it was measured to answer `false` to every
 /// tint setter it was asked about.
 final class HelmToggleRow: NSView {
-    let toggle = NSSwitch()
+    /// E5: this row was the one toggle surface in the app that never adopted
+    /// `HelmToggle` - its own doc comment said so - so a sheet could show a
+    /// themed pill and a stock system switch two rows apart. It is a
+    /// `HelmToggle` now, which is also what makes "`HelmToggle` everywhere"
+    /// literally true.
+    ///
+    /// `isEnabled`, `state` and the `target`/`action` pair all keep working:
+    /// `HelmToggle` is an `NSControl` that mirrors its own `NSSwitch` and
+    /// forwards the action, which is what lets this be a type change rather
+    /// than a rework of every caller.
+    let toggle = HelmToggle()
     private let titleLabel: NSTextField
     private let subtitleLabel: NSTextField?
     private let trailing: NSView?
@@ -1400,8 +1377,8 @@ final class HelmToggleRow: NSView {
     var onToggle: (() -> Void)?
 
     var isOn: Bool {
-        get { toggle.state == .on }
-        set { toggle.state = newValue ? .on : .off }
+        get { toggle.isOn }
+        set { toggle.isOn = newValue }
     }
 
     init(title: String, subtitle: String? = nil, trailing: NSView? = nil) {
@@ -1412,8 +1389,7 @@ final class HelmToggleRow: NSView {
         translatesAutoresizingMaskIntoConstraints = false
         HelmField.makeSunken(self, cornerRadius: HelmMetrics.rRow)
 
-        toggle.target = self
-        toggle.action = #selector(toggled)
+        toggle.onToggle = { [weak self] in self?.onToggle?() }
         toggle.setContentHuggingPriority(.required, for: .horizontal)
         toggle.translatesAutoresizingMaskIntoConstraints = false
 
@@ -1464,12 +1440,14 @@ final class HelmToggleRow: NSView {
     /// The view carrying this row's sunken chrome - itself.
     var chromeView: NSView { self }
 
-    @objc private func toggled() { onToggle?() }
-
     func applyTheme(_ theme: HelmTheme) {
         HelmField.applySunken(to: self, theme: theme, isRow: true)
         titleLabel.textColor = HelmField.ink(theme)
         subtitleLabel?.textColor = HelmField.mutedInk(theme)
+        // E5: the row's own toggle is a `HelmToggle` now, and it paints
+        // itself - so this row has to hand it the theme, exactly the way
+        // `SchedulesCardView` already does for its per-schedule toggle.
+        toggle.applyTheme(theme)
     }
 }
 
@@ -2503,13 +2481,31 @@ final class HelmToggle: NSControl {
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
-        let daylight = theme.isDaylight
-        pill.isHidden = !daylight
-        fallbackSwitch.isHidden = daylight
+        // E5 settles the open captain decision recorded as
+        // `grandline-full-app-audit-decision-nsswitch-theming`.
+        //
+        // The UI modernization audit (§3E): "Daylight/Dusk get the custom
+        // `HelmToggle` pill (good); the other 12 themes still render stock
+        // `NSSwitch` ... the stock switch next to themed everything is chrome
+        // bleed-through, and the captain lives in a dark legacy palette today
+        // (his real window is catppuccin-like). ... settle the open decision -
+        // `HelmToggle` everywhere, with its on-fill from the theme's
+        // `.good`/accent." Asking for this fix *is* the decision, so the
+        // Daylight-only gate is gone.
+        //
+        // The `NSSwitch` stays built and simply never shown: it is still what
+        // carries `state` for a caller wired the `NSSwitch` way (see
+        // `setOnFromUser`), and removing it would change this component's
+        // API rather than its look.
+        pill.isHidden = false
+        fallbackSwitch.isHidden = true
         applyToggleState(animated: false)
     }
 
     private func applyToggleState(animated: Bool) {
+        // E5's "with its on-fill from the theme's `.good`/accent" - already
+        // true, and now that the pill renders on all fourteen palettes it is
+        // what every one of them shows.
         let onFill = HelmTheme.nsColor(theme.isDaylight
                                        ? DaylightPalette.ok
                                        : HelmTint.good.hex(in: theme))

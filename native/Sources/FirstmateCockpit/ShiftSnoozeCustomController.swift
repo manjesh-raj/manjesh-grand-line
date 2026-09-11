@@ -21,7 +21,8 @@ final class ShiftSnoozeCustomController: NSViewController {
     private let initial: Date
     var onPick: ((Date) -> Void)?
 
-    private let picker = NSDatePicker()
+    /// E6 - see `ShiftTaskEditorController.dueDatePicker`.
+    private let picker = HelmDateField()
 
     init(initial: Date) {
         self.initial = initial
@@ -40,8 +41,7 @@ final class ShiftSnoozeCustomController: NSViewController {
         let title = NSTextField(labelWithString: "Snooze until\u{2026}")
         title.font = .systemFont(ofSize: 14, weight: .semibold)
 
-        picker.datePickerStyle = .textFieldAndStepper
-        picker.datePickerElements = [.yearMonthDay, .hourMinute]
+        // E6: style and elements are fixed at init now - see `HelmDateField`.
         picker.dateValue = initial
         picker.translatesAutoresizingMaskIntoConstraints = false
 

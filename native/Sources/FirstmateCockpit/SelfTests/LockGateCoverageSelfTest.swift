@@ -98,6 +98,16 @@ enum LockGateCoverageSelfTest {
                   + "the timestamp is what the SRE Lead/kube bridges read to avoid "
                   + "injecting while the captain types, so suppressing it while locked "
                   + "would make those bridges *less* careful, not more."),
+        .init(file: "HelmUIComponents.swift", gate: nil,
+              reason: "C2's press compression on `HoverHighlightView`. The monitor observes "
+                  + "left mouse down/up purely to scale a view 2% while it is held, returns "
+                  + "every event untouched, and is installed only while the pointer is inside "
+                  + "a view that opted in. It shows nothing, writes nothing and performs no "
+                  + "action - and it exists in the first place *because* overriding "
+                  + "`mouseDown`/`mouseUp` here broke a nested button's click, so the whole "
+                  + "point is that it cannot participate in routing. Same class as "
+                  + "`CockpitTerminalView`'s above: a decorative reaction to input, not a "
+                  + "path to any of the captain's data."),
         .init(file: "DictationHotkey.swift",
               gate: (file: "main.swift", needle: "allows(.dictation)"),
               reason: "the monitor only reports the hold/release transition; the gate is at "

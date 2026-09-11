@@ -101,7 +101,12 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
     private let projectIconTile = IconTileView(size: 22, cornerRadius: HelmMetrics.rChip)
     private lazy var projectCard = HelmFieldCard(label: "Project", accessory: projectIconTile)
 
-    private let dueDatePicker = HelmDatePicker()
+    /// E6: the field-card idiom with a themed calendar popover, replacing
+    /// the `.textFieldAndStepper` picker the audit calls "the single most
+    /// dated AppKit control still visible in the app". `target`/`action`,
+    /// `dateValue`, `isEnabled` and `isHidden` all read the same, which is
+    /// what makes this a type change rather than a rework of this sheet.
+    private let dueDatePicker = HelmDateField()
     private lazy var dueRow = HelmToggleRow(title: "Set due date",
                                             subtitle: "Add a date and optional time",
                                             trailing: dueDatePicker)

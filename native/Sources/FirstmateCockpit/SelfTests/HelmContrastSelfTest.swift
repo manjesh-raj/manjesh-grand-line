@@ -1402,7 +1402,7 @@ enum HelmContrastSelfTest {
             let text = HelmTextField(placeholder: "Placeholder")
             let secure = HelmSecureTextField(placeholder: "Placeholder")
             let multi = HelmTextView(height: 80)
-            let picker = HelmDatePicker()
+            let picker = HelmDateField()
             let card = HelmFieldCard(label: "Priority", accessory: HelmDotAccessory())
             let toggle = HelmToggleRow(title: "Something", subtitle: "Explains itself")
             text.applyTheme(theme)
