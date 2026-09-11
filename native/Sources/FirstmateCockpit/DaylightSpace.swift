@@ -108,6 +108,16 @@ enum DaylightModule: String, CaseIterable {
     case tasks
     case mergeQueue
     case console
+    // `fm/grandline-devops-space-and-diagram-tool`: declared here, at the end
+    // of the Command-space group, because `canvasOrder` below is `allCases`
+    // (declaration order) - so a space reassignment ALONE would have left this
+    // card rendering first on the Command canvas, ahead of Tasks/Merge queue/
+    // Console. `.poneglyph`'s own note below records the same lesson, learned
+    // the hard way. Appended to the group rather than slotted in by topic,
+    // matching how a new quick-access bar icon is added: the group reads in the
+    // order the captain asked for each entry, and appending is what stops a
+    // move shuffling a card he already knows the position of.
+    case commandLibrary
     case health
     case hosts
     case updates
@@ -135,12 +145,6 @@ enum DaylightModule: String, CaseIterable {
     case whiteboard
     case stickyBoard
     case codePreview
-    // `fm/grandline-tasks-kanban-devops-split`: declared here, beside its
-    // Stores-space siblings, because `canvasOrder` is `allCases` (declaration
-    // order) - see `.poneglyph`'s own note above for the same lesson, learned
-    // the hard way when a space reassignment alone left a card rendering
-    // first on a canvas it had just joined.
-    case commandLibrary
     case settings
     // `fm/straw-hat-voice-order-composer-polish-8dd2`: the captain's second
     // correction. `fm/polish-straw-hat-overview-card-and-voice-c8d3` had
@@ -174,7 +178,20 @@ enum DaylightModule: String, CaseIterable {
         // the captain asked for it on Overview specifically, which is exactly
         // the "no other home" property the other two have.
         case .briefing, .fleet, .strawHat: return nil
-        case .console, .tasks, .mergeQueue: return .command
+        // `fm/grandline-devops-space-and-diagram-tool` moved `.commandLibrary`
+        // here out of `.stores` below. `fm/grandline-tasks-kanban-devops-split`
+        // had promoted it out of `ShiftController`'s own tab switcher into its
+        // own destination and filed it under Stores on the reading that a
+        // library of saved commands is reference material; the captain used the
+        // shipped page and corrected that - a saved shell command is something
+        // he *runs*, so it belongs beside the Console he runs it in, not on the
+        // shelf beside the docs. Its `domainHue` was already `.teal` (the
+        // "running systems" hue Console/Hosts/Log Analyzer/Kubernetes share)
+        // and needed no change - that choice reads as more obviously right
+        // here than it did in Stores. See `DaylightModuleSelfTest`'s
+        // `lockedMembership`, updated alongside this per this file's own
+        // "change it here and in that test together" rule.
+        case .console, .tasks, .mergeQueue, .commandLibrary: return .command
         case .hosts, .logAnalyzer, .kubernetes, .health, .schedules: return .operations
         // `fm/grandline-docs-split-runbooks-postmortems` added Runbooks and
         // Postmortems here, promoted out of `DocsController`'s own tabs into
@@ -193,7 +210,7 @@ enum DaylightModule: String, CaseIterable {
         // asked for Poneglyph to move out of Engineering into Stores
         // (`fm/move-poneglyph-to-stores-space-282a`), so it sits here now
         // rather than beside the other four Setup pages.
-        case .vault, .poneglyph, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview, .commandLibrary: return .stores
+        case .vault, .poneglyph, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview: return .stores
         case .updates, .bootstrap, .automation, .githubSync, .settings: return .engineering
         }
     }

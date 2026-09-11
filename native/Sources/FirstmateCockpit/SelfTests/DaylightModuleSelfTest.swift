@@ -74,7 +74,12 @@ enum DaylightModuleSelfTest {
     /// asserts nothing. These five lines are the decision block at the top of
     /// `daylight-ui-design.md`, verbatim.
     private static let lockedMembership: [DaylightSpace: Set<DaylightModule>] = [
-        .command: [.console, .tasks, .mergeQueue],
+        // `fm/grandline-devops-space-and-diagram-tool` added `.commandLibrary`
+        // here, out of `.stores` below - the captain's own correction after
+        // using the page `fm/grandline-tasks-kanban-devops-split` shipped. It
+        // is the deliberate table change `DaylightSpace.swift`'s own doc
+        // comment says to make together with `DaylightModule.space`.
+        .command: [.console, .tasks, .mergeQueue, .commandLibrary],
         // `fm/grandline-k8s-cluster-tail` added `.kubernetes` here - the
         // deliberate table change this file's own doc comment says to make
         // together with `DaylightModule.space`. The scout report's own
@@ -102,7 +107,7 @@ enum DaylightModuleSelfTest {
         // destination's *slot* is independent of which controller populates
         // it. `fm/move-poneglyph-to-stores-space-282a` is the captain's own
         // later ask to move it here, beside the other Stores utilities.
-        .stores: [.vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview, .poneglyph, .commandLibrary],
+        .stores: [.vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview, .poneglyph],
         .engineering: [.updates, .bootstrap, .automation, .githubSync, .settings],
     ]
 
