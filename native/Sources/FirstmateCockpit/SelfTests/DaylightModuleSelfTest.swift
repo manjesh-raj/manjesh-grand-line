@@ -102,7 +102,7 @@ enum DaylightModuleSelfTest {
         // destination's *slot* is independent of which controller populates
         // it. `fm/move-poneglyph-to-stores-space-282a` is the captain's own
         // later ask to move it here, beside the other Stores utilities.
-        .stores: [.vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview, .poneglyph],
+        .stores: [.vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview, .poneglyph, .commandLibrary],
         .engineering: [.updates, .bootstrap, .automation, .githubSync, .settings],
     ]
 
@@ -193,8 +193,8 @@ enum DaylightModuleSelfTest {
         // from Overview like every other Setup card - and this check is what
         // caught it defaulting to *visible* there, which would have put a
         // seventh card on Overview against the captain's own locked decision.
-        if trimmed.count != 19 {
-            fail("expected exactly 19 modules trimmed from Overview, got \(trimmed.count): "
+        if trimmed.count != 20 {
+            fail("expected exactly 20 modules trimmed from Overview, got \(trimmed.count): "
                  + "\(trimmed.map(\.rawValue).sorted())", &ok)
         }
         for module in trimmed {

@@ -160,8 +160,7 @@ enum DaylightDrillPageSelfTest {
             return
         }
 
-        let shift = ShiftController(store: scratchShiftStore(),
-                                    commandLibraryStore: CommandLibraryStore())
+        let shift = ShiftController(store: scratchShiftStore())
         let shiftWindow = mount(shift)
         defer { _ = shiftWindow }
         guard let shiftSubtitle = shift.drillHeaderSubtitle, shiftSubtitle.contains("open") else {
@@ -190,8 +189,7 @@ enum DaylightDrillPageSelfTest {
             ok = false
         }
 
-        let shift = ShiftController(store: scratchShiftStore(),
-                                    commandLibraryStore: CommandLibraryStore())
+        let shift = ShiftController(store: scratchShiftStore())
         let shiftWindow = mount(shift)
         defer { _ = shiftWindow }
         let shiftHeroes = labels(in: shift.view, atLeast: heroFloor)
@@ -462,8 +460,7 @@ enum DaylightDrillPageSelfTest {
     /// squeezed into half the page.
     private static func checkTasksBoardLayout(_ ok: inout Bool) {
         print("\n-- Tasks board: Today | Follow-ups row, Projects full-width below --")
-        let shift = ShiftController(store: scratchShiftStore(),
-                                    commandLibraryStore: CommandLibraryStore())
+        let shift = ShiftController(store: scratchShiftStore())
         let window = mount(shift)
         defer { _ = window }
         shift.view.layoutSubtreeIfNeeded()
@@ -669,8 +666,7 @@ enum DaylightDrillPageSelfTest {
         // So the sweep runs down to the app's own narrowest tested width for
         // both pages, and Review - which this slice restyled end to end and
         // which has no such pane - is additionally swept to 760.
-        let shift = ShiftController(store: scratchShiftStore(),
-                                    commandLibraryStore: CommandLibraryStore())
+        let shift = ShiftController(store: scratchShiftStore())
         let review = ReviewController()
 
         func floor(of controller: NSViewController, widths: [CGFloat], label: String) {

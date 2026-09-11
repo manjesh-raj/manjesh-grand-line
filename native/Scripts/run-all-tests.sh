@@ -230,6 +230,11 @@ NEEDS_SESSION=(
   # same reason as its Whiteboard/Kubernetes peers above. Its pure-logic half
   # (FM_RUN_STICKY_BOARD_TESTS) is deliberately not here - that one runs in CI.
   "FM_RUN_STICKY_BOARD_VIEW_TESTS"
+  # fm/grandline-tasks-kanban-devops-split: mounts a real ShiftController in
+  # a real window and routes real mouse events through NSWindow.sendEvent -
+  # a drag session needs a window to drag in. Its pure-logic half
+  # (FM_RUN_SHIFT_BOARD_TESTS) is deliberately not here and runs in CI.
+  "FM_RUN_SHIFT_BOARD_VIEW_TESTS"
   # ---------------------------------------------------------------------
   # The full-app audit's §7.1 finding: these eight all create real
   # `NSWindow`s and drive real AppKit layout, exactly like every entry

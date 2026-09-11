@@ -133,6 +133,10 @@ final class AppShellController: NSViewController {
     /// gating note: a session that never opens it never starts a web content
     /// process, never loads the 4MB bundle and never builds an editor.
     private let codePreview: CodePreviewController
+    /// `fm/grandline-tasks-kanban-devops-split`: the Command Library's own
+    /// destination. Was the third tab of `shift` - see
+    /// `CommandLibraryController`'s header for why it moved.
+    private let commandLibrary: CommandLibraryController
 
     /// The same `CodePreviewStore` instance the page uses, exposed so ⌘K's
     /// provider searches what the page shows rather than a second reader
@@ -375,7 +379,10 @@ final class AppShellController: NSViewController {
         // search palette, and quick capture - all of which need to read/
         // write the same tasks/follow-ups this page shows, not a second
         // independent store instance.
-        self.shift = ShiftController(store: shiftStore, commandLibraryStore: commandLibraryStore)
+        self.shift = ShiftController(store: shiftStore)
+        // GL-23 again: the same shared instance the Log Analyzer, the crew's
+        // `command_search` tool and the ⌘K palette already read.
+        self.commandLibrary = CommandLibraryController(store: commandLibraryStore)
         // GL-23: the same instance the Tasks page uses.
         self.logAnalyzer = LogAnalyzerController(commandLibrary: commandLibraryStore)
         self.bootstrap = BootstrapController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore)
@@ -410,7 +417,8 @@ final class AppShellController: NSViewController {
             scheduleStore: scheduleStore,
             logAnalyzerStore: LogAnalyzerStore(),
             docsRunbookStore: DocsRunbookStore(),
-            codePreviewStore: codePreviewStore))
+            codePreviewStore: codePreviewStore,
+            commandLibraryStore: commandLibraryStore))
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -529,6 +537,7 @@ final class AppShellController: NSViewController {
         mounter.register(DestinationSlot(id: .whiteboard, title: RailDestination.whiteboard.bodyTitle, mountsEagerly: false, controller: whiteboard))
         mounter.register(DestinationSlot(id: .stickyBoard, title: RailDestination.stickyBoard.bodyTitle, mountsEagerly: false, controller: stickyBoard))
         mounter.register(DestinationSlot(id: .codePreview, title: RailDestination.codePreview.bodyTitle, mountsEagerly: false, controller: codePreview))
+        mounter.register(DestinationSlot(id: .commandLibrary, title: RailDestination.commandLibrary.bodyTitle, mountsEagerly: false, controller: commandLibrary))
         mounter.register(DestinationSlot(id: .vault, title: RailDestination.vault.bodyTitle, mountsEagerly: false, controller: vault))
         mounter.register(DestinationSlot(id: .dictation, title: RailDestination.dictation.bodyTitle, mountsEagerly: false, controller: dictation))
         mounter.register(DestinationSlot(id: .schedules, title: RailDestination.schedules.bodyTitle, mountsEagerly: false, controller: schedules))
@@ -746,9 +755,9 @@ final class AppShellController: NSViewController {
         // currently in front - not a new one-shot command tab (`runInConsole`
         // above), the exact same "type this into the active tab" behavior
         // Snippets' own "Run" already uses.
-        shift.onSendCommandToTerminal = { [weak self] text in self?.console.sendCommandLibraryTextToActiveTab(text) }
+        commandLibrary.onSendCommandToTerminal = { [weak self] text in self?.console.sendCommandLibraryTextToActiveTab(text) }
         // F9 (v1): straight up to the app delegate - see `onSendCommandToHosts`.
-        shift.onSendCommandToHosts = { [weak self] command, values, generated in
+        commandLibrary.onSendCommandToHosts = { [weak self] command, values, generated in
             self?.onSendCommandToHosts?(command, values, generated)
         }
 
@@ -871,6 +880,7 @@ final class AppShellController: NSViewController {
         docs.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         whiteboard.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         codePreview.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        commandLibrary.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Runbooks inherited Docs' old per-editor-state cluster: "New
         // Runbook" beside a form already creating one is a second, competing
         // action, so its cluster empties while the editor is open.
@@ -2506,13 +2516,18 @@ final class AppShellController: NSViewController {
 
     /// F5 (`fm/grandline-feature-f5-command-palette-expansion`): the command
     /// palette's action for a saved command that still needs a parameter
-    /// filled in - switches to the Tasks destination's DevOps Commands tab
-    /// and selects it, so the captain completes it on the real form (with its
-    /// real Copy/Send buttons and their real risk gate) rather than the
-    /// palette sending a half-substituted template.
+    /// filled in - switches to the DevOps Commands destination and selects
+    /// it, so the captain completes it on the real form (with its real
+    /// Copy/Send buttons and their real risk gate) rather than the palette
+    /// sending a half-substituted template.
+    ///
+    /// `fm/grandline-tasks-kanban-devops-split`: this used to `show(.shift)`
+    /// and ask that page to switch to its third tab. The library is its own
+    /// destination now, so the navigation is a plain `show` like every other
+    /// palette landing.
     func openCommandLibraryCommand(id: String) {
-        show(.shift)
-        shift.openCommandLibraryCommand(id: id)
+        show(.commandLibrary)
+        commandLibrary.openCommand(id: id)
     }
 
     /// The command palette's send action for a command that needs no input -

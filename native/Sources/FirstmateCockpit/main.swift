@@ -1660,6 +1660,20 @@ if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_STORE_TESTS"] == "1" {
     exit(ShiftStoreSelfTest.run() ? 0 : 1)
 }
 
+// fm/grandline-tasks-kanban-devops-split: the Kanban board's pure logic - the
+// column/status table (including a cancelled task having no column at all)
+// and the process-stable per-project colour hash. The board's *view* half
+// needs a real window and lives in ShiftBoardViewSelfTest.
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_BOARD_TESTS"] == "1" {
+    exit(ShiftBoardSelfTest.run() ? 0 : 1)
+}
+
+// The same board's view half: a real ShiftController mounted in a real
+// window, a real press-and-drag on a card, and a real drop onto a column.
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_BOARD_VIEW_TESTS"] == "1" {
+    exit(ShiftBoardViewSelfTest.run() ? 0 : 1)
+}
+
 // fm/grandline-devops-command-library: same convention, for the DevOps
 // Command Library's parameter detection/substitution/search/favorites - see
 // CommandLibraryStoreSelfTest.swift's header.

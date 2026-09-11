@@ -74,6 +74,9 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
     /// on Save. The caller (`ShiftController`) persists both via
     /// `ShiftStore.addTask`/`updateTask`.
     var onSave: ((ShiftTask, ShiftAttachmentChange) -> Void)?
+    /// The sheet's Delete button, handed the task's id. Its owner confirms
+    /// and deletes - see `deleteTask()` below.
+    var onDelete: ((String) -> Void)?
 
     private var form: HelmFormSheet!
 
@@ -241,6 +244,14 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
                        // as a newline. `performKeyEquivalent:` reaches the
                        // button regardless of first responder.
                        confirmModifiers: [.command],
+                       // `fm/grandline-tasks-kanban-devops-split`: a task had
+                       // no delete anywhere until now. The sheet is where
+                       // every other editable record in this app offers one
+                       // (`SnippetEditorController`,
+                       // `CredentialVaultDetailController`), and like those
+                       // it only *asks* - `onDelete`'s owner runs GL-06's
+                       // shared confirmation.
+                       delete: editing == nil ? nil : (title: "Delete", action: #selector(deleteTask)),
                        hint: "\u{2318}\u{23ce} to save")
 
         form.setSubtitle("Something to do.")
@@ -448,6 +459,16 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
     }
 
     @objc private func cancel() {
+        dismiss(self)
+    }
+
+    /// Asks; never deletes. The confirmation and the store call both belong
+    /// to `ShiftController.confirmDeleteTask`, so the sheet's Delete and a
+    /// card's context menu cannot end up with two different prompts - or, as
+    /// GL-06 found across three editors, one prompt and one silent deletion.
+    @objc private func deleteTask() {
+        guard let id = editing?.id else { return }
+        onDelete?(id)
         dismiss(self)
     }
 

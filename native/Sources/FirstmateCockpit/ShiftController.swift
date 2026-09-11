@@ -82,49 +82,70 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// `String`-backed so it can be the id `HelmSegmentedTabs` hands back -
     /// the shared component deals in caller-owned ids rather than indices, so a
     /// page keeps its own enum.
-    private enum ShiftTopLevelView: String { case dashboard, weeklyReview, commandLibrary }
+    private enum ShiftTopLevelView: String { case dashboard, weeklyReview }
     private var topLevelView: ShiftTopLevelView = .dashboard
     private let dashboardContainer = NSStackView()
     private let weeklyReviewContainer = NSStackView()
 
-    // MARK: DevOps Commands (fm/grandline-devops-command-library, Phase 1)
+    // MARK: The board (fm/grandline-tasks-kanban-devops-split)
 
-    /// A third tab alongside My Tasks/Weekly Review - see AGENTS.md's "Shift"
-    /// section. Owns its own store: Phase 1 has no other consumer of the
-    /// command library (search-palette/`⌘⇧P` integration is explicitly
-    /// Phase 3 per the design doc), so there's no need to thread this through
-    /// `AppShellController`'s init chain the way the shared `ShiftStore` is.
-    /// GL-23: injected, not constructed here. Two independent instances (this
-    /// page's and Log Analyzer's) each cached their own copy of the library and
-    /// each wrote `recent.yaml` from that stale cache, so an edit in one was
-    /// invisible to the other until relaunch and whichever saved last silently
-    /// dropped the other's recency data. The "independent store instances"
-    /// convention this was copied from was established for a store that
-    /// re-reads disk on every call; it does not transfer to a caching, writing
-    /// store. Same shared-instance shape as `shiftStore`.
-    private let commandLibraryStore: CommandLibraryStore
-    private lazy var commandLibraryView = CommandLibraryPageView(store: commandLibraryStore)
-    /// The three-way My Tasks / Weekly Review / DevOps Commands switcher, built
-    /// from the app's shared `HelmSegmentedTabs` (`HelmDesignSystem.swift`,
-    /// audit §6.3 component 6). This page's own capsule was the model the
-    /// component adopted, so it renders as before; what changed is that Docs'
-    /// and Updates' near-identical copies now render the same way too.
+    /// How the captain's tasks are laid out: a Kanban board of three status
+    /// columns, or the flat list this page has always had.
+    ///
+    /// The board is the captain's own ask - a flat list never answered "what
+    /// is actually in flight right now", which is the question he opens this
+    /// page with. The list is not a legacy fallback either: it is the only
+    /// view that shows *every* active task at once, sorted by due date, which
+    /// is exactly what a board deliberately is not.
+    ///
+    /// `String`-backed for the same reason `ShiftTopLevelView` is:
+    /// `HelmSegmentedTabs` deals in caller-owned ids.
+    private enum ShiftTasksView: String { case board, list }
+    private var tasksView: ShiftTasksView = .board
+    private let tasksViewToggle = HelmSegmentedTabs(items: [
+        .init(id: ShiftTasksView.board.rawValue, title: "Board"),
+        .init(id: ShiftTasksView.list.rawValue, title: "List"),
+    ], selected: ShiftTasksView.board.rawValue, size: .compact)
+
+    private let boardSection = NSStackView()
+    private let boardToolbar = NSStackView()
+    private let boardView = ShiftBoardView()
+    private let projectFilterBar = ShiftProjectFilterBar()
+    /// `nil` = every project, matching `ShiftProjectFilterBar`'s own "All
+    /// projects" chip. Held here rather than read back off the chip row so
+    /// the board and the list filter identically.
+    private var projectFilter: String?
+
+    /// How far back the Done column looks.
+    ///
+    /// Completed tasks do not live in `active.yaml` - they are filed into
+    /// `tasks/completed/<YYYY-MM>.yaml` by month (see
+    /// `ShiftStore.setTaskCompleted`), so "Done" could mean every task ever
+    /// finished. That is not a column, it is an archive: it would grow
+    /// without bound and bury the two columns a board is actually for. A week
+    /// matches the window Weekly Review already reasons in, and anything
+    /// older is still reachable through a project's own detail page.
+    private static let doneColumnLookbackDays = 7
+
+    /// The My Tasks / Weekly Review switcher, built from the app's shared
+    /// `HelmSegmentedTabs` (`HelmDesignSystem.swift`, audit section 6.3
+    /// component 6). This page's own capsule was the model the component
+    /// adopted.
+    ///
+    /// `fm/grandline-tasks-kanban-devops-split` took the third pill - "DevOps
+    /// Commands" - off this row: the Command Library is its own top-level
+    /// destination now (`CommandLibraryController`), so reaching a saved
+    /// command no longer means first opening a page about something else.
+    ///
+    /// Weekly Review stays a pill rather than folding into the board as a
+    /// filter: it answers a different question (what happened across a week)
+    /// with entirely different content (stat tiles and a pushed-back list, no
+    /// task cards at all), and it is already the target of a menu item and a
+    /// search-palette entry that both expect a view to switch to.
     private let tabs = HelmSegmentedTabs(items: [
         .init(id: ShiftTopLevelView.dashboard.rawValue, title: "My Tasks"),
         .init(id: ShiftTopLevelView.weeklyReview.rawValue, title: "Weekly Review"),
-        .init(id: ShiftTopLevelView.commandLibrary.rawValue, title: "DevOps Commands"),
     ], selected: ShiftTopLevelView.dashboard.rawValue)
-
-    /// Phase 2 (fm/grandline-devops-command-library-phase2) - forward-don't-
-    /// own, same convention as every other page's `onRunCommand`/`onRun`:
-    /// `ShiftController` knows nothing about the console, `AppShellController`
-    /// wires this to `ConsoleController.sendCommandLibraryTextToActiveTab`.
-    var onSendCommandToTerminal: ((String) -> Void)?
-    /// F9 (v1): forwarded straight up to `AppShellController`, which forwards
-    /// it again to the app delegate - the picker needs the host store and the
-    /// per-host page path, neither of which this page has any business
-    /// knowing about.
-    var onSendCommandToHosts: ((DevOpsCommand, [String: String], String) -> Void)?
 
     private let reviewGreeting = NSTextField(labelWithString: "")
     private let reviewSubtitle = NSTextField(labelWithString: "What got done, what got pushed back, what's coming.")
@@ -164,9 +185,8 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// `buildFollowUpSection`.
     private static let taskFollowUpPanelBodyHeight: CGFloat = 280
 
-    init(store: ShiftStore, commandLibraryStore: CommandLibraryStore) {
+    init(store: ShiftStore) {
         self.store = store
-        self.commandLibraryStore = commandLibraryStore
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -190,6 +210,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         let taskSection = buildTaskSection()
         let followUpSection = buildFollowUpSection()
         let projectsSection = buildProjectsSection()
+        buildBoardSection()
 
         // Daylight §7's board, as the captain has asked it to actually render:
         // **Today | Follow-ups as a two-column row, Projects full-width below
@@ -226,6 +247,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         rightColumn.spacing = 20
         rightColumn.translatesAutoresizingMaskIntoConstraints = false
 
+        tasksLeftColumn = leftColumn
         let tasksRow = NSStackView(views: [leftColumn, rightColumn])
         tasksRow.orientation = .horizontal
         tasksRow.distribution = .fillEqually
@@ -238,6 +260,14 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         dashboardContainer.spacing = 20
         dashboardContainer.translatesAutoresizingMaskIntoConstraints = false
         dashboardContainer.addArrangedSubview(statsRow)
+        // The board's own toolbar (Board/List + the project chips) and the
+        // board itself sit above the Today/Follow-ups row, full width - three
+        // columns squeezed into half a page is the one layout a Kanban must
+        // not have. In Board mode `taskPanel` hides, and because a *hidden
+        // arranged subview of an `NSStackView`* leaves layout entirely
+        // (AGENTS.md gotcha (11)'s one exception), Follow-ups takes the row
+        // on its own rather than sitting beside an empty half.
+        dashboardContainer.addArrangedSubview(boardSection)
         dashboardContainer.addArrangedSubview(tasksRow)
         // Projects is its own full-width section, a direct child of the
         // dashboard rather than nested in either column - it renders a
@@ -250,25 +280,15 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         dashboardContainer.addArrangedSubview(projectsDetailContainer)
 
         let weeklyReviewSection = buildWeeklyReviewSection()
-        commandLibraryView.view.translatesAutoresizingMaskIntoConstraints = false
-        commandLibraryView.view.isHidden = true
-        commandLibraryView.onSendToTerminal = { [weak self] text in self?.onSendCommandToTerminal?(text) }
-        commandLibraryView.onSendToHosts = { [weak self] command, values, generated in
-            self?.onSendCommandToHosts?(command, values, generated)
-        }
-        commandLibraryView.onPresentEditor = { [weak self] editor in
-            guard let self else { return }
-            self.presentAsSheet(editor)
-        }
 
         contentStack.orientation = .vertical
         contentStack.alignment = .leading
         contentStack.spacing = 20
         contentStack.translatesAutoresizingMaskIntoConstraints = false
         contentStack.addArrangedSubview(tabRow)
+
         contentStack.addArrangedSubview(dashboardContainer)
         contentStack.addArrangedSubview(weeklyReviewSection)
-        contentStack.addArrangedSubview(commandLibraryView.view)
 
         content.addSubview(contentStack)
         NSLayoutConstraint.activate([
@@ -289,7 +309,10 @@ final class ShiftController: NSViewController, DaylightDrillActions {
             // `statsRow`/`tasksRow` above it.
             projectsSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             weeklyReviewSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
-            commandLibraryView.view.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            boardSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            // The toolbar spans the page so its trailing-pinned Board/List
+            // switch actually lands at the page's own trailing edge.
+            tabRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
         ])
 
         scroll.documentView = content
@@ -312,6 +335,9 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         taskListView.onOpen = { [weak self] task in
             self?.presentTaskEditor(for: task)
         }
+        taskListView.onDelete = { [weak self] task in
+            self?.confirmDeleteTask(id: task.id)
+        }
 
         followUpListView.onEdit = { [weak self] item in
             self?.presentFollowUpEditor(for: item)
@@ -322,6 +348,9 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         }
         followUpListView.onSnooze = { [weak self] item, option in
             self?.snoozeFollowUp(item, option: option)
+        }
+        followUpListView.onDelete = { [weak self] item in
+            self?.confirmDeleteFollowUp(id: item.id)
         }
 
         ThemeManager.shared.observe { [weak self, weak root] theme in
@@ -658,15 +687,259 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         return projectsPanel
     }
 
+    // MARK: The board (fm/grandline-tasks-kanban-devops-split)
+
+    /// Sits above the board: the Board/List toggle on the left, the project
+    /// filter chips beside it, and a short hint about how a card moves.
+    private let boardHint = NSTextField(labelWithString: "Drag a card between columns, or right-click it to move.")
+
+    private func buildBoardSection() {
+        projectFilterBar.onSelect = { [weak self] projectID in
+            guard let self else { return }
+            self.projectFilter = projectID
+            self.render()
+        }
+
+        boardHint.font = HelmType.captionSmall()
+        boardHint.lineBreakMode = .byTruncatingTail
+        // The hint is the one thing in this row allowed to shrink - a filter
+        // chip that truncated to "Pra..." would defeat the point of the chip.
+        boardHint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        boardToolbar.orientation = .horizontal
+        boardToolbar.alignment = .centerY
+        boardToolbar.spacing = HelmMetrics.s3
+        // AGENTS.md gotcha (10): a horizontal stack left at the default
+        // `.gravityAreas` honours no hugging priority at all, so the row's
+        // slack lands wherever Auto Layout's own tie-breaking puts it.
+        boardToolbar.distribution = .fill
+        boardToolbar.translatesAutoresizingMaskIntoConstraints = false
+        boardToolbar.addArrangedSubview(projectFilterBar)
+        boardToolbar.addArrangedSubview(spacer)
+        boardToolbar.addArrangedSubview(boardHint)
+
+        boardView.onOpenTask = { [weak self] id in self?.openBoardTask(id: id) }
+        boardView.onMoveTask = { [weak self] id, column in self?.moveTask(id: id, to: column) }
+        boardView.onDeleteTask = { [weak self] id in self?.confirmDeleteTask(id: id) }
+        boardView.onAddTask = { [weak self] column in self?.addTask(in: column) }
+        boardView.onDropTask = { [weak self] id, column in self?.moveTask(id: id, to: column) ?? false }
+
+        boardSection.orientation = .vertical
+        boardSection.alignment = .leading
+        boardSection.spacing = HelmMetrics.s3
+        boardSection.translatesAutoresizingMaskIntoConstraints = false
+        boardSection.addArrangedSubview(boardToolbar)
+        boardSection.addArrangedSubview(boardView)
+        boardToolbar.widthAnchor.constraint(equalTo: boardSection.widthAnchor).isActive = true
+        boardView.widthAnchor.constraint(equalTo: boardSection.widthAnchor).isActive = true
+    }
+
+    private func switchTasksView(_ view: ShiftTasksView) {
+        tasksView = view
+        tasksViewToggle.select(view.rawValue)
+        render()
+    }
+
+    /// Which tasks the board shows, grouped by column.
+    ///
+    /// Backlog and In Progress come from `activeTasks`; Done comes from the
+    /// completed month files, cut off at `doneColumnLookbackDays` - see that
+    /// constant for why an uncapped Done column is an archive rather than a
+    /// column. Both halves run through the same project filter, so a chip
+    /// filters the whole board rather than two thirds of it.
+    private func boardTasks() -> [ShiftBoardColumn: [ShiftTask]] {
+        var byColumn: [ShiftBoardColumn: [ShiftTask]] = [:]
+        for task in store.activeTasks where matchesProjectFilter(task) {
+            guard let column = ShiftBoardColumn.column(for: task.status) else { continue }
+            byColumn[column, default: []].append(task)
+        }
+        for column in [ShiftBoardColumn.backlog, .inProgress] {
+            byColumn[column] = (byColumn[column] ?? []).sorted(by: Self.byDueDateThenCreated)
+        }
+
+        let cutoff = Calendar.current.date(byAdding: .day, value: -Self.doneColumnLookbackDays, to: Date())
+        byColumn[.done] = store.allCompletedTasks()
+            .filter(matchesProjectFilter)
+            .filter { task in
+                guard let cutoff,
+                      let completed = task.completedAt.flatMap(ShiftStore.date(fromISO8601:)) else { return false }
+                return completed >= cutoff
+            }
+            // Newest first: the most recent thing finished is the one worth
+            // seeing at the top of a Done pile.
+            .sorted { ($0.completedAt ?? "") > ($1.completedAt ?? "") }
+        return byColumn
+    }
+
+    private func matchesProjectFilter(_ task: ShiftTask) -> Bool {
+        guard let projectFilter else { return true }
+        return task.projectID == projectFilter
+    }
+
+    /// The list's own ordering, extracted so the board's two in-flight
+    /// columns and the flat list cannot disagree about what "next" means.
+    private static func byDueDateThenCreated(_ lhs: ShiftTask, _ rhs: ShiftTask) -> Bool {
+        let ld = lhs.dueDate.flatMap(ShiftDateFormatting.date(from:))
+        let rd = rhs.dueDate.flatMap(ShiftDateFormatting.date(from:))
+        switch (ld, rd) {
+        case (.some(let l), .some(let r)): return l < r
+        case (.some, .none): return true
+        case (.none, .some): return false
+        default: return lhs.createdAt < rhs.createdAt
+        }
+    }
+
+    /// Applies a board move - a drop, a context-menu item or an
+    /// accessibility action, all three of which land here so there is exactly
+    /// one definition of what moving a card does.
+    ///
+    /// Completion is not a status flip: `setTaskCompleted` moves the task
+    /// between `active.yaml` and a completed month file, so both directions
+    /// across the Done boundary have to go through it rather than through
+    /// `updateTask`, which only ever rewrites a task already in
+    /// `active.yaml`.
+    ///
+    /// Returns whether anything actually changed, which is what a drop
+    /// reports back to AppKit - dropping a card into the column it came from
+    /// is a no-op, not a failure.
+    @discardableResult
+    private func moveTask(id: String, to column: ShiftBoardColumn) -> Bool {
+        if let task = store.activeTasks.first(where: { $0.id == id }) {
+            guard task.status != column.status else { return false }
+            if column == .done {
+                store.setTaskCompleted(id: id, completed: true)
+            } else {
+                var updated = task
+                updated.status = column.status
+                store.updateTask(updated)
+            }
+            render()
+            return true
+        }
+
+        // Coming back out of Done: reopen first (which files it back into
+        // `active.yaml` as `todo`), then apply the target status if it is not
+        // already the one reopening gives.
+        guard store.allCompletedTasks().contains(where: { $0.id == id }) else { return false }
+        guard column != .done else { return false }
+        store.setTaskCompleted(id: id, completed: false)
+        if column.status != .todo, var reopened = store.activeTasks.first(where: { $0.id == id }) {
+            reopened.status = column.status
+            store.updateTask(reopened)
+        }
+        render()
+        return true
+    }
+
+    /// A card click. A completed task is opened read-only-ish: `updateTask`
+    /// deliberately only touches `active.yaml`, so editing one from the Done
+    /// column would silently save nothing - reopening it is the honest path,
+    /// and saying so beats a sheet whose Save does nothing.
+    private func openBoardTask(id: String) {
+        if let task = store.activeTasks.first(where: { $0.id == id }) {
+            presentTaskEditor(for: task)
+            return
+        }
+        guard let done = store.allCompletedTasks().first(where: { $0.id == id }) else { return }
+        let alert = NSAlert()
+        alert.messageText = "\u{201C}\(done.title)\u{201D} is done"
+        alert.informativeText = "Completed tasks are filed away and can't be edited in place. "
+            + "Move it back to Backlog or In Progress to edit it."
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    /// A column's own "+ Add task". Opens the same New Task sheet the header
+    /// "+" and the Shift menu's Cmd-N open, then applies that column's status
+    /// to whatever the captain saved - so adding straight into In Progress
+    /// works without the editor needing a status control it does not have.
+    private func addTask(in column: ShiftBoardColumn) {
+        presentTaskEditor(for: nil, defaultProjectID: projectFilter, defaultStatus: column.status)
+    }
+
+    // MARK: Deletion (fm/grandline-tasks-kanban-devops-split)
+
+    /// The one delete path. Every affordance - a board card's context menu, a
+    /// list row's context menu, and the task editor's own Delete button - ends
+    /// up here, so there is exactly one confirmation and one store call.
+    ///
+    /// The confirmation is not optional: deleting a task is irreversible and
+    /// there is no undo for it (`Toast.showUndo` restores a value the caller
+    /// still holds, which a task's completed-month file and attachment do not
+    /// survive cleanly). `DestructiveConfirm` is GL-06's shared prompt, with
+    /// Cancel as the default so a reflexive Return cannot complete it.
+    func confirmDeleteTask(id: String) {
+        let task = store.activeTasks.first(where: { $0.id == id })
+            ?? store.allCompletedTasks().first(where: { $0.id == id })
+        guard let task else { return }
+
+        var detail = "This can't be undone."
+        if task.hasAttachment { detail += " Its attached image is deleted too." }
+        if !task.subtasks.isEmpty {
+            detail += " Its \(task.subtasks.count) subtask\(task.subtasks.count == 1 ? "" : "s") go with it."
+        }
+        guard DestructiveConfirm.confirm(message: "Delete \u{201C}\(task.title)\u{201D}?",
+                                         detail: detail,
+                                         confirmTitle: "Delete Task",
+                                         window: view.window) else { return }
+        store.deleteTask(id: id)
+        Toast.show(in: view, message: "\u{201C}\(task.title)\u{201D} deleted")
+        render()
+    }
+
+    /// The same, for a follow-up - see `ShiftStore.deleteFollowUp`'s header
+    /// for why follow-ups got a delete alongside tasks and projects did not.
+    func confirmDeleteFollowUp(id: String) {
+        guard let item = store.followUps.first(where: { $0.id == id }) else { return }
+        guard DestructiveConfirm.confirm(message: "Delete \u{201C}\(item.title)\u{201D}?",
+                                         detail: "This follow-up is removed for good. This can't be undone.",
+                                         confirmTitle: "Delete Follow-up",
+                                         window: view.window) else { return }
+        store.deleteFollowUp(id: id)
+        Toast.show(in: view, message: "\u{201C}\(item.title)\u{201D} deleted")
+        render()
+    }
+
     // MARK: Weekly Review
 
+    /// The page's top toolbar, laid out the way the captain's reference draws
+    /// it: the view tabs pinned left, the Board/List switch pinned right,
+    /// with the space between them empty.
+    ///
+    /// The switch hides on Weekly Review, because there is no task list there
+    /// for it to switch - the reference hides it on its own non-task tabs for
+    /// the same reason.
     private func buildTabRow() -> NSView {
         tabs.onSelect = { [weak self] id in
             guard let self, let view = ShiftTopLevelView(rawValue: id) else { return }
             self.switchTopLevelView(view)
         }
-        return tabs
+        tasksViewToggle.onSelect = { [weak self] id in
+            guard let self, let view = ShiftTasksView(rawValue: id) else { return }
+            self.switchTasksView(view)
+        }
+        tasksViewToggle.translatesAutoresizingMaskIntoConstraints = false
+
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let row = NSStackView(views: [tabs, spacer, tasksViewToggle])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = HelmMetrics.s3
+        // AGENTS.md gotcha (10): without `.fill` a horizontal stack honours no
+        // hugging priority at all and the spacer never absorbs the slack, so
+        // the switch would sit next to the tabs instead of at the far edge.
+        row.distribution = .fill
+        row.translatesAutoresizingMaskIntoConstraints = false
+        topToolbar = row
+        return row
     }
+
+    /// Held so `switchTopLevelView` can size it and hide the view switch.
+    private var topToolbar: NSStackView?
 
     private func switchTopLevelView(_ view: ShiftTopLevelView) {
         topLevelView = view
@@ -677,9 +950,8 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         tabs.select(view.rawValue)
         dashboardContainer.isHidden = view != .dashboard
         weeklyReviewContainer.isHidden = view != .weeklyReview
-        commandLibraryView.view.isHidden = view != .commandLibrary
+        tasksViewToggle.isHidden = view != .dashboard
         if view == .weeklyReview { renderWeeklyReview() }
-        if view == .commandLibrary { commandLibraryView.reloadAndRender() }
         applyTheme()
     }
 
@@ -690,16 +962,6 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// Back to the daily dashboard - used after navigating here to open a
     /// task/follow-up/project found via search or the menu bar popover.
     func showDashboard() { switchTopLevelView(.dashboard) }
-
-    /// F5 (`fm/grandline-feature-f5-command-palette-expansion`): reveal one
-    /// saved command from the command palette. Switches to the DevOps
-    /// Commands tab (which `switchTopLevelView` already reloads) and then asks
-    /// the library page to select that command - the same selection a real row
-    /// click performs, never a second one.
-    func openCommandLibraryCommand(id: String) {
-        switchTopLevelView(.commandLibrary)
-        commandLibraryView.openCommand(id: id)
-    }
 
     private func buildWeeklyReviewSection() -> NSView {
         reviewGreeting.font = HelmType.pageTitle(.serif)
@@ -884,19 +1146,19 @@ final class ShiftController: NSViewController, DaylightDrillActions {
 
         rebuildStats(tasksToday: dueToday.count, followUps: pendingFollowUps.count, overdue: overdue.count)
 
-        let sortedTasks = tasks.sorted { lhs, rhs in
-            let ld = lhs.dueDate.flatMap(ShiftDateFormatting.date(from:))
-            let rd = rhs.dueDate.flatMap(ShiftDateFormatting.date(from:))
-            switch (ld, rd) {
-            case (.some(let l), .some(let r)): return l < r
-            case (.some, .none): return true
-            case (.none, .some): return false
-            default: return lhs.createdAt < rhs.createdAt
-            }
-        }
-        taskListView.setTasks(sortedTasks, projects: store.projects)
+        let sortedTasks = tasks.sorted(by: Self.byDueDateThenCreated)
+        taskListView.setTasks(sortedTasks.filter(matchesProjectFilter), projects: store.projects)
         tasksHeader.stringValue = "My Tasks"
         tasksCountBadge.stringValue = "\(tasks.count)"
+
+        // The board and the flat list are two presentations of the same
+        // filtered set, so both are refreshed on every render regardless of
+        // which one is showing - a stale board behind a view toggle is the
+        // exact "switch away and back to find yesterday's data" shape this
+        // page has been corrected for before.
+        projectFilterBar.setProjects(store.projects, theme: theme)
+        boardView.setTasks(boardTasks(), projects: store.projects, theme: theme)
+        applyTasksViewVisibility()
 
         followUpListView.setItems(followUps)
         followUpsHeader.stringValue = "Follow-ups"
@@ -904,7 +1166,6 @@ final class ShiftController: NSViewController, DaylightDrillActions {
 
         renderProjectsSection()
         if topLevelView == .weeklyReview { renderWeeklyReview() }
-        if topLevelView == .commandLibrary { commandLibraryView.reloadAndRender() }
 
         applyTheme()
     }
@@ -924,7 +1185,36 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         taskPanel.isHidden = isDetail
         followUpPanel.isHidden = isDetail
         projectsPanel.isHidden = isDetail
+        isProjectDetailFullPage = isDetail
+        applyTasksViewVisibility()
     }
+
+    /// Whether the project detail currently owns the whole page - the board
+    /// and the task panel both have to stay hidden while it does, whichever
+    /// way the Board/List toggle happens to be set.
+    private var isProjectDetailFullPage = false
+
+    /// Board mode hides the flat task panel and shows the board; list mode is
+    /// this page's original layout exactly. `taskPanel` is a *hidden arranged
+    /// subview of an `NSStackView`*, which AppKit drops out of layout
+    /// entirely - so Follow-ups fills the row on its own in board mode
+    /// instead of sitting beside a gap.
+    private func applyTasksViewVisibility() {
+        let boardShowing = !isProjectDetailFullPage && tasksView == .board
+        boardSection.isHidden = !boardShowing
+        let hideTasks = isProjectDetailFullPage || boardShowing
+        taskPanel.isHidden = hideTasks
+        // The *column wrapper*, not just the panel inside it. `tasksRow` is
+        // `.fillEqually`, and a visible-but-empty column still claims its
+        // half of the row - which left Follow-ups rendering at half width
+        // against a blank left half in board mode (caught in a real render,
+        // not by reading the constraints).
+        tasksLeftColumn?.isHidden = hideTasks
+    }
+
+    /// The `tasksRow` column holding the flat task panel - see
+    /// `applyTasksViewVisibility`.
+    private var tasksLeftColumn: NSStackView?
 
     private func renderProjectsSection() {
         switch projectsView {
@@ -1340,7 +1630,14 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     @objc private func newFollowUpClicked() { presentFollowUpEditor(for: nil) }
     @objc private func newProjectClicked() { presentProjectEditor() }
 
-    private func presentTaskEditor(for task: ShiftTask?, defaultProjectID: String? = nil) {
+    /// `defaultStatus` is how a board column's own "+ Add task" puts a brand
+    /// new task straight into In Progress: the editor has no status control
+    /// (a task's status is something the board moves, not something a form
+    /// sets), so the column applies it to whatever comes back. Ignored when
+    /// editing an existing task, whose status is already whatever it is.
+    private func presentTaskEditor(for task: ShiftTask?,
+                                   defaultProjectID: String? = nil,
+                                   defaultStatus: ShiftTaskStatus? = nil) {
         let existingAttachmentData = (task?.hasAttachment ?? false) ? store.attachmentData(forTaskID: task!.id) : nil
         let editor = ShiftTaskEditorController(
             task: task, projects: store.projects, defaultProjectID: defaultProjectID,
@@ -1351,9 +1648,20 @@ final class ShiftController: NSViewController, DaylightDrillActions {
             if task != nil {
                 self.store.updateTask(saved, attachment: attachmentChange)
             } else {
-                self.store.addTask(saved, attachment: attachmentChange)
+                var created = saved
+                if let defaultStatus { created.status = defaultStatus }
+                self.store.addTask(created, attachment: attachmentChange)
             }
             self.render()
+        }
+        // GL-06: the editor's own Delete button confirms through the exact
+        // same path every other delete affordance on this page uses. Deferred
+        // a runloop turn because the sheet dismisses itself the moment this
+        // closure returns, and running a modal alert on a sheet that is
+        // mid-teardown stacks one window on another - the same fix
+        // `HostsController`'s own key editor carries.
+        editor.onDelete = { [weak self] id in
+            DispatchQueue.main.async { self?.confirmDeleteTask(id: id) }
         }
         presentAsSheet(editor)
     }
@@ -1453,6 +1761,27 @@ final class ShiftController: NSViewController, DaylightDrillActions {
                              contentWidth: contentStack.bounds.width)
     }
 
+    // fm/grandline-tasks-kanban-devops-split: the board's own probe surface.
+    // Structure rather than appearance, deliberately - a column holding the
+    // wrong cards, a toggle that hides nothing, and a card that never
+    // receives a mouse event all render plausibly.
+
+    var debugBoardView: ShiftBoardView? { boardView }
+    var debugProjectFilterBar: ShiftProjectFilterBar? { projectFilterBar }
+    var debugBoardIsVisible: Bool { !boardSection.isHidden }
+    var debugTaskPanelIsVisible: Bool { !taskPanel.isHidden }
+
+    /// Drives the real toggle's own handler, so a test cannot pass against a
+    /// pill wired to nothing.
+    func debugSelectTasksView(_ id: String) {
+        guard let view = ShiftTasksView(rawValue: id) else { return }
+        switchTasksView(view)
+    }
+
+    /// The page's one render pass, for a test that has just mutated the store
+    /// behind its back.
+    func debugRender() { render() }
+
     /// Opens a project's detail through the same path a card click takes, on a
     /// project seeded for the test - or a fresh one when the scratch store is
     /// empty, since the detail state is what is under test, not the data.
@@ -1510,7 +1839,10 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         detailTaskListView.applyTheme(theme)
 
         tabs.applyTheme(theme)
-        commandLibraryView.applyTheme(theme)
+        tasksViewToggle.applyTheme(theme)
+        projectFilterBar.applyTheme(theme)
+        boardView.applyTheme(theme)
+        boardHint.textColor = muted
 
         reviewGreeting.textColor = ink
         reviewSubtitle.textColor = muted

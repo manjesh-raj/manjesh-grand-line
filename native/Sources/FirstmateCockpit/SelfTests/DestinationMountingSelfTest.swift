@@ -63,6 +63,7 @@ enum DestinationMountingSelfTest {
             ("healthHasItsOwnSlotAndSettingsNoLongerRendersIt", test_healthIsSeparateFromSettings),
             ("runbooksAndPostmortemsHaveTheirOwnSlotsAndDocsNoLongerRendersThem", test_runbooksAndPostmortemsAreSeparateFromDocs),
             ("poneglyphHasItsOwnSlotAndSetupNoLongerRendersIt", test_poneglyphIsSeparateFromSetup),
+            ("commandLibraryHasItsOwnSlotAndTasksNoLongerRendersIt", test_commandLibraryIsSeparateFromTasks),
             ("mounterIsLazyAndBuildsEachSlotOnce", test_mounterUnitBehaviour),
             ("everyDestinationRendersRealContentOnFirstLoad", test_everyDestinationRendersRealContentOnFirstLoad),
             ("everyDestinationForcesItsOwnAppearance", test_everyDestinationForcesItsOwnAppearance),
@@ -147,7 +148,7 @@ enum DestinationMountingSelfTest {
             // mounting it eagerly would start a WebKit content process at
             // launch for a page the captain may never open
             // (`fm/grand-line-whiteboard-excalidraw`).
-            let mustBeLazy: Set<DestinationSlotID> = [.docs, .runbooks, .postmortems, .tools, .whiteboard, .codePreview, .stickyBoard, .logAnalyzer, .vault, .poneglyph, .dictation, .schedules, .health, .hosts, .shift, .settings]
+            let mustBeLazy: Set<DestinationSlotID> = [.docs, .runbooks, .postmortems, .tools, .whiteboard, .codePreview, .stickyBoard, .commandLibrary, .logAnalyzer, .vault, .poneglyph, .dictation, .schedules, .health, .hosts, .shift, .settings]
             let eagerlyBuilt = mounted.intersection(mustBeLazy)
             guard eagerlyBuilt.isEmpty else {
                 return "these should not be built at launch: \(eagerlyBuilt.map(\.rawValue).sorted())"
@@ -535,6 +536,45 @@ enum DestinationMountingSelfTest {
     /// pre-move shape) makes this fail on the second assertion, naming the
     /// leftover "Poneglyph" tab pill label, while every other case in this
     /// file keeps passing.
+    /// `fm/grandline-tasks-kanban-devops-split`: the Command Library used to
+    /// be the third tab of the Tasks page, so the only way to reach a saved
+    /// command was to first open a page about something else. Mirrors
+    /// `test_poneglyphIsSeparateFromSetup` above exactly - and like it, the
+    /// half that matters is the *leftover label* check: a half-done split
+    /// that gave the library its own destination while leaving the old tab
+    /// pill behind would mount cleanly and look almost right.
+    private static func test_commandLibraryIsSeparateFromTasks() -> String? {
+        withScratchEnv {
+            let (_, shell) = makeMountedShell()
+
+            guard RailDestination.commandLibrary.slot != RailDestination.shift.slot else {
+                return "DevOps Commands must not share a slot with Tasks"
+            }
+
+            shell.show(.commandLibrary)
+            guard let libraryView = shell.destinationViewIfMountedForTests(.commandLibrary) else {
+                return "show(.commandLibrary) did not mount the commandLibrary slot"
+            }
+            guard libraryView.isHidden == false else {
+                return "the DevOps Commands view should be visible right after show(.commandLibrary)"
+            }
+            guard shell.destinationViewIfMountedForTests(.shift) == nil else {
+                return "show(.commandLibrary) unexpectedly mounted the Tasks slot too"
+            }
+
+            shell.show(.shift)
+            guard let tasksView = shell.destinationViewIfMountedForTests(.shift) else {
+                return "show(.shift) did not mount the Tasks slot"
+            }
+            let labels = collectTextFieldValues(in: tasksView)
+            guard !labels.contains("DevOps Commands") else {
+                return "the Tasks page still renders a \"DevOps Commands\" tab pill - it should have "
+                    + "moved to its own destination"
+            }
+            return nil
+        }
+    }
+
     private static func test_poneglyphIsSeparateFromSetup() -> String? {
         withScratchEnv {
             let (_, shell) = makeMountedShell()

@@ -147,6 +147,19 @@ import AppKit
 /// is a utility (`isDailyUse == false`) for the same reason those siblings
 /// are: a surface a captain opens when a thought needs somewhere to go, not
 /// one they check in on daily.
+/// `.commandLibrary` (`fm/grandline-tasks-kanban-devops-split`) is the
+/// "DevOps Commands" library, promoted out of `ShiftController`'s own
+/// three-way tab switcher into its own top-level destination - the captain's
+/// own correction after using it: a searchable library of saved shell
+/// commands is a separate feature from his task board, and burying it as a
+/// third tab inside Tasks made it reachable only by first going somewhere
+/// unrelated. Exactly the same promotion `.runbooks`/`.postmortems` got out
+/// of Docs' tabs, and it reuses the already-built `CommandLibraryPageView`
+/// rather than rebuilding anything - see `CommandLibraryController`. It sits
+/// in the Stores space alongside Docs, Runbooks, Tools, Vault and the Code
+/// Preview panel (a library of saved commands is reference material, which is
+/// that space's own definition), and is a utility (`isDailyUse == false`) on
+/// the same criterion as those siblings.
 ///
 /// `isDailyUse` (fm/grandline-sidebar-labeled-nav) marks the 6
 /// `navStack` members (Overview, Console, Hosts, Shift, Review, Log
@@ -191,7 +204,7 @@ enum RailDestination: String, CaseIterable {
     /// reachable through `show(_:)`), so nothing about routing needed a
     /// second concept.
     case homeCanvas
-    case overview, strawHat, console, hosts, shift, review, logAnalyzer, kubernetes, tools, whiteboard, codePreview, stickyBoard, vault, dictation, schedules, health, docs, runbooks, postmortems, updates, bootstrap, automation, githubSync, poneglyph, settings
+    case overview, strawHat, console, hosts, shift, review, logAnalyzer, kubernetes, tools, whiteboard, codePreview, stickyBoard, commandLibrary, vault, dictation, schedules, health, docs, runbooks, postmortems, updates, bootstrap, automation, githubSync, poneglyph, settings
 
     var symbol: String {
         switch self {
@@ -244,6 +257,14 @@ enum RailDestination: String, CaseIterable {
         // to resolve (`NSImage(systemSymbolName:)` returns nil silently, and
         // this app has shipped an invisible icon that way).
         case .codePreview: return "chevron.left.forwardslash.chevron.right"
+        // `fm/grandline-tasks-kanban-devops-split`: a shelf of books - the
+        // one glyph in this family that reads as "a library you look things
+        // up in" rather than as a single document (`.docs`' closed book), a
+        // terminal (`.console`) or a tool. Deliberately not a terminal glyph:
+        // this destination is where commands are *kept*, not where they run.
+        // Verified to resolve - `NSImage(systemSymbolName:)` returns nil
+        // silently, and this app has shipped an invisible icon that way.
+        case .commandLibrary: return "books.vertical"
         case .vault: return "lock.shield"
         case .dictation: return "waveform"
         // `fm/grandline-schedules-sidebar-move`: a calendar - matches
@@ -343,7 +364,7 @@ enum RailDestination: String, CaseIterable {
         case .automation: return AutomationIcon.image
         case .githubSync: return GithubSyncIcon.image
         case .settings: return SettingsAppIcon.image
-        case .homeCanvas, .overview, .review, .vault, .dictation, .bootstrap:
+        case .homeCanvas, .overview, .review, .vault, .dictation, .bootstrap, .commandLibrary:
             return nil
         }
     }
@@ -363,6 +384,7 @@ enum RailDestination: String, CaseIterable {
         case .whiteboard: return "Whiteboard"
         case .stickyBoard: return "Sticky Board"
         case .codePreview: return "Code Preview"
+        case .commandLibrary: return "DevOps Commands"
         case .vault: return "Vault"
         case .dictation: return "Dictation"
         case .schedules: return "Schedules"
@@ -423,7 +445,7 @@ enum RailDestination: String, CaseIterable {
         // group and is the one remaining tint that collides with none of them.
         case .poneglyph: return .good
         case .homeCanvas, .overview, .strawHat, .console, .hosts, .shift, .review, .logAnalyzer, .kubernetes,
-             .tools, .whiteboard, .stickyBoard, .codePreview, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems, .settings: return .accent
+             .tools, .whiteboard, .stickyBoard, .codePreview, .commandLibrary, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems, .settings: return .accent
         }
     }
 
@@ -440,7 +462,7 @@ enum RailDestination: String, CaseIterable {
              // on the same criterion as its Stores-space siblings. Inert
              // since Phase 2 removed the rail - see this enum's own note.
              .strawHat,
-             .tools, .whiteboard, .codePreview, .stickyBoard, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems,
+             .tools, .whiteboard, .codePreview, .stickyBoard, .commandLibrary, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems,
              .updates, .bootstrap, .automation, .githubSync, .poneglyph, .settings: return false
         }
     }
