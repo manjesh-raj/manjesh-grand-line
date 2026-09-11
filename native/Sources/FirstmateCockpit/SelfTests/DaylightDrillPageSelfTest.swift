@@ -119,10 +119,15 @@ enum DaylightDrillPageSelfTest {
         let window = mount(review)
         defer { _ = window }
 
-        let header = HelmDrillHeader()
-        header.configure(title: "Review", subtitle: "", symbol: RailDestination.review.symbol,
-                         hue: RailDestination.review.domainHue)
-        header.setActions(review.drillHeaderActions)
+        // UI modernization audit A2: the action cluster is the *bar's* now,
+        // not the drill header's - so this drives the surface that actually
+        // renders it. The contract it is asserting is unchanged.
+        let bar = DaylightBarController()
+        _ = bar.view
+        bar.setDrillContext(DaylightBarController.DrillContext(
+            title: "Review", subtitle: "", symbol: RailDestination.review.symbol,
+            hue: RailDestination.review.domainHue, artwork: nil))
+        bar.setDrillActions(review.drillHeaderActions)
 
         guard !review.drillHeaderActions.isEmpty else {
             print("  FAIL Review offers no drill-header actions - its Refresh never moved")
@@ -131,18 +136,18 @@ enum DaylightDrillPageSelfTest {
         }
         // Identity, not just count: a copy would render but never disable
         // itself while a fetch is in flight.
-        guard header.actionsForTests.count == review.drillHeaderActions.count,
-              zip(header.actionsForTests, review.drillHeaderActions).allSatisfy({ $0 === $1 }) else {
-            print("  FAIL the header is not showing Review's own action views")
+        guard bar.drillActionsForTests.count == review.drillHeaderActions.count,
+              zip(bar.drillActionsForTests, review.drillHeaderActions).allSatisfy({ $0 === $1 }) else {
+            print("  FAIL the bar is not showing Review's own action views")
             ok = false
             return
         }
         // Clearing has to actually clear - otherwise navigating from a
         // migrated page to an unmigrated one leaves the previous page's
-        // buttons in the header.
-        header.setActions([])
-        guard header.actionsForTests.isEmpty else {
-            print("  FAIL setActions([]) left \(header.actionsForTests.count) view(s) behind")
+        // buttons in the bar.
+        bar.setDrillActions([])
+        guard bar.drillActionsForTests.isEmpty else {
+            print("  FAIL setDrillActions([]) left \(bar.drillActionsForTests.count) view(s) behind")
             ok = false
             return
         }

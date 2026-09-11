@@ -32,6 +32,32 @@
 // row) is tied at `HelmDaylightPriority.contentTie` (499).
 // `DaylightModuleSelfTest.checkBarDoesNotCapWindow` measures that against a
 // real window rather than trusting the reasoning.
+//
+// **The bar is the window's top edge now, and it carries the drill
+// navigation** (UI modernization audit A1/A2,
+// `data/grandline-ui-modernization-audit/report.md` §3A):
+//
+//   - A1: the window is `.fullSizeContentView` with a transparent, titleless
+//     titlebar, so this bar sits `topMargin` from the window's own top edge
+//     rather than below a 32pt system strip. The traffic lights land *on*
+//     the bar, so `leadingContentInset` reserves room for them - see
+//     `WindowChromeFusion`, which owns every measured number behind that.
+//   - A2: on a drill page the leading area swaps the logo+wordmark for
+//     `HelmDrillHeader`'s back-chevron + tile + title, and the page's own
+//     action cluster joins the trailing side, immediately before the search
+//     pill. **The space pills hide while that is showing**, because they do
+//     not fit: measured on a real bar, the pills alone take 454pt at 1440
+//     and the gap between them and the search pill is only 143pt, so there
+//     is nowhere near enough room for a ~94pt leading cluster plus a page's
+//     actions. Hiding them is also what Finder/Settings/App Store do - the
+//     toolbar shows the drilled context, and the back button is the way out.
+//     They are arranged subviews of `pillRow`, so hiding them collapses that
+//     stack to nothing (AGENTS.md gotcha (11)'s own `NSStackView`
+//     exemption) rather than leaving 454pt of invisible demand behind.
+//   - A3: `setScrollEdgeActive` deepens the bar's own elevation and border
+//     once the showing page is scrolled - see that method for why a
+//     *floating rounded* bar expresses "hairline + slight material" as
+//     depth rather than as a full-width rule under it.
 
 import AppKit
 
@@ -58,7 +84,41 @@ final class DaylightBarController: NSViewController {
     static var reservedTopHeight: CGFloat { topMargin + height + contentGap }
 
     /// §6.3's own stated floor: "the bar needs roughly 700pt to lay out".
+    ///
+    /// **Measured, and it is aspirational rather than real** - on a live bar
+    /// the pill row and the search pill already overlap at 800pt, before any
+    /// of the audit's changes. A2 does not make that worse: a drill page
+    /// *frees* room (the 454pt pill row collapses, and the ~94pt leading
+    /// cluster plus a page's actions are well under that), so the narrowest
+    /// layout is still the canvas's, exactly as it was. Left at 700 because
+    /// nothing this change does moved it, and re-deriving it is its own
+    /// task - see `DaylightModuleSelfTest.checkBarDoesNotCapWindow`, which
+    /// asserts the thing that actually matters: the bar never caps the
+    /// window, at any width.
     static let comfortableWidth: CGFloat = 700
+
+    /// The bar's own inner padding, before the traffic lights are accounted
+    /// for.
+    static let contentInset: CGFloat = 12
+
+    /// How far the leading content starts from the bar's own leading edge.
+    ///
+    /// A1 puts the traffic lights on the bar, so this reserves the cluster's
+    /// measured width (`WindowChromeFusion.trafficLightClusterWidth`, in
+    /// *window* coordinates) minus the bar's own side margin. Falls back to
+    /// the plain inset in full screen, where AppKit hides the cluster.
+    var leadingContentInset: CGFloat {
+        WindowChromeFusion.leadingInset(for: view.window, sideMargin: Self.sideMargin, plain: Self.contentInset)
+    }
+
+    /// Where `WindowChromeFusion` should put the traffic lights: centred on
+    /// the bar's own vertical centre, and inset from its leading edge by the
+    /// same padding any other leading content gets - so they read as set
+    /// into the bar rather than straddling it.
+    static var trafficLightCenterY: CGFloat { topMargin + height / 2 }
+    static var trafficLightLeadingX: CGFloat {
+        WindowChromeFusion.trafficLightLeadingX(sideMargin: sideMargin, plain: contentInset)
+    }
 
     // MARK: Callbacks (forward, never own)
 
@@ -81,6 +141,22 @@ final class DaylightBarController: NSViewController {
     private let bar = NSView()
     private let logoTile = HelmGradientTile(size: .logo)
     private let wordmark = NSTextField(labelWithString: "Grand Line")
+    /// A2: the drill page's back-chevron + tile + title, in the leading area
+    /// the wordmark otherwise occupies. Both live in `leadingGroup`, and
+    /// exactly one is visible - see `setDrillContext`.
+    private let drillNav = HelmDrillHeader()
+    /// A2: the drill page's own action cluster, on the trailing side.
+    /// Caller-owned views, exactly as `HelmDrillHeader.setActions` took them
+    /// before the merge.
+    private let drillActions = NSStackView()
+    /// `drillActions.trailing == searchPill.leading - gap`, where the gap is
+    /// 0 while the cluster is empty so the canvas's own chain is byte-for-byte
+    /// what it was before A2.
+    private var drillActionsGap: NSLayoutConstraint!
+    /// The leading content's own distance from the bar's leading edge -
+    /// re-read on every layout pass, because the traffic-light reservation
+    /// depends on whether the window is in full screen.
+    private var leadingInsetConstraint: NSLayoutConstraint!
     private let searchPill = DaylightSearchPill()
     /// The light/dark quick-toggle, moved here from Console's own toolbar
     /// (`fm/grandline-daylight-theme-toggle-relocate`) - it flips the whole
@@ -138,6 +214,18 @@ final class DaylightBarController: NSViewController {
     private var pills: [SpacePill] = []
     private var selectedSpace: DaylightSpace = .overview
     private var themeToken: ThemeObservation?
+    /// Built in `loadView`; held so `setDrillContext` can swap which of its
+    /// two arranged subviews is showing.
+    private var leadingGroup: NSStackView!
+    /// Held so the space pills can be collapsed on a drill page.
+    private var pillRow: NSStackView!
+    /// A3's state, so a theme change re-applies the right elevation.
+    private var scrollEdgeActive = false
+
+    /// A2: the drill cluster's back chevron was clicked. Forwarded, never
+    /// owned - the bar has no idea what "home" is, exactly as it has no idea
+    /// what a space means (`onSelectSpace`).
+    var onDrillBack: (() -> Void)?
 
     private struct SpacePill {
         let space: DaylightSpace
@@ -180,7 +268,33 @@ final class DaylightBarController: NSViewController {
         logoRow.translatesAutoresizingMaskIntoConstraints = false
         logoRow.setHuggingPriority(.required, for: .horizontal)
 
+        // A2: the wordmark and the drill cluster are two arranged subviews of
+        // one stack, so whichever is hidden leaves layout entirely rather
+        // than holding its width (AGENTS.md gotcha (11)'s `NSStackView`
+        // exemption) - which is what lets one leading anchor serve both.
+        drillNav.onBack = { [weak self] in self?.onDrillBack?() }
+        drillNav.isHidden = true
+        let leadingGroup = NSStackView(views: [logoRow, drillNav])
+        leadingGroup.orientation = .horizontal
+        leadingGroup.alignment = .centerY
+        leadingGroup.spacing = 0
+        leadingGroup.distribution = .fill
+        leadingGroup.translatesAutoresizingMaskIntoConstraints = false
+        leadingGroup.setHuggingPriority(.required, for: .horizontal)
+        self.leadingGroup = leadingGroup
+
+        drillActions.orientation = .horizontal
+        drillActions.alignment = .centerY
+        drillActions.spacing = HelmMetrics.s2
+        drillActions.distribution = .fill
+        drillActions.translatesAutoresizingMaskIntoConstraints = false
+        // AGENTS.md gotcha (12): the *stack*-level APIs are the ones that
+        // bite on a view with no intrinsic content size.
+        drillActions.setHuggingPriority(.required, for: .horizontal)
+        drillActions.setClippingResistancePriority(.required, for: .horizontal)
+
         let pillRow = buildPillRow()
+        self.pillRow = pillRow
 
         searchPill.translatesAutoresizingMaskIntoConstraints = false
         searchPill.onClick = { [weak self] in self?.onSearchTapped?() }
@@ -201,8 +315,9 @@ final class DaylightBarController: NSViewController {
 
         buildAvatar()
 
-        bar.addSubview(logoRow)
+        bar.addSubview(leadingGroup)
         bar.addSubview(pillRow)
+        bar.addSubview(drillActions)
         bar.addSubview(searchPill)
         bar.addSubview(recentDestinations.button)
         bar.addSubview(stickyBoardButton)
@@ -214,7 +329,7 @@ final class DaylightBarController: NSViewController {
         bar.addSubview(notificationCenter.bell)
         bar.addSubview(avatar)
 
-        let inset: CGFloat = 12
+        let inset = Self.contentInset
 
         // The horizontal chain is deliberately *not* one stack: the pills sit
         // just after the logo (leading-anchored), the trailing cluster is
@@ -232,9 +347,24 @@ final class DaylightBarController: NSViewController {
         // between the pills and the search pill, unchanged in kind - still
         // exactly one squeeze point in the whole chain, per AGENTS.md gotcha
         // (13).
-        let pillsToSearch = searchPill.leadingAnchor.constraint(
+        //
+        // A2 inserts the drill action cluster at the *leading* end of that
+        // trailing chain, so the one compressible joint is now measured to
+        // `drillActions` rather than to the search pill. With no actions the
+        // stack has zero width and `drillActionsGap` is 0, which puts the
+        // search pill exactly where it has always been.
+        let pillsToSearch = drillActions.leadingAnchor.constraint(
             greaterThanOrEqualTo: pillRow.trailingAnchor, constant: HelmMetrics.s3)
         pillsToSearch.priority = HelmDaylightPriority.contentTie
+        drillActionsGap = drillActions.trailingAnchor.constraint(
+            equalTo: searchPill.leadingAnchor, constant: 0)
+        // Starts at the reserved value, not the plain one: `viewDidLayout`
+        // is what adjusts it, and the first pass can run before the view is
+        // in a window - reserving is the safe direction there (too much room
+        // is invisible; too little puts content under the traffic lights).
+        leadingInsetConstraint = leadingGroup.leadingAnchor.constraint(
+            equalTo: bar.leadingAnchor,
+            constant: WindowChromeFusion.reservedLeadingInset(plain: inset))
 
         NSLayoutConstraint.activate([
             bar.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.sideMargin),
@@ -243,13 +373,15 @@ final class DaylightBarController: NSViewController {
             bar.heightAnchor.constraint(equalToConstant: Self.height),
             bar.bottomAnchor.constraint(equalTo: root.bottomAnchor),
 
-            logoRow.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: inset),
-            logoRow.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            leadingInsetConstraint,
+            leadingGroup.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
 
-            pillRow.leadingAnchor.constraint(equalTo: logoRow.trailingAnchor, constant: HelmMetrics.s5),
+            pillRow.leadingAnchor.constraint(equalTo: leadingGroup.trailingAnchor, constant: HelmMetrics.s5),
             pillRow.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
 
             pillsToSearch,
+            drillActionsGap,
+            drillActions.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             searchPill.trailingAnchor.constraint(equalTo: recentDestinations.button.leadingAnchor, constant: -HelmMetrics.s2),
             searchPill.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
 
@@ -309,6 +441,137 @@ final class DaylightBarController: NSViewController {
 
     deinit {
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
+    }
+
+    // MARK: A2 - the drill navigation
+
+    /// Point the bar's leading area at a drill page, or hand it `nil` for the
+    /// canvas (where the wordmark comes back and the space pills return).
+    ///
+    /// The pills hide on a drill page because they do not fit beside a
+    /// leading cluster and an action cluster - see this file's header for the
+    /// measurement. They are arranged subviews, so hiding them genuinely
+    /// removes their 454pt from layout.
+    func setDrillContext(_ context: DrillContext?) {
+        // The shell adds `bar.view` to its root long before it ever
+        // navigates, so this is defence in depth rather than a live path -
+        // but the leading group and the pill row are implicitly unwrapped,
+        // and a crash in the window's own chrome is not a good way to find
+        // out that some future caller reordered that.
+        guard isViewLoaded else { return }
+        guard let context else {
+            drillNav.isHidden = true
+            logoRow?.isHidden = false
+            setPillsHidden(false)
+            setDrillActions([])
+            return
+        }
+        drillNav.configure(title: context.title, subtitle: context.subtitle,
+                           symbol: context.symbol, hue: context.hue, artwork: context.artwork)
+        drillNav.isHidden = false
+        logoRow?.isHidden = true
+        setPillsHidden(true)
+    }
+
+    /// Hand the bar this page's own actions, or `[]` to clear them.
+    ///
+    /// The views are **caller-owned**, exactly as `HelmDrillHeader.setActions`
+    /// took them before A2: a page keeps its own Refresh button, its own sync
+    /// pill, and the state on them that it already manages.
+    func setDrillActions(_ views: [NSView]) {
+        guard isViewLoaded else { return }
+        drillActions.arrangedSubviews.forEach {
+            drillActions.removeArrangedSubview($0)
+            $0.removeFromSuperview()
+        }
+        for view in views {
+            view.setContentHuggingPriority(.required, for: .horizontal)
+            view.setContentCompressionResistancePriority(.required, for: .horizontal)
+            drillActions.addArrangedSubview(view)
+        }
+        drillActions.isHidden = views.isEmpty
+        // Zero gap while empty, so the canvas's chain is exactly what it was
+        // before the cluster existed.
+        drillActionsGap.constant = views.isEmpty ? 0 : -HelmMetrics.s3
+    }
+
+    /// The five space pills are arranged subviews, so hiding each one takes
+    /// its width out of `pillRow` entirely - hiding the *stack* would not
+    /// (an ordinary hidden `NSView` keeps its constraints).
+    private func setPillsHidden(_ hidden: Bool) {
+        for pill in pills { pill.container.isHidden = hidden }
+    }
+
+    /// The leading area's logo row, for the swap in `setDrillContext`.
+    private var logoRow: NSView? { leadingGroup?.arrangedSubviews.first }
+
+    // MARK: A3 - the scroll edge
+
+    /// The showing page has scrolled off its own top edge (or come back to
+    /// it). Deepens the bar's elevation and firms up its border, so it reads
+    /// as chrome floating over moving content.
+    ///
+    /// **Why depth rather than a rule under the bar.** A3 asks for "a
+    /// hairline + slight material once scrolled". That recipe assumes a
+    /// full-width strip whose bottom edge is the chrome/content boundary;
+    /// this bar is a rounded, inset, *floating* card with a 12pt gap beneath
+    /// it, so a full-width hairline under it would draw a line attached to
+    /// nothing. The same two signals expressed for this shape are the border
+    /// it already has (the hairline) going to full strength, and
+    /// `HelmCard.elevation`'s own second level (the material) - §2.5 defines
+    /// exactly two, and this is what the raised one is for. That also keeps
+    /// the per-theme split the audit asks for without a special case: the
+    /// elevation helper already resolves Daylight/Dusk separately from the
+    /// twelve legacy palettes.
+    func setScrollEdgeActive(_ active: Bool) {
+        guard isViewLoaded, active != scrollEdgeActive else { return }
+        scrollEdgeActive = active
+        applyScrollEdge(ThemeManager.shared.theme, animated: true)
+    }
+
+    private func applyScrollEdge(_ theme: HelmTheme, animated: Bool) {
+        guard let layer = bar.layer else { return }
+        let shadow = HelmCard.elevation(for: theme, level: scrollEdgeActive ? .raised : .resting)
+        let line = HelmTheme.nsColor(theme.chromeLineHex)
+        // The per-family split the audit asks for, and it falls out of the
+        // palettes rather than being special-cased: Daylight/Dusk already
+        // draw this border at full strength (their card and page grounds can
+        // be the same colour, so the border is the only thing separating
+        // them), which leaves them no headroom - there, depth alone carries
+        // the signal. The twelve legacy palettes rest at 0.6, so on those the
+        // hairline firms up as well.
+        let restingAlpha: CGFloat = theme.isDaylight ? 1.0 : 0.6
+        let borderColor = line.withAlphaComponent(scrollEdgeActive ? 1.0 : restingAlpha).cgColor
+        let opacity = Float(shadow.shadowColor?.alphaComponent ?? 0.1)
+
+        let apply = {
+            layer.shadowColor = (shadow.shadowColor ?? .black).cgColor
+            layer.shadowOpacity = opacity
+            layer.shadowRadius = shadow.shadowBlurRadius
+            layer.shadowOffset = CGSize(width: shadow.shadowOffset.width, height: shadow.shadowOffset.height)
+            layer.borderColor = borderColor
+        }
+        // A state change is worth easing; a theme change is not (it is
+        // already a whole-app repaint), and Reduce Motion wants the end
+        // state immediately either way.
+        guard animated, !HelmMotion.isReduced else {
+            HelmMotion.withoutImplicitAnimation(apply)
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.16
+            context.allowsImplicitAnimation = true
+            apply()
+        }
+    }
+
+    /// Everything the shell knows about the page the bar is naming.
+    struct DrillContext {
+        let title: String
+        let subtitle: String
+        let symbol: String
+        let hue: HelmDomainHue
+        let artwork: NSImage?
     }
 
     /// B4: the narrowest a space pill's label may be squeezed. Enough for a
@@ -405,7 +668,11 @@ final class DaylightBarController: NSViewController {
     /// two groups are separate constraint chains and nothing in the view
     /// hierarchy states their relative order.
     var keyViewChain: [NSView] {
-        var chain: [NSView] = pills.map { $0.container }
+        // A2: on a drill page the way out is the first thing the keyboard
+        // should reach. `filter` below drops it on the canvas, where the
+        // whole cluster is hidden.
+        var chain: [NSView] = [drillNav.backButtonForKeyLoop]
+        chain += pills.map { $0.container }
         chain.append(searchPill)
         chain.append(recentDestinations.button)
         chain.append(stickyBoardButton)
@@ -553,6 +820,12 @@ final class DaylightBarController: NSViewController {
                                        cornerWidth: HelmMetrics.dBar,
                                        cornerHeight: HelmMetrics.dBar,
                                        transform: nil)
+        // A1: full screen hides the traffic lights, so the reservation has
+        // to be re-read rather than set once - see `leadingContentInset`.
+        let wantedInset = leadingContentInset
+        if abs(leadingInsetConstraint.constant - wantedInset) > 0.01 {
+            leadingInsetConstraint.constant = wantedInset
+        }
     }
 
     private func applyTheme(_ theme: HelmTheme) {
@@ -567,12 +840,11 @@ final class DaylightBarController: NSViewController {
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
 
         bar.layer?.backgroundColor = surface.cgColor
-        bar.layer?.borderColor = line.withAlphaComponent(theme.isDaylight ? 1.0 : 0.6).cgColor
-        let shadow = HelmCard.elevation(for: theme, level: .resting)
-        bar.layer?.shadowColor = (shadow.shadowColor ?? .black).cgColor
-        bar.layer?.shadowOpacity = Float(shadow.shadowColor?.alphaComponent ?? 0.1)
-        bar.layer?.shadowRadius = shadow.shadowBlurRadius
-        bar.layer?.shadowOffset = CGSize(width: shadow.shadowOffset.width, height: shadow.shadowOffset.height)
+        // A3: the border and the elevation both depend on whether the
+        // showing page is scrolled, so one method owns them - otherwise a
+        // theme change would silently reset the bar to its resting depth
+        // while the page underneath is still scrolled.
+        applyScrollEdge(theme, animated: false)
 
         wordmark.font = HelmType.rounded(HelmType.scaled(14.5), .heavy)
         wordmark.textColor = ink
@@ -692,7 +964,14 @@ final class DaylightBarController: NSViewController {
             // the whole subtree rather than exempting each internal constraint,
             // which would otherwise mean this check re-litigating
             // `NotificationBellButton`'s private layout.
-            if v is NSButton || v is HelmGradientTile { return }
+            //
+            // A2 adds `HelmDrillHeader` for exactly the same reason: its own
+            // width constraints are a 34pt back button and a 30pt tile, and
+            // the one flexible thing in it (the title) carries `.defaultLow`
+            // compression resistance, so the cluster is content-sized and
+            // yields before the window does. Re-litigating its private
+            // layout here would be the same mistake.
+            if v is NSButton || v is HelmGradientTile || v is HelmDrillHeader { return }
             for c in v.constraints where c.firstAttribute == .width || c.secondAttribute == .width {
                 out.append((String(describing: c), c.priority.rawValue))
             }
@@ -708,6 +987,23 @@ final class DaylightBarController: NSViewController {
     func debugMaxWidthConstraintPriority() -> Float {
         debugWidthConstraints().map(\.1).max() ?? 0
     }
+
+    // MARK: A1/A2/A3 probe surface
+
+    /// The drill cluster itself, so a suite can read the real title the bar
+    /// is showing rather than the one the shell believes it set.
+    var drillNavForTests: HelmDrillHeader { drillNav }
+    var drillNavIsHiddenForTests: Bool { drillNav.isHiddenOrHasHiddenAncestor }
+    var drillActionsForTests: [NSView] { drillActions.arrangedSubviews }
+    var pillsAreHiddenForTests: Bool { pills.allSatisfy { $0.container.isHiddenOrHasHiddenAncestor } }
+    var wordmarkIsHiddenForTests: Bool { wordmark.isHiddenOrHasHiddenAncestor }
+    var scrollEdgeActiveForTests: Bool { scrollEdgeActive }
+    var barLayerForTests: CALayer? { bar.layer }
+    var leadingContentInsetForTests: CGFloat { leadingInsetConstraint.constant }
+    /// The leading cluster's real frame in the bar's own coordinates, for a
+    /// collision check against the traffic-light span.
+    var leadingGroupFrameForTests: NSRect { leadingGroup?.frame ?? .zero }
+    var barFrameInViewForTests: NSRect { bar.frame }
 }
 
 // MARK: - The search pill (§6.3)

@@ -2327,7 +2327,7 @@ enum HelmContrastSelfTest {
         print("\n-- daylight type roles (section 3) --")
         let roles: [(String, NSFont, CGFloat)] = [
             ("heroTitle", HelmType.heroTitle(), 30),
-            ("drillTitle", HelmType.drillTitle(), 26),
+            ("drillTitle", HelmType.drillTitle(), 15),
             ("moduleTitle", HelmType.moduleTitle(), 13.5),
             ("moduleMetric", HelmType.moduleMetric(), 34),
             ("metricUnit", HelmType.metricUnit(), 12),

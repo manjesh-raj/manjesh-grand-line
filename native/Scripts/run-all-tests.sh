@@ -133,6 +133,10 @@ NEEDS_SESSION=(
   # (`FM_RUN_CREDENTIAL_VAULT_TESTS`) is pure logic and deliberately NOT here.
   "FM_RUN_CREDENTIAL_VAULT_VIEW_TESTS"
   "FM_RUN_APP_SHELL_BODY_WIDTH_TESTS"
+  # The UI modernization audit's A1/A2/A3: a real window's own titlebar
+  # chrome, a real laid-out bar, and a real scroll offset. None of the three
+  # is answerable without a window.
+  "FM_RUN_WINDOW_CHROME_FUSION_TESTS"
   # The session switcher mounts a real `AppShellController` in a real window.
   "FM_RUN_SESSION_SWITCHER_TESTS"
   # `fm/grandline-k8s-cluster-tail`: mounts the real `.kubernetes` destination

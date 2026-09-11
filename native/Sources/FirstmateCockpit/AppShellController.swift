@@ -43,11 +43,18 @@
 // **Daylight Phase 2 rewrote the shell's chrome, and only its chrome.**
 // `IconRailController` and `TopBarController` are gone. In their place:
 //
-//   root
-//   ├── DaylightBarController.view   (floating bar, pinned 14/22, height 50)
-//   ├── HelmDrillHeader              (back button + tile + title; 0-height on
-//   │                                 the canvas, which is the hub, not a spoke)
+//   root                             (a `ChromeFusionRootView`, so the window's
+//   │                                 traffic lights can be re-centred on the
+//   │                                 bar from its own `layout()` - A1)
+//   ├── DaylightBarController.view   (floating bar, pinned 14/22, height 50 -
+//   │                                 and, since A1, the window's top edge:
+//   │                                 there is no system titlebar above it)
 //   └── bodyContainer                (every destination, exactly as before)
+//
+// The drill header used to be a third child here, a 56pt strip between the
+// bar and the body. The UI modernization audit's A2 merged it into the bar
+// itself (`HelmDrillHeader` is the bar's leading cluster now), which is
+// where the shell's remaining drill wiring below points.
 //
 // Everything below the chrome is untouched by that change, and deliberately:
 // `DestinationRegistry`'s permanent-mount model, `show(_:)`, `connectHost`,
@@ -71,17 +78,14 @@ final class AppShellController: NSViewController {
     /// notification centre and its space pills.
     let bar = DaylightBarController()
 
-    /// The back affordance every drill page gets, owned here rather than by
-    /// each destination - see `HelmDrillHeader`'s own header for why that is
-    /// the right level, and why per-page header restyling is Phase 4.
-    private let drillHeader = HelmDrillHeader()
-    /// Toggled between 0 and `HelmDrillHeader.height`. Collapsing needs both
-    /// this *and* `isHidden`: an ordinary hidden `NSView`'s constraints still
-    /// participate fully in Auto Layout (AGENTS.md gotcha (11)).
-    private var drillHeaderHeightConstraint: NSLayoutConstraint!
-    /// What the drill header was last pointed at, so a page whose live numbers
-    /// changed can have its subtitle re-read without the shell having to work
-    /// out which destination is showing all over again.
+    /// A3: one observer, re-pointed at whatever is showing, that tells the
+    /// bar when the page has scrolled off its own top edge. See
+    /// `ScrollEdge.swift` for why this discovers the page's scroll view
+    /// rather than asking the page for it.
+    private let scrollEdge = ScrollEdgeObserver()
+    /// What the drill navigation was last pointed at, so a page whose live
+    /// numbers changed can have its subtitle re-read without the shell having
+    /// to work out which destination is showing all over again.
     private var lastDrillContext: (title: String, subtitle: String, symbol: String,
                                    hue: HelmDomainHue, artwork: NSImage?, controller: NSViewController?)?
 
@@ -425,8 +429,19 @@ final class AppShellController: NSViewController {
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 1220, height: 720))
+        // A1: a `ChromeFusionRootView` rather than a plain `NSView`, purely
+        // for its `layout()` hook - AppKit resets the traffic lights' frames
+        // on every layout pass, so the reposition has to ride that same
+        // pass. `WindowChromeFusion`'s header records the measurements.
+        let root = ChromeFusionRootView(frame: NSRect(x: 0, y: 0, width: 1220, height: 720))
         root.wantsLayer = true
+        root.onLayout = { [weak self] in
+            guard let self else { return }
+            WindowChromeFusion.positionTrafficLights(
+                in: self.view.window,
+                verticalCenter: DaylightBarController.trafficLightCenterY,
+                leadingX: DaylightBarController.trafficLightLeadingX)
+        }
         view = root
 
         // Daylight Phase 2: this view is the window's *ground* now, and it has
@@ -482,8 +497,10 @@ final class AppShellController: NSViewController {
         bodyContainer.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(bodyContainer)
 
-        drillHeader.onBack = { [weak self] in self?.show(.homeCanvas) }
-        bodyContainer.addSubview(drillHeader)
+        bar.onDrillBack = { [weak self] in self?.show(.homeCanvas) }
+        // A3: the bar is the only thing that reacts to the scroll edge, and
+        // the observer is the only thing that knows about it.
+        scrollEdge.onChange = { [weak self] active in self?.bar.setScrollEdgeActive(active) }
         // Phase 4 ("Knowledge and speed") superseded Fix 4's original mapping
         // here (an in-terminal find stand-in, since there was no real global
         // search yet) - the topbar Search pill (and its `⌘K` badge) now opens
@@ -564,8 +581,6 @@ final class AppShellController: NSViewController {
         bodyLeadingConstraint = bodyContainer.leadingAnchor.constraint(equalTo: root.leadingAnchor)
         bodyTrailingConstraint = bodyContainer.trailingAnchor.constraint(equalTo: root.trailingAnchor)
 
-        drillHeaderHeightConstraint = drillHeader.heightAnchor.constraint(equalToConstant: HelmDrillHeader.height)
-
         // The session strip sits between the floating bar and the body, at the
         // bar's own side margins so the two read as one piece of chrome. It is
         // a sibling here rather than a second row inside
@@ -599,11 +614,6 @@ final class AppShellController: NSViewController {
             bodyTrailingConstraint,
             bodyTopConstraint,
             bodyContainer.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-
-            drillHeader.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
-            drillHeader.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
-            drillHeader.topAnchor.constraint(equalTo: bodyContainer.topAnchor),
-            drillHeaderHeightConstraint,
         ])
 
         // `fm/grandline-live-gap-rootcause-scout`: a real, live-captured
@@ -1185,7 +1195,9 @@ final class AppShellController: NSViewController {
         NSLayoutConstraint.activate([
             destinationView.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
             destinationView.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
-            destinationView.topAnchor.constraint(equalTo: drillHeader.bottomAnchor),
+            // A2: the drill header no longer sits between the bar and the
+            // page, so a destination starts at the body container's own top.
+            destinationView.topAnchor.constraint(equalTo: bodyContainer.topAnchor),
             destinationView.bottomAnchor.constraint(equalTo: bodyContainer.bottomAnchor),
         ])
     }
@@ -1373,9 +1385,16 @@ final class AppShellController: NSViewController {
     /// module cards and the real back button rather than stand-ins.
     #if FM_SELFTESTS
     var homeCanvasForTests: HomeCanvasController { homeCanvas }
-    var drillHeaderForTests: HelmDrillHeader { drillHeader }
-    var drillHeaderHeightForTests: CGFloat { drillHeaderHeightConstraint.constant }
-    var drillHeaderIsHiddenForTests: Bool { drillHeader.isHidden }
+    /// A2: the drill cluster lives in the bar now. These keep their names so
+    /// the suites that already read them still read the same *fact* - which
+    /// destination the chrome is naming, and whether it is showing at all -
+    /// rather than being renamed across a dozen call sites for no gain.
+    var drillHeaderForTests: HelmDrillHeader { bar.drillNavForTests }
+    var drillHeaderIsHiddenForTests: Bool { bar.drillNavIsHiddenForTests }
+    var drillActionsForTests: [NSView] { bar.drillActionsForTests }
+    /// A3's state, as the bar currently has it.
+    var scrollEdgeActiveForTests: Bool { bar.scrollEdgeActiveForTests }
+    var scrollEdgeWatchedForTests: [NSScrollView] { scrollEdge.watchedForTests }
     #endif
 
     /// The view a mounted slot owns, for identity comparison across a
@@ -1421,6 +1440,12 @@ final class AppShellController: NSViewController {
                          artwork: dest.drillHeaderArtwork,
                          isCanvas: slot.id == .homeCanvas,
                          slotController: slot.controller)
+
+        // A3: re-point the scroll-edge observer at what is now showing.
+        // After `mounter.show` the slot's view exists but may not have been
+        // laid out yet, and the observer's own test is geometric, so this
+        // waits for the layout pass the navigation just scheduled.
+        retargetScrollEdge(to: slot.controller.view)
 
         // B5 (`data/grand-line-e2e-audit/report.md`): keep the bar's selected
         // space honest on **every** navigation, not only a pill click.
@@ -1492,16 +1517,30 @@ final class AppShellController: NSViewController {
         if window.initialFirstResponder == nil { window.initialFirstResponder = chain.first }
     }
 
-    /// The first thing below the bar the keyboard should reach: the drill
-    /// header's back button on a drill page (it is the affordance out of
-    /// there, and the topmost control), else the showing destination's own
-    /// first focusable view - which on the canvas is its first module card.
+    /// The first thing below the bar the keyboard should reach: the showing
+    /// destination's own first focusable view, which on the canvas is its
+    /// first module card.
+    ///
+    /// A2 moved the drill page's back button *into* the bar, so it is the
+    /// head of `bar.keyViewChain` now rather than the first thing below it -
+    /// which is the same reading order it always had, one row up.
     private func firstBodyKeyView() -> NSView? {
-        if !drillHeader.isHidden, let inHeader = Self.firstKeyView(in: drillHeader) {
-            return inHeader
-        }
         guard let body = visibleDestinationView() else { return nil }
         return Self.firstKeyView(in: body)
+    }
+
+    /// A3: point the observer at a freshly-shown destination.
+    ///
+    /// The discovery is geometric (see `ScrollEdgeObserver`), so it has to
+    /// run against a laid-out view: a slot mounted for the first time by
+    /// this very navigation has its scroll view at `.zero` until the pass
+    /// that follows. Forcing the pass here rather than deferring to the next
+    /// runloop turn keeps the bar's state correct on the same frame the page
+    /// appears, which is what stops a scrolled page briefly rendering the
+    /// resting bar.
+    private func retargetScrollEdge(to destinationView: NSView?) {
+        destinationView?.layoutSubtreeIfNeeded()
+        scrollEdge.observe(destination: destinationView)
     }
 
     private func visibleDestinationView() -> NSView? {
@@ -1548,40 +1587,44 @@ final class AppShellController: NSViewController {
     var firstBodyKeyViewForTests: NSView? { firstBodyKeyView() }
     #endif
 
-    /// Daylight §6.4: point the shell's drill header at whatever is showing,
-    /// or collapse it entirely on the canvas (the hub has no "back").
+    /// Daylight §6.4, as merged into the bar by the audit's A2: point the
+    /// bar's leading area at whatever is showing, or hand it `nil` on the
+    /// canvas (the hub has no "back", so the wordmark and the space pills
+    /// come back instead).
     ///
-    /// Collapsing sets both `isHidden` *and* the height to 0 - AGENTS.md
-    /// gotcha (11): an ordinary hidden `NSView`'s constraints still
-    /// participate fully in Auto Layout, so hiding alone would leave a
-    /// `HelmDrillHeader.height` gap above the canvas.
+    /// The name is unchanged because this is still the same decision it
+    /// always made; only where the result is rendered moved.
     private func applyDrillHeader(title: String, subtitle: String, symbol: String,
                                   hue: HelmDomainHue, artwork: NSImage? = nil, isCanvas: Bool,
                                   slotController: NSViewController?) {
-        drillHeader.isHidden = isCanvas
-        drillHeaderHeightConstraint.constant = isCanvas ? 0 : HelmDrillHeader.height
-        guard !isCanvas else { return }
+        guard !isCanvas else {
+            bar.setDrillContext(nil)
+            lastDrillContext = nil
+            return
+        }
         let page = slotController as? DaylightDrillActions
-        drillHeader.configure(title: title,
-                              subtitle: page?.drillHeaderSubtitle ?? subtitle,
-                              symbol: symbol, hue: hue, artwork: artwork)
+        bar.setDrillContext(DaylightBarController.DrillContext(
+            title: title,
+            subtitle: page?.drillHeaderSubtitle ?? subtitle,
+            symbol: symbol, hue: hue, artwork: artwork))
         // §6.4's action cluster. Asked of the destination rather than switched
         // on here, so migrating a page in a later slice is one conformance on
         // that page and no edit to the shell - and a page that has not been
         // migrated yet answers `nil`, which clears the cluster rather than
         // leaving the previous page's buttons showing.
-        drillHeader.setActions(page?.drillHeaderActions ?? [])
+        bar.setDrillActions(page?.drillHeaderActions ?? [])
         lastDrillContext = (title, subtitle, symbol, hue, artwork, slotController)
     }
 
     /// Re-read the showing page's own live subtitle (§6.4). Called by a
     /// migrated destination whose numbers just changed - never by the header.
     func refreshDrillHeaderSubtitle() {
-        guard let context = lastDrillContext, !drillHeader.isHidden else { return }
+        guard let context = lastDrillContext else { return }
         let page = context.controller as? DaylightDrillActions
-        drillHeader.configure(title: context.title,
-                              subtitle: page?.drillHeaderSubtitle ?? context.subtitle,
-                              symbol: context.symbol, hue: context.hue, artwork: context.artwork)
+        bar.setDrillContext(DaylightBarController.DrillContext(
+            title: context.title,
+            subtitle: page?.drillHeaderSubtitle ?? context.subtitle,
+            symbol: context.symbol, hue: context.hue, artwork: context.artwork))
     }
 
     /// Re-read the showing page's own action cluster (§6.4) - the sibling of
@@ -1594,9 +1637,9 @@ final class AppShellController: NSViewController {
     /// page whose cluster never changes (Review's Refresh button, Tasks' sync
     /// pill) should not have it torn down and rebuilt on every render.
     func refreshDrillHeaderActions() {
-        guard let context = lastDrillContext, !drillHeader.isHidden else { return }
+        guard let context = lastDrillContext else { return }
         let page = context.controller as? DaylightDrillActions
-        drillHeader.setActions(page?.drillHeaderActions ?? [])
+        bar.setDrillActions(page?.drillHeaderActions ?? [])
     }
 
     // MARK: Spaces (Daylight §5.3)
@@ -1706,6 +1749,7 @@ final class AppShellController: NSViewController {
                                       symbol: RailDestination.hosts.symbol,
                                       hue: RailDestination.hosts.domainHue, isCanvas: false,
                                       slotController: controller)
+                self.retargetScrollEdge(to: controller.view)
                 self.activeHostID = hostID
                 controller.selectAndFocusTab(id: tab.id)
             }
@@ -1966,6 +2010,9 @@ final class AppShellController: NSViewController {
                          symbol: RailDestination.hosts.symbol,
                          hue: RailDestination.hosts.domainHue, isCanvas: false,
                          slotController: controller)
+        // A3: a host console has no page scroll view, so this correctly
+        // clears the edge rather than leaving the previous page's state.
+        retargetScrollEdge(to: controller.view)
         activeHostID = hostID
         sessions.setActive(hostID)
         controller.focusCurrentTab()

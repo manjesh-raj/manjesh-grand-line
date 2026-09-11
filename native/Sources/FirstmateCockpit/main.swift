@@ -511,13 +511,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // `visibleFrame` (not `frame`) so the menu bar and the Dock are
         // excluded, and it is applied as the *window* frame (title bar
         // included) so nothing is pushed off the top of the screen.
+        //
+        // **A1 of the UI modernization audit** (`data/grandline-ui-
+        // modernization-audit/report.md` §3A) adds `.fullSizeContentView`
+        // here: the content view then covers the whole window and the
+        // floating bar becomes the top edge, reclaiming the stock titlebar's
+        // height (measured: 32pt, not the report's estimated ~28). The rest
+        // of that treatment - the transparent, titleless titlebar and the
+        // traffic lights re-centred onto the bar - is `WindowChromeFusion`;
+        // see its header for every measured number and for why the lights
+        // have to be repositioned from a `layout()` hook.
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1220, height: 720),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
+        // Still set, and still worth setting, even though `titleVisibility`
+        // hides it: the Window menu, Mission Control and the window's own
+        // proxy menu all read it.
         window.title = Self.windowTitle()
+        WindowChromeFusion.apply(to: window)
         // **`contentViewController` first, then the frame.** Assigning a
         // content view controller makes AppKit re-derive the window's frame
         // from that content's Auto Layout fitting size (AGENTS.md's
@@ -1820,6 +1834,15 @@ if ProcessInfo.processInfo.environment["FM_RUN_DRILL_HEADER_TITLE_TESTS"] == "1"
 // module anatomy, span-2 grid math, the locked space table, the canvas's
 // no-store rule, and the bar's window-safety. See
 // DaylightModuleSelfTest.swift's header.
+// The UI modernization audit's A1/A2/A3: the window's titlebar fused into
+// the floating bar, the drill header merged into that bar's leading area,
+// and the shared scroll-edge treatment. Window-backed - every case is a
+// question about a real window's chrome, a real laid-out bar or a real
+// scroll offset. See WindowChromeFusionSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_WINDOW_CHROME_FUSION_TESTS"] == "1" {
+    exit(WindowChromeFusionSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_MODULE_TESTS"] == "1" {
     exit(DaylightModuleSelfTest.run() ? 0 : 1)
 }
