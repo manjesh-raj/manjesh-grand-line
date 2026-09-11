@@ -156,10 +156,14 @@ import AppKit
 /// unrelated. Exactly the same promotion `.runbooks`/`.postmortems` got out
 /// of Docs' tabs, and it reuses the already-built `CommandLibraryPageView`
 /// rather than rebuilding anything - see `CommandLibraryController`. It sits
-/// in the Stores space alongside Docs, Runbooks, Tools, Vault and the Code
-/// Preview panel (a library of saved commands is reference material, which is
-/// that space's own definition), and is a utility (`isDailyUse == false`) on
-/// the same criterion as those siblings.
+/// in the **Command** space alongside Console, Tasks and the Merge queue:
+/// that promotion first filed it under Stores on the reading that a library of
+/// saved commands is reference material, and the captain corrected it after
+/// using the page (`fm/grandline-devops-space-and-diagram-tool`) - a saved
+/// shell command is something he *runs*, so it belongs beside the Console he
+/// runs it in, not on the shelf beside the docs. It is still a utility
+/// (`isDailyUse == false`), which is a property of how often it is opened
+/// rather than of which space it sits in.
 ///
 /// `isDailyUse` (fm/grandline-sidebar-labeled-nav) marks the 6
 /// `navStack` members (Overview, Console, Hosts, Shift, Review, Log
