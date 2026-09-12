@@ -964,7 +964,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     func showDashboard() { switchTopLevelView(.dashboard) }
 
     private func buildWeeklyReviewSection() -> NSView {
-        reviewGreeting.font = HelmType.pageTitle(.serif)
+        reviewGreeting.font = HelmType.pageTitle(.display)
         reviewSubtitle.font = HelmType.body()
         let textStack = NSStackView(views: [reviewGreeting, reviewSubtitle])
         textStack.orientation = .vertical
@@ -1428,7 +1428,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     private func buildDetailHeader() -> NSView {
         detailIconTile.configure(symbol: "shippingbox", tint: .accent)
 
-        detailNameLabel.font = HelmType.pageTitle(.serif)
+        detailNameLabel.font = HelmType.pageTitle(.display)
         detailNameLabel.lineBreakMode = .byTruncatingTail
 
         detailStatusPillLabel.font = ShiftFont.mono(10.5, weight: .semibold)

@@ -745,7 +745,8 @@ final class HelmSearchField: NSView, NSTextFieldDelegate {
         HelmField.makeSunken(well)
         well.translatesAutoresizingMaskIntoConstraints = false
 
-        icon.image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
+        icon.image = HelmSymbol.image("magnifyingglass", pointSize: 12,
+                                      weight: HelmSymbol.weight(for: .medium))
         icon.imageScaling = .scaleProportionallyUpOrDown
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.setContentHuggingPriority(.required, for: .horizontal)

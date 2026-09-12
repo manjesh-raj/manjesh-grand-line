@@ -151,7 +151,9 @@ final class TabChipView: NSView, NSTextFieldDelegate {
         // to keep this file in the audit's stock-bezel count.
         closeButton.imagePosition = .imageOnly
         closeButton.imageScaling = .scaleProportionallyDown
-        closeButton.image = NSImage(systemSymbolName: "xmark", accessibilityDescription: "Close Tab")
+        closeButton.image = HelmSymbol.image("xmark", pointSize: 9,
+                                     weight: HelmSymbol.weight(for: .semibold),
+                                     accessibilityDescription: "Close Tab")
         closeButton.target = self
         closeButton.action = #selector(closeClicked)
         closeButton.toolTip = "Close Tab"

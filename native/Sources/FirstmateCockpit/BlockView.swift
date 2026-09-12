@@ -58,7 +58,9 @@ final class BlockRowView: NSView {
     private let iconTile = IconTileView(size: 26, cornerRadius: 7)
     private let commandLabel = NSTextField(labelWithString: "")
     private let exitPill = NSTextField(labelWithString: "")
-    private let chevron = NSButton(image: NSImage(systemSymbolName: "chevron.down", accessibilityDescription: nil) ?? NSImage(), target: nil, action: nil)
+    private let chevron = NSButton(image: HelmSymbol.image("chevron.down", pointSize: 9,
+                                                       weight: HelmSymbol.weight(for: .semibold)) ?? NSImage(),
+                               target: nil, action: nil)
     private let header = NSStackView()
     private let outputWrapper: NSView
     private let outputLabel = NSTextField(wrappingLabelWithString: "")
@@ -174,10 +176,9 @@ final class BlockRowView: NSView {
 
     private func applyExpandedState() {
         outputWrapper.isHidden = !isExpanded
-        chevron.image = NSImage(
-            systemSymbolName: isExpanded ? "chevron.down" : "chevron.right",
-            accessibilityDescription: nil
-        )
+        chevron.image = HelmSymbol.image(isExpanded ? "chevron.down" : "chevron.right",
+                                         pointSize: 9,
+                                         weight: HelmSymbol.weight(for: .semibold))
     }
 
     func configure(with block: TerminalBlock, theme: HelmTheme) {

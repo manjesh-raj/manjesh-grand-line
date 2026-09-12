@@ -435,7 +435,17 @@ enum WhiteboardViewSelfTest {
 
         startProbe(webView)
         let hidden = probeReading(webView, after: 1.0)
-        check(hidden.frames == 0,
+        // **At most one**, not exactly zero. A frame already scheduled when the
+        // visibility flips still runs, which is the behaviour this feature's
+        // own notes record as correct ("1 frame in 3s - the one already
+        // scheduled before the flip, then nothing"). Whether that frame lands
+        // inside the probe window is a race with how fast the host is, so
+        // `== 0` passes on a developer machine and fails on a loaded CI runner
+        // for a page doing exactly the right thing.
+        //
+        // One frame is still a real assertion: an ungated page ticks ~30fps,
+        // so the failure this guards against reads as ~30 frames, not 1.
+        check(hidden.frames <= 1,
               "the page kept animating while hidden (\(hidden.frames) frames) - the hidden tab is costing real work")
         check(hidden.visibility == "hidden",
               "WebKit should report the page hidden while the view is hidden, got \(hidden.visibility)")

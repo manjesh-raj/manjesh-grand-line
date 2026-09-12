@@ -104,9 +104,15 @@ enum OverlaysModernizationSelfTest {
         let destinationRow = UnifiedSearchRowView()
         destinationRow.configure(item: destinationItem, theme: theme, selected: false)
         _ = makeWindow(destinationRow)
-        if destination.drillHeaderArtwork != nil && !destinationRow.debugTileUsesArtwork {
-            problems.append("a destination with real artwork rendered a plain glyph")
+        // I1 narrowed H1 here: a palette row takes the destination's *hue*
+        // but never its raster artwork, because I1's policy reserves raster
+        // for page identity (drill header + canvas card tile). See the
+        // `.destination` case in `UnifiedSearchRowView.configure`.
+        if destinationRow.debugTileUsesArtwork {
+            problems.append("a palette row rendered raster artwork - I1 reserves that for page identity")
         }
+        let destinationFill = destinationRow.debugFlatTileFill
+        if destinationFill == nil { problems.append("a destination row has no tile fill") }
 
         // A host row: the captain's own accent, used literally.
         let hostItem = UnifiedSearchItem(kind: .host, id: "h", title: "Prod", meta: "",

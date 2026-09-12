@@ -180,12 +180,10 @@ final class HelmGradientTile: NSView {
         self.literalHex = nil
         self.symbolName = symbol
         setArtworkMode(nil)
-        let configured = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: size.glyphPointSize, weight: .semibold))
-        if configured == nil {
-            AppLog.ui.error("HelmGradientTile: SF Symbol '\(symbol, privacy: .public)' did not resolve")
-        }
-        imageView.image = configured
+        // I1: the image is built in `applyTheme` rather than here, because a
+        // hierarchical one carries its own colours and has to be rebuilt on a
+        // theme change rather than re-tinted. `HelmSymbol.image` keeps this
+        // file's own "log rather than render an empty tile" behaviour.
         applyTheme(ThemeManager.shared.theme)
     }
 
@@ -215,12 +213,10 @@ final class HelmGradientTile: NSView {
         self.literalHex = literalHex
         self.symbolName = symbol
         setArtworkMode(nil)
-        let configured = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-            .withSymbolConfiguration(.init(pointSize: size.glyphPointSize, weight: .semibold))
-        if configured == nil {
-            AppLog.ui.error("HelmGradientTile: SF Symbol '\(symbol, privacy: .public)' did not resolve")
-        }
-        imageView.image = configured
+        // I1: the image is built in `applyTheme` rather than here, because a
+        // hierarchical one carries its own colours and has to be rebuilt on a
+        // theme change rather than re-tinted. `HelmSymbol.image` keeps this
+        // file's own "log rather than render an empty tile" behaviour.
         applyTheme(ThemeManager.shared.theme)
     }
 
@@ -311,8 +307,18 @@ final class HelmGradientTile: NSView {
             return
         }
         // Scored against `h1`, the gradient's darker end, exactly as the
-        // domain-hue path does - see `glyphColor`.
-        imageView.contentTintColor = HelmContrast.legibleGlyph(over: pair.h1)
+        // domain-hue path does - see `glyphColor`. I1 moved this from a tint
+        // on a flat template to a hierarchical render in the same colour: the
+        // colour that was safe is unchanged, only how it is distributed across
+        // the symbol's layers.
+        let glyph = HelmContrast.legibleGlyph(over: pair.h1)
+        imageView.contentTintColor = glyph
+        if let symbolName {
+            imageView.image = HelmSymbol.image(symbolName,
+                                               pointSize: size.glyphPointSize,
+                                               weight: .semibold,
+                                               hierarchicalColor: glyph)
+        }
     }
 
     /// The glyph colour: white, corrected only when white genuinely cannot

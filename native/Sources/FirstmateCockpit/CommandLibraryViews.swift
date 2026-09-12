@@ -240,7 +240,7 @@ final class CommandLibraryPageView: NSObject {
     }
 
     private func buildDetailContent() {
-        detailNameLabel.font = HelmType.pageTitle(.serif)
+        detailNameLabel.font = HelmType.pageTitle(.display)
         detailNameLabel.lineBreakMode = .byTruncatingTail
 
         detailRiskPillLabel.font = ShiftFont.mono(9.5, weight: .semibold)

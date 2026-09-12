@@ -261,7 +261,9 @@ final class VocabularyChipView: NSView {
         label.translatesAutoresizingMaskIntoConstraints = false
 
         removeButton.title = ""
-        removeButton.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Remove \(word)")
+        removeButton.image = HelmSymbol.image("xmark.circle.fill", pointSize: 11,
+                                      weight: HelmSymbol.weight(for: .semibold),
+                                      accessibilityDescription: "Remove \(word)")
         removeButton.isBordered = false
         removeButton.target = self
         removeButton.action = #selector(removeTapped)
