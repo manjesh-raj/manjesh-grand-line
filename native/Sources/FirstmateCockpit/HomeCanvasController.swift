@@ -74,6 +74,22 @@ final class HomeCanvasController: NSViewController {
     static let gridSpacing: CGFloat = 16
     /// §2.7's canvas gutter.
     static let gutter: CGFloat = 22
+    /// How far the top-anchored content sits below the page's own top edge.
+    ///
+    /// The bar already reserves its own height above this page
+    /// (`DaylightBarController.reservedTopHeight`), so this is only the gap
+    /// between that chrome and the hero - the pre-C1 value, which is what
+    /// "sits directly under the page chrome" means here.
+    static let contentTopMargin: CGFloat = HelmMetrics.s2
+    /// The hero band's own padding, on the one space that has a verdict to
+    /// feature. `s5` horizontally and vertically gives the 40pt badge and the
+    /// 30pt headline a card's worth of room without the band becoming a
+    /// second page of its own.
+    static let heroBandPadding: CGFloat = HelmMetrics.s5
+    /// The strongest-to-faintest washes of the verdict's hue the band will
+    /// try for its fill. Measured per theme rather than picked - see
+    /// `heroWashFraction`.
+    static let heroWashSteps: [CGFloat] = [0.22, 0.18, 0.14, 0.10, HelmAccentRow.signalWash]
 
     // MARK: Forwarded actions (never owned)
 
@@ -148,6 +164,25 @@ final class HomeCanvasController: NSViewController {
     /// real, shared, theme-aware definition rather than a page-local muted
     /// `.quiet` look.
     private let refreshButton = HelmButton(title: "Refresh", variant: .primary, symbol: "arrow.clockwise")
+    /// Plan B's hero *band*: the surface the greeting row sits on.
+    ///
+    /// The captain reviewed C1's shipped vertical centring live and rejected
+    /// it - content floating with an empty margin above *and* below reads as
+    /// uncommitted rather than composed - and picked the finding's option (b)
+    /// instead: "give the hub one full-width hero row ... above the uniform
+    /// card grid", top-anchored, with leftover space trailing at the bottom.
+    ///
+    /// Only Overview has a verdict worth featuring. The other four spaces
+    /// name themselves and nothing more, so there the band is transparent
+    /// with no insets and the header renders as the plain row it already was
+    /// - the change there is purely that it now sits at the top of the page.
+    private let heroCard = NSView()
+    private var heroCardInsets: [NSLayoutConstraint] = []
+    /// `true` only while the hero is reporting a real fleet verdict, which
+    /// is what earns the band its surface. Kept as state rather than
+    /// re-derived in `applyTheme`, so the paint and the copy can never
+    /// disagree about which hero is on screen.
+    private var heroIsBanner = false
     private let gridStack = NSStackView()
 
     private var cards: [HelmModuleCard] = []
@@ -230,6 +265,21 @@ final class HomeCanvasController: NSViewController {
         greetingRow.spacing = HelmMetrics.s4
         greetingRow.translatesAutoresizingMaskIntoConstraints = false
 
+        heroCard.translatesAutoresizingMaskIntoConstraints = false
+        heroCard.wantsLayer = true
+        heroCard.addSubview(greetingRow)
+        // Mutable, because the band's padding *is* the difference between a
+        // hero and a plain page header: Overview's verdict gets a real card's
+        // breathing room, and the four spaces with nothing to report get
+        // zero, which puts their row back exactly where it renders today.
+        heroCardInsets = [
+            greetingRow.leadingAnchor.constraint(equalTo: heroCard.leadingAnchor),
+            greetingRow.trailingAnchor.constraint(equalTo: heroCard.trailingAnchor),
+            greetingRow.topAnchor.constraint(equalTo: heroCard.topAnchor),
+            greetingRow.bottomAnchor.constraint(equalTo: heroCard.bottomAnchor),
+        ]
+        NSLayoutConstraint.activate(heroCardInsets)
+
         gridStack.orientation = .vertical
         gridStack.alignment = .leading
         gridStack.spacing = Self.gridSpacing
@@ -241,7 +291,7 @@ final class HomeCanvasController: NSViewController {
         stack.spacing = 20
         stack.distribution = .fill
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.addArrangedSubview(greetingRow)
+        stack.addArrangedSubview(heroCard)
         stack.addArrangedSubview(gridStack)
 
         // gotcha (9): `FlippedView`, never a plain `NSView` - y=0 must be the
@@ -280,33 +330,36 @@ final class HomeCanvasController: NSViewController {
             stack.trailingAnchor.constraint(lessThanOrEqualTo: document.trailingAnchor, constant: -Self.gutter),
             stack.centerXAnchor.constraint(equalTo: document.centerXAnchor),
 
-            // C1: the content *composes* the space instead of flushing to
-            // the top-left of it.
+            // Plan B's vertical half: the content is **top-anchored**, and
+            // whatever the space cannot fill trails below it.
             //
-            // The audit's measurement was a space with four cards rendering
-            // one row and then ~80% empty paper. The dead space it names is
-            // vertical, so this is the vertical half of its fix (a) plus (c)
-            // in effect: the document is at least as tall as the viewport, the
-            // content sits within it by inequality, and a centring constraint
-            // at 499 decides where. Content shorter than the viewport centres;
-            // content taller than it breaks the 499 tie, the inequalities
-            // win, and the page scrolls exactly as it always did.
+            // C1 shipped the finding's option (a) here - the document held at
+            // least as tall as the viewport, the content floating inside it
+            // on a 499 centring tie. The captain used it and rejected it: a
+            // page whose content has an empty margin above *and* below reads
+            // as floating rather than composed. He picked option (b) instead,
+            // which anchors the content to the top and answers the dead space
+            // with a hero band rather than with symmetry.
             //
-            // 499 for the same reason every width on this page is 499 -
-            // gotcha (13): nothing here may out-rank
-            // `NSLayoutPriorityWindowSizeStayPut` and start driving the
-            // window's own size.
-            document.heightAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.heightAnchor),
-            stack.topAnchor.constraint(greaterThanOrEqualTo: document.topAnchor, constant: HelmMetrics.s2),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: document.bottomAnchor, constant: -44),
+            // So this is deliberately back to the pre-C1 shape, and both of
+            // these are **required equalities** rather than the inequalities
+            // C1 needed to leave room to centre in. The bottom one is what
+            // makes the document exactly as tall as its content, which is in
+            // turn what makes a space taller than the viewport scroll - so it
+            // is load-bearing, not symmetry for its own sake, and dropping
+            // back to a `<=` here would leave the document's height undriven.
+            //
+            // `document.heightAnchor >= scroll.contentView.heightAnchor` is
+            // gone with the centring it existed for, and must NOT come back
+            // alongside these two: a document forced to fill a viewport it is
+            // shorter than, while also being exactly its content's height, is
+            // two required constraints in direct conflict.
+            stack.topAnchor.constraint(equalTo: document.topAnchor, constant: Self.contentTopMargin),
+            stack.bottomAnchor.constraint(equalTo: document.bottomAnchor, constant: -44),
 
-            greetingRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            heroCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             gridStack.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
-
-        let verticalCentring = stack.centerYAnchor.constraint(equalTo: document.centerYAnchor)
-        verticalCentring.priority = HelmDaylightPriority.contentTie
-        verticalCentring.isActive = true
 
         let contentWidth = stack.widthAnchor.constraint(equalToConstant: HelmResponsiveGrid.fallbackContainerWidth)
         contentWidth.priority = HelmDaylightPriority.contentTie
@@ -498,6 +551,11 @@ final class HomeCanvasController: NSViewController {
                          kicker: String,
                          title: String,
                          detail: String) {
+        // A `nil` tint is exactly "this hero has no verdict", which is also
+        // exactly when the band must not put a surface under it: a space that
+        // has measured nothing would otherwise wear the same card as an
+        // all-clear and look like it were reporting one.
+        heroIsBanner = tint != nil
         // `.neutral` is the one slot that claims nothing - deliberately not
         // a domain hue's `fallbackTint`, which resolves rose to `.critical`
         // and would paint an alert bar on a space that has reported nothing.
@@ -664,9 +722,16 @@ final class HomeCanvasController: NSViewController {
         // window cannot make the check pass vacuously.
         view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
+        paintHeroBand(theme)
         greetingLabel.font = HelmType.heroTitle()
         greetingLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
-        subtitleLabel.font = HelmType.body()
+        // The band's detail line is the one piece of hero copy carrying real
+        // numbers ("0 crew working - 50 PRs ready to merge"), so on the space
+        // that has a verdict it steps up a role. `sectionTitle()`, never a new
+        // size: `HelmContrastSelfTest`'s type-scale table is a fixed list of
+        // roles on purpose, and a hero-only literal would be a fifth size in a
+        // scale this app spent a whole phase reducing to four.
+        subtitleLabel.font = heroIsBanner ? HelmType.sectionTitle() : HelmType.body()
         subtitleLabel.textColor = HelmTheme.mutedInk(theme)
         // C1's hero. The kicker is `mutedInk`, never the hero's own tint:
         // a `HelmTint` is safe as a fill or a bar and is *not* automatically
@@ -677,6 +742,97 @@ final class HomeCanvasController: NSViewController {
         kickerLabel.textColor = HelmTheme.mutedInk(theme)
         heroBadge.applyTheme(theme)
         for card in cards { card.applyTheme(theme) }
+    }
+
+    /// Plan B's band: a real card surface, washed with the verdict's own hue.
+    ///
+    /// The captain's approved mockup draws the hero as a tinted band with its
+    /// own border sitting directly under the page chrome, with the card grid
+    /// immediately below - so the hue reaches a *fill* and a *border* and
+    /// stops there. It never reaches the copy: a `HelmTint` is safe as a fill
+    /// and is not automatically safe as text (`HelmContrast`'s own rule, and
+    /// the §5.7 defect this app has fixed four times).
+    ///
+    /// The border alpha and the flattening are `HelmAccentRow`'s, not a
+    /// second recipe - the band is the same idiom that class already uses for
+    /// a row carrying a signal, one level up. `HelmContrast.mix`, never
+    /// `NSColor.blended`: that method converts into a *calibrated* space
+    /// first, so its result drifts from the straight-sRGB composite alpha
+    /// compositing actually performs (Phase 4's segmented-tabs lesson).
+    private func paintHeroBand(_ theme: HelmTheme) {
+        // The padding *is* the difference between a hero and a plain page
+        // header, so it moves with the paint rather than in `setHero`: that
+        // runs before `loadView` on the very first `select(space:)`, when
+        // there are no constraints to set yet.
+        for constraint in heroCardInsets {
+            let inset = heroIsBanner ? Self.heroBandPadding : 0
+            // The trailing and bottom pins are negative offsets from their
+            // own edge, so the sign follows the anchor rather than the value.
+            let negative = constraint.firstAttribute == .trailing || constraint.firstAttribute == .bottom
+            constraint.constant = negative ? -inset : inset
+        }
+        guard heroIsBanner else {
+            // Off Overview the band is not a surface at all, so the header
+            // renders as the plain row it has always been.
+            heroCard.layer?.backgroundColor = NSColor.clear.cgColor
+            heroCard.layer?.borderWidth = 0
+            heroCard.layer?.cornerRadius = 0
+            return
+        }
+        let tint = HelmTheme.nsColor(heroTint.hex(in: theme))
+        heroCard.layer?.cornerRadius = theme.isDaylight ? HelmMetrics.dModule : HelmMetrics.rCard
+        heroCard.layer?.backgroundColor = Self.heroFill(tint: tint, theme: theme).cgColor
+        heroCard.layer?.borderWidth = 1
+        heroCard.layer?.borderColor = tint.withAlphaComponent(HelmAccentRow.borderAlpha).cgColor
+    }
+
+    /// The band's fill: the strongest wash of the verdict's hue that still
+    /// leaves *both* lines of hero copy above the 4.5:1 text floor.
+    ///
+    /// Derived, never a literal, for the reason `HelmSelection.alphaLadder`
+    /// and `HelmContrast.tintedSurface` derive theirs: this band has to read
+    /// as a band on fourteen palettes whose `chromeBackgroundHex` runs from
+    /// near-black to warm cream, and one alpha tuned on Daylight is either
+    /// invisible or illegible on several of the others. Both lines are scored
+    /// because they fail at different strengths - the muted detail line is
+    /// the theme's ink at its own muted alpha, so it runs out of headroom
+    /// well before the headline does.
+    static func heroFill(tint: NSColor, theme: HelmTheme) -> NSColor {
+        HelmContrast.color(HelmContrast.mix(HelmContrast.components(tint),
+                                            HelmContrast.components(HelmTheme.nsColor(theme.chromeBackgroundHex)),
+                                            Double(heroWashFraction(tint: tint, theme: theme))))
+    }
+
+    static func heroWashFraction(tint: NSColor, theme: HelmTheme) -> CGFloat {
+        let base = HelmContrast.components(HelmTheme.nsColor(theme.chromeBackgroundHex))
+        let hue = HelmContrast.components(tint)
+        let ink = HelmContrast.components(HelmTheme.nsColor(theme.chromeInkHex))
+        let mutedAlpha = Double(HelmTheme.mutedAlpha(for: theme))
+        for step in heroWashSteps {
+            let fill = HelmContrast.mix(hue, base, Double(step))
+            // `mutedInk` is the ink at the theme's own alpha, so what it
+            // resolves to depends on the surface under it - it has to be
+            // flattened against *this* fill, never against the page.
+            let muted = HelmContrast.mix(ink, fill, mutedAlpha)
+            if HelmContrast.ratio(ink, fill) >= HelmContrast.textTarget,
+               HelmContrast.ratio(muted, fill) >= HelmContrast.textTarget {
+                return step
+            }
+        }
+        // No wash at all, rather than the faintest one anyway.
+        //
+        // Measured: `solarized-dark`'s ink on a 7% wash of its own green
+        // reaches 4.47:1, so even `HelmAccentRow`'s own signal-wash value -
+        // the floor this ladder started with - is unaffordable there. (That
+        // row never renders it on this palette: its wash is Daylight-only.)
+        //
+        // Zero leaves the band on the plain card surface, which is the one
+        // pairing `HelmCard` already guarantees is legible, and the hue still
+        // reaches the border - which is what separates the band from the page
+        // in the three themes where `chromeBackgroundHex == backgroundHex`
+        // anyway. A hero that is slightly less tinted beats a hero whose own
+        // numbers cannot be read.
+        return 0
     }
 
     // MARK: Module content (§6.1's table)
@@ -1432,9 +1588,22 @@ final class HomeCanvasController: NSViewController {
     /// Overview and only an identity elsewhere.
     var heroTintForTests: HelmTint { heroTint }
     var heroBadgeHiddenForTests: Bool { heroBadge.isHidden }
-    /// C1's composed layout: where the content column actually sits inside
-    /// the (at-least-viewport-tall) document.
+    /// Plan B's layout: where the top-anchored content column actually sits
+    /// inside the document.
     var contentFrameForTests: CGRect { stack.frame }
+    /// Plan B's hero band, as the surface it really resolved to - a paint
+    /// this app cannot see any other way, since `cacheDisplay` renders a
+    /// band and a bare row equally happily.
+    var heroBandForTests: (isBanner: Bool, fill: NSColor?, borderWidth: CGFloat, radius: CGFloat, inset: CGFloat) {
+        (heroIsBanner,
+         heroCard.layer?.backgroundColor.map { NSColor(cgColor: $0) ?? .clear },
+         heroCard.layer?.borderWidth ?? 0,
+         heroCard.layer?.cornerRadius ?? 0,
+         heroCardInsets.first(where: { $0.firstAttribute == .leading })?.constant ?? 0)
+    }
+    /// The detail line's resolved size, so "the hero's copy steps up on the
+    /// space with a verdict" is asserted rather than assumed.
+    var heroDetailPointSizeForTests: CGFloat { subtitleLabel.font?.pointSize ?? 0 }
     var documentHeightForTests: CGFloat { document.frame.height }
     var viewportHeightForTests: CGFloat { scroll.contentView.bounds.height }
     var gridRowCountForTests: Int { gridStack.arrangedSubviews.count }
@@ -1442,4 +1611,8 @@ final class HomeCanvasController: NSViewController {
     /// self-test can establish a known starting state before driving the
     /// signal it is actually testing.
     func debugRenderNow() { render() }
+    /// Repaint against a given theme without going near
+    /// `ThemeManager.setTheme`, which writes through to the real preference -
+    /// the hermeticity hazard that has poisoned whole suite runs before.
+    func debugApplyTheme(_ theme: HelmTheme) { applyTheme(theme) }
 }
