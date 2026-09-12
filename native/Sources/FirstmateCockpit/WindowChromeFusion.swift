@@ -177,7 +177,93 @@ enum WindowChromeFusion {
                 button.setFrameOrigin(wanted)
             }
         }
+        // Remember where the cluster ended up, so `trafficLightHitTest` can
+        // reject the overwhelming majority of points with one rect test
+        // instead of resolving three system buttons - see that method for why
+        // the difference is not academic.
+        clusterRects[ObjectIdentifier(window)] = buttons.reduce(NSRect.null) {
+            $0.union($1.convert($1.bounds, to: nil))
+        }
     }
+
+    /// The cluster's last known window-coordinate rect, per window. Written
+    /// only by `positionTrafficLights`, which is the one thing that moves it.
+    private static var clusterRects: [ObjectIdentifier: NSRect] = [:]
+
+    /// **The half A1 shipped without, and the reason close/minimise/zoom were
+    /// dead to the mouse for every captain on every build since it landed.**
+    ///
+    /// `positionTrafficLights` moves the buttons to the bar's own centre -
+    /// measured on a real window, `frame.origin.y == -14` inside a superview
+    /// whose `bounds.height` is 32. That is *entirely outside* their own
+    /// superview, and AppKit's default `hitTest(_:)` rejects a point outside
+    /// a view's frame **before** it ever asks that view's subviews. So the
+    /// cluster rendered perfectly (a view draws outside its superview's
+    /// bounds; only clipping stops that, and the titlebar does not clip) and
+    /// received nothing: measured on the real running app, a `hitTest` at
+    /// each button's own rendered centre returned a plain `NSView` rather
+    /// than the button, for all three.
+    ///
+    /// That is exactly the captain's "the app max window size and closing is
+    /// also not working", and it explains their own workaround too: a real
+    /// move or resize makes AppKit reset the cluster to its stock position
+    /// *inside* the titlebar, where it is briefly clickable again until the
+    /// next layout pass moves it back out.
+    ///
+    /// The fix is deliberately **hit-test forwarding rather than
+    /// reparenting**. Re-adding the buttons as subviews of the bar would also
+    /// work and is what several apps do, but it takes ownership of system
+    /// views away from AppKit across full-screen transitions and style-mask
+    /// changes; this is purely additive, leaves the buttons where AppKit put
+    /// them, and is directly assertable with the one measurement that was
+    /// failing.
+    ///
+    /// `point` is in the window's base coordinates - which is what a content
+    /// view's own `hitTest(_:)` is handed, since its superview (the theme
+    /// frame) shares the window's origin.
+    static func trafficLightHitTest(_ point: NSPoint, in window: NSWindow?) -> NSView? {
+        // Full screen: AppKit owns the cluster in its own auto-hiding overlay
+        // and nothing is repositioned, so it must keep its own hit testing.
+        guard let window, !isFullScreen(window) else { return nil }
+        // **The cheap rejection has to come first, and it is not an
+        // optimisation.** This runs on *every* hit test in the window -
+        // which includes every mouse-moved and every step of every drag -
+        // and `standardWindowButton(_:)` is a window-level accessor that can
+        // reach into the titlebar. Resolving three of them per hit test made
+        // a real, previously-passing window-backed suite
+        // (`FM_RUN_SHIFT_BOARD_VIEW_TESTS`, which synthesizes drags) stop
+        // finishing at all - measured: it passes in well under a minute
+        // without this and had not produced a line after ten with it. The
+        // cluster only ever moves in `positionTrafficLights`, so its rect is
+        // cached there and this is one containment test for every point that
+        // is not on a traffic light.
+        guard let cluster = clusterRects[ObjectIdentifier(window)],
+              !cluster.isNull,
+              cluster.insetBy(dx: -hitSlop, dy: -hitSlop).contains(point) else { return nil }
+
+        for kind in trafficLightKinds {
+            guard let button = window.standardWindowButton(kind),
+                  !button.isHidden, button.alphaValue > 0.01,
+                  let superview = button.superview else { continue }
+            // Only a *repositioned* button needs this: one still inside its
+            // own superview is reachable through AppKit's own hit testing,
+            // and claiming it here would take a click AppKit should have had.
+            guard button.frame.minY < 0 || button.frame.maxY > superview.bounds.height else { continue }
+            let inWindow = button.convert(button.bounds, to: nil)
+            // macOS gives the stock cluster a slightly larger clickable area
+            // than the 14pt dot. `hitSlop` stays well inside the gap between
+            // the cluster and the bar's first real control
+            // (`reservedLeadingInset` leaves 12pt), so it cannot steal a
+            // click meant for the back button or the wordmark.
+            if inWindow.insetBy(dx: -hitSlop, dy: -hitSlop).contains(point) { return button }
+        }
+        return nil
+    }
+
+    /// How far outside its own 14pt bounds a traffic light still answers a
+    /// click. Deliberately smaller than the clearance
+    /// `reservedLeadingInset` leaves after the cluster.
+    static let hitSlop: CGFloat = 4
 
     private static var isPositioning = false
     private static let trafficLightKinds: [NSWindow.ButtonType] = [.closeButton, .miniaturizeButton, .zoomButton]
@@ -249,5 +335,15 @@ final class ChromeFusionRootView: NSView {
     override func layout() {
         super.layout()
         onLayout?()
+    }
+
+    /// A1 moves the traffic lights outside their own superview, which makes
+    /// AppKit's own hit testing skip them entirely - see
+    /// `WindowChromeFusion.trafficLightHitTest` for the measurement and for
+    /// why this forwards rather than reparenting. Without this the buttons
+    /// render correctly and do nothing at all.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        if let button = WindowChromeFusion.trafficLightHitTest(point, in: window) { return button }
+        return super.hitTest(point)
     }
 }
