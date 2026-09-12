@@ -421,20 +421,31 @@ enum FormsModernizationSelfTest {
             ok = false
             return
         }
-        // 12 icons at 6 per row is two rows; measuring distinct y centres is
+        // 12 icons at 6 per row is two rows; counting distinct y centres is
         // what tells a grid from a row, and is read off real frames after a
         // real layout pass rather than from the builder's own arithmetic.
-        // Bucketed to 4pt, not to a half point: `NSButton.alignmentRectInsets`
-        // is non-zero (AGENTS.md records the measurement), so two swatches on
-        // the same visual row legitimately resolve half a point apart. Rows are
-        // a swatch plus a gap apart, so 4pt separates them and absorbs that.
-        let ys = Set(editor.debugIconSwatches.map { Int(($0.centreY / 4).rounded()) })
+        //
+        // **Clustered, not bucketed.** The first version of this rounded each
+        // centre into a 4pt bucket, which has boundary artefacts: two swatches
+        // genuinely on one row split into two buckets whenever they straddle a
+        // bucket edge, and `NSButton.alignmentRectInsets` is non-zero (AGENTS.md
+        // records the measurement) so they do resolve a fraction apart. It
+        // passed on this machine and reported "3 row(s), want 2" on a CI
+        // runner - a real 12-icon grid on two rows, split by arithmetic.
+        // Grouping centres that are *near each other* has no such edge, and is
+        // what "distinct rows" means in the first place.
+        let rowTolerance: CGFloat = 6   // well under a swatch (30) plus its gap
+        var rows: [CGFloat] = []
+        for centre in editor.debugIconSwatches.map({ $0.centreY }).sorted() {
+            if let last = rows.last, abs(centre - last) <= rowTolerance { continue }
+            rows.append(centre)
+        }
         let wantRows = Int((Double(HostCatalog.icons.count) / 6.0).rounded(.up))
-        if ys.count != wantRows {
-            print("  FAIL icon swatches sit on \(ys.count) row(s), want \(wantRows)")
+        if rows.count != wantRows {
+            print("  FAIL icon swatches sit on \(rows.count) row(s), want \(wantRows)")
             ok = false
         } else {
-            print("  OK   \(HostCatalog.icons.count) icons wrap onto \(ys.count) rows")
+            print("  OK   \(HostCatalog.icons.count) icons wrap onto \(rows.count) rows")
         }
     }
 
