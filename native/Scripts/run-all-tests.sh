@@ -166,6 +166,9 @@ NEEDS_SESSION=(
   # Phase 5 mounts real editor sheets, a real `NSPanel` palette and real
   # `NSButton` clicks - window-backed, like its Daylight peers above.
   "FM_RUN_DAYLIGHT_CHROME_TESTS"
+  # The modernization audit's §3F: mounts a real Host editor in a real window
+  # and reads real swatch/focus geometry off its layers.
+  "FM_RUN_FORMS_MODERNIZATION_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_SLICE6_TESTS"
   # Phase 6 mounts a real window to follow the real key view loop and drives
   # real accessibility presses - window-backed for the same reason.

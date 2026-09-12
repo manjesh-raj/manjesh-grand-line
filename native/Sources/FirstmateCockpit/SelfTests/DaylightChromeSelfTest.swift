@@ -170,6 +170,7 @@ enum DaylightChromeSelfTest {
         ThemeManager.shared.setTheme(theme)
         let card = HelmTheme.nsColor(DaylightPalette.card)
         let muted = HelmTheme.mutedInk(theme)
+        var sheetsWithKeycaps = 0
 
         for (name, controller) in everySheet() {
             guard let form = sheet(of: controller) else {
@@ -210,9 +211,34 @@ enum DaylightChromeSelfTest {
             if !sameColor(g.closeFill, HelmField.fill(theme)) {
                 problems.append("close square is not an `inset` fill")
             }
+            // F2c inverted this. The hint used to be one mono label holding
+            // "⌘⏎ to save"; it is `HelmKeyHint` keycaps plus a caption now, so
+            // "is it mono" no longer describes anything - what matters is that
+            // there are real caps carrying real glyphs, at the keycap radius.
             if g.hintText.isEmpty { problems.append("no footer hint") }
-            if g.hintFont?.isFixedPitch != true { problems.append("footer hint is not mono") }
-            if !sameColor(g.hintColor, muted) { problems.append("footer hint is not `muted`") }
+            // A footer note has two legitimate shapes, and `setFooter`'s two
+            // override parameters are exactly that distinction: keycaps plus a
+            // caption (the default, and `hintCaption:`), or prose with no
+            // keycaps at all (`hint:` - "Stored securely in macOS Keychain",
+            // which is not about a key). So this asserts the keycap *recipe*
+            // wherever caps exist, and `sheetsWithKeycaps` below asserts they
+            // have not silently vanished everywhere.
+            if !g.hintCapGlyphs.isEmpty {
+                sheetsWithKeycaps += 1
+                if g.hintCapGlyphs.contains(where: { $0.isEmpty }) {
+                    problems.append("a footer keycap is blank")
+                }
+                // The whole point of F2c: macOS's own Return glyph, not U+23CE.
+                if g.hintCapGlyphs.last != HelmKeyHint.returnKey {
+                    problems.append("last cap is \(g.hintCapGlyphs.last ?? "nil"), want U+21A9")
+                }
+                if g.hintCapGlyphs.contains("\u{23ce}") {
+                    problems.append("footer hint still uses U+23CE")
+                }
+                if g.hintCapRadii.contains(where: { abs($0 - HelmKeyHint.capCornerRadius) > 0.01 }) {
+                    problems.append("a footer keycap is not at the keycap radius")
+                }
+            }
             if g.cancelVariant != .quiet { problems.append("Cancel is \(String(describing: g.cancelVariant)), want ghost/.quiet") }
             if g.confirmVariant != .primary { problems.append("Save is not .primary") }
             if g.confirmHue != g.hue { problems.append("Save does not carry the sheet's hue") }
@@ -224,6 +250,17 @@ enum DaylightChromeSelfTest {
                 print("  FAIL \(name): \(problems.joined(separator: "; "))")
                 ok = false
             }
+        }
+
+        // F2c's own floor. Every per-sheet check above is conditional on a
+        // sheet *having* keycaps, so a regression that stopped building them
+        // altogether would leave each sheet reporting OK. This is what fails
+        // instead.
+        if sheetsWithKeycaps < 2 {
+            print("  FAIL only \(sheetsWithKeycaps) sheet(s) render keycaps - F2c's hint is gone")
+            ok = false
+        } else {
+            print("  OK   \(sheetsWithKeycaps) sheets render the shortcut as keycaps")
         }
     }
 
@@ -318,7 +355,11 @@ enum DaylightChromeSelfTest {
             // themes' Save buttons.
             if g.confirmHue != nil { problems.append("Save carries a domain hue") }
             if g.confirmGradient { problems.append("Save is a gradient") }
-            if g.hintFont?.isFixedPitch == true { problems.append("hint went mono") }
+            // F2c: the keycaps are the same on every palette - they are a
+            // *structure*, not a Daylight recipe - so what the twelve must not
+            // pick up is the ribbon/close-square/gradient chrome above, and the
+            // hint is simply expected to be there.
+            if g.hintCapGlyphs.isEmpty { problems.append("hint lost its keycaps") }
             if problems.isEmpty { continue }
             print("  FAIL \(theme.id): \(problems.joined(separator: "; "))")
             ok = false

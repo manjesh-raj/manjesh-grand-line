@@ -256,8 +256,7 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
                        // `CredentialVaultDetailController`), and like those
                        // it only *asks* - `onDelete`'s owner runs GL-06's
                        // shared confirmation.
-                       delete: editing == nil ? nil : (title: "Delete", action: #selector(deleteTask)),
-                       hint: "\u{2318}\u{23ce} to save")
+                       delete: editing == nil ? nil : (title: "Delete", action: #selector(deleteTask)))
 
         form.setSubtitle("Something to do.")
         form.refreshTheme()

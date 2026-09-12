@@ -1124,9 +1124,11 @@ final class HelmComposerCard: NSView {
     /// `applyTheme(_:)` rather than requiring the caller to re-call it on
     /// every focus change.
     private func setFocused(_ focused: Bool) {
+        // Every call that gets past this guard is a genuine transition, which
+        // is what makes `animated: true` below unconditionally right here (F1).
         guard focused != isFocused else { return }
         isFocused = focused
-        if let lastTheme { applyTheme(lastTheme) }
+        if let lastTheme { applyTheme(lastTheme, animated: true) }
     }
 
     /// The chrome routes through `HelmInputSurface` so this card, a
@@ -1134,10 +1136,11 @@ final class HelmComposerCard: NSView {
     /// way - and so Phase 1 re-tokenizes one place. The recipe is unchanged
     /// from what this class shipped: 1.5pt accent border plus an accent glow
     /// on the un-clipped wrapper.
-    func applyTheme(_ theme: HelmTheme) {
+    func applyTheme(_ theme: HelmTheme, animated: Bool = false) {
         lastTheme = theme
         HelmInputSurface.apply(chrome: contentContainer, shadowHost: self,
-                               theme: theme, focused: isFocused, hue: domainHue)
+                               theme: theme, focused: isFocused, hue: domainHue,
+                               animated: animated)
         if let focusTarget { HelmSelection.apply(to: focusTarget, theme: theme) }
     }
 }

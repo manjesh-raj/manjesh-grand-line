@@ -351,8 +351,14 @@ private final class SunkenFieldTheming {
         observation = ThemeManager.shared.observe { [weak self] theme in self?.apply(theme) }
         focus = HelmFocusSensing.shared.register(field) { [weak self] focused in
             guard let self else { return }
+            // F1: animate only a genuine transition. `register` fires once at
+            // registration to deliver the current state, and `refresh()` fires
+            // only when the state actually changed - so comparing against the
+            // stored value is exactly "is this a transition", with no extra
+            // has-fired-once flag to keep in step.
+            let changed = self.isFocused != focused
             self.isFocused = focused
-            self.apply(self.lastTheme)
+            self.apply(self.lastTheme, animated: changed)
         }
     }
 
@@ -361,10 +367,11 @@ private final class SunkenFieldTheming {
         if let focus { HelmFocusSensing.shared.unregister(focus) }
     }
 
-    func apply(_ theme: HelmTheme) {
+    func apply(_ theme: HelmTheme, animated: Bool = false) {
         guard let field else { return }
         lastTheme = theme
-        HelmInputSurface.apply(chrome: field, theme: theme, focused: isFocused, hue: domainHue)
+        HelmInputSurface.apply(chrome: field, theme: theme, focused: isFocused,
+                               hue: domainHue, animated: animated)
         // Both, deliberately. With `drawsBackground = true` the *cell* paints
         // `backgroundColor` over the layer's own fill, and its default is the
         // system `.textBackgroundColor` - so setting only the layer (which is
@@ -589,8 +596,12 @@ final class HelmTextView: NSView {
         // the glow - see `HelmInputSurface`'s "two shapes" note.
         focus = HelmFocusSensing.shared.register(textView) { [weak self] focused in
             guard let self else { return }
+            // F1 - see `HelmTextField`'s own registration for why comparing
+            // against the stored value is the whole "is this a transition?"
+            // test.
+            let changed = self.isFocused != focused
             self.isFocused = focused
-            self.applyTheme(self.lastTheme)
+            self.applyTheme(self.lastTheme, animated: changed)
         }
     }
 
@@ -619,10 +630,10 @@ final class HelmTextView: NSView {
                                    cornerHeight: radius, transform: nil)
     }
 
-    func applyTheme(_ theme: HelmTheme) {
+    func applyTheme(_ theme: HelmTheme, animated: Bool = false) {
         lastTheme = theme
         HelmInputSurface.apply(chrome: scroll, shadowHost: self, theme: theme,
-                               focused: isFocused, hue: domainHue)
+                               focused: isFocused, hue: domainHue, animated: animated)
         let ink = HelmField.ink(theme)
         textView.backgroundColor = HelmField.fill(theme)
         textView.textColor = ink
@@ -802,8 +813,12 @@ final class HelmSearchField: NSView, NSTextFieldDelegate {
         observation = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
         focus = HelmFocusSensing.shared.register(editor) { [weak self] focused in
             guard let self else { return }
+            // F1 - see `HelmTextField`'s own registration for why comparing
+            // against the stored value is the whole "is this a transition?"
+            // test.
+            let changed = self.isFocused != focused
             self.isFocused = focused
-            self.applyTheme(self.lastTheme)
+            self.applyTheme(self.lastTheme, animated: changed)
         }
         updatePlaceholderVisibility()
     }
@@ -834,10 +849,10 @@ final class HelmSearchField: NSView, NSTextFieldDelegate {
         window?.makeFirstResponder(editor)
     }
 
-    func applyTheme(_ theme: HelmTheme) {
+    func applyTheme(_ theme: HelmTheme, animated: Bool = false) {
         lastTheme = theme
         HelmInputSurface.apply(chrome: well, shadowHost: self, theme: theme,
-                               focused: isFocused, hue: domainHue)
+                               focused: isFocused, hue: domainHue, animated: animated)
         let ink = HelmField.ink(theme)
         editor.textColor = ink
         placeholderLabel.textColor = HelmField.mutedInk(theme)
@@ -977,8 +992,12 @@ final class HelmChipInput: NSView, NSTextFieldDelegate {
         observation = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
         focus = HelmFocusSensing.shared.register(editor) { [weak self] focused in
             guard let self else { return }
+            // F1 - see `HelmTextField`'s own registration for why comparing
+            // against the stored value is the whole "is this a transition?"
+            // test.
+            let changed = self.isFocused != focused
             self.isFocused = focused
-            self.applyTheme(self.lastTheme)
+            self.applyTheme(self.lastTheme, animated: changed)
         }
         applyTheme(ThemeManager.shared.theme)
     }
@@ -1051,10 +1070,10 @@ final class HelmChipInput: NSView, NSTextFieldDelegate {
                                    cornerHeight: radius, transform: nil)
     }
 
-    func applyTheme(_ theme: HelmTheme) {
+    func applyTheme(_ theme: HelmTheme, animated: Bool = false) {
         lastTheme = theme
         HelmInputSurface.apply(chrome: well, shadowHost: self, theme: theme,
-                               focused: isFocused, hue: domainHue)
+                               focused: isFocused, hue: domainHue, animated: animated)
         editor.textColor = HelmField.ink(theme)
         editor.placeholderAttributedString = NSAttributedString(
             string: editor.placeholderString ?? "",
@@ -1502,6 +1521,7 @@ final class HelmFormSheet: NSView {
     private let closeButton = NSButton()
     private var headerBlock: NSView!
     private var footerHintLabel: NSTextField?
+    private var footerKeyHint: HelmKeyHint?
     private weak var footerCancelButton: HelmButton?
     private weak var footerConfirmButton: HelmButton?
 
@@ -1547,6 +1567,28 @@ final class HelmFormSheet: NSView {
     /// §6.10 names for the task editor and the one §4 gives to Tasks.
     private let domainHue: HelmDomainHue
     private var ribbonHeightConstraint: NSLayoutConstraint?
+    /// F2(a) - the top inset the header column takes.
+    ///
+    /// A plain sheet gets `headerTopInset`. A sheet used as the content of a
+    /// *fused* window (the Host editor, whose stock titlebar A1's treatment
+    /// removes) gets that plus the room the traffic lights need, so the
+    /// heading starts below them instead of behind them.
+    private var headerTopConstraint: NSLayoutConstraint?
+    private static let headerTopInset: CGFloat = HelmMetrics.s5 - 4
+
+    /// Reserve room at the top for a fused window's traffic lights.
+    ///
+    /// Set by the one caller that puts a `HelmFormSheet` in a real window
+    /// rather than a sheet. Idempotent and safe to set before or after the
+    /// view is in a hierarchy.
+    var reservesWindowChromeInset: Bool = false {
+        didSet {
+            guard reservesWindowChromeInset != oldValue else { return }
+            headerTopConstraint?.constant = Self.headerTopInset
+                + (reservesWindowChromeInset ? WindowChromeFusion.contentTopClearance : 0)
+            needsLayout = true
+        }
+    }
     /// Every well the sheet was handed, as a "point this at a hue" closure -
     /// so §6.10's "the sheet's domain hue drives focus" holds for every field
     /// without `HelmFormSheet` having to know which concrete input type each
@@ -1686,10 +1728,12 @@ final class HelmFormSheet: NSView {
         outer.spacing = HelmMetrics.s3 + 2
         outer.translatesAutoresizingMaskIntoConstraints = false
         addSubview(outer)
+        let outerTop = outer.topAnchor.constraint(equalTo: topAnchor, constant: Self.headerTopInset)
+        headerTopConstraint = outerTop
         NSLayoutConstraint.activate([
             outer.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.gutter),
             outer.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.gutter),
-            outer.topAnchor.constraint(equalTo: topAnchor, constant: HelmMetrics.s5 - 4),
+            outerTop,
             outer.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -(HelmMetrics.s4 + 2)),
             headerBlock.widthAnchor.constraint(equalTo: outer.widthAnchor),
             contentStack.widthAnchor.constraint(equalTo: outer.widthAnchor),
@@ -1732,6 +1776,9 @@ final class HelmFormSheet: NSView {
 
         footerDivider.wantsLayer = true
         footerDivider.translatesAutoresizingMaskIntoConstraints = false
+        let headerTop = headerColumn.topAnchor.constraint(equalTo: headerBox.topAnchor,
+                                                          constant: Self.headerTopInset)
+        headerTopConstraint = headerTop
         addSubview(headerBox)
         addSubview(scroll)
         addSubview(footerDivider)
@@ -1742,7 +1789,7 @@ final class HelmFormSheet: NSView {
             headerBox.topAnchor.constraint(equalTo: topAnchor),
             headerBlock.leadingAnchor.constraint(equalTo: headerColumn.leadingAnchor),
             headerBlock.trailingAnchor.constraint(equalTo: headerColumn.trailingAnchor),
-            headerColumn.topAnchor.constraint(equalTo: headerBox.topAnchor, constant: HelmMetrics.s5 - 4),
+            headerTop,
             headerColumn.bottomAnchor.constraint(equalTo: headerBox.bottomAnchor, constant: -HelmMetrics.s3),
             headerBlock.topAnchor.constraint(equalTo: headerColumn.topAnchor),
             headerBlock.bottomAnchor.constraint(equalTo: headerColumn.bottomAnchor),
@@ -2056,25 +2103,37 @@ final class HelmFormSheet: NSView {
                    cancel: Selector,
                    confirmModifiers: NSEvent.ModifierFlags = [],
                    delete: (title: String, action: Selector)? = nil,
-                   hint: String? = nil) -> (confirm: HelmButton, cancel: HelmButton, delete: HelmButton?) {
+                   hint: String? = nil,
+                   hintCaption: String? = nil) -> (confirm: HelmButton, cancel: HelmButton, delete: HelmButton?) {
         footerContainer.subviews.forEach { $0.removeFromSuperview() }
 
         var views: [NSView] = []
-        // §6.10's mono "⌘⏎ to save" hint. Derived from `confirmModifiers` when
-        // the caller passed none, rather than hardcoded: only the task editor
-        // confirms on ⌘Return (its multi-line description eats a plain one),
-        // and printing "⌘⏎" on the eight sheets where a bare Return saves
-        // would be telling the captain the wrong shortcut. `muted`, never
-        // `faint` - §6.10 calls that out because `faint` fails the text floor.
-        let resolvedHint = hint ?? (confirmModifiers.contains(.command)
-                                    ? "\u{2318}\u{23ce} to save"
-                                    : "\u{23ce} to save")
-        do {
-            let label = NSTextField(labelWithString: resolvedHint)
+        // §6.10's "⌘⏎ to save" hint, rendered as keycaps (F2c) rather than as
+        // two raw symbol characters in one text run - see `HelmKeyHint`'s
+        // header for the two typographic problems that fixes.
+        //
+        // The *keys* are still derived from `confirmModifiers` rather than
+        // hardcoded: only the task editor confirms on ⌘Return (its multi-line
+        // description eats a plain one), and drawing a ⌘ cap on the eight
+        // sheets where a bare Return saves would be telling the captain the
+        // wrong shortcut.
+        //
+        // Two caller overrides, because a footer note has two genuinely
+        // different shapes: `hintCaption` keeps the keycaps and replaces only
+        // the words after them (a sheet whose Return does something other
+        // than save); `hint` is prose with **no** keycaps at all, for a footer
+        // line that is not about a key ("Stored securely in macOS Keychain").
+        if let hint {
+            let label = NSTextField(labelWithString: hint)
             label.translatesAutoresizingMaskIntoConstraints = false
             mutedLabels.append(label)
             footerHintLabel = label
             views.append(label)
+        } else {
+            let keys = HelmKeyHint.keys(for: confirmModifiers, key: HelmKeyHint.returnKey)
+            let view = HelmKeyHint(keys: keys, caption: hintCaption ?? "to save")
+            footerKeyHint = view
+            views.append(view)
         }
         var deleteButton: HelmButton?
         if let delete {
@@ -2153,6 +2212,69 @@ final class HelmFormSheet: NSView {
     /// matched their real content.
     ///
     /// Call again from anything that shows or hides a real row.
+    // MARK: F2(b) - the entrance
+
+    /// §3F's "250ms spring scale-fade (0.97→1.0)".
+    static let entranceScale: CGFloat = 0.97
+
+    private var hasPlayedEntrance = false
+
+    /// Play the entrance the first time this sheet lands in a real sheet
+    /// window.
+    ///
+    /// **What this does and does not replace, stated plainly.** AppKit's own
+    /// sheet drop is a *window* animation owned by `beginSheet`, and there is
+    /// no supported way to suppress it while keeping the window a real sheet
+    /// (modal session, attachment, Esc handling, `dismiss(_:)`); replacing it
+    /// would mean reimplementing sheet mechanics behind a custom
+    /// `NSViewControllerPresentationAnimator`, which is a far larger and
+    /// riskier change than the finding asks for. So the spring is layered on
+    /// the sheet's *content* rather than substituted for the window's motion -
+    /// the sheet still slides down, and settles.
+    ///
+    /// Gated on `isSheet` for two reasons: the Host editor is a real window
+    /// (F2a), where a scaling content view would read as a glitch rather than
+    /// as an arrival; and every self-test mounts these controllers into a
+    /// plain `[.titled]` window, which must keep rendering the resting state
+    /// so geometry reads stay honest.
+    private func playEntranceIfNeeded() {
+        guard !hasPlayedEntrance, let window, window.isSheet else { return }
+        hasPlayedEntrance = true
+        guard !HelmMotion.isReduced else { return }
+        wantsLayer = true
+        guard let layer else { return }
+        // A plain scale, no anchor-point correction: AppKit gives a
+        // layer-backed view's layer an anchor point of (0.5, 0.5), so this
+        // scales about the centre - the same assumption `HoverHighlightView`'s
+        // press compression already relies on.
+        layer.transform = CATransform3DMakeScale(Self.entranceScale, Self.entranceScale, 1)
+        alphaValue = 0
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = HelmMotion.springDuration
+            context.timingFunction = HelmMotion.spring()
+            context.allowsImplicitAnimation = true
+            layer.transform = CATransform3DIdentity
+            animator().alphaValue = 1
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        playEntranceIfNeeded()
+    }
+
+    #if FM_SELFTESTS
+    /// Whether the entrance has run, and what it would start from - so a check
+    /// can assert the Reduce Motion branch and the not-a-sheet branch without
+    /// needing to watch an animation.
+    var debugEntrancePlayed: Bool { hasPlayedEntrance }
+    func debugPlayEntrance() { playEntranceIfNeeded() }
+    /// The resolved top inset, read off the real constraint rather than
+    /// recomputed - so a check cannot pass by repeating this file's own
+    /// arithmetic.
+    var debugHeaderTopInset: CGFloat { headerTopConstraint?.constant ?? -1 }
+    #endif
+
     func sizeToFitContent() {
         guard !scrolls else { return }
         layoutSubtreeIfNeeded()
@@ -2214,6 +2336,8 @@ final class HelmFormSheet: NSView {
         closeSquare.normalColor = insetFill
         closeSquare.hoverColor = HelmTheme.nsColor(theme.chromeLineHex)
         closeGlyph.contentTintColor = HelmTheme.mutedInk(theme)
+        // A prose footer note only. `footerKeyHint` is self-theming (its own
+        // `ThemeManager` observation) and needs nothing here.
         footerHintLabel?.font = theme.isDaylight ? HelmType.code() : HelmType.caption()
         footerCancelButton?.variant = theme.isDaylight ? .quiet : .secondary
         // §6.10's "primary Save (domain gradient capsule)". Applied from here,
@@ -2285,7 +2409,13 @@ final class HelmFormSheet: NSView {
         let closeSide: CGFloat
         let closeRadius: CGFloat
         let closeFill: NSColor?
+        /// The whole footer hint as read aloud - keycap glyphs then the
+        /// caption, or the prose note for a `hint:`-only footer. Still one
+        /// string so "there is a hint at all" stays assertable.
         let hintText: String
+        /// F2c - the keycap glyphs, empty for a prose-only footer note.
+        let hintCapGlyphs: [String]
+        let hintCapRadii: [CGFloat]
         let hintFont: NSFont?
         let hintColor: NSColor?
         let cancelVariant: HelmButton.Variant?
@@ -2309,7 +2439,14 @@ final class HelmFormSheet: NSView {
                          closeRadius: closeSquare.layer?.cornerRadius ?? 0,
                          closeFill: closeSquare.layer?.backgroundColor
                              .flatMap { NSColor(cgColor: $0) },
-                         hintText: footerHintLabel?.stringValue ?? "",
+                         hintText: footerHintLabel?.stringValue
+                             ?? footerKeyHint.map {
+                                 ($0.debugCapGlyphs + [$0.debugCaption ?? ""])
+                                     .joined(separator: " ")
+                                     .trimmingCharacters(in: .whitespaces)
+                             } ?? "",
+                         hintCapGlyphs: footerKeyHint?.debugCapGlyphs ?? [],
+                         hintCapRadii: footerKeyHint?.debugCapCornerRadii ?? [],
                          hintFont: footerHintLabel?.font,
                          hintColor: footerHintLabel?.textColor,
                          cancelVariant: footerCancelButton?.variant,

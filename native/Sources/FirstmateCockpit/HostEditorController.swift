@@ -140,6 +140,8 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     private var selectedAccent: String
     private var iconButtons: [NSButton] = []
     private var colorButtons: [NSButton] = []
+    /// The selection checkmark overlaid on each colour swatch, by hex.
+    private var colorTicks: [String: NSImageView] = [:]
 
     // MARK: Init
 
@@ -398,55 +400,111 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         tagsChipsFlow.setChips(chips)
     }
 
-    // MARK: Icon + colour pickers (A3)
+    // MARK: Icon + colour pickers (A3, restyled by F3)
+
+    /// F3's "28-32pt targets". One number for both grids, so an icon tile and
+    /// a colour swatch are the same size and the two rows line up.
+    private static let swatchSide: CGFloat = 30
+    /// How many swatches per row before wrapping. 12 icons and 8 colours both
+    /// divide into rows no wider than the form's own capped column.
+    private static let swatchesPerRow = 6
+    private static let swatchSpacing: CGFloat = HelmMetrics.s2 - 2
+    /// The ring a selected colour swatch wears, outside its own fill so the
+    /// colour itself is never obscured by the selection state.
+    private static let selectionRingWidth: CGFloat = 2.5
+
+    /// Wrap `views` into a grid of rows - F3's "swatch grid" rather than the
+    /// single long row both pickers used to be.
+    private func swatchGrid(_ views: [NSView]) -> NSView {
+        var rows: [NSView] = []
+        for chunk in stride(from: 0, to: views.count, by: Self.swatchesPerRow) {
+            let slice = Array(views[chunk..<min(chunk + Self.swatchesPerRow, views.count)])
+            let row = NSStackView(views: slice)
+            row.orientation = .horizontal
+            row.alignment = .centerY
+            row.spacing = Self.swatchSpacing
+            row.translatesAutoresizingMaskIntoConstraints = false
+            // Never `.fillEqually`: a short last row would stretch its
+            // swatches to a different size from the full row above it, which
+            // is exactly the raggedness a grid is meant to remove.
+            row.distribution = .gravityAreas
+            rows.append(row)
+        }
+        let grid = NSStackView(views: rows)
+        grid.orientation = .vertical
+        grid.alignment = .leading
+        grid.spacing = Self.swatchSpacing
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        return grid
+    }
 
     private func buildIconPicker() -> NSView {
-        let stack = NSStackView()
-        stack.orientation = .horizontal
-        stack.spacing = HelmMetrics.s1
-        stack.translatesAutoresizingMaskIntoConstraints = false
+        var swatches: [NSView] = []
         for symbol in HostCatalog.icons {
             let b = NSButton(title: "", target: self, action: #selector(pickIcon(_:)))
             b.isBordered = false
             b.wantsLayer = true
             b.layer?.cornerRadius = HelmMetrics.rChip
             b.imageScaling = .scaleProportionallyDown
-            b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: symbol)
+            // I2: weight-matched to the label beside it rather than left at
+            // the symbol's default, which renders light against this form's
+            // semibold section kickers.
+            b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: symbol)?
+                .withSymbolConfiguration(.init(pointSize: 14, weight: .medium))
             b.identifier = NSUserInterfaceItemIdentifier(symbol)
             b.toolTip = symbol
+            b.setAccessibilityLabel(symbol)
             NSLayoutConstraint.activate([
-                b.widthAnchor.constraint(equalToConstant: 30),
-                b.heightAnchor.constraint(equalToConstant: 28),
+                b.widthAnchor.constraint(equalToConstant: Self.swatchSide),
+                b.heightAnchor.constraint(equalToConstant: Self.swatchSide),
             ])
             iconButtons.append(b)
-            stack.addArrangedSubview(b)
+            swatches.append(b)
         }
         styleIconButtons()
-        return stack
+        return swatchGrid(swatches)
     }
 
     private func buildColorPicker() -> NSView {
-        let stack = NSStackView()
-        stack.orientation = .horizontal
-        stack.spacing = HelmMetrics.s2 - 2
-        stack.translatesAutoresizingMaskIntoConstraints = false
+        var swatches: [NSView] = []
         for hex in HostCatalog.accents {
             let b = NSButton(title: "", target: self, action: #selector(pickColor(_:)))
             b.isBordered = false
             b.wantsLayer = true
-            b.layer?.cornerRadius = 11
+            b.layer?.cornerRadius = Self.swatchSide / 2
             b.layer?.backgroundColor = HelmTheme.nsColor(hex).cgColor
             b.identifier = NSUserInterfaceItemIdentifier(hex)
             b.toolTip = "#\(hex)"
+            b.setAccessibilityLabel("Accent #\(hex)")
             NSLayoutConstraint.activate([
-                b.widthAnchor.constraint(equalToConstant: 22),
-                b.heightAnchor.constraint(equalToConstant: 22),
+                b.widthAnchor.constraint(equalToConstant: Self.swatchSide),
+                b.heightAnchor.constraint(equalToConstant: Self.swatchSide),
             ])
+
+            // F3's "checkmark on the chosen colour". A non-interactive overlay
+            // rather than the button's own image: an `NSButton` draws its
+            // image tinted by `contentTintColor`, which on a bordered-less
+            // button also tints nothing else here - but the glyph has to be
+            // legible against *this* swatch's own colour, which is a per-
+            // swatch answer (`HelmContrast.legibleGlyph`), not a theme one.
+            let tick = NSImageView()
+            tick.image = NSImage(systemSymbolName: "checkmark", accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: 12, weight: .bold))
+            tick.contentTintColor = HelmContrast.legibleGlyph(over: HelmTheme.nsColor(hex))
+            tick.isHidden = true
+            tick.translatesAutoresizingMaskIntoConstraints = false
+            b.addSubview(tick)
+            NSLayoutConstraint.activate([
+                tick.centerXAnchor.constraint(equalTo: b.centerXAnchor),
+                tick.centerYAnchor.constraint(equalTo: b.centerYAnchor),
+            ])
+            colorTicks[hex] = tick
+
             colorButtons.append(b)
-            stack.addArrangedSubview(b)
+            swatches.append(b)
         }
         styleColorButtons()
-        return stack
+        return swatchGrid(swatches)
     }
 
     @objc private func pickIcon(_ sender: NSButton) {
@@ -460,26 +518,94 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         styleColorButtons()
     }
 
-    /// Selected icon reads in the chosen accent and sits on a tinted chip; the
-    /// rest are neutral.
+    /// F3: the chosen icon sits on a **filled** tile in the chosen accent, not
+    /// the 18%-alpha wash this used to paint - a wash reads as a hover state,
+    /// which is exactly the "selection is a faint wash" the finding names. The
+    /// glyph on it is contrast-corrected against that fill rather than left as
+    /// the accent itself, which on the accent would be invisible.
     private func styleIconButtons() {
         let accent = HelmTheme.nsColor(selectedAccent)
+        let selectedGlyph = HelmContrast.legibleGlyph(over: accent)
         for b in iconButtons {
             let isSel = b.identifier?.rawValue == selectedIcon
-            b.contentTintColor = isSel ? accent : HelmTheme.mutedInk(ThemeManager.shared.theme)
-            b.layer?.backgroundColor = (isSel ? accent.withAlphaComponent(0.18) : .clear).cgColor
+            b.contentTintColor = isSel ? selectedGlyph : HelmTheme.mutedInk(ThemeManager.shared.theme)
+            b.layer?.backgroundColor = (isSel ? accent : .clear).cgColor
+            b.setAccessibilityValue(isSel)
         }
     }
 
-    /// Selected swatch gets a ring so the choice is obvious.
+    /// F3: the chosen colour gets a ring **and** a checkmark. The ring alone
+    /// is ambiguous at a glance on a row of saturated dots (which ring is
+    /// darker is a colour question, not a selection one); the tick says it
+    /// outright, and is what a captain with a colour-vision difference reads.
     private func styleColorButtons() {
         let ring = HelmTheme.nsColor(ThemeManager.shared.theme.chromeInkHex)
         for b in colorButtons {
-            let isSel = b.identifier?.rawValue == selectedAccent
-            b.layer?.borderWidth = isSel ? 2.5 : 0
+            let hex = b.identifier?.rawValue
+            let isSel = hex == selectedAccent
+            b.layer?.borderWidth = isSel ? Self.selectionRingWidth : 0
             b.layer?.borderColor = ring.cgColor
+            b.setAccessibilityValue(isSel)
+            if let hex { colorTicks[hex]?.isHidden = !isSel }
         }
     }
+
+    #if FM_SELFTESTS
+    // MARK: Probe surface (F3)
+
+    struct DebugIconSwatch {
+        let symbol: String
+        let isSelected: Bool
+        /// The tile's own fill, read off the real layer.
+        let fill: NSColor?
+        let glyphTint: NSColor?
+        let side: CGFloat
+        let centreY: CGFloat
+    }
+
+    struct DebugColourSwatch {
+        let hex: String
+        let isSelected: Bool
+        let ringWidth: CGFloat
+        let tickHidden: Bool
+        let tickTint: NSColor?
+        let side: CGFloat
+    }
+
+    var debugSelectedAccent: String { selectedAccent }
+
+    var debugIconSwatches: [DebugIconSwatch] {
+        iconButtons.map { b in
+            let symbol = b.identifier?.rawValue ?? ""
+            return DebugIconSwatch(symbol: symbol,
+                                   isSelected: symbol == selectedIcon,
+                                   fill: b.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) },
+                                   glyphTint: b.contentTintColor,
+                                   side: b.frame.width,
+                                   centreY: b.convert(NSPoint(x: 0, y: b.bounds.midY), to: nil).y)
+        }
+    }
+
+    var debugColourSwatches: [DebugColourSwatch] {
+        colorButtons.map { b in
+            let hex = b.identifier?.rawValue ?? ""
+            let tick = colorTicks[hex]
+            return DebugColourSwatch(hex: hex,
+                                     isSelected: hex == selectedAccent,
+                                     ringWidth: b.layer?.borderWidth ?? 0,
+                                     tickHidden: tick?.isHidden ?? true,
+                                     tickTint: tick?.contentTintColor,
+                                     side: b.frame.width)
+        }
+    }
+
+    /// Drive a real pick through the real target/action, so a check exercises
+    /// the handler rather than setting the model behind it.
+    func debugPickColour(_ hex: String) {
+        guard let button = colorButtons.first(where: { $0.identifier?.rawValue == hex }) else { return }
+        button.performClick(nil)
+    }
+    #endif
 
     // MARK: Actions
 
