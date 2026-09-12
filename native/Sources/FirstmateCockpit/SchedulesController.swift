@@ -273,17 +273,22 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
     /// The card this page renders - so a suite can read the real time/tick
     /// columns it built rather than re-deriving them.
     var debugSchedulesCard: SchedulesCardView? { isViewLoaded ? schedulesCard : nil }
+    /// G3: drive the real delete path, confirmation and all.
+    func debugConfirmDeleteSchedule(_ schedule: AutomationSchedule) {
+        confirmDeleteSchedule(schedule)
+    }
     #endif
 
     private func confirmDeleteSchedule(_ schedule: AutomationSchedule) {
-        let alert = NSAlert()
-        alert.messageText = "Delete this schedule?"
-        alert.informativeText = "\(schedule.action.title) will stop running on its own. "
-            + "The action itself stays available to run by hand on its own page."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Delete")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        // G3: themed; Return still deletes, as it did here.
+        guard HelmConfirm.confirm(
+            title: "Delete this schedule?",
+            body: "\(schedule.action.title) will stop running on its own. "
+                + "The action itself stays available to run by hand on its own page.",
+            confirmTitle: "Delete",
+            destructive: true,
+            symbol: "trash.fill",
+            hue: .rose) else { return }
         scheduleStore.delete(id: schedule.id)
         NotificationSources.clearScheduleResult(scheduleID: schedule.id)
         refreshSchedules()

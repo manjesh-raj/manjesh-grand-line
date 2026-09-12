@@ -908,11 +908,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
     }
 
     private func presentError(_ error: Error, context: String) {
-        let alert = NSAlert()
-        alert.messageText = context
-        alert.informativeText = error.localizedDescription
-        alert.alertStyle = .critical
-        alert.runModal()
+        HelmConfirm.problem(title: context, body: error.localizedDescription)
     }
 
     // MARK: Probe / self-test surface

@@ -841,13 +841,14 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         guard let snippet = currentSnippet else { return }
         guard !snippet.content.isEmpty else { return }
 
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Clear \(snippet.name)?"
-        alert.informativeText = "This empties the snippet but keeps the tab. \u{2318}Z in the editor can undo it."
-        alert.addButton(withTitle: "Clear")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        // G3: themed; Return still clears, as it did here.
+        guard HelmConfirm.confirm(
+            title: "Clear \(snippet.name)?",
+            body: "This empties the snippet but keeps the tab. \u{2318}Z in the editor can undo it.",
+            confirmTitle: "Clear",
+            destructive: true,
+            symbol: "eraser.fill",
+            hue: .rose) else { return }
 
         snippet.content = ""
         webView.call("openSnippet", payload: [

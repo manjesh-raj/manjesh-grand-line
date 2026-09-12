@@ -14,15 +14,18 @@
 // the third caller lives in `main.swift` (the host editor is a window owned by
 // the app delegate, not by `HostsController`), so there was no existing
 // `private func confirm` for it to reach.
+//
+// G3 (UI modernization audit §3G) re-pointed the body at `HelmConfirm`. Every
+// caller and every guarantee below is unchanged - what changed is that the
+// dialog is now drawn in the app's own language instead of the system's.
 
 import AppKit
 
 enum DestructiveConfirm {
 
-    /// A modal, two-button "are you sure" with the destructive action as the
-    /// *second* button, so Return means Cancel and Escape means Cancel. Both
-    /// safe keys do the safe thing - the point of a confirmation is that a
-    /// reflexive keypress cannot complete the deletion.
+    /// A modal, two-button "are you sure" where Return means Cancel and
+    /// Escape means Cancel. Both safe keys do the safe thing - the point of a
+    /// confirmation is that a reflexive keypress cannot complete the deletion.
     ///
     /// - Parameters:
     ///   - message: the headline, e.g. `Delete "Prod Bastion"?`.
@@ -39,13 +42,21 @@ enum DestructiveConfirm {
                         detail: String,
                         confirmTitle: String = "Delete",
                         window: NSWindow? = nil) -> Bool {
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = message
-        alert.informativeText = detail
-        alert.addButton(withTitle: "Cancel")
-        let destructive = alert.addButton(withTitle: confirmTitle)
-        if #available(macOS 11.0, *) { destructive.hasDestructiveAction = true }
-        return alert.runModal() == .alertSecondButtonReturn
+        // G3: the app's own themed confirm rather than a centre-screen
+        // system alert. The *semantics* are byte-for-byte what they were -
+        // `confirmIsDefault: false` is what keeps Return on Cancel, which is
+        // this function's whole reason for putting Cancel first.
+        //
+        // `window:` is still accepted and still unread. It was already unread
+        // before G3 (the body always ran app-modally), and making it real now
+        // would be a behaviour change smuggled into a restyle - two callers
+        // pass it and would silently move from app-modal to sheet-modal.
+        return HelmConfirm.confirm(title: message,
+                                   body: detail,
+                                   confirmTitle: confirmTitle,
+                                   destructive: true,
+                                   confirmIsDefault: false,
+                                   symbol: "trash.fill",
+                                   hue: .rose)
     }
 }

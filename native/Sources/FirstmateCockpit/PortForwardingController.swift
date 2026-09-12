@@ -183,11 +183,7 @@ final class PortForwardingController: NSViewController {
     }
 
     private func warn(title: String, body: String) {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = body
-        alert.alertStyle = .warning
-        alert.runModal()
+        HelmConfirm.problem(title: title, body: body)
     }
 
     @objc private func cancel() {

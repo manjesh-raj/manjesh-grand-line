@@ -733,18 +733,14 @@ final class UpdatesController: NSViewController, SetupPageSummary {
             update(row)
             return
         }
-        let alert = NSAlert()
-        if row.status == .notInstalled {
-            alert.messageText = "Install firstmate from upstream?"
-            alert.informativeText = "\(row.detail)\n\nThis fast-forwards the local default branch to kunchenguid/firstmate's upstream, then pushes the result to origin (your fork). Never forced, never a merge commit."
-        } else {
-            alert.messageText = "Sync firstmate with upstream?"
-            alert.informativeText = "\(row.detail)\n\nThis fast-forwards the local default branch to kunchenguid/firstmate's upstream, then pushes the result to origin (your fork). Never forced, never a merge commit."
-        }
-        alert.addButton(withTitle: row.status == .notInstalled ? "Install and Push" : "Sync and Push")
-        alert.addButton(withTitle: "Cancel")
-        alert.alertStyle = .informational
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        // G3: themed. Return still performs it, as it did here.
+        let fresh = row.status == .notInstalled
+        guard HelmConfirm.confirm(
+            title: fresh ? "Install firstmate from upstream?" : "Sync firstmate with upstream?",
+            body: "\(row.detail)\n\nThis fast-forwards the local default branch to kunchenguid/firstmate's upstream, then pushes the result to origin (your fork). Never forced, never a merge commit.",
+            confirmTitle: fresh ? "Install and Push" : "Sync and Push",
+            symbol: "arrow.triangle.branch",
+            hue: RailDestination.updates.domainHue) else { return }
         update(row)
     }
 

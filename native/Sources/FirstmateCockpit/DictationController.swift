@@ -953,17 +953,25 @@ final class DictationController: NSViewController, DaylightDrillActions {
 
     /// GL-35. Confirmed, because it is a ~547MB re-download to undo and this
     /// app's convention is that a destructive action asks first.
+    #if FM_SELFTESTS
+    /// G3: drive the real model-delete confirmation.
+    func debugModelDeleteTapped() { modelDeleteTapped() }
+    #endif
+
     @objc private func modelDeleteTapped() {
         let bytes = WhisperModelManager.shared.downloadedByteCount
         let size = bytes.map { ByteCountFormatter.string(fromByteCount: $0, countStyle: .file) } ?? "the downloaded model"
-        let alert = NSAlert()
-        alert.messageText = "Delete the local Whisper model?"
-        alert.informativeText = "This frees \(size). Dictation falls back to Apple's Speech framework, "
-            + "and you can download the model again at any time."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Delete")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        // G3: themed. This site put Delete first, so Return deletes - kept
+        // exactly, because changing which key completes a destructive action
+        // is a behaviour change, not a restyle.
+        guard HelmConfirm.confirm(
+            title: "Delete the local Whisper model?",
+            body: "This frees \(size). Dictation falls back to Apple's Speech framework, "
+                + "and you can download the model again at any time.",
+            confirmTitle: "Delete",
+            destructive: true,
+            symbol: "trash.fill",
+            hue: .rose) else { return }
         if WhisperModelManager.shared.deleteDownloadedModel(),
            let container = view.window?.contentView {
             Toast.show(in: container, message: "Local Whisper model deleted")

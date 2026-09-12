@@ -1819,11 +1819,6 @@ extension LogAnalyzerController {
     /// text, offers Copy, and (where it applies) an explicit save action.
     private func presentArtifact(title: String, explanation: String, body: String,
                                  saveTitle: String?, onSave: (() -> Void)?) {
-        let alert = NSAlert()
-        alert.messageText = "\(title) draft"
-        alert.informativeText = explanation
-        alert.alertStyle = .informational
-
         let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 620, height: 360))
         textView.string = body
         textView.isEditable = false
@@ -1833,19 +1828,26 @@ extension LogAnalyzerController {
         scroll.documentView = textView
         scroll.hasVerticalScroller = true
         scroll.borderType = .noBorder
-        alert.accessoryView = scroll
+        scroll.heightAnchor.constraint(equalToConstant: 360).isActive = true
+        scroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 620).isActive = true
 
-        alert.addButton(withTitle: "Copy")
-        if saveTitle != nil { alert.addButton(withTitle: saveTitle!) }
-        alert.addButton(withTitle: "Close")
-
-        let response = alert.runModal()
-        switch response {
-        case .alertFirstButtonReturn:
+        // G3: themed. The button *order* is what carries the meaning here -
+        // Copy was first (and therefore the default), the optional save was
+        // second, Close last - so Copy is the confirm, the save is `extra`,
+        // and Close is the cancel. Same three outcomes, same default key.
+        var request = HelmConfirm.Request(title: "\(title) draft", body: explanation)
+        request.confirmTitle = "Copy"
+        request.cancelTitle = "Close"
+        if let saveTitle { request.extra = HelmConfirm.ExtraButton(title: saveTitle) }
+        request.accessory = scroll
+        request.symbol = "doc.text.fill"
+        request.hue = RailDestination.logAnalyzer.domainHue
+        switch HelmConfirm.confirm(request) {
+        case .confirm:
             copy(body, what: title)
-        case .alertSecondButtonReturn where saveTitle != nil:
+        case .extra:
             onSave?()
-        default:
+        case .cancel:
             break
         }
     }

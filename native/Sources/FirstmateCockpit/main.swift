@@ -1958,6 +1958,11 @@ if ProcessInfo.processInfo.environment["FM_RUN_FORMS_MODERNIZATION_TESTS"] == "1
 }
 // The UI modernization audit's §3G - toasts, notifications and progress
 // (G1/G2/G4). See FeedbackModernizationSelfTest.swift's header.
+// The UI modernization audit's §3G G3 - the 30-site confirm migration. See
+// ConfirmMigrationSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_CONFIRM_MIGRATION_TESTS"] == "1" {
+    exit(ConfirmMigrationSelfTest.run() ? 0 : 1)
+}
 if ProcessInfo.processInfo.environment["FM_RUN_FEEDBACK_MODERNIZATION_TESTS"] == "1" {
     exit(FeedbackModernizationSelfTest.run() ? 0 : 1)
 }

@@ -172,6 +172,8 @@ NEEDS_SESSION=(
   # §3G: a sliding layer animation is suppressed off-window (GL-13), so the
   # indeterminate bar can only be measured in a real one.
   "FM_RUN_FEEDBACK_MODERNIZATION_TESTS"
+  # §3G's G3: mounts real controllers and drives their real confirm paths.
+  "FM_RUN_CONFIRM_MIGRATION_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_SLICE6_TESTS"
   # Phase 6 mounts a real window to follow the real key view loop and drives
   # real accessibility presses - window-backed for the same reason.

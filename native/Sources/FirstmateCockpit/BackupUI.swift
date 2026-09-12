@@ -225,23 +225,25 @@ enum BackupUI {
     }
 
     private static func chooseDestination(in viewController: NSViewController, verb: String, title: String, localLabel: String, githubLabel: String, githubAvailable: Bool) -> BackupDestination? {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = githubAvailable
-            ? "Choose where to \(verb.lowercased()) this config."
-            : "Choose where to \(verb.lowercased()) this config.\n\n\(GitHubBackupSource.unavailableReason)"
-        alert.addButton(withTitle: localLabel)
-        let githubButton = alert.addButton(withTitle: githubLabel)
-        alert.addButton(withTitle: "Cancel")
-        githubButton.isEnabled = githubAvailable
-        if !githubAvailable {
-            githubButton.toolTip = GitHubBackupSource.unavailableReason
-        }
-
-        switch alert.runModal() {
-        case .alertFirstButtonReturn: return .local
-        case .alertSecondButtonReturn: return githubAvailable ? .github : nil
-        default: return nil
+        // G3: a three-way *picker*, which is why `HelmConfirm` carries an
+        // `extra` button at all. The GitHub option stays offered-but-disabled
+        // with its reason on a tooltip when `gh` is not logged in - saying why
+        // it cannot be used beats hiding it.
+        //
+        // `confirm` is the local option, because Return chose it before.
+        var request = HelmConfirm.Request(title: title,
+                                          body: githubAvailable
+                                            ? "Choose where to \(verb.lowercased()) this config."
+                                            : "Choose where to \(verb.lowercased()) this config.\n\n\(GitHubBackupSource.unavailableReason)")
+        request.confirmTitle = localLabel
+        request.extra = HelmConfirm.ExtraButton(title: githubLabel,
+                                                isEnabled: githubAvailable,
+                                                tooltip: githubAvailable ? nil : GitHubBackupSource.unavailableReason)
+        request.symbol = "arrow.up.arrow.down.circle.fill"
+        switch HelmConfirm.confirm(request) {
+        case .confirm: return .local
+        case .extra: return githubAvailable ? .github : nil
+        case .cancel: return nil
         }
     }
 
@@ -249,13 +251,16 @@ enum BackupUI {
     /// row - never a static description. Returns whether the captain chose
     /// to import.
     private static func confirmImport(_ preview: BackupImport.Preview, in viewController: NSViewController) -> Bool {
-        let alert = NSAlert()
-        alert.messageText = "Import Grand Line config?"
-        alert.informativeText = confirmSummary(preview)
-        alert.addButton(withTitle: "Import")
-        alert.addButton(withTitle: "Cancel")
-        alert.accessoryView = diffScrollView(preview)
-        return alert.runModal() == .alertFirstButtonReturn
+        // G3: themed. Return still imports, as it did here, and the real
+        // per-row diff is still the body - never a static description.
+        var request = HelmConfirm.Request(title: "Import Grand Line config?",
+                                          body: confirmSummary(preview))
+        request.confirmTitle = "Import"
+        request.destructive = true
+        request.accessory = diffScrollView(preview)
+        request.symbol = "square.and.arrow.down.fill"
+        request.hue = .amber
+        return HelmConfirm.confirm(request) == .confirm
     }
 
     private static func confirmSummary(_ preview: BackupImport.Preview) -> String {
@@ -361,10 +366,6 @@ enum BackupUI {
     }
 
     private static func presentError(_ error: Error, in viewController: NSViewController) {
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Couldn't complete that"
-        alert.informativeText = error.localizedDescription
-        alert.runModal()
+        HelmConfirm.problem(title: "Couldn't complete that", body: error.localizedDescription)
     }
 }

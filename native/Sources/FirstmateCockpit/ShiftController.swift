@@ -844,12 +844,12 @@ final class ShiftController: NSViewController, DaylightDrillActions {
             return
         }
         guard let done = store.allCompletedTasks().first(where: { $0.id == id }) else { return }
-        let alert = NSAlert()
-        alert.messageText = "\u{201C}\(done.title)\u{201D} is done"
-        alert.informativeText = "Completed tasks are filed away and can't be edited in place. "
-            + "Move it back to Backlog or In Progress to edit it."
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+        HelmConfirm.notice(
+            title: "\u{201C}\(done.title)\u{201D} is done",
+            body: "Completed tasks are filed away and can't be edited in place. "
+                + "Move it back to Backlog or In Progress to edit it.",
+            symbol: "checkmark.circle.fill",
+            hue: RailDestination.shift.domainHue)
     }
 
     /// A column's own "+ Add task". Opens the same New Task sheet the header

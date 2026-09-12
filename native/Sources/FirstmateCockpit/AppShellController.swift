@@ -2351,13 +2351,14 @@ final class AppShellController: NSViewController {
     /// cannot answer - so the alert is unconditional, and says why.
     func confirmEndSession(hostID: UUID) {
         guard let session = sessions.session(for: hostID) else { return }
-        let alert = NSAlert()
-        alert.messageText = "End the session on \(session.label)?"
-        alert.informativeText = "Anything still running in that terminal will be terminated."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "End Session")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        // G3: themed; Return still ends the session, as it did here.
+        guard HelmConfirm.confirm(
+            title: "End the session on \(session.label)?",
+            body: "Anything still running in that terminal will be terminated.",
+            confirmTitle: "End Session",
+            destructive: true,
+            symbol: "xmark.circle.fill",
+            hue: .rose) else { return }
         removeHostConsole(id: hostID)
     }
 
