@@ -66,6 +66,9 @@ enum WindowChromeFusionSelfTest {
             ("A1 fusion reclaims the titlebar and keeps the buttons live", test_a1FusionReclaimsHeight),
             ("A1 the traffic lights centre on the bar and stay there", test_a1TrafficLightsHoldTheirPosition),
             ("A1 the traffic lights survive window title changes", test_a1TrafficLightsSurviveTitleChanges),
+            ("A1 the traffic lights actually answer a click", test_a1TrafficLightsAreHitTestable),
+            ("A1 a real click on zoom actually zooms the window", test_a1ZoomButtonReallyZooms),
+            ("A1 the cluster's hit slop steals nothing from the bar", test_a1HitSlopStealsNothingFromTheBar),
             ("A1 the bar's leading content clears the traffic lights", test_a1LeadingContentClearsTheCluster),
             ("A1 the bar forces its own appearance", test_a1BarForcesItsOwnAppearance),
             ("A2 the leading swap is two-way", test_a2LeadingSwapIsTwoWay),
@@ -736,6 +739,166 @@ enum WindowChromeFusionSelfTest {
     /// production literal is covered by the source guard in
     /// `test_a1FusionReclaimsHeight` instead: the two catch different
     /// failures and both are needed.
+    /// **The case this suite was missing, and the reason a green run sat
+    /// alongside a completely dead close/minimise/zoom for the whole life of
+    /// A1.**
+    ///
+    /// Every pre-existing A1 case measured where the cluster *is*
+    /// (`trafficLightCenterForTests`/`trafficLightSpanForTests`, both of
+    /// which read the button's own frame). Position was never the broken
+    /// part - it was correct, and the buttons rendered exactly where the
+    /// design wanted them. What nothing asserted is that a click *reaches*
+    /// them, and it did not: repositioning puts the buttons at
+    /// `frame.origin.y == -14` inside a superview whose `bounds.height` is
+    /// 32, i.e. wholly outside it, and AppKit's default `hitTest(_:)`
+    /// rejects a point outside a view's own frame before it ever asks that
+    /// view's subviews. Measured on the real running app before the fix, a
+    /// hit test at each button's own rendered centre returned a plain
+    /// `NSView` for all three.
+    ///
+    /// So this asks the question the geometry cases cannot: hand the
+    /// window's *real* content view the point AppKit would dispatch, and
+    /// require the button back.
+    private static func test_a1TrafficLightsAreHitTestable() -> String? {
+        let window = makeWindow(fused: true)
+        defer { window.close() }
+        let root = ChromeFusionRootView(frame: NSRect(x: 0, y: 0, width: 1220, height: 720))
+        root.onLayout = { [weak window] in
+            WindowChromeFusion.positionTrafficLights(
+                in: window,
+                verticalCenter: DaylightBarController.trafficLightCenterY,
+                leadingX: DaylightBarController.trafficLightLeadingX)
+        }
+        window.contentView = root
+        window.orderFront(nil)
+        root.layoutSubtreeIfNeeded()
+
+        let kinds: [(String, NSWindow.ButtonType)] = [
+            ("close", .closeButton), ("minimise", .miniaturizeButton), ("zoom", .zoomButton),
+        ]
+        for (name, kind) in kinds {
+            guard let button = window.standardWindowButton(kind) else {
+                return "\(name): the window has no button to test"
+            }
+            // The cluster genuinely has to be outside its own superview for
+            // this case to mean anything - otherwise AppKit's own hit
+            // testing would have covered it and a pass proves nothing.
+            guard let superview = button.superview else { return "\(name): no superview" }
+            guard button.frame.minY < 0 || button.frame.maxY > superview.bounds.height else {
+                return "\(name): the button is inside its superview, so this case is vacuous"
+            }
+            let inWindow = button.convert(button.bounds, to: nil)
+            let centre = NSPoint(x: inWindow.midX, y: inWindow.midY)
+            let hit = root.hitTest(centre)
+            guard hit === button else {
+                return "\(name): a click at the button's own centre \(centre) reaches "
+                    + "\(hit.map { String(describing: type(of: $0)) } ?? "nothing") rather than the button - "
+                    + "close/minimise/zoom are dead"
+            }
+        }
+        return nil
+    }
+
+    /// The end-to-end half of the captain's own report ("the app max window
+    /// size and closing is also not working"): a hit test returning the right
+    /// view is necessary but not sufficient, so this sends a **real**
+    /// left-click through `NSWindow.sendEvent` at the zoom button's own
+    /// centre and requires the window to have actually zoomed.
+    ///
+    /// Deliberately the zoom button rather than close: a case that proves
+    /// itself by closing the window it is measuring has nothing left to
+    /// measure, and zoom is the half the captain named first.
+    private static func test_a1ZoomButtonReallyZooms() -> String? {
+        let window = makeWindow(fused: true)
+        defer { window.close() }
+        let root = ChromeFusionRootView(frame: NSRect(x: 0, y: 0, width: 1220, height: 720))
+        root.onLayout = { [weak window] in
+            WindowChromeFusion.positionTrafficLights(
+                in: window,
+                verticalCenter: DaylightBarController.trafficLightCenterY,
+                leadingX: DaylightBarController.trafficLightLeadingX)
+        }
+        window.contentView = root
+        // The traffic-light widgets ignore a click in a window that is not
+        // key - measured: with `orderFront` alone this case reports a dead
+        // zoom against the *fixed* code too, which would make it useless.
+        // `makeKey` on a window parked at x=-20_000 in an `.accessory`
+        // process shows nothing and does not activate the app, so it never
+        // takes focus from whatever the captain is looking at.
+        window.makeKeyAndOrderFront(nil)
+        root.layoutSubtreeIfNeeded()
+
+        guard let zoom = window.standardWindowButton(.zoomButton) else { return "no zoom button" }
+        guard window.isZoomable else { return "the probe window is not zoomable" }
+        guard window.isKeyWindow else {
+            print("      NOTE: this process cannot make a window key, so the real-click half is "
+                + "unverifiable here - the hit-test case still covers the fix's own mechanism.")
+            return nil
+        }
+        let inWindow = zoom.convert(zoom.bounds, to: nil)
+        let centre = NSPoint(x: inWindow.midX, y: inWindow.midY)
+        let before = window.frame
+
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            guard let event = NSEvent.mouseEvent(
+                with: type, location: centre, modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber, context: nil,
+                eventNumber: 0, clickCount: 1,
+                pressure: type == .leftMouseDown ? 1 : 0) else {
+                return "could not synthesize a \(type) event"
+            }
+            window.sendEvent(event)
+        }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.4))
+
+        guard window.frame != before else {
+            return "a real click at the zoom button's own centre \(centre) changed nothing - "
+                + "the window is still \(before), so maximise is dead"
+        }
+        return nil
+    }
+
+    /// The fix forwards a click near the cluster to the button, so it has to
+    /// stop well short of the bar's own first control - otherwise it would
+    /// trade a dead maximise for a dead back button.
+    ///
+    /// `reservedLeadingInset` is what guarantees the gap, so this measures
+    /// against that rather than against a literal.
+    private static func test_a1HitSlopStealsNothingFromTheBar() -> String? {
+        let window = makeWindow(fused: true)
+        defer { window.close() }
+        let root = ChromeFusionRootView(frame: NSRect(x: 0, y: 0, width: 1220, height: 720))
+        root.onLayout = { [weak window] in
+            WindowChromeFusion.positionTrafficLights(
+                in: window,
+                verticalCenter: DaylightBarController.trafficLightCenterY,
+                leadingX: DaylightBarController.trafficLightLeadingX)
+        }
+        window.contentView = root
+        window.orderFront(nil)
+        root.layoutSubtreeIfNeeded()
+
+        guard let span = WindowChromeFusion.trafficLightSpanForTests(in: window) else {
+            return "no cluster to measure"
+        }
+        // Where the bar's own first leading control starts, in window
+        // coordinates - the same arithmetic the bar itself uses.
+        let firstControlX = DaylightBarController.sideMargin
+            + WindowChromeFusion.reservedLeadingInset(plain: DaylightBarController.contentInset)
+        let claimed = span.maxX + WindowChromeFusion.hitSlop
+        guard claimed < firstControlX else {
+            return "the cluster claims clicks out to x=\(claimed) but the bar's first control "
+                + "starts at x=\(firstControlX) - the slop is stealing them"
+        }
+        // And a point just past the claimed edge must go to the bar, not a button.
+        let probe = NSPoint(x: claimed + 1, y: window.frame.height - DaylightBarController.trafficLightCenterY)
+        if let hit = WindowChromeFusion.trafficLightHitTest(probe, in: window) {
+            return "a point at x=\(probe.x), past the cluster, still resolves to \(type(of: hit))"
+        }
+        return nil
+    }
+
     private static func makeWindow(fused: Bool) -> NSWindow {
         let mask: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable]
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1220, height: 720),
