@@ -1326,10 +1326,22 @@ enum ToolRowLayout {
     /// that set it prints them): "Check" 59pt, "Check" + "Update" 131pt,
     /// "Sync now" 77pt, and GitHub Sync's in-sync rows 0pt - their button is
     /// hidden, and a hidden arranged subview leaves an `NSStackView`'s layout
-    /// entirely. So the widest common set needs 24 + 131 = 155, and 160 gives
-    /// it a little air: every one of Updates' 13 real rows and every one of
-    /// GitHub Sync's 8 real rows then shares one pill x exactly (measured:
-    /// 0.0pt spread on both real pages).
+    /// entirely. So the widest common set needs 24 + 131 = 155, and a little
+    /// air on top: every one of Updates' 13 real rows and every one of GitHub
+    /// Sync's 8 real rows then shares one pill x exactly.
+    ///
+    /// **170, not 160, and those measurements were all taken on a legacy
+    /// palette.** A Daylight-family `HelmButton(.secondary, .small)` is ~5pt
+    /// wider than the same button on the twelve, so the same "Check" +
+    /// "Update" pair needs **165** there (bisected: at 164 the column spreads
+    /// by 1pt, at 165 it is exact) - above the old 160, which is why the
+    /// status column was quietly 5pt out of column on Daylight and Dusk
+    /// across all five pages that use these rows. Nobody saw it because
+    /// neither was the default; K1 made Dusk the default and
+    /// `HelmContrastSelfTest.checkStatusColumnAligned` reported it on the
+    /// first CI run. 170 is the Daylight need plus the same 5pt of air the
+    /// original value carried over its own, so both registers are in column
+    /// with headroom rather than one of them being exact.
     ///
     /// Two row shapes deliberately exceed it and shift left together -
     /// Updates' rare `.notInstalled` row ("Check" + "Install in Bootstrap
@@ -1338,7 +1350,7 @@ enum ToolRowLayout {
     /// re-creating the dead gap this constant exists to close. A row that is
     /// wide because it genuinely carries more is the better thing to make
     /// special.
-    static let statusColumnTrailingReserve: CGFloat = 160
+    static let statusColumnTrailingReserve: CGFloat = 170
 
     /// The minimum air between the name/detail column and the status column.
     ///
