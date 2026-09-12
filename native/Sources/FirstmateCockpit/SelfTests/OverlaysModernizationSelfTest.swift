@@ -308,6 +308,22 @@ enum OverlaysModernizationSelfTest {
 
     private static func checkLockScreenSeaAndField(_ ok: inout Bool) {
         print("\n-- H4: the sea is a gradient, the unlock field has a glow --")
+        // **The parallax below is only observable with motion on**, and
+        // whether it is on is a property of the machine rather than of this
+        // app: `startAnimationsIfNeeded` refuses to attach either drift under
+        // Reduce Motion, which is GL-16 working exactly as the lock screen's
+        // own header says it must ("this screen is *mandatory* - a captain who
+        // has turned it on cannot navigate away from it").
+        //
+        // A GitHub runner reports Reduce Motion **on**, so this check read the
+        // app doing the right thing as "no parallax" and failed there while
+        // passing on every developer machine. Pinning the setting is what
+        // makes the measurement about the scene rather than about the host -
+        // and the `true` half below is then worth asserting outright, which is
+        // coverage this check did not have before.
+        HelmMotion.reducedOverrideForTests = false
+        defer { HelmMotion.reducedOverrideForTests = nil }
+
         let lock = LockScreenController()
         lock.view.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
         _ = makeWindow(lock.view)
@@ -334,8 +350,27 @@ enum OverlaysModernizationSelfTest {
             problems.append("the unlock field has no glow host")
         }
 
+        // The other half of GL-16, now that the setting is under this check's
+        // control: with Reduce Motion on, a freshly built scene attaches
+        // neither drift. The two gradients stay - a still illustration is the
+        // documented Reduce Motion rendering, not a blank one.
+        HelmMotion.reducedOverrideForTests = true
+        let still = LockScreenController()
+        still.view.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
+        _ = makeWindow(still.view)
+        still.view.layoutSubtreeIfNeeded()
+        let stillScene = still.debugSceneLayers
+        if !stillScene.driftDurations.isEmpty {
+            problems.append("the swells drift under Reduce Motion - GL-16 says this screen holds still")
+        }
+        if stillScene.skyStops < 2 || stillScene.seaStops < 2 {
+            problems.append("Reduce Motion lost the gradients - it should still render the illustration")
+        }
+        HelmMotion.reducedOverrideForTests = false
+
         if problems.isEmpty {
-            print("  OK   sky/sea gradients, celestial glow, \(scene.driftDurations.count)-layer parallax, field glow")
+            print("  OK   sky/sea gradients, celestial glow, \(scene.driftDurations.count)-layer parallax,"
+                  + " field glow, still under Reduce Motion")
         } else {
             for p in problems { print("  FAIL \(p)") }
             ok = false
