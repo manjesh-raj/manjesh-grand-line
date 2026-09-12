@@ -617,13 +617,13 @@ final class ReviewController: NSViewController, DaylightDrillActions {
             return
         }
 
-        let alert = NSAlert()
-        alert.messageText = "Merge this PR?"
-        alert.informativeText = prURL
-        alert.addButton(withTitle: "Merge")
-        alert.addButton(withTitle: "Cancel")
-        alert.alertStyle = .informational
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        // G3: themed. Return still merges, as it did here.
+        guard HelmConfirm.confirm(
+            title: "Merge this PR?",
+            body: prURL,
+            confirmTitle: "Merge",
+            symbol: "arrow.triangle.merge",
+            hue: RailDestination.review.domainHue) else { return }
 
         sender.isEnabled = false
         sender.title = "Merging\u{2026}"
@@ -639,11 +639,7 @@ final class ReviewController: NSViewController, DaylightDrillActions {
                 } else {
                     sender.isEnabled = true
                     sender.title = "Merge"
-                    let failAlert = NSAlert()
-                    failAlert.messageText = "Merge failed"
-                    failAlert.informativeText = result.message
-                    failAlert.alertStyle = .warning
-                    failAlert.runModal()
+                    HelmConfirm.problem(title: "Merge failed", body: result.message)
                 }
             }
         }

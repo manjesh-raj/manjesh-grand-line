@@ -745,15 +745,18 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
     /// mockup's own copy is used verbatim.
     private func confirmDelete(id: String) {
         guard let credential = store.credential(id: id) else { return }
-        let alert = NSAlert()
-        alert.alertStyle = .critical
-        alert.messageText = "Delete \u{201C}\(credential.title)\u{201D}?"
-        alert.informativeText = "The value cannot be recovered from Grand Line once this is removed. You'll have a few seconds to undo right after."
-        // Cancel first and default, so Return does not delete - the same
-        // ordering `CommandRiskConfirmation` uses for a destructive command.
-        alert.addButton(withTitle: "Cancel")
-        alert.addButton(withTitle: "Delete")
-        guard alert.runModal() == .alertSecondButtonReturn else { return }
+        // G3: themed, with the key mapping unchanged. `confirmIsDefault:
+        // false` is what keeps Return on Cancel - the same ordering
+        // `CommandRiskConfirmation` uses for a destructive command, and the
+        // reason this site chose it in the first place.
+        guard HelmConfirm.confirm(
+            title: "Delete \u{201C}\(credential.title)\u{201D}?",
+            body: "The value cannot be recovered from Grand Line once this is removed. You'll have a few seconds to undo right after.",
+            confirmTitle: "Delete",
+            destructive: true,
+            confirmIsDefault: false,
+            symbol: "trash.fill",
+            hue: .rose) else { return }
 
         switch store.delete(id: id) {
         case .success(let removed):
@@ -770,12 +773,10 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
     }
 
     private func reportVaultError(_ error: Error) {
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Couldn't update the vault"
-        alert.informativeText = error.localizedDescription
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+        // G3: themed, still blocking - the caller's own flow continues after
+        // it and depends on the captain having read it.
+        HelmConfirm.problem(title: "Couldn't update the vault",
+                            body: error.localizedDescription)
     }
 
     // MARK: Lifecycle

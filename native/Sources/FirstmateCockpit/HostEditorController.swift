@@ -313,11 +313,8 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
     }
 
     private func presentKeyStoreError(_ error: Error, label: String) {
-        let alert = NSAlert()
-        alert.messageText = "Couldn't save \"\(label)\" to the Keychain"
-        alert.informativeText = error.localizedDescription
-        alert.alertStyle = .critical
-        alert.runModal()
+        HelmConfirm.problem(title: "Couldn't save \"\(label)\" to the Keychain",
+                            body: error.localizedDescription)
     }
 
     // MARK: Snippet chooser + port forwarding (Phase 3)
@@ -692,14 +689,11 @@ final class HostEditorController: NSViewController, NSTextFieldDelegate {
         NSSound.beep()
     }
 
-    /// A blocking validation warning at Save time (Finding 5, cockpit-audit-core) -
-    /// same `NSAlert` shape as the Keychain-save-failure alert above.
+    /// A blocking validation warning at Save time (Finding 5, cockpit-audit-core).
+    /// Still blocking after G3: `save()` returns early right after this, and
+    /// the captain has to have seen why.
     private func warn(title: String, body: String) {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = body
-        alert.alertStyle = .warning
-        alert.runModal()
+        HelmConfirm.problem(title: title, body: body)
     }
 
     /// cockpit-native-host-form-fixes, Fix 2: this editor is presented as its

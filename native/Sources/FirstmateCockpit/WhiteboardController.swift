@@ -332,15 +332,16 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
         // first. `Toast.showUndo` is deliberately not used: the elements are
         // gone from the page's memory once cleared, so an "Undo" here could
         // only lie - Excalidraw's own ⌘Z is the real undo and still works.
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Clear the whiteboard?"
-        alert.informativeText = elementCount > 0
-            ? "This removes all \(elementCount) elements from the board. \u{2318}Z on the canvas can undo it."
-            : "The board is already empty."
-        alert.addButton(withTitle: "Clear")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        // G3: themed; Return still clears, as it did here.
+        guard HelmConfirm.confirm(
+            title: "Clear the whiteboard?",
+            body: elementCount > 0
+                ? "This removes all \(elementCount) elements from the board. \u{2318}Z on the canvas can undo it."
+                : "The board is already empty.",
+            confirmTitle: "Clear",
+            destructive: true,
+            symbol: "eraser.fill",
+            hue: .rose) else { return }
         webView.call("clear") { [weak self] result in
             guard let self else { return }
             if case .success = result {

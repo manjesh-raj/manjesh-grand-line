@@ -451,14 +451,22 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
         confirmDeleteRunbook(id: id, title: runbookTitleField.stringValue, dismissingEditor: true)
     }
 
+    #if FM_SELFTESTS
+    /// G3: drive the real delete path, confirmation and all.
+    func debugConfirmDeleteRunbook(id: String, title: String) {
+        confirmDeleteRunbook(id: id, title: title)
+    }
+    #endif
+
     private func confirmDeleteRunbook(id: String, title: String, dismissingEditor: Bool = false) {
-        let alert = NSAlert()
-        alert.messageText = "Delete \"\(title)\"?"
-        alert.informativeText = "This removes the runbook file and syncs the deletion."
-        alert.addButton(withTitle: "Delete")
-        alert.addButton(withTitle: "Cancel")
-        alert.alertStyle = .warning
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        // G3: themed; Return still deletes, as it did here.
+        guard HelmConfirm.confirm(
+            title: "Delete \"\(title)\"?",
+            body: "This removes the runbook file and syncs the deletion.",
+            confirmTitle: "Delete",
+            destructive: true,
+            symbol: "trash.fill",
+            hue: .rose) else { return }
         runbookStore.deleteRunbook(id: id)
         if dismissingEditor {
             runbookEditorContainer.isHidden = true

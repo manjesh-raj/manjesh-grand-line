@@ -897,14 +897,20 @@ final class DaylightBarController: NSViewController {
     /// Unchanged from the rail's own Logout: one confirmation, same copy.
     /// `fm/grandline-avatar-menu-and-setup-guide` collapsed this from two
     /// alerts to one after live captain feedback; that decision stands.
+    #if FM_SELFTESTS
+    /// G3: drive the real logout confirmation.
+    func debugLogoutClicked() { logoutClicked() }
+    #endif
+
     private func logoutClicked() {
-        let alert = NSAlert()
-        alert.messageText = "Log out of Manjesh Grand Line?"
-        alert.informativeText = "This locks the app immediately. You'll need your Grand Line password to get back in. Your terminal sessions keep running in the background."
-        alert.addButton(withTitle: "Log Out")
-        alert.addButton(withTitle: "Cancel")
-        alert.alertStyle = .warning
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        // G3: themed; Return still logs out, as it did here.
+        guard HelmConfirm.confirm(
+            title: "Log out of Manjesh Grand Line?",
+            body: "This locks the app immediately. You'll need your Grand Line password to get back in. Your terminal sessions keep running in the background.",
+            confirmTitle: "Log Out",
+            destructive: true,
+            symbol: "lock.fill",
+            hue: .rose) else { return }
         onLogoutRequested?()
     }
 
