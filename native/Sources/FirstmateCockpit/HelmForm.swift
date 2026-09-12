@@ -391,7 +391,13 @@ private final class SunkenFieldTheming {
         // a real render: the Host editor's fields came out visibly darker than
         // the field card beside them, even though both layers reported the
         // identical colour.
-        field.backgroundColor = HelmField.fill(theme)
+        //
+        // And through `HelmInputSurface.fill(_:focused:)` rather than
+        // `HelmField.fill`, so the cell follows the layer into the focused
+        // state too. Painting the resting fill here while the layer flipped to
+        // `card` is what rendered a focused field as two boxes - see that
+        // method's own note.
+        field.backgroundColor = HelmInputSurface.fill(theme, focused: isFocused)
         field.textColor = HelmField.ink(theme)
         applyPlaceholder(theme)
     }
@@ -652,7 +658,10 @@ final class HelmTextView: NSView {
         HelmInputSurface.apply(chrome: scroll, shadowHost: self, theme: theme,
                                focused: isFocused, hue: domainHue, animated: animated)
         let ink = HelmField.ink(theme)
-        textView.backgroundColor = HelmField.fill(theme)
+        // The same pairing `SunkenFieldTheming` makes, and for the same
+        // reason: the scroll view carries the layer fill and the text view
+        // paints its own background over it, so both read one definition.
+        textView.backgroundColor = HelmInputSurface.fill(theme, focused: isFocused)
         textView.textColor = ink
         textView.insertionPointColor = ink
         HelmSelection.apply(to: textView, theme: theme)

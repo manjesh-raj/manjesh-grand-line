@@ -46,6 +46,7 @@ enum InputSurfaceSelfTest {
         checkSelectionIsThemed(&ok)
         checkSearchField(&ok)
         checkHealthCard(&ok)
+        checkOneToneInEveryState(&ok)
         print(ok ? "InputSurfaceSelfTest: all checks passed" : "InputSurfaceSelfTest: FAILED")
         return ok
     }
@@ -330,6 +331,101 @@ enum InputSurfaceSelfTest {
     // MARK: D3 / D6 - Health
 
     /// Health's own two regressions, asserted on the real card.
+    // MARK: One box, one tone
+
+    /// A well's layer and whatever paints over it must resolve to the **same**
+    /// colour, resting and focused, in every palette.
+    ///
+    /// The captain's report: the master-password field "visibly has two
+    /// different background colors in one box: an outer white rounded field
+    /// with a blue focus ring, and inside it a distinctly different, darker
+    /// beige/tan rectangle behind the actual text/placeholder." That is
+    /// §6.9's focused-fill flip landing on the layer only - the layer went to
+    /// Daylight's `card` (`FFFFFF`) while the cell kept the resting `inset`
+    /// (`F3F0E7`), and the layer showed in the sliver the cell does not cover.
+    /// Measured on both of the app's password screens, since both are
+    /// `HelmSecureTextField`.
+    ///
+    /// **This has to read the two surfaces rather than render them.** A
+    /// focused field is covered by the window's shared field editor, which
+    /// AppKit stocks from the *cell's* background when it installs it, so an
+    /// off-screen `cacheDisplay` of the field shows whichever colour won that
+    /// race rather than the disagreement itself. What the app paints is the
+    /// pair, so the pair is what is asserted.
+    private static func checkOneToneInEveryState(_ ok: inout Bool) {
+        print("\n-- one box, one tone: layer and content agree in every state --")
+        let secure = HelmSecureTextField(placeholder: "Master password")
+        let plain = HelmTextField(placeholder: "Plain")
+        let area = HelmTextView(height: 60)
+        let window = makeWindow([secure, plain, area], height: 320)
+
+        func hex(_ color: NSColor?) -> String {
+            guard let c = color?.usingColorSpace(.sRGB) else { return "nil" }
+            return String(format: "%02X%02X%02X", Int(c.redComponent * 255),
+                          Int(c.greenComponent * 255), Int(c.blueComponent * 255))
+        }
+        func layerHex(_ view: NSView) -> String {
+            guard let cg = view.layer?.backgroundColor else { return "nil" }
+            return hex(NSColor(cgColor: cg))
+        }
+
+        var mismatches: [String] = []
+        for theme in HelmTheme.allThemes {
+            for focused in [false, true] {
+                // The text field and the text view focus separately, so each
+                // is driven into the state under test in turn.
+                window.makeFirstResponder(focused ? secure : nil)
+                HelmFocusSensing.shared.refresh()
+                secure.applyTheme(theme)
+                plain.applyTheme(theme)
+                let fieldLayer = layerHex(secure), fieldCell = hex(secure.backgroundColor)
+
+                window.makeFirstResponder(focused ? area.textView : nil)
+                HelmFocusSensing.shared.refresh()
+                area.applyTheme(theme)
+                let areaLayer = layerHex(area.chromeView), areaBody = hex(area.textView.backgroundColor)
+
+                let state = focused ? "focused" : "resting"
+                if fieldLayer != fieldCell {
+                    mismatches.append("\(theme.id) \(state): secure field layer \(fieldLayer) vs cell \(fieldCell)")
+                }
+                if areaLayer != areaBody {
+                    mismatches.append("\(theme.id) \(state): text view layer \(areaLayer) vs background \(areaBody)")
+                }
+            }
+        }
+        window.makeFirstResponder(nil)
+        HelmFocusSensing.shared.refresh()
+        check(mismatches.isEmpty,
+              "every well is one tone in every theme and state" +
+              (mismatches.isEmpty ? "" : " - \(mismatches.count) mismatch(es), first: \(mismatches[0])"),
+              &ok)
+
+        // The captain's own call, from the vault's setup screen where a
+        // focused field sits directly above an unfocused one: a well keeps its
+        // resting fill through focus, so the two match and focus is carried by
+        // the border and the glow. Asserted for **all fourteen** palettes,
+        // because that is now one rule rather than a Daylight special case -
+        // and because "one tone" above would otherwise be satisfiable by a
+        // focused fill that agrees with itself while still not matching the
+        // field beside it.
+        var flips: [String] = []
+        for theme in HelmTheme.allThemes where
+            hex(HelmInputSurface.fill(theme, focused: false)) != hex(HelmInputSurface.fill(theme, focused: true)) {
+            flips.append(theme.id)
+        }
+        check(flips.isEmpty,
+              "a well keeps one fill through focus in every palette" +
+              (flips.isEmpty ? "" : " - flipped in \(flips.joined(separator: ", "))"), &ok)
+        guard let daylight = HelmTheme.allThemes.first(where: { $0.id == "daylight" }) else {
+            fail("the daylight theme should exist", &ok)
+            return
+        }
+        check(hex(HelmInputSurface.fill(daylight, focused: true)) == daylight.daylightTokens.inset.uppercased(),
+              "daylight's focused well is still the sunken `inset` token, got \(hex(HelmInputSurface.fill(daylight, focused: true)))",
+              &ok)
+    }
+
     private static func checkHealthCard(_ ok: inout Bool) {
         print("\n-- D3/D6: Health uses the shared pill and HelmType --")
         // A real report, so the card renders a real service row rather than
