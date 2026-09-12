@@ -475,6 +475,49 @@ enum HelmInputSurface {
     /// two durations.
     static let focusTransitionDuration: TimeInterval = HelmMotion.stateDuration
 
+    /// The surface a well actually resolves to, resting or focused.
+    ///
+    /// **One definition, because two things paint it and they must not
+    /// disagree.** A well's fill is drawn by its own layer (`applyChrome`
+    /// below) *and*, for a well whose content draws its own background - an
+    /// `NSTextField`'s cell, an `NSTextView` - by that content's
+    /// `backgroundColor`, which AppKit paints **over** the layer.
+    /// `SunkenFieldTheming`'s own comment already records why both are set;
+    /// what it missed is that they have to be set to the *same* colour in
+    /// every state.
+    ///
+    /// **A well keeps one fill through focus, and that is a captain decision
+    /// taken against §6.9's literal wording.** The spec says the focused fill
+    /// "flips to the card surface", and the flip used to happen on the layer
+    /// only - so a focused field on the Daylight family rendered an outer
+    /// **white** rounded box (`card`, the layer, visible in the sliver the
+    /// cell does not cover) wrapped around an inner **beige** rectangle
+    /// (`inset`, the cell), measured as layer `FFFFFF` against cell `F3F0E7`.
+    /// That is what the captain reported as one box with "two colors, white
+    /// and the theme color".
+    ///
+    /// Making the two agree leaves the question of *which* tone, and he
+    /// answered it from the vault's own setup screen, where a focused "Master
+    /// password" sits directly above an unfocused "Confirm master password":
+    /// the unfocused, `inset`-filled well is the one that "looks good". The
+    /// other direction was available and is worse on this screen for a reason
+    /// the spec did not consider - §6.9 describes a well on the *page*, and
+    /// every form in this app puts its wells on a **card**, so flipping the
+    /// fill to `card` makes a focused field vanish into the surface behind it
+    /// and stop matching the field below it.
+    ///
+    /// So focus is carried by the accent border and the glow alone - which is
+    /// what the twelve pre-Daylight palettes have always done, making this one
+    /// rule for all fourteen rather than a Daylight special case.
+    static func fill(_ theme: HelmTheme, focused: Bool) -> NSColor {
+        // `focused` is deliberately kept even though both states answer the
+        // same today: this is the one place the question is asked, so a future
+        // change to the focused surface has exactly one place to land and
+        // cannot reintroduce a layer that moves while its content does not.
+        _ = focused
+        return HelmField.fill(theme)
+    }
+
     /// Apply the resting or focused chrome to a sunken well.
     ///
     /// - Parameters:
@@ -504,6 +547,9 @@ enum HelmInputSurface {
                                     theme: HelmTheme, focused: Bool,
                                     hue: HelmDomainHue?, isRow: Bool) {
         HelmField.applySunken(to: chrome, theme: theme, isRow: isRow)
+        // Both states through `fill(_:focused:)`, so the layer and whatever
+        // content paints over it cannot resolve to different colours.
+        chrome.layer?.backgroundColor = fill(theme, focused: focused).cgColor
         guard focused else {
             // Explicitly back to the hairline: `applySunken` only recolours,
             // so without this a well that has been focused once keeps the
@@ -512,15 +558,13 @@ enum HelmInputSurface {
             shadowHost?.layer?.shadowOpacity = 0
             return
         }
-        // §6.9's focused well: the fill flips to the *card* surface, the
-        // border becomes the page's own domain hue, and the glow is that hue
-        // at 15%. `hue` is opt-in, so a well on a page that has not claimed
+        // §6.9's focused well: the fill flips to the *card* surface (done
+        // above, through `fill(_:focused:)` - never here, or the layer would
+        // move while the cell painting over it did not), the border becomes
+        // the page's own domain hue, and the glow is that hue at 15%. `hue` is opt-in, so a well on a page that has not claimed
         // one still lights in the theme's accent exactly as it did before
         // Phase 4.
         let accent = hue.map { $0.baseColor(in: theme) } ?? HelmTheme.nsColor(theme.accentHex)
-        if theme.isDaylight {
-            chrome.layer?.backgroundColor = HelmTheme.nsColor(theme.daylightTokens.card).cgColor
-        }
         chrome.layer?.borderWidth = focusBorderWidth
         chrome.layer?.borderColor = accent.withAlphaComponent(focusBorderAlpha).cgColor
         guard let host = shadowHost else { return }

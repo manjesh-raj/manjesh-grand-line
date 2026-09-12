@@ -94,6 +94,8 @@ enum CredentialVaultViewSelfTest {
         checkExactlyOneSwitchPerToggleRow(check)
         checkPasswordChangeWarnsAboutGitHistory(check)
         checkThemeSweep(scratch: scratch, window: window, check)
+        checkListBodyFillsItsCard(check)
+        checkHeaderlessCardGivesItsBodyTheCard(check)
 
         window.contentView = nil
         if ok {
@@ -678,6 +680,146 @@ enum CredentialVaultViewSelfTest {
         var count = view is NSSwitch ? 1 : 0
         for sub in view.subviews { count += countSwitchControls(in: sub) }
         return count
+    }
+
+    // MARK: The list is actually on screen
+
+    /// The saved credential must be **visible**, not merely present in the
+    /// data source.
+    ///
+    /// The captain's report: "In the top it says one credential saved.
+    /// However, in the UI I am not able to see anything." Both halves of that
+    /// were true at once, which is what made it hard to find - the store held
+    /// the credential, `renderList` built the right rows, the table reported
+    /// the right `numberOfRows`, and the drill subtitle said "1 credential".
+    /// What was wrong was **geometry**: `HelmCard`'s vertical chain had two
+    /// free heights against one equation for a headerless card whose body has
+    /// no intrinsic height, and the solver resolved a 559pt-tall card's scroll
+    /// view to `(12, 12, 1148, 0)`. See `HelmCard.headerCollapsed`.
+    ///
+    /// So this asserts the *shape on screen* rather than the model. A row
+    /// count check alone passed throughout the bug - the rows were there - and
+    /// so did every other case in this file.
+    ///
+    /// **It mounts a real `AppShellController`, and that is the whole reason
+    /// it reproduces.** The defect was an ambiguity, so which way it resolved
+    /// depended on the surrounding hierarchy: measured, the same page built
+    /// standalone - with its frame set by hand, as every other case here does,
+    /// or even pinned by constraints inside a plain host - resolved the
+    /// harmless way and rendered fine, while the real shell resolved it the
+    /// other way every time. `NSView.hasAmbiguousLayout` does not flag it
+    /// either (measured: `false` on both sides of the fix), so there is no
+    /// cheaper deterministic stand-in for the real thing.
+    private static func checkListBodyFillsItsCard(_ check: (Bool, String) -> Void) {
+        print("\n-- the list is on screen, not just in the data source --")
+        let window = NSWindow(contentRect: NSRect(x: -20_000, y: 0, width: 1220, height: 720),
+                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let hostStore = HostStore()
+        let keyStore = SSHKeyStore()
+        let snippetStore = SnippetStore()
+        let shell = AppShellController(
+            hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
+            console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
+            settings: SettingsController(hostStore: hostStore, keyStore: keyStore,
+                                         snippetStore: snippetStore, dictationStore: DictationStore()),
+            hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, shiftStore: ShiftStore(),
+            dictationStore: DictationStore(), commandLibraryStore: CommandLibraryStore(),
+            scheduleStore: ScheduleStore(),
+            makeHostConsole: { ConsoleController(keyStore: keyStore, snippetStore: snippetStore,
+                                                 isFirstmateConsole: false) })
+        window.contentViewController = shell
+        window.orderFront(nil)
+        defer { window.orderOut(nil) }
+        // The page defers everything privileged until the app is unlocked.
+        let wasLocked = AppLockGate.shared.isLocked
+        AppLockGate.shared.setLocked(false)
+        defer { AppLockGate.shared.setLocked(wasLocked) }
+
+        shell.show(.poneglyph)
+        window.displayIfNeeded()
+        shell.view.layoutSubtreeIfNeeded()
+
+        let store = shell.debugPoneglyphStore
+        let controller = shell.debugPoneglyph
+        _ = store.createVault(masterPassword: "view-test-password")
+        _ = store.add(VaultCredential(title: "Gmail", category: .email,
+                                      account: "captain@example.com", secret: "s"))
+        window.displayIfNeeded()
+        shell.view.layoutSubtreeIfNeeded()
+
+        let list = controller.debugList
+        // The brief's own ask: the list's item count matches what the vault
+        // reports. Kept even though it passed throughout the bug - it is the
+        // half that would catch a future filter or reload defect.
+        let records = (0..<list.debugRowCount).filter { list.debugItem($0)?.isRecord == true }
+        check(records.count == store.credentials.count,
+              "the list should render one record per stored credential, got \(records.count) for \(store.credentials.count)")
+        check(controller.drillHeaderSubtitle?.hasPrefix("1 credential") == true,
+              "the drill subtitle should report the one credential, got \(String(describing: controller.drillHeaderSubtitle))")
+
+        // The half that actually catches it.
+        guard let scroll = list.debugTable.enclosingScrollView else {
+            check(false, "the list's table should be inside a scroll view")
+            return
+        }
+        check(list.card.frame.height > 200,
+              "the list card should have real height, got \(list.card.frame.height)")
+        check(scroll.frame.height > list.card.frame.height / 2,
+              "the list's scroll view should fill its card, got \(scroll.frame.height) inside a \(list.card.frame.height)pt card")
+        guard let row = records.first else {
+            check(false, "there should be a record row to look at")
+            return
+        }
+        let rowRect = scroll.contentView.convert(list.debugTable.rect(ofRow: row), from: list.debugTable)
+        check(scroll.contentView.bounds.intersects(rowRect),
+              "the credential's row should be inside the visible rect, row \(rowRect) vs clip \(scroll.contentView.bounds)")
+    }
+
+    /// The component-level half of the same bug, and the deterministic one.
+    ///
+    /// A `HelmCard` with no header and a body that has no intrinsic height of
+    /// its own - an `NSScrollView` has none at all - must still give that body
+    /// the card. Asserted directly on `HelmCard` because the page-level case
+    /// above depends on the surrounding hierarchy to resolve the ambiguity one
+    /// way rather than the other, and this does not.
+    private static func checkHeaderlessCardGivesItsBodyTheCard(_ check: (Bool, String) -> Void) {
+        print("\n-- a headerless card gives its body the whole card --")
+        let host = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+        let card = HelmCard()
+        let scroll = NSScrollView()
+        scroll.documentView = NSView()
+        card.setBody(scroll, insets: NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12))
+        host.addSubview(card)
+        NSLayoutConstraint.activate([
+            card.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            card.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            card.topAnchor.constraint(equalTo: host.topAnchor),
+            card.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        host.layoutSubtreeIfNeeded()
+        check(abs(scroll.frame.height - (card.frame.height - 24)) < 1,
+              "a headerless card's body should be the card less its insets, got \(scroll.frame.height) inside \(card.frame.height)")
+
+        // And a card that *does* have a header still gives the header its room
+        // - the collapse must be lifted, not merely applied.
+        let headed = HelmCard()
+        let body = NSScrollView()
+        body.documentView = NSView()
+        headed.setHeader(symbol: "lock.fill", title: "Titled")
+        headed.setBody(body)
+        let host2 = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+        host2.addSubview(headed)
+        NSLayoutConstraint.activate([
+            headed.leadingAnchor.constraint(equalTo: host2.leadingAnchor),
+            headed.trailingAnchor.constraint(equalTo: host2.trailingAnchor),
+            headed.topAnchor.constraint(equalTo: host2.topAnchor),
+            headed.bottomAnchor.constraint(equalTo: host2.bottomAnchor),
+        ])
+        host2.layoutSubtreeIfNeeded()
+        check(headed.headerContainer.frame.height > 20,
+              "a card with a header should still give it room, got \(headed.headerContainer.frame.height)")
+        check(body.frame.height > 200,
+              "a headed card should still give its body the rest, got \(body.frame.height)")
     }
 
     private static func checkThemeSweep(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {

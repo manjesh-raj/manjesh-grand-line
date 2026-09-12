@@ -422,6 +422,38 @@ final class HelmCard: NSView {
     let bodyContainer = NSView()
     private let divider = NSView()
 
+    /// Collapses the header area to nothing until a header is actually set.
+    ///
+    /// **This constraint is what makes a headerless card's layout
+    /// unambiguous, and without it the body can vanish.** The card's vertical
+    /// chain is `top -> headerContainer -> divider (1pt) -> bodyContainer ->
+    /// bottom`, all required. `headerContainer` with no subviews has no
+    /// intrinsic height, and a body whose content has none either - an
+    /// `NSScrollView` has no intrinsic content size at all - leaves **two**
+    /// free heights against **one** equation. The solver may then satisfy
+    /// every constraint by giving the whole card to the header and collapsing
+    /// the body to its insets, which is the tie-breaking drift AGENTS.md's
+    /// gotcha (10) records for a different under-determined layout.
+    ///
+    /// Measured on the real Poneglyph page mounted in the real shell: a
+    /// 559pt-tall card resolved its list's scroll view to **0pt** (frame
+    /// `(12, 12, 1148, 0)`), so a vault holding one credential rendered a
+    /// correct "1 credential" drill subtitle above a completely blank card.
+    /// Forcing layout did not move it and neither did a window resize - it was
+    /// a satisfied layout, not a stale one. The same card built standalone
+    /// resolved the *other* way and rendered fine, which is exactly why this
+    /// reached a captain: it is ambiguity, so it depends on the surrounding
+    /// hierarchy rather than on this file.
+    private var headerCollapsed: NSLayoutConstraint!
+
+    /// The divider's own height, collapsed with the header.
+    ///
+    /// A hidden plain `NSView` still participates in layout (AGENTS.md's
+    /// gotcha (11)), so hiding the divider alone still charges the body a
+    /// point - which is the difference between "the body is the card" and
+    /// "the body is the card minus something".
+    private var dividerHeight: NSLayoutConstraint!
+
     /// Set only by the structured `setHeader(symbol:...)`, so `applyTheme`
     /// knows whether it owns a tile and a subtitle label to re-colour.
     private var headerTile: IconTileView?
@@ -450,13 +482,20 @@ final class HelmCard: NSView {
             divider.leadingAnchor.constraint(equalTo: leadingAnchor),
             divider.trailingAnchor.constraint(equalTo: trailingAnchor),
             divider.topAnchor.constraint(equalTo: headerContainer.bottomAnchor),
-            divider.heightAnchor.constraint(equalToConstant: 1),
 
             bodyContainer.leadingAnchor.constraint(equalTo: leadingAnchor),
             bodyContainer.trailingAnchor.constraint(equalTo: trailingAnchor),
             bodyContainer.topAnchor.constraint(equalTo: divider.bottomAnchor),
             bodyContainer.bottomAnchor.constraint(equalTo: bottomAnchor),
         ])
+        // A card starts headerless, so start collapsed - `setHeader` is what
+        // lifts it. The divider goes with it: a 1pt line across the top of a
+        // card with no header above it is a stray rule, not a separator.
+        headerCollapsed = headerContainer.heightAnchor.constraint(equalToConstant: 0)
+        headerCollapsed.isActive = true
+        dividerHeight = divider.heightAnchor.constraint(equalToConstant: 0)
+        dividerHeight.isActive = true
+        divider.isHidden = true
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
@@ -555,6 +594,11 @@ final class HelmCard: NSView {
     /// An arbitrary header view - for headers carrying their own badges,
     /// filter rows or buttons.
     func setHeader(_ view: NSView, insets: NSEdgeInsets = HelmCard.headerInsets) {
+        // Every `setHeader` overload funnels here, so this is the one place
+        // the header area is lifted out of its collapsed state.
+        headerCollapsed.isActive = false
+        dividerHeight.constant = 1
+        divider.isHidden = false
         headerContainer.subviews.forEach { $0.removeFromSuperview() }
         view.translatesAutoresizingMaskIntoConstraints = false
         headerContainer.addSubview(view)

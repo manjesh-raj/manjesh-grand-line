@@ -159,6 +159,16 @@ final class AppShellController: NSViewController {
     /// `CredentialVaultController.swift`'s headers for the full history.
     private let vault = VaultController()
     private let poneglyph = CredentialVaultController()
+
+    #if FM_SELFTESTS
+    /// The Poneglyph page and its store, so a suite can drive the real
+    /// destination inside a real shell. `CredentialVaultViewSelfTest`'s
+    /// list-geometry case needs the shell specifically: the bug it guards
+    /// (`HelmCard.headerCollapsed`) was an *ambiguous* layout, and a card
+    /// mounted in a simpler hierarchy resolves it the harmless way.
+    var debugPoneglyph: CredentialVaultController { poneglyph }
+    var debugPoneglyphStore: CredentialVaultStore { poneglyph.credentialStore }
+    #endif
     private let dictation: DictationController
     /// `fm/grandline-schedules-sidebar-move`: F11's Schedules card, promoted
     /// off the Automation page onto its own rail destination - see

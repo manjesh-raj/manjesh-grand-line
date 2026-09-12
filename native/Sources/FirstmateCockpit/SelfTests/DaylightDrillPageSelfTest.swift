@@ -355,8 +355,19 @@ enum DaylightDrillPageSelfTest {
         }
 
         // The well: `dWell` radius, `inset` fill, and a focused well that
-        // flips to `card` with the *page's* hue on its border - §6.9's
-        // non-negotiable focused state.
+        // keeps that fill and takes the *page's* hue on its border.
+        //
+        // **The fill half is inverted from what §6.9 states, and deliberately
+        // so** - the spec's "the focused fill flips to `card`" is overturned by
+        // the captain's own call on the Poneglyph setup screen, where a focused
+        // "Master password" sits directly above an unfocused "Confirm master
+        // password": the unfocused, `inset`-filled well is the one that "looks
+        // good". §6.9 describes a well on the *page*, and every form in this app
+        // puts its wells on a **card**, so flipping to `card` makes a focused
+        // field vanish into the surface behind it. Focus is the border and the
+        // glow, which is what the twelve legacy palettes always did. The reason
+        // lives on `HelmInputSurface.fill(_:focused:)`; flipping this assertion
+        // back means re-opening that decision, not tidying a stale test.
         let field = HelmTextField(placeholder: "Something")
         field.applyTheme(daylight)
         let resting = HelmField.geometry(of: field.chromeView)
@@ -381,8 +392,8 @@ enum DaylightDrillPageSelfTest {
             ok = false
         }
         if !sameColor(chrome.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) },
-                      HelmTheme.nsColor(DaylightPalette.card)) {
-            print("  FAIL a focused Daylight well did not flip its fill to `card`")
+                      HelmTheme.nsColor(DaylightPalette.inset)) {
+            print("  FAIL a focused Daylight well should keep its `inset` fill")
             ok = false
         }
         let hueBase = HelmDomainHue.rose.baseColor(in: daylight)

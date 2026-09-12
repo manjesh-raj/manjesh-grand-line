@@ -206,6 +206,10 @@ final class CredentialVaultUnlockView: NSView {
         updateStrength()
     }
 
+    #if FM_SELFTESTS
+    var debugPasswordField: HelmSecureTextField { passwordField }
+    #endif
+
     func focusPasswordField() {
         window?.makeFirstResponder(passwordField)
     }
