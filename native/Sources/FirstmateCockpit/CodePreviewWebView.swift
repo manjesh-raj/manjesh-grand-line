@@ -70,6 +70,14 @@ final class CodePreviewWebView: WKWebView {
     /// Caret moved. Throttled only by how fast a caret can move; the handler
     /// updates one label.
     var onCursorMoved: ((CodePreviewCursor) -> Void)?
+    /// M2: the editor scrolled away from - or back to - its own top edge.
+    ///
+    /// The page only posts when that boolean flips, so this fires twice per
+    /// scroll gesture rather than per pixel. The answer itself is re-derived
+    /// here from the raw offset through `ScrollEdgeObserver`'s own threshold,
+    /// so that class stays the single definition of "is this away from its
+    /// own top edge" for native and web-hosted pages alike.
+    var onScrolledAwayFromTop: ((Bool) -> Void)?
 
     private(set) var isReady = false
     private(set) var hasLoaded = false
@@ -235,6 +243,9 @@ final class CodePreviewWebView: WKWebView {
         case "change":
             guard let id = body["id"] as? String, let content = body["content"] as? String else { return }
             onSnippetChanged?(id, content)
+        case "scroll":
+            let top = (body["top"] as? Double) ?? 0
+            onScrolledAwayFromTop?(top > Double(ScrollEdgeObserver.offsetThreshold))
         case "cursor":
             onCursorMoved?(CodePreviewCursor(
                 line: (body["line"] as? Int) ?? 1,

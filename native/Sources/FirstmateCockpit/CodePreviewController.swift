@@ -155,6 +155,10 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         target: self, action: #selector(clearTapped))
 
     private let editorCard = NSView()
+    /// M2: the scroll-edge hairline, driven by Monaco's own scroll position
+    /// rather than by an `NSScrollView` this page does not have. Built in
+    /// `loadView` once `editorCard` exists.
+    private var scrollEdge: HelmScrollEdgeHairline?
     private let webView = CodePreviewWebView()
     private let overlay = NSView()
     private var overlayState: HelmEmptyState?
@@ -391,6 +395,23 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
 
         overlay.translatesAutoresizingMaskIntoConstraints = false
         editorCard.addSubview(overlay)
+
+        // M2 (§3M): the same hairline every native page gets, at the one
+        // boundary this page's content genuinely slides under.
+        //
+        // **Why the card's top edge and not the app's floating bar.** A3's
+        // shell-level edge is deliberately withheld from a page whose own top
+        // is a static strip - `ScrollEdgeObserver`'s header lists Console,
+        // Tools and Docs by name for exactly this - and this page's top is a
+        // `HelmPageToolbar` that never moves. What scrolls under it is the
+        // editor, so the boundary is the card's own top edge, which is the
+        // treatment D5(a) already gives a card-hosted list (`HostsListSection`
+        // is the reference). Adding it to the bar instead would draw a line
+        // at an edge nothing passes.
+        scrollEdge = HelmScrollEdgeHairline(atTopOf: editorCard, in: editorCard)
+        webView.onScrolledAwayFromTop = { [weak self] scrolled in
+            self?.scrollEdge?.setScrolled(scrolled)
+        }
 
         NSLayoutConstraint.activate([
             editorCard.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.cardInset),

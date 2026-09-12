@@ -96,6 +96,7 @@ enum HelmContrastSelfTest {
         checkDaylightTypeRoles(&ok)
         checkGradientTileRecipe(&ok)
         checkTextSelectionContrast(&ok)
+        checkTerminalCard(&ok)
         print(ok ? "== contrast: PASS ==" : "== contrast: FAIL ==")
         return ok
     }
@@ -2176,6 +2177,154 @@ enum HelmContrastSelfTest {
     /// for "the Hosts hue" unconditionally, so a captain on any of the 12
     /// pre-existing palettes has to get a real, in-palette, legible pair back.
     /// That is asserted for every theme, not just Daylight.
+    /// K2 of the UI modernization audit (§3K), finishing the design doc's
+    /// §6.13: the Daylight family's terminal cells are painted on a dark card,
+    /// and every colour on it is measured against that card rather than
+    /// against the page ground.
+    ///
+    /// **The set is not invented, and this check is what makes that
+    /// verifiable.** §2.1 gives Daylight's terminal card the fill `23242B`
+    /// and *also* makes that exact value Dusk's `card`, so the palette for a
+    /// dark card in this design language already existed - the dark
+    /// register's. This measures that claim rather than asserting it: all 15
+    /// non-black slots of `DaylightPalette.darkRegisterAnsi` against both
+    /// registers' `termBackground`, plus the ink and the caret.
+    ///
+    /// Slot 0 ("black") is **exempt by nature** and stated rather than
+    /// skipped, exactly as `checkDuskPalette` already does for the same slot
+    /// against `paper`: a terminal's black cannot separate from a dark
+    /// background, and lightening it until it could would stop it being
+    /// black.
+    private static func checkTerminalCard(_ ok: inout Bool) {
+        print("\n-- K2: the dark terminal card (design doc section 6.13) --")
+        let floor = HelmContrast.textTarget
+        // A caret is a filled block, not running text: what it has to do is
+        // separate from the card, which is the non-text floor. It clears the
+        // text floor anyway, and the check states which one it is holding to
+        // so a future value cannot quietly slide under 4.5 unnoticed.
+        let caretFloor = HelmContrast.textTarget
+
+        func expect(_ label: String, _ value: Double, atLeast target: Double) {
+            if value < target - 0.01 {
+                print("  FAIL \(label): \(fmt(value)):1, want >= \(fmt(target))")
+                ok = false
+            } else {
+                print("  OK   \(pad(label, 48)) \(fmt(value)):1")
+            }
+        }
+
+        // Every non-Daylight palette must keep painting its terminal in its
+        // own page colours - K2 moved one family, not the app.
+        for theme in HelmTheme.allThemes where !theme.isDaylight {
+            if theme.terminalCard != nil {
+                print("  FAIL \(theme.id) must have no terminalCard: its page ground and its terminal are correctly the same token")
+                ok = false
+            }
+        }
+
+        for id in ["daylight", "dusk"] {
+            guard let theme = HelmTheme.theme(id: id) else {
+                print("  FAIL \(id) is not in HelmTheme.allThemes")
+                ok = false
+                continue
+            }
+            guard let card = theme.terminalCard else {
+                print("  FAIL \(id) has no terminalCard - section 6.13's dark card is what K2 finished")
+                ok = false
+                continue
+            }
+            let fill = HelmTheme.nsColor(card.backgroundHex)
+
+            // The card must be the token the design doc names, not a value
+            // this file re-derived.
+            let wantFill = theme.daylightTokens.termBackground
+            if card.backgroundHex.lowercased() != wantFill.lowercased() {
+                print("  FAIL \(id) terminal fill: got \(card.backgroundHex), want termBackground \(wantFill)")
+                ok = false
+            }
+            // And it has to differ from the page ground, or there is no card.
+            let pageSeparation = HelmContrast.ratio(fill, HelmTheme.nsColor(theme.backgroundHex))
+            if pageSeparation <= 1.001 {
+                print("  FAIL \(id): the terminal card is the same colour as the page ground - nothing reads as a card")
+                ok = false
+            } else {
+                print("  OK   \(pad("\(id) card vs page ground", 48)) \(fmt(pageSeparation)):1")
+            }
+
+            expect("\(id) terminal ink on card",
+                   HelmContrast.ratio(HelmTheme.nsColor(card.inkHex), fill), atLeast: floor)
+            expect("\(id) caret on card",
+                   HelmContrast.ratio(HelmTheme.nsColor(card.cursorHex), fill), atLeast: caretFloor)
+
+            // Every slot but 0, against this card.
+            if card.ansiHex.count != 16 {
+                print("  FAIL \(id) terminal card has \(card.ansiHex.count) ANSI slots, want 16")
+                ok = false
+                continue
+            }
+            var worst = (value: Double.greatestFiniteMagnitude, slot: 0)
+            for slot in 1..<16 {
+                let r = HelmContrast.ratio(HelmTheme.nsColor(card.ansiHex[slot]), fill)
+                if r < worst.value { worst = (r, slot) }
+                if r < floor - 0.01 {
+                    print("  FAIL \(id) ANSI slot \(slot) (\(card.ansiHex[slot])) on the card: \(fmt(r)):1")
+                    ok = false
+                }
+            }
+            print("  OK   \(pad("\(id) ANSI slots 1-15 on card (worst: slot \(worst.slot))", 48)) \(fmt(worst.value)):1")
+            let black = HelmContrast.ratio(HelmTheme.nsColor(card.ansiHex[0]), fill)
+            print("  OK   \(pad("\(id) ANSI slot 0 exempt by nature", 48)) \(fmt(black)):1")
+
+            // Selection is deliberately not part of the override - it is an
+            // opaque fill plus ink on it, so its own pair is unaffected by
+            // what is behind it. What it does need is to stay *visible*
+            // against the card, which is a separation floor and not a text
+            // one (`HelmSelection.minimumSurfaceSeparation`).
+            let selectionOnCard = HelmContrast.ratio(HelmTheme.nsColor(theme.selectionHex), fill)
+            if selectionOnCard < Double(HelmSelection.minimumSurfaceSeparation) {
+                print("  FAIL \(id) selection fill vs card: \(fmt(selectionOnCard)):1 - the selection would not be visible on the card")
+                ok = false
+            } else {
+                print("  OK   \(pad("\(id) selection fill separates from card", 48)) \(fmt(selectionOnCard)):1")
+            }
+        }
+
+        // One array, three surfaces: Dusk's page palette and both registers'
+        // cards are the same 16 values, so a future correction cannot land on
+        // one and miss the others.
+        if let dusk = HelmTheme.theme(id: "dusk"),
+           dusk.ansiHex != DaylightPalette.darkRegisterAnsi {
+            print("  FAIL dusk.ansiHex is no longer DaylightPalette.darkRegisterAnsi - the page palette and the terminal cards can now drift")
+            ok = false
+        }
+        if let daylight = HelmTheme.theme(id: "daylight"),
+           let dusk = HelmTheme.theme(id: "dusk"),
+           daylight.terminalCard?.ansiHex != dusk.terminalCard?.ansiHex {
+            print("  FAIL the two registers' terminal cards no longer share one ANSI set")
+            ok = false
+        }
+
+        // And the apply path actually reads it. A source guard, because the
+        // behavioural half lives in the window-backed suite: a theme whose
+        // card is perfect but which `apply(to:)` ignores renders exactly like
+        // the pre-K2 app.
+        let themeFile = (SelfTestSources.appSourceDirectory() ?? URL(fileURLWithPath: "/nonexistent"))
+            .appendingPathComponent("HelmTheme.swift")
+        guard let source = try? String(contentsOf: themeFile, encoding: .utf8) else {
+            print("  NOTE could not read HelmTheme.swift - skipping the apply-path source guard")
+            return
+        }
+        for needle in ["cells?.ansiHex ?? ansiHex",
+                       "cells?.inkHex ?? foregroundHex",
+                       "cells?.backgroundHex ?? backgroundHex",
+                       "cells?.cursorHex ?? cursorHex"] {
+            if !source.contains(needle) {
+                print("  FAIL HelmTheme.apply(to:) no longer prefers the terminal card: missing `\(needle)`")
+                ok = false
+            }
+        }
+    }
+
     private static func checkDaylightDomainHues(_ ok: inout Bool) {
         print("\n-- daylight domain hues (section 2.2 table, 2.8 per-theme fallback) --")
         guard let daylight = HelmTheme.theme(id: "daylight") else { return }

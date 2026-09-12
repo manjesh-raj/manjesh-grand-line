@@ -30,12 +30,19 @@
 //    terminal. Setting `backgroundHex` to `termBg` would turn every page's
 //    ground dark; setting it to `paper` gives a light terminal, which is what
 //    `helm-light` already does and what keeps every contrast guarantee in this
-//    file meaningful. So `backgroundHex` is `paper`, `termBackgroundHex`/
-//    `termInkHex` are recorded here for the phase that owns the Console page
-//    (§6.13, Phase 4), and `HelmTheme.apply(to:)` is untouched - it is on the
-//    migration's own "must NOT change" list. That phase will need its own
-//    contrast-verified ANSI set for a dark card; inventing one here, unused
-//    and unverifiable against a real render, would be worse than saying so.
+//    file meaningful. So `backgroundHex` stays `paper`.
+//
+//    **The deferral this deviation used to carry is closed** (K2 of the UI
+//    modernization audit). Phase 1 recorded `termBackground`/`termInk` here
+//    unused, because the missing piece was a contrast-verified ANSI set for a
+//    dark card and inventing one unverified would have been worse than saying
+//    so. It is no longer invented: §2.1 makes Daylight's `termBg` and Dusk's
+//    `card` the *same* value, so the dark register's own measured palette IS
+//    the set - see `DaylightPalette.daylightTerminalCard`. The two tokens
+//    resolve through `HelmTheme.terminalCard` now, which `apply(to:)` reads
+//    instead of `backgroundHex`/`foregroundHex`/`ansiHex` for a theme that has
+//    one. `backgroundHex`'s two jobs stopped fighting by splitting the
+//    terminal half off into its own field, not by moving `backgroundHex`.
 //
 // 2. **`ShiftFont.serif` is not re-pointed at the rounded face yet.** §3
 //    retires the serif as the page-title voice, but `HelmType.pageTitle`'s
@@ -249,15 +256,114 @@ enum DaylightPalette {
     /// Row hover fill inside cards.
     static let rowHover = DaylightTokens.light.rowHover
 
-    // MARK: §2.1 Terminal card - recorded for Phase 4, see this file's header
+    // MARK: §2.1 Terminal card
 
-    /// The dark terminal card inside the light UI. **Not** wired up in Phase 1
-    /// - see deviation 1 in this file's header for why, and §6.13 for the
-    /// phase that owns it.
+    /// The dark terminal card inside the light UI.
+    ///
+    /// Wired up by K2 via `daylightTerminalCard` below - and consumed directly
+    /// by every other dark pane in the app (`LogRawPaneView.surfaceColor`,
+    /// `KubeLogListView`), which is what the audit means by "exactly as Log
+    /// Analyzer's raw pane already does".
     static let termBackground = DaylightTokens.light.termBackground
-    /// The terminal card's default ink (SwiftTerm's own palette still governs
-    /// individual cells). Same deferral as `termBackground`.
+    /// The terminal card's default ink. SwiftTerm's own 16-slot palette still
+    /// governs individual cells - see `darkRegisterAnsi`.
     static let termInk = DaylightTokens.light.termInk
+
+    // MARK: §6.13 The dark terminal card (K2)
+
+    /// The 16 ANSI slots for a **dark** surface in this design language, in
+    /// SwiftTerm/xterm order.
+    ///
+    /// This is Dusk's own page palette, named and shared rather than copied,
+    /// because it has two jobs now: Dusk's `ansiHex` (measured against that
+    /// register's `paper`) and **both** registers' terminal cards (measured
+    /// against `termBackground`). One array, so a future correction cannot
+    /// land on one of the three surfaces and not the others.
+    ///
+    /// Per-slot derivation is in `HelmTheme.dusk`'s own doc comment - each
+    /// normal slot is that hue's text-corrected variant for a dark register,
+    /// each bright slot is 15% white into its normal sibling.
+    static let darkRegisterAnsi: [String] = [
+        // black (exempt - see below)   red                        green
+        DaylightTokens.dusk.hairRow, DaylightTokens.dusk.badText, DaylightTokens.dusk.okText,
+        // yellow                        blue                          magenta
+        DaylightTokens.dusk.warnText, DaylightTokens.dusk.linkBlue, "9C81E0",
+        // cyan (teal lightened by the same rule)
+        "2E9EAD",
+        // white - a light warm grey, the mirror of Daylight's deep warm grey.
+        "C9C5B9",
+        // bright black - the dim-but-still-legible slot: this register's own
+        // muted token.
+        DaylightTokens.dusk.muted,
+        // bright red/green/yellow/blue/magenta/cyan - 15% white into each
+        // normal sibling.
+        "E58787", "56B595", "D59E4D", "809EF0", "AB94E5", "4DADB9",
+        // bright white
+        DaylightTokens.dusk.ink,
+    ]
+
+    /// **Daylight's terminal card** - K2 of the UI modernization audit,
+    /// finishing §6.13 and closing this file's own deviation 1.
+    ///
+    /// **The set is derived, not invented, and the derivation is the whole
+    /// point.** §2.1 gives Daylight's terminal card the fill `23242B`, and
+    /// §2.1 *also* makes that exact value Dusk's `card` - the Dusk derivation
+    /// says so in as many words ("`card` is §2.1's own `termBg`"). So a
+    /// contrast-verified palette for a dark card in this design language
+    /// already exists: it is the dark register's. Daylight's terminal card is
+    /// Dusk's register, appearing inside a light app - which is what "a dark
+    /// terminal card" means, and why no new hue had to be chosen.
+    ///
+    /// Measured against this fill (`HelmContrastSelfTest.checkTerminalCard`
+    /// re-runs all of it):
+    /// - ink `E6E4DC`: **12.14:1**.
+    /// - ANSI slots 1-15: **4.87-12.37**, worst cyan at 4.87. All clear 4.5.
+    /// - slot 0 ("black", `2A2B33`): 1.10:1, **exempt by nature** - the same
+    ///   exemption every dark palette in this app already carries, including
+    ///   `helm-dark`'s own (1.46:1). A terminal's black cannot separate from a
+    ///   dark background, and lightening it until it could would stop it being
+    ///   black.
+    /// - cursor: Daylight's page cursor (`linkBlue`, light-corrected) measures
+    ///   only **3.07:1** here, so the card takes the dark register's blue
+    ///   (`6A8DED`, **4.89:1**) instead. This is the one field that genuinely
+    ///   had to move rather than being inherited, and the reason
+    ///   `HelmTerminalCard` carries a cursor at all.
+    ///
+    /// **Two things this fixes for free, worth knowing.** The vendored
+    /// SwiftTerm dim/truecolor patches (`Dimming.swift`) correct a foreground
+    /// against `nativeBackgroundColor`, so SGR-2 faint text and hard-coded
+    /// 24-bit greys - the exact case that patch exists for - start correcting
+    /// against the dark card instead of against warm paper the moment this is
+    /// installed. And `selectionHex`/`selectionTextHex` need no variant: that
+    /// pair is an opaque fill plus ink on it (see `HelmTheme.apply(to:)`), so
+    /// its 5.04:1 does not depend on what is behind it.
+    static let daylightTerminalCard = HelmTerminalCard(
+        backgroundHex: DaylightTokens.light.termBackground,
+        inkHex: DaylightTokens.light.termInk,
+        cursorHex: DaylightTokens.dusk.linkBlue,
+        ansiHex: darkRegisterAnsi
+    )
+
+    /// **Dusk's terminal card** - the same treatment one register down.
+    ///
+    /// Dusk's terminal was never illegible (it is a dark palette; the cells
+    /// already rendered dark-on-dark correctly), so this is not a fix - it is
+    /// consistency with the one thing §6.13 names as the structural reference:
+    /// "exactly as Log Analyzer's raw pane already does". `LogRawPaneView
+    /// .surfaceColor` fills with `termBackground` for the whole Daylight
+    /// family, Dusk included, so Console's terminal now reads as the same
+    /// deliberately-deeper well as every other dark pane in the app rather
+    /// than as the page ground with a border drawn round it.
+    ///
+    /// Measured against `131418`: ink 14.46:1, ANSI slots 1-15 5.79-14.73
+    /// (worst cyan), cursor 5.82:1. Every slot improves on its own
+    /// page-ground reading, because this fill is darker than `paper`.
+    static let duskTerminalCard = HelmTerminalCard(
+        backgroundHex: DaylightTokens.dusk.termBackground,
+        inkHex: DaylightTokens.dusk.termInk,
+        cursorHex: DaylightTokens.dusk.linkBlue,
+        ansiHex: darkRegisterAnsi
+    )
 
     // MARK: §2.3 Semantic state colours (state only - never identity)
 
@@ -705,7 +811,10 @@ extension HelmTheme {
             "A03738", "196950", "7D5319", "3358BB", "6849B6", "0A6874",
             // bright white
             DaylightPalette.ink,
-        ]
+        ],
+        // K2 / §6.13: the cells are NOT painted in the palette above - they
+        // are painted on a dark card. See `daylightTerminalCard`.
+        terminalCard: DaylightPalette.daylightTerminalCard
     )
 
     /// **Dusk** - Daylight's dark companion (Phase 6), and the 14th theme.
@@ -764,24 +873,9 @@ extension HelmTheme {
         cursorHex: DaylightTokens.dusk.linkBlue,
         selectionHex: DaylightTokens.dusk.linkBlue,
         selectionTextHex: "12131A",
-        ansiHex: [
-            // black (exempt, see above)  red                        green
-            DaylightTokens.dusk.hairRow, DaylightTokens.dusk.badText, DaylightTokens.dusk.okText,
-            // yellow                        blue                          magenta
-            DaylightTokens.dusk.warnText, DaylightTokens.dusk.linkBlue, "9C81E0",
-            // cyan (teal lightened by the same rule, 5.47 on paper)
-            "2E9EAD",
-            // white - a light warm grey (10.07 on paper), the mirror of
-            // Daylight's deep warm grey in this slot.
-            "C9C5B9",
-            // bright black - the dim-but-still-legible slot: this register's
-            // own muted token (5.59 on paper).
-            DaylightTokens.dusk.muted,
-            // bright red/green/yellow/blue/magenta/cyan - 15% white into each
-            // normal sibling (6.61-7.30 on paper).
-            "E58787", "56B595", "D59E4D", "809EF0", "AB94E5", "4DADB9",
-            // bright white
-            DaylightTokens.dusk.ink,
-        ]
+        ansiHex: DaylightPalette.darkRegisterAnsi,
+        // K2: the same 16 slots this theme's page already uses, on the
+        // deeper `termBackground` well - see `duskTerminalCard`.
+        terminalCard: DaylightPalette.duskTerminalCard
     )
 }

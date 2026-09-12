@@ -227,7 +227,15 @@ enum TerminalSelectionRenderSelfTest {
         // real window `bitmapImageRepForCachingDisplay` hands back a rep in the
         // *display's* profile, so a converted palette colour lands a channel
         // step or two away from the pixel it painted (AGENTS.md's probe rule).
-        let pageBG = HelmTheme.nsColor(theme.backgroundHex).usingColorSpace(rep.colorSpace)
+        // K2: read the terminal's OWN background, not the page ground. For the
+        // twelve pre-Daylight palettes those are the same token; for the
+        // Daylight family the cells are painted on `terminalCard` (§6.13's
+        // dark card) while the page around them stays `backgroundHex`, so
+        // reading the page's would classify every unselected row as selected.
+        // The premise of this histogram is unchanged - "a row the drag missed
+        // shows the terminal's background" - only where that colour lives.
+        let terminalBG = theme.terminalCard?.backgroundHex ?? theme.backgroundHex
+        let pageBG = HelmTheme.nsColor(terminalBG).usingColorSpace(rep.colorSpace)
         func isPageBG(_ c: NSColor) -> Bool {
             guard let pageBG else { return false }
             return abs(c.redComponent - pageBG.redComponent) < 0.03

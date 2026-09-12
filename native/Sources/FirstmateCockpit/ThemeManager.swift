@@ -107,13 +107,52 @@ final class ThemeManager {
     private static let defaultsKey = "fm.themeID"
     private static let legacyModeKey = "fm.themeMode"
 
+    /// K3: the 200ms crossfade, injected once the app has a real window.
+    ///
+    /// The audit names this type as "the single choke point" for a theme
+    /// change and it is - but it is a model object with no window to snapshot,
+    /// so the animation is pushed in rather than reached for. `nil` (every
+    /// self-test process, and the whole of launch before the window exists)
+    /// means the change applies instantly, exactly as it always did.
+    var transitionCoordinator: ThemeTransitionCoordinator?
+
+    /// The theme a captain with no saved preference lands on.
+    ///
+    /// **K1 of the UI modernization audit, and the captain's own decision.**
+    /// That finding measured the app's fourteen palettes as a fork: the
+    /// Daylight family "look current" while the legacy half gets "the flat,
+    /// shadowless, border-only rendering", and it offered two ways out -
+    /// promote Dusk to the daily driver, or extend the Daylight-family
+    /// recipes to the twelve legacy palettes as a "modern rendering, legacy
+    /// colors" mode. It flagged the choice as the captain's; he chose the
+    /// first. So a fresh install opens on the design language every
+    /// modernization round since has actually been built for, in the dark
+    /// register he works in.
+    ///
+    /// **Nothing about the other thirteen changed.** They are all still in
+    /// `HelmTheme.allThemes`, still selectable, still contrast-verified, and
+    /// every Daylight component still resolves through the theme system with
+    /// the §2.8 fallback intact - this moves one default, it does not retire
+    /// a palette.
+    ///
+    /// **A captain who has already chosen keeps their choice**, which is why
+    /// this is only reached when `fm.themeID` is absent. Overriding a stored
+    /// preference to push a new default would be a real defect - silently
+    /// discarding a past decision - so an existing install has to switch in
+    /// Settings > Appearance (or ⌘⌥T from Daylight) to pick this up.
+    static let fallbackTheme: HelmTheme = .dusk
+
     private init() {
         if let id = UserDefaults.standard.string(forKey: Self.defaultsKey), let match = HelmTheme.theme(id: id) {
             theme = match
         } else if let legacyMode = UserDefaults.standard.string(forKey: Self.legacyModeKey) {
+            // A pre-`fm.themeID` install: honour the dark/light bit it
+            // recorded rather than the new default. That captain expressed a
+            // preference too, just in an older vocabulary, and the migration's
+            // whole point is not to reset it.
             theme = legacyMode == "light" ? .light : .dark
         } else {
-            theme = .dark
+            theme = Self.fallbackTheme
         }
     }
 
@@ -121,9 +160,20 @@ final class ThemeManager {
     /// just registering, via `observe`, so callers don't need a separate
     /// "apply once" step).
     func setTheme(_ theme: HelmTheme) {
-        self.theme = theme
-        UserDefaults.standard.set(theme.id, forKey: Self.defaultsKey)
-        observers.forEach { $0.fn(theme) }
+        // K3: the whole change - persist and fan out - is what gets
+        // cross-faded, so the snapshot is taken before any of it and the new
+        // state renders underneath. With no coordinator installed the closure
+        // simply runs, which is the pre-K3 behaviour byte for byte.
+        let apply = {
+            self.theme = theme
+            UserDefaults.standard.set(theme.id, forKey: Self.defaultsKey)
+            self.observers.forEach { $0.fn(theme) }
+        }
+        if let transitionCoordinator {
+            transitionCoordinator.performThemeChange(apply)
+        } else {
+            apply()
+        }
     }
 
     /// Re-fire every observer with the theme that is already active.
@@ -135,6 +185,12 @@ final class ThemeManager {
     /// reaches the four shared components (which derive their fonts inside
     /// `applyTheme`) without a second app-wide observer list whose only job
     /// would be to duplicate this one.
+    ///
+    /// **Deliberately not cross-faded** (K3): this path exists for a text-size
+    /// change, which re-derives every font and re-lays out, and fading a
+    /// frozen picture over text that is simultaneously resizing and
+    /// re-flowing reads as a glitch rather than a transition. See
+    /// `ThemeTransition.swift`'s header.
     ///
     /// Not to be used for anything else: a *theme* change goes through
     /// `setTheme`, and an observer that repaints on a no-op theme change is

@@ -177,6 +177,9 @@ NEEDS_SESSION=(
   # §3H: builds a real palette panel, a real lock screen and a real HUD, and
   # reads layer animations off them.
   "FM_RUN_OVERLAYS_MODERNIZATION_TESTS"
+  # §3K/§3L/§3M: K3's crossfade snapshots a real, ordered-front window's
+  # content view, and M2 lays out a real hairline.
+  "FM_RUN_THEME_MOTION_WEB_ISLANDS_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_SLICE6_TESTS"
   # Phase 6 mounts a real window to follow the real key view loop and drives
   # real accessibility presses - window-backed for the same reason.

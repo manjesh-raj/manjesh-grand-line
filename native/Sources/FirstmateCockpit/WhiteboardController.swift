@@ -415,7 +415,66 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
     /// is that it reads as part of the app.
     private func pushTheme() {
         guard webView.isReady else { return }
-        webView.call("setTheme", payload: ["theme": theme.mode == .dark ? "dark" : "light"])
+        webView.call("setTheme", payload: [
+            "theme": theme.mode == .dark ? "dark" : "light",
+            "island": Self.islandTokens(for: theme),
+        ])
+    }
+
+    /// M1 of the UI modernization audit (§3M): "match Excalidraw's island
+    /// radius/fill via its CSS custom properties if exposed".
+    ///
+    /// They are exposed - `.Island` reads `--island-bg-color`,
+    /// `--border-radius-lg` and `--shadow-island` off the document root - so
+    /// this is the cheap seam-hider that finding asks for and needed no patch
+    /// to the vendored bundle. Excalidraw's zoom pill, its library panel and
+    /// its stats panel are all `.Island`s, which is the chrome the report
+    /// measured as "differing" beside a themed native page.
+    ///
+    /// Three deliberate calls in here:
+    ///
+    /// - **The fill is `chromeBackgroundHex`, this app's own card token**, so
+    ///   an island reads as the same surface as every `HelmCard` around it -
+    ///   in all fourteen palettes, not just the Daylight family, because it
+    ///   resolves through `HelmTheme` rather than a literal.
+    /// - **The radius is `rCard` (12), not `dSurface` (16).** `--border-radius-lg`
+    ///   is Excalidraw's own *large* radius token and has 47 usages inside
+    ///   that bundle, several of them small controls; 12 is this app's card
+    ///   radius and a modest, coherent step up from Excalidraw's own 8, where
+    ///   16 would visibly bloat its smaller buttons. Excalidraw's
+    ///   `--border-radius-md` is left alone - a third-party widget's own
+    ///   small-control radius is its business.
+    /// - **The shadow is `HelmCard.elevation`'s resting level, re-expressed as
+    ///   CSS**, so an island floats by the same amount a card does rather than
+    ///   by Excalidraw's own three-layer stack. Two numbers rather than a
+    ///   faithful port: an `NSShadow`'s blur radius is roughly twice a CSS
+    ///   blur, which is the one conversion this mapping has to make.
+    static func islandTokens(for theme: HelmTheme) -> [String: String] {
+        let shadow = HelmCard.elevation(for: theme)
+        let blur = shadow.shadowBlurRadius / 2
+        let dy = -shadow.shadowOffset.height
+        let colour = shadow.shadowColor ?? .black
+        return [
+            "bg": cssHex(theme.chromeBackgroundHex),
+            "radius": "\(HelmMetrics.rCard)px",
+            "shadow": "0px \(fmt(dy))px \(fmt(blur))px 0px \(cssRGBA(colour))",
+        ]
+    }
+
+    private static func cssHex(_ hex: String) -> String {
+        hex.hasPrefix("#") ? hex : "#" + hex
+    }
+
+    private static func fmt(_ value: CGFloat) -> String {
+        String(format: "%.1f", Double(value))
+    }
+
+    private static func cssRGBA(_ color: NSColor) -> String {
+        let c = color.usingColorSpace(.sRGB) ?? color
+        let r = Int((c.redComponent * 255).rounded())
+        let g = Int((c.greenComponent * 255).rounded())
+        let b = Int((c.blueComponent * 255).rounded())
+        return "rgba(\(r), \(g), \(b), \(fmt(c.alphaComponent)))"
     }
 
     // MARK: Probe / self-test surface

@@ -210,6 +210,22 @@ const bridge = {
       const mode = payload && payload.theme === "dark" ? "dark" : "light";
       document.documentElement.dataset.theme = mode;
       if (window.__setWhiteboardTheme) window.__setWhiteboardTheme(mode);
+      // M1 of the UI modernization audit (report.md §3M): "match Excalidraw's
+      // island radius/fill via its CSS custom properties if exposed". They
+      // are - `.Island` resolves its fill from `--island-bg-color`, its
+      // corner from `--border-radius-lg` and its shadow from
+      // `--shadow-island`, all three read from the document root - so the one
+      // seam-hider that finding asks for is three variable writes rather than
+      // a patch to the vendored bundle.
+      //
+      // Every value comes from the native side (this app's own card token and
+      // radius scale); anything absent is left alone, so an older native
+      // build that only sends `theme` keeps exactly today's Excalidraw look.
+      const island = (payload && payload.island) || {};
+      const root = document.documentElement;
+      if (island.bg) root.style.setProperty("--island-bg-color", island.bg);
+      if (island.radius) root.style.setProperty("--border-radius-lg", island.radius);
+      if (island.shadow) root.style.setProperty("--shadow-island", island.shadow);
       reply(callID, { ok: true });
     } catch (err) {
       reply(callID, { ok: false, message: String((err && err.message) || err) });

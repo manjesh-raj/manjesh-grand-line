@@ -123,6 +123,15 @@ enum HelmMotion {
         }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = duration
+            // L's headline complaint is "No springs anywhere. **No timing
+            // curves set (default ease).**" Earlier rounds answered the first
+            // half and set a curve at each *new* call site, but the two
+            // shared primitives - this and `animate` - still took AppKit's
+            // default ease-in-ease-out, which is what most of the app's motion
+            // actually runs through. This is the spec's one ease-out, so the
+            // statement "two curves total" is now true of the primitives
+            // rather than only of the call sites that remembered.
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             view.animator().alphaValue = target
         }
     }
@@ -187,6 +196,13 @@ enum HelmMotion {
         }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = duration
+            // The same ease-out `fade` and `animateLayers` take - see the note
+            // in `fade`. None of this method's callers sets its own timing
+            // function, and all of them (a press scale, a hover lift, a
+            // drawer slide) are ease-out shapes; a caller that genuinely
+            // wants the spring sets `HelmMotion.spring()` inside the body,
+            // which runs after this line and therefore wins.
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
             body()
         }
     }

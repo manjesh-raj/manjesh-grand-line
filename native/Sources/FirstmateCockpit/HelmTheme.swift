@@ -26,6 +26,43 @@
 import AppKit
 import SwiftTerm
 
+/// The colours a theme's **terminal cells** are painted in, when those should
+/// differ from the page around them.
+///
+/// K2 of the UI modernization audit (`data/grandline-ui-modernization-audit/
+/// report.md` §3K) finishing the design doc's §6.13: "the terminal renders
+/// inside a dark card". Only the Daylight family has one; `terminalCard` is
+/// `nil` for all twelve pre-Daylight palettes, where the page ground and the
+/// terminal background are correctly the same colour.
+///
+/// **One struct rather than four optional fields on `HelmTheme`, and that is
+/// the safety property.** A background set without a matching ANSI set is an
+/// illegible terminal - light-corrected glyphs on a dark fill - so "either
+/// this theme's terminal has its own palette or it does not" has to be one
+/// decision, not four that can disagree.
+///
+/// **Selection is deliberately absent.** `HelmTheme.selectionHex` is an
+/// *opaque* fill with `selectionTextHex` drawn on it (see `apply(to:)`'s own
+/// note on why it is not alpha-blended), so that pair's contrast does not
+/// depend on what is behind it and needs no per-surface variant. What it does
+/// need is to stay *visible* against the card, which is a separation floor
+/// rather than a text floor - `HelmContrastSelfTest.checkTerminalCard`
+/// measures it.
+struct HelmTerminalCard {
+    /// The card's fill - SwiftTerm's `nativeBackgroundColor`.
+    let backgroundHex: String
+    /// Default cell ink - SwiftTerm's `nativeForegroundColor`.
+    let inkHex: String
+    /// The caret. Its own field because a cursor that reads correctly on the
+    /// page ground can vanish on the card: Daylight's page cursor (the
+    /// light-corrected link blue) measures **3.07:1** on this card, against
+    /// the dark register's own blue at 4.89:1.
+    let cursorHex: String
+    /// 16 ANSI colours for *this* surface, same SwiftTerm/xterm order as
+    /// `HelmTheme.ansiHex`.
+    let ansiHex: [String]
+}
+
 /// A complete terminal colour scheme: the 16 ANSI colours plus foreground,
 /// background, cursor, and selection.
 struct HelmTheme {
@@ -62,15 +99,32 @@ struct HelmTheme {
     /// black, red, green, yellow, blue, magenta, cyan, white, then the 8 bright.
     let ansiHex: [String]
 
+    /// This theme's terminal cells, when they should NOT be painted in the
+    /// same colours as the page around them - `nil` for every theme where
+    /// they should, which is all twelve pre-Daylight palettes.
+    ///
+    /// K2 of the UI modernization audit, finishing the design doc's §6.13.
+    /// See `HelmTerminalCard` for why this is one optional struct rather than
+    /// four parallel optional fields, and `HelmDaylight.swift`'s
+    /// `darkRegisterTerminalCard` for where the values come from.
+    let terminalCard: HelmTerminalCard?
+
     // MARK: Apply
 
     /// Install this theme onto a SwiftTerm terminal view: the 16 ANSI colours,
     /// then foreground / background / cursor / selection.
+    ///
+    /// **A theme with a `terminalCard` paints the cells from that instead**,
+    /// which is what makes §6.13's dark card real rather than a border drawn
+    /// around a light terminal. Selection is deliberately NOT part of the
+    /// override - see `HelmTerminalCard`'s own note on why that pair is
+    /// already background-independent.
     func apply(to view: TerminalView) {
-        view.installColors(ansiHex.map(Self.termColor))
-        view.nativeForegroundColor = Self.nsColor(foregroundHex)
-        view.nativeBackgroundColor = Self.nsColor(backgroundHex)
-        view.caretColor = Self.nsColor(cursorHex)
+        let cells = terminalCard
+        view.installColors((cells?.ansiHex ?? ansiHex).map(Self.termColor))
+        view.nativeForegroundColor = Self.nsColor(cells?.inkHex ?? foregroundHex)
+        view.nativeBackgroundColor = Self.nsColor(cells?.backgroundHex ?? backgroundHex)
+        view.caretColor = Self.nsColor(cells?.cursorHex ?? cursorHex)
         // Opaque, not alpha-blended: an alpha-blended fill's effective colour
         // (and thus its contrast against selectionTextHex) depends on
         // whatever background happened to be underneath a given cell -
@@ -220,7 +274,11 @@ struct HelmTheme {
             // for genuinely-dim-but-still-legible text (comments, timestamps).
             "292e34", "ef6661", "67d283", "f2bf4e", "5eade2", "d285cb", "71cfd9", "ced1d4",
             "747c86", "ff8179", "7fe998", "ffd972", "7dc7f7", "e9a1e3", "96e8ef", "f9fcfe",
-        ]
+        ],
+        // Twelve pre-Daylight palettes: the page ground and the
+        // terminal background are correctly the same colour, so there
+        // is no separate card to paint (K2 / HelmTerminalCard).
+        terminalCard: nil
     )
 
     static let light = HelmTheme(
@@ -250,7 +308,11 @@ struct HelmTheme {
             // secondary text on this theme.
             "272e38", "c22826", "007a43", "995c00", "0069a1", "93398e", "007984", "4c5866",
             "4e5661", "b3000d", "006c32", "9d5400", "005893", "852381", "006875", "212c3a",
-        ]
+        ],
+        // Twelve pre-Daylight palettes: the page ground and the
+        // terminal background are correctly the same colour, so there
+        // is no separate card to paint (K2 / HelmTerminalCard).
+        terminalCard: nil
     )
 }
 
@@ -286,7 +348,11 @@ extension HelmTheme {
         accentHex: "2aa198",
         foregroundHex: "839496", backgroundHex: "002b36",
         cursorHex: "2aa198", selectionHex: "2aa198", selectionTextHex: "002b36",
-        ansiHex: solarizedDarkAnsi
+        ansiHex: solarizedDarkAnsi,
+        // Twelve pre-Daylight palettes: the page ground and the
+        // terminal background are correctly the same colour, so there
+        // is no separate card to paint (K2 / HelmTerminalCard).
+        terminalCard: nil
     )
 
     static let solarizedLight = HelmTheme(
@@ -323,7 +389,11 @@ extension HelmTheme {
             // without abandoning Solarized's own ramp for a non-canonical hue.
             "586e75",
             "002b36", "dc322f", "859900", "b58900", "268bd2", "d33682", "2aa198", "586e75",
-        ]
+        ],
+        // Twelve pre-Daylight palettes: the page ground and the
+        // terminal background are correctly the same colour, so there
+        // is no separate card to paint (K2 / HelmTerminalCard).
+        terminalCard: nil
     )
 
     // --- Catppuccin (github.com/catppuccin/palette, github.com/catppuccin/alacritty) ---
@@ -339,7 +409,11 @@ extension HelmTheme {
         ansiHex: [
             "45475a", "f38ba8", "a6e3a1", "f9e2af", "89b4fa", "f5c2e7", "94e2d5", "bac2de",
             "585b70", "f38ba8", "a6e3a1", "f9e2af", "89b4fa", "f5c2e7", "94e2d5", "a6adc8",
-        ]
+        ],
+        // Twelve pre-Daylight palettes: the page ground and the
+        // terminal background are correctly the same colour, so there
+        // is no separate card to paint (K2 / HelmTerminalCard).
+        terminalCard: nil
     )
 
     static let catppuccinLatte = HelmTheme(
@@ -351,7 +425,11 @@ extension HelmTheme {
         ansiHex: [
             "bcc0cc", "d20f39", "40a02b", "df8e1d", "1e66f5", "ea76cb", "179299", "5c5f77",
             "acb0be", "d20f39", "40a02b", "df8e1d", "1e66f5", "ea76cb", "179299", "6c6f85",
-        ]
+        ],
+        // Twelve pre-Daylight palettes: the page ground and the
+        // terminal background are correctly the same colour, so there
+        // is no separate card to paint (K2 / HelmTerminalCard).
+        terminalCard: nil
     )
 
     // --- Gruvbox (github.com/morhetz/gruvbox, colors/gruvbox.vim) ---
@@ -369,7 +447,11 @@ extension HelmTheme {
             // below the 4.5:1 floor this slot is held to) to 9e8c7a
             // (4.55:1), staying the same grey-brown hue.
             "9e8c7a", "fb4934", "b8bb26", "fabd2f", "83a598", "d3869b", "8ec07c", "ebdbb2",
-        ]
+        ],
+        // Twelve pre-Daylight palettes: the page ground and the
+        // terminal background are correctly the same colour, so there
+        // is no separate card to paint (K2 / HelmTerminalCard).
+        terminalCard: nil
     )
 
     static let gruvboxLight = HelmTheme(
@@ -395,7 +477,11 @@ extension HelmTheme {
             // as index 3 above.
             "8f5f0a",
             "076678", "8f3f71", "427b58", "3c3836",
-        ]
+        ],
+        // Twelve pre-Daylight palettes: the page ground and the
+        // terminal background are correctly the same colour, so there
+        // is no separate card to paint (K2 / HelmTerminalCard).
+        terminalCard: nil
     )
 
     // --- Tokyo Night (github.com/enkia/tokyo-night-vscode-theme) ---
@@ -424,7 +510,11 @@ extension HelmTheme {
             // `terminal.foreground`-derived value - enkia's port doesn't
             // distinguish it from index 7 the way it does on light mode below.
             "acb0d0",
-        ]
+        ],
+        // Twelve pre-Daylight palettes: the page ground and the
+        // terminal background are correctly the same colour, so there
+        // is no separate card to paint (K2 / HelmTerminalCard).
+        terminalCard: nil
     )
 
     static let tokyoNightLight = HelmTheme(
@@ -451,7 +541,11 @@ extension HelmTheme {
             // to `editor.foreground` like index 7 was. Accepted limitation,
             // no alternate published to substitute.
             "707280",
-        ]
+        ],
+        // Twelve pre-Daylight palettes: the page ground and the
+        // terminal background are correctly the same colour, so there
+        // is no separate card to paint (K2 / HelmTerminalCard).
+        terminalCard: nil
     )
 
     // --- Rosé Pine (github.com/rose-pine/palette, /alacritty, /vscode) ---
@@ -470,7 +564,11 @@ extension HelmTheme {
         ansiHex: [
             "26233a", "eb6f92", "31748f", "f6c177", "9ccfd8", "c4a7e7", "ebbcba", "e0def4",
             "6e6a86", "eb6f92", "31748f", "f6c177", "9ccfd8", "c4a7e7", "ebbcba", "e0def4",
-        ]
+        ],
+        // Twelve pre-Daylight palettes: the page ground and the
+        // terminal background are correctly the same colour, so there
+        // is no separate card to paint (K2 / HelmTerminalCard).
+        terminalCard: nil
     )
 
     static let rosePineDawn = HelmTheme(
@@ -489,7 +587,11 @@ extension HelmTheme {
         ansiHex: [
             "f2e9e1", "b4637a", "286983", "ea9d34", "56949f", "907aa9", "d7827e", "464261",
             "9893a5", "b4637a", "286983", "ea9d34", "56949f", "907aa9", "d7827e", "464261",
-        ]
+        ],
+        // Twelve pre-Daylight palettes: the page ground and the
+        // terminal background are correctly the same colour, so there
+        // is no separate card to paint (K2 / HelmTerminalCard).
+        terminalCard: nil
     )
 
     /// All 14 palettes: the Daylight family (`daylight` and its Phase 6 dark
