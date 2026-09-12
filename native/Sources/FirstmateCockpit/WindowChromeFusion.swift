@@ -29,15 +29,31 @@
 //     item's own height**. None of those is the bar's own centre (39), so the
 //     toolbar route cannot express this design.
 //
-// So the lights are repositioned by hand, and the *only* hook that actually
-// holds is a layout pass. Measured: a manual `setFrameOrigin` survives a
-// runloop turn, a key/resign, and an appearance change, and is undone by a
-// window resize, a `title` change, a `styleMask` touch, and - the one that
-// matters, because this app does it on every resize
-// (`AppShellController.reassertBodyContainerWidthTie`) - any forced
-// `layoutSubtreeIfNeeded()`. Re-applying from the content view's own
-// `layout()` covers every one of those, including a synchronous layout with
-// no intervening runloop turn.
+// So the lights are repositioned by hand, and the main hook is a layout
+// pass. Measured: a manual `setFrameOrigin` survives a runloop turn, a
+// key/resign, and an appearance change, and is undone by a window resize, a
+// `title` change, a `styleMask` touch, and - the one that matters, because
+// this app does it on every resize (`AppShellController.
+// reassertBodyContainerWidthTie`) - any forced `layoutSubtreeIfNeeded()`.
+// Re-applying from the content view's own `layout()` covers the resize and
+// forced-layout cases, including a synchronous layout with no intervening
+// runloop turn.
+//
+// **It does NOT, on its own, cover a title change - a real, captain-reported
+// regression, not a theoretical gap.** A window resize/move genuinely
+// changes this view's geometry, which AppKit marks `needsLayout` for on its
+// own; a title change does neither, so `layoutSubtreeIfNeeded()` alone is a
+// no-op after one (it only calls `layout()` if something already marked the
+// view dirty) and the lights stay at AppKit's own stock, uncentred position
+// until the next real resize/move. A Console tab's shell reports its own
+// title on ordinary activity (`ConsoleController+Tabs.swift`'s
+// `updateWindowTitle`/`setTerminalTitle`), so this could fire many times a
+// minute during real use - matching the captain's own report exactly
+// ("after going through a couple of consoles", fixed by "moving the
+// window", a real geometry change). `ChromeFusionRootView.
+// viewDidMoveToWindow` closes this with its own `NSKeyValueObservation` on
+// `window.title`, explicitly marking the view dirty before forcing the
+// layout - see that class's own doc comment.
 //
 // **Do not observe the titlebar view's own frame.** Setting
 // `postsFrameChangedNotifications` on AppKit's private `NSTitlebarView` and
@@ -190,12 +206,45 @@ enum WindowChromeFusion {
     #endif
 }
 
-/// The window's content view, with the one hook A1 needs: AppKit resets the
+/// The window's content view, with the two hooks A1 needs: AppKit resets the
 /// traffic lights' frames on every layout pass, so the reposition has to ride
 /// that same pass. See `WindowChromeFusion`'s header for the measurements
 /// behind that.
+///
+/// **A real, measured regression this class also fixes: a window title
+/// change resets the lights too, and - unlike a resize - never marks this
+/// view `needsLayout`, so `onLayout` is silently never called again.** A
+/// Console tab reports its shell's own title (`ConsoleController+Tabs.swift`'s
+/// `updateWindowTitle`/`setTerminalTitle`), which fires on ordinary shell
+/// activity (a new prompt, a `cd`), so this could and did happen many times
+/// per minute during real use - matching the captain-reported symptom
+/// exactly ("after going through a couple of consoles", "moving the window
+/// unsticks it" - a move/resize is a real geometry change, which *does* mark
+/// this view dirty, and is the only other thing that does).
+///
+/// Confirmed empirically (a temporary probe, reverted before commit): a bare
+/// `layoutSubtreeIfNeeded()` call right after a title change does **nothing**
+/// - that method only invokes `layout()` if something already marked the
+/// view dirty, and a title change alone never does. `needsLayout = true`
+/// immediately before it is what makes the reposition actually happen again.
 final class ChromeFusionRootView: NSView {
     var onLayout: (() -> Void)?
+
+    private var titleObservation: NSKeyValueObservation?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // Re-established on every window change (including to `nil`, which
+        // simply drops the old observation) - this view's own `window` is
+        // resolved by AppKit at exactly the right time for this, unlike
+        // trying to grab a window reference during the controller's
+        // `loadView()`, which may run before the view has one.
+        titleObservation = window?.observe(\.title, options: [.new]) { [weak self] _, _ in
+            guard let self else { return }
+            self.needsLayout = true
+            self.layoutSubtreeIfNeeded()
+        }
+    }
 
     override func layout() {
         super.layout()
