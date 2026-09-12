@@ -33,24 +33,48 @@ final class HelmScrollEdgeHairline {
     private let observer = ScrollEdgeObserver()
     private var themeToken: ThemeObservation?
 
+    /// Installs the hairline across the top of `target`, inside `container`,
+    /// **driven by the caller** rather than by a scroll view of its own.
+    ///
+    /// M2 of the UI modernization audit (§3M): "give Monaco's page the same
+    /// scroll-edge hairline treatment as native pages". Monaco has no
+    /// `NSScrollView` - it scrolls inside a `WKWebView` - so there is nothing
+    /// for `ScrollEdgeObserver` to watch, and the page reports its own offset
+    /// over the JS bridge instead. Everything else about the treatment (the
+    /// geometry, the token, the fade, the Reduce Motion gate) is the same
+    /// code, which is the point of this initializer existing rather than a
+    /// second hairline being written next to it.
+    init(atTopOf target: NSView, in container: NSView) {
+        install(over: target, in: container)
+    }
+
+    /// Set the hairline's state from outside - the externally-driven
+    /// counterpart of the observer's own `onChange`.
+    func setScrolled(_ scrolled: Bool) { setVisible(scrolled) }
+
     /// Installs the hairline across the top of `scrollView`, inside
     /// `container` (the card body, so the line spans the card rather than the
     /// clip view's scrolled content).
     init(over scrollView: NSScrollView, in container: NSView) {
+        install(over: scrollView, in: container)
+        observer.onChange = { [weak self] scrolled in self?.setVisible(scrolled) }
+        observer.observe(scrollView: scrollView)
+    }
+
+    /// The half both initializers share: the line's geometry and its theming.
+    private func install(over target: NSView, in container: NSView) {
         line.wantsLayer = true
         line.translatesAutoresizingMaskIntoConstraints = false
         line.alphaValue = 0
         container.addSubview(line)
         NSLayoutConstraint.activate([
-            line.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
-            line.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
-            line.topAnchor.constraint(equalTo: scrollView.topAnchor),
+            line.leadingAnchor.constraint(equalTo: target.leadingAnchor),
+            line.trailingAnchor.constraint(equalTo: target.trailingAnchor),
+            line.topAnchor.constraint(equalTo: target.topAnchor),
             line.heightAnchor.constraint(equalToConstant: Self.thickness),
         ])
         applyTheme(ThemeManager.shared.theme)
         themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
-        observer.onChange = { [weak self] scrolled in self?.setVisible(scrolled) }
-        observer.observe(scrollView: scrollView)
     }
 
     deinit { if let themeToken { ThemeManager.shared.unobserve(themeToken) } }

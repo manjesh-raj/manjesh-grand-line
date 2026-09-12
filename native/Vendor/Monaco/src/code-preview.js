@@ -333,6 +333,28 @@ editor.onDidChangeModelContent(() => {
   changeTimer = setTimeout(postPendingChange, CHANGE_DEBOUNCE_MS);
 });
 
+// M2 of the UI modernization audit (report.md §3M): "give Monaco's page the
+// same scroll-edge hairline treatment as native pages". A native page's edge
+// is discovered by walking for an `NSScrollView` (`ScrollEdgeObserver`), and
+// Monaco has none - it scrolls inside the web view - so the page reports the
+// one bit that observer would otherwise derive.
+//
+// Only posted when the *boolean* flips, not on every scrolled pixel, so a
+// long flick is two messages rather than hundreds. The threshold here is only
+// that rate filter: Swift re-derives the answer from `top` with its own
+// `ScrollEdgeObserver.offsetThreshold`, so that class stays the single
+// definition of "is this away from its own top edge" even if the two numbers
+// ever drift.
+const SCROLL_EDGE_THRESHOLD = 0.5;
+let lastScrolledAway = null;
+
+editor.onDidScrollChange((event) => {
+  const scrolledAway = event.scrollTop > SCROLL_EDGE_THRESHOLD;
+  if (scrolledAway === lastScrolledAway) return;
+  lastScrolledAway = scrolledAway;
+  post({ type: "scroll", top: event.scrollTop });
+});
+
 editor.onDidChangeCursorPosition((event) => {
   const selection = editor.getSelection();
   const model = editor.getModel();

@@ -3279,6 +3279,12 @@ final class HelmSegmentedTabs: NSView {
     /// is, exactly as before the migration.
     var onSelect: ((String) -> Void)?
 
+    /// The theme this control was last handed, so `layout()` re-derives the
+    /// Daylight capsule from it rather than from the global one. `nil` until
+    /// the first `applyTheme`, where falling back to the global is right -
+    /// that is the theme a freshly built control is about to be given.
+    private var appliedTheme: HelmTheme?
+
     init(items: [Item], selected: String? = nil, size: Size = .standard) {
         self.size = size
         self.selectedID = selected ?? items.first?.id ?? ""
@@ -3358,9 +3364,21 @@ final class HelmSegmentedTabs: NSView {
     /// A capsule's radius is half its own height, and a freshly built control
     /// has no height yet - so the Daylight branch re-derives it once real
     /// geometry exists. A no-op off Daylight, where the radius is a constant.
+    ///
+    /// **It reads the theme this control was last *given*, not the global
+    /// one.** Those always agree in the running app (every page forwards
+    /// `ThemeManager`'s own theme), so this is a latent-correctness fix rather
+    /// than a visible one - but a control with an `applyTheme(_:)` parameter
+    /// has to honour that parameter or the parameter is a lie, and reading the
+    /// global here silently undid it on the next layout pass: told
+    /// `helm-dark` while the global was a Daylight-family theme, the pills
+    /// went back to capsules. That is what made
+    /// `HelmContrastSelfTest.checkSegmentedTabsRecipe` and
+    /// `DaylightDrillPageSlice2SelfTest` depend on the *ambient* theme, which
+    /// K1 turned from a rare leak into the default state.
     override func layout() {
         super.layout()
-        let theme = ThemeManager.shared.theme
+        let theme = appliedTheme ?? ThemeManager.shared.theme
         if theme.isDaylight {
             for pill in pills {
                 pill.container.cornerRadius = size.daylightPillRadius(for: pill.container)
@@ -3464,6 +3482,7 @@ final class HelmSegmentedTabs: NSView {
     }
 
     func applyTheme(_ theme: HelmTheme) {
+        appliedTheme = theme
         if theme.isDaylight { applyDaylightTheme(theme); return }
         let line = HelmTheme.nsColor(theme.chromeLineHex)
         let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)

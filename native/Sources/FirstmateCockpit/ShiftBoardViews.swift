@@ -987,14 +987,23 @@ final class ShiftBoardView: NSView {
 
     /// One card's height at the usual column width.
     ///
-    /// Measured (81pt for the reference's own three stacked pieces - project
-    /// line, title, priority badge - plus the card's padding), not guessed,
-    /// and run through `scaledRowHeight` so it grows with the captain's
-    /// chrome text-size setting the way every other fixed row height in this
-    /// app does (GL-32). A card whose title wraps onto a second line is
-    /// taller than this, which is exactly what the column's own scroll view
-    /// is for.
-    static var cardRowHeight: CGFloat { HelmType.scaledRowHeight(81) }
+    /// Measured (the reference's own three stacked pieces - project line,
+    /// title, priority badge - plus the card's padding), not guessed, and run
+    /// through `scaledRowHeight` so it grows with the captain's chrome
+    /// text-size setting the way every other fixed row height in this app
+    /// does (GL-32). A card whose title wraps onto a second line is taller
+    /// than this, which is exactly what the column's own scroll view is for.
+    ///
+    /// **82, not 81, and the extra point is the whole reason this comment
+    /// exists.** J2 (the audit's typography round) left this at exactly its
+    /// own measured need, and that measurement was taken on a *legacy*
+    /// palette - where it fits. A Daylight-family theme renders the same row
+    /// 1pt taller, so at 81 a board card clipped by a point in Daylight and
+    /// Dusk. Nobody saw it because neither was the default; K1 made Dusk the
+    /// default and `TextScaleRowHeightSelfTest` reported it on the first CI
+    /// run. The value is now the need in the *taller* of the two registers,
+    /// so it fits in all fourteen palettes rather than in twelve.
+    static var cardRowHeight: CGFloat { HelmType.scaledRowHeight(82) }
 
     func applyTheme(_ theme: HelmTheme) {
         for columnView in columnViews { columnView.applyTheme(theme) }

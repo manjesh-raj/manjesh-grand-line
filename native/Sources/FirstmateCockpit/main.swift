@@ -552,6 +552,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // to force `.appearance` on, so without this it always follows the
         // OS's actual light/dark setting rather than the active Helm theme.
         window.followHelmTheme()
+        // K3: install the theme crossfade now that there is a window to
+        // snapshot. Deliberately here rather than in `AppShellController`,
+        // which several window-backed self-tests mount and then re-theme -
+        // see `ThemeTransition.swift`'s header.
+        ThemeManager.shared.transitionCoordinator = ThemeTransitionCoordinator(window: window)
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -1976,6 +1981,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_OVERLAYS_MODERNIZATION_TESTS"] ==
 
 if ProcessInfo.processInfo.environment["FM_RUN_ICONS_TYPOGRAPHY_TESTS"] == "1" {
     exit(IconsTypographySelfTest.run() ? 0 : 1)
+}
+// The UI modernization audit's §3K/§3L/§3M - Dusk as the daily theme, the
+// theme crossfade, the motion spec's last gap, and the two web-island
+// seam-hiders. K2's own contrast measurements live in
+// `HelmContrastSelfTest.checkTerminalCard`. See
+// ThemeMotionWebIslandsSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_THEME_MOTION_WEB_ISLANDS_TESTS"] == "1" {
+    exit(ThemeMotionWebIslandsSelfTest.run() ? 0 : 1)
 }
 if ProcessInfo.processInfo.environment["FM_RUN_CONFIRM_MIGRATION_TESTS"] == "1" {
     exit(ConfirmMigrationSelfTest.run() ? 0 : 1)
