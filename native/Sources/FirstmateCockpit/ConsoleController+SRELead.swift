@@ -560,6 +560,26 @@ extension ConsoleController {
         // reads as the panel sliding into a space made for it.
         updateTerminalCardStyle(carded: open)
         sreLeadPaneWidthConstraint.constant = open ? sreLeadPaneWidth : 0
+
+        // **Only animate into a window.** This runs from `applyTheme` by way
+        // of `updateSRELeadControls`, and `ThemeManager.observe` fires
+        // synchronously at registration - which for this controller is inside
+        // `loadView`, long before its view is in a window. Forcing a layout
+        // pass there is both pointless (nothing can see it) and the documented
+        // route to AppKit's `Expression N unable to find variable ... in engine
+        // 0x0`: a view outside a window has no layout engine for the animation
+        // group's forced pass to run against.
+        //
+        // Seen as a hard crash (SIGABRT) on CI's window-backed lane, from a
+        // suite that builds a shell and assigns it as a window's
+        // `contentViewController` - so the controller's own view genuinely has
+        // no window at the moment the theme observer first fires. It does not
+        // reproduce on a developer machine, which is the usual shape of a race
+        // that a slower host loses.
+        //
+        // With no window the constant above is enough: AppKit lays the view out
+        // when it is added to one, and arrives at the same geometry.
+        guard view.window != nil else { return }
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.18
             ctx.allowsImplicitAnimation = true
