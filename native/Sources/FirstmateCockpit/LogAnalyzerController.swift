@@ -176,7 +176,7 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
     private let inputHintLabel = NSTextField(labelWithString: "")
 
     private let analyzingRow = NSStackView()
-    private let analyzingSpinner = NSProgressIndicator()
+    private let analyzingSpinner = HelmProgressBar.inlineActivity(hue: RailDestination.logAnalyzer.domainHue)
     private let analyzingLabel = NSTextField(labelWithString: "Analyzing output\u{2026}")
 
     private let detectionStrip = NSView()
@@ -542,10 +542,6 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
     }
 
     private func buildAnalyzingRow() {
-        analyzingSpinner.style = .spinning
-        analyzingSpinner.isIndeterminate = true
-        analyzingSpinner.controlSize = .small
-        analyzingSpinner.translatesAutoresizingMaskIntoConstraints = false
         analyzingLabel.font = HelmType.body()
         analyzingLabel.translatesAutoresizingMaskIntoConstraints = false
         _ = mutedLabels.add(analyzingLabel)
@@ -1642,9 +1638,9 @@ extension LogAnalyzerController: NSTextViewDelegate {
         investigateButton.isEnabled = !analyzing
         if analyzing {
             analyzingLabel.stringValue = message
-            analyzingSpinner.startAnimation(nil)
+            analyzingSpinner.startAnimation()
         } else {
-            analyzingSpinner.stopAnimation(nil)
+            analyzingSpinner.stopAnimation()
         }
     }
 

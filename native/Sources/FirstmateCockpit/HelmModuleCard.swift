@@ -1114,8 +1114,33 @@ final class HelmRingGauge: NSView {
 final class HelmProgressBar: NSView {
     static let height: CGFloat = 8
 
+    /// G4: the width an inline "something is running" bar takes when it stands
+    /// in for a spinner beside a label.
+    ///
+    /// A spinner is square and a bar is not, so a migrated site needs *a*
+    /// width - and one shared value is what stops fifteen call sites each
+    /// picking their own. Narrow on purpose: this sits inside a footer row or
+    /// a status column, where a full-width track would read as a determinate
+    /// download rather than as activity.
+    static let inlineWidth: CGFloat = 54
+
+    /// How long one pass of the indeterminate segment takes, end to end.
+    static let indeterminateCycle: TimeInterval = 1.1
+    /// How much of the track the moving segment covers.
+    private static let segmentFraction: CGFloat = 0.36
+
     private let fill = CAGradientLayer()
     private var fraction: Double = 0
+    private var indeterminate = false
+    private var lastTheme: HelmTheme?
+    private var lastHue: HelmDomainHue = .blue
+    /// Only an `inlineActivity` bar observes: the canvas-card bars are themed
+    /// by the card that owns them (which also chooses their hue per render),
+    /// and a second observation there would fight that. A spinner's
+    /// replacement has no such owner - it is dropped into thirteen footer rows
+    /// and status columns whose pages never expected to theme a progress
+    /// control, because `NSProgressIndicator` drew itself.
+    private var observation: ThemeObservation?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -1130,10 +1155,53 @@ final class HelmProgressBar: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
+    /// A short, inline, indeterminate bar - G4's replacement for a stock
+    /// spinner. Starts hidden; `isRunning` drives both the motion and, when
+    /// `hidesWhenStopped`, the visibility.
+    static func inlineActivity(hue: HelmDomainHue = .blue,
+                               width: CGFloat = HelmProgressBar.inlineWidth) -> HelmProgressBar {
+        let bar = HelmProgressBar()
+        bar.indeterminate = true
+        bar.lastHue = hue
+        bar.widthAnchor.constraint(equalToConstant: width).isActive = true
+        bar.setContentHuggingPriority(.required, for: .horizontal)
+        bar.setContentCompressionResistancePriority(.required, for: .horizontal)
+        bar.isHidden = true
+        bar.setAccessibilityRole(.progressIndicator)
+        bar.setAccessibilityLabel("Working")
+        bar.observation = ThemeManager.shared.observe { [weak bar] theme in
+            bar?.applyTheme(theme, hue: hue)
+        }
+        return bar
+    }
+
+    deinit {
+        if let observation { ThemeManager.shared.unobserve(observation) }
+    }
+
     func configure(fraction: Double) {
+        indeterminate = false
         self.fraction = min(1, max(0, fraction))
+        refreshAnimation()
         needsLayout = true
     }
+
+    /// G4: `NSProgressIndicator`'s own verb, so a migrated call site is a type
+    /// change rather than a rewrite.
+    var isRunning: Bool = false {
+        didSet {
+            guard isRunning != oldValue else { return }
+            if hidesWhenStopped { isHidden = !isRunning }
+            refreshAnimation()
+        }
+    }
+
+    /// Mirrors `NSProgressIndicator.isDisplayedWhenStopped` inverted, which is
+    /// what most of the migrated sites were already using.
+    var hidesWhenStopped = true
+
+    func startAnimation() { isRunning = true }
+    func stopAnimation() { isRunning = false }
 
     override func layout() {
         super.layout()
@@ -1141,10 +1209,49 @@ final class HelmProgressBar: NSView {
         // half the shorter side, which is what makes a capsule a capsule.
         layer?.cornerRadius = bounds.height / 2
         fill.cornerRadius = bounds.height / 2
-        fill.frame = CGRect(x: 0, y: 0, width: bounds.width * CGFloat(fraction), height: bounds.height)
+        if indeterminate {
+            fill.frame = CGRect(x: 0, y: 0,
+                                width: bounds.width * Self.segmentFraction,
+                                height: bounds.height)
+            refreshAnimation()
+        } else {
+            fill.frame = CGRect(x: 0, y: 0,
+                                width: bounds.width * CGFloat(fraction), height: bounds.height)
+        }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // GL-13: an animation on an off-window view is a wake-up nobody can
+        // see. The same discipline `HelmSkeletonRow`'s shimmer already keeps.
+        refreshAnimation()
+    }
+
+    /// The sliding segment. Suppressed when there is nothing to say (not
+    /// running, determinate, off-window) and under Reduce Motion - where the
+    /// bar still *shows*, parked at the start of the track, so "something is
+    /// happening" survives even though the motion does not.
+    private func refreshAnimation() {
+        let shouldRun = indeterminate && isRunning && window != nil
+            && !isHidden && !HelmMotion.isReduced && bounds.width > 1
+        guard shouldRun else {
+            fill.removeAnimation(forKey: "indeterminate")
+            return
+        }
+        let travel = bounds.width * (1 + Self.segmentFraction)
+        let slide = CABasicAnimation(keyPath: "transform.translation.x")
+        slide.fromValue = -bounds.width * Self.segmentFraction
+        slide.toValue = travel - bounds.width * Self.segmentFraction
+        slide.duration = Self.indeterminateCycle
+        slide.repeatCount = .infinity
+        slide.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        fill.removeAnimation(forKey: "indeterminate")
+        fill.add(slide, forKey: "indeterminate")
     }
 
     func applyTheme(_ theme: HelmTheme, hue: HelmDomainHue) {
+        lastTheme = theme
+        lastHue = hue
         layer?.backgroundColor = (theme.isDaylight
             ? HelmTheme.nsColor(theme.daylightTokens.inset)
             : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6)).cgColor
@@ -1154,5 +1261,14 @@ final class HelmProgressBar: NSView {
         }
     }
 
+    /// Re-theme with whatever hue this bar already had - what an inline
+    /// activity bar's owner calls from its own theme pass, since the hue was
+    /// chosen once at construction.
+    func applyTheme(_ theme: HelmTheme) { applyTheme(theme, hue: lastHue) }
+
     var fractionForTests: Double { fraction }
+    #if FM_SELFTESTS
+    var debugIsIndeterminate: Bool { indeterminate }
+    var debugIsSliding: Bool { fill.animation(forKey: "indeterminate") != nil }
+    #endif
 }

@@ -44,7 +44,7 @@ final class ShiftConflictController: NSViewController {
 
     private let applyButton = HelmButton(title: "Apply & Push", variant: .primary, target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "")
-    private let progressSpinner = NSProgressIndicator()
+    private let progressSpinner = HelmProgressBar.inlineActivity(hue: RailDestination.shift.domainHue)
 
     init(conflictSet: ShiftConflictSet) {
         self.conflictSet = conflictSet
@@ -123,10 +123,6 @@ final class ShiftConflictController: NSViewController {
         statusLabel.textColor = HelmTheme.nsColor(theme.ansiHex[1])
         statusLabel.isHidden = true
 
-        progressSpinner.style = .spinning
-        progressSpinner.controlSize = .small
-        progressSpinner.isDisplayedWhenStopped = false
-        progressSpinner.translatesAutoresizingMaskIntoConstraints = false
 
         let cancelButton = HelmButton(title: "Cancel", variant: .secondary, target: self, action: #selector(cancelClicked))
         applyButton.keyEquivalent = "\r"
@@ -306,11 +302,11 @@ final class ShiftConflictController: NSViewController {
     @objc private func applyClicked() {
         guard let onResolve else { return }
         applyButton.isEnabled = false
-        progressSpinner.startAnimation(nil)
+        progressSpinner.startAnimation()
         statusLabel.isHidden = true
         onResolve(choices) { [weak self] ok in
             guard let self else { return }
-            self.progressSpinner.stopAnimation(nil)
+            self.progressSpinner.stopAnimation()
             if ok {
                 self.dismiss(self)
             } else {

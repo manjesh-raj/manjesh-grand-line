@@ -627,7 +627,7 @@ extension KubernetesController {
             : "Running kubectl describe in the feed tab\u{2026}"
         describeTextView.string = ""
         describeCopyButton.isEnabled = false
-        describeSpinner.startAnimation(nil)
+        describeSpinner.startAnimation()
         applyDescribeTheme()
         openDescribeDrawer()
         bridge.enqueue(.describePod(name: name, namespace: namespace), priority: .interactive) { [weak self] result in
@@ -635,7 +635,7 @@ extension KubernetesController {
             // A completion for a pod the captain has since navigated away
             // from must never overwrite what they are looking at now.
             guard self.describeTarget == name else { return }
-            self.describeSpinner.stopAnimation(nil)
+            self.describeSpinner.stopAnimation()
             switch result {
             case .success(let raw):
                 let text = raw.isEmpty ? "kubectl returned nothing." : raw
@@ -710,7 +710,7 @@ extension KubernetesController {
 
     func hideDescribeDrawer() {
         describeTarget = nil
-        describeSpinner.stopAnimation(nil)
+        describeSpinner.stopAnimation()
         setDescribeDrawerOpen(false)
         clusterTable.clearSelection()
     }

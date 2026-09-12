@@ -183,6 +183,33 @@ final class NotificationBellButton: NSButton {
     /// used to anchor the popover on the icon itself, not the wider control.
     var visibleIconFrame: NSRect { iconBackground.frame }
 
+    /// G2: "on new-notification arrival, a gentle bell symbol bounce".
+    ///
+    /// Hand-rolled rather than `NSImageView.addSymbolEffect(.bounce)`: symbol
+    /// effects are macOS 14, and this package targets 13 (`Package.swift`).
+    /// Two small scale beats on the glyph's own layer is what that effect
+    /// does anyway, and it composes with the badge sitting on the same tile.
+    ///
+    /// Reduce Motion gets nothing at all - not a shorter bounce. A bounce
+    /// carries no information the badge does not already carry, so the end
+    /// state *is* the whole message.
+    func playArrivalBounce() {
+        guard !HelmMotion.isReduced else { return }
+        iconImageView.wantsLayer = true
+        guard let layer = iconImageView.layer else { return }
+        let bounce = CAKeyframeAnimation(keyPath: "transform.scale")
+        bounce.values = [1.0, 1.18, 0.94, 1.06, 1.0]
+        bounce.keyTimes = [0, 0.25, 0.5, 0.75, 1]
+        bounce.duration = 0.42
+        bounce.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        layer.add(bounce, forKey: "arrival-bounce")
+    }
+
+    #if FM_SELFTESTS
+    /// Whether the arrival bounce is on the glyph's layer right now.
+    var debugIsBouncing: Bool { iconImageView.layer?.animation(forKey: "arrival-bounce") != nil }
+    #endif
+
     func setBadgeCount(_ count: Int) {
         badgeContainer.isHidden = count <= 0
         if count > 0 {
@@ -248,6 +275,8 @@ final class NotificationCenterController: NSObject {
     /// had - the bell, its badge count, and the panel content.
     private let panel: HelmBarPanel
     private let content = NotificationPanelViewController()
+    /// What the badge last showed, so a *rise* can be told from a fall.
+    private var lastBadgeCount = 0
     private var themeObservation: ThemeObservation?
     private var storeObservation: NotificationCenterObservation?
 
@@ -271,7 +300,15 @@ final class NotificationCenterController: NSObject {
         // the same way.
         storeObservation = GrandLineNotificationCenter.shared.observe { [weak self] in
             guard let self else { return }
-            self.bell.setBadgeCount(GrandLineNotificationCenter.shared.badgeCount)
+            let count = GrandLineNotificationCenter.shared.badgeCount
+            // G2: bounce on **arrival**, not on every publish. The store
+            // re-notifies whenever any signal changes, including a count
+            // falling as something resolves - a bell that bounced then would
+            // be celebrating a thing going away.
+            let arrived = count > self.lastBadgeCount
+            self.lastBadgeCount = count
+            self.bell.setBadgeCount(count)
+            if arrived { self.bell.playArrivalBounce() }
             if self.panel.isShown { self.content.reload() }
         }
     }
@@ -289,6 +326,10 @@ final class NotificationCenterController: NSObject {
     /// The panel content itself, so a suite can drive the real header action
     /// and the real rows without having to put a real window on screen.
     var debugPanelController: NSViewController { content }
+    /// The real panel content, typed - so a check can read the grouping it
+    /// actually built rather than re-deriving it from the store.
+    var debugPanelContent: NotificationPanelViewController { content }
+    var debugBell: NotificationBellButton { bell }
     var debugPanel: HelmBarPanel { panel }
     #endif
 }
@@ -327,6 +368,8 @@ final class NotificationPanelViewController: NSViewController {
     private let emptyState = HelmEmptyState(symbol: "checkmark.circle",
                                             body: "You're all caught up.")
     private let rowsStack = NSStackView()
+    /// G2's per-kind group labels, re-tinted on every theme pass.
+    private var groupHeaders: [NSTextField] = []
     private let separator = NSView()
 
     var onSizeChanged: ((NSSize) -> Void)?
@@ -407,25 +450,50 @@ final class NotificationPanelViewController: NSViewController {
             rowsStack.removeArrangedSubview(view)
             view.removeFromSuperview()
         }
+        groupHeaders.removeAll()
         let entries = GrandLineNotificationCenter.shared.entries
         emptyState.isHidden = !entries.isEmpty
         markAllReadButton.isHidden = !entries.contains { $0.kind == .informational }
-        for entry in entries {
-            let row = Self.makeRow(for: entry, theme: theme)
-            row.translatesAutoresizingMaskIntoConstraints = false
-            row.onClick = { [weak self] in
-                entry.navigate()
-                self?.onRequestClose?()
+
+        // G2: "rows grouped by kind". The two kinds already carry genuinely
+        // different contracts - `.actionNeeded` clears only when its condition
+        // resolves, `.informational` can be dismissed - so grouping by kind is
+        // grouping by what the captain can *do* about a row, not by a label.
+        let groups: [(title: String, entries: [AppNotification])] = [
+            ("Needs you", entries.filter { $0.kind == .actionNeeded }),
+            ("Updates", entries.filter { $0.kind == .informational }),
+        ].filter { !$0.entries.isEmpty }
+        // A single group needs no header: the panel's own title already says
+        // what this list is, and one header under it reads as a duplicate.
+        let showHeaders = groups.count > 1
+
+        for group in groups {
+            if showHeaders {
+                let header = NSTextField(labelWithString: group.title.uppercased())
+                header.translatesAutoresizingMaskIntoConstraints = false
+                groupHeaders.append(header)
+                rowsStack.addArrangedSubview(header)
+                NSLayoutConstraint.activate([
+                    header.leadingAnchor.constraint(equalTo: rowsStack.leadingAnchor, constant: 14),
+                    header.trailingAnchor.constraint(lessThanOrEqualTo: rowsStack.trailingAnchor, constant: -14),
+                ])
             }
-            rowsStack.addArrangedSubview(row)
-            // Each card gets its own margin from the panel's edges (unlike
-            // the old full-bleed row, whose hover fill ran edge to edge) -
-            // an explicit leading/trailing offset from `rowsStack`, not a
-            // width-equal-to-stack constraint, is what creates that margin.
-            NSLayoutConstraint.activate([
-                row.leadingAnchor.constraint(equalTo: rowsStack.leadingAnchor, constant: 14),
-                row.trailingAnchor.constraint(equalTo: rowsStack.trailingAnchor, constant: -14),
-            ])
+            for entry in group.entries {
+                let row = NotificationRowView(entry: entry, theme: theme)
+                row.translatesAutoresizingMaskIntoConstraints = false
+                row.onActivate = { [weak self] in
+                    entry.navigate()
+                    self?.onRequestClose?()
+                }
+                rowsStack.addArrangedSubview(row)
+                // Each row gets its own margin from the panel's edges - an
+                // explicit leading/trailing offset from `rowsStack`, not a
+                // width-equal-to-stack constraint, is what creates that margin.
+                NSLayoutConstraint.activate([
+                    row.leadingAnchor.constraint(equalTo: rowsStack.leadingAnchor, constant: 10),
+                    row.trailingAnchor.constraint(equalTo: rowsStack.trailingAnchor, constant: -10),
+                ])
+            }
         }
         applyTheme(theme)
         updateSize()
@@ -451,35 +519,160 @@ final class NotificationPanelViewController: NSViewController {
         titleLabel.textColor = ink
         separator.layer?.backgroundColor = line.cgColor
         emptyState.applyTheme(theme)
-        for case let row as HelmAccentRow in rowsStack.arrangedSubviews {
+        for case let row as NotificationRowView in rowsStack.arrangedSubviews {
             row.applyTheme(theme)
+        }
+        for header in groupHeaders {
+            header.font = HelmType.kicker()
+            header.textColor = HelmTheme.mutedInk(theme)
         }
     }
 
-    /// One notification row, built from the app's shared accent row.
-    ///
-    /// This row *is* `HelmAccentRow`'s source: the component
-    /// (`HelmDesignSystem.swift`, audit §6.3 component 2) is the recipe that
-    /// used to live here, promoted so Shift's task and follow-up lists, SRE
-    /// Lead's findings and Overview's "In flight" rows could stop
-    /// re-implementing it. What is left here is the part that is genuinely
-    /// about notifications: which glyph and kicker a given source gets
-    /// (`NotificationRowPresentation`), and what the chip says.
-    ///
-    /// `.belowBody` because this panel is narrow (`Self.width`) - too narrow
-    /// for a chip beside wrapping body text.
-    static func makeRow(for entry: AppNotification, theme: HelmTheme) -> HelmAccentRow {
+    #if FM_SELFTESTS
+    /// The rows and group headers actually in the panel, in order - so a check
+    /// reads the real view tree rather than re-deriving the grouping.
+    var debugRowTitles: [String] { rowsStack.arrangedSubviews.compactMap { ($0 as? NotificationRowView)?.debugTitle } }
+    var debugGroupHeaders: [String] { groupHeaders.map { $0.stringValue } }
+    var debugRows: [NotificationRowView] { rowsStack.arrangedSubviews.compactMap { $0 as? NotificationRowView } }
+    #endif
+}
+
+/// G2's notification row: a hue dot, an SF Symbol, a title and a detail line.
+///
+/// **What this replaced and why.** Until G2 each entry rendered as a full
+/// `HelmAccentRow` "claim card" - a 3pt accent bar, a 26pt circular badge, an
+/// uppercase kicker, the message, and a trailing chip carrying the entry's
+/// source text. That recipe is right in a wide list (it is what Shift's tasks,
+/// Hosts' records and Overview's rows wear), and the audit's finding is that
+/// it is wrong *here*: "cards-in-a-340pt-popover feel cramped". Five stacked
+/// elements per row in a 360pt column leaves the message - the only part a
+/// captain reads - a narrow strip between chrome above and chrome below.
+///
+/// So this is the same information at one level less structure: the accent bar
+/// and the badge collapse into one small hue **dot** plus the symbol, the
+/// kicker's job is done by the group header above the row (a kicker per row
+/// repeated "Update Available" down a list of updates), and the chip's text
+/// becomes the plain detail line it always was.
+///
+/// A `HoverHighlightView`, so the row keeps the hover fill, the `.button`
+/// accessibility role, the focus ring and the keyboard press that
+/// `HelmAccentRow` was providing (GL-16) - none of which this row would get on
+/// its own.
+final class NotificationRowView: HoverHighlightView {
+
+    /// The hue dot's diameter.
+    private static let dotSide: CGFloat = 7
+    /// The symbol's point size - weight-matched to the title beside it (I2).
+    private static let symbolPointSize: CGFloat = 12
+
+    private let dot = NSView()
+    private let glyph = NSImageView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private let detailLabel = NSTextField(labelWithString: "")
+    private let tint: HelmTint
+
+    var onActivate: (() -> Void)?
+
+    init(entry: AppNotification, theme: HelmTheme) {
+        self.tint = entry.tint
+        super.init(frame: .zero)
         let presentation = NotificationRowPresentation(for: entry)
-        let row = HelmAccentRow(chipPlacement: .belowBody)
-        row.configure(HelmAccentRow.Content(tint: entry.tint,
-                                            kicker: presentation.kicker,
-                                            title: entry.title,
-                                            badgeSymbol: presentation.icon,
-                                            chipText: entry.subtext,
-                                            titleWraps: true),
-                      theme: theme)
-        return row
+
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = Self.dotSide / 2
+        dot.translatesAutoresizingMaskIntoConstraints = false
+
+        glyph.image = NSImage(systemSymbolName: presentation.icon, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: Self.symbolPointSize, weight: .semibold))
+        glyph.imageScaling = .scaleProportionallyDown
+        glyph.setContentHuggingPriority(.required, for: .horizontal)
+        glyph.translatesAutoresizingMaskIntoConstraints = false
+
+        titleLabel.stringValue = entry.title
+        titleLabel.lineBreakMode = .byWordWrapping
+        titleLabel.maximumNumberOfLines = 2
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        titleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        detailLabel.stringValue = entry.subtext
+        detailLabel.lineBreakMode = .byTruncatingTail
+        detailLabel.maximumNumberOfLines = 1
+        detailLabel.isHidden = entry.subtext.isEmpty
+        detailLabel.translatesAutoresizingMaskIntoConstraints = false
+        detailLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let text = NSStackView(views: [titleLabel, detailLabel])
+        text.orientation = .vertical
+        text.alignment = .leading
+        text.spacing = 2
+        text.translatesAutoresizingMaskIntoConstraints = false
+        // AGENTS.md gotcha (12): the *stack*-level priority is the one that
+        // bites for a view with no intrinsic content size.
+        text.setHuggingPriority(.defaultLow, for: .horizontal)
+        text.setClippingResistancePriority(.defaultLow, for: .horizontal)
+
+        cornerRadius = HelmMetrics.rRow
+        addSubview(dot)
+        addSubview(glyph)
+        addSubview(text)
+        NSLayoutConstraint.activate([
+            dot.widthAnchor.constraint(equalToConstant: Self.dotSide),
+            dot.heightAnchor.constraint(equalToConstant: Self.dotSide),
+            dot.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+            // Optically aligned with the title's first line, not the row's
+            // centre: a two-line title would otherwise pull the dot down to
+            // somewhere it points at nothing.
+            dot.centerYAnchor.constraint(equalTo: titleLabel.firstBaselineAnchor, constant: -4),
+
+            glyph.leadingAnchor.constraint(equalTo: dot.trailingAnchor, constant: 8),
+            glyph.centerYAnchor.constraint(equalTo: dot.centerYAnchor),
+            glyph.widthAnchor.constraint(equalToConstant: 16),
+
+            text.leadingAnchor.constraint(equalTo: glyph.trailingAnchor, constant: 8),
+            text.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
+            text.topAnchor.constraint(equalTo: topAnchor, constant: 8),
+            text.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+        ])
+
+        addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(activate)))
+        accessibilityLabelOverride = entry.subtext.isEmpty
+            ? entry.title
+            : "\(entry.title). \(entry.subtext)"
+        applyTheme(theme)
     }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("not supported") }
+
+    @objc private func activate() { onActivate?() }
+
+    func applyTheme(_ theme: HelmTheme) {
+        // The dot is a *fill*, so the raw hue is safe on it - unlike the
+        // labels beside it, which take the theme's own ink (`HelmContrast`'s
+        // rule: a tint is safe as a fill and is not automatically safe as
+        // text).
+        let hue = HelmTheme.nsColor(tint.hex(in: theme))
+        HelmMotion.withoutImplicitAnimation {
+            dot.layer?.backgroundColor = hue.cgColor
+        }
+        glyph.contentTintColor = HelmContrast.legibleTintedText(
+            tintHex: tint.hex(in: theme),
+            over: HelmTheme.nsColor(theme.chromeBackgroundHex),
+            theme: theme)
+        titleLabel.font = HelmType.rowTitle()
+        titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+        detailLabel.font = HelmType.caption()
+        detailLabel.textColor = HelmTheme.mutedInk(theme)
+        normalColor = .clear
+        hoverColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.35)
+    }
+
+    #if FM_SELFTESTS
+    var debugTitle: String { titleLabel.stringValue }
+    var debugDotColor: NSColor? { dot.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) } }
+    var debugHasSymbol: Bool { glyph.image != nil }
+    var debugDetail: String { detailLabel.stringValue }
+    #endif
 }
 
 /// Per-source icon + kicker label for a notification row - derived from each

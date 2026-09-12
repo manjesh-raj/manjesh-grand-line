@@ -276,7 +276,7 @@ final class WhiteboardDSLViewController: NSViewController, NSTextViewDelegate {
     private let placeholderLabel = NSTextField(labelWithString: "")
     private let hintLabel = NSTextField(labelWithString: "\u{2318}\u{23ce} to insert")
     private let insertButton = HelmButton(title: "Insert", variant: .primary, target: nil, action: nil)
-    private let spinner = NSProgressIndicator()
+    private let spinner = HelmProgressBar.inlineActivity(hue: RailDestination.whiteboard.domainHue)
     private let preview = DiagramPreviewView()
     private let componentsKicker = NSTextField(labelWithString: "")
     private let componentsFlow = ChipFlowView(frame: .zero)
@@ -353,10 +353,6 @@ final class WhiteboardDSLViewController: NSViewController, NSTextViewDelegate {
         hintLabel.translatesAutoresizingMaskIntoConstraints = false
         hintLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
 
-        spinner.style = .spinning
-        spinner.controlSize = .small
-        spinner.isDisplayedWhenStopped = false
-        spinner.translatesAutoresizingMaskIntoConstraints = false
 
         // "Hint left, action right" needs a flexible spacer plus `.fill` -
         // gotcha (10): a `.gravityAreas` row stretches nothing on its own.
@@ -575,7 +571,7 @@ final class WhiteboardDSLViewController: NSViewController, NSTextViewDelegate {
         isInserting = inserting
         insertButton.isEnabled = !inserting && parsed != nil
         for button in componentButtons { button.isEnabled = !inserting }
-        if inserting { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
+        if inserting { spinner.startAnimation() } else { spinner.stopAnimation() }
     }
 
     private var statusColor: NSColor {

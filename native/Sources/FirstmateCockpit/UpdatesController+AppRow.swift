@@ -40,10 +40,8 @@ extension UpdatesController {
         appRow.actionButton.action = #selector(appUpdateActionTapped)
         appRow.actionButton.isHidden = true
 
-        appRow.spinner.style = .spinning
-        appRow.spinner.controlSize = .small
-        appRow.spinner.isIndeterminate = true
-        appRow.spinner.translatesAutoresizingMaskIntoConstraints = false
+        // G4: `inlineActivity` starts hidden and self-sizes, so the five
+        // stock-spinner config lines this replaced have nothing left to say.
         appRow.spinner.isHidden = true
         appRow.progressLabel.font = .systemFont(ofSize: 11, weight: .medium)
         appRow.progressLabel.isHidden = true
@@ -173,13 +171,13 @@ extension UpdatesController {
         if appRow.isBusy {
             views.pill.isHidden = true
             appRow.spinner.isHidden = false
-            appRow.spinner.startAnimation(nil)
+            appRow.spinner.startAnimation()
             appRow.progressLabel.isHidden = false
             appRow.progressLabel.stringValue = "Working\u{2026}"
             appRow.checkButton.isEnabled = false
             appRow.actionButton.isEnabled = false
         } else {
-            appRow.spinner.stopAnimation(nil)
+            appRow.spinner.stopAnimation()
             appRow.spinner.isHidden = true
             appRow.progressLabel.isHidden = true
             views.pill.isHidden = false
@@ -260,7 +258,7 @@ final class AppUpdateRowState {
     let detailLabel = NSTextField(labelWithString: "")
     let pill = NSView()
     let pillLabel = NSTextField(labelWithString: "")
-    let spinner = NSProgressIndicator()
+    let spinner = HelmProgressBar.inlineActivity(hue: RailDestination.updates.domainHue)
     let progressLabel = NSTextField(labelWithString: "Working\u{2026}")
     let checkButton = HelmButton(title: "Check", variant: .secondary, size: .small)
     let actionButton = HelmButton(title: "Release Notes", variant: .secondary, size: .small)

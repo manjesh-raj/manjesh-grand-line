@@ -73,37 +73,43 @@ enum Toast {
 
     private static func show(in container: NSView, message: String, undo: (() -> Void)?) {
         let theme = ThemeManager.shared.theme
-        // §6.14: capsule, `ink` fill, white 12 semibold text, raised shadow,
-        // top-centre. The other twelve palettes keep the bordered
-        // `chromeBackground` pill they have always rendered - a dark-on-dark
-        // toast on `helm-dark` would be worse, not more consistent.
-        let daylight = theme.isDaylight
 
-        let glyph = NSTextField(labelWithString: "\u{2713}")
-        glyph.font = .systemFont(ofSize: 12, weight: .bold)
-        glyph.textColor = daylight ? .white : HelmTheme.nsColor(theme.ansiHex[2])
+        // G1: a checkmark *symbol*, not a literal "✓" in a bold system font.
+        // A text tick renders at whatever weight the font gives it and sits on
+        // the text baseline rather than optically centred against the message
+        // beside it; the symbol is designed to sit beside a label.
+        let glyph = NSImageView()
+        glyph.image = NSImage(systemSymbolName: "checkmark.circle.fill",
+                              accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 13, weight: .semibold))
+        // Corrected against the card surface the tick actually lands on, not
+        // used raw: a `HelmTint` hue is safe as a fill and is not automatically
+        // safe as ink (`HelmContrast`'s own rule).
+        glyph.contentTintColor = HelmContrast.legibleTintedText(
+            tintHex: HelmTint.good.hex(in: theme),
+            over: HelmTheme.nsColor(theme.chromeBackgroundHex),
+            theme: theme)
+        glyph.setContentHuggingPriority(.required, for: .horizontal)
         glyph.translatesAutoresizingMaskIntoConstraints = false
 
         let label = NSTextField(labelWithString: message)
-        label.font = daylight
-            ? .systemFont(ofSize: HelmType.scaled(12), weight: .semibold)
-            : .systemFont(ofSize: 12.5, weight: .medium)
-        label.textColor = daylight ? .white : HelmTheme.nsColor(theme.chromeInkHex)
+        label.font = .systemFont(ofSize: HelmType.scaled(12), weight: .semibold)
+        // G1: "the theme's ink" - one rule for all fourteen palettes now. The
+        // fixed white-on-ink capsule this replaced ignored the theme's own
+        // surfaces entirely, which is the finding verbatim.
+        label.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         label.translatesAutoresizingMaskIntoConstraints = false
 
         var arranged: [NSView] = [glyph, label]
         var undoButton: HelmButton?
         if undo != nil {
-            let button = HelmButton(title: "Undo", variant: .quiet, size: .small)
+            // G1: "the Undo affordance styled as a capsule button inside".
+            // `.secondary` is the bordered capsule; `.quiet` was a bare word,
+            // which on a card surface no longer reads as a control at all now
+            // that the surface is light in half the palettes.
+            let button = HelmButton(title: "Undo", variant: .secondary, size: .small)
             button.setContentHuggingPriority(.required, for: .horizontal)
             button.setContentCompressionResistancePriority(.required, for: .horizontal)
-            // A `.quiet` button's own label is `muted`, which is a *page*
-            // colour and would disappear against the ink capsule. §6.14's
-            // "action word in the domain hue's light stop" is what replaces it,
-            // through `labelColorOverride` rather than by assigning
-            // `attributedTitle` - `restyle()` owns that property and would
-            // overwrite an external assignment on the next theme change.
-            if daylight { button.labelColorOverride = toastHue.pair(in: theme).h2 }
             arranged.append(button)
             undoButton = button
         }
@@ -115,68 +121,88 @@ enum Toast {
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let pill = NSView()
-        pill.wantsLayer = true
-        pill.layer?.backgroundColor = daylight
-            ? HelmTheme.nsColor(theme.daylightTokens.ink).cgColor
-            : HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
-        pill.layer?.borderWidth = daylight ? 0 : 1
-        pill.layer?.borderColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6).cgColor
-        if daylight {
-            // The capsule radius has to come from the pill's *resolved* height,
-            // which is only known after a layout pass - so the radius is set
-            // below, once the constraints have run. The raised shadow is drawn
-            // on this same layer: nothing clips it, because a pill has no
-            // rounded child to mask.
-            let shadow = HelmCard.elevation(for: theme, level: .raised)
-            pill.layer?.shadowColor = shadow.shadowColor?.cgColor
-            pill.layer?.shadowOpacity = 1
-            pill.layer?.shadowRadius = shadow.shadowBlurRadius / 2
-            pill.layer?.shadowOffset = CGSize(width: shadow.shadowOffset.width,
-                                              height: shadow.shadowOffset.height)
-        } else {
-            pill.layer?.cornerRadius = 10
-        }
         pill.translatesAutoresizingMaskIntoConstraints = false
         pill.alphaValue = 0
         pill.addSubview(stack)
 
         container.addSubview(pill)
+        // G1: **bottom**-centre, above the content area. Top-centre put every
+        // confirmation underneath the floating bar and across its search pill -
+        // the one strip of chrome guaranteed to be there.
+        let bottom = pill.bottomAnchor.constraint(equalTo: container.bottomAnchor,
+                                                  constant: -bottomInset)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: pill.leadingAnchor, constant: 14),
             stack.trailingAnchor.constraint(equalTo: pill.trailingAnchor, constant: -14),
             stack.topAnchor.constraint(equalTo: pill.topAnchor, constant: 9),
             stack.bottomAnchor.constraint(equalTo: pill.bottomAnchor, constant: -9),
             pill.centerXAnchor.constraint(equalTo: container.centerXAnchor),
-            pill.topAnchor.constraint(equalTo: container.topAnchor, constant: 20),
+            bottom,
         ])
 
-        if daylight {
-            container.layoutSubtreeIfNeeded()
-            pill.layer?.cornerRadius = HelmMetrics.capsuleRadius(forHeight: pill.bounds.height)
+        container.layoutSubtreeIfNeeded()
+        // G1: "`card`-on-elevation styling". The app's one card surface, so a
+        // toast cannot disagree with the cards it floats over, plus the second
+        // of §2.5's two elevation levels - which is what `raised` is for.
+        HelmCard.applyCardSurface(to: pill, theme: theme,
+                                  cornerRadius: HelmMetrics.capsuleRadius(forHeight: pill.bounds.height),
+                                  daylightRadius: HelmMetrics.capsuleRadius(forHeight: pill.bounds.height))
+        let shadow = HelmCard.elevation(for: theme, level: .raised)
+        pill.layer?.masksToBounds = false
+        pill.layer?.shadowColor = shadow.shadowColor?.cgColor
+        pill.layer?.shadowOpacity = 1
+        pill.layer?.shadowRadius = shadow.shadowBlurRadius / 2
+        pill.layer?.shadowOffset = CGSize(width: shadow.shadowOffset.width,
+                                          height: shadow.shadowOffset.height)
+
+        // A new *undo* pill still supersedes whatever undo was on screen -
+        // including committing that delete by simply never running its handler.
+        // G1 asks for stackable *toasts*, which is a different thing: two
+        // plain confirmations stacking is readable, whereas two pending undos
+        // is a state a captain cannot reason about (GL-33's own reasoning,
+        // unchanged).
+        if undo != nil {
+            activeUndo?.dismiss()
+            activeUndo = nil
         }
 
-        // A new pill supersedes whatever was on screen - including, for an
-        // undo pill, committing the previous delete by simply never running
-        // its handler.
-        activeUndo?.dismiss()
-        activeUndo = nil
+        let entry = Entry(pill: pill, bottom: bottom, container: container)
+        live.append(entry)
+        restack(in: container, animated: false)
 
-        // Phase 6's Reduce Motion audit: appear and disappear instantly rather
-        // than cross-fading when the captain has asked for less motion. The
-        // pill still shows for the same duration - what goes away is the fade,
-        // not the message.
-        HelmMotion.animate(duration: 0.18) { pill.animator().alphaValue = 1 }
+        // G1: "spring rise + fade (translate 12pt)". The rise is a layer
+        // translation rather than a constraint animation so it composes with
+        // `restack`'s own constant writes without the two fighting over the
+        // same constraint.
+        if HelmMotion.isReduced {
+            pill.alphaValue = 1
+        } else {
+            pill.wantsLayer = true
+            pill.layer?.transform = CATransform3DMakeTranslation(0, -riseDistance, 0)
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = HelmMotion.springDuration
+                context.timingFunction = HelmMotion.spring()
+                context.allowsImplicitAnimation = true
+                pill.layer?.transform = CATransform3DIdentity
+                pill.animator().alphaValue = 1
+            }
+        }
 
         let dismiss = {
+            entry.retire()
             guard !HelmMotion.isReduced else {
                 pill.removeFromSuperview()
+                restack(in: container, animated: false)
                 return
             }
             NSAnimationContext.runAnimationGroup({ ctx in
                 ctx.duration = 0.25
+                ctx.allowsImplicitAnimation = true
+                pill.layer?.transform = CATransform3DMakeTranslation(0, -riseDistance, 0)
                 pill.animator().alphaValue = 0
             }, completionHandler: {
                 pill.removeFromSuperview()
+                restack(in: container, animated: true)
             })
         }
 
@@ -198,6 +224,63 @@ enum Toast {
         }
         slot.expiry = expiry
         DispatchQueue.main.asyncAfter(deadline: .now() + undoDuration, execute: expiry)
+    }
+
+    // MARK: G1 - stacking
+
+    /// How far above the container's bottom edge the lowest pill sits.
+    static let bottomInset: CGFloat = 24
+    /// The gap between two stacked pills.
+    static let stackSpacing: CGFloat = 8
+    /// How far a pill rises as it fades in (G1's "translate 12pt").
+    static let riseDistance: CGFloat = 12
+
+    /// One live pill. Held weakly on the container so a page torn down while a
+    /// toast is up cannot keep it - and `retire()` is idempotent, because the
+    /// dismiss closure and an undo click can both reach it.
+    private final class Entry {
+        let pill: NSView
+        let bottom: NSLayoutConstraint
+        weak var container: NSView?
+        var retired = false
+        init(pill: NSView, bottom: NSLayoutConstraint, container: NSView) {
+            self.pill = pill
+            self.bottom = bottom
+            self.container = container
+        }
+        func retire() { retired = true }
+    }
+
+    private static var live: [Entry] = []
+
+    /// Re-place every live pill in `container`, newest at the bottom.
+    ///
+    /// Called on show and after every dismissal, so a pill leaving the middle
+    /// of the stack closes the gap rather than leaving a hole.
+    private static func restack(in container: NSView, animated: Bool) {
+        live.removeAll { $0.container == nil || $0.retired && $0.pill.superview == nil }
+        var offset = bottomInset
+        // Newest last in `live`, and newest lowest on screen - so the stack
+        // grows upward away from the content the captain is looking at.
+        for entry in live.reversed() where entry.container === container && !entry.retired {
+            entry.pill.superview?.layoutSubtreeIfNeeded()
+            let height = max(entry.pill.bounds.height, entry.pill.fittingSize.height)
+            // **Never `constraint.animator().constant` on the unanimated
+            // branch.** The animator proxy routes the write through AppKit's
+            // animation machinery whether or not a context is open, so an
+            // "unanimated" assignment does not take immediately - which is the
+            // trap `HelmMotion.fade`'s own header records, and which showed up
+            // here as two toasts landing on top of each other.
+            if animated && !HelmMotion.isReduced {
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = HelmMotion.stateDuration
+                    entry.bottom.animator().constant = -offset
+                }
+            } else {
+                entry.bottom.constant = -offset
+            }
+            offset += height + stackSpacing
+        }
     }
 
     /// How long a plain confirmation stays up, and how long an undo offer does.

@@ -115,15 +115,7 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
     private weak var generateButton: HelmButton?
     private weak var verifyButton: HelmButton?
     private var workInFlight = 0
-    private let spinner: NSProgressIndicator = {
-        let s = NSProgressIndicator()
-        s.style = .spinning
-        s.controlSize = .small
-        s.isDisplayedWhenStopped = false
-        s.isHidden = true
-        s.translatesAutoresizingMaskIntoConstraints = false
-        return s
-    }()
+    private let spinner = HelmProgressBar.inlineActivity(hue: RailDestination.hosts.domainHue)
 
     private var pendingPrivateKey: Data?
     private var pendingPublicKeyLine: String?
@@ -510,7 +502,7 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
         generateButton?.isEnabled = false
         verifyButton?.isEnabled = false
         spinner.isHidden = false
-        spinner.startAnimation(nil)
+        spinner.startAnimation()
         setStatusTone(.neutral)
         statusLabel.stringValue = statusText
         updateSaveEnabled()
@@ -521,7 +513,7 @@ final class KeyEditorController: NSViewController, NSTextFieldDelegate {
         guard workInFlight == 0 else { return }
         generateButton?.isEnabled = true
         verifyButton?.isEnabled = true
-        spinner.stopAnimation(nil)
+        spinner.stopAnimation()
         spinner.isHidden = true
     }
 

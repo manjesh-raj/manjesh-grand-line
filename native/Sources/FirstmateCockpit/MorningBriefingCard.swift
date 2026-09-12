@@ -260,7 +260,7 @@ final class MorningBriefingCard: NSView {
     private let subtitleLabel = NSTextField(wrappingLabelWithString: "")
     private let paragraph = BriefingParagraphView()
     private let footnote = NSTextField(wrappingLabelWithString: "")
-    private let spinner = NSProgressIndicator()
+    private let spinner = HelmProgressBar.inlineActivity(hue: RailDestination.overview.domainHue)
     private let busyLabel = NSTextField(labelWithString: "Composing your briefing\u{2026}")
     private let refreshButton: HelmButton
     private let dismissButton: HelmButton
@@ -296,10 +296,6 @@ final class MorningBriefingCard: NSView {
         footnote.translatesAutoresizingMaskIntoConstraints = false
         footnote.isHidden = true
 
-        spinner.style = .spinning
-        spinner.isIndeterminate = true
-        spinner.controlSize = .small
-        spinner.translatesAutoresizingMaskIntoConstraints = false
         busyLabel.font = HelmType.body()
         busyLabel.translatesAutoresizingMaskIntoConstraints = false
         let busyRow = NSStackView(views: [spinner, busyLabel])
@@ -345,7 +341,7 @@ final class MorningBriefingCard: NSView {
         }
         busyRow.isHidden = !busy
         refreshButton.isEnabled = !busy
-        if busy { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
+        if busy { spinner.startAnimation() } else { spinner.stopAnimation() }
     }
 
     func render(_ record: MorningBriefingRecord, theme: HelmTheme) {

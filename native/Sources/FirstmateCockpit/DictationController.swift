@@ -86,7 +86,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
     /// GL-35: 547MB is not a footprint to strand. Only shown while the model
     /// is actually on disk.
     private let modelDeleteButton = HelmButton(title: "Delete Model", variant: .destructive)
-    private let modelProgressBar = NSProgressIndicator()
+    private let modelProgressBar = HelmProgressBar()
     private var modelState: WhisperModelState = .notDownloaded
 
     private let vocabularyPanel = HelmCard()
@@ -577,13 +577,9 @@ final class DictationController: NSViewController, DaylightDrillActions {
         modelReadyPill.setContentCompressionResistancePriority(.required, for: .horizontal)
         modelReadyPill.isHidden = true
 
-        modelProgressBar.style = .bar
-        modelProgressBar.isIndeterminate = false
-        modelProgressBar.minValue = 0
-        modelProgressBar.maxValue = 1
-        modelProgressBar.controlSize = .small
+        // G4: the app's own bar rather than the stock determinate one.
         modelProgressBar.isHidden = true
-        modelProgressBar.translatesAutoresizingMaskIntoConstraints = false
+        modelProgressBar.setContentHuggingPriority(.required, for: .horizontal)
         modelProgressBar.widthAnchor.constraint(equalToConstant: 160).isActive = true
 
         modelActionButton.controlSize = .small
@@ -770,6 +766,10 @@ final class DictationController: NSViewController, DaylightDrillActions {
     }
 
     private func applyTheme() {
+        // G4: the shared bar carries its own theme + hue, handed over from the
+        // page's own theme pass rather than observed independently.
+        modelProgressBar.applyTheme(ThemeManager.shared.theme,
+                                    hue: RailDestination.dictation.domainHue)
 
         // GL-32 (audit §6.1): the history rows grow with the chrome text
         // scale, so the box that shows three of them has to follow.
@@ -833,7 +833,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
             modelStatusLabel.isHidden = false
             modelReadyPill.isHidden = true
             modelProgressBar.isHidden = false
-            modelProgressBar.doubleValue = progress
+            modelProgressBar.configure(fraction: progress)
             modelActionButton.title = "Cancel"
             modelActionButton.isEnabled = true
             modelDeleteButton.isHidden = true

@@ -1956,6 +1956,11 @@ if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_SLICE6_TESTS"] == 
 if ProcessInfo.processInfo.environment["FM_RUN_FORMS_MODERNIZATION_TESTS"] == "1" {
     exit(FormsModernizationSelfTest.run() ? 0 : 1)
 }
+// The UI modernization audit's §3G - toasts, notifications and progress
+// (G1/G2/G4). See FeedbackModernizationSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_FEEDBACK_MODERNIZATION_TESTS"] == "1" {
+    exit(FeedbackModernizationSelfTest.run() ? 0 : 1)
+}
 if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_CHROME_TESTS"] == "1" {
     exit(DaylightChromeSelfTest.run() ? 0 : 1)
 }
