@@ -178,13 +178,6 @@ final class AppShellController: NSViewController {
     private let bootstrap: BootstrapController
     private let automation: AutomationController
     private let githubSync = GitHubSyncController()
-    /// fm/grandline-design-fidelity-fixes: the four pages above are one Setup
-    /// destination with a `HelmSegmentedTabs` row across the top, so the
-    /// captain can move between them without going back out to the rail's
-    /// Setup flyout. They are still four independent `RailDestination` cases
-    /// and four independent controllers - this only parents them and switches
-    /// which one is visible. See `SetupContainerController`.
-    private var setup: SetupContainerController!
 
     /// Fix 1: builds a fresh, host-scoped `ConsoleController` (its own ssh
     /// tab(s) only, no Firstmate host's own Shell tab - see
@@ -511,24 +504,6 @@ final class AppShellController: NSViewController {
         // icon (`ConsoleController.showFind`) and the Edit menu's `⌘F`.
         bar.onSearchTapped = { [weak self] in self?.onSearchTapped?() }
 
-        // The four Setup pages become children of `setup`, not of this
-        // controller - `SetupContainerController.loadView` calls `addChild`
-        // for each of them, which means none of the four runs its own
-        // `loadView` until the Setup slot itself is first mounted. Poneglyph
-        // is registered as its own slot below instead
-        // (`fm/poneglyph-own-destination-and-strawhat-toolbar-shortcut`) -
-        // see `SetupContainerController.swift`'s header for why it no longer
-        // shares this container.
-        setup = SetupContainerController(updates: updates, bootstrap: bootstrap,
-                                         automation: automation, githubSync: githubSync)
-        setup.onTabSelected = { _ in
-            // Nothing to follow any more. Before Daylight this moved the rail
-            // highlight; the drill header keeps saying "Setup" (all four pages
-            // share one slot and one title) and the tab row directly below it
-            // is what names the active sub-page, exactly as Hosts already does
-            // for its own three tabs.
-        }
-
         // GL-37: the destination table. One line per body view replaces the
         // six hand-maintained per-destination edit sites this used to need
         // (see `DestinationRegistry.swift`'s header). Registration order is
@@ -541,30 +516,39 @@ final class AppShellController: NSViewController {
         // file is safe before a first visit as long as it only *assigns a
         // closure* (which the wiring below does) - anything that touches a
         // destination's views goes through `show(_:)` first.
-        mounter.register(DestinationSlot(id: .homeCanvas, title: RailDestination.homeCanvas.bodyTitle, mountsEagerly: true, controller: homeCanvas))
-        mounter.register(DestinationSlot(id: .overview, title: RailDestination.overview.bodyTitle, mountsEagerly: true, controller: overview))
-        mounter.register(DestinationSlot(id: .strawHat, title: RailDestination.strawHat.bodyTitle, mountsEagerly: false, controller: strawHat))
-        mounter.register(DestinationSlot(id: .console, title: RailDestination.console.bodyTitle, mountsEagerly: true, controller: console))
-        mounter.register(DestinationSlot(id: .hosts, title: RailDestination.hosts.bodyTitle, mountsEagerly: false, controller: hostsPanel))
-        mounter.register(DestinationSlot(id: .shift, title: RailDestination.shift.bodyTitle, mountsEagerly: false, controller: shift))
-        mounter.register(DestinationSlot(id: .review, title: RailDestination.review.bodyTitle, mountsEagerly: true, controller: review))
-        mounter.register(DestinationSlot(id: .logAnalyzer, title: RailDestination.logAnalyzer.bodyTitle, mountsEagerly: false, controller: logAnalyzer))
-        mounter.register(DestinationSlot(id: .kubernetes, title: RailDestination.kubernetes.bodyTitle, mountsEagerly: false, controller: kubernetes))
-        mounter.register(DestinationSlot(id: .tools, title: RailDestination.tools.bodyTitle, mountsEagerly: false, controller: tools))
-        mounter.register(DestinationSlot(id: .whiteboard, title: RailDestination.whiteboard.bodyTitle, mountsEagerly: false, controller: whiteboard))
-        mounter.register(DestinationSlot(id: .stickyBoard, title: RailDestination.stickyBoard.bodyTitle, mountsEagerly: false, controller: stickyBoard))
-        mounter.register(DestinationSlot(id: .codePreview, title: RailDestination.codePreview.bodyTitle, mountsEagerly: false, controller: codePreview))
-        mounter.register(DestinationSlot(id: .commandLibrary, title: RailDestination.commandLibrary.bodyTitle, mountsEagerly: false, controller: commandLibrary))
-        mounter.register(DestinationSlot(id: .vault, title: RailDestination.vault.bodyTitle, mountsEagerly: false, controller: vault))
-        mounter.register(DestinationSlot(id: .dictation, title: RailDestination.dictation.bodyTitle, mountsEagerly: false, controller: dictation))
-        mounter.register(DestinationSlot(id: .schedules, title: RailDestination.schedules.bodyTitle, mountsEagerly: false, controller: schedules))
-        mounter.register(DestinationSlot(id: .health, title: RailDestination.health.bodyTitle, mountsEagerly: false, controller: health))
-        mounter.register(DestinationSlot(id: .docs, title: RailDestination.docs.bodyTitle, mountsEagerly: false, controller: docs))
-        mounter.register(DestinationSlot(id: .runbooks, title: RailDestination.runbooks.bodyTitle, mountsEagerly: false, controller: runbooks))
-        mounter.register(DestinationSlot(id: .postmortems, title: RailDestination.postmortems.bodyTitle, mountsEagerly: false, controller: postmortems))
-        mounter.register(DestinationSlot(id: .setup, title: RailDestination.updates.bodyTitle, mountsEagerly: false, controller: setup))
-        mounter.register(DestinationSlot(id: .poneglyph, title: RailDestination.poneglyph.bodyTitle, mountsEagerly: false, controller: poneglyph))
-        mounter.register(DestinationSlot(id: .settings, title: RailDestination.settings.bodyTitle, mountsEagerly: false, controller: settings))
+        mounter.register(DestinationSlot(id: .homeCanvas, title: RailDestination.homeCanvas.title, mountsEagerly: true, controller: homeCanvas))
+        mounter.register(DestinationSlot(id: .overview, title: RailDestination.overview.title, mountsEagerly: true, controller: overview))
+        mounter.register(DestinationSlot(id: .strawHat, title: RailDestination.strawHat.title, mountsEagerly: false, controller: strawHat))
+        mounter.register(DestinationSlot(id: .console, title: RailDestination.console.title, mountsEagerly: true, controller: console))
+        mounter.register(DestinationSlot(id: .hosts, title: RailDestination.hosts.title, mountsEagerly: false, controller: hostsPanel))
+        mounter.register(DestinationSlot(id: .shift, title: RailDestination.shift.title, mountsEagerly: false, controller: shift))
+        mounter.register(DestinationSlot(id: .review, title: RailDestination.review.title, mountsEagerly: true, controller: review))
+        mounter.register(DestinationSlot(id: .logAnalyzer, title: RailDestination.logAnalyzer.title, mountsEagerly: false, controller: logAnalyzer))
+        mounter.register(DestinationSlot(id: .kubernetes, title: RailDestination.kubernetes.title, mountsEagerly: false, controller: kubernetes))
+        mounter.register(DestinationSlot(id: .tools, title: RailDestination.tools.title, mountsEagerly: false, controller: tools))
+        mounter.register(DestinationSlot(id: .whiteboard, title: RailDestination.whiteboard.title, mountsEagerly: false, controller: whiteboard))
+        mounter.register(DestinationSlot(id: .stickyBoard, title: RailDestination.stickyBoard.title, mountsEagerly: false, controller: stickyBoard))
+        mounter.register(DestinationSlot(id: .codePreview, title: RailDestination.codePreview.title, mountsEagerly: false, controller: codePreview))
+        mounter.register(DestinationSlot(id: .commandLibrary, title: RailDestination.commandLibrary.title, mountsEagerly: false, controller: commandLibrary))
+        mounter.register(DestinationSlot(id: .vault, title: RailDestination.vault.title, mountsEagerly: false, controller: vault))
+        mounter.register(DestinationSlot(id: .dictation, title: RailDestination.dictation.title, mountsEagerly: false, controller: dictation))
+        mounter.register(DestinationSlot(id: .schedules, title: RailDestination.schedules.title, mountsEagerly: false, controller: schedules))
+        mounter.register(DestinationSlot(id: .health, title: RailDestination.health.title, mountsEagerly: false, controller: health))
+        mounter.register(DestinationSlot(id: .docs, title: RailDestination.docs.title, mountsEagerly: false, controller: docs))
+        mounter.register(DestinationSlot(id: .runbooks, title: RailDestination.runbooks.title, mountsEagerly: false, controller: runbooks))
+        mounter.register(DestinationSlot(id: .postmortems, title: RailDestination.postmortems.title, mountsEagerly: false, controller: postmortems))
+        // `fm/grandline-separate-setup-destinations`: four ordinary lines,
+        // where this was one `.setup` slot holding a
+        // `SetupContainerController` that parented all four pages. Each of
+        // them is now registered, titled, mounted and lazily built exactly
+        // like every other destination in this table - see
+        // `RailDestination.slot` for the captain's own reasoning.
+        mounter.register(DestinationSlot(id: .updates, title: RailDestination.updates.title, mountsEagerly: false, controller: updates))
+        mounter.register(DestinationSlot(id: .bootstrap, title: RailDestination.bootstrap.title, mountsEagerly: false, controller: bootstrap))
+        mounter.register(DestinationSlot(id: .automation, title: RailDestination.automation.title, mountsEagerly: false, controller: automation))
+        mounter.register(DestinationSlot(id: .githubSync, title: RailDestination.githubSync.title, mountsEagerly: false, controller: githubSync))
+        mounter.register(DestinationSlot(id: .poneglyph, title: RailDestination.poneglyph.title, mountsEagerly: false, controller: poneglyph))
+        mounter.register(DestinationSlot(id: .settings, title: RailDestination.settings.title, mountsEagerly: false, controller: settings))
 
         // Built here, before the window is ever shown, for the three
         // invariants `DestinationRegistry.swift` documents (a live PTY, and
@@ -869,11 +853,17 @@ final class AppShellController: NSViewController {
         }
         health.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         console.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // Setup's header line is per-tab (§7's four tabs count entirely
-        // different things), so it moves both when a sub-page's own numbers
-        // change and when the captain switches tabs - `select(tab:)` fires
-        // this too.
-        setup.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        // The four Engineering setup pages, each wired exactly like every
+        // other conforming destination since
+        // `fm/grandline-separate-setup-destinations`. They used to route
+        // through `SetupContainerController`'s own per-tab forwarding, which
+        // also had to fire on a tab switch because the line was per-tab; each
+        // page owns its own header line now, so a page's own numbers moving is
+        // the only thing that can change it.
+        updates.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        bootstrap.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        automation.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        githubSync.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         schedules.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         logAnalyzer.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         vault.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
@@ -957,7 +947,7 @@ final class AppShellController: NSViewController {
             return (store.loadState(), store.isUnlocked, store.isUnlocked ? store.credentials.count : nil)
         }
 
-        // GL-31: a machine with no firstmate home resolved lands on Setup, not
+        // GL-31: a machine with no firstmate home resolved lands on Bootstrap, not
         // on a Console tab in front of an Overview that can only report
         // zeroes. `FirstmateHome.root` is resolved once at launch, so this is
         // a one-time decision and cannot flap.
@@ -1430,13 +1420,6 @@ final class AppShellController: NSViewController {
         // `RecentDestinations`'s own recording method's doc comment for why a
         // captain never sees "where I already am" in the dropdown.
         updateRecentDestinations(arriving: .rail(dest))
-
-        // The one destination-specific step left: four rail destinations
-        // share the Setup slot, and which of them the captain asked for
-        // decides the segmented tab, not the body view.
-        if slot.id == .setup, let tab = SetupTab(destination: dest) {
-            setup.select(tab: tab)
-        }
 
         applyDrillHeader(title: slot.title,
                          subtitle: dest.drillSubtitle,

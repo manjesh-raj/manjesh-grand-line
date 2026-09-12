@@ -53,8 +53,8 @@ enum DestinationMountingSelfTest {
     static func run() -> Bool {
         let cases: [(String, () -> String?)] = [
             ("everyRailDestinationResolvesToARegisteredSlot", test_everyDestinationHasASlot),
-            ("setupGroupSharesOneSlotAndOneTitle", test_setupGroupSharesOneSlot),
-            ("bodyTitleMatchesTheRailRowElsewhere", test_bodyTitleMatchesRailTitle),
+            ("setupGroupHasFourSeparateSlotsAndFourTitles", test_setupGroupHasFourSeparateSlots),
+            ("setupDestinationsShowTheirOwnDrillHeader", test_setupDestinationsShowTheirOwnDrillHeader),
             ("onlyEagerSlotsAreMountedAtLaunch", test_onlyEagerSlotsMountedAtLaunch),
             ("firstVisitMountsExactlyOneSlot", test_firstVisitMountsOneSlot),
             ("revisitReusesTheSameView", test_revisitReusesSameView),
@@ -95,33 +95,44 @@ enum DestinationMountingSelfTest {
         return nil
     }
 
-    private static func test_setupGroupSharesOneSlot() -> String? {
-        // `.poneglyph` (the captain's own credential vault) used to be a
-        // fifth tab of this shared slot (`fm/implement-grand-line-secrets-
-        // vault-poneg-ad`), unaffected by `fm/swap-vault-poneglyph-naming-in-
-        // grand-lin-1f` later swapping which feature `.vault`/`.poneglyph`
-        // each show. `fm/poneglyph-own-destination-and-strawhat-toolbar-
-        // shortcut` gave it its own slot instead (see
-        // `test_poneglyphIsSeparateFromSetup`) - listed explicitly rather
-        // than derived from `slot == .setup`, for this file's own reason - a
-        // test that reads the table it is checking asserts nothing.
-        let setupGroup: [RailDestination] = [.updates, .bootstrap, .automation, .githubSync]
-        for dest in setupGroup {
-            guard dest.slot == .setup else { return "\(dest) should map to the setup slot, got \(dest.slot.rawValue)" }
-            guard dest.bodyTitle == "Setup" else { return "\(dest).bodyTitle should be \"Setup\", got \"\(dest.bodyTitle)\"" }
-            guard SetupTab(destination: dest) != nil else { return "\(dest) has no SetupTab, so show(_:) could not select its tab" }
+    /// **Inverted by `fm/grandline-separate-setup-destinations`**, not
+    /// deleted - it used to be `setupGroupSharesOneSlotAndOneTitle`, asserting
+    /// that all four of these mapped to one `.setup` slot and that every one
+    /// of them reported the body title "Setup". That was a faithful record of
+    /// the shape `fm/grandline-design-fidelity-fixes` shipped, and the captain
+    /// reversed it after using the Engineering canvas: "we have 4 cards,
+    /// however when we go inside it says setup and everything is lumped up."
+    /// So the assertion now says the opposite, and a re-merge has to come here
+    /// and read why it went.
+    ///
+    /// The four are listed explicitly rather than derived from the table for
+    /// this file's own standing reason - a test that reads the table it is
+    /// checking asserts nothing.
+    private static func test_setupGroupHasFourSeparateSlots() -> String? {
+        let setupGroup: [(RailDestination, DestinationSlotID, String)] = [
+            (.updates, .updates, "Updates"),
+            (.bootstrap, .bootstrap, "Bootstrap"),
+            (.automation, .automation, "Automation"),
+            (.githubSync, .githubSync, "GitHub Sync"),
+        ]
+        var slots: Set<DestinationSlotID> = []
+        for (dest, slot, title) in setupGroup {
+            guard dest.slot == slot else {
+                return "\(dest) should own the \(slot.rawValue) slot, got \(dest.slot.rawValue)"
+            }
+            guard dest.title == title else {
+                return "\(dest).title should be \"\(title)\", got \"\(dest.title)\""
+            }
+            slots.insert(dest.slot)
         }
-        // And nothing outside that group leaks into the shared slot.
-        for dest in RailDestination.allCases where !setupGroup.contains(dest) {
-            guard dest.slot != .setup else { return "\(dest) unexpectedly shares the setup slot" }
+        guard slots.count == setupGroup.count else {
+            return "the four Engineering setup pages share a slot again: \(slots.map(\.rawValue).sorted())"
         }
-        return nil
-    }
-
-    private static func test_bodyTitleMatchesRailTitle() -> String? {
-        for dest in RailDestination.allCases where dest.slot != .setup {
-            guard dest.bodyTitle == dest.title else {
-                return "\(dest): bodyTitle \"\(dest.bodyTitle)\" should match the rail row's \"\(dest.title)\""
+        // And no other destination was quietly folded in behind them.
+        let group = Set(setupGroup.map(\.0))
+        for dest in RailDestination.allCases where !group.contains(dest) {
+            guard !slots.contains(dest.slot) else {
+                return "\(dest) shares a slot with an Engineering setup page"
             }
         }
         return nil
@@ -348,12 +359,14 @@ enum DestinationMountingSelfTest {
     /// captain's own correction was that Schedules needed its own rail icon,
     /// directly visible, and that the card must actually leave the Automation
     /// page rather than just gaining a second entry point. Both halves are
-    /// checked here: `.schedules` mounts to a slot of its own (not `.setup`,
-    /// the one Updates/Bootstrap/Automation/GitHub Sync all share), and the
-    /// real `SetupContainerController` root that `.automation` shows -
-    /// which parents all four Setup pages' views up front, regardless of
-    /// which tab is active (see `SetupContainerController.loadView`) - no
-    /// longer contains a "Schedules" card header anywhere in its view tree.
+    /// checked here: `.schedules` mounts to a slot of its own, and the real
+    /// `AutomationController` root that `.automation` shows no longer
+    /// contains a "Schedules" card header anywhere in its view tree.
+    /// (`.automation` used to share a `SetupContainerController` slot with
+    /// three sibling pages, which parented all four up front; since
+    /// `fm/grandline-separate-setup-destinations` it is its own slot, so this
+    /// now walks Automation's own view tree and nothing else's - a strictly
+    /// narrower, more honest check than it was.)
     ///
     /// Confirmed to catch a real regression, not just to pass: temporarily
     /// re-adding `SchedulesCardView`'s card to `AutomationController`'s own
@@ -376,19 +389,19 @@ enum DestinationMountingSelfTest {
                 return "the schedules view should be visible right after show(.schedules)"
             }
 
-            // Visiting Schedules must not have built the shared Setup slot as
-            // a side effect - it is a fully independent destination now.
-            guard shell.destinationViewIfMountedForTests(.setup) == nil else {
-                return "show(.schedules) unexpectedly mounted the setup slot too"
+            // Visiting Schedules must not have built the Automation page as a
+            // side effect - it is a fully independent destination now.
+            guard shell.destinationViewIfMountedForTests(.automation) == nil else {
+                return "show(.schedules) unexpectedly mounted the automation slot too"
             }
 
             shell.show(.automation)
-            guard let setupView = shell.destinationViewIfMountedForTests(.setup) else {
-                return "show(.automation) did not mount the setup slot"
+            guard let automationView = shell.destinationViewIfMountedForTests(.automation) else {
+                return "show(.automation) did not mount the automation slot"
             }
-            let labels = collectTextFieldValues(in: setupView)
+            let labels = collectTextFieldValues(in: automationView)
             guard !labels.contains("Schedules") else {
-                return "the Automation page (behind the Setup flyout) still renders a \"Schedules\" card header - it should have moved to its own destination"
+                return "the Automation page still renders a \"Schedules\" card header - it should have moved to its own destination"
             }
             guard !labels.contains(where: { $0.localizedCaseInsensitiveContains("new schedule") }) else {
                 return "the Automation page still renders a schedule-creation control"
@@ -526,16 +539,18 @@ enum DestinationMountingSelfTest {
     /// as though the vault were part of Engineering's setup pipeline rather
     /// than the fully separate feature it is. Mirrors
     /// `test_schedulesIsSeparateFromAutomation`/`test_healthIsSeparateFromSettings`
-    /// exactly: `.poneglyph` mounts to a slot of its own (not `.setup`), and
-    /// the real `SetupContainerController` root that the four remaining
-    /// Setup destinations show no longer contains a "Poneglyph" tab pill
-    /// anywhere in its view tree.
+    /// exactly: `.poneglyph` mounts to a slot of its own, and the page the
+    /// first of the four remaining Engineering setup destinations shows no
+    /// longer contains a "Poneglyph" tab pill anywhere in its view tree.
+    /// (Those four have since been un-merged too -
+    /// `fm/grandline-separate-setup-destinations` - so this walks
+    /// `UpdatesController`'s own view tree rather than a shared container's.)
     ///
     /// Confirmed to catch a real regression, not just to pass: temporarily
     /// re-adding `.poneglyph` to `SetupTab`/`SetupContainerController` (the
-    /// pre-move shape) makes this fail on the second assertion, naming the
-    /// leftover "Poneglyph" tab pill label, while every other case in this
-    /// file keeps passing.
+    /// pre-move shape, both since deleted) made this fail on the second
+    /// assertion, naming the leftover "Poneglyph" tab pill label, while every
+    /// other case in this file kept passing.
     /// `fm/grandline-tasks-kanban-devops-split`: the Command Library used to
     /// be the third tab of the Tasks page, so the only way to reach a saved
     /// command was to first open a page about something else. Mirrors
@@ -575,6 +590,76 @@ enum DestinationMountingSelfTest {
         }
     }
 
+    /// `fm/grandline-separate-setup-destinations`, end to end: opening any one
+    /// of the four Engineering setup destinations lands on a page titled for
+    /// *that* page, carrying *that* page's own live line.
+    ///
+    /// **This is the case the captain's own report maps onto.** Four
+    /// distinct cards on the Engineering canvas funnelled into one body view
+    /// whose drill header always said "Setup", with a segmented tab strip
+    /// naming the sub-page underneath: "we have 4 cards, however when we go
+    /// inside it says setup and everything is lumped up." Three independent
+    /// things had to hold for that to stop, and each fails differently:
+    ///
+    ///   - a slot of its own (a shared one cannot show four titles),
+    ///   - the title being the destination's own (the old `bodyTitle`
+    ///     hardcoded "Setup" for all four, which looked like a design choice),
+    ///   - and the subtitle being the page's own live line rather than
+    ///     `drillSubtitle`'s static per-area fallback, which is what a lost
+    ///     `DaylightDrillActions` conformance or a lost
+    ///     `onDrillSubtitleChanged` wiring silently degrades to.
+    ///
+    /// `DaylightModuleSelfTest` sweeps the title half across every
+    /// destination; this is the local, three-part check for the four that were
+    /// merged.
+    private static func test_setupDestinationsShowTheirOwnDrillHeader() -> String? {
+        withScratchEnv {
+            let (_, shell) = makeMountedShell()
+            let group: [RailDestination] = [.updates, .bootstrap, .automation, .githubSync]
+            var subtitles: [String] = []
+
+            for dest in group {
+                shell.show(dest)
+
+                let title = shell.drillHeaderForTests.titleForTests
+                guard title == dest.title else {
+                    return "opening \(dest) shows a page titled \"\(title)\", expected \"\(dest.title)\""
+                }
+                guard title != "Setup" else {
+                    return "\(dest) still lands on a page titled \"Setup\""
+                }
+
+                let subtitle = shell.drillHeaderForTests.subtitleForTests
+                guard !subtitle.isEmpty else { return "\(dest)'s drill header has no subtitle" }
+                guard subtitle != dest.drillSubtitle else {
+                    return "\(dest)'s header shows the static per-area fallback (\"\(subtitle)\") rather than "
+                        + "the page's own live line - its DaylightDrillActions conformance or its "
+                        + "onDrillSubtitleChanged wiring is missing"
+                }
+                subtitles.append(subtitle)
+
+                // Opening the *first* of the four must not build the other
+                // three as a side effect - which is exactly what happened
+                // while they shared a container, since it parented all four
+                // up front regardless of which tab was active. Checked on the
+                // first pass only: by the second, the earlier page is
+                // legitimately mounted and retained.
+                if dest == group[0] {
+                    for other in group.dropFirst() {
+                        guard shell.destinationViewIfMountedForTests(other.slot) == nil else {
+                            return "show(\(dest)) unexpectedly mounted \(other) too"
+                        }
+                    }
+                }
+            }
+
+            guard Set(subtitles).count == subtitles.count else {
+                return "two of the four setup pages render the identical header line: \(subtitles)"
+            }
+            return nil
+        }
+    }
+
     private static func test_poneglyphIsSeparateFromSetup() -> String? {
         withScratchEnv {
             let (_, shell) = makeMountedShell()
@@ -591,19 +676,19 @@ enum DestinationMountingSelfTest {
                 return "the poneglyph view should be visible right after show(.poneglyph)"
             }
 
-            // Visiting Poneglyph must not have built the shared Setup slot as
-            // a side effect - it is a fully independent destination now.
-            guard shell.destinationViewIfMountedForTests(.setup) == nil else {
-                return "show(.poneglyph) unexpectedly mounted the setup slot too"
+            // Visiting Poneglyph must not have built Updates as a side effect
+            // - it is a fully independent destination now.
+            guard shell.destinationViewIfMountedForTests(.updates) == nil else {
+                return "show(.poneglyph) unexpectedly mounted the updates slot too"
             }
 
             shell.show(.updates)
-            guard let setupView = shell.destinationViewIfMountedForTests(.setup) else {
-                return "show(.updates) did not mount the setup slot"
+            guard let updatesView = shell.destinationViewIfMountedForTests(.updates) else {
+                return "show(.updates) did not mount the updates slot"
             }
-            let labels = collectTextFieldValues(in: setupView)
+            let labels = collectTextFieldValues(in: updatesView)
             guard !labels.contains("Poneglyph") else {
-                return "the Setup page still renders a \"Poneglyph\" tab pill - it should have moved to its own destination"
+                return "the Updates page still renders a \"Poneglyph\" tab pill - it should have moved to its own destination"
             }
             return nil
         }

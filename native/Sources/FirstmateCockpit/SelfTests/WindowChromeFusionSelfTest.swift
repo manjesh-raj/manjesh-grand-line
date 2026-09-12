@@ -252,8 +252,8 @@ enum WindowChromeFusionSelfTest {
             if !shell.bar.wordmarkIsHiddenForTests { return "a drill page shows the wordmark too" }
             if !shell.bar.pillsAreHiddenForTests { return "a drill page leaves the space pills up" }
             let title = shell.drillHeaderForTests.titleForTests
-            if title != RailDestination.review.bodyTitle {
-                return "the bar says '\(title)', expected '\(RailDestination.review.bodyTitle)'"
+            if title != RailDestination.review.title {
+                return "the bar says '\(title)', expected '\(RailDestination.review.title)'"
             }
 
             // The back control is in the bar's own chain now, and it has to

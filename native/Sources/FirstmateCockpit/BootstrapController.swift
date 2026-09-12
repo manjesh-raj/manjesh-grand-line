@@ -185,7 +185,7 @@ extension SetupStepKind {
     var isPartOfFullSetupSequence: Bool { self != .restoreConfig }
 }
 
-final class BootstrapController: NSViewController, SetupPageSummary {
+final class BootstrapController: NSViewController, DaylightDrillActions {
 
     /// The three stores the "Restore Grand Line config" step reads/writes
     /// through the shared `BackupUI.importFlow` (fm/cockpit-local-state-
@@ -753,7 +753,7 @@ final class BootstrapController: NSViewController, SetupPageSummary {
     /// costs nothing to read. `.checking` is a step whose own `stepIsDone`
     /// answered "not known yet"; reporting it as pending would be a confident
     /// claim the page has not earned.
-    var setupSummaryLine: String {
+    var drillHeaderSubtitle: String? {
         let total = setupSteps.count
         guard total > 0 else { return "No setup steps" }
         if isRunningFullSetup { return fullSetupSubtitle }
@@ -772,14 +772,28 @@ final class BootstrapController: NSViewController, SetupPageSummary {
         return "\(done) of \(total) steps done"
     }
 
-    var onSetupSummaryChanged: (() -> Void)?
+    var onDrillSubtitleChanged: (() -> Void)?
+
+    /// **Deliberately empty.** This page carries its own actions in its own
+    /// toolbar or card header a few points below the drill header -
+    /// its "Run full setup" button, which sits on its own progress track. Hoisting a copy of one
+    /// would either duplicate a control §6.4's cluster exists to
+    /// de-duplicate, or separate the button from the state it reports. The
+    /// header still earns its place through the live subtitle above, which is
+    /// the signal this page states nowhere else in one line.
+    ///
+    /// Carried over verbatim from `SetupContainerController`'s own (equally
+    /// empty) cluster, which made this same call for all four Engineering
+    /// setup pages at once before `fm/grandline-separate-setup-destinations`
+    /// gave each of them its own destination.
+    var drillHeaderActions: [NSView] { [] }
 
     private func rebuildSetupSection() {
         guard isViewLoaded else { return }
         // Every step-status change funnels through here (the live re-sync
         // below, a run's own `updateSetupStep`, and the initial build), so
         // this is the one place the header's line is re-read from.
-        defer { onSetupSummaryChanged?() }
+        defer { onDrillSubtitleChanged?() }
         syncSetupStepsWithLiveState()
         clearStack(setupStack)
         for step in setupSteps {

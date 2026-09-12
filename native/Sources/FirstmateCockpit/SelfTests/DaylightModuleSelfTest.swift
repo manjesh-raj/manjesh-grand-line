@@ -1151,9 +1151,17 @@ enum DaylightModuleSelfTest {
                 if !shell.bar.wordmarkIsHiddenForTests {
                     fail("\(dest) shows the wordmark and the drill title at once", &ok)
                 }
-                if shell.drillHeaderForTests.titleForTests != dest.bodyTitle {
+                // `fm/grandline-separate-setup-destinations`: this used to
+                // read `dest.bodyTitle`, a property whose only job was to
+                // report "Setup" for the four Engineering setup destinations
+                // regardless of which one was showing. With that property
+                // gone, this sweep *is* the behavioural guard that every
+                // destination's drill header names the page the captain
+                // actually opened - there is nowhere left for a lumped title
+                // to hide.
+                if shell.drillHeaderForTests.titleForTests != dest.title {
                     fail("\(dest)'s drill header says '\(shell.drillHeaderForTests.titleForTests)', "
-                         + "expected '\(dest.bodyTitle)'", &ok)
+                         + "expected '\(dest.title)'", &ok)
                 }
                 // The real back path a click or a VoiceOver press takes.
                 if !shell.drillHeaderForTests.debugActivateBack() {

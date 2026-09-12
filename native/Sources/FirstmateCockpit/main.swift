@@ -582,7 +582,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// what is and is not restored.
     ///
     /// **GL-31 wins.** A machine with no firstmate home resolved lands on
-    /// Setup, and a saved destination must not drag it away from the page
+    /// Bootstrap, and a saved destination must not drag it away from the page
     /// that fixes the cause - that landing is the whole point of GL-31's
     /// exception. Tabs are still restored in that case; only the destination
     /// defers.
@@ -609,7 +609,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         guard FirstmateHome.homeOk() else {
-            AppLog.lifecycle.info("session restore: tabs restored, destination left to GL-31's Setup landing")
+            AppLog.lifecycle.info("session restore: tabs restored, destination left to GL-31's Bootstrap landing")
             return
         }
 

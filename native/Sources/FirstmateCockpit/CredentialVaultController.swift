@@ -24,7 +24,10 @@
 // is. `fm/poneglyph-own-destination-and-strawhat-toolbar-shortcut` gave it its
 // own destination slot instead (see `DestinationRegistry.swift`), the same
 // standalone shape `.strawHat` already has - `SetupTab.poneglyph` no longer
-// exists. Automic Vault's actual job (gating what a CLI tool may do with a
+// exists. Nor does the container: `fm/grandline-separate-setup-destinations`
+// made the identical move for the four pages left behind, so
+// `SetupContainerController` and `SetupTab` are both gone and every one of
+// those five destinations now shows its own title. Automic Vault's actual job (gating what a CLI tool may do with a
 // credential) is genuinely useful and unchanged throughout; what it is not, by
 // its own written architecture decision, is a retrieval-based password
 // manager, which is what this page is. Two very different things that have

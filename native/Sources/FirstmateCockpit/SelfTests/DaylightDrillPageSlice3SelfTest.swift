@@ -1,18 +1,26 @@
 // Manjesh Grand Line - native macOS app.
 //
-// Daylight **Phase 4, slice 3**'s own suite: the two destinations §7 puts
-// next, Setup (four tabs) and Schedules.
+// Daylight **Phase 4, slice 3**'s own suite: the destinations §7 puts next -
+// the four Engineering setup pages and Schedules.
+//
+// **They were one destination with four tabs when this suite was written.**
+// `fm/grandline-separate-setup-destinations` un-merged them at the captain's
+// own instruction, so every case below that used to drive
+// `SetupContainerController.select(tab:)` now drives the four real pages
+// directly. What each case protects is unchanged; only how it reaches a page
+// is.
 //
 // What each case is actually protecting, and why it is worth a test rather
 // than a read-through:
 //
-//   1. **Both pages really reached the drill header** (§6.4), and Setup's line
-//      is genuinely *per tab*. The seam is a protocol conformance, and a
-//      missing one is invisible - the header just renders the static per-area
-//      line, which looks like a design choice. Setup is the case worth pinning
-//      hardest: four sub-pages count entirely different things, so a subtitle
-//      that did not follow the tab would still read plausibly on whichever tab
-//      happened to be showing when it was written.
+//   1. **Every one of these pages really reached the drill header** (§6.4),
+//      and each line is genuinely its own. The seam is a protocol
+//      conformance, and a missing one is invisible - the header just renders
+//      the static per-area line, which looks like a design choice. The four
+//      setup pages are the case worth pinning hardest: they count entirely
+//      different things, so a subtitle that belonged to a sibling page would
+//      still read plausibly on whichever one happened to be showing when it
+//      was written.
 //   2. **A page that has not finished its first check says so.** This is
 //      Phase 3's honesty rule applied to a header line: "0 need attention" on
 //      a page whose sweep has not run yet is a confident claim it has not
@@ -42,11 +50,11 @@
 //      most expensive recurring bug. `AppShellBodyWidthSelfTest` is the broad
 //      sweep; this is the local one for the two pages just touched.
 //
-// **Nothing here calls `viewWillAppear` on a Setup sub-page.** All four start
-// their real `brew`/`npm`/`git`/`gh` sweeps from that callback, so a suite that
-// mounted them through `contentViewController` (which fires appearance
-// callbacks) would shell out against the captain's real machine. Mounting the
-// container's *view* builds every page's `loadView` - which touches no
+// **Nothing here calls `viewWillAppear` on one of the four setup pages.** All
+// four start their real `brew`/`npm`/`git`/`gh` sweeps from that callback, so
+// a suite that mounted them through `contentViewController` (which fires
+// appearance callbacks) would shell out against the captain's real machine.
+// Mounting a page's *view* builds its `loadView` - which touches no
 // subprocess - and nothing more.
 //
 // Run with:
@@ -62,7 +70,7 @@ enum DaylightDrillPageSlice3SelfTest {
 
     static func run() -> Bool {
         var allOK = true
-        for check in [checkSetupDrillHeaderIsPerTab,
+        for check in [checkSetupPagesEachOwnTheirDrillHeader,
                       checkSchedulesDrillHeader,
                       checkRowRecipeAndSignalWash,
                       checkUpdateButtonIsAmberPrimary,
@@ -107,20 +115,24 @@ enum DaylightDrillPageSlice3SelfTest {
         return (HostStore(), SSHKeyStore(), SnippetStore(), DictationStore(), ScheduleStore())
     }
 
-    private static func makeSetup() -> SetupContainerController {
+    /// The four Engineering setup pages, each its own destination since
+    /// `fm/grandline-separate-setup-destinations` - built together here only
+    /// because they share one set of scratch stores.
+    private static func makeSetupPages() -> [(RailDestination, NSViewController)] {
         let (hostStore, keyStore, snippetStore, dictationStore, _) = scratchStores()
-        return SetupContainerController(
-            updates: UpdatesController(),
-            bootstrap: BootstrapController(hostStore: hostStore, keyStore: keyStore,
-                                           snippetStore: snippetStore, dictationStore: dictationStore),
-            automation: AutomationController(hostStore: hostStore, keyStore: keyStore,
-                                             snippetStore: snippetStore, dictationStore: dictationStore),
-            githubSync: GitHubSyncController())
+        return [
+            (.updates, UpdatesController()),
+            (.bootstrap, BootstrapController(hostStore: hostStore, keyStore: keyStore,
+                                             snippetStore: snippetStore, dictationStore: dictationStore)),
+            (.automation, AutomationController(hostStore: hostStore, keyStore: keyStore,
+                                               snippetStore: snippetStore, dictationStore: dictationStore)),
+            (.githubSync, GitHubSyncController()),
+        ]
     }
 
     /// Mounts a controller's **view** in a window - never as
     /// `contentViewController`, which would fire the appearance callbacks that
-    /// start the Setup pages' real check sweeps (see the file header).
+    /// start the setup pages' real check sweeps (see the file header).
     private static func mount(_ controller: NSViewController, width: CGFloat = 1200) -> NSWindow {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 820),
                               styleMask: [.titled], backing: .buffered, defer: false)
@@ -161,82 +173,105 @@ enum DaylightDrillPageSlice3SelfTest {
         return found
     }
 
-    // MARK: 1 + 2 - Setup's per-tab live subtitle (§6.4)
+    // MARK: 1 + 2 - each setup page owns its own drill header (§6.4)
 
-    private static func checkSetupDrillHeaderIsPerTab(_ ok: inout Bool) {
-        print("\n-- §6.4: Setup's drill header carries a live, per-tab line --")
-        let setup = makeSetup()
-        _ = mount(setup)
+    /// **Rewritten, not retired, by `fm/grandline-separate-setup-destinations`.**
+    /// This was `checkSetupDrillHeaderIsPerTab`: it drove
+    /// `SetupContainerController.select(tab:)` and asserted the shared
+    /// container's subtitle followed the active tab, prefixed with that tab's
+    /// own name. The four pages are four destinations now - each with its own
+    /// title in the drill header above the line - so that prefix would be the
+    /// duplicate-title defect §6.4 exists to remove, and the thing worth
+    /// pinning is that each page conforms *itself* and supplies its own
+    /// honest, distinct line.
+    private static func checkSetupPagesEachOwnTheirDrillHeader(_ ok: inout Bool) {
+        print("\n-- §6.4: each Engineering setup page carries its own live header line --")
 
-        guard let page = setup as DaylightDrillActions? else {
-            print("  FAIL SetupContainerController does not conform to DaylightDrillActions")
+        var seen: [RailDestination: String] = [:]
+        for (dest, controller) in makeSetupPages() {
+            _ = mount(controller)
+
+            // The seam. A page that stopped conforming would silently fall
+            // back to the static per-area line, which reads like a choice.
+            guard let page = controller as? DaylightDrillActions else {
+                print("  FAIL \(dest.title) does not conform to DaylightDrillActions")
+                ok = false
+                continue
+            }
+            guard let line = page.drillHeaderSubtitle, !line.isEmpty else {
+                print("  FAIL \(dest.title): no subtitle at all")
+                ok = false
+                continue
+            }
+            // The page's own name belongs to the drill header's *title*, one
+            // line up. Repeating it here is the duplicate-title defect §6.4
+            // exists to remove - and it is exactly what the shared container
+            // used to do ("Updates - 13 tools - ..."), because it had no title
+            // of its own to say it in.
+            if line.hasPrefix(dest.title) {
+                print("  FAIL \(dest.title): subtitle repeats the page's own title (\"\(line)\")")
+                ok = false
+            }
+            seen[dest] = line
+            print("  \(dest.title.padding(toLength: 12, withPad: " ", startingAt: 0)) -> \(line)")
+
+            // §6.4's cluster is deliberately empty on all four - see any of
+            // their `drillHeaderActions` doc comments. Asserted so a later
+            // change that fills one does so on purpose.
+            if !page.drillHeaderActions.isEmpty {
+                print("  note \(dest.title) now carries \(page.drillHeaderActions.count) header action(s) - update the property's doc comment")
+            }
+
+            // The tab strip that produced the captain's "everything is lumped
+            // up" is genuinely gone: a page that kept one would render a pill
+            // naming each of its three siblings.
+            //
+            // Deliberately *not* "does this page contain a `HelmSegmentedTabs`"
+            // - Updates owns a real one of its own (its All / Needs attention
+            // filter), so a structural check would fail on a control that has
+            // nothing to do with the merge. The leftover *label* is the honest
+            // symptom, and the shape `DestinationMountingSelfTest`'s own split
+            // cases already use.
+            let labels = Set(textFieldValues(in: controller.view))
+            for sibling in makeSetupPages().map(\.0) where sibling != dest {
+                if labels.contains(sibling.title) {
+                    print("  FAIL \(dest.title) still renders a \"\(sibling.title)\" tab pill")
+                    ok = false
+                }
+            }
+        }
+
+        guard seen.count == 4 else {
+            print("  FAIL only \(seen.count) of 4 pages produced a line")
             ok = false
             return
         }
 
-        var seen: [SetupTab: String] = [:]
-        var subtitleChanges = 0
-        setup.onDrillSubtitleChanged = { subtitleChanges += 1 }
-
-        for tab in SetupTab.allCases {
-            setup.select(tab: tab)
-            guard let line = page.drillHeaderSubtitle, !line.isEmpty else {
-                print("  FAIL \(tab.title): no subtitle at all")
-                ok = false
-                continue
-            }
-            guard line.hasPrefix(tab.title) else {
-                print("  FAIL \(tab.title): subtitle does not name the showing tab (\"\(line)\")")
-                ok = false
-                continue
-            }
-            seen[tab] = line
-            print("  \(tab.title.padding(toLength: 12, withPad: " ", startingAt: 0)) -> \(line)")
-        }
-
-        // The line has to actually *differ* per tab. Four identical lines would
-        // pass every "has a subtitle" check while telling the captain nothing.
+        // The lines have to actually *differ*. Four identical ones would pass
+        // every "has a subtitle" check while telling the captain nothing.
         if Set(seen.values).count < seen.count {
-            print("  FAIL two tabs render the identical subtitle: \(Array(seen.values))")
-            ok = false
-        }
-        // And a tab switch is itself a subtitle change - the shell has no other
-        // way to know, since no page's own numbers moved.
-        if subtitleChanges < SetupTab.allCases.count {
-            print("  FAIL only \(subtitleChanges) subtitle notifications for \(SetupTab.allCases.count) tab switches")
+            print("  FAIL two pages render the identical subtitle: \(Array(seen.values))")
             ok = false
         }
 
         // Phase 3's honesty rule: a page whose first sweep has not run reports
         // that, not a zero. Neither Updates nor GitHub Sync has been visited
         // here (no `viewWillAppear`), so both are genuinely un-swept.
-        for (tab, line) in seen where tab == .updates || tab == .githubSync {
+        for (dest, line) in seen where dest == .updates || dest == .githubSync {
             if !line.contains("not checked yet") && !line.contains("checking") {
-                print("  FAIL \(tab.title) claims a real verdict before its first check: \"\(line)\"")
+                print("  FAIL \(dest.title) claims a real verdict before its first check: \"\(line)\"")
                 ok = false
             }
         }
 
-        // §7's "capsule tab pills": the shared control, whose own Daylight
-        // recipe `HelmContrastSelfTest.checkSegmentedTabsRecipe` pins per
-        // theme. Asserted structurally rather than re-measured here - a
-        // hand-rolled pill row would render plausibly and silently opt out of
-        // that check.
-        func hasSegmentedTabs(_ view: NSView) -> Bool {
-            if view is HelmSegmentedTabs { return true }
-            return view.subviews.contains(where: hasSegmentedTabs)
-        }
-        if !hasSegmentedTabs(setup.view) {
-            print("  FAIL Setup's tab strip is not the shared HelmSegmentedTabs")
-            ok = false
-        }
+        if ok { print("  OK - four pages, four distinct honest lines, no sibling tab pills") }
+    }
 
-        // §6.4's cluster is deliberately empty here - see the property's own
-        // note. Asserted so a later slice that fills it does so on purpose.
-        if !page.drillHeaderActions.isEmpty {
-            print("  note Setup now carries \(page.drillHeaderActions.count) header action(s) - update the property's doc comment")
-        }
-        if ok { print("  OK - four tabs, four distinct honest lines, and switching notifies the shell") }
+    private static func textFieldValues(in view: NSView) -> [String] {
+        var result: [String] = []
+        if let field = view as? NSTextField, !field.stringValue.isEmpty { result.append(field.stringValue) }
+        for sub in view.subviews { result += textFieldValues(in: sub) }
+        return result
     }
 
     // MARK: 3 - Schedules' hoisted add action (§6.4)
@@ -531,7 +566,7 @@ enum DaylightDrillPageSlice3SelfTest {
     // MARK: 7 - gotcha (13)
 
     private static func checkNoWindowWidthFloor(_ ok: inout Bool) {
-        print("\n-- gotcha (13): the two restyled pages hold a narrow window --")
+        print("\n-- gotcha (13): the restyled pages hold a narrow window --")
         let (_, _, _, _, store) = scratchStores()
         store.add(AutomationSchedule(action: .configBackupExport, cadence: .daily(hour: 3, minute: 15)))
 
@@ -540,7 +575,7 @@ enum DaylightDrillPageSlice3SelfTest {
                                   styleMask: [.titled, .resizable],
                                   backing: .buffered, defer: false)
             // `contentView`, not `contentViewController` - see the file header:
-            // appearance callbacks would start the Setup pages' real sweeps.
+            // appearance callbacks would start the setup pages' real sweeps.
             window.contentView = controller.view
             for width in widths {
                 window.setFrame(NSRect(x: 0, y: 0, width: width, height: 820), display: true)
@@ -552,9 +587,11 @@ enum DaylightDrillPageSlice3SelfTest {
                 }
             }
         }
-        floor(of: makeSetup(), label: "Setup", widths: [1400, 1100, 900])
+        for (dest, controller) in makeSetupPages() {
+            floor(of: controller, label: dest.title, widths: [1400, 1100, 900])
+        }
         floor(of: SchedulesController(scheduleStore: store), label: "Schedules", widths: [1400, 1100, 900])
-        if ok { print("  OK - Setup and Schedules both hold 900pt") }
+        if ok { print("  OK - all four setup pages and Schedules hold 900pt") }
     }
 }
 

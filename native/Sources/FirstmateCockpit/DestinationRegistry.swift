@@ -57,7 +57,8 @@
 //     page's back button, so it can never wait for a first visit.
 //
 // Everything else - Hosts, Tasks, DevOps Commands, Log Analyzer, Tools,
-// Vault, Dictation, Docs, Setup (all four pages) and Settings - is lazy.
+// Vault, Dictation, Docs, the four Engineering setup pages (Updates,
+// Bootstrap, Automation, GitHub Sync) and Settings - is lazy.
 
 import AppKit
 
@@ -98,17 +99,26 @@ extension DaylightDrillActions {
 
 /// One mountable body view.
 ///
-/// Not one-to-one with `RailDestination`: the four Setup pages
-/// (`.updates`/`.bootstrap`/`.automation`/`.githubSync`) are four rail
-/// destinations sharing a single `SetupContainerController`, which is the
-/// whole reason this is a separate type rather than keying the table on
-/// `RailDestination` directly.
+/// **One-to-one with `RailDestination` today, and deliberately still its own
+/// type.** It was not always one-to-one: `.updates`/`.bootstrap`/
+/// `.automation`/`.githubSync` shared a single `SetupContainerController`
+/// slot until `fm/grandline-separate-setup-destinations` un-merged them (see
+/// `RailDestination.slot` below for the captain's own reasoning), and
+/// `.poneglyph` was a fifth tab of that same container before it. Keeping the
+/// separate type is what let both of those be a table edit rather than a
+/// refactor of everything keyed on it - a body view and a place you can
+/// navigate to are genuinely different concepts, and this app has now moved
+/// the line between them twice.
 enum DestinationSlotID: String, CaseIterable {
     /// Daylight Phase 2's home canvas - eagerly mounted, because it is the
     /// launch landing and the target of every drill page's back button.
     case homeCanvas
     case overview, strawHat, console, hosts, shift, review, logAnalyzer, kubernetes
-    case tools, whiteboard, codePreview, stickyBoard, commandLibrary, vault, dictation, schedules, health, docs, runbooks, postmortems, setup, poneglyph, settings
+    case tools, whiteboard, codePreview, stickyBoard, commandLibrary, vault, dictation, schedules, health, docs, runbooks, postmortems, poneglyph, settings
+    /// The four Engineering setup pages. One slot each since
+    /// `fm/grandline-separate-setup-destinations`; they shared a single
+    /// `setup` slot before that.
+    case updates, bootstrap, automation, githubSync
 }
 
 extension RailDestination {
@@ -136,28 +146,29 @@ extension RailDestination {
         case .docs: return .docs
         case .runbooks: return .runbooks
         case .postmortems: return .postmortems
-        case .updates, .bootstrap, .automation, .githubSync: return .setup
-        // `fm/poneglyph-own-destination-and-strawhat-toolbar-shortcut`:
-        // Poneglyph used to be a fifth Setup sub-page sharing the container's
-        // one slot (see `SetupTab`'s own now-removed `.poneglyph` case) - the
-        // captain's own correction was that opening it from its Stores card
-        // should never show a "Setup" tab strip, since the credential vault
-        // is a fully separate feature from Updates/Bootstrap/Automation/
-        // GitHub Sync. It gets its own slot now, the same way `.strawHat`
-        // (below) got its own slot rather than sharing anything.
+        // `fm/grandline-separate-setup-destinations`: these four shared one
+        // `.setup` slot - a `SetupContainerController` with a
+        // `HelmSegmentedTabs` strip across the top - until the captain used
+        // the Engineering canvas and objected: "we have 4 cards, however when
+        // we go inside it says setup and everything is lumped up." The
+        // container's original justification was sibling navigation (the old
+        // icon rail's Setup flyout was their only entry point, so picking one
+        // stranded you from the other three), and the canvas retired that
+        // premise - each of the four has its own always-visible card now, so
+        // the tab strip only produced the lumping. A deliberate reversal of
+        // `fm/grandline-design-fidelity-fixes`, not a regression of it.
+        case .updates: return .updates
+        case .bootstrap: return .bootstrap
+        case .automation: return .automation
+        case .githubSync: return .githubSync
+        // `fm/poneglyph-own-destination-and-strawhat-toolbar-shortcut` made
+        // the same move one release earlier, for the same reason: Poneglyph
+        // was a fifth sub-page of that shared container, and opening the
+        // captain's own credential vault from its Stores card showed a page
+        // titled "Setup" with a setup-pipeline tab strip above it.
         case .poneglyph: return .poneglyph
         case .settings: return .settings
         }
-    }
-
-    /// The top bar's title while this destination is showing.
-    ///
-    /// Identical to `title` (the rail row's own label) except for the Setup
-    /// group: all four of those say "Setup", because the segmented tab row
-    /// directly below the top bar is what names the active sub-page - the
-    /// same split Hosts already uses for its own three tabs.
-    var bodyTitle: String {
-        slot == .setup ? "Setup" : title
     }
 
     /// The line under a drill page's title (Daylight §6.4). Deliberately
@@ -203,13 +214,24 @@ extension RailDestination {
         case .docs: return "The DevOps Playbook, browsable offline"
         case .runbooks: return "Step-by-step operational procedures"
         case .postmortems: return "Incident write-ups and root causes"
-        case .updates, .bootstrap, .automation, .githubSync: return "Toolchain, machine config and fork sync"
+        // `fm/grandline-separate-setup-destinations` split the one line these
+        // four shared ("Toolchain, machine config and fork sync") into four,
+        // now that each is its own page with its own title above it. In
+        // practice all four are fallbacks only: every one of them conforms to
+        // `DaylightDrillActions` and supplies its own live line (update
+        // counts, step counts, fork counts), which
+        // `AppShellController.applyDrillHeader` prefers.
+        case .updates: return "Every tool in the catalog, and what needs updating"
+        case .bootstrap: return "Set this machine up, and see what has drifted"
+        case .automation: return "Run every setup step in order, unattended"
+        case .githubSync: return "Pull upstream into each of your personal forks"
         // The credential vault's own line, moved here from `.vault` by the
         // same swap noted above. In practice this static string is a fallback
         // only: `CredentialVaultController` conforms to `DaylightDrillActions`
         // directly now (`fm/poneglyph-own-destination-and-strawhat-toolbar-
-        // shortcut` gave it its own slot instead of sharing
-        // `SetupContainerController`'s) and always supplies its own live
+        // shortcut` gave it its own slot instead of sharing the
+        // since-retired `SetupContainerController`'s) and always supplies its
+        // own live
         // subtitle (credential count, lock state), which
         // `AppShellController.applyDrillHeader` prefers - the same
         // "conforming page wins, this is just what an unmigrated page would
