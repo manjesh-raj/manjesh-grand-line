@@ -75,6 +75,21 @@ enum WindowChromeFusion {
         sideMargin + plain
     }
 
+    /// How far down a fused window's own content must start before it clears
+    /// the traffic-light cluster (F2a).
+    ///
+    /// The lights sit at a top-down centre of 16 (measured, see this file's
+    /// header) and are ~14pt across, so the cluster's bottom edge is about 23.
+    /// 32 is that plus a row of breathing room - and it is deliberately a
+    /// *derived* pair rather than a literal, so a future macOS that moves the
+    /// cluster moves this with it.
+    ///
+    /// Only for a window with no floating bar of its own to hand the lights
+    /// to. `AppShellController`'s window re-centres them onto the bar instead
+    /// and reserves room with `leadingInset`.
+    static let naturalVerticalCenter: CGFloat = 16
+    static var contentTopClearance: CGFloat { naturalVerticalCenter * 2 }
+
     /// Turn a stock window into the fused one. Idempotent.
     static func apply(to window: NSWindow) {
         window.styleMask.insert(.fullSizeContentView)

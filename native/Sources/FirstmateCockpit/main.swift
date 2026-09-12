@@ -904,6 +904,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // own content - Space membership alone doesn't guarantee that.
             win.collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
             win.level = .floating
+            // F2(a): A1's window fusion, applied to the one other real window
+            // this app opens. Before this, the Host editor wore a stock
+            // titlebar with the teal domain ribbon starting *underneath* it -
+            // two stacked strips of chrome, which is precisely the shape A1
+            // removed from the main window. `WindowChromeFusion.apply` makes
+            // the titlebar transparent and titleless while keeping
+            // close/minimise/zoom, so the ribbon runs edge to edge along the
+            // very top and the lights sit over it.
+            //
+            // The lights stay where AppKit puts them: this window has no
+            // floating bar to hand them to, so the natural top-leading cluster
+            // is right, and the sheet reserves room below it rather than the
+            // cluster moving (`reservesWindowChromeInset`).
+            WindowChromeFusion.apply(to: win)
             win.followHelmTheme()
             hostEditorWindow = win
             // GL-09: a `.floating` window stays above the lock overlay - which
@@ -913,8 +927,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // created; the gate orders it out on every lock.
             AppLockGate.shared.registerSecondaryWindow { [weak self] in self?.hostEditorWindow }
         }
+        // Still set, though `titleVisibility` is `.hidden` under F2(a)'s
+        // fusion: the Window menu, Mission Control and the proxy menu all read
+        // it, and the sheet's own heading is what the captain actually sees.
         win.title = host == nil ? "New Host" : "Edit Host"
         win.contentViewController = editor
+        // Set here rather than in the controller so the two halves of F2(a) -
+        // fusing the window and reserving room for the lights it now shows
+        // over the content - sit in one function and cannot drift apart.
+        (editor.view as? HelmFormSheet)?.reservesWindowChromeInset = true
         // Fix 2 (third round): the form's content column caps at 520pt and
         // centers (`HostEditorController.maxContentWidth`), so 568pt
         // (520 + 24pt margin each side) is the narrowest width that shows the
@@ -1930,6 +1951,11 @@ if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_SLICE6_TESTS"] == 
 // Daylight Phase 5: the chrome that is not a destination page - editor sheets,
 // the ⌘K palette, the notification panel, toasts and empty states. See
 // DaylightChromeSelfTest.swift's header.
+// The UI modernization audit's §3F - inputs and forms (F1/F2/F3). See
+// FormsModernizationSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_FORMS_MODERNIZATION_TESTS"] == "1" {
+    exit(FormsModernizationSelfTest.run() ? 0 : 1)
+}
 if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_CHROME_TESTS"] == "1" {
     exit(DaylightChromeSelfTest.run() ? 0 : 1)
 }

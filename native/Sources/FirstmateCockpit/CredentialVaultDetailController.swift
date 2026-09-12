@@ -153,8 +153,10 @@ final class CredentialVaultDetailController: NSViewController {
                         cancel: #selector(closeClicked),
                         delete: (title: "Delete", action: #selector(deleteClicked)),
                         // This sheet saves nothing, so the scaffold's default
-                        // "⏎ to save" hint would be a lie about what Return does.
-                        hint: "\u{23ce} opens the editor")
+                        // "to save" caption would be a lie about what Return
+                        // does. The keycap itself is still right, which is
+                        // what `hintCaption` (rather than `hint`) keeps.
+                        hintCaption: "opens the editor")
         sheet.refreshTheme()
     }
 

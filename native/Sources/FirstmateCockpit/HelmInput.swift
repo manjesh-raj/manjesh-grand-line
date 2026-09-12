@@ -467,6 +467,14 @@ enum HelmInputSurface {
         return theme.mode == .dark ? 0.35 : 0.22
     }
 
+    /// How long the resting <-> focused transition takes (F1).
+    ///
+    /// `HelmMotion.stateDuration`, not a value of its own: a field lighting up
+    /// is the same *class* of event as a button answering a press or a tab
+    /// pill taking the selection, and the audit's motion spec allows exactly
+    /// two durations.
+    static let focusTransitionDuration: TimeInterval = HelmMotion.stateDuration
+
     /// Apply the resting or focused chrome to a sunken well.
     ///
     /// - Parameters:
@@ -474,9 +482,27 @@ enum HelmInputSurface {
     ///     the scroll view wrapping a text view).
     ///   - shadowHost: an un-clipped ancestor that may carry the glow, or
     ///     `nil` for a border-only treatment.
+    ///   - animated: F1 - `true` only when this call is a genuine focus
+    ///     *transition*. Every one of these properties lives on a view-backed
+    ///     layer, which pops by default (see `HelmMotion.animateLayers`), and
+    ///     the finding is specifically that the glow pops in. Defaulted off so
+    ///     the other reason this runs - a theme change, which re-applies every
+    ///     field in the window at once - stays instant: cross-fading the whole
+    ///     form's chrome on a palette switch is the churn Phase 6 removed from
+    ///     the gradient ribbons, not something to reintroduce here.
     static func apply(chrome: NSView, shadowHost: NSView? = nil,
                       theme: HelmTheme, focused: Bool,
-                      hue: HelmDomainHue? = nil, isRow: Bool = false) {
+                      hue: HelmDomainHue? = nil, isRow: Bool = false,
+                      animated: Bool = false) {
+        HelmMotion.animateLayers(animated, duration: focusTransitionDuration) {
+            applyChrome(chrome: chrome, shadowHost: shadowHost, theme: theme,
+                        focused: focused, hue: hue, isRow: isRow)
+        }
+    }
+
+    private static func applyChrome(chrome: NSView, shadowHost: NSView?,
+                                    theme: HelmTheme, focused: Bool,
+                                    hue: HelmDomainHue?, isRow: Bool) {
         HelmField.applySunken(to: chrome, theme: theme, isRow: isRow)
         guard focused else {
             // Explicitly back to the hairline: `applySunken` only recolours,

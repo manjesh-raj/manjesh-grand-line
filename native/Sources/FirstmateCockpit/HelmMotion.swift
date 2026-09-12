@@ -127,6 +127,51 @@ enum HelmMotion {
         }
     }
 
+    /// The ease-out curve's duration - the audit's motion spec states two
+    /// curves and two durations ("spring 250ms", "120ms eased state changes"),
+    /// and this is the second of them: a state change the eye should register
+    /// as *having happened* rather than as a thing travelling.
+    static let stateDuration: TimeInterval = 0.12
+
+    /// Runs `body` inside an animation context that animates **layer**
+    /// properties - `borderWidth`, `borderColor`, `shadowOpacity`,
+    /// `backgroundColor` - not just the view properties `animate` covers.
+    ///
+    /// **Why this is a separate primitive rather than a flag on `animate`.**
+    /// A *view-backed* layer is the opposite of the standalone-sublayer case
+    /// `withoutImplicitAnimation` exists for: AppKit makes the view the
+    /// layer's delegate and that delegate returns `NSNull` for every action
+    /// unless `allowsImplicitAnimation` is set, so a layer property assigned
+    /// on a `wantsLayer` view *pops* by default. That is exactly the F1
+    /// finding - "the glow currently pops in" - and no amount of wrapping in
+    /// `animate` fixes it, because `animate` never sets that flag.
+    ///
+    /// The flag applies to everything inside the block, which is what the
+    /// callers want: a focus transition changes four layer properties at once
+    /// and they must move together.
+    static func animateLayers(_ animated: Bool = true,
+                              duration: TimeInterval,
+                              _ body: () -> Void) {
+        guard animated, !isReduced else {
+            // Reduce Motion means the end state, instantly - and "instantly"
+            // for a layer property means suppressing whatever implicit
+            // animation a *standalone* sublayer in the same block would
+            // otherwise take. A view-backed layer needs no suppression, but a
+            // caller may touch both kinds, so this is the safe shape.
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            body()
+            CATransaction.commit()
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = duration
+            context.allowsImplicitAnimation = true
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            body()
+        }
+    }
+
     /// `NSAnimationContext.runAnimationGroup` that collapses to an immediate
     /// state change under Reduce Motion.
     ///
