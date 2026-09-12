@@ -25,6 +25,30 @@
 //     asserted.
 //   - A3's is a boolean, so the case drives a *real* scroll on a real page
 //     and reads the bar's own state back, rather than calling the setter.
+//
+// **Two captain-reported regressions closed here, neither one A1/A2/A3's own
+// fault but both living in this same window-chrome layer:**
+//
+//   1. The bar's own root view never forced `.appearance`
+//      (`ThemeManager.swift`'s checklist item 2, which every other
+//      destination follows) - it relied entirely on inheriting the window's
+//      forced appearance. That is fine for its own layer-backed fills and
+//      literal-hex label colours, but not for anything AppKit-owned inside
+//      it that resolves against the OS's *actual* light/dark setting rather
+//      than the window's forced one in some circumstances (the same
+//      "half-themed" class Sticky Board/Code Preview/Whiteboard hit before
+//      it) - most visibly the bar's own `NSVisualEffectView` material, shown
+//      only on the Daylight family (Daylight and Dusk, the daily theme since
+//      the theme-motion-web-islands task). A captain on a Daylight-family
+//      theme with the OS itself in a *different* light/dark setting saw
+//      exactly the reported symptom: the bar renders in the OS's appearance
+//      while the rest of the window (explicit `HelmTheme` colours
+//      everywhere) stays correctly on the active Helm theme.
+//   2. Repeated `window.title` changes (which a Console tab's own shell
+//      triggers on ordinary activity) silently undo A1's traffic-light
+//      reposition without marking `ChromeFusionRootView` needing layout, so
+//      nothing re-applies it until the next real resize/move - matching the
+//      captain's own reported workaround exactly.
 
 #if FM_SELFTESTS
 
@@ -41,7 +65,9 @@ enum WindowChromeFusionSelfTest {
         let cases: [(String, () -> String?)] = [
             ("A1 fusion reclaims the titlebar and keeps the buttons live", test_a1FusionReclaimsHeight),
             ("A1 the traffic lights centre on the bar and stay there", test_a1TrafficLightsHoldTheirPosition),
+            ("A1 the traffic lights survive window title changes", test_a1TrafficLightsSurviveTitleChanges),
             ("A1 the bar's leading content clears the traffic lights", test_a1LeadingContentClearsTheCluster),
+            ("A1 the bar forces its own appearance", test_a1BarForcesItsOwnAppearance),
             ("A2 the leading swap is two-way", test_a2LeadingSwapIsTwoWay),
             ("A2 the page starts directly under the bar", test_a2NoStripBetweenBarAndPage),
             ("A2 the page's actions are its own views, on the bar", test_a2ActionsAreTheCallersOwnViews),
@@ -189,6 +215,70 @@ enum WindowChromeFusionSelfTest {
         return nil
     }
 
+    /// A captain-reported regression: repeated `window.title` changes (which
+    /// a Console tab does on ordinary shell activity, via
+    /// `ConsoleController+Tabs.swift`'s `updateWindowTitle`/
+    /// `setTerminalTitle`) reset the traffic lights the same way a resize
+    /// does, but - unlike a resize - never mark `ChromeFusionRootView`
+    /// `needsLayout`, so `onLayout` was never called again and the lights
+    /// stayed at AppKit's stock, uncentred position until the captain moved
+    /// or resized the window (a genuine geometry change, which *does* mark
+    /// the view dirty). This is what `ChromeFusionRootView.viewDidMoveToWindow`'s
+    /// title `NSKeyValueObservation` fixes - confirmed here to survive
+    /// several *rapid* title changes (simulating shell prompt spam), which is
+    /// what actually reproduced the drift in a temporary probe: a single
+    /// title change did not always show it, several in a row reliably did.
+    private static func test_a1TrafficLightsSurviveTitleChanges() -> String? {
+        let window = makeWindow(fused: true)
+        defer { window.close() }
+        let root = ChromeFusionRootView(frame: NSRect(x: 0, y: 0, width: 1220, height: 720))
+        root.onLayout = { [weak window] in
+            WindowChromeFusion.positionTrafficLights(
+                in: window,
+                verticalCenter: DaylightBarController.trafficLightCenterY,
+                leadingX: DaylightBarController.trafficLightLeadingX)
+        }
+        // `viewDidMoveToWindow` is what installs the title observation, so
+        // this has to happen through a real content-view assignment, not a
+        // constructor - exactly how `AppShellController.loadView()` does it.
+        window.contentView = root
+        window.orderFront(nil)
+        root.layoutSubtreeIfNeeded()
+
+        let target = DaylightBarController.trafficLightCenterY
+        let targetX = DaylightBarController.trafficLightLeadingX
+        func drift(_ label: String) -> String? {
+            guard let centre = WindowChromeFusion.trafficLightCenterForTests(in: window),
+                  let span = WindowChromeFusion.trafficLightSpanForTests(in: window) else {
+                return "\(label): no close button to measure"
+            }
+            guard abs(centre - target) < 0.51 else {
+                return "\(label): the cluster is centred at \(centre), expected \(target)"
+            }
+            guard abs(span.minX - targetX) < 0.51 else {
+                return "\(label): the cluster starts at x=\(span.minX), expected \(targetX)"
+            }
+            return nil
+        }
+
+        if let failure = drift("after the first layout") { return failure }
+
+        for i in 0..<5 {
+            window.title = "\(i) - simulated shell prompt"
+            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        }
+        if let failure = drift("after repeated title changes (no resize)") { return failure }
+
+        // And a single one, in case a real launch only ever sets it once
+        // before the captain notices - the regression must not need "several
+        // in a row" to matter.
+        window.title = "one more, alone"
+        RunLoop.main.run(until: Date().addingTimeInterval(0.12))
+        if let failure = drift("after one more title change") { return failure }
+
+        return nil
+    }
+
     /// Nothing in the bar's leading area may sit under the cluster. Measured
     /// against the real laid-out bar rather than against the 78pt constant,
     /// so a change to either the constant or the bar's own inset is caught.
@@ -224,6 +314,48 @@ enum WindowChromeFusionSelfTest {
                     return "\(dest): the cluster spans \(span.minX)...\(span.maxX) but the bar is "
                         + "\(barOriginX)...\(barEndX) - the lights are not inside it"
                 }
+            }
+            return nil
+        }
+    }
+
+    /// A captain-reported regression: the bar's own root view never forced
+    /// `.appearance` (`ThemeManager.swift`'s checklist item 2), unlike every
+    /// other destination in this app, so anything inside it that resolves
+    /// against the OS's actual light/dark setting rather than the window's
+    /// forced appearance in some circumstances (most visibly its own
+    /// `NSVisualEffectView` material, shown only on the Daylight family)
+    /// could render in the wrong appearance while the rest of the window -
+    /// every destination, each forcing its own - stayed correct.
+    ///
+    /// Discriminating step borrowed from `DestinationMountingSelfTest.
+    /// test_everyDestinationForcesItsOwnAppearance`: force `window.appearance`
+    /// to the *opposite* of the active theme's mode after mounting, then
+    /// check the bar's own view resolves to the theme regardless. A bar that
+    /// merely inherits would fail this exactly as every unmigrated
+    /// destination once did.
+    private static func test_a1BarForcesItsOwnAppearance() -> String? {
+        withScratchEnv {
+            guard let dusk = HelmTheme.allThemes.first(where: { $0.id == "dusk" }) else {
+                return "expected 'dusk' in HelmTheme.allThemes"
+            }
+            let savedTheme = ThemeManager.shared.theme
+            defer { ThemeManager.shared.setTheme(savedTheme) }
+
+            ThemeManager.shared.setTheme(dusk)
+            let (window, shell) = makeMountedShell()
+            defer { window.close() }
+            // The discriminating mismatch: Dusk is dark, window.appearance is
+            // forced light. A view merely inheriting resolves light; a view
+            // that forces its own resolves dark regardless.
+            window.appearance = NSAppearance(named: .aqua)
+
+            let expected: NSAppearance.Name = dusk.mode == .dark ? .darkAqua : .aqua
+            let match = shell.bar.view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
+            guard match == expected else {
+                return "the bar resolved \(match?.rawValue ?? "nil") under theme \(dusk.id) "
+                    + "(expected \(expected.rawValue)) while window.appearance was forced "
+                    + "to the opposite - it does not force its own view.appearance"
             }
             return nil
         }

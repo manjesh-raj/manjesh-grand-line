@@ -946,6 +946,24 @@ final class DaylightBarController: NSViewController {
     }
 
     private func applyTheme(_ theme: HelmTheme) {
+        // `ThemeManager.swift`'s checklist item 2, which every other
+        // destination in this app already follows - this bar was the one
+        // exception. Its layer-backed fills and every label's colour are
+        // literal `HelmTheme` hexes, so they tracked the theme correctly
+        // regardless; what had no guarantee of its own was `materialView` (an
+        // `NSVisualEffectView`, shown only on the Daylight family) and any
+        // other AppKit-owned chrome inside this subtree (a popped `NSMenu`,
+        // a search field's cursor) - those resolve against the OS's actual
+        // light/dark setting rather than this window's forced appearance
+        // unless the view carrying them is *itself* told, the same class of
+        // "half-themed" bug this codebase has hit for Sticky Board, Code
+        // Preview and Whiteboard. A captain running macOS in System Light
+        // with a dark Helm theme selected (Dusk, the daily theme since
+        // `fm/grandline-theme-motion-web-islands-modernization`) is exactly
+        // the condition that exposes it: everything else stays dark, and
+        // this bar's material renders light.
+        view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let muted = HelmTheme.mutedInk(theme)
         let line = HelmTheme.nsColor(theme.chromeLineHex)
