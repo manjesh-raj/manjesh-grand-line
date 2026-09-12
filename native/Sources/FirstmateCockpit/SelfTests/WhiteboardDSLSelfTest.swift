@@ -671,15 +671,22 @@ enum WhiteboardDSLSelfTest {
         // with the replace-by-default checkbox off. The checkbox is about the
         // diagram the *text* describes; a component is always an addition.
         popover.debugSetAppend(false)
-        let buttons = popover.debugComponentButtons
-        check(buttons.count == DiagramComponent.allCases.count,
-              "palette: expected \(DiagramComponent.allCases.count) buttons, got \(buttons.count)")
-        guard let database = buttons.first(where: { $0.identifier?.rawValue == DiagramComponent.database.rawValue }) else {
-            check(false, "palette: no Database button")
+        // Through the real menu the button pops, so an item wired to nothing
+        // fails here rather than rendering perfectly and doing nothing.
+        let menu = popover.debugComponentMenu()
+        check(menu.items.count == DiagramComponentCategory.allCases.count,
+              "palette: expected \(DiagramComponentCategory.allCases.count) categories, got \(menu.items.count)")
+        let leaves = menu.items.flatMap { $0.submenu?.items ?? [] }
+        check(leaves.allSatisfy { $0.target != nil && $0.action != nil },
+              "palette: a component item is wired to nothing")
+
+        func leaf(_ component: DiagramComponent) -> NSMenuItem? {
+            leaves.first { $0.representedObject as? String == component.rawValue }
+        }
+        guard let database = leaf(.database) else {
+            check(false, "palette: no Database item")
             return
         }
-        // Through the button's own target/action, so a button wired to nothing
-        // fails here rather than rendering perfectly and doing nothing.
         _ = database.target?.perform(database.action, with: database)
         check(appends == [true], "palette: a component insert must always append, got \(appends)")
         check(payloads.first?.count == 1, "palette: expected exactly one element")
@@ -694,7 +701,10 @@ enum WhiteboardDSLSelfTest {
         check(first != second || (payloads.first?.first?["y"] as? Double) != (payloads.last?.first?["y"] as? Double),
               "palette: a second click landed exactly on the first")
 
-        // Every button in the palette is live, so none is a dead end.
+        // Every component is reachable from the drop-down and every entry is
+        // live - a component only findable by typing its keyword is one the
+        // captain has no way to discover, and a drawer nobody can insert from
+        // is worse than no drawer.
         var reached = Set<String>()
         popover.onInsert = { elements, _, done in
             if let label = (elements.first?["label"] as? [String: Any])?["text"] as? String {
@@ -702,9 +712,17 @@ enum WhiteboardDSLSelfTest {
             }
             done(nil)
         }
-        for button in buttons { _ = button.target?.perform(button.action, with: button) }
-        check(reached.count == DiagramComponent.allCases.count,
-              "palette: only \(reached.count) of \(DiagramComponent.allCases.count) buttons inserted anything")
+        for component in DiagramComponent.allCases {
+            guard let item = leaf(component) else {
+                check(false, "palette: \(component.rawValue) is in no category, so the drop-down cannot reach it")
+                continue
+            }
+            _ = item.target?.perform(item.action, with: item)
+            // The inserted label is "<emoji> <title>", so this matches on the
+            // title rather than on set membership.
+            check(reached.contains { $0.contains(component.title) },
+                  "palette: picking \(component.rawValue) inserted nothing")
+        }
     }
 
     private static func checkPreviewRenders(_ check: (Bool, String) -> Void) {

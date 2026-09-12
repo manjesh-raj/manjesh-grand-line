@@ -966,6 +966,16 @@ final class HelmButton: NSButton {
         didSet { if symbolName != oldValue { rebuildImage(); invalidateIntrinsicContentSize(); restyle() } }
     }
 
+    /// Put the symbol *after* the title instead of before it.
+    ///
+    /// For exactly one shape, and it is the shape macOS is unanimous about: a
+    /// button that opens a menu carries its disclosure chevron on the trailing
+    /// edge. Leading is right for every other use here (the glyph is an icon
+    /// for the action), which is why this is opt-in rather than a new default.
+    var symbolTrailing: Bool = false {
+        didSet { if symbolTrailing != oldValue { rebuildImage(); invalidateIntrinsicContentSize() } }
+    }
+
     private var plainTitle: String
     private var isHovering = false
     private var isPressed = false
@@ -1500,7 +1510,7 @@ final class HelmButton: NSButton {
         let described = plainTitle.isEmpty ? (toolTip?.isEmpty == false ? toolTip : nil) : plainTitle
         image = NSImage(systemSymbolName: symbolName, accessibilityDescription: described)?
             .withSymbolConfiguration(configuration)
-        imagePosition = plainTitle.isEmpty ? .imageOnly : .imageLeading
+        imagePosition = plainTitle.isEmpty ? .imageOnly : (symbolTrailing ? .imageTrailing : .imageLeading)
         // Without this the glyph is pinned to the cell's leading edge and the
         // title floats away from it, instead of the two reading as one label.
         imageHugsTitle = true

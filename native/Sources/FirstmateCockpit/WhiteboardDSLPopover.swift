@@ -279,8 +279,15 @@ final class WhiteboardDSLViewController: NSViewController, NSTextViewDelegate {
     private let spinner = HelmProgressBar.inlineActivity(hue: RailDestination.whiteboard.domainHue)
     private let preview = DiagramPreviewView()
     private let componentsKicker = NSTextField(labelWithString: "")
-    private let componentsFlow = ChipFlowView(frame: .zero)
-    private var componentButtons: [HelmButton] = []
+    /// The one control the component library is reached through.
+    ///
+    /// It replaced a flat `ChipFlowView` of every component: seven chips fitted
+    /// in a row, and the SRE/DevOps set the captain actually works in does not
+    /// - so the library is a two-level `NSMenu` (category, then its
+    /// components), which is the drop-down-with-sub-drop-down he asked for and
+    /// the idiom this app already pops from a button in half a dozen places.
+    private let componentsButton = HelmButton(title: "Components", variant: .secondary, size: .small)
+    private let componentsHint = NSTextField(labelWithString: "")
     private let appendToggle = NSButton(checkboxWithTitle: "Add to what's already on the board", target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "")
 
@@ -376,17 +383,30 @@ final class WhiteboardDSLViewController: NSViewController, NSTextViewDelegate {
 
         preview.translatesAutoresizingMaskIntoConstraints = false
 
-        componentButtons = DiagramComponent.allCases.map { component in
-            let button = HelmButton(title: "\(component.emoji) \(component.title)",
-                                    variant: .secondary, size: .small)
-            button.target = self
-            button.action = #selector(componentClicked(_:))
-            button.identifier = NSUserInterfaceItemIdentifier(component.rawValue)
-            button.toolTip = "Drop a \(component.title) on the board, or write \(component.keyword)(Name) above"
-            return button
-        }
-        componentsFlow.translatesAutoresizingMaskIntoConstraints = false
-        componentsFlow.setChips(componentButtons)
+        componentsButton.symbolName = "chevron.down"
+        componentsButton.symbolTrailing = true
+        componentsButton.target = self
+        componentsButton.action = #selector(componentsButtonClicked(_:))
+        componentsButton.toolTip = "Pick a component to drop on the board"
+        componentsButton.translatesAutoresizingMaskIntoConstraints = false
+        componentsButton.setContentHuggingPriority(.required, for: .horizontal)
+
+        componentsHint.font = HelmType.caption()
+        componentsHint.lineBreakMode = .byTruncatingTail
+        componentsHint.stringValue = "\(DiagramComponent.allCases.count) shapes \u{00B7} "
+            + DiagramComponentCategory.allCases.dropFirst().prefix(3).map(\.title)
+                .joined(separator: ", ") + ", \u{2026}"
+        componentsHint.translatesAutoresizingMaskIntoConstraints = false
+        componentsHint.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        // gotcha (10): a `.gravityAreas` row stretches nothing, so the hint
+        // only takes the slack beside the button under `.fill`.
+        let componentsRow = NSStackView(views: [componentsButton, componentsHint])
+        componentsRow.orientation = .horizontal
+        componentsRow.alignment = .centerY
+        componentsRow.distribution = .fill
+        componentsRow.spacing = HelmMetrics.s2
+        componentsRow.translatesAutoresizingMaskIntoConstraints = false
 
         appendToggle.target = self
         appendToggle.action = #selector(appendToggled)
@@ -400,7 +420,7 @@ final class WhiteboardDSLViewController: NSViewController, NSTextViewDelegate {
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
 
         let stack = NSStackView(views: [titleRow, kicker, modeTabs, composerCard, preview,
-                                        componentsKicker, componentsFlow, appendToggle, statusLabel])
+                                        componentsKicker, componentsRow, appendToggle, statusLabel])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = HelmMetrics.s2
@@ -421,7 +441,7 @@ final class WhiteboardDSLViewController: NSViewController, NSTextViewDelegate {
             composerCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             preview.widthAnchor.constraint(equalTo: stack.widthAnchor),
             preview.heightAnchor.constraint(equalToConstant: Self.previewHeight),
-            componentsFlow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            componentsRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             appendToggle.widthAnchor.constraint(equalTo: stack.widthAnchor),
             statusLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
 
@@ -461,6 +481,7 @@ final class WhiteboardDSLViewController: NSViewController, NSTextViewDelegate {
         componentsKicker.attributedStringValue = NSAttributedString(
             string: "Component library".uppercased(),
             attributes: HelmType.kickerAttributes(color: HelmTheme.mutedInk(theme)))
+        componentsHint.textColor = HelmTheme.mutedInk(theme)
         placeholderLabel.textColor = HelmTheme.mutedInk(theme)
         hintLabel.textColor = HelmTheme.mutedInk(theme)
         appendToggle.attributedTitle = NSAttributedString(
@@ -535,9 +556,42 @@ final class WhiteboardDSLViewController: NSViewController, NSTextViewDelegate {
                 success: "Drew \(diagram.summary) on the board. Edit it there like anything else you drew.")
     }
 
-    @objc private func componentClicked(_ sender: HelmButton) {
+    /// Builds the component drop-down fresh on every open.
+    ///
+    /// A category is a real submenu rather than a flat run with headers: the
+    /// library is 62 shapes across 9 drawers, and a single menu that long is a
+    /// scroller rather than a picker. A component that lives in two drawers
+    /// gets an item in both - see `DiagramComponentCategory`.
+    func buildComponentMenu() -> NSMenu {
+        let menu = NSMenu()
+        for category in DiagramComponentCategory.allCases {
+            let item = NSMenuItem(title: "\(category.emoji)  \(category.title)", action: nil, keyEquivalent: "")
+            let submenu = NSMenu()
+            for component in category.components {
+                let leaf = NSMenuItem(title: "\(component.emoji)  \(component.title)",
+                                      action: #selector(componentMenuPicked(_:)), keyEquivalent: "")
+                leaf.target = self
+                leaf.representedObject = component.rawValue
+                leaf.toolTip = "Drop a \(component.title) on the board, or write \(component.keyword)(Name) above"
+                submenu.addItem(leaf)
+            }
+            item.submenu = submenu
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    @objc private func componentsButtonClicked(_ sender: HelmButton) {
         guard !isInserting else { return }
-        guard let raw = sender.identifier?.rawValue, let component = DiagramComponent(rawValue: raw) else { return }
+        buildComponentMenu().popUp(positioning: nil,
+                                   at: NSPoint(x: 0, y: sender.bounds.height + 4),
+                                   in: sender)
+    }
+
+    @objc private func componentMenuPicked(_ sender: NSMenuItem) {
+        guard !isInserting else { return }
+        guard let raw = sender.representedObject as? String,
+              let component = DiagramComponent(rawValue: raw) else { return }
         let diagram = DiagramDSL.component(component, index: paletteInserts)
         // Always appended, never a replace: clicking a palette button must not
         // wipe a board, whatever the checkbox above happens to say - that
@@ -570,7 +624,7 @@ final class WhiteboardDSLViewController: NSViewController, NSTextViewDelegate {
     private func setInserting(_ inserting: Bool) {
         isInserting = inserting
         insertButton.isEnabled = !inserting && parsed != nil
-        for button in componentButtons { button.isEnabled = !inserting }
+        componentsButton.isEnabled = !inserting
         if inserting { spinner.startAnimation() } else { spinner.stopAnimation() }
     }
 
@@ -605,7 +659,10 @@ final class WhiteboardDSLViewController: NSViewController, NSTextViewDelegate {
     /// `reparse` that computes a diagram and forgets to hand it over renders a
     /// blank panel and would otherwise pass.
     var debugPreviewBoxCount: Int { preview.debugBoxCount }
-    var debugComponentButtons: [HelmButton] { componentButtons }
+    var debugComponentsButton: HelmButton { componentsButton }
+    /// The real menu the button pops, so a check drives the same items a click
+    /// would rather than a copy of them.
+    func debugComponentMenu() -> NSMenu { _ = view; return buildComponentMenu() }
     func debugSetText(_ text: String) {
         _ = view
         editor.string = text
