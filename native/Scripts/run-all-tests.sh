@@ -174,6 +174,9 @@ NEEDS_SESSION=(
   "FM_RUN_FEEDBACK_MODERNIZATION_TESTS"
   # §3G's G3: mounts real controllers and drives their real confirm paths.
   "FM_RUN_CONFIRM_MIGRATION_TESTS"
+  # §3H: builds a real palette panel, a real lock screen and a real HUD, and
+  # reads layer animations off them.
+  "FM_RUN_OVERLAYS_MODERNIZATION_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_SLICE6_TESTS"
   # Phase 6 mounts a real window to follow the real key view loop and drives
   # real accessibility presses - window-backed for the same reason.

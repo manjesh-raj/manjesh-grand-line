@@ -228,11 +228,27 @@ final class DictationHUDController {
         }
 
         positionPanel(panel)
-        panel.alphaValue = panel.isVisible ? panel.alphaValue : 0
+        let wasVisible = panel.isVisible
+        panel.alphaValue = wasVisible ? panel.alphaValue : 0
         panel.orderFrontRegardless()
-        NSAnimationContext.runAnimationGroup { ctx in
-            ctx.duration = 0.12
-            panel.animator().alphaValue = 1
+        // H3: "a spring pop-in". Only on a genuine appearance - a state change
+        // on an already-visible HUD swaps its words, and re-popping it every
+        // time would turn a two-second overlay into a jittery one.
+        if !wasVisible, !HelmMotion.isReduced, let content = panel.contentView {
+            content.wantsLayer = true
+            content.layer?.transform = CATransform3DMakeScale(Self.popInScale, Self.popInScale, 1)
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = HelmMotion.springDuration
+                ctx.timingFunction = HelmMotion.spring()
+                ctx.allowsImplicitAnimation = true
+                content.layer?.transform = CATransform3DIdentity
+                panel.animator().alphaValue = 1
+            }
+        } else {
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.12
+                panel.animator().alphaValue = 1
+            }
         }
 
         if let delay = state.autoHideDelay {
@@ -346,7 +362,11 @@ final class DictationHUDController {
 
     // MARK: Pulsing (listening state only)
 
+    static let popInScale: CGFloat = 0.88
     private static let pulseAnimationKey = "dictationHUD.pulse"
+    private var variableTimer: Timer?
+    private var variableFrames: [NSImage] = []
+    private var variableIndex = 0
 
     /// GL-16: this pulse was the one looping animation in the app the earlier
     /// Reduce Motion pass missed (the lock screen's boat/wave and the rail
@@ -367,6 +387,35 @@ final class DictationHUDController {
     }
 
     private func startPulsing() {
+        // H3: "adopt SF Symbol variable-color animation for the waveform".
+        //
+        // `NSImageView.addSymbolEffect(.variableColor)` is macOS 14 and this
+        // package targets 13 (`Package.swift`), so this is the same *effect*
+        // built from the API that does exist there:
+        // `NSImage(systemSymbolName:variableValue:)`. `waveform` is a
+        // variable-value symbol, so stepping that value lights its bars in
+        // sequence - which is precisely what `.variableColor` animates.
+        //
+        // Stepped by a timer rather than by Core Animation because the frames
+        // are *different images*, not a property CA can interpolate. It is
+        // bounded: it only runs while the captain is physically holding the
+        // dictation key, and `stopPulsing` is reached from every exit.
+        if let frames = Self.waveformFrames(tintedLike: currentState), frames.count > 1 {
+            variableFrames = frames
+            variableIndex = 0
+            let timer = Timer.scheduledTimer(withTimeInterval: Self.variableFrameInterval,
+                                             repeats: true) { [weak self] _ in
+                self?.stepVariableFrame()
+            }
+            timer.tolerance = Self.variableFrameInterval / 4
+            RunLoop.main.add(timer, forMode: .common)
+            variableTimer = timer
+            return
+        }
+        // Fallback: a symbol with no variable-value rendering keeps the
+        // opacity pulse this shipped with. `NSImage(systemSymbolName:...)`
+        // returns nil silently, so this branch is reachable and must not
+        // leave the HUD looking static.
         let animation = CABasicAnimation(keyPath: "opacity")
         animation.fromValue = 1.0
         animation.toValue = 0.35
@@ -377,8 +426,41 @@ final class DictationHUDController {
         iconView.layer?.add(animation, forKey: Self.pulseAnimationKey)
     }
 
+    /// How fast the waveform's bars travel. Slow enough to read as a level
+    /// meter rather than a flicker, and cheap enough that it is a handful of
+    /// wake-ups over the couple of seconds a dictation actually lasts.
+    private static let variableFrameInterval: TimeInterval = 0.14
+
+    private static func waveformFrames(tintedLike state: DictationHUDVisualState?) -> [NSImage]? {
+        guard let symbol = state?.symbol else { return nil }
+        let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+        let steps: [Double] = [0, 0.25, 0.5, 0.75, 1.0, 0.75, 0.5, 0.25]
+        let frames = steps.compactMap {
+            NSImage(systemSymbolName: symbol, variableValue: $0, accessibilityDescription: nil)?
+                .withSymbolConfiguration(config)
+        }
+        return frames.count == steps.count ? frames : nil
+    }
+
+    private func stepVariableFrame() {
+        guard !variableFrames.isEmpty else { return }
+        variableIndex = (variableIndex + 1) % variableFrames.count
+        iconView.image = variableFrames[variableIndex]
+    }
+
     private func stopPulsing() {
+        variableTimer?.invalidate()
+        variableTimer = nil
+        variableFrames = []
         iconView.layer?.removeAnimation(forKey: Self.pulseAnimationKey)
         iconView.layer?.opacity = 1
     }
+
+    #if FM_SELFTESTS
+    /// Whether the waveform is animating, either way it can.
+    var debugIsAnimatingIcon: Bool {
+        variableTimer != nil || iconView.layer?.animation(forKey: Self.pulseAnimationKey) != nil
+    }
+    var debugUsesVariableColor: Bool { variableTimer != nil }
+    #endif
 }

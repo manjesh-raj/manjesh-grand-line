@@ -338,6 +338,17 @@ private final class SunkenFieldTheming {
     var domainHue: HelmDomainHue? {
         didSet { if domainHue != oldValue { apply(lastTheme) } }
     }
+    /// H4: an un-clipped ancestor that may carry the focus *glow*.
+    ///
+    /// A sunken well has to clip (or its own fill ignores the corner radius),
+    /// and a clipped layer casts no shadow outside its bounds - so a bare
+    /// field gets the thicker accent border and nothing else. A caller that
+    /// owns a wrapper around the field passes it here and gets the composer
+    /// card's outer glow too. `weak`, because the host is this field's own
+    /// superview.
+    weak var glowHost: NSView? {
+        didSet { if glowHost !== oldValue { apply(lastTheme) } }
+    }
     /// Kept as a plain string so the placeholder can be re-rendered in the new
     /// theme's muted ink on every change. `NSTextField.placeholderString` is
     /// drawn in a fixed system grey, which is exactly the §5.3 token this
@@ -370,8 +381,8 @@ private final class SunkenFieldTheming {
     func apply(_ theme: HelmTheme, animated: Bool = false) {
         guard let field else { return }
         lastTheme = theme
-        HelmInputSurface.apply(chrome: field, theme: theme, focused: isFocused,
-                               hue: domainHue, animated: animated)
+        HelmInputSurface.apply(chrome: field, shadowHost: glowHost, theme: theme,
+                               focused: isFocused, hue: domainHue, animated: animated)
         // Both, deliberately. With `drawsBackground = true` the *cell* paints
         // `backgroundColor` over the layer's own fill, and its default is the
         // system `.textBackgroundColor` - so setting only the layer (which is
@@ -498,6 +509,12 @@ final class HelmSecureTextField: NSSecureTextField {
     var domainHue: HelmDomainHue? {
         get { theming.domainHue }
         set { theming.domainHue = newValue }
+    }
+
+    /// H4: see `SunkenFieldTheming.glowHost`.
+    var glowHost: NSView? {
+        get { theming.glowHost }
+        set { theming.glowHost = newValue }
     }
 
     init(placeholder: String = "") {

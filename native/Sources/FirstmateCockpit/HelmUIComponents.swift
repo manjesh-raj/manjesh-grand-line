@@ -532,12 +532,39 @@ final class IconTileView: NSView {
 
     func configure(symbol: String, tint: HelmTint, pointSize: CGFloat = 15) {
         self.tint = tint
+        self.literalHex = nil
         imageView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold))
         applyTheme(ThemeManager.shared.theme)
     }
 
+    /// Paint this tile from a literal hue instead of a semantic tint - a saved
+    /// host's own `accentHex`, which is a colour the captain chose and which
+    /// no `HelmTint` case honestly describes.
+    ///
+    /// The same distinction `HelmGradientTile.configure(symbol:literalHex:)`
+    /// already draws, and the same one `HelmAccentRow.Content.tintHex` draws
+    /// against `domainHue`: mapping a chosen colour onto the nearest semantic
+    /// slot would silently discard the choice.
+    func overrideFill(hex: String) {
+        literalHex = hex
+        applyTheme(ThemeManager.shared.theme)
+    }
+
+    private var literalHex: String?
+
     func applyTheme(_ theme: HelmTheme) {
+        if let literalHex {
+            // Corrected the same way a semantic tint is - a hue is safe as a
+            // fill and a glyph on it still has to clear the 3:1 icon floor.
+            let resolved = HelmContrast.tintedSurface(tintHex: literalHex,
+                                                      theme: theme,
+                                                      target: HelmContrast.nonTextTarget,
+                                                      washSteps: HelmContrast.tileWashSteps)
+            layer?.backgroundColor = resolved.fill.cgColor
+            imageView.contentTintColor = resolved.foreground
+            return
+        }
         // Same wash-plus-same-hue-glyph shape as `ToolRowLayout.pill`, so it
         // goes through the same helper - see `HelmContrast`'s doc comment for
         // why a tint hue is not automatically safe on a wash of itself. The

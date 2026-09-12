@@ -552,29 +552,29 @@ final class TabChipView: NSView, NSTextFieldDelegate {
 
     override func rightMouseDown(with event: NSEvent) {
         let menu = NSMenu()
-        let rename = NSMenuItem(title: "Rename", action: #selector(renameFromMenu), keyEquivalent: "")
+        let rename = NSMenuItem(title: "Rename", action: #selector(renameFromMenu), keyEquivalent: "").withSymbol("pencil")
         rename.target = self
         menu.addItem(rename)
-        let duplicate = NSMenuItem(title: "Duplicate", action: #selector(duplicateFromMenu), keyEquivalent: "")
+        let duplicate = NSMenuItem(title: "Duplicate", action: #selector(duplicateFromMenu), keyEquivalent: "").withSymbol("plus.square.on.square")
         duplicate.target = self
         menu.addItem(duplicate)
         // Console-only (`onReconnect` is nil for Tools' own tool tabs) - see
         // this file's header.
         if onReconnect != nil {
-            let reconnect = NSMenuItem(title: "Reconnect", action: #selector(reconnectFromMenu), keyEquivalent: "")
+            let reconnect = NSMenuItem(title: "Reconnect", action: #selector(reconnectFromMenu), keyEquivalent: "").withSymbol("arrow.clockwise")
             reconnect.target = self
             menu.addItem(reconnect)
         }
         // `.shell`-tabs-only (`forwardDragsEnabled` is nil everywhere else) -
         // see this property's own doc comment.
         if let forwardDragsEnabled {
-            let forward = NSMenuItem(title: "Forward Drags to This Tab's Program", action: #selector(toggleForwardDragsFromMenu), keyEquivalent: "")
+            let forward = NSMenuItem(title: "Forward Drags to This Tab's Program", action: #selector(toggleForwardDragsFromMenu), keyEquivalent: "").withSymbol("arrowshape.turn.up.forward")
             forward.target = self
             forward.state = forwardDragsEnabled() ? .on : .off
             menu.addItem(forward)
         }
         menu.addItem(.separator())
-        let close = NSMenuItem(title: "Close", action: #selector(closeClicked), keyEquivalent: "")
+        let close = NSMenuItem(title: "Close", action: #selector(closeClicked), keyEquivalent: "").withSymbol("xmark")
         close.target = self
         menu.addItem(close)
         NSMenu.popUpContextMenu(menu, with: event, for: self)

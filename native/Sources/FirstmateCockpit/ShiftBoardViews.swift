@@ -366,7 +366,7 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
 
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
-        let open = NSMenuItem(title: "Open Task\u{2026}", action: #selector(menuOpen), keyEquivalent: "")
+        let open = NSMenuItem(title: "Open Task\u{2026}", action: #selector(menuOpen), keyEquivalent: "").withSymbol("arrow.up.forward.square")
         open.target = self
         menu.addItem(open)
         menu.addItem(.separator())
@@ -377,7 +377,7 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
             menu.addItem(item)
         }
         menu.addItem(.separator())
-        let delete = NSMenuItem(title: "Delete Task\u{2026}", action: #selector(menuDelete), keyEquivalent: "")
+        let delete = NSMenuItem(title: "Delete Task\u{2026}", action: #selector(menuDelete), keyEquivalent: "").withSymbol("trash")
         delete.target = self
         menu.addItem(delete)
         return menu

@@ -1089,7 +1089,8 @@ final class CommandLibraryPageView: NSObject {
         guard let id = selectedCommandID, let command = store.command(id: id) else { return }
         let generated = command.generatedCommand(values: paramValues)
         let menu = NSMenu()
-        menu.addItem(withTitle: "New Runbook\u{2026}", action: #selector(createNewWorkflowRunbook), keyEquivalent: "")
+        menu.addItem(withTitle: "New Runbook\u{2026}", symbol: "doc.badge.plus",
+                     action: #selector(createNewWorkflowRunbook), keyEquivalent: "")
         let existing = runbookStore.listRunbooks()
         if !existing.isEmpty {
             menu.addItem(.separator())

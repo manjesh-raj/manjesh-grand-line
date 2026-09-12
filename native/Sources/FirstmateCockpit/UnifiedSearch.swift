@@ -192,10 +192,56 @@ final class UnifiedSearchController: NSWindowController {
         scroll.borderType = .noBorder
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
+        // H1: "glass material behind (within-window blur or 96% surface +
+        // raised shadow - it floats over the app, so material is honest
+        // here)". `.withinWindow`, never `.behindWindow`: gotcha (8) is about
+        // the latter, which composites against the *desktop* and renders the
+        // wrong tint on every theme. This panel floats over the app's own
+        // window, which is exactly what within-window blending is for - the
+        // same reading B1 applied to the floating bar.
+        //
+        // The material is Daylight-family only, and the twelve keep the opaque
+        // fill they have always rendered: their surfaces are already near
+        // black, so translucency buys nothing and costs contrast.
+        let material = NSVisualEffectView()
+        material.material = .menu
+        material.blendingMode = .withinWindow
+        material.state = .active
+        material.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(material)
+        self.materialRef = material
+
+        // H1: "a persistent footer strip with key hints (⏎ to run, ⌘K to
+        // close)". `HelmKeyHint` (F2c), so a keycap in the palette and a
+        // keycap in a form footer are the same object.
+        let footer = NSView()
+        footer.wantsLayer = true
+        footer.translatesAutoresizingMaskIntoConstraints = false
+        let runHint = HelmKeyHint(keys: [HelmKeyHint.returnKey], caption: "to run")
+        let closeHint = HelmKeyHint(keys: [HelmKeyHint.command, "K"], caption: "to close")
+        let footerRow = NSStackView(views: [runHint, closeHint])
+        footerRow.orientation = .horizontal
+        footerRow.alignment = .centerY
+        footerRow.spacing = HelmMetrics.s4
+        footerRow.translatesAutoresizingMaskIntoConstraints = false
+        footer.addSubview(footerRow)
+        let footerDivider = NSView()
+        footerDivider.wantsLayer = true
+        footerDivider.translatesAutoresizingMaskIntoConstraints = false
+        footer.addSubview(footerDivider)
+        self.footerRef = footer
+        self.footerDividerRef = footerDivider
+
         content.addSubview(searchField)
         content.addSubview(divider)
         content.addSubview(scroll)
+        content.addSubview(footer)
         NSLayoutConstraint.activate([
+            material.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            material.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            material.topAnchor.constraint(equalTo: content.topAnchor),
+            material.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+
             searchField.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 18),
             searchField.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -18),
             searchField.topAnchor.constraint(equalTo: content.topAnchor, constant: 14),
@@ -208,13 +254,43 @@ final class UnifiedSearchController: NSWindowController {
             scroll.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             scroll.topAnchor.constraint(equalTo: divider.bottomAnchor),
-            scroll.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            scroll.bottomAnchor.constraint(equalTo: footer.topAnchor),
             resultsStack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+
+            footer.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            footer.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            footer.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            footer.heightAnchor.constraint(equalToConstant: Self.footerHeight),
+            footerDivider.leadingAnchor.constraint(equalTo: footer.leadingAnchor),
+            footerDivider.trailingAnchor.constraint(equalTo: footer.trailingAnchor),
+            footerDivider.topAnchor.constraint(equalTo: footer.topAnchor),
+            footerDivider.heightAnchor.constraint(equalToConstant: 1),
+            footerRow.leadingAnchor.constraint(equalTo: footer.leadingAnchor, constant: 18),
+            footerRow.centerYAnchor.constraint(equalTo: footer.centerYAnchor),
         ])
         self.dividerRef = divider
     }
 
     private var dividerRef: NSView?
+    private var hasSizedOnce = false
+    /// The frame the panel is settling toward. See `resizeToFit`.
+    private var pendingFrame: NSRect?
+    private var materialRef: NSVisualEffectView?
+    private var footerRef: NSView?
+    private var footerDividerRef: NSView?
+
+    /// H1's persistent footer strip.
+    static let footerHeight: CGFloat = 30
+
+    /// How opaque the panel's own fill sits over the material (H1).
+    ///
+    /// The same value and the same reasoning as `DaylightBarController`'s: a
+    /// material is only visible through a fill that is not fully opaque, and
+    /// this is the highest alpha at which it still reads. Its contrast cost is
+    /// bounded rather than guessed - the effective surface is somewhere
+    /// between the fill and what it composites against, and the suite asserts
+    /// the panel's ink clears the floor against *both* ends.
+    static let daylightFillAlpha: CGFloat = 0.90
 
     /// Centers the palette near the top of the main window, Spotlight-style,
     /// and focuses the search field so typing works immediately.
@@ -240,10 +316,42 @@ final class UnifiedSearchController: NSWindowController {
         } else {
             window.center()
         }
+        hasSizedOnce = false
+        pendingFrame = nil
         window.makeKeyAndOrderFront(nil)
+        playEntrance()
         searchField.focusEditor()
         installOutsideClickMonitors()
     }
+
+    /// H1's "150ms scale-fade entrance".
+    ///
+    /// On the content view rather than the window: a `.floating` `NSPanel`
+    /// shown with `makeKeyAndOrderFront` has no presentation animation of its
+    /// own to compose with or replace, so the arrival *is* this. A plain
+    /// scale, no anchor-point correction - AppKit gives a layer-backed view's
+    /// layer an anchor point of (0.5, 0.5), the same assumption
+    /// `HoverHighlightView`'s press compression relies on.
+    private func playEntrance() {
+        guard let content = window?.contentView else { return }
+        content.wantsLayer = true
+        guard let layer = content.layer, !HelmMotion.isReduced else {
+            content.alphaValue = 1
+            return
+        }
+        layer.transform = CATransform3DMakeScale(Self.entranceScale, Self.entranceScale, 1)
+        content.alphaValue = 0
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Self.entranceDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            context.allowsImplicitAnimation = true
+            layer.transform = CATransform3DIdentity
+            content.animator().alphaValue = 1
+        }
+    }
+
+    static let entranceDuration: TimeInterval = 0.15
+    static let entranceScale: CGFloat = 0.97
 
     private func installOutsideClickMonitors() {
         removeOutsideClickMonitors()
@@ -390,9 +498,34 @@ final class UnifiedSearchController: NSWindowController {
         let measured = resultsStack.arrangedSubviews.reduce(CGFloat(0)) { $0 + $1.fittingSize.height }
         let contentHeight = items.isEmpty ? 46 : max(measured, 46)
         let resultsHeight = min(contentHeight, 420)
-        let total = 61 + resultsHeight // search field + divider + padding
-        let frame = window.frame
-        window.setFrame(NSRect(x: frame.minX, y: frame.maxY - total, width: frame.width, height: total), display: true)
+        // search field + divider + padding + H1's persistent footer strip
+        let total = 61 + resultsHeight + Self.footerHeight
+
+        // **Compute from the pending target, not from the live frame.**
+        // `window.animator().setFrame` does not apply immediately, so a second
+        // resize arriving mid-animation - which is every keystroke - would
+        // read a stale `maxY` and re-anchor the panel a little lower each
+        // time. Keeping the target is what stops it creeping down the screen.
+        let reference = pendingFrame ?? window.frame
+        let target = NSRect(x: reference.minX, y: reference.maxY - total,
+                            width: reference.width, height: total)
+        guard abs(reference.height - total) > 0.5 else { return }
+        pendingFrame = target
+
+        // H1: "subtle height animation as results change". Skipped on the
+        // first sizing of a presentation - a panel that grew into place as it
+        // appeared would fight the scale-fade entrance rather than compose
+        // with it - and instant under Reduce Motion.
+        guard hasSizedOnce, !HelmMotion.isReduced else {
+            hasSizedOnce = true
+            window.setFrame(target, display: true)
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = HelmMotion.stateDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            window.animator().setFrame(target, display: true)
+        }
     }
 
     private func moveSelection(by delta: Int) {
@@ -455,6 +588,17 @@ final class UnifiedSearchController: NSWindowController {
         }
         dividerRef?.wantsLayer = true
         dividerRef?.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6).cgColor
+        footerDividerRef?.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6).cgColor
+        footerRef?.layer?.backgroundColor = HelmField.fill(theme).cgColor
+        // H1's material, Daylight-family only. The fill above it drops to
+        // `daylightFillAlpha` so the blur actually reads - an opaque surface
+        // over a material is just an opaque surface. Bounded by
+        // `checkPaletteMaterialCannotBreakContrast`: the effective surface
+        // lands between the two ends, and the ink clears the floor on both.
+        materialRef?.isHidden = !theme.isDaylight
+        window?.contentView?.layer?.backgroundColor = theme.isDaylight
+            ? HelmTheme.nsColor(theme.chromeBackgroundHex).withAlphaComponent(Self.daylightFillAlpha).cgColor
+            : HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         for label in groupHeaderLabels { label.textColor = HelmTheme.mutedInk(theme) }
         for row in rowViews { row.applyTheme(theme) }
     }
@@ -474,7 +618,14 @@ final class UnifiedSearchController: NSWindowController {
     /// The panel height `resizeToFit()` settled on - the measurement that
     /// proves a grouped list of mixed row shapes is not collapsed to one
     /// row's worth of height.
-    var debugPanelHeight: CGFloat { window?.frame.height ?? 0 }
+    /// The height the panel has settled on, or is settling toward.
+    ///
+    /// H1 made the resize animated, and `window.animator().setFrame` does not
+    /// apply immediately - so `window.frame.height` read straight after a
+    /// query change is the *previous* height. That is the same animator-proxy
+    /// trap `HelmMotion.fade`'s header records, and it is also what production
+    /// now reads `pendingFrame` for rather than the live frame.
+    var debugPanelHeight: CGFloat { pendingFrame?.height ?? window?.frame.height ?? 0 }
     var debugContentWidth: CGFloat { window?.contentView?.bounds.width ?? 0 }
     func debugLayoutNow() { window?.contentView?.layoutSubtreeIfNeeded() }
     /// Per-row geometry for the layout checks: the chip must stay at its own
@@ -532,7 +683,10 @@ struct UnifiedSearchDaylightRowGeometry {
 /// One palette row, matching the mockup's shape: a small tinted icon tile,
 /// the title over a muted meta line, and an optional trailing chip carrying
 /// what Return will do ("Connect ↵").
-private final class UnifiedSearchRowView: NSView {
+/// Internal rather than `private` so the §3H suite can build one directly and
+/// read what its icon really resolved to - the same reason
+/// `RecentDestinationsPanelViewController` is internal.
+final class UnifiedSearchRowView: NSView {
     private let tile = IconTileView(size: 24, cornerRadius: 6)
     /// §6.11's 28pt gradient tile. Built for every theme and shown only under
     /// Daylight, where it takes the flat tinted tile's place - the same
@@ -662,8 +816,33 @@ private final class UnifiedSearchRowView: NSView {
 
     func configure(item: UnifiedSearchItem, theme: HelmTheme, selected: Bool) {
         self.theme = theme
-        tile.configure(symbol: item.kind.symbol, tint: item.kind.tint, pointSize: 11)
-        gradientTile.configure(symbol: item.kind.symbol, hue: HelmDomainHue(tint: item.kind.tint))
+        // H1: "per-kind icons (destinations use their real artwork/hue,
+        // commands use their category tint, hosts their accent)". The row's
+        // own identity where it has one, `kind`'s where it does not - which is
+        // right for a task or a note, whose identity genuinely *is* its kind.
+        switch item.icon {
+        case .destination(let destination):
+            let hue = destination.domainHue
+            tile.configure(symbol: destination.symbol, tint: hue.fallbackTint, pointSize: 11)
+            if let artwork = destination.drillHeaderArtwork {
+                gradientTile.configure(artwork: artwork, symbol: destination.symbol, hue: hue)
+            } else {
+                gradientTile.configure(symbol: destination.symbol, hue: hue)
+            }
+        case .tinted(let tint, let symbol):
+            let glyph = symbol ?? item.kind.symbol
+            tile.configure(symbol: glyph, tint: tint, pointSize: 11)
+            gradientTile.configure(symbol: glyph, hue: HelmDomainHue(tint: tint))
+        case .literal(let hex, let symbol):
+            // A hue the captain picked, so it is used literally - the same
+            // distinction `HelmAccentRow.Content.tintHex` draws.
+            tile.configure(symbol: symbol, tint: item.kind.tint, pointSize: 11)
+            tile.overrideFill(hex: hex)
+            gradientTile.configure(symbol: symbol, literalHex: hex)
+        case nil:
+            tile.configure(symbol: item.kind.symbol, tint: item.kind.tint, pointSize: 11)
+            gradientTile.configure(symbol: item.kind.symbol, hue: HelmDomainHue(tint: item.kind.tint))
+        }
         titleLabel.stringValue = item.title
         metaLabel.stringValue = item.meta
         metaLabel.isHidden = item.meta.isEmpty
@@ -677,6 +856,15 @@ private final class UnifiedSearchRowView: NSView {
         isSelected = selected
         applyTheme(theme)
     }
+
+    #if FM_SELFTESTS
+    /// What the row's icon actually resolved to - read off the real views, so
+    /// a check cannot pass by repeating this file's own mapping.
+    var debugFlatTileFill: NSColor? {
+        tile.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) }
+    }
+    var debugTileUsesArtwork: Bool { gradientTile.debugUsesArtwork }
+    #endif
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme

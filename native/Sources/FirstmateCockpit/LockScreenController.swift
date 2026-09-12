@@ -177,6 +177,16 @@ final class LockScreenController: NSViewController {
     /// A second, paler swell drawn behind and slightly above the first. One
     /// wave at this scale reads as a flat wedge; two give the sea a horizon.
     private let backWaveLayer = CAShapeLayer()
+    /// H4: "two subtle gradients (sky, sea)". The sky was already one; the sea
+    /// was a flat fill, which is the "hard-edged color bands read as clip-art"
+    /// half of the finding.
+    ///
+    /// A `CAShapeLayer` cannot carry a gradient fill, so each swell becomes
+    /// the **mask** of a gradient layer. The drift animation is unchanged and
+    /// still runs on the shape layer: a mask's own `position` still moves the
+    /// visible shape within its host, so parallax survives the change.
+    private let seaGradient = CAGradientLayer()
+    private let backSeaGradient = CAGradientLayer()
     private var waveWidth: CGFloat = 0
     /// The sky. A **sublayer** of a plain `wantsLayer` root, never the root
     /// layer itself - see this file's header for why that one detail is what
@@ -224,6 +234,8 @@ final class LockScreenController: NSViewController {
     /// that's needed; it's still only shown while empty and still replaced the
     /// instant typing starts, same as any other placeholder in this app.
     private let passwordField = HelmSecureTextField(placeholder: "•••••••••")
+    /// H4's un-clipped host for the field's focus glow - see where it is wired.
+    private let passwordWell = NSView()
     private let unlockButton = HelmButton(title: "Unlock", variant: .primary)
     private let formStack = NSStackView()
     /// Shown only after a rejected password. Previously the failure was
@@ -373,8 +385,15 @@ final class LockScreenController: NSViewController {
         // Wave: a smooth swell near the bottom, drawn twice as wide as the
         // view and drifted horizontally in a seamless loop. Two layers - the
         // paler one behind - because a single wedge does not read as water.
-        root.layer?.addSublayer(backWaveLayer)
-        root.layer?.addSublayer(waveLayer)
+        // H4: each swell is now a gradient masked by its own shape, so the
+        // sea has depth rather than a flat band. The shape layers still carry
+        // the drift; only what fills them changed.
+        for (gradient, mask) in [(backSeaGradient, backWaveLayer), (seaGradient, waveLayer)] {
+            gradient.startPoint = CGPoint(x: 0.5, y: 1)
+            gradient.endPoint = CGPoint(x: 0.5, y: 0)
+            gradient.mask = mask
+            root.layer?.addSublayer(gradient)
+        }
 
         let config = NSImage.SymbolConfiguration(pointSize: 38, weight: .regular)
         boatImageView.image = NSImage(systemSymbolName: "sailboat", accessibilityDescription: "Manjesh Grand Line")?
@@ -430,7 +449,20 @@ final class LockScreenController: NSViewController {
         formStack.alignment = .centerX
         formStack.spacing = HelmMetrics.s3
         formStack.translatesAutoresizingMaskIntoConstraints = false
-        formStack.addArrangedSubview(passwordField)
+        // H4: "the unlock field given the composer-card focus glow". A sunken
+        // well clips, and a clipped layer casts no shadow outside its bounds -
+        // so the glow needs an un-clipped host around the field. The same
+        // two-layer arrangement `HelmComposerCard` documented first.
+        passwordWell.translatesAutoresizingMaskIntoConstraints = false
+        passwordWell.addSubview(passwordField)
+        NSLayoutConstraint.activate([
+            passwordField.leadingAnchor.constraint(equalTo: passwordWell.leadingAnchor),
+            passwordField.trailingAnchor.constraint(equalTo: passwordWell.trailingAnchor),
+            passwordField.topAnchor.constraint(equalTo: passwordWell.topAnchor),
+            passwordField.bottomAnchor.constraint(equalTo: passwordWell.bottomAnchor),
+        ])
+        passwordField.glowHost = passwordWell
+        formStack.addArrangedSubview(passwordWell)
         formStack.addArrangedSubview(unlockButton)
 
         errorLabel.font = HelmType.caption()
@@ -561,7 +593,7 @@ final class LockScreenController: NSViewController {
             avMessageLabel.widthAnchor.constraint(equalTo: body.widthAnchor),
             installStatusLabel.widthAnchor.constraint(equalTo: body.widthAnchor),
             formStack.widthAnchor.constraint(equalTo: body.widthAnchor),
-            passwordField.widthAnchor.constraint(equalTo: formStack.widthAnchor),
+            passwordWell.widthAnchor.constraint(equalTo: formStack.widthAnchor),
             unlockButton.widthAnchor.constraint(equalTo: formStack.widthAnchor),
             setupCommandStack.widthAnchor.constraint(equalTo: body.widthAnchor),
             avUnavailableStack.widthAnchor.constraint(equalTo: body.widthAnchor),
@@ -662,8 +694,21 @@ final class LockScreenController: NSViewController {
         HelmMotion.withoutImplicitAnimation {
             view.layer?.backgroundColor = scene.ground.cgColor
             skyLayer.colors = [scene.skyTop, scene.skyMid, scene.ground].map(\.cgColor)
-            waveLayer.fillColor = scene.wave.cgColor
-            backWaveLayer.fillColor = scene.backWave.cgColor
+            // A mask's own colour is irrelevant - only its alpha is read -
+            // so the fill has to be opaque or the gradient shows through
+            // nothing at all.
+            waveLayer.fillColor = NSColor.black.cgColor
+            backWaveLayer.fillColor = NSColor.black.cgColor
+            // H4's sea gradient: the wave's own colour at the crest, deepening
+            // toward the bottom of the screen. `ground` is where the sky
+            // already ends, so blending toward it is what keeps the sea
+            // reading as one body of water rather than a pasted band.
+            seaGradient.colors = [scene.wave,
+                                  Self.blend(scene.wave, into: scene.ground, fraction: 0.45)]
+                .map(\.cgColor)
+            backSeaGradient.colors = [scene.backWave,
+                                      Self.blend(scene.backWave, into: scene.ground, fraction: 0.45)]
+                .map(\.cgColor)
             sunLayer.backgroundColor = scene.celestial.cgColor
             sunLayer.shadowColor = scene.celestialGlow.cgColor
             moonBiteLayer.backgroundColor = scene.skyTop.cgColor
@@ -775,6 +820,10 @@ final class LockScreenController: NSViewController {
 
         waveWidth = bounds.width * 2
         HelmMotion.withoutImplicitAnimation {
+            // The gradient hosts span the view; the swell shapes drift inside
+            // them as masks, which is what keeps the parallax working.
+            seaGradient.frame = bounds
+            backSeaGradient.frame = bounds
             waveLayer.path = Self.swellPath(width: waveWidth, height: 96, crest: 18)
             waveLayer.bounds = CGRect(x: 0, y: 0, width: waveWidth, height: 96)
             waveLayer.position = .zero
@@ -936,6 +985,29 @@ final class LockScreenController: NSViewController {
         backDrift.fillMode = .forwards
         backWaveLayer.add(backDrift, forKey: "drift")
     }
+
+    #if FM_SELFTESTS
+    struct DebugSceneLayers {
+        let skyStops: Int
+        let seaStops: Int
+        let backSeaStops: Int
+        let celestialGlowRadius: CGFloat
+        let driftDurations: [Double]
+    }
+
+    /// The scene read off its real layers after a real layout pass.
+    var debugSceneLayers: DebugSceneLayers {
+        DebugSceneLayers(
+            skyStops: (skyLayer.colors as? [CGColor])?.count ?? 0,
+            seaStops: (seaGradient.colors as? [CGColor])?.count ?? 0,
+            backSeaStops: (backSeaGradient.colors as? [CGColor])?.count ?? 0,
+            celestialGlowRadius: sunLayer.shadowOpacity > 0 ? sunLayer.shadowRadius : 0,
+            driftDurations: [waveLayer, backWaveLayer]
+                .compactMap { $0.animation(forKey: "drift")?.duration })
+    }
+
+    var debugPasswordFieldHasGlowHost: Bool { passwordField.glowHost != nil }
+    #endif
 
     deinit {
         if let reduceMotionObserver {

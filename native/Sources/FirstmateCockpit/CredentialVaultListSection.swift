@@ -429,6 +429,7 @@ private final class CredentialVaultRecordView: NSView {
         let menu = NSMenu()
         for (index, action) in overflow.enumerated() {
             let entry = NSMenuItem(title: action.title, action: #selector(overflowItemPicked(_:)), keyEquivalent: "")
+            if let symbol = action.symbol { entry.withSymbol(symbol) }
             entry.target = self
             entry.tag = index
             menu.addItem(entry)

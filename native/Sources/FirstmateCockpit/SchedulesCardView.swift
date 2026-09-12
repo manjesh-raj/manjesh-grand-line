@@ -358,7 +358,7 @@ final class SchedulesCardView: NSObject {
         // AppKit auto-enables a menu item whose target responds to its action,
         // which would silently undo the explicit disable on "Run Now" below.
         menu.autoenablesItems = false
-        let runNow = NSMenuItem(title: "Run Now", action: #selector(runNowPicked(_:)), keyEquivalent: "")
+        let runNow = NSMenuItem(title: "Run Now", action: #selector(runNowPicked(_:)), keyEquivalent: "").withSymbol("play.circle")
         runNow.target = self
         runNow.representedObject = schedule.id.uuidString
         // A manual run while another is in flight would break the "one at a
@@ -367,19 +367,19 @@ final class SchedulesCardView: NSObject {
         runNow.isEnabled = ScheduleRunner.shared.isBusy == false
         menu.addItem(runNow)
 
-        let edit = NSMenuItem(title: "Edit\u{2026}", action: #selector(editPicked(_:)), keyEquivalent: "")
+        let edit = NSMenuItem(title: "Edit\u{2026}", action: #selector(editPicked(_:)), keyEquivalent: "").withSymbol("pencil")
         edit.target = self
         edit.representedObject = schedule.id.uuidString
         menu.addItem(edit)
 
-        let history = NSMenuItem(title: "View History\u{2026}", action: #selector(viewHistoryPicked(_:)), keyEquivalent: "")
+        let history = NSMenuItem(title: "View History\u{2026}", action: #selector(viewHistoryPicked(_:)), keyEquivalent: "").withSymbol("clock.arrow.circlepath")
         history.target = self
         history.representedObject = schedule.id.uuidString
         menu.addItem(history)
 
         menu.addItem(.separator())
 
-        let delete = NSMenuItem(title: "Delete", action: #selector(deletePicked(_:)), keyEquivalent: "")
+        let delete = NSMenuItem(title: "Delete", action: #selector(deletePicked(_:)), keyEquivalent: "").withSymbol("trash")
         delete.target = self
         delete.representedObject = schedule.id.uuidString
         menu.addItem(delete)
