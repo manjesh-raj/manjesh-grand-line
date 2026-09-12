@@ -15,6 +15,8 @@
 //   T5  the dictation audio tap reads a snapshot, not shared mutable state
 //   A1  the notification bell's badge count reaches VoiceOver
 //   A2  every dictation HUD state change is announced
+//   Hover an NSControl subclass overriding mouseEntered/mouseExited must
+//         call super, or AppKit fires its action on a bare hover
 //
 // Window-backed (M5 is a real measurement on a real view), so this sits in
 // `Scripts/run-all-tests.sh`'s `NEEDS_SESSION` list.
@@ -37,6 +39,7 @@ enum AppKitAuditSelfTest {
             ("T5_audioTapReadsSnapshotsNotSharedMutableState", test_t5),
             ("A1_notificationBellSpeaksItsBadgeCount", test_a1),
             ("A2_dictationHUDAnnouncesEveryStateChange", test_a2),
+            ("Hover_hoverNeverActivatesAControl", test_hoverNeverActivatesAControl),
         ]
         var failures = 0
         for (name, body) in cases {
@@ -59,6 +62,116 @@ enum AppKitAuditSelfTest {
     /// VoiceOver user heard "Notifications, button" whether nothing or 99+
     /// items were waiting - the whole "quiet until it matters" signal was
     /// sighted-only.
+    /// A hover must never activate a control - and on an `NSControl` subclass
+    /// that is a question about the *source*, not about a property any test
+    /// can read back afterwards.
+    ///
+    /// The defect this guards was live and captain-reported, four separate
+    /// attempts deep: moving the mouse across the floating bar silently
+    /// flipped the whole app between Dusk and Daylight. `DaylightBarIconButton`
+    /// - and therefore `DaylightThemeToggleButton`, which is one - overrode
+    /// `mouseEntered`/`mouseExited` and never called `super`. `NSControl`
+    /// drives its own press tracking through exactly those two
+    /// (`-[NSControl(_NSTracking) gestureRecognizerTrackingAction:]` ->
+    /// `_pressGRActionCellBased:`), so starving them leaves that state machine
+    /// able to send the control's action on a *later* enter/exit/move.
+    /// Captured on the real running app: `themeToggleClicked` firing with
+    /// `NSApp.currentEvent` a `mouseEntered` and no click count at all.
+    ///
+    /// Why a source guard and not a behavioural one: reproducing it needs the
+    /// real cursor to cross the real button in a real window, so an in-process
+    /// synthetic event cannot drive AppKit's private recogniser and a
+    /// behavioural check would be probabilistic - it reproduced in 4 of 5 real
+    /// launches, not 5 of 5. Same shape as K3's implicit-animation guard: when
+    /// the defect is only visible in the source, guard the source.
+    ///
+    /// Scoped to `NSButton`/`NSControl` descendants on purpose. `NSView`'s own
+    /// `mouseEntered`/`mouseExited` are documented no-ops, so the ~4 plain
+    /// `NSView` hover consumers in this app (`HoverHighlightView`,
+    /// `HelmModuleCard`, `TabChipView`, `VocabularyChipView`) carry no such
+    /// state and are deliberately not required to call super.
+    private static func test_hoverNeverActivatesAControl() -> String? {
+        guard let files = SelfTestSources.appSourceFiles() else { return nil }
+
+        // class -> superclass, across the whole app, so "is this a control?"
+        // is answered transitively rather than by a hand-kept list that the
+        // next `: DaylightBarIconButton` subclass would silently fall out of.
+        var superclassOf: [String: String] = [:]
+        var sources: [(URL, [String])] = []
+        for file in files {
+            guard let raw = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            let lines = raw.components(separatedBy: "\n")
+            sources.append((file, lines))
+            for line in lines {
+                let t = line.trimmingCharacters(in: .whitespaces)
+                guard t.hasPrefix("class ") || t.hasPrefix("final class ") else { continue }
+                let afterKeyword = t.hasPrefix("final ") ? String(t.dropFirst("final class ".count))
+                                                         : String(t.dropFirst("class ".count))
+                let parts = afterKeyword.components(separatedBy: ":")
+                guard parts.count >= 2 else { continue }
+                let name = parts[0].trimmingCharacters(in: .whitespaces)
+                let parent = parts[1]
+                    .components(separatedBy: ",")[0]
+                    .replacingOccurrences(of: "{", with: "")
+                    .trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty, !parent.isEmpty { superclassOf[name] = parent }
+            }
+        }
+
+        func isControl(_ name: String) -> Bool {
+            var seen: Set<String> = []
+            var cur: String? = name
+            while let c = cur, !seen.contains(c) {
+                if c == "NSButton" || c == "NSControl" { return true }
+                seen.insert(c)
+                cur = superclassOf[c]
+            }
+            return false
+        }
+
+        var problems: [String] = []
+        var checked = 0
+
+        for (file, lines) in sources {
+            var currentClass = ""
+            for (i, line) in lines.enumerated() {
+                let t = line.trimmingCharacters(in: .whitespaces)
+                if t.hasPrefix("class ") || t.hasPrefix("final class ") {
+                    let afterKeyword = t.hasPrefix("final ") ? String(t.dropFirst("final class ".count))
+                                                             : String(t.dropFirst("class ".count))
+                    currentClass = afterKeyword
+                        .components(separatedBy: CharacterSet(charactersIn: ":{ "))[0]
+                        .trimmingCharacters(in: .whitespaces)
+                }
+                for hook in ["mouseEntered", "mouseExited"] {
+                    guard t.contains("override func \(hook)(with") else { continue }
+                    guard isControl(currentClass) else { continue }
+                    checked += 1
+                    // The override's body: this line plus everything up to the
+                    // first line that is exactly a method-level close brace.
+                    var body = line
+                    var j = i + 1
+                    while j < lines.count, lines[j].trimmingCharacters(in: .whitespaces) != "}" {
+                        body += "\n" + lines[j]
+                        j += 1
+                        if j - i > 40 { break }
+                    }
+                    if !body.contains("super.\(hook)(with:") {
+                        problems.append("\(file.lastPathComponent): \(currentClass).\(hook) never calls super "
+                                        + "- AppKit can fire this control's action on a hover")
+                    }
+                }
+            }
+        }
+
+        // A scan that finds nothing proves nothing: this app genuinely has
+        // three such overrides today, so zero means the scan drifted.
+        if checked < 3 {
+            return "found only \(checked) NSControl hover override(s) - expected at least 3, so this scan has drifted"
+        }
+        return problems.isEmpty ? nil : problems.sorted().joined(separator: "; ")
+    }
+
     private static func test_a1() -> String? {
         let bell = NotificationBellButton()
         var seen: [String] = []

@@ -1128,12 +1128,20 @@ final class HelmButton: NSButton {
         hoverTracking = area
     }
 
+    // `super` is load-bearing: `NSControl` maintains its press tracking
+    // through these two, and an override that swallows them can leave AppKit
+    // firing this button's action on a bare hover. This is the app's one
+    // button, so that reached ~128 call sites - see
+    // `DaylightBarIconButton.mouseEntered` for the captured evidence and
+    // `AppKitAuditSelfTest.test_hoverNeverActivatesAControl` for the guard.
     override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
         isHovering = true
         restyle(animated: true)
     }
 
     override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
         isHovering = false
         restyle(animated: true)
     }

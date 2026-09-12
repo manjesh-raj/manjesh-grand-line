@@ -1446,12 +1446,33 @@ class DaylightBarIconButton: NSButton {
         hoverArea = area
     }
 
+    /// **`super` is load-bearing, not politeness.** `NSControl` drives its own
+    /// press tracking through `mouseEntered`/`mouseExited`
+    /// (`-[NSControl(_NSTracking) gestureRecognizerTrackingAction:]` ->
+    /// `_pressGRActionCellBased:`), so an override that swallows them leaves
+    /// that state machine able to send this control's action on a *later*
+    /// enter/exit/move - i.e. **a bare hover activates the button**.
+    ///
+    /// That shipped, and it was the captain's long-running "light/dark keeps
+    /// changing by itself" report, four fix attempts deep: this class is
+    /// `DaylightThemeToggleButton`'s superclass, so sweeping the mouse across
+    /// the bar silently flipped the whole app between Dusk and Daylight.
+    /// Captured on the real running app - `themeToggleClicked` firing with
+    /// `NSApp.currentEvent` a `mouseEntered` and no click count at all.
+    /// `AppKitAuditSelfTest.test_hoverNeverActivatesAControl` is the guard.
+    ///
+    /// Note this is the *opposite* of `HoverHighlightView`'s rule, which must
+    /// never override `mouseDown`/`mouseUp` at all: that class is an `NSView`,
+    /// whose hover hooks are documented no-ops, and its overrides would steal a
+    /// nested button's click. Here the control needs the call to reach it.
     override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
         isHovering = true
         restyle()
     }
 
     override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
         isHovering = false
         restyle()
     }
@@ -1582,8 +1603,17 @@ final class HoverTrackingButton: NSButton {
         hoverArea = area
     }
 
-    override func mouseEntered(with event: NSEvent) { onHoverChange?(true) }
-    override func mouseExited(with event: NSEvent) { onHoverChange?(false) }
+    // `super` for the same reason `DaylightBarIconButton`'s does: an
+    // `NSControl` starved of its hover hooks can fire its action on a hover.
+    override func mouseEntered(with event: NSEvent) {
+        super.mouseEntered(with: event)
+        onHoverChange?(true)
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        onHoverChange?(false)
+    }
 }
 
 // MARK: - The avatar popover (moved from the rail)
