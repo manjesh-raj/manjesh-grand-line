@@ -124,7 +124,7 @@ private final class AutomationStepDotView: NSView {
     }
 }
 
-final class AutomationController: NSViewController, SetupPageSummary {
+final class AutomationController: NSViewController, DaylightDrillActions {
 
     private let hostStore: HostStore
     private let keyStore: SSHKeyStore
@@ -885,7 +885,7 @@ final class AutomationController: NSViewController, SetupPageSummary {
     /// header shows that rather than a second, differently-worded count of
     /// the same five steps. While idle it prefixes the resolved-step count,
     /// which the long idle sentence does not carry.
-    var setupSummaryLine: String {
+    var drillHeaderSubtitle: String? {
         if isRunning { return progressSummary }
         let resolved = steps.filter {
             if case .done = $0.status { return true }
@@ -895,14 +895,29 @@ final class AutomationController: NSViewController, SetupPageSummary {
         return "\(resolved) of \(steps.count) steps ready"
     }
 
-    var onSetupSummaryChanged: (() -> Void)?
+    var onDrillSubtitleChanged: (() -> Void)?
+
+    /// **Deliberately empty.** This page carries its own actions in its own
+    /// toolbar or card header a few points below the drill header -
+    /// its "Run Automation" button, which sits beside the live step line it
+    /// writes into. Hoisting a copy of one
+    /// would either duplicate a control §6.4's cluster exists to
+    /// de-duplicate, or separate the button from the state it reports. The
+    /// header still earns its place through the live subtitle above, which is
+    /// the signal this page states nowhere else in one line.
+    ///
+    /// Carried over verbatim from `SetupContainerController`'s own (equally
+    /// empty) cluster, which made this same call for all four Engineering
+    /// setup pages at once before `fm/grandline-separate-setup-destinations`
+    /// gave each of them its own destination.
+    var drillHeaderActions: [NSView] { [] }
 
     private func rebuildStepper() {
         guard isViewLoaded else { return }
         // Every step-status change reaches here (`updateStep`, the live
         // re-sync, the initial build), so this is the one place the header's
         // line is re-read from.
-        defer { onSetupSummaryChanged?() }
+        defer { onDrillSubtitleChanged?() }
         stepContentBoxes.removeAll()
         stepAccentBars.removeAll()
         dynamicLabels.removeAll()

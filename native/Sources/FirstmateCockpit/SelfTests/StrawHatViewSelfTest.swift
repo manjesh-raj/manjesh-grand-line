@@ -173,8 +173,8 @@ enum StrawHatViewSelfTest {
         // The page it opens is a real, registered body slot of its own.
         check(RailDestination.strawHat.slot == .strawHat,
               "the destination has its own body slot rather than sharing one", &ok)
-        check(RailDestination.strawHat.bodyTitle == "Straw Hat Pirates",
-              "...titled for the crew, got \(RailDestination.strawHat.bodyTitle)", &ok)
+        check(RailDestination.strawHat.title == "Straw Hat Pirates",
+              "...titled for the crew, got \(RailDestination.strawHat.title)", &ok)
 
         // Fleet is back to the two tabs F6 gave it. Asserted against the real
         // strip, not against the enum, so a tab left in the UI would fail.

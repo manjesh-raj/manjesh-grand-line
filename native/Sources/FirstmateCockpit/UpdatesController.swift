@@ -88,7 +88,7 @@ private final class UpdateRow {
     init(item: DependencyItem) { self.item = item }
 }
 
-final class UpdatesController: NSViewController, SetupPageSummary {
+final class UpdatesController: NSViewController, DaylightDrillActions {
 
     /// One category card's rows + the separators between them, kept so the
     /// search field can hide non-matching rows and collapse the separator
@@ -454,7 +454,7 @@ final class UpdatesController: NSViewController, SetupPageSummary {
 
     /// Read straight off the same `rows` array the four stat tiles above are
     /// built from, so the header and the tiles can never disagree.
-    var setupSummaryLine: String {
+    var drillHeaderSubtitle: String? {
         let total = rows.count
         guard total > 0 else { return "No tools in the catalog" }
         // Phase 3's honesty rule: a first pass still running is "checking",
@@ -468,13 +468,28 @@ final class UpdatesController: NSViewController, SetupPageSummary {
         return "\(total) tools \u{00B7} all up to date"
     }
 
-    var onSetupSummaryChanged: (() -> Void)?
+    var onDrillSubtitleChanged: (() -> Void)?
+
+    /// **Deliberately empty.** This page carries its own actions in its own
+    /// toolbar or card header a few points below the drill header -
+    /// its Refresh pill, which swaps for a determinate progress bar and a live
+    /// "Checking… (N/M)" count while a sweep runs. Hoisting a copy of one
+    /// would either duplicate a control §6.4's cluster exists to
+    /// de-duplicate, or separate the button from the state it reports. The
+    /// header still earns its place through the live subtitle above, which is
+    /// the signal this page states nowhere else in one line.
+    ///
+    /// Carried over verbatim from `SetupContainerController`'s own (equally
+    /// empty) cluster, which made this same call for all four Engineering
+    /// setup pages at once before `fm/grandline-separate-setup-destinations`
+    /// gave each of them its own destination.
+    var drillHeaderActions: [NSView] { [] }
 
     private func renderStats() {
         // Every path that changes a row's status already lands here (initial
         // check, a single check/update, the check-all sweep), so this is the
         // one place the header's line has to be re-read from.
-        onSetupSummaryChanged?()
+        onDrillSubtitleChanged?()
         let total = rows.count
         let upToDate = rows.filter { $0.status == .upToDate }.count
         let needsUpdate = rows.filter { $0.status == .updateAvailable || $0.status == .notInstalled }.count
@@ -484,7 +499,7 @@ final class UpdatesController: NSViewController, SetupPageSummary {
         // answer this page does not have yet - the same GL-14 shape as B1,
         // just quieter (the adjacent "Checking… (1/13)" mitigates it, which is
         // why this is the audit's lowest-severity item rather than a
-        // non-issue). `setupSummaryLine` right above already applies exactly
+        // non-issue). `drillHeaderSubtitle` right above already applies exactly
         // this rule to the header; the tiles never followed.
         //
         // Only the two *derived* counts go unknown. "Tools Installed" is the

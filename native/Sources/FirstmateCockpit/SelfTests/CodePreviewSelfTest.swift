@@ -643,7 +643,6 @@ enum CodePreviewSelfTest {
         let dest = RailDestination.codePreview
         check(dest.slot == .codePreview, "the destination should have a body slot of its own")
         check(dest.title == "Code Preview", "the destination's title")
-        check(dest.bodyTitle == dest.title, "it is not part of the Setup group, so its body title is its title")
         check(!dest.drillSubtitle.isEmpty, "every destination needs a drill subtitle")
         check(!dest.isDailyUse, "a code panel is a utility, like Tools and the Whiteboard")
 

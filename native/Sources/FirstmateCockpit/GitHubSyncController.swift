@@ -69,7 +69,7 @@ private final class GitHubSyncRow {
     init(repo: GitHubSyncRepoConfig) { self.repo = repo }
 }
 
-final class GitHubSyncController: NSViewController, SetupPageSummary {
+final class GitHubSyncController: NSViewController, DaylightDrillActions {
 
     private var rows: [GitHubSyncRow] = GitHubSyncCatalog.repos.map(GitHubSyncRow.init)
     private var theme: HelmTheme = ThemeManager.shared.theme
@@ -394,7 +394,7 @@ final class GitHubSyncController: NSViewController, SetupPageSummary {
     /// Counted off the same `rows` array the page renders, and off the same
     /// `showsSyncButton` / `isDiverged` predicates the rows' own buttons and
     /// signal treatment already use - never a second notion of "behind".
-    var setupSummaryLine: String {
+    var drillHeaderSubtitle: String? {
         let total = rows.count
         guard total > 0 else { return "No forks in the catalog" }
         if rows.contains(where: { $0.status == .checking || $0.status == .syncing }) {
@@ -410,12 +410,27 @@ final class GitHubSyncController: NSViewController, SetupPageSummary {
         return parts.joined(separator: " \u{00B7} ")
     }
 
-    var onSetupSummaryChanged: (() -> Void)?
+    var onDrillSubtitleChanged: (() -> Void)?
+
+    /// **Deliberately empty.** This page carries its own actions in its own
+    /// toolbar or card header a few points below the drill header -
+    /// its "Sync All" button, which sits above the summary line it writes
+    /// into. Hoisting a copy of one
+    /// would either duplicate a control §6.4's cluster exists to
+    /// de-duplicate, or separate the button from the state it reports. The
+    /// header still earns its place through the live subtitle above, which is
+    /// the signal this page states nowhere else in one line.
+    ///
+    /// Carried over verbatim from `SetupContainerController`'s own (equally
+    /// empty) cluster, which made this same call for all four Engineering
+    /// setup pages at once before `fm/grandline-separate-setup-destinations`
+    /// gave each of them its own destination.
+    var drillHeaderActions: [NSView] { [] }
 
     private func render(_ row: GitHubSyncRow) {
         // Every status change for every row lands here, so this is the one
         // place the header's line has to be re-read from.
-        defer { onSetupSummaryChanged?() }
+        defer { onDrillSubtitleChanged?() }
         row.detailLabel.stringValue = row.detail
         row.logField.stringValue = row.log.isEmpty ? "No output yet." : row.log
 

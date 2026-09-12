@@ -728,7 +728,7 @@ enum WhiteboardSelfTest {
         var mounted: [String] = []
         let mounter = DestinationMounter { vc in mounted.append(String(describing: type(of: vc))) }
         let controller = WhiteboardController()
-        mounter.register(DestinationSlot(id: .whiteboard, title: RailDestination.whiteboard.bodyTitle,
+        mounter.register(DestinationSlot(id: .whiteboard, title: RailDestination.whiteboard.title,
                                          mountsEagerly: false, controller: controller))
         mounter.mountEagerSlots()
         check(mounted.isEmpty, "the whiteboard must not mount eagerly - that is the whole lazy-web-view argument")
