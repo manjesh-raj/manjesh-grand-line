@@ -153,6 +153,9 @@ final class HelmGradientTile: NSView {
     }
 
     #if FM_SELFTESTS
+    /// H1: whether this tile is rendering a raster asset rather than a glyph.
+    var debugUsesArtwork: Bool { artwork != nil }
+
     /// `fm/grandline-daylight-shell-regressions`: same live-instance counter
     /// convention as `HelmModuleCard.debugLiveInstanceCount`, to isolate
     /// whether a tile specifically (rather than its owning card) is what a

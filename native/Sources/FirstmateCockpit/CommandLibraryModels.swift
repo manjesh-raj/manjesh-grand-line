@@ -226,27 +226,44 @@ struct CommandLibraryCategoryInfo {
     let id: String
     let displayName: String
     let symbol: String
+    /// H1 ("commands use their category tint"). A semantic `HelmTint`, never a
+    /// literal hex, so all fourteen palettes resolve their own.
+    ///
+    /// Thirteen categories over seven tints, so some share - differentiation,
+    /// not uniqueness, and the same trade `StrawHatMember`'s own mapping makes
+    /// for seven crew over six usable hues. What is deliberately avoided is
+    /// `.critical`: a category is an identity and asserts nothing about risk,
+    /// and a red icon on every Kubernetes row would say the opposite. A
+    /// command's *risk* is already carried, in words, by the row's own pill.
+    var tint: HelmTint = .neutral
+    init(id: String, displayName: String, symbol: String, tint: HelmTint = .neutral) {
+        self.id = id
+        self.displayName = displayName
+        self.symbol = symbol
+        self.tint = tint
+    }
 }
 
 enum CommandLibraryCategory {
     static let all: [CommandLibraryCategoryInfo] = [
-        .init(id: "kubernetes", displayName: "Kubernetes", symbol: "square.stack.3d.up"),
-        .init(id: "aws", displayName: "AWS", symbol: "cloud"),
-        .init(id: "linux", displayName: "Linux", symbol: "terminal"),
-        .init(id: "docker", displayName: "Docker", symbol: "shippingbox"),
-        .init(id: "git", displayName: "Git", symbol: "arrow.triangle.branch"),
-        .init(id: "mysql", displayName: "MySQL", symbol: "cylinder"),
-        .init(id: "networking", displayName: "Networking", symbol: "network"),
-        .init(id: "openssl", displayName: "OpenSSL", symbol: "lock.shield"),
-        .init(id: "terraform", displayName: "Terraform", symbol: "cube.transparent"),
-        .init(id: "helm", displayName: "Helm", symbol: "square.grid.2x2"),
-        .init(id: "argocd", displayName: "ArgoCD", symbol: "arrow.triangle.2.circlepath"),
-        .init(id: "jenkins", displayName: "Jenkins", symbol: "gearshape.2"),
-        .init(id: "general", displayName: "General DevOps", symbol: "wrench.and.screwdriver"),
+        .init(id: "kubernetes", displayName: "Kubernetes", symbol: "square.stack.3d.up", tint: .info),
+        .init(id: "aws", displayName: "AWS", symbol: "cloud", tint: .warn),
+        .init(id: "linux", displayName: "Linux", symbol: "terminal", tint: .accent),
+        .init(id: "docker", displayName: "Docker", symbol: "shippingbox", tint: .info),
+        .init(id: "git", displayName: "Git", symbol: "arrow.triangle.branch", tint: .violet),
+        .init(id: "mysql", displayName: "MySQL", symbol: "cylinder", tint: .good),
+        .init(id: "networking", displayName: "Networking", symbol: "network", tint: .accent),
+        .init(id: "openssl", displayName: "OpenSSL", symbol: "lock.shield", tint: .warn),
+        .init(id: "terraform", displayName: "Terraform", symbol: "cube.transparent", tint: .violet),
+        .init(id: "helm", displayName: "Helm", symbol: "square.grid.2x2", tint: .info),
+        .init(id: "argocd", displayName: "ArgoCD", symbol: "arrow.triangle.2.circlepath", tint: .good),
+        .init(id: "jenkins", displayName: "Jenkins", symbol: "gearshape.2", tint: .warn),
+        .init(id: "general", displayName: "General DevOps", symbol: "wrench.and.screwdriver", tint: .neutral),
     ]
 
     static func info(for id: String) -> CommandLibraryCategoryInfo {
-        all.first { $0.id == id } ?? CommandLibraryCategoryInfo(id: id, displayName: id.capitalized, symbol: "folder")
+        all.first { $0.id == id }
+            ?? CommandLibraryCategoryInfo(id: id, displayName: id.capitalized, symbol: "folder")
     }
 }
 

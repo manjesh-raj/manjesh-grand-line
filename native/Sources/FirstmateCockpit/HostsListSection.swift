@@ -489,12 +489,14 @@ private final class HostsListRecordView: NSView {
         let menu = NSMenu()
         if let primary {
             let item = NSMenuItem(title: primary.title, action: #selector(primaryClicked), keyEquivalent: "")
+            if let symbol = primary.symbol { item.withSymbol(symbol) }
             item.target = self
             menu.addItem(item)
             menu.addItem(.separator())
         }
         for (index, action) in overflow.enumerated() {
             let item = NSMenuItem(title: action.title, action: #selector(overflowItemPicked(_:)), keyEquivalent: "")
+            if let symbol = action.symbol { item.withSymbol(symbol) }
             item.target = self
             item.tag = index
             menu.addItem(item)

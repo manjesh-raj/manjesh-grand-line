@@ -86,9 +86,9 @@ final class ShiftTaskListView: NSObject {
     /// (`clickedTask`), with `menuNeedsUpdate` doing the per-row work.
     private func rowMenu() -> NSMenu {
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Open\u{2026}", action: #selector(openClicked), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Open\u{2026}", action: #selector(openClicked), keyEquivalent: "").withSymbol("arrow.up.forward.square"))
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Delete Task\u{2026}", action: #selector(deleteClicked), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Delete Task\u{2026}", action: #selector(deleteClicked), keyEquivalent: "").withSymbol("trash"))
         for item in menu.items { item.target = self }
         menu.delegate = self
         return menu
@@ -389,24 +389,24 @@ final class ShiftFollowUpListView: NSObject {
 
     private func rowMenu() -> NSMenu {
         let menu = NSMenu()
-        menu.addItem(NSMenuItem(title: "Mark Done", action: #selector(doneClicked), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Reopen", action: #selector(reopenClicked), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Mark Done", action: #selector(doneClicked), keyEquivalent: "").withSymbol("checkmark.circle"))
+        menu.addItem(NSMenuItem(title: "Reopen", action: #selector(reopenClicked), keyEquivalent: "").withSymbol("arrow.uturn.backward"))
         menu.addItem(.separator())
-        let snooze = NSMenuItem(title: "Snooze", action: nil, keyEquivalent: "")
+        let snooze = NSMenuItem(title: "Snooze", action: nil, keyEquivalent: "").withSymbol("clock")
         let snoozeMenu = NSMenu()
-        snoozeMenu.addItem(NSMenuItem(title: "30 Minutes", action: #selector(snooze30), keyEquivalent: ""))
-        snoozeMenu.addItem(NSMenuItem(title: "1 Hour", action: #selector(snoozeHour), keyEquivalent: ""))
-        snoozeMenu.addItem(NSMenuItem(title: "Tomorrow", action: #selector(snoozeTomorrow), keyEquivalent: ""))
-        snoozeMenu.addItem(NSMenuItem(title: "Next Week", action: #selector(snoozeNextWeek), keyEquivalent: ""))
+        snoozeMenu.addItem(NSMenuItem(title: "30 Minutes", action: #selector(snooze30), keyEquivalent: "").withSymbol("clock"))
+        snoozeMenu.addItem(NSMenuItem(title: "1 Hour", action: #selector(snoozeHour), keyEquivalent: "").withSymbol("clock"))
+        snoozeMenu.addItem(NSMenuItem(title: "Tomorrow", action: #selector(snoozeTomorrow), keyEquivalent: "").withSymbol("sun.max"))
+        snoozeMenu.addItem(NSMenuItem(title: "Next Week", action: #selector(snoozeNextWeek), keyEquivalent: "").withSymbol("calendar"))
         snoozeMenu.addItem(.separator())
-        snoozeMenu.addItem(NSMenuItem(title: "Custom\u{2026}", action: #selector(snoozeCustom), keyEquivalent: ""))
+        snoozeMenu.addItem(NSMenuItem(title: "Custom\u{2026}", action: #selector(snoozeCustom), keyEquivalent: "").withSymbol("slider.horizontal.3"))
         for item in snoozeMenu.items { item.target = self }
         snooze.submenu = snoozeMenu
         menu.addItem(snooze)
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Edit\u{2026}", action: #selector(editClicked), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Edit\u{2026}", action: #selector(editClicked), keyEquivalent: "").withSymbol("pencil"))
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Delete Follow-up\u{2026}", action: #selector(deleteClicked), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Delete Follow-up\u{2026}", action: #selector(deleteClicked), keyEquivalent: "").withSymbol("trash"))
         for item in menu.items { item.target = self }
         menu.delegate = self
         return menu

@@ -1095,7 +1095,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(NSMenuItem.separator())
         // Nav-redesign task, item 5: Settings is a rail destination in the
         // main window now, not a separate window.
-        appMenu.addItem(withTitle: "Settings…", action: #selector(AppShellController.selectSettings), keyEquivalent: ",")
+        appMenu.addItem(withTitle: "Settings…", symbol: "gearshape", action: #selector(AppShellController.selectSettings), keyEquivalent: ",")
             .target = appShell
         appMenu.addItem(NSMenuItem.separator())
         // GL-17: Services, plus the standard Hide Others / Show All trio a Mac
@@ -1118,12 +1118,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(editMenuItem)
         let editMenu = NSMenu(title: "Edit")
         editMenuItem.submenu = editMenu
-        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(withTitle: "Cut", symbol: "scissors", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", symbol: "doc.on.doc", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: "Paste", symbol: "doc.on.clipboard", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: "Select All", symbol: "selection.pin.in.out", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editMenu.addItem(NSMenuItem.separator())
-        editMenu.addItem(withTitle: "Find…", action: #selector(ConsoleController.showFind), keyEquivalent: "f")
+        editMenu.addItem(withTitle: "Find…", symbol: "magnifyingglass", action: #selector(ConsoleController.showFind), keyEquivalent: "f")
         // Phase 4 ("Knowledge and speed") reassigned ⌘K from "Find in
         // Terminal" (Fix 4's original mapping) to the real unified search
         // palette below - plain find-in-terminal stays reachable with no
@@ -1132,7 +1132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // magnifying-glass icon already triggers the identical action
         // independently of any menu shortcut, and ⌘F ("Find…" above) covers
         // the common case too.
-        let findInTerminalItem = NSMenuItem(title: "Find in Terminal", action: #selector(AppShellController.activateConsoleFind), keyEquivalent: "")
+        let findInTerminalItem = NSMenuItem(title: "Find in Terminal", action: #selector(AppShellController.activateConsoleFind), keyEquivalent: "").withSymbol("text.magnifyingglass")
         findInTerminalItem.target = appShell
         editMenu.addItem(findInTerminalItem)
         // ⌘K opens the app's one command palette, matching the topbar Search
@@ -1142,7 +1142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Shift's own ⌘⇧P palette. See `UnifiedSearch.swift`'s header (and
         // `UnifiedSearchProviders.swift`'s) for the design, including why
         // terminal history is still not included.
-        let unifiedSearchItem = NSMenuItem(title: "Search…", action: #selector(AppDelegate.showUnifiedSearch), keyEquivalent: "k")
+        let unifiedSearchItem = NSMenuItem(title: "Search…", action: #selector(AppDelegate.showUnifiedSearch), keyEquivalent: "k").withSymbol("sparkle.magnifyingglass")
         unifiedSearchItem.target = self
         editMenu.addItem(unifiedSearchItem)
 
@@ -1165,17 +1165,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // could never fire. ⌘N stays with New Task, which is the far more
         // frequent action and the one AGENTS.md documents; New Host takes ⌘⌃N,
         // matching this menu's own "Show Hosts" (⌘⌃S).
-        let newHostItem = NSMenuItem(title: "New Host…", action: #selector(AppShellController.newHostFromMenu), keyEquivalent: "n")
+        let newHostItem = NSMenuItem(title: "New Host…", action: #selector(AppShellController.newHostFromMenu), keyEquivalent: "n").withSymbol("plus.circle")
         newHostItem.keyEquivalentModifierMask = [.command, .control]
         newHostItem.target = appShell
         hostsMenu.addItem(newHostItem)
         // No keyboard shortcut (⌘K now belongs to Find in Terminal above) -
         // reachable via this menu item or by clicking the Hosts rail icon.
-        let quickConnectItem = NSMenuItem(title: "Quick Connect", action: #selector(AppShellController.revealHostsQuickConnect), keyEquivalent: "")
+        let quickConnectItem = NSMenuItem(title: "Quick Connect", action: #selector(AppShellController.revealHostsQuickConnect), keyEquivalent: "").withSymbol("bolt.horizontal.circle")
         quickConnectItem.target = appShell
         hostsMenu.addItem(quickConnectItem)
         hostsMenu.addItem(NSMenuItem.separator())
-        let showHostsItem = NSMenuItem(title: "Show Hosts", action: #selector(AppShellController.selectHosts), keyEquivalent: "s")
+        let showHostsItem = NSMenuItem(title: "Show Hosts", action: #selector(AppShellController.selectHosts), keyEquivalent: "s").withSymbol("server.rack")
         showHostsItem.keyEquivalentModifierMask = [.command, .control]
         showHostsItem.target = appShell
         hostsMenu.addItem(showHostsItem)
@@ -1205,11 +1205,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let nextSessionItem = NSMenuItem(title: "Next Session",
                                         action: #selector(AppShellController.nextSession),
                                         keyEquivalent: "]")
+        nextSessionItem.withSymbol("chevron.forward.circle")
         nextSessionItem.target = appShell
         hostsMenu.addItem(nextSessionItem)
         let previousSessionItem = NSMenuItem(title: "Previous Session",
                                             action: #selector(AppShellController.previousSession),
                                             keyEquivalent: "[")
+        previousSessionItem.withSymbol("chevron.backward.circle")
         previousSessionItem.target = appShell
         hostsMenu.addItem(previousSessionItem)
         for n in 1...9 {
@@ -1231,10 +1233,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(shiftMenuItem)
         let shiftMenu = NSMenu(title: "Tasks")
         shiftMenuItem.submenu = shiftMenu
-        let newTaskItem = NSMenuItem(title: "New Task…", action: #selector(AppShellController.newShiftTaskFromMenu), keyEquivalent: "n")
+        let newTaskItem = NSMenuItem(title: "New Task…", action: #selector(AppShellController.newShiftTaskFromMenu), keyEquivalent: "n").withSymbol("plus.circle")
         newTaskItem.target = appShell
         shiftMenu.addItem(newTaskItem)
-        let newFollowUpItem = NSMenuItem(title: "New Follow-up…", action: #selector(AppShellController.newShiftFollowUpFromMenu), keyEquivalent: "f")
+        let newFollowUpItem = NSMenuItem(title: "New Follow-up…", action: #selector(AppShellController.newShiftFollowUpFromMenu), keyEquivalent: "f").withSymbol("bell.badge")
         newFollowUpItem.keyEquivalentModifierMask = [.command, .shift]
         newFollowUpItem.target = appShell
         shiftMenu.addItem(newFollowUpItem)
@@ -1242,7 +1244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // "Weekly Review"'s own no-shortcut precedent rather than force a
         // collision. (It could take ⌘⇧P now that F5 freed it, but a shortcut
         // the captain never had is not this task's to invent.)
-        let newProjectItem = NSMenuItem(title: "New Project…", action: #selector(AppShellController.newShiftProjectFromMenu), keyEquivalent: "")
+        let newProjectItem = NSMenuItem(title: "New Project…", action: #selector(AppShellController.newShiftProjectFromMenu), keyEquivalent: "").withSymbol("folder.badge.plus")
         newProjectItem.target = appShell
         shiftMenu.addItem(newProjectItem)
         shiftMenu.addItem(NSMenuItem.separator())
@@ -1253,7 +1255,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // exactly the duplication the review asked to collapse. Tasks are
         // still fully searchable - from the Edit menu's "Search… ⌘K" or the
         // topbar Search pill. ⌘⇧P is now unbound.
-        let weeklyReviewItem = NSMenuItem(title: "Weekly Review", action: #selector(AppShellController.showShiftWeeklyReview), keyEquivalent: "")
+        let weeklyReviewItem = NSMenuItem(title: "Weekly Review", action: #selector(AppShellController.showShiftWeeklyReview), keyEquivalent: "").withSymbol("calendar")
         weeklyReviewItem.target = appShell
         shiftMenu.addItem(weeklyReviewItem)
         // In-app fallback for quick capture's global ⌥Space hotkey (see
@@ -1261,7 +1263,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // permission at all as long as this app is frontmost, so it's a
         // meaningful discoverability aid even before that permission is
         // granted.
-        let quickCaptureItem = NSMenuItem(title: "Quick Capture", action: #selector(AppDelegate.showShiftQuickCapture), keyEquivalent: " ")
+        let quickCaptureItem = NSMenuItem(title: "Quick Capture", action: #selector(AppDelegate.showShiftQuickCapture), keyEquivalent: " ").withSymbol("square.and.pencil")
         quickCaptureItem.keyEquivalentModifierMask = [.option]
         quickCaptureItem.target = self
         shiftMenu.addItem(quickCaptureItem)
@@ -1290,32 +1292,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let openAnalyzerItem = NSMenuItem(title: "Open Log Analyzer",
                                           action: #selector(AppShellController.showLogAnalyzer), keyEquivalent: "l")
+        openAnalyzerItem.withSymbol("doc.text.magnifyingglass")
         openAnalyzerItem.keyEquivalentModifierMask = [.command, .shift]
         logAnalyzerMenu.addItem(openAnalyzerItem)
 
         let analyzeClipboardItem = NSMenuItem(title: "Analyze Clipboard",
                                               action: #selector(AppShellController.analyzeClipboardInLogAnalyzer),
                                               keyEquivalent: "")
+        analyzeClipboardItem.withSymbol("clipboard")
         logAnalyzerMenu.addItem(analyzeClipboardItem)
         logAnalyzerMenu.addItem(NSMenuItem.separator())
 
         let copyAnalysisItem = NSMenuItem(title: "Copy Analysis",
                                           action: #selector(AppShellController.logAnalyzerCopyAnalysis), keyEquivalent: "c")
+        copyAnalysisItem.withSymbol("doc.on.doc")
         copyAnalysisItem.keyEquivalentModifierMask = [.command, .shift]
         logAnalyzerMenu.addItem(copyAnalysisItem)
 
         let sendToTerminalItem = NSMenuItem(title: "Send Top Command to Terminal",
                                             action: #selector(AppShellController.logAnalyzerSendToTerminal), keyEquivalent: "t")
+        sendToTerminalItem.withSymbol("terminal")
         sendToTerminalItem.keyEquivalentModifierMask = [.command, .shift]
         logAnalyzerMenu.addItem(sendToTerminalItem)
 
         let investigateItem = NSMenuItem(title: "Investigate Further",
                                          action: #selector(AppShellController.logAnalyzerInvestigateFurther), keyEquivalent: "i")
+        investigateItem.withSymbol("magnifyingglass.circle")
         investigateItem.keyEquivalentModifierMask = [.command, .shift]
         logAnalyzerMenu.addItem(investigateItem)
 
         let createRCAItem = NSMenuItem(title: "Create RCA",
                                        action: #selector(AppShellController.logAnalyzerCreateRCA), keyEquivalent: "a")
+        createRCAItem.withSymbol("doc.badge.plus")
         createRCAItem.keyEquivalentModifierMask = [.command, .shift]
         logAnalyzerMenu.addItem(createRCAItem)
 
@@ -1331,9 +1339,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(keysMenuItem)
         let keysMenu = NSMenu(title: "Keys")
         keysMenuItem.submenu = keysMenu
-        keysMenu.addItem(withTitle: "New Key…", action: #selector(AppShellController.newKeyFromMenu), keyEquivalent: "n")
+        keysMenu.addItem(withTitle: "New Key…", symbol: "key", action: #selector(AppShellController.newKeyFromMenu), keyEquivalent: "n")
             .keyEquivalentModifierMask = [.command, .shift]
-        keysMenu.addItem(withTitle: "Manage Keys…", action: #selector(AppShellController.selectKeys), keyEquivalent: "k")
+        keysMenu.addItem(withTitle: "Manage Keys…", symbol: "key.horizontal", action: #selector(AppShellController.selectKeys), keyEquivalent: "k")
             .keyEquivalentModifierMask = [.command, .shift]
         for item in keysMenu.items { item.target = appShell }
 
@@ -1344,9 +1352,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(snippetsMenuItem)
         let snippetsMenu = NSMenu(title: "Snippets")
         snippetsMenuItem.submenu = snippetsMenu
-        snippetsMenu.addItem(withTitle: "New Snippet…", action: #selector(AppShellController.newSnippetFromMenu), keyEquivalent: "n")
+        snippetsMenu.addItem(withTitle: "New Snippet…", symbol: "plus.rectangle.on.rectangle", action: #selector(AppShellController.newSnippetFromMenu), keyEquivalent: "n")
             .keyEquivalentModifierMask = [.command, .option]
-        snippetsMenu.addItem(withTitle: "Manage Snippets…", action: #selector(AppShellController.selectSnippets), keyEquivalent: "p")
+        snippetsMenu.addItem(withTitle: "Manage Snippets…", symbol: "rectangle.stack", action: #selector(AppShellController.selectSnippets), keyEquivalent: "p")
             .keyEquivalentModifierMask = [.command, .option]
         for item in snippetsMenu.items { item.target = appShell }
 
@@ -1960,6 +1968,11 @@ if ProcessInfo.processInfo.environment["FM_RUN_FORMS_MODERNIZATION_TESTS"] == "1
 // (G1/G2/G4). See FeedbackModernizationSelfTest.swift's header.
 // The UI modernization audit's §3G G3 - the 30-site confirm migration. See
 // ConfirmMigrationSelfTest.swift's header.
+// The UI modernization audit's §3H - overlays (H1-H4). See
+// OverlaysModernizationSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_OVERLAYS_MODERNIZATION_TESTS"] == "1" {
+    exit(OverlaysModernizationSelfTest.run() ? 0 : 1)
+}
 if ProcessInfo.processInfo.environment["FM_RUN_CONFIRM_MIGRATION_TESTS"] == "1" {
     exit(ConfirmMigrationSelfTest.run() ? 0 : 1)
 }

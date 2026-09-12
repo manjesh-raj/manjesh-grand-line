@@ -153,15 +153,37 @@ struct UnifiedSearchItem {
     /// The trailing chip, e.g. "Connect ↵". `nil` for a row whose meta line
     /// already says what Return does.
     let actionHint: String?
+    /// H1: this row's *own* identity, where it has one - "destinations use
+    /// their real artwork/hue, commands use their category tint, hosts their
+    /// accent". `nil` falls back to `kind.symbol`/`kind.tint`, which is right
+    /// for a row whose identity genuinely is its kind (a task, a note).
+    ///
+    /// Three shapes because the three sources are genuinely different: a
+    /// destination owns a raster app icon, a command owns a semantic
+    /// `HelmTint` through its category, and a saved host owns a literal hex
+    /// the captain picked. Collapsing them would mean discarding one of the
+    /// three - which is the same distinction `HelmAccentRow.Content.tintHex`
+    /// already draws against `domainHue`.
+    let icon: Icon?
     let activate: () -> Void
 
+    enum Icon {
+        /// A destination: its own artwork when it has any, its own domain hue.
+        case destination(RailDestination)
+        /// A semantic tint, with an optional symbol override.
+        case tinted(HelmTint, symbol: String? = nil)
+        /// A literal hue the captain chose - a saved host's `accentHex`.
+        case literal(hex: String, symbol: String)
+    }
+
     init(kind: UnifiedSearchKind, id: String, title: String, meta: String,
-         actionHint: String? = nil, activate: @escaping () -> Void) {
+         actionHint: String? = nil, icon: Icon? = nil, activate: @escaping () -> Void) {
         self.kind = kind
         self.id = id
         self.title = title
         self.meta = meta
         self.actionHint = actionHint
+        self.icon = icon
         self.activate = activate
     }
 }
@@ -234,6 +256,9 @@ struct UnifiedSearchSessionProvider: UnifiedSearchProvider {
                 meta: "\(session.isConnected ? "LIVE" : "RESTORED") \u{00B7} "
                     + "\(session.stateText) \u{00B7} \(meta)",
                 actionHint: "Switch \u{21B5}",
+                // The same host's own accent, so a live session and its host
+                // row read as the same machine.
+                icon: host.map { .literal(hex: $0.accentHex, symbol: $0.iconSymbol) },
                 activate: { onSwitch(session.hostID) }
             )
         }
@@ -294,6 +319,9 @@ struct UnifiedSearchHostProvider: UnifiedSearchProvider {
                 title: host.label,
                 meta: Self.meta(for: host),
                 actionHint: "Connect \u{21B5}",
+                // H1: "hosts their accent" - a colour the captain picked, so a
+                // literal hue rather than a semantic tint.
+                icon: .literal(hex: host.accentHex, symbol: host.iconSymbol),
                 activate: { onConnect(host) }
             )
         }
@@ -359,6 +387,12 @@ struct UnifiedSearchCommandProvider: UnifiedSearchProvider {
                 title: command.name,
                 meta: Self.meta(for: command),
                 actionHint: ready ? "Send \u{21B5}" : "Open \u{21B5}",
+                // H1: "commands use their category tint" - the same mapping the
+                // Command Library's own category list uses, not a second one.
+                icon: {
+                    let info = CommandLibraryCategory.info(for: command.category)
+                    return .tinted(info.tint, symbol: info.symbol)
+                }(),
                 activate: {
                     if ready {
                         onSend(command, command.generatedCommand(values: [:]))
@@ -650,7 +684,19 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
         let title: String
         let meta: String
         let keywords: [String]
+        /// H1: a destination row wears that destination's own identity - its
+        /// artwork and hue - rather than the one teal square every action row
+        /// used to share.
+        var icon: UnifiedSearchItem.Icon?
         let run: () -> Void
+        init(title: String, meta: String, keywords: [String],
+             icon: UnifiedSearchItem.Icon? = nil, run: @escaping () -> Void) {
+            self.title = title
+            self.meta = meta
+            self.keywords = keywords
+            self.icon = icon
+            self.run = run
+        }
     }
 
     let actions: [Action]
@@ -668,6 +714,7 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
                 title: "Switch to \(destination.title)",
                 meta: "Destination",
                 keywords: [destination.title],
+                icon: .destination(destination),
                 run: { [weak shell] in shell?.show(destination) }
             )
         }
@@ -721,6 +768,7 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
                 title: action.title,
                 meta: action.meta,
                 actionHint: nil,
+                icon: action.icon,
                 activate: action.run
             )
         }
