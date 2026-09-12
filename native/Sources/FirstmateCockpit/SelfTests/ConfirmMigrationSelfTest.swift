@@ -78,7 +78,8 @@ enum ConfirmMigrationSelfTest {
                       checkScheduleDelete,
                       checkRunbookDelete,
                       checkLogout,
-                      checkDangerousSitesCancelCleanly] {
+                      checkDangerousSitesCancelCleanly,
+                      checkThePanelIsSizedForItsRealWrapWidth] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -243,6 +244,99 @@ enum ConfirmMigrationSelfTest {
     }
 
     // MARK: 3. The component's own contract
+
+    /// The panel must be sized at the width its body really wraps at.
+    ///
+    /// **The captain-reported "the Updates sync UI is not clean".** `runModal`
+    /// read `content.fittingSize` before the view had any width, so the two
+    /// places that derive `preferredMaxLayoutWidth` both fell back to their
+    /// 200pt floor - the panel was sized for a body wrapped at 200pt, mounted
+    /// at 380, and `layout()` then re-wrapped it several lines shorter with the
+    /// frame already fixed. Measured on the Updates page's firstmate sync
+    /// dialog: 308pt of panel for 244pt of content, so a quarter of the dialog
+    /// was empty space below the buttons.
+    ///
+    /// This asserts the property rather than a number: mount the panel at the
+    /// size the real code path measured, lay it out, and require it to need
+    /// exactly that. A tolerance of one point absorbs AppKit's own rounding;
+    /// anything more is slack a captain would see. It sweeps a real long body,
+    /// a short one, an empty one and a wide accessory (which sets the dialog's
+    /// width itself, so the width has to be settled before the height is
+    /// measured), because only the long one reproduced the shipped defect.
+    private static func checkThePanelIsSizedForItsRealWrapWidth(_ ok: inout Bool) {
+        func check(_ condition: Bool, _ message: String) {
+            if !condition { ok = false; print("FAIL: \(message)") }
+        }
+
+        // **A source guard as well as the behaviour, because they catch
+        // different failures.** Every assertion below calls `measuredSize()`
+        // itself, so it proves that method is right and says nothing about
+        // `runModal` still calling it - and reverting that one line is exactly
+        // how the defect shipped. Confirmed: with only the behavioural half,
+        // putting `let size = content.fittingSize` back passed the whole suite.
+        let source = source("HelmConfirm.swift") ?? ""
+        check(!source.isEmpty, "could not read HelmConfirm.swift")
+        check(source.contains("content.measuredSize()"),
+              "HelmConfirm.runModal no longer sizes the panel with measuredSize()")
+        check(!source.contains("let size = content.fittingSize"),
+              "HelmConfirm.runModal is back to measuring with a bare fittingSize")
+
+        // The real copy the Updates page builds, verbatim - the worst case in
+        // the app and the one the captain reported.
+        let syncDetail = "main carries 56 commit(s) of its own and is 1 behind upstream/main; "
+            + "run without --check to merge upstream into main, then push to origin"
+        var sync = HelmConfirm.Request(
+            title: "Sync firstmate with upstream?",
+            body: "\(syncDetail)\n\nThis fast-forwards the local default branch to "
+                + "kunchenguid/firstmate's upstream, then pushes the result to origin (your fork). "
+                + "Never forced, never a merge commit.")
+        sync.confirmTitle = "Sync and Push"
+        sync.symbol = "arrow.triangle.branch"
+        sync.hue = RailDestination.updates.domainHue
+
+        var short = HelmConfirm.Request(title: "Log out?",
+                                        body: "You will need your Grand Line password to get back in.")
+        short.confirmTitle = "Log Out"
+
+        var empty = HelmConfirm.Request(title: "Delete this schedule?", body: "")
+        empty.confirmTitle = "Delete"
+
+        let accessory = NSView()
+        accessory.translatesAutoresizingMaskIntoConstraints = false
+        accessory.widthAnchor.constraint(equalToConstant: 520).isActive = true
+        accessory.heightAnchor.constraint(equalToConstant: 120).isActive = true
+        var wide = HelmConfirm.Request(title: "Draft preview", body: "Review it before saving.")
+        wide.accessory = accessory
+
+        // Every theme, because the tile the body's wrap width is measured
+        // against is a different size on the Daylight family.
+        for theme in [HelmTheme.allThemes.first(where: { $0.id == "dusk" }),
+                      HelmTheme.allThemes.first(where: { $0.id == "helm-dark" }),
+                      HelmTheme.allThemes.first(where: { $0.id == "daylight" })].compactMap({ $0 }) {
+            for (name, request) in [("firstmate sync", sync), ("short", short),
+                                    ("empty body", empty), ("wide accessory", wide)] {
+                let content = HelmConfirm.makeContent(request)
+                content.applyTheme(theme)
+                let measured = content.measuredSize()
+                check(measured.width >= HelmConfirmView.width,
+                      "\(theme.id)/\(name): measured width \(measured.width) is under the minimum")
+
+                let window = NSWindow(contentRect: NSRect(x: -20_000, y: 0,
+                                                          width: measured.width, height: measured.height),
+                                      styleMask: [.titled], backing: .buffered, defer: false)
+                window.contentView = content
+                window.layoutIfNeeded()
+                content.layoutSubtreeIfNeeded()
+                let needed = content.fittingSize
+                let slack = measured.height - needed.height
+                check(slack <= 1,
+                      "\(theme.id)/\(name): the panel is \(slack)pt taller than its content needs")
+                check(slack >= -1,
+                      "\(theme.id)/\(name): the panel is \(-slack)pt shorter than its content needs")
+                window.orderOut(nil)
+            }
+        }
+    }
 
     private static func checkComponentContract(_ ok: inout Bool) {
         print("\n-- G3: the component answers the way an NSAlert did --")
