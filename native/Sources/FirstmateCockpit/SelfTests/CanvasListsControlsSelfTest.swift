@@ -61,7 +61,10 @@ enum CanvasListsControlsSelfTest {
         let cases: [(String, () -> String?)] = [
             ("C1 the hero reports the answer banner's own verdict", test_c1HeroReportsTheAnswer),
             ("C1 every space's hero glyph resolves", test_c1HeroSymbolsResolve),
-            ("C1 short content composes the space instead of flushing to the top", test_c1ContentComposesTheSpace),
+            ("C1 short content is top-anchored, leftover space trails below", test_c1ContentIsTopAnchored),
+            ("C1 content taller than the viewport still scrolls", test_c1TallContentStillScrolls),
+            ("C1 the hero band is Overview's verdict and nothing else", test_c1HeroBandIsOverviewOnly),
+            ("C1 the hero band's wash keeps both lines of copy legible", test_c1HeroWashStaysLegible),
             ("C1 the content column uses only the columns it can fill", test_c1ComposedContentWidth),
             ("C2 a card press compresses, and composes with the hover lift", test_c2PressComposesWithHover),
             ("C2 Reduce Motion gets the end state instantly", test_c2ReduceMotionIsInstant),
@@ -875,38 +878,231 @@ enum CanvasListsControlsSelfTest {
         return nil
     }
 
-    /// §3C's actual measurement was "four cards in a row and then ~80% empty
-    /// paper". The fix is that short content centres in the viewport rather
-    /// than flushing to the top of it - and, just as importantly, that tall
-    /// content is untouched and still scrolls.
-    private static func test_c1ContentComposesTheSpace() -> String? {
+    /// C1 shipped the finding's option (a) - short content vertically centred
+    /// in the viewport - and the captain rejected it live: a page with an
+    /// empty margin above *and* below reads as floating, not composed. He
+    /// picked option (b), so this asserts the opposite of what it used to.
+    ///
+    /// Inverted rather than deleted, per this codebase's own precedent for an
+    /// assertion that has become a record of a decision since overturned: a
+    /// future edit that reinstates centring has to come here and read why it
+    /// was removed.
+    private static func test_c1ContentIsTopAnchored() -> String? {
         let canvas = makeCanvas()
         let window = makeWindow(canvas.view, size: NSSize(width: 1400, height: 900))
         defer { window.orderOut(nil) }
 
-        // Engineering is one of the sparse spaces the finding names.
+        // Engineering is one of the sparse spaces the finding names - the one
+        // where centring was most visible and where top-anchoring has the
+        // most leftover space to leave trailing below.
         canvas.select(space: .engineering)
+        canvas.view.layoutSubtreeIfNeeded()
+
+        let viewport = canvas.viewportHeightForTests
+        let content = canvas.contentFrameForTests
+        if viewport <= 0 { return "the canvas has no viewport height to measure against" }
+        guard content.height + 8 < viewport else {
+            return "this space's content (\(content.height)pt) already fills the \(viewport)pt viewport, "
+                 + "so the top-anchored case is not being exercised"
+        }
+        // The document is flipped, so `minY` is the gap above the content.
+        let above = content.minY
+        if abs(above - HomeCanvasController.contentTopMargin) > 1 {
+            return "short content sits \(above)pt below the top of the page, expected "
+                 + "\(HomeCanvasController.contentTopMargin)pt - Plan B anchors it to the top instead of "
+                 + "floating it in the middle"
+        }
+        // And the leftover space genuinely trails *below* rather than being
+        // split around the content, which is the whole of the captain's
+        // objection stated as a measurement.
+        let below = canvas.documentHeightForTests - content.maxY
+        if below < above {
+            return "\(below)pt trails below the content against \(above)pt above it - the leftover "
+                 + "space must fall to the bottom of the page"
+        }
+        return nil
+    }
+
+    /// The one regression risk in removing C1's centring machinery: the
+    /// document's height was held to at least the viewport's, and the content
+    /// sat inside it by inequality. Both are gone, so what drives the
+    /// document's height when content *overflows* is now the bottom pin
+    /// alone - and a page that silently stopped scrolling would hide every
+    /// card past the fold.
+    private static func test_c1TallContentStillScrolls() -> String? {
+        let canvas = makeCanvas()
+        // Deliberately short, so Overview's cards cannot all fit: this is the
+        // case the centring constraints used to own.
+        let window = makeWindow(canvas.view, size: NSSize(width: 900, height: 420))
+        defer { window.orderOut(nil) }
+
+        canvas.select(space: .overview)
+        canvas.debugRenderNow()
         canvas.view.layoutSubtreeIfNeeded()
 
         let viewport = canvas.viewportHeightForTests
         let document = canvas.documentHeightForTests
         let content = canvas.contentFrameForTests
-        if viewport <= 0 { return "the canvas has no viewport height to measure against" }
-        if document + 0.5 < viewport {
-            return "the document is \(document)pt inside a \(viewport)pt viewport - it must fill it "
-                 + "so there is a space to compose"
+        guard content.height > viewport else {
+            return "a \(viewport)pt viewport still fits this space's \(content.height)pt of content, "
+                 + "so the scrolling case is not being exercised"
         }
-        guard content.height + 8 < viewport else {
-            return "this space's content (\(content.height)pt) already fills the \(viewport)pt viewport, "
-                 + "so the composed-layout case is not being exercised"
+        if document + 1 < content.maxY {
+            return "the document is \(document)pt but the content reaches \(content.maxY)pt - content "
+                 + "below the fold would be unreachable"
         }
-        // The document is flipped, so `minY` is the gap above the content.
-        let above = content.minY
-        let below = document - content.maxY
-        if abs(above - below) > 24 {
-            return "content sits \(above)pt from the top and \(below)pt from the bottom - short content "
-                 + "must compose the space, not flush to the top of it"
+        if document <= viewport + 1 {
+            return "the document (\(document)pt) did not grow past the \(viewport)pt viewport, so the "
+                 + "page cannot scroll to content it is already taller than"
         }
+        // Top-anchored on the scrolling path too: content taller than the
+        // viewport must still start at the top rather than being pushed down.
+        if abs(content.minY - HomeCanvasController.contentTopMargin) > 1 {
+            return "scrolling content starts \(content.minY)pt down instead of "
+                 + "\(HomeCanvasController.contentTopMargin)pt"
+        }
+        return nil
+    }
+
+    /// Plan B's hero: Overview's verdict gets a real card - a washed fill, a
+    /// tinted border, a radius and real padding - and the four spaces with
+    /// nothing to report get none of it.
+    ///
+    /// A render cannot check this: `cacheDisplay` draws a band and a bare row
+    /// equally happily, and the difference between them is which paint the
+    /// layer resolved to. So the layer is read.
+    private static func test_c1HeroBandIsOverviewOnly() -> String? {
+        let canvas = makeCanvas()
+        let window = makeWindow(canvas.view, size: NSSize(width: 1300, height: 860))
+        defer { window.orderOut(nil) }
+
+        // Every other space first, while the fleet has reported nothing.
+        for space in DaylightSpace.allCases where space != .overview {
+            canvas.select(space: space)
+            canvas.debugRenderNow()
+            let band = canvas.heroBandForTests
+            if band.isBanner {
+                return "\(space) renders a hero band - only a space with a real verdict earns one"
+            }
+            if band.borderWidth > 0 || band.inset > 0 {
+                return "\(space)'s header has a \(band.borderWidth)pt border and \(band.inset)pt of "
+                     + "padding - off Overview it must render as the plain row it always was"
+            }
+            if let fill = band.fill, fill.alphaComponent > 0.01 {
+                return "\(space)'s header painted a surface (alpha \(fill.alphaComponent))"
+            }
+        }
+
+        // Overview, before any fleet snapshot: still no verdict, so still no
+        // band. GL-14 - an all-clear this page has not measured is worse than
+        // no hero at all.
+        canvas.select(space: .overview)
+        canvas.debugRenderNow()
+        if canvas.heroBandForTests.isBanner {
+            return "Overview wears a hero band before the fleet has reported anything"
+        }
+
+        // And with one: the band appears.
+        let snapshot = FleetSnapshot(homeOk: true, captain: "Manjesh", tasks: [],
+                                     queuedCount: 0, doneCount: 0, projectsCount: 1,
+                                     watcher: WatcherHealth(status: "healthy"))
+        canvas.applyFleet(snapshot: snapshot, mergedPRs: [], prFetchFailure: nil)
+        canvas.debugRenderNow()
+        canvas.view.layoutSubtreeIfNeeded()
+
+        let band = canvas.heroBandForTests
+        if !band.isBanner { return "Overview did not raise its hero band after a real fleet verdict" }
+        if band.borderWidth < 0.9 { return "the hero band has no border (\(band.borderWidth)pt)" }
+        if band.radius < 1 { return "the hero band has no corner radius (\(band.radius)pt)" }
+        if abs(band.inset - HomeCanvasController.heroBandPadding) > 0.5 {
+            return "the hero band's padding is \(band.inset)pt, expected "
+                 + "\(HomeCanvasController.heroBandPadding)pt - a hero without room is a row"
+        }
+        guard let fill = band.fill, fill.alphaComponent > 0.9 else {
+            return "the hero band has no opaque fill"
+        }
+        _ = fill
+        // The hero's detail line steps up a role on the space with a verdict.
+        if canvas.heroDetailPointSizeForTests <= HelmType.body().pointSize {
+            return "the hero's detail line is \(canvas.heroDetailPointSizeForTests)pt, no larger than the "
+                 + "plain header's \(HelmType.body().pointSize)pt"
+        }
+
+        // And the derived fill genuinely *reaches the layer*, on every
+        // palette - a colour computed correctly and never applied is a defect
+        // class this codebase has shipped more than once, and the arithmetic
+        // check in the next case cannot see it. Driven through
+        // `debugApplyTheme` rather than `ThemeManager.setTheme`, which writes
+        // through to the real preference and has poisoned whole suite runs.
+        let restore = ThemeManager.shared.theme
+        defer { canvas.debugApplyTheme(restore) }
+        for theme in HelmTheme.allThemes {
+            canvas.debugApplyTheme(theme)
+            let painted = canvas.heroBandForTests
+            guard let paintedFill = painted.fill else {
+                return "\(theme.id): the hero band lost its fill on a theme change"
+            }
+            let want = HomeCanvasController.heroFill(
+                tint: HelmTheme.nsColor(canvas.heroTintForTests.hex(in: theme)), theme: theme)
+            let got = HelmContrast.components(paintedFill)
+            let expected = HelmContrast.components(want)
+            // Component-wise, never `HelmContrast.ratio` - that compares
+            // relative *luminance*, so two different hues of similar
+            // brightness pass it. This codebase has walked into that twice.
+            if abs(got.0 - expected.0) > 0.01 || abs(got.1 - expected.1) > 0.01
+                || abs(got.2 - expected.2) > 0.01 {
+                return "\(theme.id): the band painted \(got) but its own derivation says \(expected)"
+            }
+            if painted.borderWidth < 0.9 {
+                return "\(theme.id): the hero band lost its border on a theme change"
+            }
+        }
+        return nil
+    }
+
+    /// The band's wash is derived per theme, so the derivation is what is
+    /// asserted: on every one of the fourteen palettes, and for every verdict
+    /// hue the answer banner can report, both lines of hero copy have to
+    /// clear the 4.5:1 text floor against the fill they actually land on.
+    ///
+    /// Pure arithmetic over the real helper, so it needs no window - and it
+    /// scores the *muted* line too, which is the one that runs out of
+    /// headroom first and the one a fill tuned by eye on Daylight would break.
+    private static func test_c1HeroWashStaysLegible() -> String? {
+        var worst = Double.greatestFiniteMagnitude
+        var worstWhere = ""
+        for theme in HelmTheme.allThemes {
+            let ink = HelmContrast.components(HelmTheme.nsColor(theme.chromeInkHex))
+            let mutedAlpha = Double(HelmTheme.mutedAlpha(for: theme))
+            for tint in [HelmTint.good, .warn, .critical, .accent, .neutral] {
+                let hue = HelmTheme.nsColor(tint.hex(in: theme))
+                let fill = HelmContrast.components(HomeCanvasController.heroFill(tint: hue, theme: theme))
+                let muted = HelmContrast.mix(ink, fill, mutedAlpha)
+                for (name, colour) in [("headline", ink), ("detail", muted)] {
+                    let ratio = HelmContrast.ratio(colour, fill)
+                    if ratio < worst { worst = ratio; worstWhere = "\(theme.id)/\(tint)/\(name)" }
+                    if ratio < HelmContrast.textTarget {
+                        return "\(theme.id): the hero band's \(name) measures \(String(format: "%.2f", ratio)):1 "
+                             + "on a \(tint) wash - the ladder must stop at a fill both lines clear"
+                    }
+                }
+            }
+        }
+        print("     (worst hero-copy contrast \(String(format: "%.2f", worst)):1 at \(worstWhere))")
+
+        // The ladder's floor is "no wash", and at least one real palette
+        // takes it (solarized-dark measures 4.47:1 on a 7% wash of its own
+        // green). Asserting that some palette *does* get a wash is what stops
+        // a future over-cautious edit from quietly flattening the band
+        // everywhere and passing this check by rendering nothing at all.
+        let washed = HelmTheme.allThemes.filter {
+            HomeCanvasController.heroWashFraction(tint: HelmTheme.nsColor(HelmTint.good.hex(in: $0)),
+                                                  theme: $0) > 0
+        }
+        if washed.isEmpty {
+            return "no palette resolved a hero wash at all - the band would be a plain card everywhere"
+        }
+        print("     (\(washed.count) of \(HelmTheme.allThemes.count) palettes afford a hue wash)")
         return nil
     }
 
