@@ -95,7 +95,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
     private let recipeDetailLabel = NSTextField(wrappingLabelWithString: "")
     private let exportRecipeButton = HelmButton(title: "", variant: .primary)
     private let checkBackupButton = HelmButton(title: "", variant: .secondary)
-    private let recipeSpinner = NSProgressIndicator()
+    private let recipeSpinner = HelmProgressBar.inlineActivity(hue: RailDestination.vault.domainHue)
     private var isRecipeBusy = false
     // Bug fix (fm/grandline-dictation-global-hotkey-and-theme-fixes):
     // `recipeDetailLabel.textColor` used to be set directly, ad hoc, at each
@@ -364,10 +364,6 @@ final class VaultController: NSViewController, DaylightDrillActions {
         checkBackupButton.target = self
         checkBackupButton.action = #selector(checkBackupTapped)
 
-        recipeSpinner.style = .spinning
-        recipeSpinner.controlSize = .small
-        recipeSpinner.isIndeterminate = true
-        recipeSpinner.translatesAutoresizingMaskIntoConstraints = false
         recipeSpinner.isHidden = true
 
         let buttonsRow = NSStackView(views: [checkBackupButton, exportRecipeButton, recipeSpinner])
@@ -818,7 +814,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
         exportRecipeButton.isEnabled = !busy
         checkBackupButton.isEnabled = !busy
         recipeSpinner.isHidden = !busy
-        if busy { recipeSpinner.startAnimation(nil) } else { recipeSpinner.stopAnimation(nil) }
+        if busy { recipeSpinner.startAnimation() } else { recipeSpinner.stopAnimation() }
         recipeDetailLabel.stringValue = status
         setRecipeLabelColor(.info)
     }

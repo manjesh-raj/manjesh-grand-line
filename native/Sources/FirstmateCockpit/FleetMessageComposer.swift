@@ -37,7 +37,7 @@ final class FleetMessageComposer: NSView, NSTextViewDelegate {
     private let statusLabel = NSTextField(labelWithString: "")
     private let sendButton: HelmButton
     private let cancelButton = HelmButton(title: "Cancel", variant: .quiet, size: .small)
-    private let spinner = NSProgressIndicator()
+    private let spinner = HelmProgressBar.inlineActivity(hue: RailDestination.overview.domainHue)
 
     private var textScrollHeight: NSLayoutConstraint!
     private static let minTextHeight: CGFloat = 46
@@ -182,10 +182,6 @@ final class FleetMessageComposer: NSView, NSTextViewDelegate {
         statusLabel.translatesAutoresizingMaskIntoConstraints = false
         statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        spinner.style = .spinning
-        spinner.controlSize = .small
-        spinner.isDisplayedWhenStopped = false
-        spinner.translatesAutoresizingMaskIntoConstraints = false
         spinner.setContentHuggingPriority(.required, for: .horizontal)
 
         sendButton.translatesAutoresizingMaskIntoConstraints = false
@@ -257,7 +253,7 @@ final class FleetMessageComposer: NSView, NSTextViewDelegate {
     func setBusy(_ busy: Bool) {
         textView.isEditable = !busy
         cancelButton.isEnabled = !busy
-        if busy { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
+        if busy { spinner.startAnimation() } else { spinner.stopAnimation() }
         updateSendEnabled(busy: busy)
     }
 

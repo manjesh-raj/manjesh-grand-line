@@ -201,7 +201,7 @@ private final class WhiteboardComposerViewController: NSViewController, NSTextVi
     private let appendToggle = NSButton(checkboxWithTitle: "Add to what's already on the board", target: nil, action: nil)
     private let startOverButton = HelmButton(title: "Start over", variant: .quiet, size: .small)
     private let statusLabel = NSTextField(labelWithString: "")
-    private let spinner = NSProgressIndicator()
+    private let spinner = HelmProgressBar.inlineActivity(hue: RailDestination.whiteboard.domainHue)
 
     private static let freshPlaceholder = "A three-tier web app with a load balancer, two app servers and a database…"
     private static let refinePlaceholder = "Make the database box bigger, and colour the cache layer amber…"
@@ -295,10 +295,6 @@ private final class WhiteboardComposerViewController: NSViewController, NSTextVi
         hintLabel.translatesAutoresizingMaskIntoConstraints = false
         hintLabel.setContentHuggingPriority(.defaultHigh, for: .horizontal)
 
-        spinner.style = .spinning
-        spinner.controlSize = .small
-        spinner.isDisplayedWhenStopped = false
-        spinner.translatesAutoresizingMaskIntoConstraints = false
 
         // "Hint left, action right" needs a flexible spacer plus `.fill` -
         // gotcha (10): a `.gravityAreas` row stretches nothing on its own.
@@ -625,7 +621,7 @@ private final class WhiteboardComposerViewController: NSViewController, NSTextVi
         generateButton.isEnabled = !generating
         startOverButton.isEnabled = !generating
         for button in exampleButtons { button.isEnabled = !generating }
-        if generating { spinner.startAnimation(nil) } else { spinner.stopAnimation(nil) }
+        if generating { spinner.startAnimation() } else { spinner.stopAnimation() }
     }
 
     private var statusColor: NSColor {

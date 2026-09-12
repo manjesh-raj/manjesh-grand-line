@@ -259,7 +259,7 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
     var describeSubtitleLabel: NSTextField!
     var describeTextView: NSTextView!
     var describeScroll: NSScrollView!
-    var describeSpinner: NSProgressIndicator!
+    var describeSpinner: HelmProgressBar!
     var describeCloseButton: HelmButton!
     var describeCopyButton: HelmButton!
     var describeWidthConstraint: NSLayoutConstraint!
@@ -710,11 +710,7 @@ final class KubernetesController: NSViewController, DaylightDrillActions {
         describeSubtitleLabel.lineBreakMode = .byTruncatingTail
         describeSubtitleLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        describeSpinner = NSProgressIndicator()
-        describeSpinner.style = .spinning
-        describeSpinner.controlSize = .small
-        describeSpinner.isDisplayedWhenStopped = false
-        describeSpinner.translatesAutoresizingMaskIntoConstraints = false
+        describeSpinner = HelmProgressBar.inlineActivity(hue: RailDestination.kubernetes.domainHue)
 
         describeCopyButton = HelmButton(title: "Copy", variant: .quiet, size: .small)
         describeCopyButton.target = self

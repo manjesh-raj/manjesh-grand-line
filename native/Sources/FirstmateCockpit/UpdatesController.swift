@@ -279,7 +279,7 @@ final class UpdatesController: NSViewController, SetupPageSummary {
     private let checkAllPill = HoverHighlightView()
     private let checkAllIcon = NSImageView()
     private let checkAllLabel = NSTextField(labelWithString: "Refresh")
-    private let checkAllProgressBar = NSProgressIndicator()
+    private let checkAllProgressBar = HelmProgressBar()
     private let checkAllProgressLabel = NSTextField(labelWithString: "")
     private var isCheckingAll = false
 
@@ -339,12 +339,11 @@ final class UpdatesController: NSViewController, SetupPageSummary {
         checkAllPill.setContentHuggingPriority(.required, for: .horizontal)
         checkAllPill.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        checkAllProgressBar.style = .bar
-        checkAllProgressBar.isIndeterminate = false
-        checkAllProgressBar.controlSize = .small
-        checkAllProgressBar.minValue = 0
+        // G4: the app's own bar, which already handles theme + tint - a stock
+        // determinate `NSProgressIndicator` is the one control on this page
+        // still drawing system chrome.
         checkAllProgressBar.isHidden = true
-        checkAllProgressBar.translatesAutoresizingMaskIntoConstraints = false
+        checkAllProgressBar.setContentHuggingPriority(.required, for: .horizontal)
         checkAllProgressBar.widthAnchor.constraint(equalToConstant: 90).isActive = true
 
         checkAllProgressLabel.font = .systemFont(ofSize: 11, weight: .medium)
@@ -386,8 +385,7 @@ final class UpdatesController: NSViewController, SetupPageSummary {
         checkAllProgressLabel.isHidden = false
 
         let total = rows.count
-        checkAllProgressBar.maxValue = Double(total)
-        checkAllProgressBar.doubleValue = 0
+        checkAllProgressBar.configure(fraction: 0)
         checkAllProgressLabel.stringValue = "Checking\u{2026} (0/\(total))"
 
         // F3: the App row checks with everything else rather than
@@ -400,7 +398,8 @@ final class UpdatesController: NSViewController, SetupPageSummary {
             check(row, forceRefresh: forceRefresh) { [weak self] in
                 guard let self else { return }
                 completed += 1
-                self.checkAllProgressBar.doubleValue = Double(completed)
+                self.checkAllProgressBar.configure(
+                    fraction: total == 0 ? 1 : Double(completed) / Double(total))
                 self.checkAllProgressLabel.stringValue = "Checking\u{2026} (\(completed)/\(total))"
                 if completed == total { self.finishCheckAll() }
             }
@@ -903,6 +902,9 @@ final class UpdatesController: NSViewController, SetupPageSummary {
         // confirmed live via `UpdatesRefreshButtonThemeSelfTest`.
         checkAllPill.normalColor = accent
         checkAllPill.hoverColor = accent.hoverShifted(by: 0.10, forMode: theme.mode)
+        // G4: the shared bar carries its own theme + hue, so this page's own
+        // theme pass has to hand it over - it does not observe on its own.
+        checkAllProgressBar.applyTheme(theme, hue: RailDestination.updates.domainHue)
         // `selectionTextHex` is the text tone already contrast-verified
         // against an opaque `accentHex` fill (SwiftTerm's selected-text
         // color) - the same pairing this pill's fill/text need.

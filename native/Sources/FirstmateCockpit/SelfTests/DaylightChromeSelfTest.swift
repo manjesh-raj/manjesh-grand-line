@@ -547,7 +547,16 @@ enum DaylightChromeSelfTest {
     }
 
     private static func checkToastRecipe(_ ok: inout Bool) {
-        print("\n-- §6.14: the toast --")
+        print("\n-- §6.14 + G1: the toast --")
+        // G1 inverted most of this check, deliberately rather than by
+        // deletion. §6.14 shipped a fixed white-on-`ink` capsule pinned to the
+        // container's **top** edge, and the audit's finding is exactly that:
+        // the fixed ink "ignores the theme's own surfaces" and top-centre
+        // "collides with the chrome" - it sat under the floating bar and
+        // across its search pill. So what is asserted now is the opposite of
+        // what was asserted before, on purpose, and the assertion that
+        // survives unchanged is the one that matters most: Undo still
+        // restores.
         let theme = daylight
         ThemeManager.shared.setTheme(theme)
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
@@ -563,30 +572,67 @@ enum DaylightChromeSelfTest {
         if abs(radius - pill.bounds.height / 2) > 0.51 {
             problems.append("radius \(fmt(radius)) on a \(fmt(pill.bounds.height))pt pill - not a capsule")
         }
+        // G1: the app's own card surface, not a literal ink capsule.
         if !sameColor(pill.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) },
-                      HelmTheme.nsColor(DaylightPalette.ink)) {
-            problems.append("fill is not `ink`")
+                      HelmTheme.nsColor(theme.chromeBackgroundHex)) {
+            problems.append("fill is not the card surface")
         }
-        if (pill.layer?.borderWidth ?? 0) != 0 { problems.append("still bordered") }
         let raised = HelmCard.elevation(for: theme, level: .raised)
         if abs((pill.layer?.shadowRadius ?? 0) - raised.shadowBlurRadius / 2) > 0.01
             || (pill.layer?.shadowOpacity ?? 0) == 0 {
             problems.append("no raised shadow")
         }
         let label = descendants(NSTextField.self, in: pill).first { $0.stringValue == "Saved" }
-        if !sameColor(label?.textColor, .white) { problems.append("label is not white") }
+        // G1: "the theme's ink". White was only ever right on the ink capsule.
+        if !sameColor(label?.textColor, HelmTheme.nsColor(theme.chromeInkHex)) {
+            problems.append("label is not the theme's ink")
+        }
         if label?.font?.pointSize != HelmType.scaled(12) {
             problems.append("label \(label?.font.map { fmt($0.pointSize) } ?? "nil"), want 12")
         }
+        // G1's headline: **bottom**-centre. Measured against the container's
+        // own edges rather than asserted as a constant, because which edge it
+        // is pinned to is the entire finding.
+        let fromBottom = pill.frame.minY - container.bounds.minY
+        let fromTop = container.bounds.maxY - pill.frame.maxY
+        if fromBottom > fromTop {
+            problems.append("pill is \(fmt(fromBottom))pt off the bottom and \(fmt(fromTop))pt off the top - still top-anchored")
+        }
+        if abs(fromBottom - Toast.bottomInset) > 0.51 {
+            problems.append("bottom inset \(fmt(fromBottom))pt, want \(fmt(Toast.bottomInset))")
+        }
         if problems.isEmpty {
-            print("  OK   ink capsule, white 12 semibold, raised shadow")
+            print("  OK   card capsule on a raised shadow, theme ink, \(fmt(fromBottom))pt off the bottom")
         } else {
             print("  FAIL \(problems.joined(separator: "; "))")
             ok = false
         }
 
-        // The undo variant: the action word takes the hue's light stop, and it
-        // still restores.
+        // G1: "stackable". Two plain confirmations must both be on screen, and
+        // the newer one must be the lower of the two - the stack grows upward,
+        // away from the content.
+        let stackContainer = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
+        Toast.show(in: stackContainer, message: "First")
+        Toast.show(in: stackContainer, message: "Second")
+        stackContainer.layoutSubtreeIfNeeded()
+        let first = toastPill(in: stackContainer, message: "First")
+        let second = toastPill(in: stackContainer, message: "Second")
+        if let first, let second {
+            if second.frame.minY >= first.frame.minY {
+                print("  FAIL the newer toast is not below the older one")
+                ok = false
+            } else if first.frame.minY < second.frame.maxY {
+                print("  FAIL the two toasts overlap")
+                ok = false
+            } else {
+                print("  OK   two toasts stack, newest lowest, no overlap")
+            }
+        } else {
+            print("  FAIL toasts do not stack - \(first == nil ? "the first" : "the second") is gone")
+            ok = false
+        }
+
+        // The undo variant: a capsule button, and it still restores.
         var undone = 0
         let undoContainer = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
         Toast.showUndo(in: undoContainer, message: "Deleted host") { undone += 1 }
@@ -597,11 +643,13 @@ enum DaylightChromeSelfTest {
             ok = false
             return
         }
-        let lightStop = HelmDomainHue.blue.pair(in: theme).h2
-        if sameColor(undoButton.labelColorOverride, lightStop) {
-            print("  OK   \"Undo\" takes the hue's light stop")
+        // G1: "the Undo affordance styled as a capsule button inside". On the
+        // old ink capsule it was a `.quiet` word with a hand-set label colour;
+        // on a card surface that no longer reads as a control.
+        if undoButton.variant == .secondary {
+            print("  OK   \"Undo\" is a bordered capsule button")
         } else {
-            print("  FAIL Undo label override is \(String(describing: undoButton.labelColorOverride))")
+            print("  FAIL Undo is \(String(describing: undoButton.variant)), want .secondary")
             ok = false
         }
         undoButton.performClick(nil)
@@ -612,18 +660,23 @@ enum DaylightChromeSelfTest {
             ok = false
         }
 
-        // And the twelve keep their bordered pill.
+        // G1 unified the recipe across all fourteen palettes - the split this
+        // used to assert existed because a fixed dark ink capsule would have
+        // been worse than the bordered pill on `helm-dark`, and the card
+        // surface is the theme's own on every palette, so there is nothing
+        // left to split.
         let other = otherThemes[0]
         ThemeManager.shared.setTheme(other)
         let otherContainer = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
         Toast.show(in: otherContainer, message: "Saved")
         otherContainer.layoutSubtreeIfNeeded()
         if let otherPill = toastPill(in: otherContainer, message: "Saved"),
-           (otherPill.layer?.borderWidth ?? 0) == 1,
-           abs((otherPill.layer?.cornerRadius ?? 0) - 10) < 0.01 {
-            print("  OK   \(other.id) keeps the bordered radius-10 pill")
+           sameColor(otherPill.layer?.backgroundColor.flatMap { NSColor(cgColor: $0) },
+                     HelmTheme.nsColor(other.chromeBackgroundHex)),
+           otherPill.frame.minY - otherContainer.bounds.minY < otherContainer.bounds.height / 2 {
+            print("  OK   \(other.id) gets the same card capsule, also bottom-anchored")
         } else {
-            print("  FAIL \(other.id) picked up the Daylight capsule")
+            print("  FAIL \(other.id) does not get G1's recipe")
             ok = false
         }
         ThemeManager.shared.setTheme(daylight)

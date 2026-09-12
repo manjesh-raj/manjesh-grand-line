@@ -215,7 +215,7 @@ final class StrawHatMenuBarPopoverController: NSViewController {
     private let hintLabel = NSTextField(wrappingLabelWithString:
         "Ask a quick question - the crew doesn't know what's on your screen, but knows your tasks, docs and health.")
     private let thinkingRow = NSStackView()
-    private let thinkingSpinner = NSProgressIndicator()
+    private let thinkingSpinner = HelmProgressBar.inlineActivity(hue: RailDestination.strawHat.domainHue)
     private let thinkingLabel = NSTextField(labelWithString: "The crew is thinking\u{2026}")
     private let replyStack = NSStackView()
     private let replyPortraitSlot = NSView()
@@ -332,10 +332,6 @@ final class StrawHatMenuBarPopoverController: NSViewController {
         hintLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         hintLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        thinkingSpinner.style = .spinning
-        thinkingSpinner.controlSize = .small
-        thinkingSpinner.isDisplayedWhenStopped = false
-        thinkingSpinner.translatesAutoresizingMaskIntoConstraints = false
         thinkingSpinner.setContentHuggingPriority(.required, for: .horizontal)
         thinkingLabel.font = HelmType.caption()
         thinkingLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -514,7 +510,7 @@ final class StrawHatMenuBarPopoverController: NSViewController {
         errorLabel.isHidden = true
         field.isEnabled = !isThinking
         updateAskEnabled()
-        if isThinking { thinkingSpinner.startAnimation(nil) } else { thinkingSpinner.stopAnimation(nil) }
+        if isThinking { thinkingSpinner.startAnimation() } else { thinkingSpinner.stopAnimation() }
 
         switch state {
         case .idle:

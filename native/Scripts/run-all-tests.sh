@@ -169,6 +169,9 @@ NEEDS_SESSION=(
   # The modernization audit's §3F: mounts a real Host editor in a real window
   # and reads real swatch/focus geometry off its layers.
   "FM_RUN_FORMS_MODERNIZATION_TESTS"
+  # §3G: a sliding layer animation is suppressed off-window (GL-13), so the
+  # indeterminate bar can only be measured in a real one.
+  "FM_RUN_FEEDBACK_MODERNIZATION_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_SLICE6_TESTS"
   # Phase 6 mounts a real window to follow the real key view loop and drives
   # real accessibility presses - window-backed for the same reason.

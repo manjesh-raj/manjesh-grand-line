@@ -247,7 +247,7 @@ final class LockScreenController: NSViewController {
 
     /// The two "retrying, nothing to type yet" states show a spinner instead
     /// of a form, because there is nothing useful the captain can do yet.
-    private let waitingSpinner = NSProgressIndicator()
+    private let waitingSpinner = HelmProgressBar.inlineActivity(hue: RailDestination.poneglyph.domainHue)
     private let waitingStack = NSStackView()
     private let waitingLabel = NSTextField(labelWithString: "")
 
@@ -492,10 +492,6 @@ final class LockScreenController: NSViewController {
         avUnavailableStack.addArrangedSubview(installStatusLabel)
         avUnavailableStack.isHidden = true
 
-        waitingSpinner.style = .spinning
-        waitingSpinner.controlSize = .small
-        waitingSpinner.isIndeterminate = true
-        waitingSpinner.translatesAutoresizingMaskIntoConstraints = false
         waitingLabel.font = HelmType.caption()
         waitingLabel.translatesAutoresizingMaskIntoConstraints = false
         waitingStack.orientation = .horizontal
@@ -960,7 +956,7 @@ final class LockScreenController: NSViewController {
         setupCommandStack.isHidden = true
         avUnavailableStack.isHidden = true
         waitingStack.isHidden = true
-        waitingSpinner.stopAnimation(nil)
+        waitingSpinner.stopAnimation()
         footerLeftLabel.stringValue = ""
         footerRightLabel.stringValue = ""
 
@@ -1008,14 +1004,14 @@ final class LockScreenController: NSViewController {
             subtitleLabel.stringValue = "Its approval service isn't answering yet. Retrying - this usually clears in a few seconds."
             waitingStack.isHidden = false
             waitingLabel.stringValue = "Checking\u{2026}"
-            waitingSpinner.startAnimation(nil)
+            waitingSpinner.startAnimation()
 
         case .transientFailure:
             titleLabel.stringValue = "Couldn't reach the vault"
             subtitleLabel.stringValue = "The check timed out. Your password is probably fine - retrying."
             waitingStack.isHidden = false
             waitingLabel.stringValue = "Retrying\u{2026}"
-            waitingSpinner.startAnimation(nil)
+            waitingSpinner.startAnimation()
         }
 
         // The footer only earns its divider when it has something to say.

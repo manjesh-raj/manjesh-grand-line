@@ -47,7 +47,7 @@ final class DocsController: NSViewController, DaylightDrillActions {
     private static let playbookCardInset: CGFloat = HelmMetrics.s3
     private var playbookEmptyState: HelmEmptyState?
     private let syncButton = HelmButton(title: "", variant: .primary)
-    private let syncSpinner = NSProgressIndicator()
+    private let syncSpinner = HelmProgressBar.inlineActivity(hue: RailDestination.docs.domainHue)
     private var isSyncing = false
 
     private var theme: HelmTheme = ThemeManager.shared.theme
@@ -220,11 +220,7 @@ final class DocsController: NSViewController, DaylightDrillActions {
         syncButton.action = #selector(syncNowTapped)
         syncButton.translatesAutoresizingMaskIntoConstraints = false
 
-        syncSpinner.style = .spinning
-        syncSpinner.controlSize = .small
-        syncSpinner.isIndeterminate = true
         syncSpinner.isHidden = true
-        syncSpinner.translatesAutoresizingMaskIntoConstraints = false
 
         let actionRow = NSStackView(views: [syncButton, syncSpinner])
         actionRow.orientation = .horizontal
@@ -254,7 +250,7 @@ final class DocsController: NSViewController, DaylightDrillActions {
         isSyncing = true
         syncButton.isEnabled = false
         syncSpinner.isHidden = false
-        syncSpinner.startAnimation(nil)
+        syncSpinner.startAnimation()
         DispatchQueue.global(qos: .userInitiated).async {
             let outcome = DocsSyncSource.update()
             DispatchQueue.main.async { [weak self] in
@@ -262,7 +258,7 @@ final class DocsController: NSViewController, DaylightDrillActions {
                 self.isSyncing = false
                 self.syncButton.isEnabled = true
                 self.syncSpinner.isHidden = true
-                self.syncSpinner.stopAnimation(nil)
+                self.syncSpinner.stopAnimation()
                 if outcome.ok {
                     self.loadDocsIfAvailable()
                 } else if let container = self.view.window?.contentView {
