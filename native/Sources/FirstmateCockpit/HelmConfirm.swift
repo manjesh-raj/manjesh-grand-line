@@ -190,7 +190,7 @@ enum HelmConfirm {
 
     private static func runModal(_ request: Request) -> Response {
         let content = makeContent(request)
-        let size = content.fittingSize
+        let size = content.measuredSize()
         let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size),
                             styleMask: [.titled, .fullSizeContentView],
                             backing: .buffered, defer: false)
@@ -395,6 +395,51 @@ final class HelmConfirmView: NSView {
         applyTheme(ThemeManager.shared.theme)
     }
 
+    /// The width the wrapping body actually gets, for a given panel width.
+    ///
+    /// **One definition, consulted by `applyTheme`, `layout()` and
+    /// `measuredSize()` alike** - three copies of this arithmetic is how the
+    /// measurement and the render came to disagree about how many lines the
+    /// body needs (see `measuredSize()`).
+    ///
+    /// It reads the *visible* tile's side rather than a constant: exactly one
+    /// of the two tiles is ever shown, and they are different sizes (30pt for
+    /// the Daylight family's gradient tile, `tileBase` for the twelve legacy
+    /// palettes' flat one), so a hardcoded `tileBase` over-reserved 4pt on
+    /// every Daylight-family dialog - the safe direction, but still two
+    /// answers to one question.
+    private func bodyWidth(forPanelWidth width: CGFloat) -> CGFloat {
+        let tileSide = tile.isHidden ? HelmMetrics.tileBase : HelmGradientTile.Size.module.side
+        return max(200, width - HelmMetrics.s5 * 2 - tileSide - HelmMetrics.s3)
+    }
+
+    /// The size the panel should be - measured at the width the body will
+    /// really wrap at.
+    ///
+    /// **`fittingSize` on its own is not a usable measurement for this view,
+    /// and reading it directly is the defect this replaced.** The body is a
+    /// wrapping label, so its height depends entirely on
+    /// `preferredMaxLayoutWidth` - and until this view is in a window its
+    /// `bounds.width` is 0, so both places that derive that width fall back to
+    /// the 200pt floor. `runModal` measured there, sized the panel for a body
+    /// wrapped at 200pt, mounted it at 380, and `layout()` then re-wrapped the
+    /// body at ~286pt where it needs several fewer lines - with the panel's
+    /// frame already fixed and never re-derived.
+    ///
+    /// Measured on the Updates page's firstmate sync dialog (the app's
+    /// longest confirm body): **308pt measured against 244pt actually needed,
+    /// i.e. 64pt - a quarter of the panel - of dead space below the buttons**,
+    /// in every theme. That is the captain-reported "the UI is not clean".
+    ///
+    /// Two passes, because the width is itself derived: an accessory may be
+    /// wider than `Self.width`, so the width has to be settled first and the
+    /// height measured against it second.
+    func measuredSize() -> NSSize {
+        let width = max(Self.width, fittingSize.width)
+        bodyLabel.preferredMaxLayoutWidth = bodyWidth(forPanelWidth: width)
+        return NSSize(width: width, height: fittingSize.height)
+    }
+
     func applyTheme(_ theme: HelmTheme) {
         layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         layer?.cornerRadius = theme.isDaylight ? HelmMetrics.dSurface : HelmMetrics.rPanel
@@ -409,8 +454,7 @@ final class HelmConfirmView: NSView {
         titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         bodyLabel.font = HelmType.body()
         bodyLabel.textColor = HelmTheme.mutedInk(theme)
-        bodyLabel.preferredMaxLayoutWidth = max(200, bounds.width - HelmMetrics.s5 * 2
-                                                - HelmMetrics.tileBase - HelmMetrics.s3)
+        bodyLabel.preferredMaxLayoutWidth = bodyWidth(forPanelWidth: bounds.width)
     }
 
     override func layout() {
@@ -420,8 +464,7 @@ final class HelmConfirmView: NSView {
         // the same reason: an over-estimated `preferredMaxLayoutWidth` makes
         // AppKit lay the label out one line tall and draw the second outside
         // its own bounds.
-        bodyLabel.preferredMaxLayoutWidth = max(200, bounds.width - HelmMetrics.s5 * 2
-                                                - HelmMetrics.tileBase - HelmMetrics.s3)
+        bodyLabel.preferredMaxLayoutWidth = bodyWidth(forPanelWidth: bounds.width)
     }
 
     @objc private func confirmClicked() { onAnswer?(.confirm) }

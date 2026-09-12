@@ -84,10 +84,19 @@ struct DiagramDSLError: Error, CustomStringConvertible {
 /// The colours are literal hexes rather than `HelmTint`s, which is the correct
 /// exception rather than an oversight: these are painted *inside* Excalidraw's
 /// own canvas by Excalidraw itself, not by this app's chrome, and every value
-/// below is one of Excalidraw's own default swatches (verified present in the
+/// is one of Excalidraw's own default swatches (verified present in the
 /// vendored bundle). A shape drawn from this palette is indistinguishable from
 /// one the captain drew by hand with the canvas's own colour picker - which is
-/// the point, since the output is meant to be hand-editable afterwards.
+/// the point, since the output is meant to be hand-editable afterwards. They
+/// now come from `DiagramComponentRole` rather than from a per-component
+/// switch; see that type for why the hue is by role and not by vendor.
+///
+/// **The library is SRE/DevOps-shaped, and AWS-heavy on purpose.** It shipped
+/// as seven generic shapes in one flat row, which is enough to sketch a
+/// three-box diagram and not enough to draw the captain's actual work. The set
+/// is organised into `DiagramComponentCategory` drawers and reached through the
+/// popover's Components drop-down; the original seven are unchanged in keyword,
+/// alias, title, emoji and colour, and are re-listed under `Common`.
 enum DiagramComponent: String, CaseIterable {
     case server
     case k8sPod
@@ -96,92 +105,339 @@ enum DiagramComponent: String, CaseIterable {
     case loadBalancer
     case secretStore
     case actor
+    case ec2
+    case lambda
+    case ecs
+    case eks
+    case alb
+    case apiGateway
+    case cloudFront
+    case route53
+    case s3
+    case rds
+    case dynamoDB
+    case elastiCache
+    case sqs
+    case sns
+    case eventBridge
+    case kinesis
+    case stepFunctions
+    case iam
+    case secretsManager
+    case cloudWatch
+    case vpc
+    case deployment
+    case k8sService
+    case ingress
+    case configMap
+    case namespace
+    case statefulSet
+    case cronJob
+    case node
+    case cdn
+    case dns
+    case firewall
+    case proxy
+    case vpn
+    case internet
+    case subnet
+    case cache
+    case objectStore
+    case dataWarehouse
+    case searchIndex
+    case stream
+    case metrics
+    case logs
+    case traces
+    case dashboard
+    case alert
+    case onCall
+    case repo
+    case pipeline
+    case registry
+    case containerImage
+    case iac
+    case certificate
+    case auth
+    case waf
 
-    /// The word the DSL uses: `db(Postgres)`.
-    var keyword: String {
+    /// One row of the component table: everything about a component except
+    /// how it is painted, which comes from its `role`.
+    ///
+    /// **One table, not six parallel `switch`es.** The library was seven
+    /// components and six switches over them; at 62 it is one line per
+    /// component, which is the difference between a reviewable diff and a
+    /// place where a case can be added to five of the six by accident.
+    struct Spec {
+        let keyword: String
+        let aliases: [String]
+        let title: String
+        let emoji: String
+        let role: DiagramComponentRole
+    }
+
+    var spec: Spec {
         switch self {
-        case .server: return "server"
-        case .k8sPod: return "k8s"
-        case .database: return "db"
-        case .queue: return "queue"
-        case .loadBalancer: return "lb"
-        case .secretStore: return "secrets"
-        case .actor: return "actor"
+        case .server: return Spec(keyword: "server", aliases: ["server", "svc", "service", "app"], title: "Server", emoji: "\u{1F5A5}\u{FE0F}", role: .compute)
+        case .k8sPod: return Spec(keyword: "k8s", aliases: ["k8s", "pod", "kube"], title: "K8s Pod", emoji: "\u{2638}\u{FE0F}", role: .container)
+        case .database: return Spec(keyword: "db", aliases: ["db", "database", "store"], title: "Database", emoji: "\u{1F5C4}\u{FE0F}", role: .data)
+        case .queue: return Spec(keyword: "queue", aliases: ["queue", "mq", "topic"], title: "Queue", emoji: "\u{1F4EC}", role: .messaging)
+        case .loadBalancer: return Spec(keyword: "lb", aliases: ["lb", "loadbalancer", "load_balancer"], title: "Load balancer", emoji: "\u{2696}\u{FE0F}", role: .routing)
+        case .secretStore: return Spec(keyword: "secrets", aliases: ["secrets", "secret", "vault"], title: "Secret store", emoji: "\u{1F510}", role: .security)
+        case .actor: return Spec(keyword: "actor", aliases: ["actor", "user", "person", "client"], title: "Actor", emoji: "\u{1F464}", role: .person)
+        case .ec2: return Spec(keyword: "ec2", aliases: ["ec2", "instance"], title: "EC2", emoji: "\u{1F5A5}\u{FE0F}", role: .compute)
+        case .lambda: return Spec(keyword: "lambda", aliases: ["lambda", "fn", "function"], title: "Lambda", emoji: "\u{26A1}", role: .compute)
+        case .ecs: return Spec(keyword: "ecs", aliases: ["ecs", "fargate"], title: "ECS / Fargate", emoji: "\u{1F4E6}", role: .container)
+        case .eks: return Spec(keyword: "eks", aliases: ["eks"], title: "EKS", emoji: "\u{2638}\u{FE0F}", role: .container)
+        case .alb: return Spec(keyword: "alb", aliases: ["alb", "elb", "nlb"], title: "ALB / ELB", emoji: "\u{2696}\u{FE0F}", role: .routing)
+        case .apiGateway: return Spec(keyword: "apigw", aliases: ["apigw", "apigateway", "api_gateway"], title: "API Gateway", emoji: "\u{1F6AA}", role: .routing)
+        case .cloudFront: return Spec(keyword: "cloudfront", aliases: ["cloudfront"], title: "CloudFront", emoji: "\u{1F30D}", role: .routing)
+        case .route53: return Spec(keyword: "route53", aliases: ["route53", "r53"], title: "Route 53", emoji: "\u{1F9ED}", role: .routing)
+        case .s3: return Spec(keyword: "s3", aliases: ["s3", "bucket"], title: "S3", emoji: "\u{1FAA3}", role: .data)
+        case .rds: return Spec(keyword: "rds", aliases: ["rds", "aurora"], title: "RDS / Aurora", emoji: "\u{1F5C3}\u{FE0F}", role: .data)
+        case .dynamoDB: return Spec(keyword: "dynamodb", aliases: ["dynamodb", "ddb", "dynamo"], title: "DynamoDB", emoji: "\u{26A1}", role: .data)
+        case .elastiCache: return Spec(keyword: "elasticache", aliases: ["elasticache"], title: "ElastiCache", emoji: "\u{1F9CA}", role: .data)
+        case .sqs: return Spec(keyword: "sqs", aliases: ["sqs"], title: "SQS", emoji: "\u{1F4EC}", role: .messaging)
+        case .sns: return Spec(keyword: "sns", aliases: ["sns"], title: "SNS", emoji: "\u{1F4E3}", role: .messaging)
+        case .eventBridge: return Spec(keyword: "eventbridge", aliases: ["eventbridge", "events"], title: "EventBridge", emoji: "\u{1F500}", role: .messaging)
+        case .kinesis: return Spec(keyword: "kinesis", aliases: ["kinesis"], title: "Kinesis", emoji: "\u{1F30A}", role: .messaging)
+        case .stepFunctions: return Spec(keyword: "stepfunctions", aliases: ["stepfunctions", "sfn"], title: "Step Functions", emoji: "\u{1FA9C}", role: .messaging)
+        case .iam: return Spec(keyword: "iam", aliases: ["iam", "role"], title: "IAM", emoji: "\u{1F6C2}", role: .security)
+        case .secretsManager: return Spec(keyword: "secretsmanager", aliases: ["secretsmanager", "asm"], title: "Secrets Manager", emoji: "\u{1F511}", role: .security)
+        case .cloudWatch: return Spec(keyword: "cloudwatch", aliases: ["cloudwatch", "cw"], title: "CloudWatch", emoji: "\u{1F453}", role: .observability)
+        case .vpc: return Spec(keyword: "vpc", aliases: ["vpc"], title: "VPC", emoji: "\u{1F3E2}", role: .edge)
+        case .deployment: return Spec(keyword: "deploy", aliases: ["deploy", "deployment"], title: "Deployment", emoji: "\u{1F680}", role: .container)
+        case .k8sService: return Spec(keyword: "k8ssvc", aliases: ["k8ssvc", "clusterip", "kubesvc"], title: "Service (k8s)", emoji: "\u{1F517}", role: .routing)
+        case .ingress: return Spec(keyword: "ingress", aliases: ["ingress"], title: "Ingress", emoji: "\u{1F6AA}", role: .routing)
+        case .configMap: return Spec(keyword: "configmap", aliases: ["configmap", "cm", "config"], title: "ConfigMap", emoji: "\u{1F4C4}", role: .data)
+        case .namespace: return Spec(keyword: "namespace", aliases: ["namespace", "ns"], title: "Namespace", emoji: "\u{1F5C2}\u{FE0F}", role: .edge)
+        case .statefulSet: return Spec(keyword: "statefulset", aliases: ["statefulset", "sts"], title: "StatefulSet", emoji: "\u{1F9F1}", role: .container)
+        case .cronJob: return Spec(keyword: "cronjob", aliases: ["cronjob", "cron", "job"], title: "CronJob", emoji: "\u{23F0}", role: .container)
+        case .node: return Spec(keyword: "node", aliases: ["node", "worker"], title: "Node", emoji: "\u{1F5A5}\u{FE0F}", role: .compute)
+        case .cdn: return Spec(keyword: "cdn", aliases: ["cdn", "edge"], title: "CDN", emoji: "\u{1F30D}", role: .routing)
+        case .dns: return Spec(keyword: "dns", aliases: ["dns"], title: "DNS", emoji: "\u{1F9ED}", role: .routing)
+        case .firewall: return Spec(keyword: "firewall", aliases: ["firewall", "fw", "sg", "securitygroup"], title: "Firewall / SG", emoji: "\u{1F9F1}", role: .security)
+        case .proxy: return Spec(keyword: "proxy", aliases: ["proxy", "nginx", "envoy"], title: "Proxy", emoji: "\u{1F504}", role: .routing)
+        case .vpn: return Spec(keyword: "vpn", aliases: ["vpn", "tunnel"], title: "VPN", emoji: "\u{1F576}\u{FE0F}", role: .security)
+        case .internet: return Spec(keyword: "internet", aliases: ["internet", "public", "www"], title: "Internet", emoji: "\u{1F310}", role: .edge)
+        case .subnet: return Spec(keyword: "subnet", aliases: ["subnet"], title: "Subnet", emoji: "\u{1F5FA}\u{FE0F}", role: .edge)
+        case .cache: return Spec(keyword: "cache", aliases: ["cache", "redis", "memcached"], title: "Cache", emoji: "\u{1F9CA}", role: .data)
+        case .objectStore: return Spec(keyword: "blob", aliases: ["blob", "objectstore", "objectstorage"], title: "Object storage", emoji: "\u{1FAA3}", role: .data)
+        case .dataWarehouse: return Spec(keyword: "warehouse", aliases: ["warehouse", "dwh", "redshift", "snowflake"], title: "Data warehouse", emoji: "\u{1F3ED}", role: .data)
+        case .searchIndex: return Spec(keyword: "search", aliases: ["search", "elasticsearch", "opensearch", "index"], title: "Search index", emoji: "\u{1F50D}", role: .data)
+        case .stream: return Spec(keyword: "stream", aliases: ["stream", "kafka"], title: "Stream / Kafka", emoji: "\u{1F30A}", role: .messaging)
+        case .metrics: return Spec(keyword: "metrics", aliases: ["metrics", "metric", "prometheus"], title: "Metrics", emoji: "\u{1F4C8}", role: .observability)
+        case .logs: return Spec(keyword: "logs", aliases: ["logs", "log", "loki"], title: "Logs", emoji: "\u{1F4DC}", role: .observability)
+        case .traces: return Spec(keyword: "traces", aliases: ["traces", "trace", "tracing", "otel"], title: "Traces", emoji: "\u{1F9F5}", role: .observability)
+        case .dashboard: return Spec(keyword: "dashboard", aliases: ["dashboard", "grafana"], title: "Dashboard", emoji: "\u{1F4CA}", role: .observability)
+        case .alert: return Spec(keyword: "alert", aliases: ["alert", "alarm", "alerting"], title: "Alert", emoji: "\u{1F6A8}", role: .observability)
+        case .onCall: return Spec(keyword: "oncall", aliases: ["oncall", "pager", "pagerduty"], title: "On-call", emoji: "\u{1F4DF}", role: .observability)
+        case .repo: return Spec(keyword: "repo", aliases: ["repo", "git", "github", "gitlab"], title: "Git repo", emoji: "\u{1F4D3}", role: .delivery)
+        case .pipeline: return Spec(keyword: "pipeline", aliases: ["pipeline", "ci", "cd", "cicd"], title: "Pipeline", emoji: "\u{1F6E0}\u{FE0F}", role: .delivery)
+        case .registry: return Spec(keyword: "registry", aliases: ["registry", "ecr", "dockerhub"], title: "Image registry", emoji: "\u{1F4E6}", role: .delivery)
+        case .containerImage: return Spec(keyword: "container", aliases: ["container", "containerimage", "docker"], title: "Container image", emoji: "\u{1F433}", role: .container)
+        case .iac: return Spec(keyword: "terraform", aliases: ["terraform", "iac", "tf", "cloudformation"], title: "Terraform / IaC", emoji: "\u{1F4D0}", role: .delivery)
+        case .certificate: return Spec(keyword: "cert", aliases: ["cert", "tls", "ssl", "certificate"], title: "TLS certificate", emoji: "\u{1F4DC}", role: .security)
+        case .auth: return Spec(keyword: "auth", aliases: ["auth", "sso", "oidc", "idp"], title: "Auth / SSO", emoji: "\u{1F6C2}", role: .security)
+        case .waf: return Spec(keyword: "waf", aliases: ["waf"], title: "WAF", emoji: "\u{1F6E1}\u{FE0F}", role: .security)
         }
     }
+
+    /// The word the DSL uses: `db(Postgres)`.
+    var keyword: String { spec.keyword }
 
     /// Spellings that mean the same thing. Forgiving on input costs nothing and
     /// removes the one failure a typed-node syntax invites: remembering whether
     /// it was `db` or `database`.
-    var aliases: [String] {
-        switch self {
-        case .server: return ["server", "svc", "service", "app"]
-        case .k8sPod: return ["k8s", "pod", "kube"]
-        case .database: return ["db", "database", "store"]
-        case .queue: return ["queue", "mq", "topic"]
-        case .loadBalancer: return ["lb", "loadbalancer", "load_balancer", "ingress"]
-        case .secretStore: return ["secrets", "secret", "vault"]
-        case .actor: return ["actor", "user", "person", "client"]
-        }
-    }
+    ///
+    /// Every alias across the whole library must be unique - `named` resolves
+    /// the first owner and would leave the other silently unreachable, which is
+    /// what `WhiteboardDSLSelfTest` asserts. One existing alias moved when the
+    /// library grew: `ingress` belonged to `loadBalancer` and now names the
+    /// Kubernetes `Ingress` component, which is the more specific answer and
+    /// renders in the identical routing hue - so `ingress(x)` draws the same
+    /// purple box it always did, only labelled "Ingress" rather than "Load
+    /// balancer" when written bare.
+    var aliases: [String] { spec.aliases }
 
-    /// What the palette button says, and what an inserted component is called
-    /// when the captain gives it no name of its own.
-    var title: String {
-        switch self {
-        case .server: return "Server"
-        case .k8sPod: return "K8s Pod"
-        case .database: return "Database"
-        case .queue: return "Queue"
-        case .loadBalancer: return "Load balancer"
-        case .secretStore: return "Secret store"
-        case .actor: return "Actor"
-        }
-    }
+    /// What the picker says, and what an inserted component is called when the
+    /// captain gives it no name of its own.
+    var title: String { spec.title }
 
-    var emoji: String {
-        switch self {
-        case .server: return "\u{1F5A5}\u{FE0F}"
-        case .k8sPod: return "\u{2638}\u{FE0F}"
-        case .database: return "\u{1F5C4}\u{FE0F}"
-        case .queue: return "\u{1F4EC}"
-        case .loadBalancer: return "\u{2696}\u{FE0F}"
-        case .secretStore: return "\u{1F510}"
-        case .actor: return "\u{1F464}"
-        }
-    }
+    var emoji: String { spec.emoji }
 
-    var strokeColor: String {
-        switch self {
-        case .server: return "#1971c2"
-        case .k8sPod: return "#0c8599"
-        case .database: return "#2f9e44"
-        case .queue: return "#f08c00"
-        case .loadBalancer: return "#9c36b5"
-        case .secretStore: return "#e03131"
-        case .actor: return "#1e1e1e"
-        }
-    }
+    var role: DiagramComponentRole { spec.role }
 
-    /// `"transparent"` is Excalidraw's own sentinel for "no fill", not a colour
-    /// this file invented. The actor is the one component with no box fill on
-    /// purpose: a person is not a system, and leaving it unfilled is how every
-    /// architecture diagram already distinguishes the two.
-    var backgroundColor: String {
-        switch self {
-        case .server: return "#a5d8ff"
-        case .k8sPod: return "#99e9f2"
-        case .database: return "#b2f2bb"
-        case .queue: return "#ffec99"
-        case .loadBalancer: return "#d0bfff"
-        case .secretStore: return "#ffc9c9"
-        case .actor: return "transparent"
-        }
+    var strokeColor: String { role.strokeColor }
+
+    var backgroundColor: String { role.backgroundColor }
+
+    /// Every drawer this component appears in. A component may be in more than
+    /// one - see `DiagramComponentCategory`.
+    var categories: [DiagramComponentCategory] {
+        DiagramComponentCategory.allCases.filter { $0.components.contains(self) }
     }
 
     static func named(_ word: String) -> DiagramComponent? {
         let needle = word.lowercased()
         return allCases.first { $0.aliases.contains(needle) }
+    }
+
+    /// The keywords worth naming when the captain typed one this does not know.
+    ///
+    /// Listing all 62 would be a wall of text in a one-line error, so this
+    /// answers with near-misses when there are any (a prefix match either way
+    /// catches `postgre`, `lamda`, `dynamo`) and falls back to the `Common`
+    /// drawer plus a pointer at the drop-down, which is where the rest live.
+    static func suggestions(for word: String) -> String {
+        let needle = word.lowercased()
+        guard !needle.isEmpty else { return commonKeywords }
+        let near = allCases.filter { component in
+            component.aliases.contains { $0.hasPrefix(needle) || needle.hasPrefix($0) }
+        }
+        guard !near.isEmpty else { return commonKeywords }
+        return near.map(\.keyword).joined(separator: ", ")
+    }
+
+    private static var commonKeywords: String {
+        DiagramComponentCategory.common.components.map(\.keyword).joined(separator: ", ")
+    }
+}
+
+/// What a component *does*, which is what decides how it is drawn.
+///
+/// **Colour is by role, never by vendor**, and that is a deliberate reading
+/// decision rather than a shortcut: a database is green whether it is RDS or a
+/// Postgres box, a queue is amber whether it is SQS or RabbitMQ. Hue-by-vendor
+/// would render an all-AWS diagram monochrome and tell the reader nothing,
+/// while hue-by-role means a glance at any diagram - mixed-cloud or not -
+/// separates the request path from the state from the plumbing.
+///
+/// Every hex below is one of Excalidraw's own default swatches, verified
+/// present in the vendored bundle (`Vendor/Excalidraw/web/whiteboard.js`) -
+/// the invariant `DiagramComponent`'s own header states, unchanged. The seven
+/// original components keep their exact previous pair: this mapping was chosen
+/// so `server`/`k8sPod`/`database`/`queue`/`loadBalancer`/`secretStore`/`actor`
+/// resolve to the values they always had, so promoting them to roles is a
+/// refactor with no visual change.
+enum DiagramComponentRole {
+    /// Anything that runs code on request.
+    case compute
+    /// A containerised workload or the thing that schedules one.
+    case container
+    /// Anything that holds state.
+    case data
+    /// Anything that carries work between two other things.
+    case messaging
+    /// Anything that decides where a request goes next.
+    case routing
+    /// Anything that grants, withholds or proves access.
+    case security
+    /// Anything that watches the system rather than serving it.
+    case observability
+    /// Anything on the path from a commit to production.
+    case delivery
+    /// A boundary rather than a component - a VPC, a subnet, the internet.
+    case edge
+    /// A human. The one role with no box fill, on purpose.
+    case person
+
+    var strokeColor: String {
+        switch self {
+        case .compute: return "#1971c2"
+        case .container: return "#0c8599"
+        case .data: return "#2f9e44"
+        case .messaging: return "#f08c00"
+        case .routing: return "#9c36b5"
+        case .security: return "#e03131"
+        case .observability: return "#0ca678"
+        case .delivery: return "#c2255c"
+        case .edge: return "#343a40"
+        case .person: return "#1e1e1e"
+        }
+    }
+
+    /// `"transparent"` is Excalidraw's own sentinel for "no fill", not a value
+    /// this file invented.
+    var backgroundColor: String {
+        switch self {
+        case .compute: return "#a5d8ff"
+        case .container: return "#99e9f2"
+        case .data: return "#b2f2bb"
+        case .messaging: return "#ffec99"
+        case .routing: return "#d0bfff"
+        case .security: return "#ffc9c9"
+        case .observability: return "#96f2d7"
+        case .delivery: return "#fcc2d7"
+        case .edge: return "#e9ecef"
+        case .person: return "transparent"
+        }
+    }
+}
+
+/// A drawer of the component drop-down.
+///
+/// **A component may appear in more than one category, on purpose.** This is a
+/// picker, so being findable in two plausible places is a feature rather than
+/// an ambiguity - an EKS cluster is genuinely both an AWS service and a
+/// Kubernetes thing, and someone reaching for it will look in whichever they
+/// were already thinking about. `Common` re-lists the seven shapes the palette
+/// shipped with so the fastest path to a generic box stays one hop away.
+///
+/// `WhiteboardDSLSelfTest` asserts every `DiagramComponent` appears in at least
+/// one category: a component reachable only by typing its keyword is one the
+/// captain has no way to discover.
+enum DiagramComponentCategory: String, CaseIterable {
+    case common
+    case aws
+    case kubernetes
+    case network
+    case data
+    case messaging
+    case observability
+    case delivery
+    case security
+
+    var title: String {
+        switch self {
+        case .common: return "Common"
+        case .aws: return "AWS"
+        case .kubernetes: return "Kubernetes"
+        case .network: return "Network & edge"
+        case .data: return "Data & storage"
+        case .messaging: return "Messaging & events"
+        case .observability: return "Observability"
+        case .delivery: return "CI/CD & delivery"
+        case .security: return "Security & identity"
+        }
+    }
+
+    var emoji: String {
+        switch self {
+        case .common: return "\u{2B50}"
+        case .aws: return "\u{2601}\u{FE0F}"
+        case .kubernetes: return "\u{2638}\u{FE0F}"
+        case .network: return "\u{1F310}"
+        case .data: return "\u{1F5C4}\u{FE0F}"
+        case .messaging: return "\u{1F4EC}"
+        case .observability: return "\u{1F4C8}"
+        case .delivery: return "\u{1F6E0}\u{FE0F}"
+        case .security: return "\u{1F510}"
+        }
+    }
+
+    var components: [DiagramComponent] {
+        switch self {
+        case .common: return [.server, .k8sPod, .database, .queue, .loadBalancer, .secretStore, .actor]
+        case .aws: return [.ec2, .lambda, .ecs, .eks, .alb, .apiGateway, .cloudFront, .route53, .s3, .rds, .dynamoDB, .elastiCache, .sqs, .sns, .eventBridge, .kinesis, .stepFunctions, .iam, .secretsManager, .cloudWatch, .vpc]
+        case .kubernetes: return [.k8sPod, .deployment, .statefulSet, .cronJob, .k8sService, .ingress, .configMap, .namespace, .node, .eks]
+        case .network: return [.loadBalancer, .alb, .apiGateway, .cdn, .dns, .proxy, .firewall, .vpn, .vpc, .subnet, .internet]
+        case .data: return [.database, .rds, .dynamoDB, .s3, .objectStore, .cache, .elastiCache, .dataWarehouse, .searchIndex]
+        case .messaging: return [.queue, .sqs, .sns, .eventBridge, .kinesis, .stream, .stepFunctions]
+        case .observability: return [.metrics, .logs, .traces, .dashboard, .alert, .onCall, .cloudWatch]
+        case .delivery: return [.repo, .pipeline, .registry, .containerImage, .iac]
+        case .security: return [.secretStore, .secretsManager, .iam, .auth, .certificate, .waf, .firewall]
+        }
     }
 }
 
@@ -434,10 +690,9 @@ enum DiagramDSL {
             return .failure(DiagramDSLError(line: line, message: "\"\(text)\" has no name inside the brackets."))
         }
         guard let kind = DiagramComponent.named(keyword) else {
-            let known = DiagramComponent.allCases.map(\.keyword).joined(separator: ", ")
             return .failure(DiagramDSLError(
                 line: line,
-                message: "\"\(keyword)\" isn't a component. The ones this knows are: \(known)."))
+                message: "\"\(keyword)\" isn't a component. Did you mean: \(DiagramComponent.suggestions(for: keyword))? The full set is in the Components drop-down."))
         }
         return .success(NodeToken(name: inner, kind: kind))
     }
