@@ -158,7 +158,18 @@ enum HelmType {
     /// title wants `sectionTitle()`.
     enum Voice {
         case sans
-        case serif
+        /// The rounded display face - **not** a serif any more.
+        ///
+        /// §3J1 retires the Georgia serif outright: "the rounded display face
+        /// is right; the serif is a leftover ... Keep serif *nowhere*". The
+        /// case is renamed rather than deleted because the *role* it names is
+        /// unchanged - a page whose title carries information - and every
+        /// caller keeps its designed 22pt. Only the face moves.
+        ///
+        /// The lock screen is the one place the finding was willing to keep a
+        /// serif ("if the nautical romance wants one"), and it never had one:
+        /// `LockScreenController` was already on `HelmType.rounded(...)`.
+        case display
     }
 
     /// A destination's own hero title. One size, 22pt, in both voices - the
@@ -174,7 +185,7 @@ enum HelmType {
         let size = scaled(22)
         switch voice {
         case .sans: return .systemFont(ofSize: size, weight: .semibold)
-        case .serif: return ShiftFont.serif(size)
+        case .display: return rounded(size, .heavy)
         }
     }
 
@@ -185,10 +196,19 @@ enum HelmType {
     static func rowTitle() -> NSFont { .systemFont(ofSize: scaled(13), weight: .semibold) }
 
     /// Ordinary body copy.
-    static func body() -> NSFont { .systemFont(ofSize: scaled(12)) }
+    ///
+    /// **13, not 12, since §3J2.** "Modern macOS body default is 13 with more
+    /// generous leading; the Daylight spec itself wanted body 13.5 and
+    /// deferred it." This is that deferred bump, taken behind one token
+    /// change - which is why every row height in the app is derived through
+    /// `scaledRowHeight` off a measured base rather than hardcoded per list.
+    static func body() -> NSFont { .systemFont(ofSize: scaled(13)) }
 
     /// Supporting / secondary copy - a card subtitle, a row's detail line.
-    static func caption() -> NSFont { .systemFont(ofSize: scaled(11.5)) }
+    /// **12, not 11.5, since §3J2's bump.** The floor
+    /// (`minimumUIPointSize`, 11) is unchanged and still applies; this simply
+    /// no longer sits one half-point above it.
+    static func caption() -> NSFont { .systemFont(ofSize: scaled(12)) }
 
     /// The small uppercase label above a row's body text.
     ///
@@ -232,11 +252,11 @@ enum HelmType {
     // - `body()` stays at 12 rather than §3's 13.5. Bumping the app's one
     //   shared body size is a visible restyle of every page in every theme,
     //   which is Phase 4's job, not the token phase's.
-    // - `pageTitle(.serif)` still resolves to Georgia. §3 retires the serif as
-    //   the page-title voice, and that happens when its callers move onto
-    //   `heroTitle()`/`drillTitle()` below (Phase 2/4) - not by re-resolving
-    //   the same accessor per active theme, which would restyle every existing
-    //   hero title the moment Daylight is selected.
+    // - `pageTitle(.serif)` used to resolve to Georgia; **§3J1 retired it**
+    //   and the case is `pageTitle(.display)` on the rounded face now. The
+    //   note below it still holds: the resolution is per *voice*, never per
+    //   active theme, so Daylight does not restyle a hero the moment it is
+    //   selected.
     // - `rowTitle()` (13), `caption()` (11.5), `code()`/`metric()` and
     //   `kicker()` already match §3's table and are reused as-is.
 
@@ -2336,7 +2356,8 @@ final class HelmAccentRow: NSView {
         titleLabel.lineBreakMode = content.titleWraps ? .byWordWrapping : .byTruncatingTail
 
         if let symbol = content.titleAccessorySymbol {
-            titleAccessory.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            titleAccessory.image = HelmSymbol.image(symbol, pointSize: 12,
+                                                    weight: HelmSymbol.weight(for: .semibold))
             titleAccessory.isHidden = false
         } else {
             titleAccessory.isHidden = true
@@ -2596,6 +2617,10 @@ final class HelmAccentRow: NSView {
 /// page-level `stashedTileParts`-style registry - those arrays are exactly
 /// what forced Shift's duplicate.
 final class HelmStatTile: NSView {
+    /// I1: kept so `applyTheme` can rebuild the glyph hierarchically - a
+    /// hierarchical image is not a template and cannot be re-tinted.
+    private var iconSymbol: String?
+    private var iconAccessibilityDescription: String?
     /// Shift's proportions, which §6.3 picked as the model.
     static let height: CGFloat = 56
     private static let insetH: CGFloat = HelmMetrics.s3
@@ -2609,6 +2634,11 @@ final class HelmStatTile: NSView {
     static let captionSize: CGFloat = 11
 
     private let iconView = NSImageView()
+
+    #if FM_SELFTESTS
+    /// See `IconTileView.debugRenderedImage` - same reason.
+    var debugRenderedIcon: NSImage? { iconView.image }
+    #endif
     private let valueLabel = NSTextField(labelWithString: "")
     private let captionLabel = NSTextField(labelWithString: "")
 
@@ -2633,8 +2663,11 @@ final class HelmStatTile: NSView {
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
 
-        iconView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: caption)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .medium))
+        // I1: built in `applyTheme` instead - a hierarchical image carries
+        // its own colours and must be rebuilt on a theme change rather than
+        // re-tinted (see `HelmSymbol`'s header).
+        self.iconSymbol = symbol
+        self.iconAccessibilityDescription = caption
         iconView.translatesAutoresizingMaskIntoConstraints = false
         iconView.setContentHuggingPriority(.required, for: .horizontal)
         iconView.setContentCompressionResistancePriority(.required, for: .horizontal)
@@ -2771,7 +2804,13 @@ final class HelmStatTile: NSView {
         // rather than a coloured number beside an ink icon. `nonTextTarget`
         // (3:1) is the right bar for a glyph, not the text one - the same
         // split `IconTileView` already makes.
-        iconView.contentTintColor = metricColor.withAlphaComponent(0.85)
+        let iconColor = metricColor.withAlphaComponent(0.85)
+        iconView.contentTintColor = iconColor
+        if let iconSymbol {
+            iconView.image = HelmSymbol.image(iconSymbol, pointSize: 12, weight: .medium,
+                                              hierarchicalColor: iconColor,
+                                              accessibilityDescription: iconAccessibilityDescription)
+        }
         captionLabel.textColor = HelmTheme.mutedInk(theme)
     }
 
@@ -2834,6 +2873,8 @@ final class HelmStatTile: NSView {
 /// with no card around it and needs a container of its own to read as an
 /// object.
 final class HelmEmptyState: NSView {
+    /// I1: see `HelmStatTile`'s own note.
+    private var iconAccessibilityDescription: String?
     enum Size {
         case compact
         case standard
@@ -2847,6 +2888,11 @@ final class HelmEmptyState: NSView {
     }
 
     private let iconView = NSImageView()
+
+    #if FM_SELFTESTS
+    /// See `IconTileView.debugRenderedImage` - same reason.
+    var debugRenderedIcon: NSImage? { iconView.image }
+    #endif
     /// Daylight §6.14's 40pt gradient plate. Built for every theme (so a
     /// theme switch never has to rebuild the view tree) and shown only under
     /// Daylight, where it takes the plain glyph's place - the two are always
@@ -2918,9 +2964,8 @@ final class HelmEmptyState: NSView {
         self.accessory = accessory
         self.symbolName = symbol
 
-        iconView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title ?? body)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: size.glyphPointSize,
-                                                                 weight: size.glyphWeight))
+        // I1: see `HelmStatTile`'s own note - built in `applyTheme`.
+        self.iconAccessibilityDescription = title ?? body
         iconView.translatesAutoresizingMaskIntoConstraints = false
 
         titleLabel.font = size == .compact ? HelmType.rowTitle() : HelmType.sectionTitle()
@@ -3062,6 +3107,11 @@ final class HelmEmptyState: NSView {
     func applyTheme(_ theme: HelmTheme) {
         let muted = HelmTheme.mutedInk(theme)
         iconView.contentTintColor = muted
+        iconView.image = HelmSymbol.image(symbolName,
+                                          pointSize: size.glyphPointSize,
+                                          weight: size.glyphWeight,
+                                          hierarchicalColor: muted,
+                                          accessibilityDescription: iconAccessibilityDescription)
         // §6.14: under Daylight the glyph becomes a gradient plate and the
         // headline takes the rounded display face. Exactly one of the two is
         // ever visible.

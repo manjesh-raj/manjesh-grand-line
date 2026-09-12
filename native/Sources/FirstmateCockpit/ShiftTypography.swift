@@ -18,14 +18,16 @@
 
 import AppKit
 
-/// The mockup's three type roles: `--serif` for the greeting and panel
-/// headings, `--mono` for kicker labels/counts/stat numbers/pill text,
-/// `--sans` (the app's existing default, untouched) for everything else.
+/// `--mono` for kicker labels/counts/stat numbers/pill text; `--sans` (the
+/// app's existing default, untouched) for everything else.
+///
+/// **`ShiftFont.serif` is gone.** It resolved to Georgia, which the UI
+/// modernization audit's §3J1 retires app-wide ("Georgia at 22pt reads
+/// distinctly 2010-blog ... Keep serif *nowhere*"). Its one remaining caller
+/// was `HelmType.pageTitle(.serif)`, which is `pageTitle(.display)` on the
+/// rounded face now - so the function is deleted rather than left as an
+/// unreferenced way back to the face this app no longer uses.
 enum ShiftFont {
-    static func serif(_ size: CGFloat) -> NSFont {
-        NSFont(name: "Georgia", size: size) ?? .systemFont(ofSize: size)
-    }
-
     static func mono(_ size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
         .monospacedSystemFont(ofSize: size, weight: weight)
     }

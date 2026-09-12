@@ -79,7 +79,9 @@ final class ShiftImageAttachmentWell: NSView {
         addSubview(thumbnailView)
 
         removeButton.title = ""
-        removeButton.image = NSImage(systemSymbolName: "xmark.circle.fill", accessibilityDescription: "Remove image")
+        removeButton.image = HelmSymbol.image("xmark.circle.fill", pointSize: 12,
+                                      weight: HelmSymbol.weight(for: .semibold),
+                                      accessibilityDescription: "Remove image")
         removeButton.isBordered = false
         removeButton.imageScaling = .scaleProportionallyDown
         removeButton.target = self

@@ -69,7 +69,7 @@ final class CredentialVaultUnlockView: NSView {
     private func build() {
         translatesAutoresizingMaskIntoConstraints = false
 
-        titleLabel.font = HelmType.pageTitle(.serif)
+        titleLabel.font = HelmType.pageTitle(.display)
         subtitleLabel.font = HelmType.body()
         strengthLabel.font = HelmType.chip()
         messageLabel.font = HelmType.caption()

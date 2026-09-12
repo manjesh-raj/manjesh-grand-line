@@ -507,6 +507,13 @@ final class HelmSignalDot: NSView {
 /// `ThemeManager.shared.observe` hook for this).
 final class IconTileView: NSView {
     private let imageView = NSImageView()
+
+    #if FM_SELFTESTS
+    /// The symbol this tile actually rendered, so §3I1's hierarchical
+    /// treatment can be asserted rather than assumed - the configuration is
+    /// applied at build time and leaves no property to read back.
+    var debugRenderedImage: NSImage? { imageView.image }
+    #endif
     private var tint: HelmTint = .accent
 
     init(size: CGFloat = 34, cornerRadius: CGFloat = 9) {
@@ -533,10 +540,17 @@ final class IconTileView: NSView {
     func configure(symbol: String, tint: HelmTint, pointSize: CGFloat = 15) {
         self.tint = tint
         self.literalHex = nil
-        imageView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: pointSize, weight: .semibold))
+        // I1: the name/size/weight are kept rather than baked into an image
+        // here, because a hierarchical image carries its own colours and so
+        // has to be *rebuilt* on a theme change rather than re-tinted - see
+        // `HelmSymbol`'s header.
+        self.symbol = symbol
+        self.symbolPointSize = pointSize
         applyTheme(ThemeManager.shared.theme)
     }
+
+    private var symbol: String?
+    private var symbolPointSize: CGFloat = 15
 
     /// Paint this tile from a literal hue instead of a semantic tint - a saved
     /// host's own `accentHex`, which is a colour the captain chose and which
@@ -562,7 +576,7 @@ final class IconTileView: NSView {
                                                       target: HelmContrast.nonTextTarget,
                                                       washSteps: HelmContrast.tileWashSteps)
             layer?.backgroundColor = resolved.fill.cgColor
-            imageView.contentTintColor = resolved.foreground
+            renderSymbol(resolved.foreground)
             return
         }
         // Same wash-plus-same-hue-glyph shape as `ToolRowLayout.pill`, so it
@@ -577,7 +591,19 @@ final class IconTileView: NSView {
                                                   target: HelmContrast.nonTextTarget,
                                                   washSteps: HelmContrast.tileWashSteps)
         layer?.backgroundColor = resolved.fill.cgColor
-        imageView.contentTintColor = resolved.foreground
+        renderSymbol(resolved.foreground)
+    }
+
+    /// I1: hierarchical, so a multi-layer glyph reads with depth. The tint is
+    /// the *resolved, contrast-corrected* foreground, never the raw hue -
+    /// hierarchical rendering changes how the colour is distributed across the
+    /// symbol's layers, not which colour was safe to use.
+    private func renderSymbol(_ color: NSColor) {
+        guard let symbol else { return }
+        imageView.image = HelmSymbol.image(symbol,
+                                           pointSize: symbolPointSize,
+                                           weight: .semibold,
+                                           hierarchicalColor: color)
     }
 }
 
@@ -1568,7 +1594,9 @@ enum ToolRowLayout {
         if showDetails {
             views.detailsButton.title = ""
             views.detailsButton.isBordered = false
-            views.detailsButton.image = NSImage(systemSymbolName: "chevron.right", accessibilityDescription: "Show details")
+            views.detailsButton.image = HelmSymbol.image("chevron.right", pointSize: 10,
+                                                         weight: HelmSymbol.weight(for: .semibold),
+                                                         accessibilityDescription: "Show details")
             views.detailsButton.imageScaling = .scaleProportionallyDown
             views.detailsButton.target = detailsTarget
             views.detailsButton.action = detailsAction

@@ -130,7 +130,72 @@ enum TextScaleRowHeightSelfTest {
                       "at \(step.title) a real row needs \(needed)pt but \(entry.name) gives it "
                       + "\(entry.current())pt - descenders clip")
             }
+
+            // The four lists above share one 78pt base and one shape, which is
+            // why one measurement covered them. **The UI modernization audit's
+            // §3J2 bumps body 12 -> 13 and caption 11.5 -> 12**, and that
+            // reflows every accent-row list in the app - including three whose
+            // shape the maximal content above does *not* represent, and which
+            // therefore had no fit coverage at all:
+            //
+            //   - a Review PR row carries no meta line (64)
+            //   - a Fleet log row carries no chip (60)
+            //   - a board card puts its chip *below* the body (81), which is
+            //     the tallest arrangement of the same parts
+            //
+            // Measuring each in its own shape is the whole point: the maximal
+            // shape over-estimates the first two and under-estimates the last,
+            // so asserting all seven against one number would be either
+            // vacuous or wrong.
+            for shape in accentRowShapes {
+                let sized = HelmAccentRow(chipPlacement: shape.placement)
+                sized.configure(shape.content, theme: theme)
+                sized.applyTheme(theme)
+                sized.frame = NSRect(x: 0, y: 0, width: 520, height: shape.height())
+                sized.layoutSubtreeIfNeeded()
+                let wants = sized.fittingSize.height
+                check(wants > 0, "\(shape.name)'s measured row had no height at all at \(step.title)")
+                check(wants <= shape.height(),
+                      "at \(step.title) a real \(shape.name) row needs \(wants)pt but the list "
+                      + "gives it \(shape.height())pt - J2's type bump reflowed it")
+            }
         }
+    }
+
+    /// The three accent-row shapes the maximal content above does not stand in
+    /// for. Each is the real content that list renders, not a generic one.
+    private static var accentRowShapes: [(name: String,
+                                          placement: HelmAccentRow.ChipPlacement,
+                                          content: HelmAccentRow.Content,
+                                          height: () -> CGFloat)] {
+        [
+            ("ReviewPRListView", .trailing,
+             HelmAccentRow.Content(
+                tint: .good,
+                kicker: "GITHUB \u{00B7} MANJESH-RAJ",
+                title: "Give the palette glass and per-row identity, put symbols in the menus",
+                chipText: "Checks green"),
+             { ReviewPRListView.rowHeight }),
+            // Kicker + title and **no meta line** - read off
+            // `FleetLogEventCellView.configure`, not assumed. The first draft
+            // of this fixture handed it a meta line it never renders and
+            // reported the list 17pt short, which is a fixture bug wearing a
+            // layout bug's clothes.
+            ("FleetLogListView", .trailing,
+             HelmAccentRow.Content(
+                tint: .info,
+                kicker: "MERGED",
+                title: "Move the toast off the chrome and retire the stock spinner",
+                badgeSymbol: "arrow.triangle.merge"),
+             { FleetLogListView.eventRowHeight }),
+            ("ShiftBoardView card", .belowBody,
+             HelmAccentRow.Content(
+                tint: .warn,
+                kicker: "GRAND LINE",
+                title: "Re-measure every accent row after the type bump",
+                chipText: "High"),
+             { ShiftBoardView.cardRowHeight }),
+        ]
     }
 
     /// The mechanism: a list re-reads its row height on the app-wide theme

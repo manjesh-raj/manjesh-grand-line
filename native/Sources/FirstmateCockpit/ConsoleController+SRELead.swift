@@ -66,7 +66,9 @@ extension ConsoleController {
         sreLeadGeneratePostmortemButton.isBordered = false
         sreLeadGeneratePostmortemButton.wantsLayer = true
         sreLeadGeneratePostmortemButton.toolTip = "Generate Postmortem"
-        sreLeadGeneratePostmortemButton.image = NSImage(systemSymbolName: "doc.badge.plus", accessibilityDescription: "Generate Postmortem")
+        sreLeadGeneratePostmortemButton.image = HelmSymbol.image("doc.badge.plus", pointSize: 12,
+                                                         weight: HelmSymbol.weight(for: .semibold),
+                                                         accessibilityDescription: "Generate Postmortem")
         sreLeadGeneratePostmortemButton.imageScaling = .scaleProportionallyDown
         sreLeadGeneratePostmortemButton.target = self
         sreLeadGeneratePostmortemButton.action = #selector(generatePostmortemClicked)

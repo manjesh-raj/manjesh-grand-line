@@ -1772,21 +1772,30 @@ enum HelmContrastSelfTest {
     /// only through `HelmType.pageTitle`" - which is what keeps a fifth size
     /// from appearing.
     private static func checkPageTitleVoice(_ ok: inout Bool) {
-        print("\n-- page-title voice (serif only via HelmType.pageTitle, one size) --")
+        print("\n-- page-title voice (the serif is retired; one size, two faces) --")
 
         // 22 is the *designed* size; GL-32's chrome scale multiplies it, so the
         // invariant this check exists for - one size, both voices - is
         // expressed against the scaled value rather than the literal.
         let wantPageTitle = HelmType.scaled(22)
-        for voice in [HelmType.Voice.sans, .serif] {
+        for voice in [HelmType.Voice.sans, .display] {
             let font = HelmType.pageTitle(voice)
             if abs(font.pointSize - wantPageTitle) > 0.01 {
                 print("  FAIL pageTitle(\(voice)) is \(font.pointSize)pt, want \(wantPageTitle)")
                 ok = false
             }
         }
-        if HelmType.pageTitle(.serif).fontName == HelmType.pageTitle(.sans).fontName {
-            print("  FAIL the serif and sans voices resolve to the same face (\(HelmType.pageTitle(.serif).fontName))")
+        if HelmType.pageTitle(.display).fontName == HelmType.pageTitle(.sans).fontName {
+            print("  FAIL the display and sans voices resolve to the same face (\(HelmType.pageTitle(.display).fontName))")
+            ok = false
+        }
+        // **Inverted for the UI modernization audit's §3J1**, which retires
+        // the Georgia serif app-wide ("Keep serif *nowhere*"). This used to
+        // assert the serif was reachable *only* through `pageTitle(.serif)`;
+        // it now asserts it is reachable from nowhere at all, which is the
+        // guarantee that finding actually asks for.
+        if HelmType.pageTitle(.display).fontName != HelmType.rounded(HelmType.scaled(22), .heavy).fontName {
+            print("  FAIL pageTitle(.display) is not the rounded face - J1 puts every hero on it")
             ok = false
         }
 
@@ -1798,23 +1807,22 @@ enum HelmContrastSelfTest {
         }
         var offenders: [String] = []
         for file in files where file.pathExtension == "swift" {
-            // `HelmDesignSystem.swift` holds the one call (inside
-            // `HelmType.pageTitle`); `ShiftTypography.swift` declares
-            // `ShiftFont.serif` itself; this file names it in prose.
-            if ["HelmDesignSystem.swift", "ShiftTypography.swift", "HelmContrastSelfTest.swift"]
+            // Only this file and `ShiftTypography.swift` may name the retired
+            // face, and both only in prose explaining the retirement.
+            if ["ShiftTypography.swift", "HelmContrastSelfTest.swift"]
                 .contains(file.lastPathComponent) { continue }
             guard let text = try? String(contentsOf: file, encoding: .utf8) else { continue }
             for (n, line) in text.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
                 if line.trimmingCharacters(in: .whitespaces).hasPrefix("//") { continue }
-                if line.contains("ShiftFont.serif(") {
+                if line.contains("ShiftFont.serif(") || line.contains("\"Georgia\"") {
                     offenders.append("\(file.lastPathComponent):\(n + 1)")
                 }
             }
         }
         if offenders.isEmpty {
-            print("  OK - serif reachable only via HelmType.pageTitle(.serif), at 22pt")
+            print("  OK - the Georgia serif is unreachable; heroes are rounded at 22pt")
         } else {
-            for o in offenders { print("  FAIL \(o) calls ShiftFont.serif directly - use HelmType.pageTitle(.serif) or HelmType.sectionTitle()") }
+            for o in offenders { print("  FAIL \(o) still reaches the retired serif - J1 keeps it nowhere") }
             ok = false
         }
     }
@@ -2353,15 +2361,20 @@ enum HelmContrastSelfTest {
         } else {
             print("  OK   rounded display face resolves: \(HelmType.heroTitle().fontName)")
         }
-        if abs(HelmType.body().pointSize - HelmType.scaled(12)) > 0.01 {
-            print("  FAIL body() moved off 12 - section 3's bump to 13.5 is a Phase 4 restyle, not a token change")
+        // **Both assertions below are inverted**, and deliberately. Phase 1
+        // pinned `body()` at 12 and the serif at Georgia precisely so a *token*
+        // phase could not quietly restyle every page; the UI modernization
+        // audit's §3J is the phase that was being deferred to, so what is
+        // worth guarding now is that both moves actually happened.
+        if abs(HelmType.body().pointSize - HelmType.scaled(13)) > 0.01 {
+            print("  FAIL body() is \(HelmType.body().pointSize)pt - J2 takes the deferred bump to 13")
             ok = false
         }
-        if HelmType.pageTitle(.serif).fontName == HelmType.pageTitle(.sans).fontName {
-            print("  FAIL pageTitle(.serif) no longer resolves to its own face - serif retirement is Phase 2/4's, via heroTitle/drillTitle")
+        if abs(HelmType.caption().pointSize - HelmType.scaled(12)) > 0.01 {
+            print("  FAIL caption() is \(HelmType.caption().pointSize)pt - J2 bumps it to 12")
             ok = false
         }
-        print("  OK   \(roles.count) new roles; body() and pageTitle(.serif) unchanged, as Phase 1 requires")
+        print("  OK   \(roles.count) new roles; body()/caption() carry J2's bump and the serif is retired")
     }
 
     // MARK: Daylight - the gradient tile

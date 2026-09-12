@@ -90,7 +90,8 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
     private let titleField = HelmTextField(placeholder: "What needs to be done?", style: .lead)
     private var hintLabel: NSTextField?
     private let detectedRow = NSStackView()
-    private let detectedIcon = NSImageView(image: NSImage(systemSymbolName: "calendar.badge.checkmark", accessibilityDescription: nil) ?? NSImage())
+    private let detectedIcon = NSImageView(image: HelmSymbol.image("calendar.badge.checkmark", pointSize: 11,
+                                                               weight: HelmSymbol.weight(for: .medium)) ?? NSImage())
     private let detectedLabel = NSTextField(labelWithString: "")
 
     private var selectedPriority: ShiftPriority

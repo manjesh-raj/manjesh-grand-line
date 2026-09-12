@@ -852,7 +852,8 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     /// a card. It asks; it does not write, and nothing about it is clickable.
     private func followupRow(_ text: String) -> NSView {
         let glyph = NSImageView()
-        glyph.image = NSImage(systemSymbolName: "arrow.turn.down.right", accessibilityDescription: nil)
+        glyph.image = HelmSymbol.image("arrow.turn.down.right", pointSize: 11,
+                               weight: HelmSymbol.weight(for: .regular))
         glyph.contentTintColor = HelmTheme.mutedInk(theme)
         glyph.translatesAutoresizingMaskIntoConstraints = false
         glyph.setContentHuggingPriority(.required, for: .horizontal)

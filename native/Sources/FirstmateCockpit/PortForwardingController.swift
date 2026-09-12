@@ -233,7 +233,9 @@ private final class PortForwardRuleRowView: NSView {
         applyTheme(ThemeManager.shared.theme)
 
         removeButton.isBordered = false
-        removeButton.image = NSImage(systemSymbolName: "minus.circle", accessibilityDescription: "Remove")
+        removeButton.image = HelmSymbol.image("minus.circle", pointSize: 12,
+                                              weight: HelmSymbol.weight(for: .medium),
+                                              accessibilityDescription: "Remove")
         removeButton.target = self
         removeButton.action = #selector(removeClicked)
         removeButton.translatesAutoresizingMaskIntoConstraints = false

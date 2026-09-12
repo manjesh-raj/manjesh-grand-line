@@ -822,13 +822,21 @@ final class UnifiedSearchRowView: NSView {
         // right for a task or a note, whose identity genuinely *is* its kind.
         switch item.icon {
         case .destination(let destination):
+            // **I1 narrows H1 here, and the two findings genuinely
+            // contradict.** H1 asks for "destinations use their real
+            // artwork/hue"; I1 - which is the report's *policy* statement for
+            // where each icon language lives - says "raster app-icons only as
+            // page identity (drill header + canvas card tile) ... palette rows
+            // use symbol + hue". Implementing both literally is not possible,
+            // and the policy wins: a palette row is not page identity, and a
+            // list of full-colour app squares beside tinted symbol rows is
+            // precisely the "five apps" mix I1 exists to end.
+            //
+            // The *hue* half of H1 survives intact - which is what actually
+            // fixed its complaint that every action row wore the same square.
             let hue = destination.domainHue
             tile.configure(symbol: destination.symbol, tint: hue.fallbackTint, pointSize: 11)
-            if let artwork = destination.drillHeaderArtwork {
-                gradientTile.configure(artwork: artwork, symbol: destination.symbol, hue: hue)
-            } else {
-                gradientTile.configure(symbol: destination.symbol, hue: hue)
-            }
+            gradientTile.configure(symbol: destination.symbol, hue: hue)
         case .tinted(let tint, let symbol):
             let glyph = symbol ?? item.kind.symbol
             tile.configure(symbol: glyph, tint: tint, pointSize: 11)

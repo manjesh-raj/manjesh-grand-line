@@ -1973,6 +1973,10 @@ if ProcessInfo.processInfo.environment["FM_RUN_FORMS_MODERNIZATION_TESTS"] == "1
 if ProcessInfo.processInfo.environment["FM_RUN_OVERLAYS_MODERNIZATION_TESTS"] == "1" {
     exit(OverlaysModernizationSelfTest.run() ? 0 : 1)
 }
+
+if ProcessInfo.processInfo.environment["FM_RUN_ICONS_TYPOGRAPHY_TESTS"] == "1" {
+    exit(IconsTypographySelfTest.run() ? 0 : 1)
+}
 if ProcessInfo.processInfo.environment["FM_RUN_CONFIRM_MIGRATION_TESTS"] == "1" {
     exit(ConfirmMigrationSelfTest.run() ? 0 : 1)
 }
