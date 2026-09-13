@@ -101,6 +101,10 @@ final class CredentialVaultListSection: NSObject, NSTableViewDataSource, NSTable
 
     let card = HelmCard()
 
+    /// A row was picked. One click, not two - the inspector is permanent, so
+    /// selecting a credential *is* opening it.
+    var onSelectRow: ((String) -> Void)?
+
     private let table = HelmTableView()
     private let scroll = NSScrollView()
     private var items: [Item] = []
@@ -156,14 +160,27 @@ final class CredentialVaultListSection: NSObject, NSTableViewDataSource, NSTable
 
     // MARK: Content
 
-    func setItems(_ items: [Item]) {
-        let previouslySelected = table.selectedRow
+    /// `selecting` is the credential the page wants highlighted - the one the
+    /// inspector is showing. Selection is keyed by credential id rather than by
+    /// row index because the rows are rebuilt on every store change, search and
+    /// filter, and an index means a different credential after any of those.
+    func setItems(_ items: [Item], selecting selectedID: String? = nil) {
         self.items = items
+        isRestoringSelection = true
         table.reloadData()
-        if previouslySelected >= 0, previouslySelected < items.count, items[previouslySelected].isRecord {
-            table.selectRowIndexes(IndexSet(integer: previouslySelected), byExtendingSelection: false)
+        if let selectedID, let row = items.firstIndex(where: { $0.isRecord && $0.credentialID == selectedID }) {
+            table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            table.scrollRowToVisible(row)
+        } else {
+            table.deselectAll(nil)
         }
+        isRestoringSelection = false
     }
+
+    /// Set while this section is re-applying the page's own selection, so
+    /// restoring it does not report back as a fresh click and re-enter
+    /// `render()`.
+    private var isRestoringSelection = false
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
@@ -288,6 +305,12 @@ final class CredentialVaultListSection: NSObject, NSTableViewDataSource, NSTable
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        if !isRestoringSelection {
+            let row = table.selectedRow
+            if row >= 0, row < items.count, items[row].isRecord {
+                onSelectRow?(items[row].credentialID)
+            }
+        }
         let visible = table.rows(in: table.visibleRect)
         guard visible.length > 0 else { return }
         for row in visible.location..<(visible.location + visible.length) where row < items.count {

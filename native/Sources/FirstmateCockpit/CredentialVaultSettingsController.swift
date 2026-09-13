@@ -180,10 +180,10 @@ final class CredentialVaultSettingsController: NSViewController {
         text.lineBreakMode = .byTruncatingTail
         text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let when = NSTextField(labelWithString: CredentialVaultDetailController.relative(event.at))
+        let when = NSTextField(labelWithString: CredentialVaultFormat.relative(event.at))
         when.font = HelmType.captionSmall()
         when.textColor = HelmTheme.mutedInk(theme)
-        when.toolTip = CredentialVaultDetailController.absolute(event.at)
+        when.toolTip = CredentialVaultFormat.absolute(event.at)
         when.setContentHuggingPriority(.required, for: .horizontal)
         when.setContentCompressionResistancePriority(.required, for: .horizontal)
 

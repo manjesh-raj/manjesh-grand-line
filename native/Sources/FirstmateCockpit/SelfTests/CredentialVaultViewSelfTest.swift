@@ -88,7 +88,11 @@ enum CredentialVaultViewSelfTest {
         checkSearchAndCategoryFilter(scratch: scratch, window: window, check)
         checkDeleteConfirmAndUndo(scratch: scratch, window: window, check)
         checkAutoLock(scratch: scratch, window: window, check)
-        checkLockDismissesOpenSheets(scratch: scratch, window: window, check)
+        checkSidebarDrivesTheFilter(scratch: scratch, window: window, check)
+        checkRecordRowFitsItsHeight(scratch: scratch, window: window, check)
+        checkInspectorShowsWholeValues(scratch: scratch, window: window, check)
+        checkSelectionFollowsTheList(scratch: scratch, window: window, check)
+        checkLockClearsTheInspector(scratch: scratch, window: window, check)
         checkUnreadableNeverOffersCreate(scratch: scratch, window: window, check)
         checkEditorRoundTrip(check)
         checkExactlyOneSwitchPerToggleRow(check)
@@ -379,122 +383,408 @@ enum CredentialVaultViewSelfTest {
         check(!navStore.isUnlocked, "the app locking should lock the vault")
     }
 
-    /// Every lock path must take the open sheets with it.
+    /// **The H2 security guard, re-pointed at the shape the detail now has.**
     ///
-    /// **The HIGH-severity defect this closes**, found by an end-to-end review:
-    /// all three lock paths cleared the key, dropped the reveal state and
-    /// re-rendered the page - and left every presented sheet up. A sheet is its
-    /// own child window layered *above* the app's lock overlay (which is only a
-    /// subview of the main window), and `CredentialVaultDetailController`
-    /// captures the plaintext credential at construction and toggles
-    /// masked/plaintext display of that already-in-memory value with no
-    /// reference to vault state at all. So locking - by idle, by the Lock
-    /// button, or by the whole app locking - left a floating sheet that still
-    /// held, and could still Reveal, the decrypted secret.
+    /// It used to assert that locking dismissed the detail *sheet*. That was
+    /// exactly right while the detail was a `presentAsSheet` child window
+    /// layered above the app's lock overlay (which is only a subview of the
+    /// main window), holding a plaintext credential captured at construction
+    /// and toggling masked/plaintext display of it with no reference to vault
+    /// state at all - so every lock path cleared the key and re-rendered the
+    /// page behind a sheet that still held, and could still Reveal, the secret.
     ///
-    /// Driven per path, each on its own page, because the three are three
+    /// The detail is a panel inside the page now
+    /// (`CredentialVaultInspectorView`), so the *window* half of that defect is
+    /// gone by construction - there is no child window left floating above the
+    /// overlay. The property worth guarding did not go with it, and is what
+    /// this case asserts instead: **every lock path must empty the panel.**
+    /// Locking is supposed to mean the decrypted value leaves memory and the
+    /// screen, not that something is drawn over it - and `lockForAppLock` in
+    /// particular can run against an already-locked store (auto-lock fires, the
+    /// captain walks away, the app locks), which is the case that would
+    /// otherwise return early with the panel still full.
+    ///
+    /// The editor and settings sheets are still real sheets, so the dismissal
+    /// half is still asserted through those.
+    ///
+    /// Driven per path, each on its own page, because the four are four
     /// separate call sites and a fix applied to one is exactly the shape of
     /// regression worth catching.
-    private static func checkLockDismissesOpenSheets(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {
-        print("\n-- locking dismisses every open sheet --")
+    private static func checkLockClearsTheInspector(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {
+        print("\n-- locking empties the inspector and dismisses every open sheet --")
 
-        /// Opens a real detail sheet on a fresh page and hands both back.
-        func openDetail(_ name: String) -> (controller: CredentialVaultController, store: CredentialVaultStore)? {
+        /// A fresh page with a credential showing in the inspector.
+        func selected(_ name: String) -> (controller: CredentialVaultController, store: CredentialVaultStore)? {
             let (controller, store) = mounted(scratch, name: name, window: window) { store in
-                _ = store.add(VaultCredential(title: "Prod DB", secret: "super-secret-value"))
+                _ = store.add(VaultCredential(title: "Prod DB", account: "dba@prod",
+                                              secret: "super-secret-value"))
             }
             guard let id = store.credentials.first?.id else {
-                check(false, "\(name): the page needs a seeded credential to open")
+                check(false, "\(name): the page needs a seeded credential to select")
                 return nil
             }
-            controller.debugOpenDetail(id: id)
-            guard controller.debugPresentedSheetCount == 1 else {
-                // A headless process cannot always establish a real sheet
-                // presentation; say so rather than reporting a pass that
-                // asserted nothing (`WhiteboardViewSelfTest`'s own convention
-                // for the half of a claim its environment cannot reach).
-                print("  NOTE: this process could not present a real sheet - skipping \(name)")
+            controller.debugSelectCredential(id: id)
+            guard controller.debugInspector.credential != nil else {
+                check(false, "\(name): selecting a credential should fill the inspector")
                 return nil
             }
             return (controller, store)
         }
 
+        /// The panel holds nothing: no credential, nothing revealed, and no
+        /// plaintext anywhere in the labels it rendered.
+        func assertEmptied(_ controller: CredentialVaultController, _ path: String) {
+            let inspector = controller.debugInspector
+            check(inspector.credential == nil,
+                  "\(path) must empty the inspector, still showing \(inspector.credential?.title ?? "-")")
+            check(controller.debugSelectedID == nil,
+                  "\(path) must drop the selection, still \(controller.debugSelectedID ?? "-")")
+            check(!inspector.debugIsRevealed, "\(path) must leave the panel masked")
+            check(inspector.debugIsEmptyStateShowing,
+                  "\(path) must leave the panel on its empty state")
+            let onScreen = inspector.debugValueLabels.map(\.stringValue).joined(separator: " ")
+                + " " + inspector.debugSecretLabel.stringValue
+            check(!onScreen.contains("super-secret-value"),
+                  "\(path) must leave no plaintext on screen, got \(onScreen)")
+        }
+
         // ---- Path 1: the Lock button ----
-        if let (controller, store) = openDetail("lock-sheet-manual") {
-            check(controller.debugPresentedDetail != nil,
-                  "the presented sheet should be the detail controller")
+        if let (controller, store) = selected("lock-panel-manual") {
             controller.debugLockTapped()
-            check(controller.debugPresentedSheetCount == 0,
-                  "the Lock button must dismiss the open detail sheet, \(controller.debugPresentedSheetCount) left")
+            assertEmptied(controller, "the Lock button")
             check(!store.isUnlocked, "...and still lock the vault")
         }
 
         // ---- Path 2: the auto-lock timer ----
-        if let (controller, store) = openDetail("lock-sheet-idle") {
+        if let (controller, store) = selected("lock-panel-idle") {
             controller.debugSetLastInteraction(Date().addingTimeInterval(-100_000))
             controller.debugCheckAutoLock()
-            check(controller.debugPresentedSheetCount == 0,
-                  "auto-locking must dismiss the open detail sheet, \(controller.debugPresentedSheetCount) left")
+            assertEmptied(controller, "auto-locking")
             check(!store.isUnlocked, "...and still lock the vault")
         }
 
         // ---- Path 3: the whole app locking ----
-        if let (controller, store) = openDetail("lock-sheet-app") {
+        if let (controller, store) = selected("lock-panel-app") {
             controller.lockForAppLock()
-            check(controller.debugPresentedSheetCount == 0,
-                  "the app locking must dismiss the open detail sheet, \(controller.debugPresentedSheetCount) left")
+            assertEmptied(controller, "the app locking")
             check(!store.isUnlocked, "...and still lock the vault")
         }
 
-        // ---- Path 3b: a sheet that outlived the vault's own lock ----
+        // ---- Path 3b: the store's own lock already empties the panel ----
         //
-        // `lockForAppLock` used to return early on an already-locked store,
-        // which is precisely the case that left a plaintext secret over the
-        // lock screen: the auto-lock timer locks the vault, the captain walks
-        // away, the app locks - and the sheet from before is still up.
-        if let (controller, store) = openDetail("lock-sheet-already-locked") {
+        // Worth asserting because it is the *reason* a panel is safer than the
+        // sheet it replaced, and it is not obvious from any one call site: the
+        // page renders off `store.onChange`, and `render()` clears the panel
+        // whenever the store is locked - so a bare `store.lock` empties it
+        // without any lock path having to remember to. The sheet had no
+        // equivalent; it was a separate window holding its own copy, which is
+        // precisely why H2 had to add a dismissal to all four paths.
+        //
+        // `lockForAppLock` then still has to leave it empty rather than
+        // restore anything, which is what the second half checks - that method
+        // returns early on an already-locked store, and its `clearInspector()`
+        // is deliberately *before* that guard.
+        if let (controller, store) = selected("lock-panel-already-locked") {
             store.lock(reason: "test")
-            check(controller.debugPresentedSheetCount == 1,
-                  "setup: locking the store directly leaves the sheet up - that is the hole under test")
+            check(controller.debugInspector.credential == nil,
+                  "locking the store alone should already empty the panel through the page's own render")
             controller.lockForAppLock()
-            check(controller.debugPresentedSheetCount == 0,
-                  "an app lock must dismiss a sheet that outlived the vault's own lock, \(controller.debugPresentedSheetCount) left")
+            assertEmptied(controller, "an app lock after the vault already locked")
         }
 
         // ---- Path 4: the app-lock gate on its own ----
         //
         // The page registers with `AppLockGate` as well, so any future path
         // that locks the app without going through `lockForAppLock` is covered.
-        if let (controller, _) = openDetail("lock-sheet-gate") {
+        if let (controller, _) = selected("lock-panel-gate") {
             AppLockGate.shared.setLocked(true)
-            check(controller.debugPresentedSheetCount == 0,
-                  "the app-lock gate alone must dismiss the sheet, \(controller.debugPresentedSheetCount) left")
+            assertEmptied(controller, "the app-lock gate alone")
             AppLockGate.shared.setLocked(false)
         }
 
-        // ---- Defence in depth: a sheet that somehow survives cannot reveal ----
+        // ---- The two remaining sheets are still sheets ----
         //
-        // The detail sheet holds its own copy of the credential, so the
-        // dismissal above is not the only thing standing between a locked vault
-        // and a plaintext secret on screen. Driven through the sheet's own real
-        // Reveal button on a controller whose store is locked.
-        let (revealController, revealStore) = mounted(scratch, name: "lock-sheet-reveal", window: window) { store in
+        // The editor is a real `presentAsSheet` child window and still has to
+        // be dismissed on a lock, for the original H2 reason.
+        let (sheetController, _) = mounted(scratch, name: "lock-editor-sheet", window: window) { store in
             _ = store.add(VaultCredential(title: "Prod DB", secret: "super-secret-value"))
         }
-        if let id = revealStore.credentials.first?.id {
-            revealController.debugOpenDetail(id: id)
-            if let detail = revealController.debugPresentedDetail {
-                revealStore.lock(reason: "test")
-                detail.debugRevealButton.performClick(nil)
-                check(!detail.debugIsRevealed,
-                      "a locked vault must refuse a reveal even from a sheet that is still up")
-                check(!detail.debugSecretLabel.stringValue.contains("super-secret-value"),
-                      "...and the plaintext must not be on screen, got \(detail.debugSecretLabel.stringValue)")
-                revealController.dismiss(detail)
-            } else {
-                print("  NOTE: this process could not present a real sheet - skipping the reveal-after-lock check")
-            }
+        sheetController.debugAddButton.performClick(nil)
+        if sheetController.debugPresentedSheetCount == 1 {
+            sheetController.debugLockTapped()
+            check(sheetController.debugPresentedSheetCount == 0,
+                  "locking must still dismiss the editor sheet, \(sheetController.debugPresentedSheetCount) left")
+        } else {
+            // A headless process cannot always establish a real sheet
+            // presentation; say so rather than reporting a pass that asserted
+            // nothing (`WhiteboardViewSelfTest`'s own convention for the half
+            // of a claim its environment cannot reach).
+            print("  NOTE: this process could not present a real sheet - skipping the editor-sheet check")
         }
+
+        // ---- Defence in depth: a locked vault refuses a reveal ----
+        //
+        // The clear above is not the only thing standing between a locked vault
+        // and a plaintext secret on screen - the panel holds its own copy of
+        // the credential, so the page's own `onReveal` must refuse as well.
+        //
+        // Driven by calling **the page's real closure**, not by clicking the
+        // panel's button and not against a copy of the guard written here.
+        // Both of those were tried and both were vacuous: through the page the
+        // button is unreachable, because `store.lock` re-renders and empties
+        // the panel first; and a standalone panel handed a locally-written
+        // `onReveal` asserts that the *test* has a guard, which passes happily
+        // while the page has none (confirmed - removing the page's own
+        // `store.isUnlocked` check did not fail that version).
+        if let (controller, store) = selected("lock-panel-reveal"),
+           let credential = store.credentials.first {
+            store.lock(reason: "test")
+            var verdict: Bool?
+            controller.debugInspector.onReveal?(credential) { verdict = $0 }
+            check(verdict == false,
+                  "a locked vault must refuse a reveal, got \(String(describing: verdict))")
+        }
+
+        // ...and the same closure must still allow one when the vault is open,
+        // or the refusal above would pass against a reveal that never works.
+        if let (controller, store) = selected("unlocked-panel-reveal"),
+           let credential = store.credentials.first {
+            var verdict: Bool?
+            controller.debugInspector.onReveal?(credential) { verdict = $0 }
+            let deadline = Date().addingTimeInterval(5)
+            while verdict == nil, Date() < deadline {
+                RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
+            }
+            check(verdict == true,
+                  "an unlocked vault must still allow a reveal, got \(String(describing: verdict))")
+            // The panel's own button is wired to that closure and renders the
+            // result, which is the other half of the same claim.
+            controller.debugInspector.debugRevealButton.performClick(nil)
+            check(controller.debugInspector.debugIsRevealed,
+                  "...and the panel's Reveal button should put it on screen")
+        }
+    }
+
+    private static func checkSidebarDrivesTheFilter(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {
+        print("\n-- the sidebar filters, counts and highlights --")
+        let (controller, _) = mounted(scratch, name: "sidebar", window: window) { store in
+            _ = store.add(VaultCredential(title: "Gmail", category: .email,
+                                          account: "manjesh@gmail.com", secret: "a"))
+            _ = store.add(VaultCredential(title: "Work email", category: .email,
+                                          account: "manjesh.p@pramata.com", secret: "b"))
+            _ = store.add(VaultCredential(title: "AWS root", category: .cloud, account: "root", secret: "c"))
+            _ = store.add(VaultCredential(title: "GitHub PAT", category: .apiKey,
+                                          account: "manjesh-raj", secret: "d", tags: ["ci"]))
+        }
+        let sidebar = controller.debugSidebar
+        let list = controller.debugList
+        func recordCount() -> Int {
+            (0..<list.debugRowCount).filter { list.debugItem($0)?.isRecord == true }.count
+        }
+
+        // One "All credentials" row over one row per category, in the enum's
+        // own order - so the sidebar's shape is a function of the model rather
+        // than a hand-maintained list that can drift from it.
+        check(sidebar.debugRowCount == CredentialCategory.allCases.count + 1,
+              "the sidebar should have an All row plus one per category, got \(sidebar.debugRowCount)")
+        check(sidebar.debugRowTitles.first == "All credentials",
+              "the first row should be All credentials, got \(sidebar.debugRowTitles.first ?? "-")")
+        check(sidebar.debugRowTitles.dropFirst() == ArraySlice(CredentialCategory.allCases.map(\.title)),
+              "the collection rows should be the categories in order, got \(sidebar.debugRowTitles)")
+        check(sidebar.debugHeaders == ["Vault", "Collections"],
+              "the two section headers should be Vault and Collections, got \(sidebar.debugHeaders)")
+
+        // Counts: the All row totals, each collection reports its own.
+        check(sidebar.debugRowCounts.first == "4",
+              "All credentials should count every credential, got \(sidebar.debugRowCounts.first ?? "-")")
+        check(sidebar.debugRowCounts == ["4", "2", "1", "1", "0"],
+              "each collection should report its own count, got \(sidebar.debugRowCounts)")
+
+        // Clicking a collection filters the list *and* moves the highlight.
+        let emailRow = 1
+        sidebar.debugClickRow(emailRow)
+        check(recordCount() == 2, "clicking Email should leave the two email credentials, got \(recordCount())")
+        check(sidebar.debugSelectedIndex == emailRow,
+              "clicking a row should select it, got \(String(describing: sidebar.debugSelectedIndex))")
+
+        sidebar.debugClickRow(0)
+        check(recordCount() == 4, "clicking All credentials should bring every record back, got \(recordCount())")
+        check(sidebar.debugSelectedIndex == 0, "All credentials should be selected again")
+
+        // The counts are scoped by the search, which is what makes the sidebar
+        // navigation ("where are my matches") rather than a second copy of the
+        // filter chips it replaced.
+        controller.debugSetQuery("manjesh")
+        check(sidebar.debugRowCounts == ["3", "2", "0", "1", "0"],
+              "counts should be scoped by the current search, got \(sidebar.debugRowCounts)")
+        controller.debugSetQuery("")
+    }
+
+    /// Selecting a credential fills the panel, and the panel shows the whole of
+    /// every value it renders.
+    ///
+    /// **The truncation half is the point of the redesign, not a nicety.** The
+    /// sheet this replaced put its content in `HelmFormSheet`'s capped, centred
+    /// column, which at the sheet's own width resolved to roughly 190pt - so a
+    /// real account rendered as `manjesh@...` and a real timestamp as
+    /// `13 Sep 2...`. A field that cannot show its own value has stopped doing
+    /// its job, so this asserts the rendered width against the width the text
+    /// actually needs rather than merely that a label exists.
+    private static func checkInspectorShowsWholeValues(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {
+        print("\n-- the inspector fills from a row click and does not truncate --")
+        let account = "manjesh.p@pramata.com"
+        let location = "console.aws.amazon.com"
+        let (controller, store) = mounted(scratch, name: "inspector", window: window) { store in
+            _ = store.add(VaultCredential(title: "AWS root account", category: .cloud,
+                                          account: account, secret: "aws-root-value",
+                                          location: location, tags: ["prod", "critical"],
+                                          notes: "Break-glass only."))
+        }
+        let inspector = controller.debugInspector
+        check(inspector.credential == nil, "nothing should be selected on first render")
+        check(inspector.debugIsEmptyStateShowing, "an unselected panel should show its empty state")
+
+        guard let id = store.credentials.first?.id else {
+            check(false, "the page needs a seeded credential")
+            return
+        }
+        // Through the list's own selection, which is what a single click does -
+        // not by calling the page's selector directly.
+        let table = controller.debugList.debugTable
+        guard let row = (0..<controller.debugList.debugRowCount)
+            .first(where: { controller.debugList.debugItem($0)?.isRecord == true }) else {
+            check(false, "there should be a record row to click")
+            return
+        }
+        table.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        window.displayIfNeeded()
+        controller.view.layoutSubtreeIfNeeded()
+
+        check(inspector.credential?.id == id,
+              "selecting a row should fill the inspector, got \(inspector.credential?.title ?? "-")")
+        check(!inspector.debugIsEmptyStateShowing, "a filled panel should not show its empty state")
+        check(controller.debugSelectedID == id, "the page should remember what is selected")
+
+        // Every numbered section, in order, with the numbers the captain's
+        // reference names. Notes is `03` only because this credential has some.
+        check(inspector.debugSectionTitles == ["01 \u{00B7} Secret", "02 \u{00B7} Where it's used",
+                                               "03 \u{00B7} Notes", "04 \u{00B7} History"],
+              "the numbered sections should read in order, got \(inspector.debugSectionTitles)")
+
+        // The values themselves, whole.
+        let rendered = inspector.debugValueLabels
+        check(rendered.contains { $0.stringValue == account },
+              "the account should render, got \(rendered.map(\.stringValue))")
+        check(rendered.contains { $0.stringValue == location },
+              "the location should render, got \(rendered.map(\.stringValue))")
+        for label in rendered where !label.stringValue.isEmpty {
+            // `fittingSize` is what the text needs; `frame` is what it got. A
+            // label narrower than its own need is one rendering an ellipsis.
+            let needed = label.fittingSize.width
+            check(label.frame.width + 0.5 >= needed,
+                  "\"\(label.stringValue)\" is truncated: \(label.frame.width)pt for \(needed)pt of text")
+        }
+
+        // The half that actually catches it. A field hugging its own content
+        // does not truncate either - it just sits in a narrow box beside empty
+        // space, which is precisely what the old sheet's capped, centred column
+        // produced and what "cramped" meant here. The property is that a field
+        // *fills* the column, so a longer value than these still has the whole
+        // of it.
+        let columnWidth = inspector.debugContentWidth
+        check(columnWidth > 200, "the panel's content column should have real width, got \(columnWidth)")
+        for well in inspector.debugValueWells {
+            check(abs(well.frame.width - columnWidth) < 1,
+                  "a field should fill the panel's column: \(well.frame.width)pt in a \(columnWidth)pt column")
+        }
+
+        // Masked until asked, and the mask never leaks the secret's length.
+        check(!inspector.debugIsRevealed, "a freshly selected credential starts masked")
+        check(!inspector.debugSecretLabel.stringValue.contains("aws-root-value"),
+              "the value must not be on screen before Reveal")
+
+        // Closing the panel drops the selection without touching the store.
+        inspector.debugCloseButton.performClick(nil)
+        check(inspector.credential == nil, "the close button should empty the panel")
+        check(controller.debugSelectedID == nil, "...and drop the page's selection")
+        check(store.credentials.count == 1, "...and delete nothing")
+    }
+
+    /// A selection that stops being visible must not leave the panel showing a
+    /// record the captain can no longer see beside it.
+    private static func checkSelectionFollowsTheList(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {
+        print("\n-- the selection follows what the list is showing --")
+        let (controller, store) = mounted(scratch, name: "selection", window: window) { store in
+            _ = store.add(VaultCredential(title: "Gmail", category: .email,
+                                          account: "manjesh@gmail.com", secret: "a"))
+            _ = store.add(VaultCredential(title: "AWS root", category: .cloud, account: "root", secret: "b"))
+        }
+        guard let aws = store.credentials.first(where: { $0.category == .cloud }) else {
+            check(false, "the page needs a seeded credential")
+            return
+        }
+        controller.debugSelectCredential(id: aws.id)
+        check(controller.debugInspector.credential?.id == aws.id, "setup: the AWS credential is selected")
+
+        // Filtered out by a search.
+        controller.debugSetQuery("gmail")
+        check(controller.debugInspector.credential == nil,
+              "a credential filtered out of the list should drop out of the panel too")
+        controller.debugSetQuery("")
+
+        // Filtered out by a collection.
+        controller.debugSelectCredential(id: aws.id)
+        controller.debugSidebar.debugClickRow(1)
+        check(controller.debugInspector.credential == nil,
+              "a credential outside the selected collection should drop out of the panel")
+        controller.debugSidebar.debugClickRow(0)
+
+        // Deleted out from under the panel.
+        controller.debugSelectCredential(id: aws.id)
+        check(controller.debugInspector.credential != nil, "setup: selected again")
+        _ = store.delete(id: aws.id)
+        check(controller.debugInspector.credential == nil,
+              "deleting the selected credential should empty the panel")
+    }
+
+    /// A record row's content has to fit the fixed `rowHeight` the table gives
+    /// it - and this is a regression guard for a real defect this redesign
+    /// introduced and then fixed, not a precaution.
+    ///
+    /// Dropping the per-row category kicker (the group header directly above
+    /// every row already names it) meant passing `kicker: ""`, and
+    /// `HelmAccentRow` rendered that as a full, empty text line: the kicker
+    /// label was the one label in that component never hidden when empty, while
+    /// `metaLabel` had been for its whole life. On a table with a fixed
+    /// `rowHeight` an extra line is not empty space - it pushed the meta line
+    /// past the card's bottom edge and clipped its descenders, so
+    /// `manjesh@gmail.com` rendered with the tails of its `j` and `g` sliced
+    /// off. Measured rather than eyeballed: the row's own fitting height
+    /// against what the list gives it.
+    private static func checkRecordRowFitsItsHeight(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {
+        print("\n-- a record row's content fits the row it is given --")
+        let (controller, _) = mounted(scratch, name: "rowfit", window: window) { store in
+            // Descenders in both lines, and a long account, so a clipped or
+            // overflowing row shows up rather than happening to fit.
+            _ = store.add(VaultCredential(title: "Gmail, personal (jpg)", category: .email,
+                                          account: "manjesh.p@pramata.com", secret: "a", tags: ["personal"]))
+        }
+        let list = controller.debugList
+        guard let row = (0..<list.debugRowCount).first(where: { list.debugItem($0)?.isRecord == true }),
+              let accentRow = list.debugAccentRow(row) else {
+            check(false, "there should be a record row to measure")
+            return
+        }
+        let given = CredentialVaultListSection.recordRowHeight
+        let needed = accentRow.fittingSize.height
+        check(needed > 0, "the measured row had no height at all")
+        check(needed <= given,
+              "a record row needs \(needed)pt but the list gives it \(given)pt - its meta line is clipped")
+
+        // The structural half: the kicker is genuinely gone rather than drawn
+        // in the background colour, which would leave the line paid for.
+        check(accentRow.debugKickerText.isEmpty,
+              "a vault row should carry no kicker - its group header names the category")
     }
 
     private static func checkUnreadableNeverOffersCreate(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {
