@@ -2463,6 +2463,16 @@ final class HelmAccentRow: NSView {
             // `mutedInk`, never the hue - see this class's doc comment.
             attributes: HelmType.kickerAttributes(color: HelmTheme.mutedInk(theme))
         )
+        // An empty kicker is *no* kicker, not a blank line. `metaLabel` has
+        // always been hidden this way a few lines up; the kicker never was, so
+        // a caller that legitimately has no category to name (Poneglyph's list,
+        // where the group header directly above the row already says it) still
+        // paid a full text line for it - and on a fixed-`rowHeight` table that
+        // is not empty space, it is the meta line pushed past the card's bottom
+        // edge with its descenders clipped. A hidden *arranged subview* leaves
+        // an `NSStackView`'s layout entirely (gotcha (11)'s own exemption), so
+        // this genuinely reclaims the line rather than blanking it.
+        kickerLabel.isHidden = content.kicker.isEmpty
         titleLabel.textColor = HelmTheme.nsColor(theme.chromeInkHex)
         metaLabel.textColor = HelmTheme.mutedInk(theme)
         titleAccessory.contentTintColor = HelmTheme.mutedInk(theme)

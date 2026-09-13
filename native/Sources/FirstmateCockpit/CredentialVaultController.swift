@@ -62,7 +62,8 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
     private let list = CredentialVaultListSection()
     private let unlockView = CredentialVaultUnlockView()
     private let searchField = HelmSearchField(placeholder: "Search titles, accounts and tags")
-    private var categoryTabs: HelmSegmentedTabs!
+    private let sidebar = CredentialVaultSidebar()
+    private let inspector = CredentialVaultInspectorView()
     private let clipboardPill = NSView()
     private let clipboardLabel = NSTextField(labelWithString: "")
     private let addButton = HelmButton(title: "Add credential", variant: .primary, symbol: "plus")
@@ -70,6 +71,10 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
     private let settingsButton = HelmButton(title: "", variant: .quiet, symbol: "gearshape")
 
     private var listContainer: NSView!
+    /// The credential the inspector is showing, if any. Survives a re-render
+    /// (a store change, a theme change, a search) so the panel does not empty
+    /// itself under the captain while they are reading it.
+    private var selectedID: String?
     private var themeObservation: ThemeObservation?
 
     private var query = ""
@@ -87,7 +92,6 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
     /// The credential this page most recently opened a detail sheet for, so a
     /// store change can refresh it. Kept weak-by-id rather than by reference:
     /// the record is a value type and the store's copy is the truth.
-    private var openDetailID: String?
 
     override init(nibName: String?, bundle: Bundle?) {
         self.store = CredentialVaultStore()
@@ -197,25 +201,35 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         render()
     }
 
+    /// The page is three columns: a fixed nav sidebar, the credential list, and
+    /// a permanent inspector - the captain's reference mockup's own shape.
+    ///
+    /// **Why three columns is itself the fix for "cramped".** Measured on the
+    /// shipped build before this change, the list was one full-width card, so a
+    /// row's text sat at the far left and its tag and actions at the far right
+    /// with roughly a thousand points of nothing between them, while the detail
+    /// it opened was a ~190pt column inside a centred sheet. Giving navigation
+    /// and detail columns of their own leaves the list a column it can actually
+    /// fill, and gives the detail a fixed, generous width instead of a dialog's.
+    ///
+    /// **Window-floor discipline** (gotchas (13)/(14)): the two fixed columns
+    /// are small and required; the list is the flexible one and carries only a
+    /// 499-priority minimum, below `NSLayoutPriorityWindowSizeStayPut`, so this
+    /// page can never stop the window shrinking. `AppShellBodyWidthSelfTest`
+    /// sweeps every destination for exactly that.
     private func buildListContainer() {
         let container = NSView()
         listContainer = container
 
-        categoryTabs = HelmSegmentedTabs(items: Self.categoryTabItems, selected: Self.allTabID)
-        categoryTabs.onSelect = { [weak self] id in
+        list.onSelectRow = { [weak self] id in self?.selectCredential(id: id) }
+
+        sidebar.onSelect = { [weak self] category in
             guard let self else { return }
-            // `CredentialCategory(rawValue:)` is the compiler-synthesized
-            // initializer, which returns nil for the "all" id - and nil *is*
-            // the no-filter state, so the All chip needs no special case. (Not
-            // to be confused with the custom `init(from decoder:)`, which maps
-            // an unknown *stored* value onto `.other` so one item never fails
-            // to decode.)
-            self.categoryFilter = CredentialCategory(rawValue: id)
+            self.categoryFilter = category
             self.noteInteraction()
             self.render()
             self.list.scrollToTop()
         }
-        categoryTabs.translatesAutoresizingMaskIntoConstraints = false
 
         searchField.onTextChanged = { [weak self] text in
             guard let self else { return }
@@ -244,7 +258,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
                                         target: self, action: #selector(clearClipboardNow))
         clearNowButton.setContentHuggingPriority(.required, for: .horizontal)
 
-        let filterRow = NSStackView(views: [categoryTabs, searchField, clipboardPill, clearNowButton])
+        let filterRow = NSStackView(views: [searchField, clipboardPill, clearNowButton])
         filterRow.orientation = .horizontal
         filterRow.alignment = .centerY
         filterRow.spacing = HelmMetrics.s3
@@ -252,10 +266,9 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         // priority is honoured at all, so the search field would not take the
         // slack and the pill would drift with sibling content.
         filterRow.distribution = .fill
-        categoryTabs.setContentHuggingPriority(.required, for: .horizontal)
-        categoryTabs.setContentCompressionResistancePriority(.required, for: .horizontal)
         clipboardPill.setContentHuggingPriority(.required, for: .horizontal)
         searchField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        searchField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         filterRow.translatesAutoresizingMaskIntoConstraints = false
         // The countdown pill and its Clear-now button are one unit, shown and
         // hidden together - a "Clear now" button with no countdown beside it
@@ -263,28 +276,79 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         clipboardPillGroup = [clipboardPill, clearNowButton]
         clipboardPillGroup.forEach { $0.isHidden = true }
 
+        wireInspector()
+
         list.card.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(filterRow)
-        container.addSubview(list.card)
+        for child in [sidebar, filterRow, list.card, inspector] as [NSView] {
+            container.addSubview(child)
+        }
+
+        let gutter = HelmMetrics.pageGutter
+        let column = HelmMetrics.s5
+        let listMinimum = list.card.widthAnchor.constraint(greaterThanOrEqualToConstant: Self.listMinimumWidth)
+        listMinimum.priority = HelmDaylightPriority.contentTie
+        let inspectorWidth = inspector.widthAnchor.constraint(equalToConstant: CredentialVaultInspectorView.Metrics.width)
+
         NSLayoutConstraint.activate([
-            filterRow.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: HelmMetrics.pageGutter),
-            filterRow.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -HelmMetrics.pageGutter),
+            sidebar.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: gutter),
+            sidebar.topAnchor.constraint(equalTo: container.topAnchor, constant: HelmMetrics.s4),
+            sidebar.bottomAnchor.constraint(lessThanOrEqualTo: container.bottomAnchor, constant: -gutter),
+
+            // The search row sits over the list column only, not over the
+            // sidebar - searching scopes the list, and a field spanning the nav
+            // would imply it searched that too.
+            filterRow.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor, constant: column),
+            filterRow.trailingAnchor.constraint(equalTo: inspector.leadingAnchor, constant: -column),
             filterRow.topAnchor.constraint(equalTo: container.topAnchor, constant: HelmMetrics.s4),
 
-            list.card.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: HelmMetrics.pageGutter),
-            list.card.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -HelmMetrics.pageGutter),
+            list.card.leadingAnchor.constraint(equalTo: filterRow.leadingAnchor),
+            list.card.trailingAnchor.constraint(equalTo: filterRow.trailingAnchor),
             list.card.topAnchor.constraint(equalTo: filterRow.bottomAnchor, constant: HelmMetrics.s3),
-            list.card.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -HelmMetrics.pageGutter),
+            list.card.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -gutter),
+            listMinimum,
+
+            inspector.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -gutter),
+            inspector.topAnchor.constraint(equalTo: container.topAnchor, constant: HelmMetrics.s4),
+            inspector.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -gutter),
+            inspectorWidth,
         ])
+    }
+
+    /// The narrowest the credential column is allowed to get before the window
+    /// itself has to give. Held *below* `NSLayoutPriorityWindowSizeStayPut` so
+    /// it can never become a window-width floor.
+    static let listMinimumWidth: CGFloat = 300
+
+    /// Every callback the inspector needs. The gate, the audit event and the
+    /// clipboard all stay on the page - the panel only ever asks.
+    private func wireInspector() {
+        inspector.onEdit = { [weak self] credential in self?.presentEditor(editing: credential) }
+        inspector.onDelete = { [weak self] credential in self?.confirmDelete(id: credential.id) }
+        inspector.onCopy = { [weak self] credential in self?.copyValue(id: credential.id) }
+        inspector.onCopyAccount = { [weak self] credential in self?.copyAccount(id: credential.id) }
+        inspector.onClose = { [weak self] in
+            self?.selectedID = nil
+            self?.render()
+        }
+        inspector.onReveal = { [weak self] credential, completion in
+            guard let self else { return completion(false) }
+            // Defence in depth, kept verbatim from the sheet this panel
+            // replaces: the panel holds its own copy of the credential, so one
+            // that somehow outlives a lock must still refuse to put the value
+            // on screen. `clearInspector()` is the other half; neither alone is
+            // enough (see `CredentialVaultInspector.swift`'s header).
+            guard self.store.isUnlocked else { return completion(false) }
+            self.noteInteraction()
+            self.gateForReveal(credential) { allowed in
+                if allowed { self.store.recordReveal(id: credential.id) }
+                completion(allowed)
+            }
+        }
     }
 
     private var clipboardPillGroup: [NSView] = []
 
-    static let allTabID = "all"
-    static var categoryTabItems: [HelmSegmentedTabs.Item] {
-        [.init(id: allTabID, title: "All")]
-            + CredentialCategory.allCases.map { .init(id: $0.rawValue, title: $0.title) }
-    }
+    static let allTabID = CredentialVaultSidebar.allRowID
 
     // MARK: Appearance
 
@@ -316,8 +380,14 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         for action in drillHeaderActions { action.isHidden = !unlocked }
 
         if unlocked {
+            renderSidebar()
             renderList()
+            renderInspector()
         } else {
+            // Nothing selected survives the gate - the panel holds a decrypted
+            // credential, so a locked page must not be one back-navigation away
+            // from showing it again.
+            clearInspector()
             switch store.loadState() {
             case .absent:
                 unlockView.setMode(.create)
@@ -329,6 +399,33 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
             }
         }
         onDrillSubtitleChanged?()
+    }
+
+    /// The sidebar's counts are scoped by the *search*, not by the category -
+    /// each row says how many matches that collection holds right now, which is
+    /// what makes it navigation rather than a second copy of the filter chips.
+    private func renderSidebar() {
+        let matching = store.credentials.filter { $0.matches(query) }
+        var counts: [CredentialCategory: Int] = [:]
+        for credential in matching { counts[credential.category, default: 0] += 1 }
+        sidebar.setCounts(total: matching.count, counts: counts)
+        sidebar.select(categoryFilter)
+    }
+
+    /// Show whatever is selected, or the panel's own empty state.
+    ///
+    /// A credential that has been deleted, or filtered out of the list by a
+    /// search the captain has since typed, drops the selection rather than
+    /// leaving the panel showing a record they can no longer see beside it.
+    private func renderInspector() {
+        guard let selectedID,
+              let credential = store.credential(id: selectedID),
+              filteredCredentials().contains(where: { $0.id == selectedID }) else {
+            self.selectedID = nil
+            inspector.clear()
+            return
+        }
+        inspector.show(credential, auditEvents: store.auditLog.filter { $0.itemID == selectedID })
     }
 
     private func filteredCredentials() -> [VaultCredential] {
@@ -361,13 +458,18 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
             items.append(.group("\(category.title) \u{00B7} \(inCategory.count)"))
             items.append(contentsOf: inCategory.map(row(for:)))
         }
-        list.setItems(items)
+        list.setItems(items, selecting: selectedID)
     }
 
     private func row(for credential: VaultCredential) -> CredentialVaultListSection.Item {
         let revealed = revealedIDs.contains(credential.id)
+        // No kicker: every row sits directly under a group header that already
+        // names its category, so repeating it per row spent a whole text line
+        // on a word the eye had just read. Dropping it is most of what makes
+        // the row feel roomy at the same height - the reference's own row is
+        // name over `account \u{00B7} meta`, with no third line.
         var content = HelmAccentRow.Content(tint: credential.category.tint,
-                                            kicker: credential.category.title,
+                                            kicker: "",
                                             title: credential.title)
         content.badgeSymbol = credential.category.symbol
         // The revealed value takes over the meta line, in code font - see
@@ -394,9 +496,12 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         let id = credential.id
         item.reveal = { [weak self] in self?.toggleReveal(id: id) }
         item.copy = { [weak self] in self?.copyValue(id: id) }
-        item.activate = { [weak self] in self?.openDetail(id: id) }
+        // A single click selects the row, which is what fills the inspector;
+        // a double click is the same action rather than a second one, so the
+        // gesture a captain reaches for from the old sheet still works.
+        item.activate = { [weak self] in self?.selectCredential(id: id) }
         item.overflow = [
-            .init(title: "Open details\u{2026}", symbol: "info.circle") { [weak self] in self?.openDetail(id: id) },
+            .init(title: "Show in inspector", symbol: "info.circle") { [weak self] in self?.selectCredential(id: id) },
             .init(title: "Edit\u{2026}", symbol: "pencil") { [weak self] in self?.openEditor(id: id) },
             .init(title: "Copy account", symbol: "person.crop.circle") { [weak self] in
                 self?.copyAccount(id: id)
@@ -410,7 +515,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         var parts: [String] = []
         if !credential.account.isEmpty { parts.append(credential.account) }
         if let used = credential.lastUsedAt {
-            parts.append("used \(CredentialVaultDetailController.relative(used))")
+            parts.append("used \(CredentialVaultFormat.relative(used))")
         } else {
             parts.append("never used")
         }
@@ -509,6 +614,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
     @objc private func lockTapped() {
         store.lock(reason: "manual")
         dismissOpenSheets()
+        clearInspector()
         revealedIDs.removeAll()
         render()
         unlockView.focusPasswordField()
@@ -533,6 +639,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         let minutes = store.settings.autoLockSeconds / 60
         store.lock(reason: "\(minutes) minute\(minutes == 1 ? "" : "s") idle")
         dismissOpenSheets()
+        clearInspector()
         revealedIDs.removeAll()
         render()
     }
@@ -660,31 +767,15 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         presentAsSheet(editor)
     }
 
-    private func openDetail(id: String) {
+    /// Select a credential: the inspector shows it, and the list row it came
+    /// from reads as selected. This replaced `openDetail(id:)`, which presented
+    /// a sheet - see `CredentialVaultInspector.swift`'s header for why the
+    /// detail stopped being a modal.
+    private func selectCredential(id: String) {
         noteInteraction()
-        guard let credential = store.credential(id: id) else { return }
-        openDetailID = id
-        let events = store.auditLog.filter { $0.itemID == id }
-        let detail = CredentialVaultDetailController(credential: credential, auditEvents: events)
-        detail.onEdit = { [weak self] toEdit in self?.presentEditor(editing: toEdit) }
-        detail.onDelete = { [weak self] toDelete in self?.confirmDelete(id: toDelete.id) }
-        detail.onReveal = { [weak self] toReveal, completion in
-            guard let self else { return completion(false) }
-            // Defence in depth for the same defect the sheet-dismissal above
-            // fixes: the detail sheet holds its own copy of the credential and
-            // its Reveal button knew nothing about vault state, so a sheet that
-            // somehow outlives a lock must still refuse to put the value on
-            // screen. Both halves are needed - this one alone would leave an
-            // already-revealed value visible, and the dismissal alone would
-            // leave any future non-dismissing path open.
-            guard self.store.isUnlocked else { return completion(false) }
-            self.gateForReveal(toReveal) { allowed in
-                if allowed { self.store.recordReveal(id: toReveal.id) }
-                completion(allowed)
-            }
-        }
-        detail.onCopy = { [weak self] toCopy in self?.copyValue(id: toCopy.id) }
-        presentAsSheet(detail)
+        guard store.credential(id: id) != nil else { return }
+        selectedID = id
+        render()
     }
 
     @objc private func settingsTapped() {
@@ -798,6 +889,12 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         // early on an already-locked store would be exactly the case that
         // leaves a plaintext secret floating over the app's lock screen.
         dismissOpenSheets()
+        // Deliberately outside the `isUnlocked` guard below, for the same
+        // reason the dismissal is: the vault's own lock can already have fired
+        // (auto-lock, or the Lock button) while the panel was still holding the
+        // plaintext it was handed before that, so returning early on an
+        // already-locked store is exactly the case worth covering.
+        clearInspector()
         guard store.isUnlocked else { return }
         store.lock(reason: "app locked")
         revealedIDs.removeAll()
@@ -810,17 +907,20 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         store.flushForTermination()
     }
 
-    // MARK: Locking the sheets down
+    // MARK: Locking the page down
     //
-    // Every one of this page's three sheets (detail, editor, settings) is a
-    // `presentAsSheet` child *window*, layered above the app's own lock overlay
-    // - the overlay is only a subview of the main window, so a sheet renders on
-    // top of it. And `CredentialVaultDetailController` captures the plaintext
-    // credential at construction and toggles masked/plaintext display of that
-    // already-in-memory value, entirely independent of vault state. So before
-    // this, locking (by any of the three paths) cleared the key and re-rendered
-    // the page behind a sheet that was still holding - and could still Reveal -
-    // the decrypted secret.
+    // Both of this page's remaining sheets (editor, settings) are
+    // `presentAsSheet` child *windows*, layered above the app's own lock
+    // overlay - the overlay is only a subview of the main window, so a sheet
+    // renders on top of it. That is H2: locking cleared the key and re-rendered
+    // the page behind a sheet that was still holding the decrypted credential.
+    //
+    // The detail used to be a third sheet, and was the worst of the three for
+    // exactly that reason - it captured the plaintext at construction and
+    // toggled masked/plaintext display of it with no reference to vault state.
+    // It is a panel inside the page now (`CredentialVaultInspectorView`), so
+    // there is no window left to dismiss; what it needs instead is emptying,
+    // which is `clearInspector()` below.
 
     /// Dismiss every sheet this page has up. Called from all three lock paths
     /// and from the app-lock gate.
@@ -837,7 +937,19 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         guard !open.isEmpty else { return }
         AppLog.keychain.info("credential vault: dismissing \(open.count, privacy: .public) open sheet(s) on lock")
         for presented in open { dismiss(presented) }
-        openDetailID = nil
+    }
+
+    /// Drop the selection and everything the panel is holding.
+    ///
+    /// This is the panel's half of what `dismissOpenSheets` does for the two
+    /// remaining sheets. A panel needs no dismissal - it is a subview of this
+    /// page, so the app's lock overlay already covers it, which is precisely
+    /// why the detail moved out of a sheet - but it *does* need emptying: the
+    /// point of locking is that the decrypted value leaves memory and the
+    /// screen, not that something is drawn over it.
+    private func clearInspector() {
+        selectedID = nil
+        inspector.clear()
     }
 
     /// The gate registration for the sheets, and why it is `observe` rather
@@ -861,6 +973,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         AppLockGate.shared.observe { [weak self] locked in
             guard locked else { return }
             self?.dismissOpenSheets()
+            self?.clearInspector()
         }
     }
 
@@ -874,6 +987,8 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         // (`DestinationMountingSelfTest.everyDestinationForcesItsOwnAppearance`).
         view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
         list.applyTheme(theme)
+        sidebar.applyTheme(theme)
+        inspector.applyTheme(theme)
         unlockView.applyTheme(theme)
         clipboardLabel.font = HelmType.chip()
         if !clipboardPill.isHidden {
@@ -886,7 +1001,9 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
     var debugList: CredentialVaultListSection { list }
     var debugUnlockView: CredentialVaultUnlockView { unlockView }
     var debugSearchField: HelmSearchField { searchField }
-    var debugCategoryTabs: HelmSegmentedTabs { categoryTabs }
+    var debugSidebar: CredentialVaultSidebar { sidebar }
+    var debugInspector: CredentialVaultInspectorView { inspector }
+    var debugSelectedID: String? { selectedID }
     var debugAddButton: HelmButton { addButton }
     var debugLockButton: HelmButton { lockButton }
     var debugSettingsButton: HelmButton { settingsButton }
@@ -913,10 +1030,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
     var debugPresentedSheetCount: Int { (presentedViewControllers ?? []).count }
     /// The presented detail sheet, if one is up - so a suite can drive its real
     /// Reveal button and check what it does once the vault is locked.
-    var debugPresentedDetail: CredentialVaultDetailController? {
-        (presentedViewControllers ?? []).compactMap { $0 as? CredentialVaultDetailController }.first
-    }
-    func debugOpenDetail(id: String) { openDetail(id: id) }
+    func debugSelectCredential(id: String) { selectCredential(id: id) }
     func debugLockTapped() { lockTapped() }
     #endif
 }
