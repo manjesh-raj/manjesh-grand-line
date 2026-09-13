@@ -306,6 +306,14 @@ final class CredentialVaultListSection: NSObject, NSTableViewDataSource, NSTable
         (debugRowView(row) as? CredentialVaultRecordView)?.debugTouchIDIndicator
     }
 
+    /// `row`'s real trailing-icon-cluster stack, for direct constraint/
+    /// geometry inspection - a probe measuring only final `.frame` values
+    /// cannot tell whether a discrepancy comes from the stack's own internal
+    /// alignment constraints or from something else entirely.
+    func debugActionsStack(_ row: Int) -> NSStackView? {
+        (debugRowView(row) as? CredentialVaultRecordView)?.debugActionsStack
+    }
+
     func debugRowMenu(_ row: Int) -> NSMenu? {
         (debugRowView(row) as? CredentialVaultRecordView)?.debugMenu()
     }
@@ -496,20 +504,61 @@ private final class CredentialVaultGroupHeaderView: NSView {
 /// is what made a 90pt "Connect" render ~900pt wide in the first Phase 5 render
 /// of the Hosts page (AGENTS.md gotcha (12) - the content-level API is a no-op
 /// on the stack itself, and the stack-level one is a no-op on the buttons).
+///
+/// **`TrailingActionsStack` corrects `touchIDIndicator`'s vertical position
+/// directly, in frame space, at the end of every one of ITS OWN layout
+/// passes - and it has to be a subclass of the stack itself, not an override
+/// on an ancestor.** Measured, not theorized: `NSView.layout()` is called
+/// once per view during a top-down `layoutSubtreeIfNeeded()` walk, and a
+/// view's own override only resolves what constraints attached to *that*
+/// view govern - a subview further down the tree gets its OWN separate
+/// `layout()` call, LATER in the same pass, which can (and does, for an
+/// `NSStackView`) re-derive and overwrite its own arranged subviews'
+/// positions from its own internal `.Align` constraints regardless of what
+/// an ancestor did moments earlier. An earlier attempt at this fix put the
+/// correction on `CredentialVaultRecordView.layout()` (an ANCESTOR of this
+/// stack) and it appeared to work locally purely by coincidence - a
+/// dedicated probe confirmed the stack's own subsequent layout pass silently
+/// discarded that correction every time, and the reason it "passed" anyway
+/// is that this dev machine's underlying Auto-Layout-resolved answer already
+/// happens to be correct on its own (see the class comment on why that
+/// doesn't hold on every macOS/AppKit build). Overriding `layout()` HERE,
+/// on the stack itself, is what actually runs last for this relationship.
+private final class TrailingActionsStack: NSStackView {
+    /// Set once, after every arranged subview has been added - the glyph to
+    /// correct, and the button whose alignment-rect-resolved centerY it
+    /// should match exactly.
+    var glyphToCorrect: NSView?
+    var referenceCandidates: [NSView] = []
+
+    override func layout() {
+        super.layout()
+        guard let glyphToCorrect, !glyphToCorrect.isHidden else { return }
+        guard let reference = referenceCandidates.first(where: { !$0.isHidden }) else { return }
+        let targetCenterY = reference.frame.midY
+        var frame = glyphToCorrect.frame
+        let correctedOriginY = targetCenterY - frame.height / 2
+        guard abs(frame.origin.y - correctedOriginY) > 0.001 else { return }
+        frame.origin.y = correctedOriginY
+        glyphToCorrect.frame = frame
+    }
+}
+
 private final class CredentialVaultRecordView: NSView {
 
     /// A non-interactive glyph, not a fourth button - it states a fact about
     /// the credential rather than offering an action. First in `actions`, so
     /// the row reads chip, then fingerprint, then Reveal/Copy/Overflow as one
     /// icon cluster - the captain's own ordering ask, addressed by the same
-    /// move that fixes its vertical alignment (see its own header note).
+    /// move that fixes its vertical alignment (see `TrailingActionsStack`'s
+    /// own header note above).
     private let touchIDIndicator = NSImageView()
     /// `.quiet`, so two icon buttons per row read as row-level affordances
     /// rather than two competing bordered controls on every line.
     private let revealButton = HelmButton(title: "", variant: .quiet, size: .small, symbol: "eye")
     private let copyButton = HelmButton(title: "", variant: .quiet, size: .small, symbol: "doc.on.doc")
     private let overflowButton = HelmButton(title: "", variant: .quiet, size: .small, symbol: "ellipsis")
-    private let actions = NSStackView()
+    private let actions = TrailingActionsStack()
     private let row: HelmAccentRow
 
     private var reveal: (() -> Void)?
@@ -541,37 +590,15 @@ private final class CredentialVaultRecordView: NSView {
         actions.addArrangedSubview(touchIDIndicator)
 
         for button in [revealButton, copyButton, overflowButton] {
-            // `HelmButton(size: .small)` sets only the custom `size` enum
-            // (font/vInset/minHeight) - it never touches the real, inherited
-            // `NSControl.controlSize`, which AppKit leaves at its default
-            // `.regular` unless told otherwise. `NSButton.alignmentRectInsets`
-            // is keyed off that REAL controlSize, not the custom enum, and
-            // AGENTS.md's own measurement is that `.regular`'s insets are
-            // asymmetric (top 3 / bottom 2.5) while `.small`'s are symmetric
-            // (2.5/2.5). `NSStackView`'s `.centerY` alignment centers each
-            // arranged subview by its ALIGNMENT RECT, not its frame, so an
-            // asymmetric-inset button and a symmetric-inset sibling (the
-            // plain `NSImageView` fingerprint glyph) can land with their
-            // alignment rects correctly centered on a shared line while
-            // their FRAMES - which is what a captain (and a screenshot) sees
-            // - sit a fraction of a point apart; a CI run on an older macOS
-            // than this dev machine reproduced exactly that as a consistent
-            // 0.5pt delta (helm-dark/helm-light/daylight all "10.0 vs 10.5"),
-            // which this fix's own local re-measurement could not reproduce
-            // since the alignmentRectInsets it saw for `.regular` were
-            // already symmetric here regardless. Explicitly setting
-            // `.controlSize` (the same, already-supported override that lets
-            // an existing `controlSize = .small` line at a migrated site
-            // keep working) declares the density these buttons already
-            // render at, so they get `.small`'s alignment rect - symmetric
-            // by AGENTS.md's own measurement, matching the plain image view's
-            // - rather than leaving it to whatever `.regular` happens to be
-            // on a given macOS/AppKit build.
-            button.controlSize = .small
             button.setContentHuggingPriority(.required, for: .horizontal)
             button.setContentCompressionResistancePriority(.required, for: .horizontal)
             actions.addArrangedSubview(button)
         }
+
+        // See `TrailingActionsStack`'s own header for why this correction
+        // has to live on the stack itself, not on an ancestor.
+        actions.glyphToCorrect = touchIDIndicator
+        actions.referenceCandidates = [revealButton, copyButton, overflowButton]
 
         row = HelmAccentRow(trailingAccessory: actions, gradientBadge: true,
                                   maxContentWidth: HelmAccentRow.recordContentWidth)
@@ -638,6 +665,7 @@ private final class CredentialVaultRecordView: NSView {
     /// The Touch ID glyph itself, so a probe can measure its frame against
     /// `debugRevealButton`'s to confirm the two now share a centerY.
     var debugTouchIDIndicator: NSImageView? { touchIDIndicator.isHidden ? nil : touchIDIndicator }
+    var debugActionsStack: NSStackView { actions }
     func debugMenu() -> NSMenu? { overflow.isEmpty ? nil : buildMenu() }
 
     /// The `⋯` menu and the right-click menu are built from one array, so the
