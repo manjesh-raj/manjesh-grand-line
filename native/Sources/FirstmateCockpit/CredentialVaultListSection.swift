@@ -541,6 +541,33 @@ private final class CredentialVaultRecordView: NSView {
         actions.addArrangedSubview(touchIDIndicator)
 
         for button in [revealButton, copyButton, overflowButton] {
+            // `HelmButton(size: .small)` sets only the custom `size` enum
+            // (font/vInset/minHeight) - it never touches the real, inherited
+            // `NSControl.controlSize`, which AppKit leaves at its default
+            // `.regular` unless told otherwise. `NSButton.alignmentRectInsets`
+            // is keyed off that REAL controlSize, not the custom enum, and
+            // AGENTS.md's own measurement is that `.regular`'s insets are
+            // asymmetric (top 3 / bottom 2.5) while `.small`'s are symmetric
+            // (2.5/2.5). `NSStackView`'s `.centerY` alignment centers each
+            // arranged subview by its ALIGNMENT RECT, not its frame, so an
+            // asymmetric-inset button and a symmetric-inset sibling (the
+            // plain `NSImageView` fingerprint glyph) can land with their
+            // alignment rects correctly centered on a shared line while
+            // their FRAMES - which is what a captain (and a screenshot) sees
+            // - sit a fraction of a point apart; a CI run on an older macOS
+            // than this dev machine reproduced exactly that as a consistent
+            // 0.5pt delta (helm-dark/helm-light/daylight all "10.0 vs 10.5"),
+            // which this fix's own local re-measurement could not reproduce
+            // since the alignmentRectInsets it saw for `.regular` were
+            // already symmetric here regardless. Explicitly setting
+            // `.controlSize` (the same, already-supported override that lets
+            // an existing `controlSize = .small` line at a migrated site
+            // keep working) declares the density these buttons already
+            // render at, so they get `.small`'s alignment rect - symmetric
+            // by AGENTS.md's own measurement, matching the plain image view's
+            // - rather than leaving it to whatever `.regular` happens to be
+            // on a given macOS/AppKit build.
+            button.controlSize = .small
             button.setContentHuggingPriority(.required, for: .horizontal)
             button.setContentCompressionResistancePriority(.required, for: .horizontal)
             actions.addArrangedSubview(button)
