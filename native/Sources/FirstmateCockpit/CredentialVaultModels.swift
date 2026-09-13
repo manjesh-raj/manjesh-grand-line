@@ -129,6 +129,23 @@ struct VaultCredential: Codable, Equatable, Identifiable {
     /// When the value was last revealed or copied - the row's "used 2 days ago".
     /// Nil until first use, which the list renders as "never used".
     var lastUsedAt: Date?
+    /// The captain's own manual position within this credential's category
+    /// group - lower sorts first. This is the list's *default* display order
+    /// (see `displayOrder(_:_:)`), replacing plain alphabetical-by-title,
+    /// because a captain must be able to put any credential above or below
+    /// any other regardless of when either was created or last used - his
+    /// own correction, verbatim: "Anything, I should be able to sort
+    /// anything irrespective of whether it's created first or last."
+    ///
+    /// Seeded once, for a file written before this field existed, from the
+    /// exact order the list already showed - alphabetical within category -
+    /// so nothing visibly reshuffles the first time this ships (see
+    /// `CredentialVaultStore.normalizeSortOrderIfNeeded`). A brand-new
+    /// credential is appended to the end of its category
+    /// (`CredentialVaultStore.nextSortOrder`), never left at the struct's own
+    /// `0` default, which would otherwise put it ahead of every already-
+    /// positioned item.
+    var sortOrder: Int
 
     init(id: String = UUID().uuidString,
          title: String,
@@ -141,7 +158,8 @@ struct VaultCredential: Codable, Equatable, Identifiable {
          requiresTouchIDToReveal: Bool = false,
          createdAt: Date = Date(),
          updatedAt: Date = Date(),
-         lastUsedAt: Date? = nil) {
+         lastUsedAt: Date? = nil,
+         sortOrder: Int = 0) {
         self.id = id
         self.title = title
         self.category = category
@@ -154,6 +172,7 @@ struct VaultCredential: Codable, Equatable, Identifiable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.lastUsedAt = lastUsedAt
+        self.sortOrder = sortOrder
     }
 
     // Rule 2: hand-written, every optional field falling back rather than
@@ -172,6 +191,21 @@ struct VaultCredential: Codable, Equatable, Identifiable {
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
         lastUsedAt = try c.decodeIfPresent(Date.self, forKey: .lastUsedAt)
+        sortOrder = try c.decodeIfPresent(Int.self, forKey: .sortOrder) ?? 0
+    }
+
+    /// The list's default sort: manual position first, alphabetical as the
+    /// tiebreak (which is what keeps a not-yet-normalized/legacy file's
+    /// on-screen order exactly what it already was - every one of its items
+    /// decodes with `sortOrder == 0`, a dead tie), the id as a final, fully
+    /// deterministic resort. Used by every renderer of the credential list
+    /// and by the store's own one-time normalization, so the two definitions
+    /// of "current order" can never drift apart.
+    static func displayOrder(_ a: VaultCredential, _ b: VaultCredential) -> Bool {
+        if a.sortOrder != b.sortOrder { return a.sortOrder < b.sortOrder }
+        let byTitle = a.title.localizedCaseInsensitiveCompare(b.title)
+        if byTitle != .orderedSame { return byTitle == .orderedAscending }
+        return a.id < b.id
     }
 
     /// Whether this credential matches the list's search box. Title, account,

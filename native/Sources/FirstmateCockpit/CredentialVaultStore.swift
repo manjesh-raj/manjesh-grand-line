@@ -507,6 +507,12 @@ final class CredentialVaultStore {
                 failedAttempts = 0
                 throttledUntil = nil
                 append(.init(kind: .unlocked, detail: method))
+                // A one-time, idempotent migration for a file predating
+                // `sortOrder` - see its own doc comment. `persistAuditOnly`
+                // right below always re-seals every credential from current
+                // in-memory state regardless, so this needs no write of its
+                // own.
+                normalizeSortOrderIfNeeded()
                 persistAuditOnly("unlock record")
                 onChange?()
                 return .unlocked
@@ -570,6 +576,11 @@ final class CredentialVaultStore {
         var stored = credential
         stored.createdAt = Date()
         stored.updatedAt = stored.createdAt
+        // Append to the end of its category rather than inheriting whatever
+        // `sortOrder` the caller's struct happened to carry (`0`, its
+        // default) - which would otherwise jump a brand-new item ahead of
+        // every credential already given a real, positive position.
+        stored.sortOrder = nextSortOrder(inCategory: stored.category)
         credentials.append(stored)
         append(.init(kind: .created, itemID: stored.id, itemTitle: stored.title))
         return finishWrite(returning: stored)
@@ -591,12 +602,65 @@ final class CredentialVaultStore {
         // Preserved rather than taken from the caller: an editor form has no
         // business resetting when the value was last used.
         stored.lastUsedAt = before.lastUsedAt
+        // The editor form has no way to move a credential's own position -
+        // that is drag-and-drop's job alone (`reorderCategory`) - so an
+        // ordinary edit must not silently reset it to whatever the caller's
+        // struct happened to carry. A category *change* is the one
+        // legitimate exception: the old position was scoped to a group this
+        // credential no longer belongs to, so it is re-appended to the end
+        // of its new category, exactly like a brand-new credential.
+        stored.sortOrder = (before.category == stored.category)
+            ? before.sortOrder
+            : nextSortOrder(inCategory: stored.category)
         credentials[index] = stored
         append(.init(kind: .updated,
                      itemID: stored.id,
                      itemTitle: stored.title,
                      detail: Self.changedFieldNames(from: before, to: stored)))
         return finishWrite(returning: stored)
+    }
+
+    /// The `sortOrder` a fresh arrival in `category` should take - one past
+    /// whatever is currently the highest position there, so it lands at the
+    /// end rather than at the front on `VaultCredential.sortOrder`'s zero
+    /// default. Shared by `add` (a brand-new credential) and `update` (one
+    /// whose category changed).
+    private func nextSortOrder(inCategory category: CredentialCategory) -> Int {
+        (credentials.filter { $0.category == category }.map(\.sortOrder).max() ?? -1) + 1
+    }
+
+    /// Persist a captain-driven manual reorder within one category:
+    /// `orderedIDs` is the complete, desired order for every credential
+    /// currently in `category`, and each is assigned a fresh sequential
+    /// `sortOrder` matching its position - which is what makes the new order
+    /// stick across a relaunch rather than being a purely visual
+    /// rearrangement. The captain's own words: "I need that freedom to
+    /// rearrange... I should be able to sort anything irrespective of
+    /// whether it's created first or last."
+    ///
+    /// An id not currently in `category` is skipped rather than moved there -
+    /// this method reorders, it never re-categorises. That should not
+    /// happen given how `CredentialVaultController` builds `orderedIDs` (from
+    /// the credential's own category, never a caller-picked one), but a
+    /// defensive no-op is cheap and matches this store's usual style.
+    @discardableResult
+    func reorderCategory(_ category: CredentialCategory, orderedIDs: [String]) -> Result<Void, Error> {
+        guard isUnlocked else { return .failure(CredentialVaultStoreError.locked) }
+        var changed = false
+        for (position, id) in orderedIDs.enumerated() {
+            guard let index = credentials.firstIndex(where: { $0.id == id }),
+                  credentials[index].category == category else { continue }
+            if credentials[index].sortOrder != position {
+                credentials[index].sortOrder = position
+                changed = true
+            }
+        }
+        // Dropping a position back where it already was (or a drag that
+        // landed exactly where it started) must not be a reason to write and
+        // sync - the same "only write on a real change" discipline every
+        // other mutator here already follows via `finishWrite`'s callers.
+        guard changed else { return .success(()) }
+        return finishWrite(returning: ())
     }
 
     @discardableResult
@@ -896,6 +960,34 @@ final class CredentialVaultStore {
 
     private static let auditPurpose = "grand-line-vault/audit"
     private static let settingsPurpose = "grand-line-vault/settings"
+
+    /// One-time migration for a vault written before `sortOrder` existed -
+    /// see `VaultCredential.sortOrder`'s own doc comment for why this must
+    /// not reshuffle anything. Every credential in such a file decodes with
+    /// `sortOrder == 0` (rule 2's `decodeIfPresent` fallback), so within any
+    /// one category every item is a dead tie and `displayOrder`'s
+    /// alphabetical tiebreak already reproduces the exact order the list
+    /// showed before this field existed. This assigns each item that same
+    /// order as its own real, distinct position, so the captain's very first
+    /// drag has real integers to move rather than a field of zeroes.
+    ///
+    /// A pure in-memory mutation - `finishUnlock`'s own `persistAuditOnly`
+    /// call right after this is what actually writes the result, since
+    /// `persist()` always re-seals every credential from current state
+    /// regardless of what changed. Idempotent: once a category's positions
+    /// are already distinct (from this pass, or from a captain's own
+    /// drag), re-running it recomputes the identical positions and changes
+    /// nothing - so calling it on every unlock never itself triggers a write.
+    private func normalizeSortOrderIfNeeded() {
+        for category in CredentialCategory.allCases {
+            let indices = credentials.indices
+                .filter { credentials[$0].category == category }
+                .sorted { VaultCredential.displayOrder(credentials[$0], credentials[$1]) }
+            for (position, index) in indices.enumerated() where credentials[index].sortOrder != position {
+                credentials[index].sortOrder = position
+            }
+        }
+    }
 
     private func append(_ event: VaultAuditEvent) {
         auditLog.append(event)

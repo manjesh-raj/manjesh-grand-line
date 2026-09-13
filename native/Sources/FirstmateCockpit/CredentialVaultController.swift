@@ -222,6 +222,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         listContainer = container
 
         list.onSelectRow = { [weak self] id in self?.selectCredential(id: id) }
+        list.onReorder = { [weak self] draggedID, beforeID in self?.reorderCredential(id: draggedID, before: beforeID) }
 
         sidebar.onSelect = { [weak self] category in
             guard let self else { return }
@@ -450,10 +451,14 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
 
         // Grouped by category, in the enum's own order - which is the mockup's
         // order, and stable regardless of what the captain has stored.
+        // Within a group, `VaultCredential.displayOrder` - the captain's own
+        // manual position, not alphabetical - is the default: "I should be
+        // able to sort anything irrespective of whether it's created first or
+        // last."
         var items: [CredentialVaultListSection.Item] = []
         for category in CredentialCategory.allCases {
             let inCategory = matching.filter { $0.category == category }
-                .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+                .sorted(by: VaultCredential.displayOrder)
             guard !inCategory.isEmpty else { continue }
             items.append(.group("\(category.title) \u{00B7} \(inCategory.count)"))
             items.append(contentsOf: inCategory.map(row(for:)))
@@ -486,13 +491,18 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
             content.chipText = credential.tags.first
             content.chipTint = .neutral
         }
-        if credential.requiresTouchIDToReveal {
-            content.titleAccessorySymbol = "touchid"
-        }
-
+        // Deliberately **not** `HelmAccentRow.Content.titleAccessorySymbol`.
+        // That field renders inline beside the title inside `titleRow`, which
+        // is only vertically centered against the title *line* - so it sat
+        // visibly higher than this row's own reveal/copy/overflow icon
+        // cluster, which is centered against the row's full height. It is
+        // rendered by `CredentialVaultRecordView` in the same trailing icon
+        // cluster as those buttons instead - see `Item.requiresTouchIDIndicator`.
         var item = CredentialVaultListSection.Item(content: content)
         item.credentialID = credential.id
+        item.category = credential.category
         item.isRevealed = revealed
+        item.requiresTouchIDIndicator = credential.requiresTouchIDToReveal
         let id = credential.id
         item.reveal = { [weak self] in self?.toggleReveal(id: id) }
         item.copy = { [weak self] in self?.copyValue(id: id) }
@@ -776,6 +786,33 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         guard store.credential(id: id) != nil else { return }
         selectedID = id
         render()
+    }
+
+    /// A drag within the list moved a credential to a new position inside its
+    /// own category. `beforeID` is the *visible* neighbor it should now sit
+    /// directly above, or nil to move it to the end - see
+    /// `CredentialVaultListSection.onReorder`'s own doc comment for why the
+    /// callback reports a neighbor rather than an absolute index: it lets
+    /// this method splice the move into the credential's real, complete
+    /// category list (`store.credentials`, not the possibly search-filtered
+    /// `matching` this page renders), so a captain reordering while a search
+    /// is active can never scramble a hidden credential's position.
+    private func reorderCredential(id draggedID: String, before beforeID: String?) {
+        noteInteraction()
+        guard let dragged = store.credential(id: draggedID) else { return }
+        var ordered = store.credentials
+            .filter { $0.category == dragged.category }
+            .sorted(by: VaultCredential.displayOrder)
+            .map(\.id)
+        ordered.removeAll { $0 == draggedID }
+        if let beforeID, let index = ordered.firstIndex(of: beforeID) {
+            ordered.insert(draggedID, at: index)
+        } else {
+            ordered.append(draggedID)
+        }
+        if case .failure(let error) = store.reorderCategory(dragged.category, orderedIDs: ordered) {
+            reportVaultError(error)
+        }
     }
 
     @objc private func settingsTapped() {

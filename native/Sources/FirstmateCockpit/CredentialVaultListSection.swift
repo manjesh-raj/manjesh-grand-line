@@ -40,6 +40,27 @@
 
 import AppKit
 
+// MARK: - Pasteboard
+
+/// The list's own drag payload for a reorder: a credential id, nothing else.
+///
+/// A private type rather than `.string`, matching `ShiftBoardPasteboard`'s own
+/// reasoning verbatim: a drag from anywhere else in the app (or from another
+/// app) can never be mistaken for a credential and dropped into the list.
+enum CredentialVaultDragPasteboard {
+    static let credentialType = NSPasteboard.PasteboardType("com.firstmate.cockpit.vault.credential-id")
+
+    static func item(credentialID: String) -> NSPasteboardItem {
+        let item = NSPasteboardItem()
+        item.setString(credentialID, forType: credentialType)
+        return item
+    }
+
+    static func credentialID(from pasteboard: NSPasteboard) -> String? {
+        pasteboard.string(forType: credentialType)
+    }
+}
+
 final class CredentialVaultListSection: NSObject, NSTableViewDataSource, NSTableViewDelegate {
 
     /// One action offered by a row's `⋯` menu.
@@ -68,6 +89,13 @@ final class CredentialVaultListSection: NSObject, NSTableViewDataSource, NSTable
         /// (which happens on every store change, including one caused from a
         /// different row).
         var credentialID: String = ""
+        /// The credential's own category - `nil` for a `.group`/`.empty` row.
+        /// Drag-and-drop reorder is scoped to one category's own records (a
+        /// drop may never move a credential across a category boundary), and
+        /// this is how the table's drag validation tells which group a given
+        /// row - or the boundary between two rows - belongs to, with no need
+        /// to parse the group header's own display string.
+        var category: CredentialCategory? = nil
         /// Toggle this row's on-screen visibility. Never copies.
         var reveal: (() -> Void)?
         /// Copy this row's value. Never reveals.
@@ -75,6 +103,16 @@ final class CredentialVaultListSection: NSObject, NSTableViewDataSource, NSTable
         /// Whether the value is currently on screen for this row - drives which
         /// glyph the reveal button shows.
         var isRevealed: Bool = false
+        /// Whether this credential requires Touch ID to reveal. Rendered as a
+        /// small non-interactive glyph in `CredentialVaultRecordView`'s own
+        /// trailing icon cluster - first, before Reveal/Copy/Overflow - rather
+        /// than as `HelmAccentRow.Content.titleAccessorySymbol`. That field
+        /// sits inline next to the title, vertically centered only against
+        /// the title *line*; putting it in the same cluster as the row's
+        /// other icons is what makes it centered against the row's full
+        /// height by construction, matching them, instead of needing its own
+        /// alignment math.
+        var requiresTouchIDIndicator: Bool = false
         var overflow: [Action] = []
         /// Double-click, and the `⋯` menu's first entry: open Item Detail.
         var activate: (() -> Void)?
@@ -104,6 +142,15 @@ final class CredentialVaultListSection: NSObject, NSTableViewDataSource, NSTable
     /// A row was picked. One click, not two - the inspector is permanent, so
     /// selecting a credential *is* opening it.
     var onSelectRow: ((String) -> Void)?
+
+    /// The captain dragged a row to a new position within its own category
+    /// group. `beforeID` is the *visible* neighboring credential it should
+    /// now sit directly above, or `nil` for "at the end of what is currently
+    /// shown" - deliberately a neighbor rather than an absolute row index, so
+    /// the caller (which knows the credential's real, complete, possibly
+    /// search-filtered-out category list) can splice the move in without this
+    /// section having to reason about anything outside what it renders.
+    var onReorder: ((_ draggedID: String, _ beforeID: String?) -> Void)?
 
     private let table = HelmTableView()
     private let scroll = NSScrollView()
@@ -141,6 +188,19 @@ final class CredentialVaultListSection: NSObject, NSTableViewDataSource, NSTable
         table.target = self
         table.doubleAction = #selector(rowDoubleClicked)
         table.allowsEmptySelection = true
+        // Drag-and-drop reorder within the table - `NSTableView`'s own
+        // built-in mechanism (`pasteboardWriterForRow`/`validateDrop`/
+        // `acceptDrop` below), rather than a bespoke `NSDraggingSource` like
+        // `ShiftBoardCardView`'s: that one exists because the Kanban board is
+        // several independent card views spread across separate columns, not
+        // rows of one `NSTableView` - this list is exactly the case AppKit's
+        // own reorder API is for. `.gap`, not `.regular`, shows a thin
+        // insertion line between rows rather than highlighting a whole row,
+        // which is the "moving between two positions" feedback a reorder
+        // needs.
+        table.registerForDraggedTypes([CredentialVaultDragPasteboard.credentialType])
+        table.setDraggingSourceOperationMask(.move, forLocal: true)
+        table.draggingDestinationFeedbackStyle = .gap
 
         scroll.documentView = table
         scroll.hasVerticalScroller = true
@@ -239,6 +299,21 @@ final class CredentialVaultListSection: NSObject, NSTableViewDataSource, NSTable
         (debugRowView(row) as? CredentialVaultRecordView)?.debugCopyButton
     }
 
+    /// `row`'s Touch ID glyph, when it has one - so a probe can measure its
+    /// frame against `debugRevealButton`'s to confirm both now share a
+    /// centerY, and that it renders first in the trailing icon cluster.
+    func debugTouchIDIndicator(_ row: Int) -> NSImageView? {
+        (debugRowView(row) as? CredentialVaultRecordView)?.debugTouchIDIndicator
+    }
+
+    /// `row`'s real trailing-icon-cluster stack, for direct constraint/
+    /// geometry inspection - a probe measuring only final `.frame` values
+    /// cannot tell whether a discrepancy comes from the stack's own internal
+    /// alignment constraints or from something else entirely.
+    func debugActionsStack(_ row: Int) -> NSStackView? {
+        (debugRowView(row) as? CredentialVaultRecordView)?.debugActionsStack
+    }
+
     func debugRowMenu(_ row: Int) -> NSMenu? {
         (debugRowView(row) as? CredentialVaultRecordView)?.debugMenu()
     }
@@ -318,6 +393,75 @@ final class CredentialVaultListSection: NSObject, NSTableViewDataSource, NSTable
                 .setSelected(table.selectedRowIndexes.contains(row))
         }
     }
+
+    // MARK: NSTableView - drag-and-drop reorder
+    //
+    // The manual reorder the captain asked for, verbatim: "I need that
+    // freedom to rearrange... I should be able to sort anything irrespective
+    // of whether it's created first or last." Reordering is scoped to one
+    // category's own group - a drop may never move a credential across a
+    // category boundary, which is what `categoryGroup(atBoundary:)` enforces
+    // in both `validateDrop` and `acceptDrop` below.
+
+    /// Only a `.record` row may be dragged - a group header or the empty
+    /// state has no credential to move.
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        guard row < items.count, items[row].isRecord else { return nil }
+        return CredentialVaultDragPasteboard.item(credentialID: items[row].credentialID)
+    }
+
+    /// Only `.above` (insert-between-rows) is meaningful for a reorder - a
+    /// `.on` drop (onto a row) has no defined behaviour here - and only when
+    /// the drop position is inside the dragged credential's own category
+    /// group.
+    func tableView(_ tableView: NSTableView, validateDrop info: NSDraggingInfo,
+                   proposedRow row: Int, proposedDropOperation dropOperation: NSTableView.DropOperation) -> NSDragOperation {
+        guard dropOperation == .above,
+              let sourceID = CredentialVaultDragPasteboard.credentialID(from: info.draggingPasteboard),
+              let sourceCategory = category(ofCredential: sourceID),
+              categoryGroup(atBoundary: row) == sourceCategory else { return [] }
+        return .move
+    }
+
+    func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo,
+                   row: Int, dropOperation: NSTableView.DropOperation) -> Bool {
+        guard dropOperation == .above,
+              let sourceID = CredentialVaultDragPasteboard.credentialID(from: info.draggingPasteboard),
+              let sourceCategory = category(ofCredential: sourceID),
+              categoryGroup(atBoundary: row) == sourceCategory else { return false }
+        // The record currently sitting right at the drop boundary - the
+        // *visible* neighbor the dragged credential should now sit directly
+        // above - or nil when the boundary is past the last visible record
+        // of this category (dropped at the end of what is currently shown).
+        let beforeID: String? = (row < items.count && items[row].isRecord && items[row].category == sourceCategory)
+            ? items[row].credentialID
+            : nil
+        onReorder?(sourceID, beforeID)
+        return true
+    }
+
+    private func category(ofCredential id: String) -> CredentialCategory? {
+        items.first { $0.isRecord && $0.credentialID == id }?.category
+    }
+
+    /// The category whose group brackets `boundaryRow` - i.e. the category of
+    /// whichever *record* straddles this drop position. A boundary is
+    /// checked against the row just before it first (the common case: the
+    /// end of a group, or a position in its middle), then the row right at
+    /// it (the top of a group, which has no record before it - the header
+    /// does). `nil` when the boundary sits between two different
+    /// categories' own groups, or right before/after a group header with no
+    /// record on either side to disambiguate it, or past the end of the
+    /// list.
+    private func categoryGroup(atBoundary boundaryRow: Int) -> CredentialCategory? {
+        if boundaryRow > 0, boundaryRow - 1 < items.count, let category = items[boundaryRow - 1].category {
+            return category
+        }
+        if boundaryRow < items.count, let category = items[boundaryRow].category {
+            return category
+        }
+        return nil
+    }
 }
 
 // MARK: - Group header
@@ -360,14 +504,61 @@ private final class CredentialVaultGroupHeaderView: NSView {
 /// is what made a 90pt "Connect" render ~900pt wide in the first Phase 5 render
 /// of the Hosts page (AGENTS.md gotcha (12) - the content-level API is a no-op
 /// on the stack itself, and the stack-level one is a no-op on the buttons).
+///
+/// **`TrailingActionsStack` corrects `touchIDIndicator`'s vertical position
+/// directly, in frame space, at the end of every one of ITS OWN layout
+/// passes - and it has to be a subclass of the stack itself, not an override
+/// on an ancestor.** Measured, not theorized: `NSView.layout()` is called
+/// once per view during a top-down `layoutSubtreeIfNeeded()` walk, and a
+/// view's own override only resolves what constraints attached to *that*
+/// view govern - a subview further down the tree gets its OWN separate
+/// `layout()` call, LATER in the same pass, which can (and does, for an
+/// `NSStackView`) re-derive and overwrite its own arranged subviews'
+/// positions from its own internal `.Align` constraints regardless of what
+/// an ancestor did moments earlier. An earlier attempt at this fix put the
+/// correction on `CredentialVaultRecordView.layout()` (an ANCESTOR of this
+/// stack) and it appeared to work locally purely by coincidence - a
+/// dedicated probe confirmed the stack's own subsequent layout pass silently
+/// discarded that correction every time, and the reason it "passed" anyway
+/// is that this dev machine's underlying Auto-Layout-resolved answer already
+/// happens to be correct on its own (see the class comment on why that
+/// doesn't hold on every macOS/AppKit build). Overriding `layout()` HERE,
+/// on the stack itself, is what actually runs last for this relationship.
+private final class TrailingActionsStack: NSStackView {
+    /// Set once, after every arranged subview has been added - the glyph to
+    /// correct, and the button whose alignment-rect-resolved centerY it
+    /// should match exactly.
+    var glyphToCorrect: NSView?
+    var referenceCandidates: [NSView] = []
+
+    override func layout() {
+        super.layout()
+        guard let glyphToCorrect, !glyphToCorrect.isHidden else { return }
+        guard let reference = referenceCandidates.first(where: { !$0.isHidden }) else { return }
+        let targetCenterY = reference.frame.midY
+        var frame = glyphToCorrect.frame
+        let correctedOriginY = targetCenterY - frame.height / 2
+        guard abs(frame.origin.y - correctedOriginY) > 0.001 else { return }
+        frame.origin.y = correctedOriginY
+        glyphToCorrect.frame = frame
+    }
+}
+
 private final class CredentialVaultRecordView: NSView {
 
+    /// A non-interactive glyph, not a fourth button - it states a fact about
+    /// the credential rather than offering an action. First in `actions`, so
+    /// the row reads chip, then fingerprint, then Reveal/Copy/Overflow as one
+    /// icon cluster - the captain's own ordering ask, addressed by the same
+    /// move that fixes its vertical alignment (see `TrailingActionsStack`'s
+    /// own header note above).
+    private let touchIDIndicator = NSImageView()
     /// `.quiet`, so two icon buttons per row read as row-level affordances
     /// rather than two competing bordered controls on every line.
     private let revealButton = HelmButton(title: "", variant: .quiet, size: .small, symbol: "eye")
     private let copyButton = HelmButton(title: "", variant: .quiet, size: .small, symbol: "doc.on.doc")
     private let overflowButton = HelmButton(title: "", variant: .quiet, size: .small, symbol: "ellipsis")
-    private let actions = NSStackView()
+    private let actions = TrailingActionsStack()
     private let row: HelmAccentRow
 
     private var reveal: (() -> Void)?
@@ -382,11 +573,32 @@ private final class CredentialVaultRecordView: NSView {
         actions.setHuggingPriority(.required, for: .horizontal)
         actions.setClippingResistancePriority(.required, for: .horizontal)
         actions.translatesAutoresizingMaskIntoConstraints = false
+
+        // 11pt / `.semibold`, matching `HelmButton.Size.small`'s own symbol
+        // size (`rebuildImage()`'s configuration) - so the glyph reads as
+        // part of the same icon cluster as the buttons beside it rather than
+        // a differently-scaled visitor. A flat template image (no
+        // `hierarchicalColor`), tinted per theme in `configure`, the same way
+        // `HelmAccentRow`'s own `titleAccessory` tinted this exact glyph
+        // before it moved here.
+        touchIDIndicator.image = HelmSymbol.image("touchid", pointSize: 11, weight: .semibold)
+        touchIDIndicator.imageScaling = .scaleProportionallyUpOrDown
+        touchIDIndicator.translatesAutoresizingMaskIntoConstraints = false
+        touchIDIndicator.setContentHuggingPriority(.required, for: .horizontal)
+        touchIDIndicator.setContentCompressionResistancePriority(.required, for: .horizontal)
+        touchIDIndicator.isHidden = true
+        actions.addArrangedSubview(touchIDIndicator)
+
         for button in [revealButton, copyButton, overflowButton] {
             button.setContentHuggingPriority(.required, for: .horizontal)
             button.setContentCompressionResistancePriority(.required, for: .horizontal)
             actions.addArrangedSubview(button)
         }
+
+        // See `TrailingActionsStack`'s own header for why this correction
+        // has to live on the stack itself, not on an ancestor.
+        actions.glyphToCorrect = touchIDIndicator
+        actions.referenceCandidates = [revealButton, copyButton, overflowButton]
 
         row = HelmAccentRow(trailingAccessory: actions, gradientBadge: true,
                                   maxContentWidth: HelmAccentRow.recordContentWidth)
@@ -417,6 +629,13 @@ private final class CredentialVaultRecordView: NSView {
         copy = item.copy
         overflow = item.overflow
 
+        touchIDIndicator.isHidden = !item.requiresTouchIDIndicator
+        touchIDIndicator.toolTip = item.requiresTouchIDIndicator ? "Requires Touch ID to reveal" : nil
+        // `mutedInk`, matching every other row-level status glyph
+        // (`HelmAccentRow`'s own `titleAccessory` used the identical tint
+        // before this moved).
+        touchIDIndicator.contentTintColor = HelmTheme.mutedInk(theme)
+
         // The glyph and the tooltip both say which way the toggle goes, so the
         // control is readable without hovering and legible to VoiceOver.
         revealButton.symbolName = item.isRevealed ? "eye.slash" : "eye"
@@ -443,6 +662,10 @@ private final class CredentialVaultRecordView: NSView {
     var debugAccentRow: HelmAccentRow { row }
     var debugRevealButton: NSButton? { revealButton.isHidden ? nil : revealButton }
     var debugCopyButton: NSButton? { copyButton.isHidden ? nil : copyButton }
+    /// The Touch ID glyph itself, so a probe can measure its frame against
+    /// `debugRevealButton`'s to confirm the two now share a centerY.
+    var debugTouchIDIndicator: NSImageView? { touchIDIndicator.isHidden ? nil : touchIDIndicator }
+    var debugActionsStack: NSStackView { actions }
     func debugMenu() -> NSMenu? { overflow.isEmpty ? nil : buildMenu() }
 
     /// The `⋯` menu and the right-click menu are built from one array, so the
