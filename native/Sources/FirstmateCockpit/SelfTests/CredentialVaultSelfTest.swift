@@ -67,6 +67,7 @@ enum CredentialVaultSelfTest {
         checkClipboardSourceGuards(check)
         checkOverrideOrder(scratch: scratch, check)
         checkGitPortability(scratch: scratch, check)
+        checkSortOrderMigrationAppendAndReorder(scratch: scratch, check)
 
         if failures.isEmpty {
             print("CredentialVaultSelfTest: all checks passed")
@@ -505,6 +506,159 @@ enum CredentialVaultSelfTest {
         }
     }
 
+
+    /// The captain's own manual-reorder ask, end to end: a legacy vault (every
+    /// item decoded with no `sortOrder` at all) must not visibly reshuffle on
+    /// its first unlock after this ships; a fresh add must append to the end
+    /// of its category rather than jump to the front; and a manual reorder -
+    /// "any credential to any position, irrespective of when it was created" -
+    /// must persist across a relaunch, which is the hard requirement this
+    /// whole feature exists to satisfy.
+    ///
+    /// The "legacy vault" is hand-built with `RawJSON`, exactly like
+    /// `checkOlderFileStillDecodes` above, but through the real
+    /// `unlock`/`finishUnlock` path rather than an isolated `open` call, since
+    /// the migration this asserts (`normalizeSortOrderIfNeeded`) only runs
+    /// there.
+    private static func checkSortOrderMigrationAppendAndReorder(scratch: URL, _ check: (Bool, String) -> Void) {
+        let root = scratch.appendingPathComponent("sortorder-migration", isDirectory: true)
+        let salt = CredentialVaultCrypto.newSalt()
+        guard let key = try? CredentialVaultCrypto.deriveKey(password: "migration-password", salt: salt, rounds: 1_000) else {
+            check(false, "deriveKey should succeed"); return
+        }
+        // Three credentials in the SAME category, sealed with no `sortOrder`
+        // key at all - the exact shape a file written before this field
+        // existed would have. Deliberately not added in alphabetical order
+        // (Zebra, Apple, Mango), so a naive "keep the array's own order"
+        // migration would visibly reshuffle while the real fix - falling back
+        // to `displayOrder`'s alphabetical tiebreak - must not.
+        let legacyItems: [(id: String, title: String)] = [
+            ("z", "Zebra AWS"), ("a", "Apple AWS"), ("m", "Mango AWS"),
+        ]
+        var entries: [CredentialVaultFile.Entry] = []
+        for (id, title) in legacyItems {
+            let json = #"{"id":"\#(id)","title":"\#(title)","category":"cloud"}"#
+            guard let sealed = try? CredentialVaultCrypto.seal(RawJSON(json), vaultKey: key,
+                                                               purpose: CredentialVaultCrypto.itemPurpose(id)) else {
+                check(false, "sealing a legacy item should succeed"); return
+            }
+            entries.append(.init(id: id, payload: sealed))
+        }
+        guard let verifier = try? CredentialVaultCrypto.makeVerifier(key) else {
+            check(false, "makeVerifier should succeed"); return
+        }
+        // Empty `Data()` for the audit log and settings: `finishUnlock` treats
+        // an empty blob as "nothing to decrypt" rather than trying to open it
+        // under a purpose this test has no access to (both are `private` on
+        // the store) - the simplest honest stand-in for a legacy file whose
+        // own log/settings blobs are equally absent-or-minimal.
+        let legacyFile = CredentialVaultFile(kdf: .init(salt: salt, rounds: 1_000),
+                                             verifier: verifier, items: entries,
+                                             auditLog: Data(), settings: Data())
+        try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        guard let encoded = try? JSONEncoder().encode(legacyFile) else {
+            check(false, "encoding the legacy file should succeed"); return
+        }
+        let store = CredentialVaultStore(root: root)
+        guard (try? encoded.write(to: store.fileURL)) != nil else {
+            check(false, "writing the legacy file should succeed"); return
+        }
+
+        var outcome: VaultUnlockOutcome?
+        waitFor(timeout: 30) { done in
+            store.unlock(masterPassword: "migration-password") { o in outcome = o; done() }
+        }
+        check(outcome == .unlocked, "the legacy vault should unlock, got \(String(describing: outcome))")
+        check(store.credentials.count == 3, "all three legacy credentials should be read back")
+
+        // The captain's on-screen order before this shipped was pure
+        // alphabetical (the old `renderList` sort) - `displayOrder`'s
+        // alphabetical tiebreak must reproduce it exactly on first unlock.
+        let displayed = store.credentials.sorted(by: VaultCredential.displayOrder).map(\.title)
+        check(displayed == ["Apple AWS", "Mango AWS", "Zebra AWS"],
+              "a legacy vault's first unlock must display alphabetically (unchanged from before this shipped), got \(displayed)")
+
+        // And normalization assigned each item a REAL, distinct position
+        // matching that order - not left every item tied at the shared 0
+        // default, which would leave the very first drag with nothing to move.
+        check(Set(store.credentials.map(\.sortOrder)).count == 3,
+              "every migrated credential should get its own distinct sortOrder, not stay tied at 0")
+        let bySortOrder = store.credentials.sorted { $0.sortOrder < $1.sortOrder }.map(\.title)
+        check(bySortOrder == displayed,
+              "the migrated sortOrder values should match the alphabetical order, got \(bySortOrder)")
+
+        // The migration persisted - a fresh store over the same file reads
+        // back the SAME real positions, not merely a re-derivation each time.
+        store.lock(reason: "test")
+        let reopened = CredentialVaultStore(root: root)
+        var reopenOutcome: VaultUnlockOutcome?
+        waitFor(timeout: 30) { done in
+            reopened.unlock(masterPassword: "migration-password") { o in reopenOutcome = o; done() }
+        }
+        check(reopenOutcome == .unlocked, "the migrated vault should still unlock on a fresh store")
+        check(reopened.credentials.sorted { $0.sortOrder < $1.sortOrder }.map(\.title) == displayed,
+              "the migrated order should survive a relaunch")
+
+        // A brand-new credential appends to the END of its category, not the
+        // front `VaultCredential.sortOrder`'s own struct default would imply.
+        guard case .success(let added) = reopened.add(VaultCredential(title: "Fresh AWS", category: .cloud, secret: "v")) else {
+            check(false, "add should succeed"); return
+        }
+        check(added.sortOrder == 3, "a new credential should append after the three migrated ones, got \(added.sortOrder)")
+        check(reopened.credentials.sorted(by: VaultCredential.displayOrder).map(\.title).last == "Fresh AWS",
+              "a freshly added credential should sort at the end of its category")
+
+        // The manual reorder itself: the captain's own example - move "Zebra
+        // AWS" (which sorts LAST alphabetically) to the very FRONT of its
+        // category, "irrespective of whether it's created first or last."
+        let zebra = reopened.credentials.first { $0.title == "Zebra AWS" }!
+        let apple = reopened.credentials.first { $0.title == "Apple AWS" }!
+        guard case .success = reopened.reorderCategory(.cloud, orderedIDs: [zebra.id, apple.id, "m", added.id]) else {
+            check(false, "reorderCategory should succeed"); return
+        }
+        let reordered = reopened.credentials.sorted(by: VaultCredential.displayOrder).map(\.title)
+        check(reordered == ["Zebra AWS", "Apple AWS", "Mango AWS", "Fresh AWS"],
+              "a manual reorder must be free-form - any credential to any position - got \(reordered)")
+
+        // The whole point: the manual order survives a relaunch, exactly like
+        // the captain's own "AWS Prod above AWS Dev, and it stays there" ask.
+        reopened.lock(reason: "test")
+        let final = CredentialVaultStore(root: root)
+        var finalOutcome: VaultUnlockOutcome?
+        waitFor(timeout: 30) { done in
+            final.unlock(masterPassword: "migration-password") { o in finalOutcome = o; done() }
+        }
+        check(finalOutcome == .unlocked, "the reordered vault should still unlock")
+        check(final.credentials.sorted(by: VaultCredential.displayOrder).map(\.title) == reordered,
+              "the manual reorder must persist across a relaunch - the hard requirement this feature exists to satisfy")
+
+        // Editing a credential (never dragging it) must not silently move it -
+        // the editor form has no reorder UI of its own.
+        var editedApple = apple
+        editedApple.notes = "edited, not moved"
+        _ = final.update(editedApple)
+        check(final.credentials.sorted(by: VaultCredential.displayOrder).map(\.title) == reordered,
+              "an ordinary edit must not move the credential")
+
+        // Changing a credential's category re-appends it to the end of the
+        // NEW category, rather than carrying a stale position across.
+        var recategorized = apple
+        recategorized.category = .email
+        guard case .success(let movedCategory) = final.update(recategorized) else {
+            check(false, "update across categories should succeed"); return
+        }
+        check(movedCategory.sortOrder == 0,
+              "moving into a category with nothing else yet should land at position 0, got \(movedCategory.sortOrder)")
+
+        // A no-op reorder (the current order, handed straight back) must
+        // still report success rather than fail.
+        let cloudOnly = final.credentials.filter { $0.category == .cloud }
+            .sorted(by: VaultCredential.displayOrder).map(\.id)
+        guard case .success = final.reorderCategory(.cloud, orderedIDs: cloudOnly) else {
+            check(false, "reordering into the identical order should still report success")
+            return
+        }
+    }
 
     /// `loadState()` is memoized on the file's (mtime, size) because the Home
     /// canvas calls it on every hub render - so the property worth asserting is

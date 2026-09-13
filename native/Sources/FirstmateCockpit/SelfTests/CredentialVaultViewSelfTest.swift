@@ -100,6 +100,8 @@ enum CredentialVaultViewSelfTest {
         checkThemeSweep(scratch: scratch, window: window, check)
         checkListBodyFillsItsCard(check)
         checkHeaderlessCardGivesItsBodyTheCard(check)
+        checkTouchIDIndicatorAlignmentAndOrdering(scratch: scratch, window: window, check)
+        checkDragReorderWithinCategory(scratch: scratch, window: window, check)
 
         window.contentView = nil
         if ok {
@@ -1140,6 +1142,282 @@ enum CredentialVaultViewSelfTest {
                   "\(id): the list should still render its record row after a theme change")
         }
     }
+
+    // MARK: The Touch ID glyph's alignment and ordering
+
+    /// The captain's report, and his own follow-up correction: the fingerprint
+    /// glyph sat inline next to the title (vertically centered only against
+    /// that title *line*), which read as visibly higher than the Reveal/Copy/
+    /// Overflow cluster (centered against the row's whole height) - and,
+    /// separately, he wanted it moved into that same cluster as its FIRST
+    /// item, after the tag chip: "[AWS chip] [fingerprint] [eye] [copy] [...]".
+    ///
+    /// Both are geometry claims, so both are measured directly rather than
+    /// read off the model - `CredentialVaultListSection.Item.requiresTouchIDIndicator`
+    /// being `true` proves nothing about where the glyph actually lands.
+    ///
+    /// Swept across three real themes (one Daylight-family, two legacy - one
+    /// light, one dark), per the brief's own explicit ask that this be
+    /// verified "across at least 2-3 themes including light and dark" - even
+    /// though the geometry itself is not expected to depend on colour, a
+    /// theme change re-fires this app's whole app-wide layout/repaint path
+    /// (`ThemeManager.reapplyCurrentTheme`), so measuring under only the
+    /// ambient default would not actually prove that. The captain's own real
+    /// theme is saved and restored, matching `Phase3PolishSelfTest.checkSuitesRestoreTheTheme`'s
+    /// rule rather than relying on the suite's own top-level `defer`, since
+    /// later cases in this file must not measure under a theme this one left
+    /// behind.
+    private static func checkTouchIDIndicatorAlignmentAndOrdering(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {
+        print("\n-- the Touch ID glyph is aligned with, and ordered inside, the icon cluster --")
+        let captainsTheme = ThemeManager.shared.theme
+        defer { ThemeManager.shared.setTheme(captainsTheme) }
+
+        for themeID in ["helm-dark", "helm-light", "daylight"] {
+            guard let theme = HelmTheme.allThemes.first(where: { $0.id == themeID }) else {
+                check(false, "theme \(themeID) should exist")
+                continue
+            }
+            ThemeManager.shared.setTheme(theme)
+
+            let (controller, _) = mounted(scratch, name: "touchid-\(themeID)", window: window) { store in
+                _ = store.add(VaultCredential(title: "AWS Prod", category: .cloud, account: "root",
+                                              secret: "v", tags: ["prod"], requiresTouchIDToReveal: true))
+            }
+            let list = controller.debugList
+            guard let row = firstRecordRow(list) else {
+                check(false, "\(themeID): the seeded credential should render a record row")
+                continue
+            }
+            guard let touchID = list.debugTouchIDIndicator(row) else {
+                check(false, "\(themeID): a credential requiring Touch ID should show the fingerprint glyph")
+                continue
+            }
+            guard let reveal = list.debugRevealButton(row), let copy = list.debugCopyButton(row) else {
+                check(false, "\(themeID): the row should still carry its Reveal/Copy buttons")
+                continue
+            }
+            check(list.debugRowMenu(row) != nil, "\(themeID): the row should still carry its overflow menu")
+
+            // 1. Vertical alignment: the fingerprint and the buttons are
+            //    siblings in the same `NSStackView` (`actions`), so their raw
+            //    `.frame`s already share one coordinate space - no
+            //    conversion needed, and none would paper over a real
+            //    mismatch the way converting to a common but differently-
+            //    scaled ancestor might.
+            check(abs(touchID.frame.midY - reveal.frame.midY) < 0.5,
+                  "\(themeID): the fingerprint should share the Reveal button's centerY, got \(touchID.frame.midY) vs \(reveal.frame.midY)")
+            check(abs(touchID.frame.midY - copy.frame.midY) < 0.5,
+                  "\(themeID): the fingerprint should share the Copy button's centerY too, got \(touchID.frame.midY) vs \(copy.frame.midY)")
+
+            // 2. Ordering inside the cluster: fingerprint, then Reveal, then
+            //    Copy.
+            check(touchID.frame.minX < reveal.frame.minX,
+                  "\(themeID): the fingerprint should render BEFORE Reveal, got fingerprint at \(touchID.frame.minX), reveal at \(reveal.frame.minX)")
+            check(reveal.frame.minX < copy.frame.minX,
+                  "\(themeID): Reveal should render before Copy, got \(reveal.frame.minX) vs \(copy.frame.minX)")
+
+            // 3. The tag chip still sits BEFORE the whole cluster, fingerprint
+            //    included - "tag chip FIRST, then ALL icons grouped together
+            //    after it."
+            guard let accentRow = list.debugAccentRow(row) else {
+                check(false, "\(themeID): the row should expose its HelmAccentRow")
+                continue
+            }
+            let geometry = accentRow.debugGeometry()
+            check(geometry.chipVisible, "\(themeID): the seeded credential's tag should render a chip")
+            if let trailingFrame = geometry.trailingAccessoryFrame {
+                check(geometry.chipFrame.maxX <= trailingFrame.minX + 0.5,
+                      "\(themeID): the chip should sit before the icon cluster (which now includes the fingerprint) - "
+                      + "chip ends at \(geometry.chipFrame.maxX), cluster starts at \(trailingFrame.minX)")
+            } else {
+                check(false, "\(themeID): the row should report a trailing accessory frame")
+            }
+        }
+
+        // Most rows have no Touch ID requirement at all, and must show no
+        // fingerprint - the brief's own explicit requirement. One pass is
+        // enough for an absence check.
+        let (plainController, _) = mounted(scratch, name: "touchid-off", window: window) { store in
+            _ = store.add(VaultCredential(title: "No Touch ID here", secret: "v"))
+        }
+        guard let plainRow = firstRecordRow(plainController.debugList) else {
+            check(false, "the plain credential should render a row")
+            return
+        }
+        check(plainController.debugList.debugTouchIDIndicator(plainRow) == nil,
+              "a credential with no Touch ID requirement should show no fingerprint glyph")
+    }
+
+    // MARK: Drag-and-drop reorder
+
+    /// The captain's second correction, driven end to end: "I need that
+    /// freedom to rearrange... I should be able to sort anything irrespective
+    /// of whether it's created first or last." Every real `NSTableViewDataSource`
+    /// drag method the list implements is called directly - the same
+    /// technique `ShiftBoardViewSelfTest`'s own `StubDraggingInfo` uses for
+    /// its Kanban board, since `NSDraggingInfo` is a protocol AppKit
+    /// implements privately and there is no public way to simulate a real
+    /// mouse-driven drag session headlessly. What is real: the pasteboard, the
+    /// list's own drag/drop code, the controller's `reorderCredential`, and
+    /// the store's `reorderCategory` persistence - only the mouse events
+    /// themselves are stood in for.
+    private static func checkDragReorderWithinCategory(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {
+        print("\n-- drag-and-drop reorder: real NSTableViewDataSource methods, end to end through the store --")
+        let (controller, store) = mounted(scratch, name: "dragreorder", window: window) { store in
+            // Added in THIS order - Zebra, Apple, Mango - so the initial
+            // manual position (by add-time) is deliberately NOT alphabetical.
+            // A reorder that happened to land on the alphabetical order by
+            // coincidence would not prove the fix works; this rules that out.
+            _ = store.add(VaultCredential(title: "Zebra AWS", category: .cloud, secret: "z"))
+            _ = store.add(VaultCredential(title: "Apple AWS", category: .cloud, secret: "a"))
+            _ = store.add(VaultCredential(title: "Mango AWS", category: .cloud, secret: "m"))
+        }
+        let list = controller.debugList
+        func rowIndex(forTitle title: String) -> Int? {
+            (0..<list.debugRowCount).first { list.debugItem($0)?.content.title == title }
+        }
+        func credentialID(forTitle title: String) -> String? {
+            rowIndex(forTitle: title).flatMap { list.debugItem($0)?.credentialID }
+        }
+        guard let mangoID = credentialID(forTitle: "Mango AWS"), let mangoRow = rowIndex(forTitle: "Mango AWS"),
+              let zebraID = credentialID(forTitle: "Zebra AWS"), let zebraRow = rowIndex(forTitle: "Zebra AWS") else {
+            check(false, "the three seeded credentials should all render rows")
+            return
+        }
+        check(store.credentials.sorted(by: VaultCredential.displayOrder).map(\.title) == ["Zebra AWS", "Apple AWS", "Mango AWS"],
+              "precondition: the initial manual order should be add-order, not alphabetical")
+
+        let table = list.debugTable
+
+        // 1. `pasteboardWriterForRow` offers the dragged credential's own id,
+        //    and a group-header row is never draggable - it has no credential.
+        guard let writer = list.tableView(table, pasteboardWriterForRow: mangoRow) as? NSPasteboardItem,
+              writer.string(forType: CredentialVaultDragPasteboard.credentialType) == mangoID else {
+            check(false, "pasteboardWriterForRow should write the dragged credential's own id")
+            return
+        }
+        if let groupRow = (0..<list.debugRowCount).first(where: {
+            if case .group = list.debugItem($0)?.kind { return true }
+            return false
+        }) {
+            check(list.tableView(table, pasteboardWriterForRow: groupRow) == nil,
+                  "a group-header row should never be draggable")
+        }
+
+        // 2. Drag Mango to the very top of the category - "before Zebra", the
+        //    boundary at Zebra's own row index, `.above` (insert-between-rows).
+        let mangoDrop = dropInfo(credentialID: mangoID, on: window)
+        let operation = list.tableView(table, validateDrop: mangoDrop, proposedRow: zebraRow, proposedDropOperation: .above)
+        check(operation == .move, "dropping within the same category should be accepted with .move, got \(operation)")
+        let accepted = list.tableView(table, acceptDrop: mangoDrop, row: zebraRow, dropOperation: .above)
+        check(accepted, "acceptDrop should report success for a valid same-category drop")
+
+        let afterDrag = store.credentials.sorted(by: VaultCredential.displayOrder).map(\.title)
+        check(afterDrag == ["Mango AWS", "Zebra AWS", "Apple AWS"],
+              "dragging Mango to the top should move it there and persist immediately, got \(afterDrag)")
+
+        // The model reordering itself is necessary but not sufficient - the
+        // LIST also has to actually render that order (`renderList` sorting
+        // by `VaultCredential.displayOrder` rather than falling back to
+        // alphabetical), or a captain's drag would persist invisibly while
+        // the row he was looking at snapped straight back. `store.onChange`
+        // already re-rendered the page on the reorder above; read the rows
+        // back rather than assuming it.
+        let renderedOrder = (0..<list.debugRowCount).compactMap { row -> String? in
+            guard list.debugItem(row)?.category == .cloud else { return nil }
+            return list.debugItem(row)?.content.title
+        }
+        check(renderedOrder == afterDrag,
+              "the rendered list must show the manual order too, not just the store, got \(renderedOrder)")
+
+        // 3. The reorder actually PERSISTED - the acceptance bar this task
+        //    specified - confirmed by reloading a genuinely fresh, SEPARATE
+        //    store over the same directory, not the in-memory model. The
+        //    mounted `store` is deliberately left unlocked here (unlike
+        //    `CredentialVaultSelfTest`'s equivalent checks) because this test
+        //    keeps driving it in steps 4-6 below; locking it would make its
+        //    own `add` refuse and fail silently.
+        let reopenedStore = CredentialVaultStore(root: scratch.appendingPathComponent("dragreorder", isDirectory: true))
+        var outcome: VaultUnlockOutcome?
+        reopenedStore.unlock(masterPassword: "view-test-password") { o in outcome = o }
+        let deadline = Date().addingTimeInterval(10)
+        while outcome == nil, Date() < deadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
+        }
+        check(outcome == .unlocked, "the reordered vault should still unlock after a fresh load")
+        check(reopenedStore.credentials.sorted(by: VaultCredential.displayOrder).map(\.title) == afterDrag,
+              "the drag-and-drop reorder must survive a fresh CredentialVaultStore load")
+
+        // 4. Cross-category drops are refused outright - reordering never
+        //    re-categorises a credential.
+        _ = store.add(VaultCredential(title: "Gmail personal", category: .email, secret: "g"))
+        controller.debugRender()
+        guard let gmailRow = rowIndex(forTitle: "Gmail personal") else {
+            check(false, "the email credential should render")
+            return
+        }
+        let crossCategoryDrop = dropInfo(credentialID: zebraID, on: window)
+        let crossOperation = list.tableView(table, validateDrop: crossCategoryDrop, proposedRow: gmailRow,
+                                            proposedDropOperation: .above)
+        check(crossOperation == [], "dropping into a different category's group must be refused, got \(crossOperation)")
+
+        // 5. Only `.above` is meaningful for a reorder - `.on` (dropping ONTO
+        //    a row) has no defined behaviour here and must be refused too.
+        let onOperation = list.tableView(table, validateDrop: mangoDrop, proposedRow: zebraRow, proposedDropOperation: .on)
+        check(onOperation == [], "a `.on` drop operation should be refused, got \(onOperation)")
+
+        // 6. A drag from anywhere else - a plain string, no credential id at
+        //    all - must never be mistaken for one of this list's own rows.
+        let foreignDrop = dropInfo(credentialID: nil, on: window)
+        let foreignOperation = list.tableView(table, validateDrop: foreignDrop, proposedRow: zebraRow,
+                                              proposedDropOperation: .above)
+        check(foreignOperation == [], "a drag carrying no credential id should be refused, got \(foreignOperation)")
+    }
+
+    /// A stand-in for the `NSDraggingInfo` AppKit hands a drop target - the
+    /// same shape `ShiftBoardViewSelfTest`'s own stub uses, for the same
+    /// reason: `NSDraggingInfo` is a protocol AppKit implements privately, and
+    /// the destination side of a reorder only ever reads the pasteboard.
+    private static func dropInfo(credentialID: String?, on window: NSWindow) -> NSDraggingInfo {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("credential-vault-drop-\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        if let credentialID {
+            pasteboard.writeObjects([CredentialVaultDragPasteboard.item(credentialID: credentialID)])
+        } else {
+            pasteboard.setString("not a credential", forType: .string)
+        }
+        return CredentialVaultStubDraggingInfo(pasteboard: pasteboard, window: window)
+    }
+}
+
+private final class CredentialVaultStubDraggingInfo: NSObject, NSDraggingInfo {
+    let draggingPasteboard: NSPasteboard
+    private let window: NSWindow
+
+    init(pasteboard: NSPasteboard, window: NSWindow) {
+        self.draggingPasteboard = pasteboard
+        self.window = window
+    }
+
+    var draggingDestinationWindow: NSWindow? { window }
+    var draggingSourceOperationMask: NSDragOperation { .move }
+    var draggingLocation: NSPoint { .zero }
+    var draggedImageLocation: NSPoint { .zero }
+    var draggedImage: NSImage? { nil }
+    var draggingSource: Any? { nil }
+    var draggingSequenceNumber: Int { 0 }
+    var animatesToDestination: Bool = false
+    var numberOfValidItemsForDrop: Int = 1
+    var draggingFormation: NSDraggingFormation = .default
+    var springLoadingHighlight: NSSpringLoadingHighlight { .none }
+
+    func slideDraggedImage(to screenPoint: NSPoint) {}
+    func enumerateDraggingItems(options: NSDraggingItemEnumerationOptions,
+                                for view: NSView?,
+                                classes classArray: [AnyClass],
+                                searchOptions: [NSPasteboard.ReadingOptionKey: Any],
+                                using block: (NSDraggingItem, Int, UnsafeMutablePointer<ObjCBool>) -> Void) {}
+    func resetSpringLoading() {}
 }
 
 #endif
