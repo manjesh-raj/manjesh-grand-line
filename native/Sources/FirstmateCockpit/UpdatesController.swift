@@ -573,12 +573,10 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         var rowViews: [NSView] = []
         var sectionSeparators: [NSView] = []
         for (index, row) in categoryRows.enumerated() {
-            // D1's mitigation: a short category keeps every row's buttons,
-            // and a long one keeps its first row's, so the affordance is
-            // never invisible.
-            rowViews.append(buildRow(row,
-                                     actionReveal: ReviewPRListView.actionReveal(
-                                        row: index, of: categoryRows.count)))
+            // Every row keeps its Check/Update button at rest - see
+            // `buildRow`'s own note for the captain report that retired D1's
+            // hover-reveal on this page.
+            rowViews.append(buildRow(row))
             if index < categoryRows.count - 1 {
                 let sep = separator()
                 rowViews.append(sep)
@@ -610,8 +608,9 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
 
     // MARK: Row
 
-    private func buildRow(_ row: UpdateRow,
-                          actionReveal: HelmAccentRow.ActionReveal = .always) -> NSView {
+    /// Builds one tool row. Its Check/Update buttons are **always** visible,
+    /// never hover-revealed - see the `actionReveal` argument below.
+    private func buildRow(_ row: UpdateRow) -> NSView {
         // Check / Update
         row.checkButton.target = self
         row.checkButton.action = #selector(checkTapped(_:))
@@ -649,9 +648,29 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
             trailingViews: [row.checkButton, row.updateButton, row.installInBootstrapButton],
             detailsTarget: self,
             detailsAction: #selector(detailsTapped(_:)),
-            // D1: thirteen rows each carrying a permanent "Check" button is
-            // what the audit measured here. The status pill stays.
-            actionReveal: actionReveal == .always ? .always : .onAim,
+            // This page deliberately opts OUT of D1's hover-reveal
+            // (`ToolRowLayout.ActionReveal.onAim`), and must keep doing so.
+            //
+            // It used to pass `ReviewPRListView.actionReveal(row:of:)`, whose
+            // discoverability rule is "a category of three rows or fewer keeps
+            // every row's buttons, a longer one keeps only its first row's".
+            // On this page's real catalog that resolves to a split the captain
+            // reported as broken: "npm packages" has five rows, so `tasks-axi`
+            // showed its Check button while `gh-axi`, `chrome-devtools-axi`,
+            // `lavish-axi` and `quota-axi` rendered an empty gap beside their
+            // status pill - directly above "Homebrew", whose three rows all
+            // showed theirs. Two treatments for one kind of row, side by side
+            // in one list, with nothing on screen explaining the difference.
+            //
+            // It also made this page the odd one out among the five that share
+            // `ToolRowLayout`: Bootstrap, Automation, GitHub Sync and Vault all
+            // take the `.always` default, so a captain moving between them saw
+            // the same row component behave two different ways.
+            //
+            // D1 itself is untouched where it was approved - `HelmAccentRow`'s
+            // own mirror of this policy still backs Review's PR list and the
+            // Hosts/Keys/Snippets lists.
+            actionReveal: .always,
             identifier: row.item.id
         )
         row.logContainer.isHidden = true // collapsed until the details chevron is tapped.
@@ -955,6 +974,41 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     // MARK: Probe surface (debug builds only, GL-27)
 
     var debugRowCount: Int { rows.count }
+
+    /// What one row's action column is ACTUALLY painted with, for the
+    /// regression guard on the captain-reported "the Check button is missing
+    /// on some rows" bug (`UpdatesActionVisibilitySelfTest`).
+    ///
+    /// `actionsAlpha` is the reading that matters and is why this reads back
+    /// rather than re-deriving: the bug hid the buttons with `alphaValue`,
+    /// never `isHidden`, so every `isHidden`-shaped check - and every
+    /// `cacheDisplay` render, which ignores `alphaValue` - passed while the
+    /// captain was looking at an empty gap.
+    struct DebugRowActionState {
+        let id: String
+        let name: String
+        let category: String
+        let actionsAlpha: CGFloat
+        let checkHidden: Bool
+        let updateHidden: Bool
+    }
+
+    var debugRowActionStates: [DebugRowActionState] {
+        rows.map {
+            DebugRowActionState(id: $0.item.id,
+                                name: $0.item.name,
+                                category: $0.item.category,
+                                actionsAlpha: $0.toolRowViews.trailingStack.alphaValue,
+                                checkHidden: $0.checkButton.isHidden,
+                                updateHidden: $0.updateButton.isHidden)
+        }
+    }
+
+    /// The real Check button, so a test can drive its own hover feedback
+    /// rather than asserting a colour it computed itself.
+    func debugCheckButton(atRow index: Int) -> HelmButton? {
+        rows.indices.contains(index) ? rows[index].checkButton : nil
+    }
 
     /// Drives the real status-change path a completed check takes.
     func debugSetStatus(_ status: DependencyStatus, atRow index: Int) {

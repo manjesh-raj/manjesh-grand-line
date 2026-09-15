@@ -2483,6 +2483,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_GITHUB_SYNC_REFRESH_TESTS"] == "1
     exit(GitHubSyncRefreshSelfTest.run() ? 0 : 1)
 }
 
+// A real, captain-reported bug on Setup > Updates: most tool rows rendered
+// an empty gap where the "Check" button should be, revealing it only on
+// hover, while other rows in the same list showed it at rest - see
+// UpdatesActionVisibilitySelfTest.swift's header for the root cause.
+if ProcessInfo.processInfo.environment["FM_RUN_UPDATES_ACTION_VISIBILITY_TESTS"] == "1" {
+    exit(UpdatesActionVisibilitySelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_UPDATES_REFRESH_BUTTON_THEME_TESTS"] == "1" {
     exit(UpdatesRefreshButtonThemeSelfTest.run() ? 0 : 1)
 }
