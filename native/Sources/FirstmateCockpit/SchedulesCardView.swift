@@ -75,6 +75,9 @@ final class SchedulesCardView: NSObject {
     private var runningScheduleID: UUID?
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var searchQuery: String = ""
+    /// Which sidebar collection is showing. `.all` is the no-filter state, so
+    /// a page that never sets one behaves exactly as this card always did.
+    private var statusFilter: StatusFilter = .all
 
     private let rowsStack = NSStackView()
     private let countBadge = NSTextField(labelWithString: "")
@@ -125,6 +128,10 @@ final class SchedulesCardView: NSObject {
             guard trimmed != self.searchQuery else { return }
             self.searchQuery = trimmed
             self.rebuild()
+            // The sidebar's counts are "how many match *under the current
+            // search*", so typing has to move them - the same contract
+            // `CredentialVaultSidebar.setCounts` already carries.
+            self.onStateChanged?()
         }
 
         card.setHeader(
@@ -201,6 +208,72 @@ final class SchedulesCardView: NSObject {
         }
     }
 
+    /// The sidebar's WORKSPACE collections. Deliberately *not* the same type
+    /// as `Group`: a group is how the list is sectioned (three sections, always
+    /// all three when non-empty), a filter is which schedules are on the page
+    /// at all, and `.active` deliberately spans two groups (a needs-you row is
+    /// still an active schedule). Collapsing them into one enum would make
+    /// "Active" mean "healthy", which is a different and wrong claim.
+    enum StatusFilter: String, CaseIterable {
+        case all
+        case needsYou
+        case active
+        case paused
+
+        /// The sidebar row's own label.
+        var title: String {
+            switch self {
+            case .all: return "All Schedules"
+            case .needsYou: return "Needs You"
+            case .active: return "Active"
+            case .paused: return "Paused"
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .all: return "square.grid.2x2.fill"
+            case .needsYou: return "exclamationmark.circle.fill"
+            case .active: return "bolt.horizontal.circle.fill"
+            case .paused: return "pause.circle.fill"
+            }
+        }
+
+        func accepts(_ schedule: AutomationSchedule) -> Bool {
+            switch self {
+            case .all: return true
+            case .needsYou: return SchedulesCardView.group(for: schedule) == .needsYou
+            case .active: return schedule.isEnabled
+            case .paused: return !schedule.isEnabled
+            }
+        }
+    }
+
+    /// Each collection's count, computed against the *current* search - so the
+    /// sidebar says where the matches are rather than only what exists, which
+    /// is the same contract `CredentialVaultSidebar.setCounts` already has.
+    ///
+    /// Counted off the very array the rows render, so a count and its list can
+    /// never disagree within a frame.
+    static func filterCounts(_ schedules: [AutomationSchedule], query: String) -> [StatusFilter: Int] {
+        let searched = schedules.filter { matches($0, query: query) }
+        var counts: [StatusFilter: Int] = [:]
+        for filter in StatusFilter.allCases {
+            counts[filter] = searched.filter { filter.accepts($0) }.count
+        }
+        return counts
+    }
+
+    /// Set by the page's sidebar. Re-renders only on a real change, so a
+    /// caller restoring state costs nothing.
+    func setStatusFilter(_ filter: StatusFilter) {
+        guard filter != statusFilter else { return }
+        statusFilter = filter
+        rebuild()
+    }
+
+    var currentSearchQuery: String { searchQuery }
+
     /// A schedule's group. A never-run schedule counts as healthy rather than
     /// as needing you: it has not asked for anything, and putting it under
     /// "Needs you" would be a claim about a run that has not happened.
@@ -250,13 +323,27 @@ final class SchedulesCardView: NSObject {
             return
         }
 
-        let visible = schedules.filter { Self.matches($0, query: searchQuery) }
+        let visible = schedules.filter {
+            Self.matches($0, query: searchQuery) && statusFilter.accepts($0)
+        }
         guard !visible.isEmpty else {
-            addFullWidth(HelmEmptyState(
-                symbol: "magnifyingglass",
-                body: "No schedule matches \u{201C}\(searchQuery)\u{201D}. "
-                    + "Search covers the action name, the cadence, the notify setting and the last run."
-            ))
+            // Say which of the two narrowings actually emptied the list. A
+            // "no match for ..." sentence on a page emptied by the *filter*
+            // would point the captain at a search box that is doing nothing.
+            if searchQuery.isEmpty {
+                addFullWidth(HelmEmptyState(
+                    symbol: statusFilter.symbol,
+                    body: "No schedule is \u{201C}\(statusFilter.title)\u{201D} right now. "
+                        + "Pick \u{201C}All Schedules\u{201D} to see every one."
+                ))
+            } else {
+                addFullWidth(HelmEmptyState(
+                    symbol: "magnifyingglass",
+                    body: "No schedule matches \u{201C}\(searchQuery)\u{201D}"
+                        + (statusFilter == .all ? ". " : " under \u{201C}\(statusFilter.title)\u{201D}. ")
+                        + "Search covers the action name, the cadence, the notify setting and the last run."
+                ))
+            }
             return
         }
 
@@ -409,8 +496,26 @@ final class SchedulesCardView: NSObject {
             control.setContentCompressionResistancePriority(.required, for: .horizontal)
         }
 
-        let row = HelmAccentRow(trailingAccessory: actions, hover: false,
-                                maxContentWidth: HelmAccentRow.recordContentWidth)
+        // **No `maxContentWidth` here, deliberately - this is the width half of
+        // `fm/grand-line-schedules-sidebar-fullwidth-fix`.**
+        //
+        // The row opted into D2's `recordContentWidth` (900) when the redesign
+        // landed. That cap's own doc comment reasons that "the captain's own
+        // 1512pt window is essentially unaffected" - true of the pages it was
+        // measured against, every one of which already has a list column near
+        // 900 (Poneglyph's three-column page, Hosts' capped column). This page
+        // is a *single* gutter-to-gutter column, so the same 900 left the
+        // trailing cluster stranded mid-row: measured at a 1512pt window, the
+        // toggle sat at x=1265 inside a row running to x=1943 - some 680pt of
+        // dead space in every row, which is what the captain reported as the
+        // page not using its width. That is also markedly more than the ~370pt
+        // of dead gutter he had a page-level cap removed from Hosts over.
+        //
+        // The sidebar is what keeps the line length honest without a cap: it
+        // takes `HelmPageSidebar.width` plus a column gap out of the content
+        // before a row ever sees it. So the row fills the column it is given,
+        // and the column is narrower than the window.
+        let row = HelmAccentRow(trailingAccessory: actions, hover: false)
         row.configure(rowContent(schedule, now: now, isRunning: isRunning), theme: theme)
         if let next = ScheduleDueCalculator.nextOccurrence(of: schedule.cadence, after: now, calendar: .current),
            schedule.isEnabled {

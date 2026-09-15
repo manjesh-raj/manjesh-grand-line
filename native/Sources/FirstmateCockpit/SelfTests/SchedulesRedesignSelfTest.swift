@@ -39,6 +39,11 @@ enum SchedulesRedesignSelfTest {
         checkTilesAndPanelsMatchTheRows(&ok)
         checkReviewHandOff(&ok)
         checkTogglePreserved(&ok)
+        checkSidebarShape(&ok)
+        checkSidebarFiltersNarrowTheList(&ok)
+        checkSidebarCountsFollowTheSearch(&ok)
+        checkRunHistoryIsAnActionNotAFilter(&ok)
+        checkRowsUseTheFullWidth(&ok)
         print(ok ? "\nPASS" : "\nFAIL")
         return ok
     }
@@ -422,4 +427,244 @@ enum SchedulesRedesignSelfTest {
         if ok { print("  OK - toggle writes through and regroups, menu keeps all four actions") }
     }
 }
+
+
+// MARK: - The sidebar and the width (fm/grand-line-schedules-sidebar-fullwidth-fix)
+//
+// The captain's two corrections after using the redesign: the reference's left
+// navigation column was missing, and the page did not use its width.
+//
+// The width half is the one worth a measured guard. The redesign opted its rows
+// into D2's `recordContentWidth` (900), which is right for a page whose list
+// column is already about that wide and wrong for this one - a single
+// gutter-to-gutter column, where it stranded the trailing cluster mid-row. So
+// the check measures where the controls actually land relative to the card's
+// own trailing edge, rather than asserting the absence of a constraint: a
+// future re-cap at any value fails it, and so does a re-cap that happens to be
+// spelled differently.
+
+extension SchedulesRedesignSelfTest {
+
+    /// Every id the sidebar offers, in order.
+    private static var expectedSidebarIDs: [String] {
+        SchedulesCardView.StatusFilter.allCases.map(\.rawValue) + ["run-history"]
+    }
+
+    private static func mountedPage(_ store: ScheduleStore,
+                                    width: CGFloat = 1512) -> (SchedulesController, NSWindow) {
+        let controller = SchedulesController(scheduleStore: store)
+        let window = mount(controller, width: width)
+        controller.viewWillAppear()
+        controller.view.layoutSubtreeIfNeeded()
+        return (controller, window)
+    }
+
+    /// A schedule per collection, so no count is trivially zero.
+    private static func seedOnePerCollection(_ store: ScheduleStore) {
+        store.add(AutomationSchedule(action: .forkSync,
+                                     cadence: .daily(hour: 11, minute: 0), notifyOn: .changeOnly))
+        store.add(AutomationSchedule(action: .toolUpdateCheck,
+                                     cadence: .daily(hour: 9, minute: 30), notifyOn: .always))
+        var needsYou = AutomationSchedule(action: .configBackupExport,
+                                          cadence: .daily(hour: 6, minute: 0), notifyOn: .always)
+        needsYou.lastRun = ScheduleRunRecord(verdict: .changed,
+                                             summary: "2 of 8 forks fast-forwarded", at: Date())
+        store.add(needsYou)
+        var paused = AutomationSchedule(action: .vaultRecipeExport,
+                                        cadence: .daily(hour: 7, minute: 0), notifyOn: .changeOnly)
+        paused.isEnabled = false
+        store.add(paused)
+    }
+
+    // MARK: 8 - the column exists, and says only what it can back
+
+    static func checkSidebarShape(_ ok: inout Bool) {
+        print("\n-- the page has its own nav column, and no row that opens nothing --")
+        let store = scratchStore()
+        seedOnePerCollection(store)
+        let (controller, _) = mountedPage(store)
+        let sidebar = controller.debugSidebar
+
+        if sidebar.debugRowIDs != expectedSidebarIDs {
+            print("  FAIL rows \(sidebar.debugRowIDs), expected \(expectedSidebarIDs)")
+            ok = false
+        }
+        if sidebar.debugHeaders != ["Workspace", "Manage"] {
+            print("  FAIL headers \(sidebar.debugHeaders), expected Workspace then Manage")
+            ok = false
+        }
+        // The reference lists "Preferences"; this app has no schedule-settings
+        // surface at all, so a row for it would open nothing. Absent on
+        // purpose - the same call `CredentialVaultSidebar` made about the
+        // reference's own Favorites/Recently-deleted rows.
+        if sidebar.debugRowTitles.contains(where: { $0.localizedCaseInsensitiveContains("preferences") }) {
+            print("  FAIL a Preferences row is present with no preferences behind it")
+            ok = false
+        }
+        // It opens on the no-filter state, so the page a captain lands on is
+        // the whole list.
+        if sidebar.debugSelectedIndex != 0 {
+            print("  FAIL the column should open on All Schedules, got \(String(describing: sidebar.debugSelectedIndex))")
+            ok = false
+        }
+        print("  rows: \(sidebar.debugRowTitles)")
+    }
+
+    // MARK: 9 - a filter really narrows the list
+
+    static func checkSidebarFiltersNarrowTheList(_ ok: inout Bool) {
+        print("\n-- each collection narrows the list, driven through the real row --")
+        let store = scratchStore()
+        seedOnePerCollection(store)
+        let (controller, _) = mountedPage(store)
+        let sidebar = controller.debugSidebar
+
+        // Counted off the store rather than hardcoded, so the case cannot drift
+        // from the seed.
+        let all = store.schedules
+        let expected: [SchedulesCardView.StatusFilter: Int] = [
+            .all: all.count,
+            .needsYou: all.filter { SchedulesCardView.group(for: $0) == .needsYou }.count,
+            .active: all.filter(\.isEnabled).count,
+            .paused: all.filter { !$0.isEnabled }.count,
+        ]
+        // A fixture that cannot tell the filters apart proves nothing.
+        if Set(expected.values).count < 3 {
+            print("  FAIL the fixture must give the collections different counts, got \(expected)")
+            ok = false
+        }
+
+        for (index, filter) in SchedulesCardView.StatusFilter.allCases.enumerated() {
+            sidebar.debugClickRow(index)
+            controller.view.layoutSubtreeIfNeeded()
+            let rows = controller.debugVisibleScheduleRowCount
+            if rows != expected[filter] {
+                print("  FAIL \(filter.title): \(rows) rows, expected \(expected[filter] ?? -1)")
+                ok = false
+            }
+            if sidebar.debugSelectedIndex != index {
+                print("  FAIL \(filter.title) should be selected after a click")
+                ok = false
+            }
+        }
+        // The counts the column reports have to agree with what it then shows.
+        let counts = SchedulesCardView.filterCounts(all, query: "")
+        for (filter, count) in expected where counts[filter] != count {
+            print("  FAIL \(filter.title) counted \(counts[filter] ?? -1), shows \(count)")
+            ok = false
+        }
+        print("  \(expected.map { "\($0.key.title)=\($0.value)" }.sorted().joined(separator: " "))")
+    }
+
+    // MARK: 10 - the counts are "under the current search", not "in the store"
+
+    static func checkSidebarCountsFollowTheSearch(_ ok: inout Bool) {
+        print("\n-- a collection counts what matches the search, not what exists --")
+        let store = scratchStore()
+        seedOnePerCollection(store)
+        let all = store.schedules
+
+        let unfiltered = SchedulesCardView.filterCounts(all, query: "")
+        // A query that matches one action and not the others.
+        let narrowed = SchedulesCardView.filterCounts(all, query: "Fork sync")
+        if narrowed[.all] == unfiltered[.all] {
+            print("  FAIL the search did not narrow the All count (\(narrowed[.all] ?? -1))")
+            ok = false
+        }
+        if (narrowed[.all] ?? 0) < 1 {
+            print("  FAIL the search matched nothing, so the case proves nothing")
+            ok = false
+        }
+        // Every collection must be a subset of All under the same query.
+        for filter in SchedulesCardView.StatusFilter.allCases where (narrowed[filter] ?? 0) > (narrowed[.all] ?? 0) {
+            print("  FAIL \(filter.title) counted more than All under the same search")
+            ok = false
+        }
+        print("  all=\(unfiltered[.all] ?? -1) -> \(narrowed[.all] ?? -1) under a search")
+    }
+
+    // MARK: 11 - Run History reveals, it does not filter
+
+    static func checkRunHistoryIsAnActionNotAFilter(_ ok: inout Bool) {
+        print("\n-- Run History reveals the panel this page already has --")
+        let store = scratchStore()
+        seedOnePerCollection(store)
+        let (controller, _) = mountedPage(store)
+        let sidebar = controller.debugSidebar
+
+        sidebar.debugClickRow(1)
+        controller.view.layoutSubtreeIfNeeded()
+        let selectedBefore = sidebar.debugSelectedIndex
+        let rowsBefore = controller.debugVisibleScheduleRowCount
+
+        guard let historyIndex = sidebar.debugRowIDs.firstIndex(of: "run-history") else {
+            print("  FAIL no Run History row")
+            ok = false
+            return
+        }
+        sidebar.debugClickRow(historyIndex)
+        controller.view.layoutSubtreeIfNeeded()
+
+        // An action must not latch: a nav row showing as selected would claim
+        // the list below it had been filtered to something.
+        if sidebar.debugSelectedIndex != selectedBefore {
+            print("  FAIL Run History moved the selection to \(String(describing: sidebar.debugSelectedIndex))")
+            ok = false
+        }
+        if controller.debugVisibleScheduleRowCount != rowsBefore {
+            print("  FAIL Run History changed the list (\(rowsBefore) -> \(controller.debugVisibleScheduleRowCount))")
+            ok = false
+        }
+        // It has to actually reveal something, or it is a row that does nothing.
+        if controller.debugScrollOffsetY <= 0 {
+            print("  FAIL Run History did not scroll to the activity panel (y=\(controller.debugScrollOffsetY))")
+            ok = false
+        }
+        print("  selection held at \(String(describing: selectedBefore)), scrolled to y=\(Int(controller.debugScrollOffsetY))")
+    }
+
+    // MARK: 12 - the row uses the width it is given
+
+    static func checkRowsUseTheFullWidth(_ ok: inout Bool) {
+        print("\n-- a row's controls reach the card's trailing edge --")
+        let store = scratchStore()
+        seedOnePerCollection(store)
+
+        // Wide enough that a 900pt content cap is unmistakable, which is the
+        // regression this guards.
+        for width in [CGFloat(1512), 1900] {
+            let (controller, _) = mountedPage(store, width: width)
+            guard let card = controller.debugSchedulesCard,
+                  let schedule = store.schedules.first,
+                  let columns = card.debugTrailingColumns(for: schedule.id) else {
+                print("  FAIL no rendered row to measure at \(Int(width))")
+                ok = false
+                continue
+            }
+            let cardWidth = card.card.bounds.width
+            // The time column is followed only by the overflow glyph and the
+            // toggle, so its own trailing edge sits a fixed, small distance
+            // from the card's. Pre-fix this measured in the hundreds.
+            let gap = cardWidth - columns.timeFrameInCard.maxX
+            if cardWidth <= 0 {
+                print("  FAIL the card never laid out at \(Int(width))")
+                ok = false
+                continue
+            }
+            if gap > Self.trailingGapCeiling {
+                print("  FAIL at \(Int(width)): the time column ends \(Int(gap))pt short of the card, "
+                      + "expected under \(Int(Self.trailingGapCeiling)) - the row is capped again")
+                ok = false
+            } else {
+                print("  \(Int(width))pt window: card \(Int(cardWidth))pt, controls end \(Int(gap))pt from its edge")
+            }
+        }
+    }
+
+    /// The overflow glyph plus the toggle plus their spacing, with headroom.
+    /// Comfortably under what a re-introduced content cap produces at any
+    /// window this page is used at.
+    private static let trailingGapCeiling: CGFloat = 160
+}
+
 #endif
