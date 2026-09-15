@@ -413,25 +413,47 @@ enum DaylightDrillPageSlice3SelfTest {
         print("  loaded -> \(two)")
 
         // The header's action has to be the card's *own* button, not a copy.
-        guard page.drillHeaderActions.count == 1,
-              let hoisted = page.drillHeaderActions.first as? NSButton else {
-            print("  FAIL expected exactly one header action, got \(page.drillHeaderActions.count)")
+        //
+        // `fm/grand-line-schedules-page-redesign` **widened this from "exactly
+        // one action" deliberately.** The `count == 1` was incidental - it
+        // recorded that the add button was the only page-level action this page
+        // had at the time, not a rule that it must stay alone. That redesign
+        // added a page-level Refresh, which is the shape every sibling page
+        // already carries (`checkAutomationRefreshAffordance` directly above
+        // pins the same affordance for Automation) and which earns its place
+        // here because half of what a row says is relative ("in 13h", "6h ago")
+        // and goes stale on a page left open. **The two properties that
+        // actually mattered are unchanged and still asserted**: each action is
+        // the owning view's *own* instance with its own target/action, and
+        // neither also renders in the page body - which is the duplication
+        // §6.4's cluster exists to remove.
+        let headerButtons = page.drillHeaderActions.compactMap { $0 as? NSButton }
+        guard headerButtons.count == page.drillHeaderActions.count else {
+            print("  FAIL every header action should be a button, got \(page.drillHeaderActions)")
             ok = false
             return
         }
-        if hoisted.title != "+ New Schedule" {
-            print("  FAIL header action is \"\(hoisted.title)\", not the add button")
+        guard let hoisted = headerButtons.first(where: { $0.title == "+ New Schedule" }) else {
+            print("  FAIL no add button in the header cluster: \(headerButtons.map(\.title))")
+            ok = false
+            return
+        }
+        guard let refresh = headerButtons.first(where: { $0.title == "Refresh" }) else {
+            print("  FAIL no Refresh in the header cluster: \(headerButtons.map(\.title))")
+            ok = false
+            return
+        }
+        for button in [hoisted, refresh] where button.target == nil || button.action == nil {
+            print("  FAIL \"\(button.title)\" lost its own target/action")
             ok = false
         }
-        if hoisted.target == nil || hoisted.action == nil {
-            print("  FAIL the hoisted button lost its own target/action")
-            ok = false
-        }
-        // ...and it must no longer also be in the page body.
-        let inBody = buttons(in: controller.view).filter { $0.title == "+ New Schedule" }
-        if !inBody.isEmpty {
-            print("  FAIL \"+ New Schedule\" still renders inside the page body (\(inBody.count) copies)")
-            ok = false
+        // ...and neither may also be in the page body.
+        for title in ["+ New Schedule", "Refresh"] {
+            let inBody = buttons(in: controller.view).filter { $0.title == title }
+            if !inBody.isEmpty {
+                print("  FAIL \"\(title)\" still renders inside the page body (\(inBody.count) copies)")
+                ok = false
+            }
         }
         // §6.4's "the old in-page explanatory line disappears".
         if !labels(in: controller.view, containing: "Pick one of the app's existing actions and a cadence, and it runs").isEmpty {
@@ -608,10 +630,10 @@ enum DaylightDrillPageSlice3SelfTest {
         if ok { print("  OK - corrected amber under Daylight, accentHex elsewhere, and the hue genuinely matters") }
     }
 
-    // MARK: 6 - §7's mono time column and honest ticks
+    // MARK: 6 - §7's mono time column and an honest run history
 
     private static func checkTimeColumnAndTicks(_ ok: inout Bool) {
-        print("\n-- §7: Schedules' mono time column, and no fabricated ticks --")
+        print("\n-- §7: Schedules' mono time column, and no fabricated run history --")
         let (_, _, _, _, store) = scratchStores()
 
         // Three cadences whose clock strings differ in width ("2:00 AM" vs
@@ -636,8 +658,26 @@ enum DaylightDrillPageSlice3SelfTest {
             return
         }
 
+        // `fm/grand-line-schedules-page-redesign` **inverted the second half of
+        // this check deliberately**, per this codebase's rule for an assertion
+        // that has become a record of overturned behaviour.
+        //
+        // What it used to assert: one glyph per row (`\u{2713}`/`\u{2022}`/`\u{2715}`)
+        // for the *single* `lastRun` on the schedule, because - in slice 2's own
+        // words - "a schedule has no run history to draw, so this does not
+        // invent one". That is no longer true: `ScheduleRunHistoryStore`
+        // (PR #289) keeps a real 7-day per-run log, and the redesign draws it as
+        // a sparkline in the same trailing slot the glyph occupied.
+        //
+        // The **property being guarded is unchanged, and is the one that
+        // matters**: a schedule with nothing on record draws nothing, rather
+        // than a row of placeholder bars padded out to a target count. These
+        // schedules are constructed directly with a `lastRun` and no history
+        // entries, which is exactly `ScheduleRunSparkline`'s documented
+        // fallback case - one real bar for one real run, and zero for a
+        // schedule that has never run.
         var xs: [CGFloat] = []
-        for (schedule, expectedTick) in [(never, ""), (clean, "\u{2713}"), (failed, "\u{2715}")] {
+        for (schedule, expectedBars) in [(never, 0), (clean, 1), (failed, 1)] {
             guard let cols = card.debugTrailingColumns(for: schedule.id) else {
                 print("  FAIL no time/tick columns for \(schedule.action.title)")
                 ok = false
@@ -649,12 +689,12 @@ enum DaylightDrillPageSlice3SelfTest {
                 print("  FAIL \(schedule.action.title): time column reads \"\(cols.time)\", expected \"\(expectedTime)\"")
                 ok = false
             }
-            if cols.ticks != expectedTick {
-                print("  FAIL \(schedule.action.title): ticks read \"\(cols.ticks)\", expected \"\(expectedTick)\"")
+            if cols.runBars != expectedBars {
+                print("  FAIL \(schedule.action.title): sparkline drew \(cols.runBars) bar(s), expected \(expectedBars)")
                 ok = false
             }
             xs.append(cols.timeFrameInCard.minX)
-            print("  \(expectedTime.padding(toLength: 9, withPad: " ", startingAt: 0)) x=\(fmt(cols.timeFrameInCard.minX)) w=\(fmt(cols.timeFrameInCard.width)) ticks=\"\(cols.ticks)\"")
+            print("  \(expectedTime.padding(toLength: 9, withPad: " ", startingAt: 0)) x=\(fmt(cols.timeFrameInCard.minX)) w=\(fmt(cols.timeFrameInCard.width)) bars=\(cols.runBars)")
         }
 
         // A *column*: one constant x, not a label drifting with the title.
@@ -666,7 +706,7 @@ enum DaylightDrillPageSlice3SelfTest {
             print("  FAIL the time column has no width")
             ok = false
         }
-        if ok { print("  OK - one aligned mono column, and a never-run schedule shows no tick") }
+        if ok { print("  OK - one aligned mono column, and a never-run schedule shows no run history") }
     }
 
     // MARK: 7 - gotcha (13)

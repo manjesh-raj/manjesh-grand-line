@@ -875,6 +875,10 @@ final class AppShellController: NSViewController {
         automation.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         githubSync.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         schedules.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        // `fm/grand-line-schedules-page-redesign`: a needs-you row's "Review"
+        // button hands off to the page that owns that action
+        // (`ScheduledActionKind.reviewDestination`). Same seam as Overview's.
+        schedules.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
         logAnalyzer.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         vault.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Poneglyph is its own destination now
