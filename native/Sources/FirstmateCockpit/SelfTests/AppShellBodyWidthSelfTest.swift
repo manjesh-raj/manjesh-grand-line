@@ -36,6 +36,15 @@
 // stays at its stale, pre-break value after the resize, since nothing
 // notices the tie is inactive - and reapplying the fix makes it pass again.
 //
+// `fm/grand-line-body-width-selfheal-layout-fix` then closed the *trigger*
+// gap that case could not see: the repair it exercises had exactly two call
+// sites, `loadView` and the resize observer, so a tie broken for any other
+// reason stayed broken until the captain resized or restarted - which is
+// what he had to do. `widthSelfHealsOnALayoutPassWithNoResize` is that
+// task's coverage, and it deliberately fires **no** resize; see its own doc
+// comment for why it asserts the tie's activity rather than a stale frame
+// (measured: a frame assertion cannot distinguish the two builds here).
+//
 // `fm/grandline-log-analyzer-body-width-regression` found and fixed a SECOND,
 // unrelated way to reach this same symptom (identical geometry, but nothing
 // to do with the width-tie staleness above): `LogAnalyzerController`'s
@@ -176,6 +185,7 @@ enum AppShellBodyWidthSelfTest {
             ("bodyContainerWidthTracksWindowAtLaunch", test_widthTracksWindowAtLaunch),
             ("bodyContainerWidthTracksASeriesOfResizes", test_widthTracksResizeSeries),
             ("widthSelfHealsAfterATieIsSilentlyBroken", test_widthSelfHealsAfterTieBroken),
+            ("widthSelfHealsOnALayoutPassWithNoResize", test_widthSelfHealsOnALayoutPassWithNoResize),
             ("bodyContainerTracksWindowAcrossRealisticWidths", test_widthTracksAcrossRealisticWidths),
             ("bodyContainerTracksWindowAcrossAllDestinations", test_widthTracksAcrossAllDestinations),
             ("bodyContainerTracksWindowAcrossAllSpaces", test_widthTracksAcrossAllSpaces),
@@ -340,6 +350,84 @@ enum AppShellBodyWidthSelfTest {
                 guard abs(actual - expected) < 0.5 else {
                     return "after resizing to \(width) wide: expected bodyContainer width \(expected), got \(actual)"
                 }
+            }
+            return nil
+        }
+    }
+
+    /// `fm/grand-line-body-width-selfheal-layout-fix`: the same self-heal,
+    /// proven from a **layout pass with no resize** - the trigger the repair
+    /// did not have until this task, and the whole reason the captain's
+    /// window stayed visibly broken (a full-width surface with only ~670pt of
+    /// it laid out, the rest undrawn black) until he quit and reopened. See
+    /// `data/grand-line-stray-window-glitch-scout/report.md` "BUG B".
+    ///
+    /// `widthSelfHealsAfterATieIsSilentlyBroken` above fires a real resize,
+    /// so it passes on either build: the `NSWindow.didResizeNotification`
+    /// observer has always been wired. This case fires **no** resize at all.
+    ///
+    /// **Why it asserts the tie's activity rather than a stale frame**, which
+    /// is not the obvious shape and was arrived at by measurement: there is
+    /// no way to make `bodyContainer`'s frame genuinely stale without
+    /// resizing the window, and resizing the window posts the very
+    /// notification this case exists to do without. A window's content view
+    /// is sized by the window, so setting its frame directly leaves
+    /// `bounds.width` reporting the new value while Auto Layout's engine
+    /// still solves against the window's real width - `bodyContainer` then
+    /// correctly resolves to the window's width, and a frame assertion says
+    /// nothing about which trigger repaired it. Whether the tie is **active
+    /// again** after an ordinary layout pass is what actually separates the
+    /// two builds. The break is asserted before the pass, so this can never
+    /// pass vacuously against a tie that was never broken.
+    ///
+    /// The closing resize is deliberately not the discriminator - it would
+    /// be repaired by the long-standing observer on either build. It is
+    /// there so this case proves the reactivated tie genuinely *binds*,
+    /// rather than only that an `isActive` flag flipped back.
+    ///
+    /// Confirmed, per this project's convention, to actually catch the
+    /// regression rather than just pass: removing
+    /// `reassertBodyContainerWidthTie()` from `ChromeFusionRootView`'s
+    /// `onLayout` hook leaves the tie inactive after the layout pass, and
+    /// restoring it passes again.
+    private static func test_widthSelfHealsOnALayoutPassWithNoResize() -> String? {
+        withScratchEnv {
+            let (window, shell) = makeMountedShell()
+            // The scout report's real screen width, so the value this
+            // reproduces is the one it actually captured (1512).
+            window.setFrame(NSRect(x: 0, y: 0, width: 1512, height: 900), display: true)
+            guard let content = window.contentView else { return "setup failed: window has no content view" }
+            guard shell.bodyWidthTieIsActiveForTests else {
+                return "setup failed: the width tie was already inactive before this case broke it"
+            }
+
+            // The live failure's starting condition: the tie goes inactive,
+            // for whatever internal AppKit reason - see this file's header.
+            shell.debugBreakBodyWidthTieForTests()
+            guard !shell.bodyWidthTieIsActiveForTests else {
+                return "setup failed: debugBreakBodyWidthTieForTests() did not leave the width tie inactive, "
+                    + "so this case would prove nothing"
+            }
+
+            // One ordinary layout pass. No `NSWindow.setFrame`, so no
+            // `didResizeNotification` - the observer that has always existed
+            // cannot be what repairs this.
+            content.needsLayout = true
+            content.layoutSubtreeIfNeeded()
+
+            guard shell.bodyWidthTieIsActiveForTests else {
+                return "the width tie was still inactive after a layout pass with no resize - the repair is not "
+                    + "riding the layout pass, so a tie broken outside a resize stays broken until the captain "
+                    + "resizes the window or restarts the app (the reported bug)"
+            }
+
+            // The tie is active again; prove it actually binds.
+            window.setFrame(NSRect(x: 0, y: 0, width: 1033, height: 900), display: true)
+            let width = shell.bodyContainerFrameForTests.width
+            let expected = expectedBodyWidth(for: window)
+            guard abs(width - expected) < 0.5 else {
+                return "the width tie reported itself active after the layout pass but does not bind: expected "
+                    + "bodyContainer width \(expected), got \(width)"
             }
             return nil
         }

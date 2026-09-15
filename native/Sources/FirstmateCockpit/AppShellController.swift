@@ -444,6 +444,32 @@ final class AppShellController: NSViewController {
                 in: self.view.window,
                 verticalCenter: DaylightBarController.trafficLightCenterY,
                 leadingX: DaylightBarController.trafficLightLeadingX)
+            // `fm/grand-line-body-width-selfheal-layout-fix`: the width tie's
+            // repair rides this same pass, for the same reason the traffic
+            // lights do. Before this, `reassertBodyContainerWidthTie()` had
+            // exactly two triggers - `loadView` and
+            // `NSWindow.didResizeNotification` (both still below) - so a tie
+            // AppKit deactivated, or a frame that went stale, for any reason
+            // other than a resize stayed visibly broken until the captain
+            // happened to resize the window or restart the app. A layout pass
+            // is when a constraint conflict actually resolves, so repairing
+            // from here catches it at the moment it happens rather than at the
+            // next resize that may never come. See
+            // `data/grand-line-stray-window-glitch-scout/report.md` "BUG B"
+            // for the live capture (a 1512pt-wide window surface with only
+            // ~670pt of it laid out and drawn, the rest undrawn black,
+            // unrecoverable without a quit-and-reopen).
+            //
+            // **This does not reintroduce GL-20's resize-frame cost, and that
+            // was measured rather than argued** (a temporary counter, reverted
+            // before commit): across ten idle layout passes on a settled
+            // window this enters the method ten times and forces **zero**
+            // layout passes - the staleness gate GL-20 added returns early on
+            // every one. The per-pass cost is two frame reads and two
+            // `isActive` checks. Only a genuine break or a genuinely stale
+            // frame pays for a resolve (4 across a launch plus four resizes,
+            // all of them real work).
+            self.reassertBodyContainerWidthTie()
         }
         view = root
 
@@ -639,6 +665,13 @@ final class AppShellController: NSViewController {
         // deactivated after losing to some other required constraint deep in
         // a (possibly hidden - gotcha (11)) destination view - can't survive
         // past the very next resize.
+        //
+        // **"Past the very next resize" was itself the defect**, and
+        // `fm/grand-line-body-width-selfheal-layout-fix` closed it: the
+        // repair also rides every layout pass now (see `root.onLayout`
+        // above). These two remain as belt-and-braces - the launch call
+        // covers the window's still-off-screen launch-time resizes, and a
+        // resize can genuinely occur without a layout pass following it.
         reassertBodyContainerWidthTie()
         windowResizeObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didResizeNotification, object: nil, queue: .main
@@ -1241,6 +1274,25 @@ final class AppShellController: NSViewController {
     /// resize, and `AppShellBodyWidthSelfTest` asserts exactly that
     /// synchronously.
     private func reassertBodyContainerWidthTie() {
+        // `fm/grand-line-body-width-selfheal-layout-fix`: this now also runs
+        // from `ChromeFusionRootView.layout()`, and it *ends* by forcing a
+        // layout pass - so a repair re-enters `layout()` -> `onLayout` ->
+        // here. That is bounded on its own whenever the repair succeeds (the
+        // second entry finds the tie active and the width correct, and
+        // returns), and **measured: removing this guard does not hang or
+        // recurse in `AppShellBodyWidthSelfTest`.** It is kept because the
+        // one case it protects is exactly the case this whole repair exists
+        // for: a required-constraint conflict the resolve cannot actually
+        // satisfy leaves the width stale after the inner pass, so an
+        // unguarded second entry would force another pass, and another -
+        // spinning the main thread rather than merely leaving a stale frame.
+        // A visibly-wrong window is a far better failure than a hung app.
+        //
+        // The traffic-light reposition beside it needs no equivalent: it only
+        // writes frame origins and never forces layout. One repair per pass
+        // loses nothing - anything still wrong afterwards is caught by the
+        // very next pass.
+        guard !isReassertingBodyContainerWidthTie else { return }
         var needsLayout = false
         if let bodyLeadingConstraint, !bodyLeadingConstraint.isActive {
             bodyLeadingConstraint.isActive = true
@@ -1256,8 +1308,26 @@ final class AppShellController: NSViewController {
             needsLayout = true
         }
         guard needsLayout else { return }
+        isReassertingBodyContainerWidthTie = true
+        defer { isReassertingBodyContainerWidthTie = false }
+        // **`needsLayout = true` is load-bearing here, and this cost a real
+        // regression before it was added.** `layoutSubtreeIfNeeded()` only
+        // invokes `layout()` if something already marked the view dirty -
+        // the same AppKit behaviour `ChromeFusionRootView`'s own title-KVO
+        // note records. Reactivating a constraint does mark things dirty, so
+        // this used to work by accident from the resize observer; once the
+        // repair *also* runs from inside a layout pass, that earlier call
+        // consumes the dirty flag and the observer's own call moments later
+        // becomes a silent no-op, leaving the frame stale. Measured: without
+        // this line `widthSelfHealsAfterATieIsSilentlyBroken` - which passed
+        // before this task and exercises only the resize path - fails with
+        // the body frozen at its pre-break 1512.
+        view.needsLayout = true
         view.layoutSubtreeIfNeeded()
     }
+
+    /// Re-entrancy guard for the above - see its own doc comment.
+    private var isReassertingBodyContainerWidthTie = false
 
     /// `bodyContainer` spans from the rail's trailing edge to `root`'s trailing
     /// edge, so its correct width is exactly `root.bounds.width - rail width`.
@@ -1376,6 +1446,25 @@ final class AppShellController: NSViewController {
     func debugBreakBodyWidthTieForTests() {
         bodyLeadingConstraint.isActive = false
         bodyTrailingConstraint.isActive = false
+    }
+
+    /// Whether both halves of the width tie are currently active.
+    ///
+    /// `fm/grand-line-body-width-selfheal-layout-fix` needs this because a
+    /// frame check alone cannot see the repair that task added. A window's
+    /// content view is sized by the window itself, not by anything this app
+    /// can set, so there is no way to make `bodyContainer`'s frame genuinely
+    /// stale *without* resizing the window - and resizing it posts the very
+    /// `NSWindow.didResizeNotification` whose repair path has always
+    /// existed. Measured: setting the content view's frame directly leaves
+    /// `bounds.width` reporting the new value while Auto Layout's own engine
+    /// still solves against the window's real width, so `bodyContainer`
+    /// correctly resolves to the window's width and a frame assertion proves
+    /// nothing about which trigger did the repairing. Whether the tie is
+    /// active again after a layout pass with no resize is the property that
+    /// actually distinguishes the two builds.
+    var bodyWidthTieIsActiveForTests: Bool {
+        bodyLeadingConstraint.isActive && bodyTrailingConstraint.isActive
     }
 
     /// GL-37: which destination slots have actually been built.
