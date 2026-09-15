@@ -1335,6 +1335,8 @@ final class AppShellController: NSViewController {
     /// asserted against that page's own composer rather than against a copy
     /// of the prefill this suite passed in.
     var debugWhiteboard: WhiteboardController { whiteboard }
+
+    var debugBootstrap: BootstrapController { bootstrap }
     #endif
 
     func debugSeedHostConsole(_ controller: ConsoleController, hostID: UUID) {

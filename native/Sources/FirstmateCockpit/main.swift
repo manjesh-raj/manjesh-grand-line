@@ -1855,6 +1855,15 @@ if ProcessInfo.processInfo.environment["FM_RUN_APP_SHELL_BODY_WIDTH_TESTS"] == "
     exit(AppShellBodyWidthSelfTest.run() ? 0 : 1)
 }
 
+// Bootstrap's own single-line, data-derived labels (a firstmate home path, a
+// dotfiles repo path, a git remote URL) sat at `NSTextField`'s default 750
+// horizontal compression resistance - above `NSLayoutPriorityWindowSizeStayPut`
+// - so the longest of those strings became a hard floor on the whole window's
+// width. See BootstrapWindowShrinkSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_BOOTSTRAP_WINDOW_SHRINK_TESTS"] == "1" {
+    exit(BootstrapWindowShrinkSelfTest.run() ? 0 : 1)
+}
+
 // A drill page header's title can render truncated to a few characters
 // after switching away from a destination whose action cluster (or a narrow
 // window) genuinely squeezed the row at some earlier point in the session -
