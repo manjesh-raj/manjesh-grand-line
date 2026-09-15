@@ -1226,10 +1226,35 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         return box
     }
 
+    /// `fm/grandline-engineering-cards-stale-counts`: hand the freshly-learned
+    /// step results to the one place that counts them.
+    ///
+    /// The Engineering hub's Bootstrap and Automation cards both render
+    /// `BackgroundSignalsPoller.lastCounts.setupDrift`, which only that
+    /// poller's own 15-minute pass could write - so fixing a drifted step
+    /// here left both cards claiming it was still drifted. This page already
+    /// knows the answer step by step (`stepIsDone`, the same
+    /// `SetupStepChecks` predicates the poller calls), so it hands those over
+    /// and lets one shared derivation do the counting. An unanswered step
+    /// publishes nothing rather than a partial count.
+    ///
+    /// Gated on being on screen for the same reason as the Updates page's -
+    /// see `UpdatesController.publishToolUpdateSignal`. That matters more
+    /// here than anywhere else: Bootstrap and Automation are two pages
+    /// publishing one signal, and only the one the captain is actually
+    /// looking at should be the one speaking for it.
+    private func publishSetupDriftSignal() {
+        guard isViewLoaded, !view.isHidden else { return }
+        var results: [SetupStepKind: Bool?] = [:]
+        for kind in SetupStepKind.allCases { results[kind] = stepIsDone(kind) }
+        BackgroundSignalsPoller.shared.publishSetupStepResults(results)
+    }
+
     /// Re-derives every step's dot/chip/detail from live state - called
     /// whenever any of the underlying checks change (see call sites in
     /// `rebuildSoftwareSection`/theme changes) or the active theme changes.
     private func refreshStepperVisuals() {
+        publishSetupDriftSignal()
         for (index, kind) in SetupStepKind.allCases.enumerated() {
             guard let rowViews = stepRowViews[kind] else { continue }
             let state = stepperDotState(for: kind)

@@ -479,8 +479,24 @@ final class VaultController: NSViewController, DaylightDrillActions {
 
         applyTheme()
         onDrillSubtitleChanged?()
+        publishVaultSignal()
         view.layoutSubtreeIfNeeded()
         scrollToTop()
+    }
+
+    /// `fm/grandline-engineering-cards-stale-counts`: the Stores hub's Vault
+    /// card renders `BackgroundSignalsPoller.lastCounts`' vault numbers, which
+    /// only that poller's own 15-minute pass could write - the same staleness
+    /// the captain hit on Engineering's Updates and GitHub Sync cards. This
+    /// page has just loaded a real snapshot, so it hands the **snapshot** over
+    /// and lets the shared derivation count it; B1's rule (a failed `av` read
+    /// is not "nothing needs attention") is applied there, once.
+    ///
+    /// Gated on being on screen for the same reason as the Updates page's -
+    /// see `UpdatesController.publishToolUpdateSignal`.
+    private func publishVaultSignal() {
+        guard isViewLoaded, !view.isHidden else { return }
+        BackgroundSignalsPoller.shared.publishVaultRead(secrets: secrets, tools: tools)
     }
 
     private func rebuildSecretsStack() {

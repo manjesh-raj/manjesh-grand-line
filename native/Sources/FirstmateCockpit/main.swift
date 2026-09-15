@@ -1907,6 +1907,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_MODULE_TESTS"] == "1" {
     exit(DaylightModuleSelfTest.run() ? 0 : 1)
 }
 
+// `fm/grandline-engineering-cards-stale-counts`: a hub summary card must
+// reflect a change the captain made through its own detail page. Window-backed
+// (it mounts a real shell and drives the real pages), so it sits in
+// `run-all-tests.sh`'s NEEDS_SESSION list.
+if ProcessInfo.processInfo.environment["FM_RUN_SUMMARY_FRESHNESS_TESTS"] == "1" {
+    exit(SummaryFreshnessSelfTest.run() ? 0 : 1)
+}
+
 // The lock screen's Daylight Harbour restyle - the last pre-Daylight surface
 // (fm/grandline-home-login-redesign-plan). Window-backed: focus, rendering and
 // the off-screen render probe all need a real window, so it sits in

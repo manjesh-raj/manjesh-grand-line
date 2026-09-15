@@ -427,10 +427,41 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     /// gave each of them its own destination.
     var drillHeaderActions: [NSView] { [] }
 
+    #if FM_SELFTESTS
+    /// Set every row's status to `statuses` (by catalog order) and run the
+    /// page's **real** `render(_:)` choke point - see
+    /// `UpdatesController.debugApplyStatusesAndRender` for why this drives the
+    /// choke point rather than the publish method.
+    func debugApplyStatusesAndRender(_ statuses: [GitHubSyncStatus]) {
+        for (row, status) in zip(rows, statuses) { row.status = status }
+        for row in rows { render(row) }
+    }
+    #endif
+
+    /// `fm/grandline-engineering-cards-stale-counts`: hand the freshly-learned
+    /// statuses to the one place that counts them.
+    ///
+    /// The captain synced every fork here and then watched the Engineering hub
+    /// go on saying "6 behind, of 8 tracked" - because the hub renders
+    /// `BackgroundSignalsPoller.lastCounts`, which only that poller's own
+    /// 15-minute pass could write. This page holds the fresher truth the
+    /// moment a check returns, so it publishes the **statuses**, never a
+    /// count: `showsSyncButton` (which deliberately excludes a diverged repo
+    /// and a non-fork) is applied in one place, so this page's rows and the
+    /// hub's card cannot disagree about what "behind" means.
+    ///
+    /// Gated on being on screen for the same reason as the Updates page's -
+    /// see `UpdatesController.publishToolUpdateSignal`.
+    private func publishForkDriftSignal() {
+        guard isViewLoaded, !view.isHidden else { return }
+        BackgroundSignalsPoller.shared.publishForkStatuses(rows.map { $0.status })
+    }
+
     private func render(_ row: GitHubSyncRow) {
         // Every status change for every row lands here, so this is the one
         // place the header's line has to be re-read from.
         defer { onDrillSubtitleChanged?() }
+        defer { publishForkDriftSignal() }
         row.detailLabel.stringValue = row.detail
         row.logField.stringValue = row.log.isEmpty ? "No output yet." : row.log
 
