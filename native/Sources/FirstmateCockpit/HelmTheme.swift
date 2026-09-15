@@ -264,7 +264,15 @@ struct HelmTheme {
         chromeLineHex: "323a43",       // --line
         accentHex: "6cd7e3",           // --accent
         foregroundHex: "f0f4f7",       // --ink
-        backgroundHex: "05090e",       // --term-bg
+        // Matched to chromeBackgroundHex (was "05090e") so the terminal
+        // canvas is pixel-identical to the surrounding chrome, rather than a
+        // subtly darker shade - the visible seam the captain reported.
+        // `fm/grand-line-legacy-terminal-canvas-chrome-match` applied this
+        // uniformly across every legacy (pre-Daylight) palette; see
+        // `data/grand-line-terminal-pane-theme-match-scout/report.md`. This
+        // does NOT touch the separate, deliberate dark-terminal-card design
+        // on `daylight`/`dusk` (see `HelmTerminalCard`/`HelmDaylight.swift`).
+        backgroundHex: "111820",       // --surface (was "05090e", --term-bg)
         cursorHex: "6cd7e3",           // --accent
         selectionHex: "6cd7e3",        // --accent, opaque fill
         selectionTextHex: "001a22",    // --accent-ink (10.6:1 on the accent fill)
@@ -291,7 +299,9 @@ struct HelmTheme {
         chromeLineHex: "cdd5dd",       // --line
         accentHex: "007194",           // --accent
         foregroundHex: "212c3a",       // --ink
-        backgroundHex: "f5f7f9",       // --term-bg
+        // Matched to chromeBackgroundHex (was "f5f7f9", --term-bg) - see the
+        // fuller note on `helm-dark`'s `backgroundHex` above.
+        backgroundHex: "fcfeff",       // --surface
         cursorHex: "007194",           // --accent
         selectionHex: "007194",        // --accent, opaque fill
         selectionTextHex: "f9fcff",    // --accent-ink (5.4:1 on the accent fill)
@@ -346,7 +356,23 @@ extension HelmTheme {
         id: "solarized-dark", mode: .dark, name: "Solarized Dark", pairId: "solarized-light",
         chromeBackgroundHex: "073642", chromeInkHex: "93a1a1", chromeLineHex: "586e75",
         accentHex: "2aa198",
-        foregroundHex: "839496", backgroundHex: "002b36",
+        // backgroundHex matched to chromeBackgroundHex (was "002b36",
+        // Solarized's `base03`) - see the fuller note on `helm-dark`'s
+        // `backgroundHex` above.
+        //
+        // foregroundHex moved from `base0` (`839496`) to `base1` (`93a1a1`)
+        // as a direct consequence: `base0` was tuned to clear 4.75:1 against
+        // the old, darker `base03` background, and only reaches 4.11:1 (under
+        // the 4.5:1 floor - `checkTextSelectionContrast` caught it) against
+        // the new, lighter `base02`. `base1` is the next step up Solarized's
+        // own monotone ramp - the same "one step up the family's own ramp,
+        // not a hand-mixed darkening" correction `solarized-light`'s own
+        // `foregroundHex` already uses below - and it clears 4.86:1. It is
+        // also, not by coincidence, already this theme's `chromeInkHex`: once
+        // the terminal's background is literally the chrome's background, the
+        // terminal's own default text colour matching the chrome's own ink
+        // token is the natural, zero-hue-drift consequence.
+        foregroundHex: "93a1a1", backgroundHex: "073642",
         cursorHex: "2aa198", selectionHex: "2aa198", selectionTextHex: "002b36",
         ansiHex: solarizedDarkAnsi,
         // Twelve pre-Daylight palettes: the page ground and the
@@ -372,7 +398,22 @@ extension HelmTheme {
         // canonical Solarized value that the spec itself lists for emphasized
         // content on a light background, so there is no hue drift and the
         // palette's identity is untouched. Measures 4.99:1 on `base3`.
-        foregroundHex: "586e75", backgroundHex: "fdf6e3",
+        //
+        // backgroundHex matched to chromeBackgroundHex (was "fdf6e3", i.e.
+        // `base3`) - see the fuller note on `helm-dark`'s `backgroundHex`
+        // above. That in turn broke the `base01` correction immediately
+        // above: `base01` was tuned to clear 4.99:1 against `base3`, and only
+        // reaches 4.39:1 (under the 4.5:1 floor - `checkTextSelectionContrast`
+        // caught it) against the new, darker `base2`. `base3`/`base01` are
+        // adjacent on the ramp with no intermediate step available, so the
+        // next value that clears the floor is `base03` (`002b36`, 12.25:1) -
+        // still one canonical Solarized value with no hue drift, and, not by
+        // coincidence, already this theme's `chromeInkHex`: once the
+        // terminal's background is literally the chrome's background, the
+        // terminal's own default text colour matching the chrome's own ink
+        // token is the natural, zero-hue-drift consequence (the same
+        // reasoning `solarized-dark`'s own `foregroundHex` fix above uses).
+        foregroundHex: "002b36", backgroundHex: "eee8d5",
         cursorHex: "2aa198", selectionHex: "2aa198", selectionTextHex: "002b36",
         ansiHex: [
             "073642", "dc322f", "859900",
@@ -404,7 +445,9 @@ extension HelmTheme {
         id: "catppuccin-mocha", mode: .dark, name: "Catppuccin Mocha", pairId: "catppuccin-latte",
         chromeBackgroundHex: "1e1e2e", chromeInkHex: "cdd6f4", chromeLineHex: "6c7086",
         accentHex: "cba6f7",
-        foregroundHex: "cdd6f4", backgroundHex: "181825",
+        // backgroundHex matched to chromeBackgroundHex (was "181825") - see
+        // the fuller note on `helm-dark`'s `backgroundHex` above.
+        foregroundHex: "cdd6f4", backgroundHex: "1e1e2e",
         cursorHex: "cba6f7", selectionHex: "cba6f7", selectionTextHex: "1e1e2e",
         ansiHex: [
             "45475a", "f38ba8", "a6e3a1", "f9e2af", "89b4fa", "f5c2e7", "94e2d5", "bac2de",
@@ -420,7 +463,9 @@ extension HelmTheme {
         id: "catppuccin-latte", mode: .light, name: "Catppuccin Latte", pairId: "catppuccin-mocha",
         chromeBackgroundHex: "eff1f5", chromeInkHex: "4c4f69", chromeLineHex: "9ca0b0",
         accentHex: "8839ef",
-        foregroundHex: "4c4f69", backgroundHex: "e6e9ef",
+        // backgroundHex matched to chromeBackgroundHex (was "e6e9ef") - see
+        // the fuller note on `helm-dark`'s `backgroundHex` above.
+        foregroundHex: "4c4f69", backgroundHex: "eff1f5",
         cursorHex: "8839ef", selectionHex: "8839ef", selectionTextHex: "eff1f5",
         ansiHex: [
             "bcc0cc", "d20f39", "40a02b", "df8e1d", "1e66f5", "ea76cb", "179299", "5c5f77",
@@ -437,7 +482,9 @@ extension HelmTheme {
         id: "gruvbox-dark", mode: .dark, name: "Gruvbox Dark", pairId: "gruvbox-light",
         chromeBackgroundHex: "3c3836", chromeInkHex: "ebdbb2", chromeLineHex: "665c54",
         accentHex: "fe8019",
-        foregroundHex: "ebdbb2", backgroundHex: "282828",
+        // backgroundHex matched to chromeBackgroundHex (was "282828") - see
+        // the fuller note on `helm-dark`'s `backgroundHex` above.
+        foregroundHex: "ebdbb2", backgroundHex: "3c3836",
         cursorHex: "fe8019", selectionHex: "fe8019", selectionTextHex: "282828",
         ansiHex: [
             "282828", "cc241d", "98971a", "d79921", "458588", "b16286", "689d6a", "a89984",
@@ -559,7 +606,9 @@ extension HelmTheme {
         // modes, mirroring how helm-dark/helm-light already use two
         // different accent hexes rather than a lightness twist of one hue.
         accentHex: "c4a7e7",
-        foregroundHex: "e0def4", backgroundHex: "191724",
+        // backgroundHex matched to chromeBackgroundHex (was "191724") - see
+        // the fuller note on `helm-dark`'s `backgroundHex` above.
+        foregroundHex: "e0def4", backgroundHex: "1f1d2e",
         cursorHex: "c4a7e7", selectionHex: "c4a7e7", selectionTextHex: "191724",
         ansiHex: [
             "26233a", "eb6f92", "31748f", "f6c177", "9ccfd8", "c4a7e7", "ebbcba", "e0def4",
@@ -582,7 +631,9 @@ extension HelmTheme {
         // `pine` - clears both jobs on this mode (5.88:1 UI accent, 5.59:1
         // selection fill); `iris` (used for Main instead) fails both here.
         accentHex: "286983",
-        foregroundHex: "464261", backgroundHex: "faf4ed",
+        // backgroundHex matched to chromeBackgroundHex (was "faf4ed") - see
+        // the fuller note on `helm-dark`'s `backgroundHex` above.
+        foregroundHex: "464261", backgroundHex: "fffaf3",
         cursorHex: "286983", selectionHex: "286983", selectionTextHex: "faf4ed",
         ansiHex: [
             "f2e9e1", "b4637a", "286983", "ea9d34", "56949f", "907aa9", "d7827e", "464261",
