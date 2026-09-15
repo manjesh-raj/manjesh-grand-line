@@ -1,6 +1,7 @@
-# F3 (production review section 25): build and publish the app itself on a
-# version tag, so the Updates page's App row has something real to compare
-# against and, once signing exists, something real to install.
+# Build and publish the app itself on a version tag, so there is a real,
+# versioned, downloadable release - by hand today; the app itself has no
+# in-app self-updater (an earlier one existed behind the Updates page's own
+# "App" row, and was removed along with that row).
 #
 # Trigger: pushing a tag that looks like a version (`git tag v0.2.0 && git
 # push origin v0.2.0`). Deliberately not every push - `ci.yml` already covers
@@ -10,17 +11,15 @@
 #
 # Real and working today: the build, the version derivation (`git describe`,
 # GL-18 - which is why `fetch-depth: 0` matters), the zip, the checksum, and
-# the GitHub release with the artifact attached. That is enough for the in-app
-# check-and-notify half of F3 to be genuinely useful.
+# the GitHub release with the artifact attached.
 #
 # **Not done, and not faked: Developer ID signing and notarization.** Both
 # require a paid Apple Developer Program membership and certificates that only
 # the captain can obtain; no workflow can substitute for them. The two steps
 # below are written out in full and gated behind `env.SIGNING_ENABLED`, which
-# is `'false'`. Nothing pretends otherwise, and the in-app installer
-# (`AppUpdateInstaller`) independently refuses to install an artifact it
-# cannot verify - so an unsigned release published by this workflow is
-# download-and-install-by-hand only, by design, not by oversight.
+# is `'false'`. Nothing pretends otherwise - an unsigned release published by
+# this workflow is download-and-install-by-hand only, by design, not by
+# oversight.
 #
 # ## Turning signing on (the captain's own steps)
 #
@@ -40,10 +39,6 @@
 #      APPLE_API_PRIVATE_KEY       the .p8 key contents
 #
 # 4. Flip `SIGNING_ENABLED` below to `'true'`.
-# 5. Set `AppUpdateInstaller.expectedTeamIdentifier` (currently `nil`) to the
-#    same Team ID. The workflow and the installer have to agree, or a
-#    correctly signed artifact will still be refused - which is the safe
-#    direction to fail, but is confusing if it is not expected.
 #
 # Until step 4, every run skips those two steps and says so in its log.
 

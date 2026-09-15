@@ -21,9 +21,14 @@
 //      behaviour inside a restyle. Each migrated site therefore keeps its own
 //      answer, and this pins the ones that can be reached.
 //   3. **The deliberately-kept `NSAlert`s are still there, and are exactly
-//      the eight named.** A ninth appearing means a new site chose system
+//      the seven named.** An eighth appearing means a new site chose system
 //      chrome without the decision being made; one disappearing means a
 //      safety gate was migrated without being argued for.
+//
+//      (This was eight, in five files, until `UpdatesController+AppRow.swift` -
+//      the self-update card's own "replaces the running binary" alert - was
+//      deleted along with the rest of that feature; see
+//      `fm/grandline-updates-remove-app-card`. Four files, seven sites, now.)
 //
 // Behavioural coverage is split honestly. `responderForTests` lets every
 // reachable site be driven, and **returning `.cancel` is always safe** - so
@@ -49,7 +54,7 @@ import AppKit
 
 enum ConfirmMigrationSelfTest {
 
-    /// The eight sites that deliberately keep the system alert, with the
+    /// The seven sites that deliberately keep the system alert, with the
     /// reason each one does. See `HelmConfirm`'s header for the rule.
     ///
     /// A literal list, not derived from a grep: deriving it would make the
@@ -58,7 +63,6 @@ enum ConfirmMigrationSelfTest {
     private static let keepsSystemAlert: [(file: String, why: String)] = [
         ("CommandLibraryViews.swift", "the four CommandRiskConfirmation gates - a real shell command is about to run"),
         ("ConsoleController+Herdr.swift", "terminates live panes in another program"),
-        ("UpdatesController+AppRow.swift", "replaces the running binary and terminates"),
         ("ConsoleController+Incident.swift", "already a sheet, not a centre-screen alert"),
         ("ConsoleController+SRELead.swift", "already a sheet, not a centre-screen alert"),
     ]
@@ -72,7 +76,7 @@ enum ConfirmMigrationSelfTest {
         scratchStores()
         var allOK = true
         for check in [checkEveryCallSiteGatesItsEffect,
-                      checkKeptSystemAlertsAreExactlyTheEightNamed,
+                      checkKeptSystemAlertsAreExactlyTheSevenNamed,
                       checkComponentContract,
                       checkDestructiveConfirmSemantics,
                       checkScheduleDelete,
@@ -201,9 +205,9 @@ enum ConfirmMigrationSelfTest {
         }
     }
 
-    // MARK: 2. The eight deliberately-kept system alerts
+    // MARK: 2. The seven deliberately-kept system alerts
 
-    private static func checkKeptSystemAlertsAreExactlyTheEightNamed(_ ok: inout Bool) {
+    private static func checkKeptSystemAlertsAreExactlyTheSevenNamed(_ ok: inout Bool) {
         print("\n-- G3: NSAlert survives only where the decision says it should --")
         let files = appSources()
         guard !files.isEmpty else {
@@ -224,7 +228,7 @@ enum ConfirmMigrationSelfTest {
         let expected = Set(keepsSystemAlert.map(\.file))
         var problems: [String] = []
         for file in found.keys where !expected.contains(file) {
-            problems.append("\(file) uses NSAlert but is not one of the eight kept sites")
+            problems.append("\(file) uses NSAlert but is not one of the seven kept sites")
         }
         for entry in keepsSystemAlert where found[entry.file] == nil {
             problems.append("\(entry.file) no longer uses NSAlert - it was kept because \(entry.why)")
@@ -232,11 +236,11 @@ enum ConfirmMigrationSelfTest {
         // The four command gates are one file; the total is what pins that a
         // fifth did not quietly join them.
         let total = found.values.reduce(0, +)
-        if total != 8 {
-            problems.append("\(total) NSAlert sites, want exactly 8")
+        if total != 7 {
+            problems.append("\(total) NSAlert sites, want exactly 7")
         }
         if problems.isEmpty {
-            print("  OK   8 kept, in the 5 files the decision names")
+            print("  OK   7 kept, in the 4 files the decision names")
         } else {
             for p in problems { print("  FAIL \(p)") }
             ok = false
