@@ -44,21 +44,55 @@ enum DragForwardingIndicator: Equatable {
 }
 
 extension DragForwardingIndicator {
-    /// Both names were already proven to resolve on this OS before being
-    /// reused here (`arrowshape.turn.up.forward.fill` was already in use on
-    /// the tab chip's own indicator; `character.cursor.ibeam` was checked
-    /// directly - `NSImage(systemSymbolName:)` fails silently, and this app
-    /// has shipped an invisible icon that way before, see `AGENTS.md`).
+    /// Both names were proven to resolve on this OS before being used
+    /// (`NSImage(systemSymbolName:)` fails silently, and this app has
+    /// shipped an invisible icon that way before - see `AGENTS.md`);
+    /// `arrowshape.turn.up.forward.fill` was already in use on the tab
+    /// chip's own indicator.
+    ///
+    /// **Two traps here, both found by rendering the real button rather
+    /// than by reading symbol names.** This shipped as
+    /// `character.cursor.ibeam` and the captain read it as the word "AI" -
+    /// that symbol draws a literal capital A beside an I-beam, so at 11pt
+    /// immediately before a text label it parses as two letters rather than
+    /// as a cursor.
+    ///
+    /// 1. **`text.cursor` is not the safe-sounding alternative its name
+    ///    suggests: it draws the *identical* A-plus-I-beam glyph.** Swapping
+    ///    to it would have reshipped the same defect under a different
+    ///    spelling, and nothing but a render would have caught that.
+    /// 2. **`cursorarrow.and.square.on.square.dashed` is the best fit on
+    ///    paper and the wrong answer on screen.** A pointer dragging out a
+    ///    marquee is exactly what this state means, but the two overlapping
+    ///    squares are the universal *copy/duplicate* motif - so on a button
+    ///    about selection it invites a second misreading. Trading "looks
+    ///    like AI" for "looks like Duplicate" is not a fix.
+    ///
+    /// `rectangle.dashed` is the marquee alone: the one candidate that is
+    /// unmistakably a drag-selection, carries no letterform, cannot be read
+    /// as copy or as forwarding, and stays crisp at 11pt. It also pairs
+    /// legibly against `.forwarding`'s arrow - a box that stays here, versus
+    /// an arrow leaving - and the button's own label already supplies the
+    /// word "Selection", so the glyph does not have to carry the whole
+    /// meaning unaided.
     var buttonSymbol: String {
         switch self {
-        case .local: return "character.cursor.ibeam"
+        case .local: return "rectangle.dashed"
         case .forwarding: return "arrowshape.turn.up.forward.fill"
         }
     }
 
+    /// Kept parallel with `.forwarding`'s "Forwarding Drags" - both name
+    /// where a plain drag currently goes. `.local` shipped as "Local
+    /// Selection", which the captain found didn't say what the button does:
+    /// "local" is this codebase's own internal word for the routing
+    /// (`prefersLocalSelection`), not a word that distinguishes this app
+    /// from the program running inside the tab. "App Selection" names the
+    /// thing that actually differs between the two states - whose selection
+    /// a drag builds.
     var buttonTitle: String {
         switch self {
-        case .local: return "Local Selection"
+        case .local: return "App Selection"
         case .forwarding: return "Forwarding Drags"
         }
     }
@@ -84,14 +118,14 @@ extension DragForwardingIndicator {
         switch self {
         case .local:
             return "Drags in this tab build this app's own themed selection.\n\n"
-                + "Plain drag \u{2192} this app's selection.\n"
+                + "Plain drag \u{2192} App Selection.\n"
                 + "Shift+drag \u{2192} forwarded to this tab's program (e.g. herdr) instead.\n\n"
                 + "Click to swap this, or right-click the tab for the same toggle."
         case .forwarding:
             return "Drags in this tab are forwarded to its program (e.g. herdr) instead of building "
                 + "this app's own selection.\n\n"
                 + "Plain drag \u{2192} forwarded to this tab's program.\n"
-                + "Shift+drag \u{2192} this app's own selection instead.\n\n"
+                + "Shift+drag \u{2192} App Selection instead.\n\n"
                 + "Click to turn this off, or right-click the tab for the same toggle."
         }
     }
