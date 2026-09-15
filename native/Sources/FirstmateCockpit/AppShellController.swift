@@ -1387,6 +1387,12 @@ final class AppShellController: NSViewController {
     /// module cards and the real back button rather than stand-ins.
     #if FM_SELFTESTS
     var homeCanvasForTests: HomeCanvasController { homeCanvas }
+    /// `fm/grandline-engineering-cards-stale-counts`: the two detail pages
+    /// whose own state the Engineering hub's cards summarise, so
+    /// `SummaryFreshnessSelfTest` can drive the real page and read the real
+    /// card rather than standing either of them in.
+    var updatesForTests: UpdatesController { updates }
+    var githubSyncForTests: GitHubSyncController { githubSync }
     /// A2: the drill cluster lives in the bar now. These keep their names so
     /// the suites that already read them still read the same *fact* - which
     /// destination the chrome is naming, and whether it is showing at all -

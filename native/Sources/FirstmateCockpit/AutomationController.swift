@@ -912,8 +912,23 @@ final class AutomationController: NSViewController, DaylightDrillActions {
     /// gave each of them its own destination.
     var drillHeaderActions: [NSView] { [] }
 
+    /// `fm/grandline-engineering-cards-stale-counts`: the Automation card on
+    /// the Engineering hub renders the same `setupDrift` signal Bootstrap's
+    /// does (deliberately - see `HomeCanvasController.fillAutomation`), so
+    /// this page publishes it from its own stepper rebuild exactly the way
+    /// `BootstrapController.publishSetupDriftSignal` does, through the same
+    /// shared derivation. Gated on being on screen so whichever of the two
+    /// pages the captain is actually looking at is the one that speaks.
+    private func publishSetupDriftSignal() {
+        guard isViewLoaded, !view.isHidden else { return }
+        var results: [SetupStepKind: Bool?] = [:]
+        for kind in SetupStepKind.allCases { results[kind] = stepIsDone(kind) }
+        BackgroundSignalsPoller.shared.publishSetupStepResults(results)
+    }
+
     private func rebuildStepper() {
         guard isViewLoaded else { return }
+        publishSetupDriftSignal()
         // Every step-status change reaches here (`updateStep`, the live
         // re-sync, the initial build), so this is the one place the header's
         // line is re-read from.

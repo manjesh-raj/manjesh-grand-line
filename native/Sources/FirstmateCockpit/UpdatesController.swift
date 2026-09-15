@@ -289,6 +289,20 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// without loosening any of this file's own access levels for
     /// production callers.
     var checkAllPillForTests: HoverHighlightView { checkAllPill }
+
+    /// Set every row's status to `statuses` (by catalog order) and run the
+    /// page's **real** `renderStats()` choke point.
+    ///
+    /// Deliberately drives the choke point rather than calling
+    /// `publishToolUpdateSignal()` directly: the regression being guarded is
+    /// that this page learns fresh truth and the Engineering hub never hears
+    /// about it, so a test that skipped the wiring and called the publish
+    /// method itself would pass with the wiring deleted.
+    func debugApplyStatusesAndRender(_ statuses: [DependencyStatus]) {
+        for (row, status) in zip(rows, statuses) { row.status = status }
+        renderStats()
+    }
+
     #endif
 
     /// The mockup's `.toolbar-row`: segmented "All / Needs attention" filter,
@@ -490,6 +504,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         // check, a single check/update, the check-all sweep), so this is the
         // one place the header's line has to be re-read from.
         onDrillSubtitleChanged?()
+        publishToolUpdateSignal()
         let total = rows.count
         let upToDate = rows.filter { $0.status == .upToDate }.count
         let needsUpdate = rows.filter { $0.status == .updateAvailable || $0.status == .notInstalled }.count
@@ -511,6 +526,28 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         statTiles[1].value = (pending || neverChecked) ? unknown : "\(upToDate)"
         statTiles[2].value = (pending || neverChecked) ? unknown : "\(needsUpdate)"
         statTiles[3].value = relativeLastChecked()
+    }
+
+    /// `fm/grandline-engineering-cards-stale-counts`: hand the freshly-learned
+    /// statuses to the one place that counts them.
+    ///
+    /// The captain updated every tool here and then watched the Engineering
+    /// hub go on saying "3 updates" - because the hub renders
+    /// `BackgroundSignalsPoller.lastCounts`, which only that poller's own
+    /// 15-minute pass could write. This page holds the fresher truth the
+    /// moment a check returns, so it publishes the **statuses**, never a
+    /// count: the derivation (and its "a pending sweep is not an answer"
+    /// rule) stays in one place, so this page cannot drift from the hub over
+    /// what "needs an update" means.
+    ///
+    /// Gated on being on screen so that the hub agrees with what the captain
+    /// last actually saw here. A page mounted but hidden is re-rendered by
+    /// ordinary events (a theme change, a font-scale change) and its rows can
+    /// be older than the poller's own last sweep - it has no business
+    /// overwriting a fresher published number from behind another page.
+    private func publishToolUpdateSignal() {
+        guard isViewLoaded, !view.isHidden else { return }
+        BackgroundSignalsPoller.shared.publishToolStatuses(rows.map { $0.status })
     }
 
     private func relativeLastChecked() -> String {

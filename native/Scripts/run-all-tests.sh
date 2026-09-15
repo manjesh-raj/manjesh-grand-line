@@ -164,6 +164,9 @@ NEEDS_SESSION=(
   # real `viewDidAppear`.
   "FM_RUN_INCIDENT_RESUME_TESTS"
   "FM_RUN_DRILL_HEADER_TITLE_TESTS"
+  # `fm/grandline-engineering-cards-stale-counts`: mounts a real shell, drives
+  # the real Updates/GitHub Sync pages and reads the real hub cards.
+  "FM_RUN_SUMMARY_FRESHNESS_TESTS"
   "FM_RUN_DAYLIGHT_MODULE_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_SLICE2_TESTS"

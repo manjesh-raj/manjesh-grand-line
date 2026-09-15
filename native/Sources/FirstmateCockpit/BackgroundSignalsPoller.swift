@@ -135,6 +135,10 @@ final class BackgroundSignalsPoller {
         var vaultSecrets: Int?
     }
 
+    /// When the data behind each published signal was gathered - see
+    /// `acceptsReading`. Main thread only, like `lastCounts` itself.
+    fileprivate var newestReading: [Signal: Date] = [:]
+
     /// Written on the main thread by each check's own completion block (the
     /// same block that calls `NotificationSources.set*`), read on the main
     /// thread by `FleetController` and `HomeCanvasController` - so no lock is
@@ -316,11 +320,14 @@ final class BackgroundSignalsPoller {
             // Software checklist step reads the exact same per-item
             // outcomes) rather than shelling out to `brew`/`npm` twice for
             // the same catalog in one poll pass.
+            let softwareGatheredAt = Date()
             let softwareStatuses = DependencyCatalog.items.map { UpdatesSource.check($0).status }
-            self.checkToolUpdates(statuses: softwareStatuses)
+            self.checkToolUpdates(statuses: softwareStatuses, gatheredAt: softwareGatheredAt)
             self.checkGitHubSync()
             self.checkVault()
-            self.checkSetupDrift(softwareStatuses: softwareStatuses)
+            // The software half of setup drift is the sweep above, so this
+            // reading is only as new as that sweep was.
+            self.checkSetupDrift(softwareStatuses: softwareStatuses, gatheredAt: softwareGatheredAt)
             DispatchQueue.main.async {
                 // Every completed pass counts as a real completion for
                 // diagnostics, even a superseded one - it did finish.
@@ -337,50 +344,38 @@ final class BackgroundSignalsPoller {
 
     // MARK: #3 - tool updates
 
-    private func checkToolUpdates(statuses: [DependencyStatus]) {
-        let count = statuses.filter { $0.showsUpdateButton }.count
+    private func checkToolUpdates(statuses: [DependencyStatus], gatheredAt: Date) {
         DispatchQueue.main.async { [weak self] in
-            self?.lastCounts.toolUpdates = count
-            NotificationSources.setToolUpdates(count: count) { self?.onNavigateToUpdates?() }
+            self?.publishToolStatuses(statuses, gatheredAt: gatheredAt)
         }
     }
 
     // MARK: #4 - GitHub Sync
 
     private func checkGitHubSync() {
-        let count = GitHubSyncCatalog.repos.filter { GitHubSyncSource.check($0).status.showsSyncButton }.count
+        let gatheredAt = Date()
+        let statuses = GitHubSyncCatalog.repos.map { GitHubSyncSource.check($0).status }
         DispatchQueue.main.async { [weak self] in
-            self?.lastCounts.forkDrift = count
-            NotificationSources.setGitHubSync(count: count) { self?.onNavigateToGitHubSync?() }
+            self?.publishForkStatuses(statuses, gatheredAt: gatheredAt)
         }
     }
 
     // MARK: #5 - Vault attention
 
     private func checkVault() {
+        let gatheredAt = Date()
         let snapshot = VaultSource.loadSnapshot()
         // B1: an `av` read that failed is not "nothing needs attention" and
-        // not "no secrets". Leave both counts as they were - `SignalCounts`'
-        // own `Int?` fields already mean "not established", which is what the
-        // Vault canvas card renders honestly.
-        guard let tools = snapshot.tools, let secrets = snapshot.secrets else {
+        // not "no secrets". `publishVaultRead` leaves both counts as they
+        // were in that case - `SignalCounts`' own `Int?` fields already mean
+        // "not established", which is what the Vault canvas card renders
+        // honestly. Logged here rather than there because only this caller
+        // knows the read was a scheduled pass rather than a page's own load.
+        if snapshot.isDegraded {
             AppLog.poller.info("vault check skipped: av read failed, leaving counts unchanged")
-            return
         }
-        let count = tools.filter {
-            if case .needsAttention = $0.status { return true }
-            return false
-        }.count
-        let secretCount = secrets.count
         DispatchQueue.main.async { [weak self] in
-            // One assignment, not two: `lastCounts`'s `didSet` fires per
-            // write, and two writes would rebuild the canvas twice for one
-            // pass's single result.
-            var counts = self?.lastCounts ?? SignalCounts()
-            counts.vaultAttention = count
-            counts.vaultSecrets = secretCount
-            self?.lastCounts = counts
-            NotificationSources.setVaultAttention(count: count) { self?.onNavigateToVault?() }
+            self?.publishVaultRead(secrets: snapshot.secrets, tools: snapshot.tools, gatheredAt: gatheredAt)
         }
     }
 
@@ -392,7 +387,7 @@ final class BackgroundSignalsPoller {
     /// fields - this poller keeps its own throwaway copy of the same inputs
     /// those pages already gather, purely to call the identical
     /// `SetupStepChecks` predicates.
-    private func checkSetupDrift(softwareStatuses: [DependencyStatus]) {
+    private func checkSetupDrift(softwareStatuses: [DependencyStatus], gatheredAt: Date) {
         let firstmateHome = SetupStepChecks.firstmateHomeDone()
 
         var dotfilesState: DotfilesRepoState?
@@ -414,26 +409,188 @@ final class BackgroundSignalsPoller {
         let snippetCount = SnippetStore().snippets.count
         let restoreConfigDone = SetupStepChecks.restoreConfigDone(hostCount: hostCount, snippetCount: snippetCount)
 
-        // `restoreConfigDone` has no "not yet checked" state (it's a pure
-        // synchronous read), and `firstmateHomeDone` is likewise always a
-        // definite bool - only dotfiles/agent/software can be `nil`
-        // ("still checking" in a live controller's async flow), which
-        // can't happen here since every call above is already synchronous.
-        // `?? true` is unreachable in practice but keeps this a total
-        // function rather than force-unwrapping.
-        let results: [Bool] = [
-            firstmateHome,
-            dotfilesDone ?? true,
-            agentDone ?? true,
-            softwareDone ?? true,
-            restoreConfigDone,
+        // Keyed by step exactly as both setup pages hold it, so the shared
+        // derivation below counts the same five things whichever producer
+        // supplied them. `restoreConfigDone` has no "not yet checked" state
+        // (it's a pure synchronous read) and `firstmateHomeDone` is likewise
+        // always a definite bool - only dotfiles/agent/software can be `nil`
+        // ("still checking" in a live controller's async flow), which can't
+        // happen here since every call above is already synchronous.
+        let results: [SetupStepKind: Bool?] = [
+            .firstmateHome: firstmateHome,
+            .dotfiles: dotfilesDone,
+            .agentInstructions: agentDone,
+            .software: softwareDone,
+            .restoreConfig: restoreConfigDone,
         ]
-        let driftedCount = results.filter { !$0 }.count
 
         DispatchQueue.main.async { [weak self] in
-            self?.lastCounts.setupDrift = driftedCount
-            NotificationSources.setSetupDrift(count: driftedCount) { self?.onNavigateToBootstrap?() }
+            self?.publishSetupStepResults(results, gatheredAt: gatheredAt)
         }
+    }
+}
+
+// MARK: - The one published count per signal
+//
+// `fm/grandline-engineering-cards-stale-counts`. The captain updated every
+// tool and synced every fork by hand, then watched the Engineering hub go on
+// claiming "3 updates" and "6 behind" while the Updates and GitHub Sync pages
+// - one click away - correctly read "0 Updates Available" and "all in sync".
+//
+// The cause was duplication, not a missing refresh: `lastCounts` was a
+// private snapshot only this poller's own 15-minute pass could ever write,
+// while each detail page independently recomputed the very same fact from a
+// real check and kept the answer to itself. Two computations of one number,
+// with no way for the fresher one to win - so the hub (and the notification
+// bell, which reads the same published signal) stayed wrong for up to 15
+// minutes after the captain had already fixed the thing being reported.
+//
+// The fix is *not* a second mechanism reconciling two counts. There is one
+// count per signal, it lives here, and it is derived in exactly one place:
+// the `static` functions below. Every producer of fresh truth - this poller's
+// own pass, and each detail page at the single choke point its own status
+// changes already funnel through - hands over the **raw outcomes it just
+// learned** and lets this file do the counting. A page never computes a
+// count, so a page can never disagree with the hub about how to count.
+//
+// Two rules the derivations share, both of them GL-14's:
+//
+//  - A pending sweep publishes nothing. Mid-check statuses are not an answer,
+//    and "0 updates" while 13 checks are still running is a confident claim
+//    about an answer nobody has yet. `nil` means "no publishable count",
+//    which leaves the previous one standing rather than overwriting it with a
+//    guess - the same call `UpdatesController.drillHeaderSubtitle` and
+//    `GitHubSyncController.drillHeaderSubtitle` already make for their own
+//    one-line summaries.
+//  - A never-checked set publishes nothing either, for the same reason: a
+//    freshly built page whose rows are all `.unknown` must not stamp a zero
+//    over a real number this poller established at launch.
+
+extension BackgroundSignalsPoller {
+
+    // MARK: Later-gathered data wins
+    //
+    // A pass spends tens of seconds gathering (13 `brew`/`npm` checks, then 8
+    // `gh` checks, then `av`, then a `git fetch`) and only publishes at the
+    // end - so the statuses it publishes can already be a minute old. A
+    // captain who resolves something on a detail page during that window would
+    // otherwise watch the hub go correct and then, seconds later, go stale
+    // again as the pass landed its pre-fix reading on top. That is the very
+    // bug this task exists to remove, reintroduced through the back door.
+    //
+    // Each publish therefore carries **when its data was gathered**, not when
+    // it was published, and an older reading never displaces a newer one. A
+    // page defaults to `Date()` because its rows are current as it renders
+    // them; the poller stamps each check as it runs.
+
+    /// Signals whose freshness is tracked independently - a pass's fork check
+    /// being outrun by the GitHub Sync page says nothing about its tool check.
+    enum Signal: Hashable { case tools, forks, setup, vault }
+
+    /// `true` when this reading is at least as new as whatever is published,
+    /// recording it as the new high-water mark. Main thread, like every other
+    /// access to `lastCounts`.
+    func acceptsReading(_ signal: Signal, gatheredAt: Date) -> Bool {
+        dispatchPrecondition(condition: .onQueue(.main))
+        if let newest = newestReading[signal], gatheredAt < newest { return false }
+        newestReading[signal] = gatheredAt
+        return true
+    }
+
+    /// How many catalog tools have an update to install.
+    ///
+    /// `showsUpdateButton` is the predicate `UpdatesController`'s own rows,
+    /// its "Updates Available" tile and its drill subtitle already use - this
+    /// is the same question, asked once.
+    static func toolUpdateCount(from statuses: [DependencyStatus]) -> Int? {
+        guard !statuses.isEmpty else { return nil }
+        guard !statuses.contains(where: { $0 == .checking || $0 == .updating }) else { return nil }
+        guard !statuses.allSatisfy({ $0 == .unknown }) else { return nil }
+        return statuses.filter { $0.showsUpdateButton }.count
+    }
+
+    /// How many tracked forks are behind their upstream.
+    ///
+    /// `showsSyncButton` is what `GitHubSyncController`'s rows offer a Sync
+    /// button for and what its own "Sync All" filters on - a repo that is
+    /// diverged or not a fork is deliberately not counted here, because there
+    /// is nothing to pull.
+    static func forkDriftCount(from statuses: [GitHubSyncStatus]) -> Int? {
+        guard !statuses.isEmpty else { return nil }
+        guard !statuses.contains(where: { $0 == .checking || $0 == .syncing }) else { return nil }
+        guard !statuses.allSatisfy({ $0 == .unknown }) else { return nil }
+        return statuses.filter { $0.showsSyncButton }.count
+    }
+
+    /// How many of the five setup steps have drifted.
+    ///
+    /// Takes the same `[SetupStepKind: Bool?]` shape both setup pages already
+    /// hold (`BootstrapController.stepIsDone`/`AutomationController.stepIsDone`,
+    /// each delegating to `SetupStepChecks`), where the inner `nil` is "this
+    /// step's own check has not answered yet". A single unanswered step makes
+    /// the whole count unpublishable - four of five known is not four-fifths
+    /// of an answer, it is an answer that could still move.
+    static func setupDriftCount(from results: [SetupStepKind: Bool?]) -> Int? {
+        var drifted = 0
+        for kind in SetupStepKind.allCases {
+            guard let answer = results[kind], let done = answer else { return nil }
+            if !done { drifted += 1 }
+        }
+        return drifted
+    }
+
+    /// Publish freshly-learned tool statuses. Safe to call from any producer;
+    /// a set that is still settling is ignored rather than published.
+    func publishToolStatuses(_ statuses: [DependencyStatus], gatheredAt: Date = Date()) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let count = Self.toolUpdateCount(from: statuses) else { return }
+        guard acceptsReading(.tools, gatheredAt: gatheredAt) else { return }
+        lastCounts.toolUpdates = count
+        NotificationSources.setToolUpdates(count: count) { [weak self] in self?.onNavigateToUpdates?() }
+    }
+
+    /// Publish freshly-learned fork statuses.
+    func publishForkStatuses(_ statuses: [GitHubSyncStatus], gatheredAt: Date = Date()) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let count = Self.forkDriftCount(from: statuses) else { return }
+        guard acceptsReading(.forks, gatheredAt: gatheredAt) else { return }
+        lastCounts.forkDrift = count
+        NotificationSources.setGitHubSync(count: count) { [weak self] in self?.onNavigateToGitHubSync?() }
+    }
+
+    /// Publish freshly-learned setup-step results.
+    func publishSetupStepResults(_ results: [SetupStepKind: Bool?], gatheredAt: Date = Date()) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let count = Self.setupDriftCount(from: results) else { return }
+        guard acceptsReading(.setup, gatheredAt: gatheredAt) else { return }
+        lastCounts.setupDrift = count
+        NotificationSources.setSetupDrift(count: count) { [weak self] in self?.onNavigateToBootstrap?() }
+    }
+
+    /// Publish a freshly-loaded Automic Vault read.
+    ///
+    /// Takes the two lists rather than a whole `VaultSnapshot` because they
+    /// are the only parts counted here, and because the Vault page holds them
+    /// as its own two members rather than keeping the snapshot around.
+    ///
+    /// B1's rule crosses the boundary intact: a read that failed says nothing
+    /// about how many secrets exist or how many launchers need attention, so
+    /// `nil` on either side leaves both counts exactly as they were.
+    func publishVaultRead(secrets: [VaultSecret]?, tools: [VaultTool]?, gatheredAt: Date = Date()) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let tools, let secrets else { return }
+        guard acceptsReading(.vault, gatheredAt: gatheredAt) else { return }
+        let attention = tools.filter {
+            if case .needsAttention = $0.status { return true }
+            return false
+        }.count
+        // One assignment, not two - `lastCounts`'s `didSet` fires per write,
+        // and two writes would rebuild the canvas twice for one snapshot.
+        var counts = lastCounts
+        counts.vaultAttention = attention
+        counts.vaultSecrets = secrets.count
+        lastCounts = counts
+        NotificationSources.setVaultAttention(count: attention) { [weak self] in self?.onNavigateToVault?() }
     }
 }
 
@@ -460,5 +617,11 @@ extension BackgroundSignalsPoller {
     func debugSetLastCompletedPassAt(_ date: Date?) { lastCompletedPassAt = date }
 
     var debugCountsObserverCount: Int { countsObserverCountForTests }
+
+    /// Clear the per-signal freshness high-water marks. A suite that seeds a
+    /// count with `debugSetCounts` has published nothing, so without this the
+    /// marks left by an earlier case would make a later one's publish look
+    /// stale and be refused.
+    func debugResetReadingClock() { newestReading = [:] }
 }
 #endif
