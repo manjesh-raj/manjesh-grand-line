@@ -208,7 +208,28 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
     private var theme: HelmTheme = ThemeManager.shared.theme
 
-    private let subtitleLabel = NSTextField(labelWithString: "Machine setup and environment bootstrap - stored locally on this machine.")
+    // MARK: Header toolbar (Refresh)
+
+    /// This page's explicit "re-check everything" affordance, built to match
+    /// `UpdatesController`'s own Refresh pill rather than inventing a second
+    /// visual language for the same action: a `HoverHighlightView` (GL-16 -
+    /// it supplies the press action, focus ring and Return/Space handling a
+    /// plain `NSView` would not) filled with the theme accent, carrying the
+    /// same `arrow.clockwise` glyph and the same "Refresh" label, pinned to
+    /// the header row's trailing edge behind a flexible spacer.
+    ///
+    /// The one deliberate difference from Updates' pill is what replaces it
+    /// while a sweep runs. Updates counts a real N-of-M over its own catalog
+    /// and can honestly draw a determinate `HelmProgressBar`; this page's
+    /// refresh is two sequential phases (a `git fetch` for the dotfiles state,
+    /// then the software sweep) with no page-level item count, so it shows a
+    /// plain "Checking..." label rather than a progress fraction nobody
+    /// measured.
+    private let refreshPill = HoverHighlightView()
+    private let refreshIcon = NSImageView()
+    private let refreshLabel = NSTextField(labelWithString: "Refresh")
+    private let refreshBusyLabel = NSTextField(labelWithString: "Checking\u{2026}")
+    private var isRefreshingAll = false
 
     private let currentPathLabel = NSTextField(labelWithString: "")
     private let pathField = HelmTextField(placeholder: "~/manjesh/firstmate")
@@ -555,11 +576,111 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
     // MARK: Header
 
+    /// The page's own toolbar row: a flexible spacer plus the Refresh pill,
+    /// the same trailing-edge placement `UpdatesController.buildToolbarRow`
+    /// gives its identical pill.
+    ///
+    /// This row used to be a lone subtitle label ("Machine setup and
+    /// environment bootstrap - stored locally on this machine."), deleted at
+    /// the captain's own request - the drill header directly above already
+    /// names this destination and states the live "N of 5 steps done" line
+    /// (`drillHeaderSubtitle`), so the sentence restated the page's own name
+    /// and said nothing the header did not.
     private func buildHeader() -> NSView {
-        subtitleLabel.font = .systemFont(ofSize: 12)
-        Self.yieldsToWindowWidth(subtitleLabel)
-        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-        return subtitleLabel
+        refreshIcon.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
+        refreshIcon.translatesAutoresizingMaskIntoConstraints = false
+        refreshLabel.font = .systemFont(ofSize: 12, weight: .semibold)
+        refreshLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let pillContent = NSStackView(views: [refreshIcon, refreshLabel])
+        pillContent.orientation = .horizontal
+        pillContent.alignment = .centerY
+        pillContent.spacing = 7
+        pillContent.translatesAutoresizingMaskIntoConstraints = false
+
+        refreshPill.wantsLayer = true
+        refreshPill.layer?.cornerRadius = 8
+        refreshPill.cornerRadius = 8
+        refreshPill.translatesAutoresizingMaskIntoConstraints = false
+        refreshPill.toolTip = "Re-check every setup step"
+        refreshPill.setAccessibilityRole(.button)
+        refreshPill.setAccessibilityLabel("Refresh")
+        refreshPill.accessibilityLabelOverride = "Refresh"
+        refreshPill.addSubview(pillContent)
+        NSLayoutConstraint.activate([
+            pillContent.leadingAnchor.constraint(equalTo: refreshPill.leadingAnchor, constant: 13),
+            pillContent.trailingAnchor.constraint(equalTo: refreshPill.trailingAnchor, constant: -13),
+            pillContent.topAnchor.constraint(equalTo: refreshPill.topAnchor, constant: 7),
+            pillContent.bottomAnchor.constraint(equalTo: refreshPill.bottomAnchor, constant: -7),
+        ])
+        refreshPill.addGestureRecognizer(
+            NSClickGestureRecognizer(target: self, action: #selector(refreshAllTapped)))
+        refreshPill.setContentHuggingPriority(.required, for: .horizontal)
+        refreshPill.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        refreshBusyLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        refreshBusyLabel.isHidden = true
+        refreshBusyLabel.translatesAutoresizingMaskIntoConstraints = false
+        refreshBusyLabel.setContentHuggingPriority(.required, for: .horizontal)
+        refreshBusyLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let row = NSStackView(views: [spacer, refreshBusyLabel, refreshPill])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 10
+        row.translatesAutoresizingMaskIntoConstraints = false
+        return row
+    }
+
+    /// Re-runs exactly the checks that populate this page's step statuses, and
+    /// nothing else.
+    ///
+    /// Deliberately the same sequence - and the same reasoning - as the drift
+    /// card's own "Re-check now" (`driftRecheckClicked`): `firstmateHome` and
+    /// `restoreConfig` are read live and synchronously inside `stepIsDone`, so
+    /// `refreshFromSettings()` plus the closing rebuild covers them, and only
+    /// dotfiles/agentInstructions (`refreshDotfiles`) and software need a real
+    /// re-fetch. `forceRefresh: true` because this is the captain pressing
+    /// Refresh: it must never settle for a `DependencyCheckCache` hit Updates
+    /// or Automation happened to leave moments ago, the same rule
+    /// `UpdatesController.checkAllTapped` states for its own pill.
+    ///
+    /// `refreshDotfiles` likewise bypasses `refreshDotfilesIfStale`'s visit
+    /// TTL - an explicit refresh answered from a 15-minute-old `git fetch`
+    /// would not be a refresh.
+    @objc private func refreshAllTapped() {
+        guard !isRefreshingAll else { return }
+        isRefreshingAll = true
+        refreshPill.isHidden = true
+        refreshBusyLabel.isHidden = false
+
+        refreshFromSettings()
+        refreshDotfiles { [weak self] in
+            guard let self else { return }
+            self.checkAllSoftware(forceRefresh: true) { [weak self] in
+                guard let self else { return }
+                self.isRefreshingAll = false
+                self.refreshPill.isHidden = false
+                self.refreshBusyLabel.isHidden = true
+                // Also re-reads the two live steps and ends in
+                // `refreshStepperVisuals()`, so the step pills, the stepper
+                // dots and the drill header's own line all land on one
+                // freshly-read answer.
+                self.rebuildDynamicSections()
+                if let container = self.view.window?.contentView {
+                    // Reuses the header's own computation rather than a second
+                    // tally, so the toast can never disagree with the line
+                    // rendered directly above it.
+                    let summary = self.drillHeaderSubtitle ?? "setup re-checked"
+                    Toast.show(in: container, message: "Re-checked setup \u{00B7} \(summary)")
+                }
+            }
+        }
     }
 
     // MARK: Card chrome
@@ -779,8 +900,10 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     var onDrillSubtitleChanged: (() -> Void)?
 
     /// **Deliberately empty.** This page carries its own actions in its own
-    /// toolbar or card header a few points below the drill header -
-    /// its "Run full setup" button, which sits on its own progress track. Hoisting a copy of one
+    /// toolbar or card header a few points below the drill header - its
+    /// "Run full setup" button, which sits on its own progress track, and its
+    /// Refresh pill, which swaps for a "Checking..." label while a sweep runs
+    /// (see `buildHeader`). Hoisting a copy of either
     /// would either duplicate a control §6.4's cluster exists to
     /// de-duplicate, or separate the button from the state it reports. The
     /// header still earns its place through the live subtitle above, which is
@@ -2602,7 +2725,20 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private func applyTheme() {
         guard isViewLoaded else { return }
         let line = HelmTheme.nsColor(theme.chromeLineHex)
-        subtitleLabel.textColor = HelmTheme.mutedInk(theme)
+        // The Refresh pill matches Updates' own: an opaque accent fill with
+        // `selectionTextHex` content, the one pairing already contrast-
+        // verified against an opaque accent (SwiftTerm's own selected text).
+        // Set through `normalColor`/`hoverColor`, never straight onto the
+        // layer - a direct layer write looks right until the first hover cycle
+        // strands the fill at `HoverHighlightView`'s untouched `.clear`
+        // default (fm/grandline-updates-refresh-button-light-mode-fix).
+        let accent = HelmTheme.nsColor(theme.accentHex)
+        refreshPill.normalColor = accent
+        refreshPill.hoverColor = accent.hoverShifted(by: 0.10, forMode: theme.mode)
+        let onAccent = HelmTheme.nsColor(theme.selectionTextHex)
+        refreshIcon.contentTintColor = onAccent
+        refreshLabel.textColor = onAccent
+        refreshBusyLabel.textColor = HelmTheme.mutedInk(theme)
         currentPathLabel.textColor = HelmTheme.mutedInk(theme)
         for card in cards { card.applyTheme(theme) }
         for v in stepContentBackgrounds {
