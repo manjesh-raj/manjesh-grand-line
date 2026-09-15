@@ -139,6 +139,33 @@ final class HostsController: NSViewController, DaylightDrillActions {
     private let keysList = HostsListSection()
     private let snippetsList = HostsListSection()
 
+    /// The reference mockup's right-hand column: Workspace, Selected, Quick
+    /// actions (`HostsSidePanels.swift`). One instance shared by all three
+    /// tabs rather than one per tab - the Workspace counts are page-wide, and
+    /// the detail panel simply re-fills from whichever list is showing.
+    private let sideStack = HostsSideStack()
+
+    /// The reference's `.filterbar`. "Online" is the one of its three chips
+    /// this app can actually answer - the app's `HostSessionRegistry` knows
+    /// which hosts have a live session (`liveSession`). Its "All environments"
+    /// is what the tag chips beside it already are, and "Recently used" has
+    /// nothing behind it: no store here records when a host was last
+    /// connected to, and inventing a timestamp would be a new field masquerading
+    /// as a filter.
+    private lazy var onlineChip: HelmButton = {
+        let b = HelmButton(title: "Online", variant: .secondary, size: .small,
+                           symbol: "bolt.fill", target: self, action: #selector(onlineChipClicked(_:)))
+        b.setButtonType(.pushOnPushOff)
+        b.toolTip = "Show only hosts with a live session"
+        return b
+    }()
+    private var onlineOnly = false
+
+    /// Open the ⌘K command palette. Forwarded rather than reached for - this
+    /// page has never known what an `AppDelegate` is, and the quick-actions
+    /// panel must not be the first thing to teach it.
+    var onOpenCommandPalette: (() -> Void)?
+
     /// The three "add" actions. Daylight §6.4 hoists a page's primary action
     /// into the shell's drill header, and this page has one per tab - so they
     /// are built here (rather than inline in each `build*Tab`) and handed over
@@ -210,6 +237,10 @@ final class HostsController: NSViewController, DaylightDrillActions {
             self?.select(tab: tab, moveTabControl: false)
         }
         root.addSubview(tabs)
+        // Added before the constraint block below, which references its
+        // anchors: activating a constraint between two views with no common
+        // ancestor throws (`fm/grandline-docs-no-window-fix`'s own finding).
+        root.addSubview(sideStack)
 
         buildHostsTab()
         buildKeysTab()
@@ -251,20 +282,53 @@ final class HostsController: NSViewController, DaylightDrillActions {
             column.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -HelmMetrics.pageGutter),
 
             tabs.leadingAnchor.constraint(equalTo: column.leadingAnchor),
-            tabs.trailingAnchor.constraint(lessThanOrEqualTo: column.trailingAnchor),
+            // The tab row sits over the content column only. Letting it span
+            // the side stack too would imply the panels beside it switch with
+            // the tab, which is exactly what they do not do.
+            tabs.trailingAnchor.constraint(lessThanOrEqualTo: sideStack.leadingAnchor,
+                                           constant: -HelmMetrics.s4),
             tabs.topAnchor.constraint(equalTo: column.topAnchor),
         ])
+
+        // The page is two columns: the tab's own content, and the permanent
+        // right-hand panel stack - the reference mockup's own `.grid`
+        // (`1.55fr .8fr`), which is what fills the dead middle of every row.
+        //
+        // The stack is a sibling of the three tab views rather than a child of
+        // each, so it survives a tab switch (its Workspace counts are page-wide
+        // and its detail panel simply re-fills from whichever list is showing),
+        // and so there is one instance rather than three.
+        //
+        // **Window-floor discipline** (gotchas (13)/(14)): the flexible column
+        // is the content, and the only two constraints that could resist a
+        // narrowing window - the stack's own width and the content's minimum -
+        // both sit at `HelmDaylightPriority.contentTie` (499), below
+        // `NSLayoutPriorityWindowSizeStayPut`. `AppShellBodyWidthSelfTest`
+        // sweeps every destination for exactly that.
+        let contentMinimum = hostsTabView.widthAnchor.constraint(
+            greaterThanOrEqualToConstant: Self.contentMinimumWidth)
+        contentMinimum.priority = HelmDaylightPriority.contentTie
 
         for tabView in [hostsTabView, keysTabView, snippetsTabView] {
             tabView.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(tabView)
             NSLayoutConstraint.activate([
                 tabView.leadingAnchor.constraint(equalTo: column.leadingAnchor),
-                tabView.trailingAnchor.constraint(equalTo: column.trailingAnchor),
+                tabView.trailingAnchor.constraint(equalTo: sideStack.leadingAnchor,
+                                                  constant: -HelmMetrics.s4),
                 tabView.topAnchor.constraint(equalTo: tabs.bottomAnchor, constant: HelmMetrics.s4),
                 tabView.bottomAnchor.constraint(equalTo: column.bottomAnchor),
             ])
         }
+
+        NSLayoutConstraint.activate([
+            sideStack.trailingAnchor.constraint(equalTo: column.trailingAnchor),
+            sideStack.topAnchor.constraint(equalTo: hostsTabView.topAnchor),
+            sideStack.bottomAnchor.constraint(lessThanOrEqualTo: column.bottomAnchor),
+            contentMinimum,
+        ])
+
+        buildSidePanels()
 
         ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
 
@@ -281,6 +345,166 @@ final class HostsController: NSViewController, DaylightDrillActions {
         // page is fully built (`ThemeManager.swift`'s checklist item 4, the
         // trap this codebase has now hit four times).
         applyTheme(ThemeManager.shared.theme)
+    }
+
+    /// The narrowest the tab's own content column is allowed to get before the
+    /// window itself has to give. Held *below* `NSLayoutPriorityWindowSizeStayPut`
+    /// at the one place it is applied, so it can never become a window floor.
+    static let contentMinimumWidth: CGFloat = 360
+
+    // MARK: Side panels
+
+    private func buildSidePanels() {
+        // Each list reports its own selection; the detail panel re-fills from
+        // whichever tab is showing, so a stale selection on a hidden tab can
+        // never be what the panel displays.
+        hostsList.onSelectRecord = { [weak self] _ in self?.refreshDetailPanel() }
+        keysList.onSelectRecord = { [weak self] _ in self?.refreshDetailPanel() }
+        snippetsList.onSelectRecord = { [weak self] _ in self?.refreshDetailPanel() }
+
+        // Every one of these is a real, bound menu item in `main.swift` -
+        // the brief's own rule, and why the reference's `⌘ ↵ Connect selected`
+        // and `⌘ ⇧ P Run snippet` are absent rather than drawn inert.
+        sideStack.quickActions.setItems([
+            .init(shortcut: "\u{2318}K", title: "Command palette") { [weak self] in
+                self?.onOpenCommandPalette?()
+            },
+            .init(shortcut: "\u{2318}\u{2303}N", title: "Add host") { [weak self] in self?.newHost() },
+            .init(shortcut: "\u{2318}\u{21E7}N", title: "New key") { [weak self] in self?.newKey() },
+            .init(shortcut: "\u{2318}\u{2325}N", title: "New snippet") { [weak self] in self?.newSnippet() },
+        ])
+    }
+
+    /// The Workspace card's four numbers, read from the same three stores the
+    /// lists beside it render and from the app's one session registry - so the
+    /// panel and the list can never disagree within a frame.
+    private func refreshWorkspacePanel() {
+        let live = hostStore.hosts.reduce(0) { $0 + (liveSession?($1.id) != nil ? 1 : 0) }
+        sideStack.workspace.setCounts(hosts: hostStore.hosts.count,
+                                      keys: keyStore.keys.count,
+                                      snippets: snippetStore.snippets.count,
+                                      live: live,
+                                      touchIDAvailable: CredentialVaultKeyStore.biometryAvailable)
+    }
+
+    /// Fill (or empty) the detail panel from the showing tab's own selection.
+    private func refreshDetailPanel() {
+        guard let detail = currentDetail() else {
+            sideStack.detail.clear()
+            return
+        }
+        sideStack.detail.show(detail)
+    }
+
+    private func currentDetail() -> HostsDetailContent? {
+        switch activeTab {
+        case .hosts:
+            guard let key = hostsList.selectedRecordKey,
+                  let id = UUID(uuidString: key),
+                  let host = hostStore.host(id: id) else { return nil }
+            return detail(for: host)
+        case .keys:
+            guard let key = keysList.selectedRecordKey,
+                  let id = UUID(uuidString: key),
+                  let sshKey = keyStore.key(id: id) else { return nil }
+            return detail(for: sshKey)
+        case .snippets:
+            guard let key = snippetsList.selectedRecordKey,
+                  let id = UUID(uuidString: key),
+                  let snippet = snippetStore.snippet(id: id) else { return nil }
+            return detail(for: snippet)
+        }
+    }
+
+    /// The reference's Environment / Endpoint / User / Credential list, read
+    /// straight off the saved `Host` - nothing here is derived or invented.
+    private func detail(for host: Host) -> HostsDetailContent {
+        var fields: [HostsDetailContent.Field] = [
+            .init("Environment", Self.roleKicker(for: host)),
+            .init("Endpoint", host.port == 22 ? host.address : "\(host.address):\(host.port)", isCode: true),
+            .init("User", host.username.isEmpty ? "\u{2014}" : host.username),
+            .init("Credential", credentialName(for: host)),
+        ]
+        if let jump = host.jumpVia?.trimmingCharacters(in: .whitespacesAndNewlines), !jump.isEmpty {
+            fields.append(.init("Jump via", jump))
+        }
+        if !host.portForwards.isEmpty {
+            fields.append(.init("Forwards", "\(host.portForwards.count)"))
+        }
+        let session = liveSession?(host.id)
+        if let session { fields.append(.init("Session", session.stateText)) }
+
+        var actions: [HostsListSection.Action] = []
+        if session != nil {
+            actions.append(.init(title: "Switch", symbol: "arrow.right.circle.fill") { [weak self] in
+                self?.onSwitchToSession?(host.id)
+            })
+        } else {
+            actions.append(.init(title: "Connect", symbol: "bolt.fill") { [weak self] in self?.connect(host) })
+        }
+        actions.append(.init(title: "Edit\u{2026}", symbol: "pencil") { [weak self] in self?.onAddOrEdit?(host) })
+
+        return HostsDetailContent(symbol: host.iconSymbol,
+                                  tint: .accent,
+                                  tintHex: host.accentHex,
+                                  kicker: Self.roleKicker(for: host),
+                                  title: host.label,
+                                  subtitle: host.subtitle,
+                                  fields: fields,
+                                  actions: actions)
+    }
+
+    /// The saved key's own label, never a path or key material - the same
+    /// thing `Host.keyID` stores and the host editor shows.
+    private func credentialName(for host: Host) -> String {
+        guard let keyID = host.keyID else { return "ssh agent" }
+        return keyStore.key(id: keyID)?.label ?? "Missing key"
+    }
+
+    private func detail(for key: SSHKey) -> HostsDetailContent {
+        let usedBy = hostStore.hosts.filter { $0.keyID == key.id }.count
+        var fields: [HostsDetailContent.Field] = [
+            .init("Type", key.type.displayName),
+            .init("Fingerprint", key.fingerprint, isCode: true),
+            .init("Passphrase", key.hasPassphrase ? "In Keychain" : "None"),
+            .init("Used by", usedBy == 1 ? "1 host" : "\(usedBy) hosts"),
+        ]
+        if key.certificate?.isEmpty == false { fields.append(.init("Certificate", "Present")) }
+        return HostsDetailContent(symbol: "key.fill",
+                                  tint: key.type.tint,
+                                  kicker: key.type.displayName,
+                                  title: key.label,
+                                  subtitle: "Private key material stays in the macOS Keychain.",
+                                  fields: fields,
+                                  actions: [
+                                    .init(title: "Edit", symbol: "pencil") { [weak self] in
+                                        self?.presentKeyEditor(for: key)
+                                    },
+                                    .init(title: "Copy key", symbol: "doc.on.doc") {
+                                        copyToPasteboard(key.publicKey)
+                                    },
+                                  ])
+    }
+
+    private func detail(for snippet: Snippet) -> HostsDetailContent {
+        let lines = snippet.command.split(separator: "\n", omittingEmptySubsequences: false).count
+        return HostsDetailContent(symbol: "chevron.left.forwardslash.chevron.right",
+                                  tint: .info,
+                                  kicker: "Snippet",
+                                  title: snippet.label,
+                                  subtitle: "Sent to the active terminal tab, then Enter.",
+                                  fields: [
+                                    .init("Command", snippet.subtitle, isCode: true),
+                                    .init("Lines", "\(lines)"),
+                                  ],
+                                  actions: [
+                                    .init(title: "Run", symbol: "play.fill") { [weak self] in
+                                        self?.onRunSnippet?(snippet)
+                                    },
+                                    .init(title: "Edit\u{2026}", symbol: "pencil") { [weak self] in
+                                        self?.presentSnippetEditor(for: snippet)
+                                    },
+                                  ])
     }
 
     private func buildHostsTab() {
@@ -311,10 +535,24 @@ final class HostsController: NSViewController, DaylightDrillActions {
             tagsScroll.heightAnchor.constraint(equalToConstant: 24),
         ])
 
+        // The reference's `.filterbar`, beside the tag chips it already had:
+        // one real toggle ("Online"), and no invented ones - see `onlineChip`.
+        let filterRow = NSStackView(views: [onlineChip, tagsScroll])
+        filterRow.orientation = .horizontal
+        filterRow.alignment = .centerY
+        filterRow.spacing = HelmMetrics.s2
+        // AGENTS.md gotcha (10): at the default `.gravityAreas` no hugging
+        // priority is honoured at all, so the scroll would not take the slack
+        // the chip leaves.
+        filterRow.distribution = .fill
+        onlineChip.setContentHuggingPriority(.required, for: .horizontal)
+        onlineChip.setContentCompressionResistancePriority(.required, for: .horizontal)
+        filterRow.translatesAutoresizingMaskIntoConstraints = false
+
         // A vertical `NSStackView`, not manual constraints, specifically so
         // hiding the tag row (no tags on any host - the common case) removes
         // it from layout instead of leaving a 24pt gap.
-        let top = NSStackView(views: [searchField, tagsScroll])
+        let top = NSStackView(views: [searchField, filterRow])
         top.orientation = .vertical
         top.alignment = .leading
         top.spacing = HelmMetrics.s2
@@ -335,7 +573,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
             top.trailingAnchor.constraint(equalTo: hostsTabView.trailingAnchor),
             top.topAnchor.constraint(equalTo: hostsTabView.topAnchor),
             searchField.widthAnchor.constraint(equalTo: top.widthAnchor),
-            tagsScroll.widthAnchor.constraint(equalTo: top.widthAnchor),
+            filterRow.widthAnchor.constraint(equalTo: top.widthAnchor),
 
             hostsList.card.leadingAnchor.constraint(equalTo: hostsTabView.leadingAnchor),
             hostsList.card.trailingAnchor.constraint(equalTo: hostsTabView.trailingAnchor),
@@ -380,6 +618,9 @@ final class HostsController: NSViewController, DaylightDrillActions {
         hostsTabView.isHidden = tab != .hosts
         keysTabView.isHidden = tab != .keys
         snippetsTabView.isHidden = tab != .snippets
+        // The panel follows the showing tab, so a selection left behind on a
+        // hidden list is never what it displays.
+        if isViewLoaded { refreshDetailPanel() }
         // §6.4: both halves of the header describe the tab that is showing.
         onDrillActionsChanged?()
         onDrillSubtitleChanged?()
@@ -437,6 +678,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
         hostsList.applyTheme(theme)
         keysList.applyTheme(theme)
         snippetsList.applyTheme(theme)
+        sideStack.applyTheme(theme)
     }
 
     // MARK: Hosts data
@@ -470,7 +712,15 @@ final class HostsController: NSViewController, DaylightDrillActions {
             tagButtons[tag] = b
             tagsStack.addArrangedSubview(b)
         }
+        // Only the tag strip collapses when there are no tags - the "Online"
+        // chip beside it is always meaningful.
         tagsScroll.isHidden = allTags.isEmpty
+    }
+
+    @objc private func onlineChipClicked(_ sender: NSButton) {
+        onlineOnly = sender.state == .on
+        (sender as? HelmButton)?.variant = onlineOnly ? .primary : .secondary
+        applyHostFilter(searchField.stringValue)
     }
 
     @objc private func tagChipClicked(_ sender: NSButton) {
@@ -506,12 +756,13 @@ final class HostsController: NSViewController, DaylightDrillActions {
         }
 
         if hosts.isEmpty {
-            let filtering = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !selectedTags.isEmpty
+            let filtering = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !selectedTags.isEmpty || onlineOnly
             items.append(.empty(
                 symbol: filtering ? "line.3.horizontal.decrease.circle" : "server.rack",
                 title: filtering ? "No matching hosts" : "No saved hosts yet",
                 body: filtering
-                    ? "Nothing matches that search or those tags. Clear them to see every saved host."
+                    ? "Nothing matches the current search or filters. Clear them to see every saved host."
                     : "Add a host to save its connection details, or type ssh user@host in the field above to connect right now."))
         }
 
@@ -522,6 +773,8 @@ final class HostsController: NSViewController, DaylightDrillActions {
         lastHostItems = items
         #endif
         hostsList.setItems(items)
+        refreshWorkspacePanel()
+        refreshDetailPanel()
         onDrillSubtitleChanged?()
     }
 
@@ -538,6 +791,9 @@ final class HostsController: NSViewController, DaylightDrillActions {
         }
         if !selectedTags.isEmpty {
             hosts = hosts.filter { !$0.tags.isEmpty && !selectedTags.isDisjoint(with: $0.tags) }
+        }
+        if onlineOnly {
+            hosts = hosts.filter { liveSession?($0.id) != nil }
         }
         return hosts
     }
@@ -614,6 +870,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
             content.chipTint = .good
         }
         var item = HostsListSection.Item(content: content)
+        item.recordKey = host.id.uuidString
         if session != nil {
             item.primary = .init(title: "Switch to session", symbol: "arrow.right.circle.fill") { [weak self] in
                 self?.onSwitchToSession?(host.id)
@@ -671,6 +928,8 @@ final class HostsController: NSViewController, DaylightDrillActions {
             ? HostsTab.keys.title
             : "\(HostsTab.keys.title) (\(keyStore.keys.count))"
         keysList.setItems(items)
+        refreshWorkspacePanel()
+        refreshDetailPanel()
         onDrillSubtitleChanged?()
     }
 
@@ -683,6 +942,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
         content.metaIsCode = true
         if key.hasPassphrase { content.chipText = "Passphrase" }
         var item = HostsListSection.Item(content: content)
+        item.recordKey = key.id.uuidString
         item.primary = .init(title: "Edit", symbol: "pencil") { [weak self] in self?.presentKeyEditor(for: key) }
         item.activate = { [weak self] in self?.presentKeyEditor(for: key) }
         item.overflow = [
@@ -705,6 +965,8 @@ final class HostsController: NSViewController, DaylightDrillActions {
             ? HostsTab.snippets.title
             : "\(HostsTab.snippets.title) (\(snippetStore.snippets.count))"
         snippetsList.setItems(items)
+        refreshWorkspacePanel()
+        refreshDetailPanel()
         onDrillSubtitleChanged?()
     }
 
@@ -716,6 +978,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
                                             badgeSymbol: "chevron.left.forwardslash.chevron.right")
         content.metaIsCode = true
         var item = HostsListSection.Item(content: content)
+        item.recordKey = snippet.id.uuidString
         item.primary = .init(title: "Run", symbol: "play.fill") { [weak self] in self?.onRunSnippet?(snippet) }
         item.activate = { [weak self] in self?.onRunSnippet?(snippet) }
         item.overflow = [
@@ -939,6 +1202,15 @@ final class HostsController: NSViewController, DaylightDrillActions {
                      keysTabVisible: !keysTabView.isHidden,
                      snippetsTabVisible: !snippetsTabView.isHidden)
     }
+
+    #if FM_SELFTESTS
+    var debugSideStack: HostsSideStack { sideStack }
+    var debugOnlineChip: HelmButton { onlineChip }
+    func debugSetOnlineOnly(_ on: Bool) {
+        onlineChip.state = on ? .on : .off
+        onlineChipClicked(onlineChip)
+    }
+    #endif
 
     func debugList(_ tab: HostsTab) -> HostsListSection {
         switch tab {

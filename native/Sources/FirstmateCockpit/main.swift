@@ -181,6 +181,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.console.openFirstmateHost()
             self.appShell.show(.console)
         }
+        // The Hosts page's own quick-actions panel names ⌘K; this is what
+        // makes the button do what its label says. Forwarded rather than
+        // reached for - that page has never known what an `AppDelegate` is.
+        hostsPanel.onOpenCommandPalette = { [weak self] in self?.showUnifiedSearch() }
         // Nav-redesign task, item 3: Add/Edit Host is a dedicated full-page
         // window, not a sheet on this ~240pt-wide panel.
         appShell.onPresentHostEditor = { [weak self] host in
@@ -1908,6 +1912,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_BAR_NAV_MODERNIZATION_TESTS"] == 
 // See CanvasListsControlsSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_CANVAS_LISTS_CONTROLS_TESTS"] == "1" {
     exit(CanvasListsControlsSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grand-line-hosts-page-redesign`: the redesigned Hosts page's two-column
+// layout, and that every panel beside the list is fed by a real store rather
+// than the reference mockup's demo data. Window-backed (it mounts the real
+// controller), so it sits in `run-all-tests.sh`'s NEEDS_SESSION list.
+if ProcessInfo.processInfo.environment["FM_RUN_HOSTS_REDESIGN_TESTS"] == "1" {
+    exit(HostsRedesignSelfTest.run() ? 0 : 1)
 }
 
 if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_MODULE_TESTS"] == "1" {

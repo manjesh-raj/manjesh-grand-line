@@ -176,6 +176,9 @@ NEEDS_SESSION=(
   "FM_RUN_DAYLIGHT_DRILL_SLICE3_TESTS"
   # Mounts the real Schedules page in a real window.
   "FM_RUN_SCHEDULES_REDESIGN_TESTS"
+  # Mounts the real Hosts destination in a real window to measure its two
+  # columns and drive its side panels.
+  "FM_RUN_HOSTS_REDESIGN_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_SLICE4_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_SLICE5_TESTS"
   # Phase 5 mounts real editor sheets, a real `NSPanel` palette and real

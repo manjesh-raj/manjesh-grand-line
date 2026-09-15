@@ -922,7 +922,7 @@ enum DaylightModuleSelfTest {
         // fail loudly - a missing constraint collapses the row, a missing
         // `addSubview` traps on "no common ancestor". The other five render a
         // pixel-identical bar, and each was confirmed to fail here by name.
-        let expected: [RailDestination] = [.stickyBoard, .codePreview, .shift, .strawHat, .poneglyph, .console]
+        let expected: [RailDestination] = [.stickyBoard, .codePreview, .shift, .strawHat, .poneglyph, .console, .hosts]
         let buttons = bar.debugDestinationButtons()
         guard buttons.count == expected.count else {
             fail("expected \(expected.count) quick-access icons, found \(buttons.count)", &ok)
