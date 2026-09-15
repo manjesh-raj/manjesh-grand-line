@@ -1498,6 +1498,18 @@ enum ToolRowLayout {
 
     /// D1's reveal policy - see `HelmAccentRow.ActionReveal`, which this
     /// mirrors so the two row components answer the question the same way.
+    ///
+    /// **No `ToolRowLayout` caller uses `.onAim` today, and that is a captain
+    /// decision rather than an oversight.** Updates was the one page that did;
+    /// he reported the result as broken, because
+    /// `ReviewPRListView.actionReveal(row:of:)`'s "short list keeps its
+    /// buttons, long list keeps only its first row's" rule splits a *single*
+    /// card's rows into two treatments whenever a category has more than three
+    /// of them - see `UpdatesController.buildRow` for the full report. Before
+    /// opting a dense checklist page back in, re-read that note: the four other
+    /// `ToolRowLayout` pages (Bootstrap, Automation, GitHub Sync, Vault) all
+    /// take the `.always` default, so one page opting in also splits the row
+    /// component's behaviour across the app.
     enum ActionReveal { case always, onAim }
 
     /// Assembles `views` into one row and returns the top-level view to place
