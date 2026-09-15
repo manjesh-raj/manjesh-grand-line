@@ -277,6 +277,7 @@ NEEDS_SESSION=(
   # a drag session needs a window to drag in. Its pure-logic half
   # (FM_RUN_SHIFT_BOARD_TESTS) is deliberately not here and runs in CI.
   "FM_RUN_SHIFT_BOARD_VIEW_TESTS"
+  "FM_RUN_SHIFT_TASKS_PAGE_TESTS"
   # ---------------------------------------------------------------------
   # The full-app audit's §7.1 finding: these eight all create real
   # `NSWindow`s and drive real AppKit layout, exactly like every entry

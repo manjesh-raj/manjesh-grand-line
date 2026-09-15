@@ -972,13 +972,50 @@ final class ShiftBoardView: NSView {
         // constant from inside `layout()`, which needs a settling pass to
         // converge - measured, that left a column a whole render behind its
         // own content. A count is known the instant the data is.
-        let fullest = byColumn.values.map(\.count).max() ?? 0
-        let rows = min(max(fullest, 1), Self.visibleRows)
-        let row = ShiftBoardView.cardRowHeight
-        let content = row * CGFloat(rows) + HelmMetrics.s2 * CGFloat(rows - 1)
-        let height = min(max(content, ShiftBoardColumnView.minBodyHeight),
+        //
+        // **The plan is content-aware, not a flat card count, and that is what
+        // stops a card being sliced in half.** A card carries a meta line only
+        // when the task has a due date or subtasks (see `configure`'s `bits`),
+        // and that line is real height: measured, 82pt without it and 103pt
+        // with. Costing every card at 82 under-counted a four-card column by
+        // 21pt, so the fourth card rendered cut through its own priority pill -
+        // visible on the captain's own board, in every theme.
+        //
+        // The frame-based raise in `ShiftBoardColumnView.applyBodyHeight` is
+        // meant to be the safety net for that, and cannot be: a view's
+        // `layout()` runs before its own descendants get their frames, so the
+        // first pass measures zero, and nothing marks the column dirty again
+        // afterwards (`layoutSubtreeIfNeeded` only descends into views already
+        // flagged `needsLayout`). It stays as the net for a *wrapped title*,
+        // which no count can predict - but the ordinary case has to be right
+        // from the count, with no settling pass, exactly as the paragraph
+        // above says.
+        let planned = byColumn.values.map { Self.plannedBodyHeight(for: $0) }.max()
+            ?? ShiftBoardColumnView.minBodyHeight
+        let height = min(max(planned, ShiftBoardColumnView.minBodyHeight),
                          ShiftBoardColumnView.maxBodyHeight)
         for columnView in columnViews { columnView.setBodyHeight(height) }
+    }
+
+    /// The height one column needs to show its first `visibleRows` cards in
+    /// full - the sum of what each of those cards will really be, not a flat
+    /// card count times one average.
+    ///
+    /// Mirrors `ShiftBoardCardView.configure`'s own rule for whether a card
+    /// gets a meta line, so the two cannot disagree about what a card costs.
+    static func plannedBodyHeight(for tasks: [ShiftTask]) -> CGFloat {
+        let rows = min(max(tasks.count, 1), visibleRows)
+        let heights = tasks.prefix(rows).map { cardHeight(for: $0) }
+        // An empty column still reserves one row, so the three stay level.
+        let content = heights.isEmpty ? cardRowHeight : heights.reduce(0, +)
+        return content + HelmMetrics.s2 * CGFloat(rows - 1)
+    }
+
+    /// One card's height: the taller shape when the task has something to put
+    /// on its meta line, the plain one otherwise.
+    static func cardHeight(for task: ShiftTask) -> CGFloat {
+        let hasMetaLine = task.dueDate != nil || !task.subtasks.isEmpty
+        return hasMetaLine ? cardRowHeightWithMeta : cardRowHeight
     }
 
     /// How many cards a column shows before it scrolls. Four is what the
@@ -1004,6 +1041,12 @@ final class ShiftBoardView: NSView {
     /// run. The value is now the need in the *taller* of the two registers,
     /// so it fits in all fourteen palettes rather than in twelve.
     static var cardRowHeight: CGFloat { HelmType.scaledRowHeight(82) }
+
+    /// The same card once it carries a meta line (a due date, a subtask
+    /// count, or both). Measured the same way and in the same register as
+    /// `cardRowHeight` above - 103 in a Daylight-family theme, 102 in a
+    /// legacy one - so it fits in all fourteen palettes rather than twelve.
+    static var cardRowHeightWithMeta: CGFloat { HelmType.scaledRowHeight(103) }
 
     func applyTheme(_ theme: HelmTheme) {
         for columnView in columnViews { columnView.applyTheme(theme) }

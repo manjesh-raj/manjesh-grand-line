@@ -107,6 +107,61 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         .init(id: ShiftTasksView.list.rawValue, title: "List"),
     ], selected: ShiftTasksView.board.rawValue, size: .compact)
 
+    /// Which slice of the captain's tasks the page is showing - the sidebar's
+    /// Workspace rows.
+    ///
+    /// Deliberately **not** a second project filter: the chip row above the
+    /// board already owns that, and it is the control the captain named in his
+    /// own list of what this page needs. Two surfaces filtering by project
+    /// would be one idea wearing two controls. What the sidebar carries is the
+    /// slice the chips cannot state - "what is due today", "what is late" -
+    /// each with a live count.
+    ///
+    /// `String`-backed because `HelmPageSidebar` deals in caller-owned row ids,
+    /// the same reason `ShiftTasksView` and `ShiftTopLevelView` are.
+    enum ShiftTaskScope: String, CaseIterable {
+        case all, dueToday = "due_today", overdue
+
+        var title: String {
+            switch self {
+            case .all: return "All tasks"
+            case .dueToday: return "Due today"
+            case .overdue: return "Overdue"
+            }
+        }
+
+        /// The same glyph the matching stat tile and panel header already use,
+        /// so one idea is one icon everywhere on this page.
+        var symbol: String {
+            switch self {
+            case .all: return "tray.full"
+            case .dueToday: return "sun.max"
+            case .overdue: return "exclamationmark.triangle"
+            }
+        }
+    }
+
+    private var taskScope: ShiftTaskScope = .all
+
+    /// The page's own left nav column - `HelmPageSidebar`, the component
+    /// Schedules and Poneglyph already share (see its header for why a
+    /// page-scoped column is not the deleted app-wide rail coming back).
+    private let sidebar = HelmPageSidebar()
+
+    /// Action rows: these scroll to a panel rather than filtering anything, so
+    /// they are `.action` rows and never take the selection.
+    private static let followUpsRowID = "jump.followUps"
+    private static let projectsRowID = "jump.projects"
+
+    /// Two constraints, one active at a time: the content starts after the
+    /// column while it is showing, and at the page edge while it is not (Weekly
+    /// Review, which the column's task filters say nothing about). A plain
+    /// `isHidden` is not enough on its own - an ordinary hidden `NSView` still
+    /// carries its constraints (AGENTS.md gotcha (11)), so the gap it leaves
+    /// would stay behind it.
+    private var scrollLeadingWithSidebar: NSLayoutConstraint?
+    private var scrollLeadingFullWidth: NSLayoutConstraint?
+
     private let boardSection = NSStackView()
     private let boardToolbar = NSStackView()
     private let boardView = ShiftBoardView()
@@ -205,6 +260,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         content.translatesAutoresizingMaskIntoConstraints = false
 
         configureSyncPill()
+        buildSidebar()
         let tabRow = buildTabRow()
         buildStatsRow()
         let taskSection = buildTaskSection()
@@ -319,12 +375,38 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(sidebar)
         root.addSubview(scroll)
+
+        // **The column sits outside the scroll view**, the same call
+        // `SchedulesController` and `CredentialVaultController` make: it is
+        // navigation, so it has to stay reachable, and its own "jump to
+        // Follow-ups" row scrolls the content - which with the column inside
+        // the document would scroll the column itself off the top.
         NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            sidebar.leadingAnchor.constraint(equalTo: root.leadingAnchor,
+                                             constant: HelmMetrics.pageGutter),
+            sidebar.topAnchor.constraint(equalTo: root.topAnchor, constant: 24),
+            sidebar.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor,
+                                            constant: -HelmMetrics.pageGutter),
+        ])
+
+        // `contentStack` carries its own `pageGutter` inset inside the scroll,
+        // so the gap between the column and the content is measured from that
+        // rather than added on top of it.
+        let withSidebar = scroll.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor,
+                                                          constant: HelmMetrics.s5 - HelmMetrics.pageGutter)
+        let fullWidth = scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor)
+        withSidebar.isActive = true
+        scrollLeadingWithSidebar = withSidebar
+        scrollLeadingFullWidth = fullWidth
+
+        NSLayoutConstraint.activate([
             scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             scroll.topAnchor.constraint(equalTo: root.topAnchor),
             scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            // AGENTS.md gotcha #4: the document view is pinned to the *clip*
+            // view, never the outer scroll view.
             content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
 
@@ -433,9 +515,34 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// never handed over cannot be shown by a later code path that forgets the
     /// rule, and cannot report a stale on-screen frame to anything walking the
     /// view tree.
+    /// The page's own primary action, and the sync pill when there is real git
+    /// sync behind it.
+    ///
+    /// **"New task" is genuinely page-level, not a hoisted copy.** The rule
+    /// this cluster follows is that it carries a page's own actions and never
+    /// duplicates a control sitting a few points below it - which is why
+    /// Console and three of the four Setup pages leave it empty. Here the only
+    /// other ways to start a task are the "+" on the My Tasks card header,
+    /// which is *hidden in board mode*, and a column's own "+ Add task", which
+    /// presets that column's status. In the mode this page opens in there is
+    /// no plain "new task" at all, which is exactly the gap the captain asked
+    /// for a primary button to fill.
+    ///
+    /// Built once and handed over on every read, never rebuilt per read - a
+    /// fresh copy each time could not carry state (the property
+    /// `DaylightDrillPageSlice4SelfTest` pins for Vault's own Refresh).
     var drillHeaderActions: [NSView] {
-        store.gitSync == nil ? [] : [syncPill]
+        store.gitSync == nil ? [newTaskButton] : [syncPill, newTaskButton]
     }
+
+    /// `.primary` - the accent-filled pill. At most one per cluster, and this
+    /// is the page's one primary action.
+    private lazy var newTaskButton: HelmButton = {
+        let button = HelmButton(title: "New task", variant: .primary, size: .small,
+                                symbol: "plus", target: self, action: #selector(newTaskClicked))
+        button.toolTip = "New Task (\u{2318}N)"
+        return button
+    }()
 
     /// §6.4's live subtitle, from the same counts the page's own stat tiles
     /// render - so the header and the tiles cannot disagree.
@@ -752,7 +859,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// filters the whole board rather than two thirds of it.
     private func boardTasks() -> [ShiftBoardColumn: [ShiftTask]] {
         var byColumn: [ShiftBoardColumn: [ShiftTask]] = [:]
-        for task in store.activeTasks where matchesProjectFilter(task) {
+        for task in store.activeTasks where matchesFilters(task) {
             guard let column = ShiftBoardColumn.column(for: task.status) else { continue }
             byColumn[column, default: []].append(task)
         }
@@ -762,7 +869,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
 
         let cutoff = Calendar.current.date(byAdding: .day, value: -Self.doneColumnLookbackDays, to: Date())
         byColumn[.done] = store.allCompletedTasks()
-            .filter(matchesProjectFilter)
+            .filter(matchesFilters)
             .filter { task in
                 guard let cutoff,
                       let completed = task.completedAt.flatMap(ShiftStore.date(fromISO8601:)) else { return false }
@@ -777,6 +884,79 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     private func matchesProjectFilter(_ task: ShiftTask) -> Bool {
         guard let projectFilter else { return true }
         return task.projectID == projectFilter
+    }
+
+    /// The sidebar's Workspace slice.
+    ///
+    /// **A completed task is never "due today" or "overdue".** Both slices ask
+    /// about work still outstanding, so they exclude anything finished or
+    /// cancelled - which means the board's Done column empties under either,
+    /// correctly: a task finished last week is not late. The predicates are
+    /// deliberately the same ones `render` counts the stat tiles with, so a
+    /// sidebar count, a tile and the board can never disagree.
+    private func matchesScope(_ task: ShiftTask) -> Bool {
+        switch taskScope {
+        case .all:
+            return true
+        case .dueToday, .overdue:
+            guard task.status != .completed, task.status != .cancelled,
+                  let due = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return false }
+            let cal = Calendar.current
+            return taskScope == .dueToday
+                ? cal.isDate(due, inSameDayAs: Date())
+                : due < cal.startOfDay(for: Date())
+        }
+    }
+
+    /// Both filters at once - every surface that shows tasks runs through this
+    /// one predicate rather than remembering to apply two.
+    private func matchesFilters(_ task: ShiftTask) -> Bool {
+        matchesProjectFilter(task) && matchesScope(task)
+    }
+
+    // MARK: The sidebar
+
+    private func buildSidebar() {
+        sidebar.appendHeader("Workspace")
+        for scope in ShiftTaskScope.allCases {
+            sidebar.appendRow(id: scope.rawValue, symbol: scope.symbol, title: scope.title)
+        }
+        sidebar.appendSpacer()
+        sidebar.appendHeader("Sections")
+        // Neither of these filters anything - they move the page to a panel
+        // further down it, so they are `.action` rows and the Workspace
+        // selection stays where the captain left it.
+        sidebar.appendRow(id: Self.followUpsRowID, symbol: "bell", title: "Follow-ups", kind: .action)
+        sidebar.appendRow(id: Self.projectsRowID, symbol: "shippingbox", title: "Projects", kind: .action)
+        sidebar.select(taskScope.rawValue)
+
+        sidebar.onSelect = { [weak self] id in
+            guard let self else { return }
+            if let scope = ShiftTaskScope(rawValue: id) {
+                self.taskScope = scope
+                self.render()
+                return
+            }
+            // An action row from Weekly Review has to take the captain back to
+            // the board first - the panel it scrolls to is not on that view.
+            if self.topLevelView != .dashboard { self.switchTopLevelView(.dashboard) }
+            switch id {
+            case Self.followUpsRowID: self.scrollToPanel(self.followUpPanel)
+            case Self.projectsRowID: self.scrollToPanel(self.projectsPanel)
+            default: break
+            }
+        }
+    }
+
+    /// Scrolls the page so a panel sits just under the top edge. The document
+    /// view is a `FlippedView`, so y grows downward and `minY` is the panel's
+    /// own top.
+    private func scrollToPanel(_ panel: NSView) {
+        view.layoutSubtreeIfNeeded()
+        guard let document = scroll.documentView, panel.superview != nil else { return }
+        let top = panel.convert(panel.bounds, to: document).minY
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, top - HelmMetrics.s3)))
+        scroll.reflectScrolledClipView(scroll.contentView)
     }
 
     /// The list's own ordering, extracted so the board's two in-flight
@@ -951,6 +1131,14 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         dashboardContainer.isHidden = view != .dashboard
         weeklyReviewContainer.isHidden = view != .weeklyReview
         tasksViewToggle.isHidden = view != .dashboard
+        // The column's rows are all about the task board, so it goes with it -
+        // the same call the Board/List switch above already makes. Both halves
+        // are needed: hiding the view alone would leave its gap behind, since
+        // an ordinary hidden `NSView` keeps its constraints.
+        let showsSidebar = view == .dashboard
+        sidebar.isHidden = !showsSidebar
+        scrollLeadingWithSidebar?.isActive = showsSidebar
+        scrollLeadingFullWidth?.isActive = !showsSidebar
         if view == .weeklyReview { renderWeeklyReview() }
         applyTheme()
     }
@@ -1144,10 +1332,23 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         }
         let pendingFollowUps = followUps.filter { $0.status == .pending }
 
-        rebuildStats(tasksToday: dueToday.count, followUps: pendingFollowUps.count, overdue: overdue.count)
+        rebuildStats(open: tasks.count, tasksToday: dueToday.count,
+                     followUps: pendingFollowUps.count, overdue: overdue.count)
+
+        // The column's counts come from the very same arrays the tiles were
+        // just built from, so the two can never report different numbers for
+        // one word.
+        sidebar.setCounts([
+            ShiftTaskScope.all.rawValue: tasks.count,
+            ShiftTaskScope.dueToday.rawValue: dueToday.count,
+            ShiftTaskScope.overdue.rawValue: overdue.count,
+            Self.followUpsRowID: pendingFollowUps.count,
+            Self.projectsRowID: store.projects.count,
+        ])
+        sidebar.select(taskScope.rawValue)
 
         let sortedTasks = tasks.sorted(by: Self.byDueDateThenCreated)
-        taskListView.setTasks(sortedTasks.filter(matchesProjectFilter), projects: store.projects)
+        taskListView.setTasks(sortedTasks.filter(matchesFilters), projects: store.projects)
         tasksHeader.stringValue = "My Tasks"
         tasksCountBadge.stringValue = "\(tasks.count)"
 
@@ -1243,12 +1444,15 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         }
     }
 
-    private func rebuildStats(tasksToday: Int, followUps: Int, overdue: Int) {
+    private func rebuildStats(open: Int, tasksToday: Int, followUps: Int, overdue: Int) {
         for v in statsRow.arrangedSubviews {
             statsRow.removeArrangedSubview(v)
             v.removeFromSuperview()
         }
         statTiles.removeAll()
+        // "open" leads, matching the captain's reference: the total is the
+        // number the page is about, and the three beside it are slices of it.
+        statsRow.addArrangedSubview(statTile(icon: "tray.full", value: "\(open)", label: "open tasks"))
         statsRow.addArrangedSubview(statTile(icon: "sun.max", value: "\(tasksToday)", label: "tasks today"))
         statsRow.addArrangedSubview(statTile(icon: "bell", value: "\(followUps)", label: "follow-ups"))
         statsRow.addArrangedSubview(statTile(icon: "exclamationmark.triangle", value: "\(overdue)", label: "overdue", tint: .critical))
@@ -1766,6 +1970,42 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     // wrong cards, a toggle that hides nothing, and a card that never
     // receives a mouse event all render plausibly.
 
+    // The page's nav column (fm/grand-line-tasks-page-redesign). Structure
+    // and behaviour, never appearance: a column that renders perfectly and
+    // filters nothing looks exactly right.
+
+    var debugSidebar: HelmPageSidebar { sidebar }
+    var debugSidebarIsVisible: Bool { !sidebar.isHidden }
+
+    /// Whether the content currently starts after the column or at the page
+    /// edge - the half a plain `isHidden` check cannot see.
+    var debugContentStartsAfterSidebar: Bool { scrollLeadingWithSidebar?.isActive ?? false }
+
+    /// The scope the page is filtering by right now.
+    var debugTaskScope: String { taskScope.rawValue }
+
+    /// Drives the real column's own handler, so a test cannot pass against a
+    /// row wired to nothing.
+    func debugSelectSidebarRow(_ id: String) { sidebar.debugClickRow(sidebarRowIndex(id)) }
+
+    private func sidebarRowIndex(_ id: String) -> Int {
+        var ids = ShiftTaskScope.allCases.map(\.rawValue)
+        ids += [Self.followUpsRowID, Self.projectsRowID]
+        return ids.firstIndex(of: id) ?? 0
+    }
+
+    /// The task ids each board column is showing, after every filter.
+    func debugVisibleTaskIDs(_ column: ShiftBoardColumn) -> [String] {
+        boardView.debugColumn(column)?.debugCardViews.map(\.taskID) ?? []
+    }
+
+    /// The stat tiles' rendered numbers, read off the tiles themselves rather
+    /// than recomputed - a check that re-derives them agrees with itself
+    /// forever and is blind to a tile that stopped being wired.
+    var debugStatTiles: [(value: String, caption: String)] {
+        statTiles.map { $0.debugMetric }
+    }
+
     var debugBoardView: ShiftBoardView? { boardView }
     var debugProjectFilterBar: ShiftProjectFilterBar? { projectFilterBar }
     var debugBoardIsVisible: Bool { !boardSection.isHidden }
@@ -1840,6 +2080,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
 
         tabs.applyTheme(theme)
         tasksViewToggle.applyTheme(theme)
+        sidebar.applyTheme(theme)
         projectFilterBar.applyTheme(theme)
         boardView.applyTheme(theme)
         boardHint.textColor = muted

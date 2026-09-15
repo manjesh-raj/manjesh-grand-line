@@ -1722,6 +1722,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_BOARD_VIEW_TESTS"] == "1" {
     exit(ShiftBoardViewSelfTest.run() ? 0 : 1)
 }
 
+// fm/grand-line-tasks-page-redesign: the Tasks page's own nav column, the
+// slice it filters by, its stat tiles, its one page-level primary action, and
+// a board column sized so a card is never sliced.
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_TASKS_PAGE_TESTS"] == "1" {
+    exit(ShiftTasksPageSelfTest.run() ? 0 : 1)
+}
+
 // fm/grandline-devops-command-library: same convention, for the DevOps
 // Command Library's parameter detection/substitution/search/favorites - see
 // CommandLibraryStoreSelfTest.swift's header.
