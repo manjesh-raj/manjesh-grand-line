@@ -56,6 +56,12 @@ final class HostsListSection: NSObject, NSTableViewDataSource, NSTableViewDelega
 
         var kind: Kind = .record
         var content: HelmAccentRow.Content
+        /// Identifies the record this row stands for, so the page can map a
+        /// table selection back to the `Host` / `SSHKey` / `Snippet` behind it
+        /// without this list learning what any of those are. `nil` for the
+        /// list's own furniture (group headers, the empty state) and for the
+        /// pinned "Firstmate" entry, which has no saved record at all.
+        var recordKey: String?
         /// The row's own headline action - "Connect", "Edit", "Run". Rendered
         /// as a button in the row, which is what replaced the three-button
         /// `.fillEqually` footer strip the three lists used to share.
@@ -89,6 +95,12 @@ final class HostsListSection: NSObject, NSTableViewDataSource, NSTableViewDelega
     }
 
     let card = HelmCard()
+
+    /// Fired with the selected row's `recordKey` - `nil` when the selection
+    /// lands on nothing selectable, or is cleared. What fills the page's
+    /// detail panel; this list itself neither knows nor stores what a record
+    /// is, exactly as it already avoids knowing what a host is.
+    var onSelectRecord: ((String?) -> Void)?
 
     private let table = HelmTableView()
     private let scroll = NSScrollView()
@@ -325,6 +337,10 @@ final class HostsListSection: NSObject, NSTableViewDataSource, NSTableViewDelega
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        // Reported before the repaint, and outside its guard: what the page's
+        // detail panel shows must not depend on whether any row happens to be
+        // on screen at the moment the selection moved.
+        notifySelection()
         // Repaint only what is on screen - `reloadData` here would rebuild
         // every cell (and drop the click that caused the selection).
         let visible = table.rows(in: table.visibleRect)
@@ -334,6 +350,15 @@ final class HostsListSection: NSObject, NSTableViewDataSource, NSTableViewDelega
                 .setSelected(table.selectedRowIndexes.contains(row))
         }
     }
+
+    /// The selected row's `recordKey`, or `nil`.
+    var selectedRecordKey: String? {
+        let row = table.selectedRow
+        guard row >= 0, row < items.count else { return nil }
+        return items[row].recordKey
+    }
+
+    private func notifySelection() { onSelectRecord?(selectedRecordKey) }
 }
 
 // MARK: - Group header
