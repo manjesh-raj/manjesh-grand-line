@@ -55,6 +55,8 @@ enum TabForwardDragsToggleSelfTest {
             ("duplicateCarriesAnAlreadyToggledStateForward", test_duplicatePropagatesToggle),
             ("aFreshTabNeverInheritsAnUnrelatedTabsToggle", test_freshTabDoesNotInheritSiblingState),
             ("chipIndicatorTracksTheToggleImmediately", test_chipIndicatorTracksToggle),
+            ("indicatorLabelsAndGlyphsAreTheCaptainApprovedPair", test_indicatorLabelsAndGlyphs),
+            ("toolbarButtonShowsTheIndicatorsOwnLabelAndGlyph", test_toolbarButtonReflectsIndicator),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -243,6 +245,127 @@ enum TabForwardDragsToggleSelfTest {
         guard tab.chip.debugForwardDragsIndicatorVisible else {
             return "opening a second tab cleared the first tab's own already-visible indicator"
         }
+
+        _ = window
+        return nil
+    }
+
+    /// `fm/grandline-drag-selection-label-icon`: the `.local` state shipped
+    /// as "Local Selection" with `character.cursor.ibeam`, and the captain
+    /// read that glyph as the word **"AI"** - it draws a literal capital A
+    /// beside an I-beam, which at this button's 11pt, immediately before a
+    /// text label, parses as two letters rather than as a cursor.
+    ///
+    /// **The pixel comparison below is the point of this case, not
+    /// belt-and-braces.** The obvious fix is to swap the symbol for a
+    /// better-*named* one, and that is exactly the trap: `text.cursor`
+    /// sounds like a bare I-beam and draws the **identical** A-plus-I-beam
+    /// glyph, so a name-based assertion (`!= "character.cursor.ibeam"`)
+    /// passes while the captain's own complaint is reshipped verbatim.
+    /// Rendering both at the real configuration and requiring they differ
+    /// catches any such alias or lookalike without having to know its name
+    /// in advance - which is the only form of this check that can outlive
+    /// the two names that happen to be known today.
+    ///
+    /// It also asserts both glyphs genuinely resolve:
+    /// `NSImage(systemSymbolName:)` returns nil silently, and this app has
+    /// shipped an invisible icon that way before (see `AGENTS.md`).
+    private static func test_indicatorLabelsAndGlyphs() -> String? {
+        guard DragForwardingIndicator.local.buttonTitle == "App Selection" else {
+            return "the default state's label should be \"App Selection\" (the captain-approved pairing " +
+                "with \"Forwarding Drags\"), got \"\(DragForwardingIndicator.local.buttonTitle)\""
+        }
+        guard DragForwardingIndicator.forwarding.buttonTitle == "Forwarding Drags" else {
+            return "the forwarding state's label changed unexpectedly - it is the half the captain kept, " +
+                "got \"\(DragForwardingIndicator.forwarding.buttonTitle)\""
+        }
+
+        // The real configuration this glyph is drawn at (`HelmButton`'s
+        // `.small` size, see `rebuildImage()`), so the comparison is of what
+        // the captain actually sees, not of some other optical size.
+        let configuration = NSImage.SymbolConfiguration(pointSize: 11, weight: .semibold)
+        func render(_ name: String) -> Data? {
+            guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+                .withSymbolConfiguration(configuration) else { return nil }
+            // Draw onto a TRANSPARENT canvas and compare the result. A
+            // template symbol draws in black, so filling the canvas first
+            // would render black-on-black and make every glyph compare
+            // equal - i.e. the check would fail for every symbol rather
+            // than only for a lookalike (caught the first time this ran).
+            let size = NSSize(width: 24, height: 24)
+            let canvas = NSImage(size: size)
+            canvas.lockFocus()
+            let origin = NSPoint(x: ((size.width - image.size.width) / 2).rounded(),
+                                 y: ((size.height - image.size.height) / 2).rounded())
+            image.draw(at: origin, from: .zero, operation: .sourceOver, fraction: 1)
+            canvas.unlockFocus()
+            guard let tiff = canvas.tiffRepresentation else { return nil }
+            return NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:])
+        }
+
+        for state in [DragForwardingIndicator.local, .forwarding] {
+            guard NSImage(systemSymbolName: state.buttonSymbol, accessibilityDescription: nil) != nil else {
+                return "\(state)'s symbol \"\(state.buttonSymbol)\" does not resolve on this OS - " +
+                    "NSImage(systemSymbolName:) fails silently, so this ships an invisible icon"
+            }
+        }
+
+        guard let chosen = render(DragForwardingIndicator.local.buttonSymbol) else {
+            return "could not render the default state's glyph (\(DragForwardingIndicator.local.buttonSymbol))"
+        }
+        guard let letterform = render("character.cursor.ibeam") else {
+            // Only the comparison is lost if this reference symbol is ever
+            // withdrawn - say so rather than passing silently.
+            return "could not render the reference letterform glyph character.cursor.ibeam"
+        }
+        guard chosen != letterform else {
+            return "the default state's glyph (\"\(DragForwardingIndicator.local.buttonSymbol)\") renders " +
+                "pixel-identically to character.cursor.ibeam, which the captain read as the word \"AI\" - " +
+                "a symbol whose NAME differs is not enough, its GLYPH has to differ too (text.cursor is " +
+                "the known lookalike that passes a name check and fails this one)"
+        }
+        return nil
+    }
+
+    /// The mapping above is only worth anything if the real toolbar button
+    /// actually shows it, in both states - a correct enum beside a button
+    /// that never reads it renders exactly like the bug. Drives the real
+    /// `toggleDragForwarding()` action rather than setting the model
+    /// directly, so an unwired button fails here too.
+    private static func test_toolbarButtonReflectsIndicator() -> String? {
+        let (window, controller) = makeTestConsole()
+        controller.newShellTab()
+        guard let tab = controller.currentTab else { return "no current tab after newShellTab()" }
+        guard let button = controller.dragForwardingButton else {
+            return "the console has no drag-routing toolbar button"
+        }
+        guard !button.isHidden else {
+            return "the drag-routing button is hidden for a real .shell tab, which is the one kind it is for"
+        }
+
+        func expect(_ state: DragForwardingIndicator, _ label: String) -> String? {
+            guard button.title == state.buttonTitle else {
+                return "\(label): button title \"\(button.title)\", expected \"\(state.buttonTitle)\""
+            }
+            guard button.symbolName == state.buttonSymbol else {
+                return "\(label): button symbol \(button.symbolName ?? "nil"), expected \(state.buttonSymbol)"
+            }
+            // A resolved name still has to have produced a real image.
+            guard button.image != nil else {
+                return "\(label): the button's glyph (\(state.buttonSymbol)) resolved to no image at all"
+            }
+            return nil
+        }
+
+        if let failure = expect(.local, "a fresh .shell tab") { _ = window; return failure }
+        controller.toggleDragForwarding()
+        guard tab.terminal.forwardDragsToChild else {
+            _ = window
+            return "the toolbar button's own action did not flip forwardDragsToChild"
+        }
+        if let failure = expect(.forwarding, "after the toolbar toggle") { _ = window; return failure }
+        controller.toggleDragForwarding()
+        if let failure = expect(.local, "after toggling back") { _ = window; return failure }
 
         _ = window
         return nil
