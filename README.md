@@ -24,17 +24,12 @@ a signed bundle needs), and publishes a GitHub release with the artifact and its
 git tag -a v0.2.0 -m "…" && git push origin v0.2.0
 ```
 
-The app's own Updates page has an **App** row that compares the running build against the
-newest published release.
-
-**Releases are unsigned today, and the in-app updater refuses to install an unsigned
-artifact** - that is deliberate, not an oversight. Installing whatever was downloaded
-would make this a remote code execution channel on a machine holding the captain's SSH
-keys. Developer ID signing and notarization need a paid Apple Developer Program
-membership; the workflow's signing and notarization steps are written out in full and
-disabled behind `SIGNING_ENABLED`, and its header lists the exact secrets and the two
-places to flip (the workflow, and `AppUpdateInstaller.expectedTeamIdentifier`). Until
-then, a release is download-and-install-by-hand.
+**Releases are unsigned today.** Developer ID signing and notarization need a paid Apple
+Developer Program membership; the workflow's signing and notarization steps are written
+out in full and disabled behind `SIGNING_ENABLED`, and its header lists the exact secrets
+and where to flip it. Until then, a release is download-and-install-by-hand - the app has
+no in-app self-update mechanism (an earlier one was removed once the Updates page's own
+"App" row, its only entry point, was removed).
 
 ## ⚠️ Never launch a built copy from a worktree
 

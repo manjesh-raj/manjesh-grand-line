@@ -104,21 +104,12 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     private enum ToolFilterMode: String { case all, needsAttention }
 
     private var rows: [UpdateRow] = DependencyCatalog.items.map(UpdateRow.init)
-    /// F3: internal (not `private`) so `UpdatesController+AppRow.swift`
-    /// can theme the App row from the same source of truth.
-    var theme: HelmTheme = ThemeManager.shared.theme
+    private var theme: HelmTheme = ThemeManager.shared.theme
     private var scrollView: NSScrollView!
     private var cards: [HelmCard] = []
     private var separators: [NSView] = []
     private var categorySections: [CategorySection] = []
 
-    /// F3: this app's own update row (`UpdatesController+AppRow.swift`).
-    let appRow = AppUpdateRowState()
-    static let appRowIdentifier = "grand-line-app"
-
-    /// Lets the extension add its card to the shared theming list without
-    /// making `cards` itself internal.
-    func registerAppCard(_ card: HelmCard) { cards.append(card) }
     /// The summary strip's four tiles. Each themes itself; this list is what
     /// `renderStats` writes the numbers into and `applyTheme` hands the theme to.
     private var statTiles: [HelmStatTile] = []
@@ -166,10 +157,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         let header = buildHeader()
         let statsRow = buildStatsRow()
         let toolbarRow = buildToolbarRow()
-        // F3: the App row sits above the tool categories - it is the one
-        // thing on this page the captain cannot update any other way.
-        let appCard = buildAppCard()
-        var sections: [NSView] = [header, statsRow, toolbarRow, appCard]
+        var sections: [NSView] = [header, statsRow, toolbarRow]
         for category in DependencyCatalog.categoryOrder {
             let categoryRows = rows.filter { $0.item.category == category }
             guard !categoryRows.isEmpty else { continue }
@@ -184,7 +172,6 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         stack.setCustomSpacing(18, after: header)
         stack.setCustomSpacing(18, after: statsRow)
         stack.setCustomSpacing(18, after: toolbarRow)
-        stack.setCustomSpacing(18, after: appCard)
 
         let content = FlippedView()
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -215,7 +202,6 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         scrollView = scroll
 
         for row in rows { render(row) }
-        renderAppRow()
         applyFilter()
         applyTheme()
         renderStats()
@@ -401,11 +387,6 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         let total = rows.count
         checkAllProgressBar.configure(fraction: 0)
         checkAllProgressLabel.stringValue = "Checking\u{2026} (0/\(total))"
-
-        // F3: the App row checks with everything else rather than
-        // needing its own click. Its own progress is independent of the
-        // per-tool counter above, which counts catalog rows.
-        checkAppUpdate()
 
         var completed = 0
         for row in rows {
@@ -967,7 +948,6 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         }
         for tile in statTiles { tile.applyTheme(theme) }
         for row in rows { applyThemeToRow(row) }
-        renderAppRow()
     }
 
     private func applyThemeToRow(_ row: UpdateRow) {

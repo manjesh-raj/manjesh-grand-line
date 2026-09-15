@@ -1416,46 +1416,33 @@ up anything still open.
     work moved every self-test *file* behind that flag, but these sat in a
     production file and kept shipping. They are guarded now - measured, 0
     symbols in the release binary against 10 in debug.
-- **F3, the self-update channel, is half shipped and honest about which half.**
-  `AppUpdateData.swift` (version + release feed), `AppUpdateInstaller.swift`
-  (download/verify/swap/relaunch), `UpdatesController+AppRow.swift` (the App
-  card at the top of Updates), `.github/workflows/release.yml` (build and
-  publish on a `v*` tag).
-  - **Sparkle is not viable here, and the reason is structural rather than a
-    preference:** it ships as an Xcode-built `.framework` with its own build
-    phases and an embedded XPC bundle, and this project builds with plain
-    `swift build` on CLT with no Xcode. Vendoring it as source would mean
-    reimplementing its packaging. Hence the minimal in-house flow.
-  - **The verification gate is the feature, not a detail.** An updater that
-    installs whatever it downloaded is a remote code execution channel on a
-    machine holding the captain's SSH keys. `AppUpdateInstaller.install`
-    refuses anything it cannot prove is signed by
-    `expectedTeamIdentifier`'s Developer ID, there is no override, and the
-    policy gate is checked *before* any environmental check so a future
-    environment change cannot silently move which refusal a caller sees.
-    `expectedTeamIdentifier` is `nil` until the captain has a real
-    certificate; the UI therefore offers "Release Notes" and says why, rather
-    than a disabled Update button.
-  - **Two places have to agree when signing arrives:** the workflow's
-    `SIGNING_ENABLED` flag (its header lists every secret) and
-    `AppUpdateInstaller.expectedTeamIdentifier`. Disagreement fails safe
-    (a correctly signed artifact is still refused) but is confusing.
-  - **`ditto -c -k --keepParent`, never `zip`**, for packaging, and
-    `ditto -x -k` for unpacking: it preserves the extended attributes and
-    symlinks a signed bundle needs, and a bundle that round-trips through
-    `zip` can arrive with a broken signature - which then fails verification
-    for a reason that has nothing to do with its provenance.
-  - `FM_RUN_APP_UPDATE_TESTS` covers version comparison (including the
-    git-describe suffix case, so a dev build past its tag is never told it is
-    behind that tag), release parsing, and the refusal. Confirmed to catch the
-    tempting "codesign --verify passed, that's good enough" shortcut - the
-    case that fails is the one describing this app's own current local
-    self-signed identity.
+- **F3, the in-app self-update channel, shipped here and was later removed
+  entirely** (`fm/grandline-updates-remove-app-card`) - the captain asked for
+  the Updates page's "App" card gone, and nothing else in the app called into
+  its check/download/verify/swap/relaunch machinery, so `AppUpdateData.swift`,
+  `AppUpdateInstaller.swift`, `UpdatesController+AppRow.swift` and their
+  `FM_RUN_APP_UPDATE_TESTS` self-test were all deleted rather than left as an
+  orphaned feature behind a removed card. `.github/workflows/release.yml`'s
+  build/zip/publish-on-a-`v*`-tag machinery was left untouched - it still
+  produces a real, versioned, downloadable release for manual install
+  regardless of whether anything in-app consumes it - but its own header
+  comment no longer promises a consuming in-app installer or names
+  `AppUpdateInstaller.expectedTeamIdentifier`, since that symbol no longer
+  exists. `Subprocess.launchDetached` (below) is the one piece of shared
+  infrastructure this feature used and is deliberately the one thing kept -
+  it lives in general-purpose `Subprocess.swift`, outside the three named
+  files, and removing it was judged out of scope for a task scoped to the
+  Updates-page card.
 - **`Subprocess.launchDetached` is the one fire-and-forget spawn**, added
-  rather than widening Phase 2's "no hand-rolled `Process`" allowlist. Its only
-  caller is the relaunch helper, whose child waits for *this* process to exit
-  and therefore cannot be waited on. Keep it narrow - no stdin, no capture, no
-  timeout - and keep new process spawning on `Subprocess.run`.
+  rather than widening Phase 2's "no hand-rolled `Process`" allowlist.
+  Originally added for, and for a while its only caller, was the self-update
+  relaunch helper above (whose child waited for *this* process to exit and
+  therefore could not be waited on) - that caller is gone now that F3 was
+  removed, so this currently has no production caller, kept in place as
+  general-purpose infra rather than deleted alongside its one-time consumer.
+  Keep it narrow - no stdin, no capture, no timeout - and keep new process
+  spawning on `Subprocess.run` unless a future caller genuinely needs a
+  fire-and-forget detached spawn.
 - **Three P3 items landed alongside:** `RailDestination` moved into its own
   file (its case order is still what orders the rail);
   `GIT_TERMINAL_PROMPT=0` is set for background children in `Subprocess`
@@ -1991,7 +1978,7 @@ The captain-approved fixes for `data/grand-line-appkit-expert-audit/report.md` (
   - **`try?` on `FileHandle.read(upToCount:)` is a trap**: `try?` flattens the `Data?` it returns into a single optional, making a read *error* indistinguishable from a clean EOF - i.e. silently hashing a partial file to a "valid" digest. Explicit `do`/`catch`, always.
 - **A self-test source guard that greps for a pattern trips on the comment documenting that pattern's removal.** This suite's first run failed on its own fix note ("this was `path.hasPrefix(docsPath)`"). `AuditSecurityFixesSelfTest.read` strips whole-line `//` comments before every grep; a `https://` inside a string literal is untouched. **Any new source guard in this codebase wants the same treatment** - the alternative is either a fragile pattern or an undocumented fix.
 - **5.7 was already fixed and was deliberately not redone.** It and §6.4 were the same finding double-counted across two sections; PR #333 put `LogRedactor` in `ScheduleRunHistoryEntry`'s own initializer. Re-asserted in the §5 suite so the two sections cannot drift apart silently.
-- **5.6's other half - Developer ID signing and notarization - is captain-only** and untouched, exactly as phase 4's own open-items list records. The updater still refuses everything while `AppUpdateInstaller.expectedTeamIdentifier` is `nil`.
+- **5.6's other half - Developer ID signing and notarization - is captain-only** and untouched, exactly as phase 4's own open-items list records. (The in-app updater this gated - `AppUpdateInstaller` - was later removed entirely along with the Updates page's "App" card; see the F3 removal note in "Production-readiness phase 4" above. This bullet describes state at the time §5 was audited, not the current app.)
 
 ## Full-app audit, section 7 ("End-to-End Testing")
 
