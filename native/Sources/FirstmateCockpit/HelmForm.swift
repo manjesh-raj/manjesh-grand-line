@@ -97,6 +97,22 @@ enum HelmField {
     /// `controlHeight`, one step up - not a fourth input language.
     static let prominentHeight: CGFloat = 40
 
+    /// The horizontal inset of a prominent well's own content from its edge -
+    /// what `HelmSearchField(.prominent)` insets its magnifier by, and what
+    /// `StrawHatChatView`'s composer insets its text by, so the ⌘K query line
+    /// and the crew composer start their text at the same distance from the
+    /// well's edge.
+    ///
+    /// A token rather than a literal in each: the composer was restyled to
+    /// match the search bar (`fm/grand-line-strawhat-chat-input-restyle`), and
+    /// the point of that change is that the two cannot drift apart again.
+    static let prominentInset: CGFloat = 12
+
+    /// The type a prominent well sets - one step up from `HelmType.body()`,
+    /// the same way `prominentHeight` is one step up from `controlHeight`.
+    /// Scaled, so GL-32's chrome text scale reaches it.
+    static func prominentFont() -> NSFont { .systemFont(ofSize: HelmType.scaled(15)) }
+
     /// The height of a single-line field, so a column of fields, popups and
     /// date pickers sits on one rhythm.
     ///
@@ -768,7 +784,7 @@ final class HelmSearchField: NSView, NSTextFieldDelegate {
         editor.cell?.wraps = false
         editor.cell?.isScrollable = true
         editor.lineBreakMode = .byTruncatingTail
-        editor.font = size == .prominent ? .systemFont(ofSize: HelmType.scaled(15)) : HelmType.body()
+        editor.font = size == .prominent ? HelmField.prominentFont() : HelmType.body()
         editor.delegate = self
         editor.translatesAutoresizingMaskIntoConstraints = false
 
@@ -788,7 +804,7 @@ final class HelmSearchField: NSView, NSTextFieldDelegate {
         well.addSubview(placeholderLabel)
 
         let iconSide: CGFloat = size == .prominent ? 15 : 13
-        let inset: CGFloat = size == .prominent ? 12 : 9
+        let inset: CGFloat = size == .prominent ? HelmField.prominentInset : 9
         var constraints: [NSLayoutConstraint] = [
             well.leadingAnchor.constraint(equalTo: leadingAnchor),
             well.trailingAnchor.constraint(equalTo: trailingAnchor),

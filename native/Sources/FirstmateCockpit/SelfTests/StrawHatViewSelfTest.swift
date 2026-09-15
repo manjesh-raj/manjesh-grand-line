@@ -77,6 +77,7 @@ enum StrawHatViewSelfTest {
         checkContributorCaptionPlural(&ok)
         checkConfirmedProposalSurvivesARebuild(&ok)
         checkThemeSweep(&ok)
+        checkComposerMatchesTheSearchBar(&ok)
 
         print(ok ? "StrawHatViewSelfTest: all checks passed" : "StrawHatViewSelfTest: FAILED")
         return ok
@@ -778,6 +779,148 @@ enum StrawHatViewSelfTest {
             check(chat.debugMessageTexts().contains("Aye."),
                   "\(id): ...including the reply text", &ok)
             check(chat.frame.height > 200, "\(id): the chat still has real height", &ok)
+        }
+    }
+
+    // MARK: The composer's chrome
+
+    /// `fm/grand-line-strawhat-chat-input-restyle`: the captain put the ⌘K
+    /// palette's query line next to this composer and found this one plainer,
+    /// so the two now resolve their chrome through the same `HelmField`
+    /// tokens.
+    ///
+    /// **Every expectation is read off a real `HelmSearchField(.prominent)`,
+    /// never written down here.** A literal would pass just as happily with
+    /// one of the two surfaces changed, which is the whole failure this case
+    /// exists to catch - the defect was never "the composer is 18pt", it was
+    /// "the composer and the search bar disagree". Reading the reference means
+    /// a future change to either one fails this rather than silently widening
+    /// the gap again.
+    ///
+    /// Swept across both registers because the radius is theme-resolved: 8 on
+    /// the twelve legacy palettes, `dWell` (14) on the Daylight family. The old
+    /// bespoke 18 happened to agree with Daylight and diverged everywhere
+    /// else, so a single-theme check could have missed it entirely.
+    private static func checkComposerMatchesTheSearchBar(_ ok: inout Bool) {
+        let saved = ThemeManager.shared.theme
+        defer { ThemeManager.shared.setTheme(saved) }
+
+        let m = mount()
+        showCrew(m)
+        let chat = m.controller.debugChat
+
+        for id in ["daylight", "dusk", "helm-light", "helm-dark", "gruvbox-light"] {
+            guard let theme = HelmTheme.allThemes.first(where: { $0.id == id }) else { continue }
+            ThemeManager.shared.setTheme(theme)
+            m.controller.view.layoutSubtreeIfNeeded()
+            chat.layoutSubtreeIfNeeded()
+
+            // The reference, built and themed exactly as the ⌘K panel builds
+            // it. Laid out in a window of its own so its own constraints
+            // genuinely resolve - an unmounted view reports nothing useful.
+            let reference = HelmSearchField(placeholder: "Search\u{2026}", size: .prominent)
+            let host = NSView(frame: NSRect(x: 0, y: 0, width: 420, height: 120))
+            host.addSubview(reference)
+            NSLayoutConstraint.activate([
+                reference.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+                reference.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+                reference.topAnchor.constraint(equalTo: host.topAnchor),
+            ])
+            let refWindow = NSWindow(contentRect: host.frame, styleMask: [.titled],
+                                     backing: .buffered, defer: false)
+            refWindow.contentView = host
+            reference.applyTheme(theme)
+            host.layoutSubtreeIfNeeded()
+
+            let refChrome = HelmField.geometry(of: reference.chromeView)
+            let composer = chat.debugComposerGeometry
+
+            // The *glow's* radius, not the fill's. `HelmInputSurface.apply`
+            // re-sets the fill's own layer radius from the shared token on
+            // every theme pass, so `composer.radius` can never disagree with
+            // the reference and asserting it proves nothing - confirmed by
+            // injection: the pre-fix bespoke 18 passed a fill-radius check on
+            // all five palettes. What the 18 really did was cut
+            // `HelmComposerCard`'s `shadowPath` to a corner the well itself
+            // never drew, so a focused composer wore a rounded-18 halo around
+            // a rounded-8 field.
+            check(abs(chat.debugComposerGlowCornerRadius - refChrome.radius) < 0.5,
+                  "\(id): the focus glow must be cut to the well's own corner, got \(chat.debugComposerGlowCornerRadius) vs a \(refChrome.radius) fill", &ok)
+            check(abs(composer.radius - refChrome.radius) < 0.5,
+                  "\(id): ...and the fill's corner still matches the search well's, got \(composer.radius) vs \(refChrome.radius)", &ok)
+            check(abs(composer.borderWidth - refChrome.borderWidth) < 0.01,
+                  "\(id): ...and its resting border weight, got \(composer.borderWidth) vs \(refChrome.borderWidth)", &ok)
+
+            // The fill is the one property both surfaces already shared before
+            // this change (both route through `HelmInputSurface`), so it is
+            // asserted to make a regression in *either* direction visible.
+            // Compared component-wise: `HelmContrast.ratio` is a luminance
+            // comparison, so two different colours of similar brightness pass
+            // it - a trap this codebase has walked into twice.
+            if let a = composer.fill?.usingColorSpace(.sRGB), let b = refChrome.fill?.usingColorSpace(.sRGB) {
+                let same = abs(a.redComponent - b.redComponent) < 0.01
+                    && abs(a.greenComponent - b.greenComponent) < 0.01
+                    && abs(a.blueComponent - b.blueComponent) < 0.01
+                check(same, "\(id): ...and its fill, got \(a) vs \(b)", &ok)
+            } else {
+                check(false, "\(id): both wells must report a real fill", &ok)
+            }
+
+            // Type: the composer used to be `HelmType.body()` (13) against the
+            // well's 15, which is most of what made it read as the smaller,
+            // plainer control.
+            check(abs(chat.debugComposerFontSize - HelmField.prominentFont().pointSize) < 0.01,
+                  "\(id): the composer takes the prominent well's own type, got \(chat.debugComposerFontSize)", &ok)
+            check(abs(chat.debugComposerPlaceholderFontSize - chat.debugComposerFontSize) < 0.01,
+                  "\(id): ...and its placeholder matches the text it stands in for, got \(chat.debugComposerPlaceholderFontSize)", &ok)
+
+            // Where the text starts, measured from the well's own edge. The
+            // search field has a magnifier in front of its editor and this
+            // composer deliberately has none (the captain's brief says so), so
+            // the comparable quantity is the *inset*, not the editor's x.
+            check(abs(chat.debugComposerTextInset - HelmField.prominentInset) < 0.5,
+                  "\(id): the composer's text starts at the prominent inset, got \(chat.debugComposerTextInset)", &ok)
+            check(abs(chat.debugComposerPlaceholderInset - chat.debugComposerTextInset) < 0.5,
+                  "\(id): ...and the placeholder stands exactly where that text will, got \(chat.debugComposerPlaceholderInset)", &ok)
+
+            // Resting height. Asserted against the token rather than the
+            // reference's frame because a mounted `HelmSearchField` is pinned
+            // to `prominentHeight` by its own constraint - reading its frame
+            // back would be asserting the same number twice.
+            check(abs(chat.debugComposerHeight - HelmField.prominentHeight) < 1.0,
+                  "\(id): an empty composer is the prominent well's own height, got \(chat.debugComposerHeight)", &ok)
+
+            // The placeholder has to be laid out at the size it asks for.
+            // Measured here after it rendered as "Message the cr\u{2026}" with
+            // ~500pt of empty well beside it: as a bare subview of the
+            // `NSScrollView` it resolved to a 124x16 frame against its own
+            // 136x19 `intrinsicContentSize`, with no ambiguity or conflict
+            // warning, and neither building it with its final font nor
+            // `invalidateIntrinsicContentSize()` moved it. A plain `NSView`
+            // parent lays it out correctly - which is what `HelmSearchField`
+            // does with its own placeholder too.
+            check(chat.debugPlaceholderFrameWidth >= chat.debugPlaceholderIntrinsicWidth - 0.5,
+                  "\(id): the placeholder is laid out at the width its own text needs, got \(chat.debugPlaceholderFrameWidth) for \(chat.debugPlaceholderIntrinsicWidth)", &ok)
+
+            // ...and it must not eat the click that starts a message. An
+            // `NSTextField` hit-tests even when neither editable nor
+            // selectable, so a placeholder painted on top of the editor
+            // swallows a click on the very words inviting one - which is why
+            // it is added *below* the input row.
+            check(chat.debugPlaceholderIsTextView,
+                  "\(id): clicking the placeholder reaches the editor, got \(String(describing: chat.debugHitTestOnPlaceholder().map { type(of: $0) }))", &ok)
+
+            // ...and it still grows: the point of a composer is that it is not
+            // a single-line field, so a check that only pinned the minimum
+            // could pass against one that had stopped growing entirely.
+            chat.debugType(String(repeating: "wrap this line please ", count: 12))
+            chat.layoutSubtreeIfNeeded()
+            check(chat.debugComposerHeight > HelmField.prominentHeight + 4,
+                  "\(id): ...and grows past it with real text, got \(chat.debugComposerHeight)", &ok)
+            chat.debugType("")
+            chat.layoutSubtreeIfNeeded()
+
+            refWindow.contentView = nil
         }
     }
 
