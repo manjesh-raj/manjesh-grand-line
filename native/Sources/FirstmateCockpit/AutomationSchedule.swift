@@ -194,6 +194,31 @@ enum ScheduledActionKind: String, Codable, CaseIterable {
         }
     }
 
+    /// The page that owns this action, for the row's "Review" hand-off.
+    ///
+    /// `fm/grand-line-schedules-page-redesign`: the captain's second reference
+    /// puts a contextual amber button on a needs-you row - "Review 2 changes"
+    /// for a fork sync, "See release notes" for a tool update. The *count* in
+    /// those labels is not backable here and is deliberately not invented: a
+    /// completed run records `ScheduleRunRecord.summary`, an already-composed
+    /// sentence from the action itself ("2 of 8 forks fast-forwarded"), and no
+    /// structured per-run change count exists anywhere to read a number out of.
+    ///
+    /// What *is* honest, and is what the button does instead: the run's real
+    /// summary is already on the row, and this says where to go and act on it.
+    /// Each destination is the page that owns this exact action - the same page
+    /// whose own button would run it by hand - so the hand-off lands somewhere
+    /// the captain can actually finish the job rather than on a generic list.
+    var reviewDestination: RailDestination {
+        switch self {
+        case .driftCheck: return .bootstrap
+        case .toolUpdateCheck, .toolUpdateInstall: return .updates
+        case .forkSync: return .githubSync
+        case .vaultRecipeExport: return .vault
+        case .configBackupExport: return .settings
+        }
+    }
+
     /// One line in the editor saying exactly what will run, so an unattended
     /// action is never a name the captain has to guess at.
     var explanation: String {

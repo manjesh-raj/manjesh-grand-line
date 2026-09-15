@@ -16,6 +16,16 @@
 // Restore config) is unaffected and stays exactly where it was, behind the
 // Setup flyout.
 //
+// **`fm/grand-line-schedules-page-redesign` rebuilt what this page renders**,
+// against two captain-supplied references - see `SchedulesCardView`'s own
+// header for the two structural decisions (grouped-by-status rather than a
+// flat filtered list; no in-page hero title, because the drill header above
+// already is one) and `SchedulesInsights.swift`'s for why every number on the
+// page comes from real recorded runs rather than the references' demo data.
+// What this controller gained: the summary tiles above the list, the two
+// run-history panels below it, a page-level Refresh, and the one read of
+// `ScheduleRunHistoryStore` that feeds all three plus every row's sparkline.
+//
 // Placement: the utility group (`RailDestination.isDailyUse == false`),
 // alongside Tools/Vault/Dictation/Docs - a schedule "runs itself and reports
 // to Health" (per `ScheduleRunner.swift`'s own header) rather than something
@@ -47,6 +57,12 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
     /// shell's; this page only says when its numbers moved.
     var onDrillSubtitleChanged: (() -> Void)?
 
+    /// Set by `AppShellController` - "show that destination". Forwarded, never
+    /// owned: this page names a `RailDestination` and the shell decides what
+    /// showing one means, exactly as `FleetController.onNavigateToDestination`
+    /// already does.
+    var onNavigateToDestination: ((RailDestination) -> Void)?
+
     // MARK: Drill header (Daylight §6.4)
 
     /// Counted off the same `ScheduleStore` array the rows below render, and
@@ -71,18 +87,52 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
     /// §6.4's action cluster: this page's one primary action, hoisted out of
     /// the card header. Caller-owned - `SchedulesCardView` still owns the
     /// button and its handler.
-    var drillHeaderActions: [NSView] { [schedulesCard.addButton] }
+    ///
+    /// Refresh is `HelmButton(.primary)` with the `arrow.clockwise` glyph, the
+    /// app-wide shape `fm/grandline-refresh-button-consistency` settled on -
+    /// not a second recipe invented here. It re-reads the store and the run
+    /// history and re-renders: on this page that is worth an affordance
+    /// because half of what a row says is *relative* ("in 13h", "6h ago",
+    /// "3 runs recorded"), and a page left open goes quietly stale between the
+    /// events that already trigger a rebuild.
+    var drillHeaderActions: [NSView] { [schedulesCard.addButton, refreshButton] }
+
+    private let refreshButton = HelmButton(title: "Refresh", variant: .primary,
+                                           symbol: "arrow.clockwise")
+
+    // MARK: The summary tiles and the two run-history panels
+
+    /// Reference 1's three stat cards, on `HelmStatTile` - the app's own tile,
+    /// which is what makes them read as this app's rather than the mockup's.
+    ///
+    /// Reference 2 offers the same three numbers as a compact inline summary
+    /// bar instead (title + subtitle + stats + button in one row). That shape
+    /// was deliberately not taken: its title-and-subtitle half is exactly what
+    /// `HelmDrillHeader` already renders directly above this page, so adopting
+    /// it would re-introduce the duplicate-title defect §6.4 exists to remove.
+    /// The tiles carry the counts and leave the naming to the header.
+    private let activeTile = HelmStatTile(symbol: "bolt.horizontal.circle.fill",
+                                          caption: "Active schedules")
+    private let attentionTile = HelmStatTile(symbol: "exclamationmark.circle.fill",
+                                             caption: "Needs your attention")
+    private let runsTile = HelmStatTile(symbol: "chart.bar.fill", caption: "Runs \u{00B7} last 7 days")
+
+    private let activityCard = HelmCard()
+    private let activityStack = NSStackView()
+    private let overviewCard = HelmCard()
+    private let overviewSummary = NSTextField(labelWithString: "")
+    private let overviewChart = ScheduleRunOverviewChart()
+    private let overviewNote = NSTextField(wrappingLabelWithString: "")
+
+    /// The most activity rows the feed shows before saying how many it left
+    /// out. A cap that is not stated reads as "that is all there is", which is
+    /// the one thing this page must never imply about a run log.
+    private static let activityRowLimit = 6
 
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 620, height: 720))
         root.wantsLayer = true
         view = root
-        ThemeManager.shared.observe { [weak root, weak self] theme in
-            root?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
-            root?.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
-            self?.theme = theme
-            self?.refreshSchedules()
-        }
 
         // The page-level explanatory line is gone (Daylight §6.4): the drill
         // header above now names the destination and carries its live numbers,
@@ -90,8 +140,16 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         // says the same sentence this label did, verbatim, at the one moment a
         // captain actually needs it.
         let schedulesCardView = buildSchedulesCard()
+        let statsRow = buildStatsRow()
+        let insightsRow = buildInsightsRow()
 
-        let stack = NSStackView(views: [schedulesCardView])
+        refreshButton.controlSize = .small
+        refreshButton.target = self
+        refreshButton.action = #selector(refreshTapped)
+        refreshButton.toolTip = "Re-read the schedules and their run history, and re-time every "
+            + "\u{201C}in 13h\u{201D} / \u{201C}6h ago\u{201D} on this page"
+
+        let stack = NSStackView(views: [statsRow, schedulesCardView, insightsRow])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
@@ -106,6 +164,8 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
             stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
             stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
             schedulesCardView.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            statsRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            insightsRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
 
         let scroll = NSScrollView()
@@ -125,6 +185,26 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
             content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
         scrollView = scroll
+
+        // **Registered last, after every view this page paints exists.**
+        //
+        // `ThemeManager.observe` fires its closure *synchronously at
+        // registration* - the trap this codebase has been bitten by four times
+        // (see `HelmFormSheet`'s header and PR #278's blank Settings page).
+        // Registering at the top of `loadView`, as this page used to, meant the
+        // first render ran before the cards below the list had been given their
+        // headers and bodies, and - worse - consumed `hasRenderedOnce`, the
+        // flag whose whole job is to guarantee the *first* render is never
+        // deferred by the visibility gate. Nothing was visibly broken, because
+        // every view it touches is a stored `let`; it was one reordering away
+        // from being exactly that bug. Registering here makes the synchronous
+        // first fire a genuine, fully-assembled render.
+        ThemeManager.shared.observe { [weak root, weak self] theme in
+            root?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+            root?.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
+            self?.theme = theme
+            self?.refreshSchedules()
+        }
     }
 
     override func viewWillAppear() {
@@ -150,6 +230,11 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         schedulesCard.onEditSchedule = { [weak self] schedule in self?.presentScheduleEditor(editing: schedule) }
         schedulesCard.onDeleteSchedule = { [weak self] schedule in self?.confirmDeleteSchedule(schedule) }
         schedulesCard.onViewHistory = { [weak self] schedule in self?.presentScheduleHistory(schedule) }
+        // The row's "Review" hand-off. `AppShellController` wires this to
+        // `show(_:)` - the same forward-don't-own seam Overview's own
+        // `onNavigateToDestination` already uses, rather than this page
+        // learning what a destination is.
+        schedulesCard.onOpenDestination = { [weak self] dest in self?.onNavigateToDestination?(dest) }
         schedulesCard.onRunNow = { [weak self] schedule in
             ScheduleRunner.shared.runNow(schedule)
             self?.refreshSchedules()
@@ -177,6 +262,199 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         return schedulesCard.card
     }
 
+    // MARK: The summary tiles
+
+    /// Three tiles, `.fillEqually`, exactly as reference 1 lays them out.
+    private func buildStatsRow() -> NSView {
+        let row = NSStackView(views: [activeTile, attentionTile, runsTile])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.distribution = .fillEqually
+        row.spacing = HelmMetrics.s3
+        row.translatesAutoresizingMaskIntoConstraints = false
+        return row
+    }
+
+    // MARK: The two run-history panels
+
+    /// Reference 1's bottom pair: "Recent activity" and "Run overview".
+    ///
+    /// Both are real (`ScheduleRunHistoryStore`), which is the only reason
+    /// either was built - the reference backs them with a hardcoded 24-run
+    /// chart and an invented feed, and the brief's instruction for a piece with
+    /// no real data behind it was to scope it out rather than fill it in.
+    private func buildInsightsRow() -> NSView {
+        activityStack.orientation = .vertical
+        activityStack.alignment = .leading
+        activityStack.spacing = HelmMetrics.s2
+        activityStack.translatesAutoresizingMaskIntoConstraints = false
+        activityCard.setHeader(symbol: "clock.arrow.circlepath",
+                               tint: .info,
+                               title: "Recent activity",
+                               subtitle: "Every recorded run, newest first")
+        activityCard.setBody(activityStack, insets: HelmCard.contentInsets)
+
+        overviewSummary.translatesAutoresizingMaskIntoConstraints = false
+        overviewSummary.lineBreakMode = .byTruncatingTail
+        overviewSummary.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        overviewNote.translatesAutoresizingMaskIntoConstraints = false
+        overviewNote.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let overviewStack = NSStackView(views: [overviewSummary, overviewChart, overviewNote])
+        overviewStack.orientation = .vertical
+        overviewStack.alignment = .leading
+        overviewStack.spacing = HelmMetrics.s2
+        overviewStack.translatesAutoresizingMaskIntoConstraints = false
+        overviewCard.setHeader(symbol: "chart.bar.xaxis",
+                               tint: .accent,
+                               title: "Run overview",
+                               subtitle: "Last 7 days")
+        overviewCard.setBody(overviewStack, insets: HelmCard.contentInsets)
+        NSLayoutConstraint.activate([
+            overviewSummary.widthAnchor.constraint(equalTo: overviewStack.widthAnchor),
+            overviewChart.widthAnchor.constraint(equalTo: overviewStack.widthAnchor),
+            overviewNote.widthAnchor.constraint(equalTo: overviewStack.widthAnchor),
+        ])
+
+        let row = NSStackView(views: [activityCard, overviewCard])
+        row.orientation = .horizontal
+        row.alignment = .top
+        row.distribution = .fillEqually
+        row.spacing = HelmMetrics.s3
+        row.translatesAutoresizingMaskIntoConstraints = false
+        return row
+    }
+
+    /// Repaints the tiles and both panels from the same `schedules` + `history`
+    /// pair the rows were built from, so a number in a tile and a bar in the
+    /// chart can never disagree with the list they sit around.
+    private func renderInsights(_ schedules: [AutomationSchedule],
+                                history: [ScheduleRunHistoryEntry]) {
+        let active = schedules.filter(\.isEnabled).count
+        let attention = schedules.filter { SchedulesCardView.group(for: $0) == .needsYou }.count
+        activeTile.value = "\(active)"
+        activeTile.setTint(nil, theme: theme)
+        attentionTile.value = "\(attention)"
+        attentionTile.setTint(attention > 0 ? .warn : nil, theme: theme)
+        runsTile.value = "\(history.count)"
+        runsTile.setTint(nil, theme: theme)
+        activeTile.toolTip = "\(active) of \(schedules.count) schedules are running on their own"
+        attentionTile.toolTip = attention == 0
+            ? "Nothing is waiting on you"
+            : "Their last run found something - each one has a Review button on its row"
+        runsTile.toolTip = "Runs recorded in the past 7 days, across every schedule"
+
+        activityCard.applyTheme(theme)
+        overviewCard.applyTheme(theme)
+        renderActivity(history)
+        renderOverview(history)
+    }
+
+    private func renderActivity(_ history: [ScheduleRunHistoryEntry]) {
+        for view in activityStack.arrangedSubviews {
+            activityStack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        func add(_ view: NSView) {
+            activityStack.addArrangedSubview(view)
+            view.widthAnchor.constraint(equalTo: activityStack.widthAnchor).isActive = true
+        }
+        guard !history.isEmpty else {
+            add(HelmEmptyState(symbol: "clock.badge.questionmark",
+                               body: "No runs recorded yet. A schedule's runs show up here as they happen, "
+                                   + "and are kept for seven days."))
+            return
+        }
+        let now = Date()
+        for entry in history.prefix(Self.activityRowLimit) {
+            add(activityRow(entry, now: now))
+        }
+        // "no silent caps": say how many were left out rather than implying
+        // the six shown are all there is.
+        if history.count > Self.activityRowLimit {
+            let more = history.count - Self.activityRowLimit
+            let note = NSTextField(labelWithString: "+\(more) more in the past 7 days \u{2014} open a schedule\u{2019}s \u{201C}View History\u{2026}\u{201D} for its own log")
+            note.font = HelmType.captionSmall()
+            note.textColor = HelmTheme.mutedInk(theme)
+            note.lineBreakMode = .byTruncatingTail
+            note.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            note.translatesAutoresizingMaskIntoConstraints = false
+            add(note)
+        }
+    }
+
+    private func activityRow(_ entry: ScheduleRunHistoryEntry, now: Date) -> NSView {
+        let tile = IconTileView(size: HelmMetrics.tileSmall, cornerRadius: HelmMetrics.tileSmall / 2)
+        tile.configure(symbol: entry.verdict.symbol, tint: entry.verdict.tint)
+        tile.applyTheme(theme)
+
+        let title = NSTextField(labelWithString: entry.actionTitle)
+        title.font = HelmType.caption()
+        title.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+        title.lineBreakMode = .byTruncatingTail
+        title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let detail = NSTextField(labelWithString: entry.summary)
+        detail.font = HelmType.captionSmall()
+        detail.textColor = HelmTheme.mutedInk(theme)
+        detail.lineBreakMode = .byTruncatingTail
+        detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let text = NSStackView(views: [title, detail])
+        text.orientation = .vertical
+        text.alignment = .leading
+        text.spacing = 2
+        text.translatesAutoresizingMaskIntoConstraints = false
+        text.setHuggingPriority(.defaultLow, for: .horizontal)
+        text.setClippingResistancePriority(.defaultLow, for: .horizontal)
+
+        let age = NSTextField(labelWithString: AutomationSchedule.relativeAge(from: entry.at, to: now))
+        age.font = HelmType.code()
+        age.textColor = HelmTheme.mutedInk(theme)
+        age.alignment = .right
+        age.translatesAutoresizingMaskIntoConstraints = false
+        age.setContentHuggingPriority(.required, for: .horizontal)
+        age.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let row = NSStackView(views: [tile, text, age])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = HelmMetrics.s2
+        // gotcha (10): without `.fill` the age would drift with the title
+        // rather than pinning to the row's trailing edge.
+        row.distribution = .fill
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.toolTip = "\(entry.verdict.outcomeChipText) \u{00B7} \(Self.activityTooltipFormatter.string(from: entry.at))"
+        return row
+    }
+
+    private static let activityTooltipFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f
+    }()
+
+    private func renderOverview(_ history: [ScheduleRunHistoryEntry]) {
+        let now = Date()
+        let buckets = ScheduleRunStats.dailyBuckets(entries: history, now: now)
+        overviewChart.setBuckets(buckets, theme: theme)
+
+        let attention = history.filter { $0.verdict != .clean }.count
+        let runs = history.count == 1 ? "1 run" : "\(history.count) runs"
+        overviewSummary.stringValue = attention == 0
+            ? "\(runs) \u{00B7} all clean"
+            : "\(runs) \u{00B7} \(attention) needed you"
+        overviewSummary.font = HelmType.rowTitle()
+        overviewSummary.textColor = HelmTheme.nsColor(theme.chromeInkHex)
+
+        overviewNote.stringValue = history.isEmpty
+            ? "Nothing has run in the past seven days. Bars appear here as runs are recorded."
+            : "Each bar is one day. The green share ran clean; the amber share found something worth your attention."
+        overviewNote.font = HelmType.captionSmall()
+        overviewNote.textColor = HelmTheme.mutedInk(theme)
+    }
+
     /// Rebuilds every row. P2/P3 (`data/grand-line-e2e-audit/report.md`):
     /// **skipped while this page is not the one showing** - it would rebuild
     /// again on its next appearance anyway, and with every destination mounted
@@ -194,9 +472,7 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
             needsRefreshOnAppear = false
             lastRefreshedAt = Date()
             hasRenderedOnce = true
-            schedulesCard.setSchedules(scheduleStore.schedules,
-                                       runningID: ScheduleRunner.shared.runningScheduleID,
-                                       theme: theme)
+            renderAll()
             return
         }
         guard view.window != nil, !view.isHiddenOrHasHiddenAncestor else {
@@ -209,9 +485,32 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         needsRefreshOnAppear = false
         lastRefreshedAt = Date()
         hasRenderedOnce = true
-        schedulesCard.setSchedules(scheduleStore.schedules,
+        renderAll()
+    }
+
+    /// The one place the page's three surfaces are painted, from **one** read
+    /// of each store.
+    ///
+    /// `ScheduleRunHistoryStore` is a file-backed singleton, so the rows'
+    /// sparklines, the "runs last 7 days" tile, the activity feed and the chart
+    /// all take the same array rather than each asking for their own - which
+    /// both keeps the page's numbers consistent within a frame and keeps a
+    /// render to a single store hit.
+    private func renderAll() {
+        let schedules = scheduleStore.schedules
+        let history = ScheduleRunHistoryStore.shared.allEntries()
+        schedulesCard.setSchedules(schedules,
                                    runningID: ScheduleRunner.shared.runningScheduleID,
+                                   history: history,
                                    theme: theme)
+        renderInsights(schedules, history: history)
+    }
+
+    /// The page-level Refresh. Nothing here re-runs a schedule - it re-reads
+    /// and re-times, which is what goes stale on a page left open.
+    @objc private func refreshTapped() {
+        refreshSchedules()
+        Toast.show(in: view, message: drillHeaderSubtitle ?? "Schedules refreshed")
     }
 
     /// Something changed (a store write, a run starting or finishing, a theme
@@ -270,8 +569,19 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
     /// click would still be a surprise - and this app confirms every other
     /// record delete (see `HostsController`'s own confirm alert).
     #if FM_SELFTESTS
-    /// The card this page renders - so a suite can read the real time/tick
-    /// columns it built rather than re-deriving them.
+    /// The three summary tiles' rendered values - read off the tiles rather
+    /// than recomputed, so a check can see a tile that stopped being repainted.
+    var debugStatValues: (active: String, attention: String, runs: String) {
+        (activeTile.value, attentionTile.value, runsTile.value)
+    }
+    /// Whether the activity feed is showing its honest "nothing recorded yet"
+    /// state rather than an empty stack that merely looks like one.
+    var debugActivityShowsEmptyState: Bool {
+        activityStack.arrangedSubviews.contains { $0 is HelmEmptyState }
+    }
+    var debugOverviewChartAxis: [String] { overviewChart.debugAxisLabels }
+    /// The card this page renders - so a suite can read the real time column
+    /// and run sparkline it built rather than re-deriving them.
     var debugSchedulesCard: SchedulesCardView? { isViewLoaded ? schedulesCard : nil }
     /// G3: drive the real delete path, confirmation and all.
     func debugConfirmDeleteSchedule(_ schedule: AutomationSchedule) {

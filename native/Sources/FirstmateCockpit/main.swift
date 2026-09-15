@@ -1974,6 +1974,11 @@ if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_SLICE5_TESTS"] == 
 if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_SLICE4_TESTS"] == "1" {
     exit(DaylightDrillPageSlice4SelfTest.run() ? 0 : 1)
 }
+// `fm/grand-line-schedules-page-redesign`: the redesigned Schedules page's own
+// honesty claims - see SchedulesRedesignSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_SCHEDULES_REDESIGN_TESTS"] == "1" {
+    exit(SchedulesRedesignSelfTest.run() ? 0 : 1)
+}
 if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_DRILL_SLICE3_TESTS"] == "1" {
     exit(DaylightDrillPageSlice3SelfTest.run() ? 0 : 1)
 }
