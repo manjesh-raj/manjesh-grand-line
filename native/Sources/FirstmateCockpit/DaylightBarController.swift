@@ -218,7 +218,8 @@ final class DaylightBarController: NSViewController {
     /// space - this is a shortcut, not a relocation - and they sit
     /// immediately before the theme toggle, matching the captain's own
     /// reviewed order: search -> Recents -> Sticky Board -> Code Preview ->
-    /// Tasks -> Straw Hat Pirates -> Poneglyph -> theme -> bell -> avatar.
+    /// Tasks -> Straw Hat Pirates -> Poneglyph -> Console -> theme -> bell ->
+    /// avatar.
     ///
     /// A new icon **appends** to the trailing end of this group rather than
     /// being slotted in by topic, which is the convention Sticky Board and
@@ -236,6 +237,13 @@ final class DaylightBarController: NSViewController {
     /// feature); Poneglyph sits right before the theme toggle.
     private let strawHatButton = DaylightDestinationButton(destination: .strawHat)
     private let poneglyphButton = DaylightDestinationButton(destination: .poneglyph)
+    /// The captain's own later ask, in its own message: a one-click jump to
+    /// Console. It appends to the trailing end of this group per the
+    /// convention above - Console is reached often, but slotting it in by
+    /// topic (beside Tasks, say) would move five icons a captain already has
+    /// muscle memory for. So it sits last, immediately before the theme
+    /// toggle, and Poneglyph keeps every icon before it exactly where it was.
+    private let consoleButton = DaylightDestinationButton(destination: .console)
     /// The "Recents" dropdown (`fm/grandline-recents-navigation`) - a captain
     /// review of four back/forward-style approaches chose this one. It first
     /// shipped right after the space pills (never next to the logo the
@@ -394,7 +402,7 @@ final class DaylightBarController: NSViewController {
         themeToggleButton.target = self
         themeToggleButton.action = #selector(themeToggleClicked)
 
-        for button in [stickyBoardButton, codePreviewButton, tasksButton, strawHatButton, poneglyphButton] {
+        for button in [stickyBoardButton, codePreviewButton, tasksButton, strawHatButton, poneglyphButton, consoleButton] {
             button.target = self
             button.action = #selector(destinationButtonClicked(_:))
         }
@@ -411,6 +419,7 @@ final class DaylightBarController: NSViewController {
         bar.addSubview(tasksButton)
         bar.addSubview(strawHatButton)
         bar.addSubview(poneglyphButton)
+        bar.addSubview(consoleButton)
         bar.addSubview(themeToggleButton)
         bar.addSubview(notificationCenter.bell)
         bar.addSubview(avatar)
@@ -496,10 +505,15 @@ final class DaylightBarController: NSViewController {
             strawHatButton.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
             strawHatButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
 
-            poneglyphButton.trailingAnchor.constraint(equalTo: themeToggleButton.leadingAnchor, constant: -HelmMetrics.s2),
+            poneglyphButton.trailingAnchor.constraint(equalTo: consoleButton.leadingAnchor, constant: -HelmMetrics.s2),
             poneglyphButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             poneglyphButton.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
             poneglyphButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
+
+            consoleButton.trailingAnchor.constraint(equalTo: themeToggleButton.leadingAnchor, constant: -HelmMetrics.s2),
+            consoleButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            consoleButton.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
+            consoleButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
 
             themeToggleButton.trailingAnchor.constraint(equalTo: notificationCenter.bell.leadingAnchor, constant: -HelmMetrics.s2),
             themeToggleButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
@@ -766,6 +780,7 @@ final class DaylightBarController: NSViewController {
         chain.append(tasksButton)
         chain.append(strawHatButton)
         chain.append(poneglyphButton)
+        chain.append(consoleButton)
         chain.append(themeToggleButton)
         chain.append(notificationCenter.bell)
         chain.append(avatar)
@@ -777,7 +792,7 @@ final class DaylightBarController: NSViewController {
     /// its own badge geometry and its own `applyTheme`.
     private var iconSquares: [DaylightBarIconButton] {
         [recentDestinations.button, stickyBoardButton, codePreviewButton,
-         tasksButton, strawHatButton, poneglyphButton, themeToggleButton]
+         tasksButton, strawHatButton, poneglyphButton, consoleButton, themeToggleButton]
     }
 
     /// B2's "active": light the shortcut for the destination the captain is
@@ -1080,7 +1095,7 @@ final class DaylightBarController: NSViewController {
     /// The bar's quick-access destination icons, in visual order
     /// (leading -> trailing).
     func debugDestinationButtons() -> [DaylightDestinationButton] {
-        [stickyBoardButton, codePreviewButton, tasksButton, strawHatButton, poneglyphButton]
+        [stickyBoardButton, codePreviewButton, tasksButton, strawHatButton, poneglyphButton, consoleButton]
     }
 
     func debugThemeToggleButton() -> DaylightThemeToggleButton { themeToggleButton }
