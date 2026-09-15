@@ -2469,6 +2469,15 @@ if ProcessInfo.processInfo.environment["FM_RUN_UNIFIED_SEARCH_LAYOUT_TESTS"] == 
 // pill rendered washed-out on a fresh light-mode load and only rendered
 // correctly after a dark -> light round trip. See
 // UpdatesRefreshButtonThemeSelfTest.swift's header for the root cause.
+// The two captain-requested Setup > GitHub Sync changes: the page's leading
+// subtitle is gone, and the page carries the same shared `HelmRefreshPill`
+// Setup > Updates does. Its sharpest check is a source guard that the Refresh
+// action can never reach this page's mutating `sync` path - see
+// GitHubSyncRefreshSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_GITHUB_SYNC_REFRESH_TESTS"] == "1" {
+    exit(GitHubSyncRefreshSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_UPDATES_REFRESH_BUTTON_THEME_TESTS"] == "1" {
     exit(UpdatesRefreshButtonThemeSelfTest.run() ? 0 : 1)
 }

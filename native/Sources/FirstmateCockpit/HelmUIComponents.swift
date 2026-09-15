@@ -1021,6 +1021,118 @@ class HoverHighlightView: NSView {
     }
 }
 
+/// The app's one page-level "re-check this page's own data" pill.
+///
+/// This is Setup > Updates' own Refresh control, promoted out of that single
+/// page so a sibling page can carry the same affordance without a third
+/// hand-rolled copy of it. The recipe is unchanged, deliberately: the
+/// captain's own mockup for the Updates page showed this as that page's
+/// clear *primary* action - a filled, labelled pill rather than the bordered
+/// `.secondary` square every toolbar glyph uses - and that decision predates
+/// `HelmButton`'s own `.primary` variant. Keeping it byte-for-byte is what
+/// makes this an extraction rather than a restyle of a page nobody asked to
+/// change.
+///
+/// GL-16: the `HoverHighlightView` base supplies the accessibility press
+/// action, the focus ring and Return/Space handling that the plain
+/// `NSView` + click recognizer this pattern started as never had.
+///
+/// **The one rule a caller must not work around.** This class owns its fill
+/// through `applyTheme(_:)`, which sets `normalColor`/`hoverColor` and never
+/// writes `layer.backgroundColor` directly. A caller that writes the layer
+/// from outside strands the fill at `.clear` on the first hover cycle -
+/// `mouseExited` repaints from `normalColor`, which such a caller never set.
+/// That is a real, captain-reported bug this very pill shipped once already
+/// (`fm/grandline-updates-refresh-button-light-mode-fix`, guarded by
+/// `UpdatesRefreshButtonThemeSelfTest`), and folding the fix *into* the
+/// component is most of the reason it is now a component: a second page
+/// cannot re-derive it wrong.
+final class HelmRefreshPill: HoverHighlightView {
+    /// Every metric here is the Updates pill's own, moved rather than
+    /// re-chosen - see this type's doc comment.
+    private enum Metrics {
+        static let cornerRadius: CGFloat = 8
+        static let horizontalInset: CGFloat = 13
+        static let verticalInset: CGFloat = 7
+        static let iconToLabelGap: CGFloat = 7
+        static let iconPointSize: CGFloat = 13
+        static let labelPointSize: CGFloat = 12
+    }
+
+    private let iconView = NSImageView()
+    private let titleLabel = NSTextField(labelWithString: "")
+    private var clickRecognizer: NSClickGestureRecognizer?
+
+    /// - Parameters:
+    ///   - title: the pill's own label, and its VoiceOver label.
+    ///   - tooltip: what *this* page's refresh actually re-runs. Every page
+    ///     re-checks something different, so the component states the shape
+    ///     and the caller states the subject.
+    init(title: String = "Refresh", tooltip: String) {
+        super.init(frame: .zero)
+
+        iconView.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)?
+            .withSymbolConfiguration(
+                NSImage.SymbolConfiguration(pointSize: Metrics.iconPointSize, weight: .semibold))
+        iconView.translatesAutoresizingMaskIntoConstraints = false
+
+        titleLabel.stringValue = title
+        titleLabel.font = .systemFont(ofSize: Metrics.labelPointSize, weight: .semibold)
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let content = NSStackView(views: [iconView, titleLabel])
+        content.orientation = .horizontal
+        content.alignment = .centerY
+        content.spacing = Metrics.iconToLabelGap
+        content.translatesAutoresizingMaskIntoConstraints = false
+
+        layer?.cornerRadius = Metrics.cornerRadius
+        cornerRadius = Metrics.cornerRadius
+        toolTip = tooltip
+        setAccessibilityRole(.button)
+        setAccessibilityLabel(title)
+        accessibilityLabelOverride = title
+
+        addSubview(content)
+        NSLayoutConstraint.activate([
+            content.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Metrics.horizontalInset),
+            content.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Metrics.horizontalInset),
+            content.topAnchor.constraint(equalTo: topAnchor, constant: Metrics.verticalInset),
+            content.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -Metrics.verticalInset),
+        ])
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
+    /// Wires the click, replacing any previous wiring rather than stacking a
+    /// second recognizer on top of it. Separate from `init` so a page can
+    /// hold the pill as a stored property (which cannot reference `self`)
+    /// and point it at itself from its own builder, which is how every
+    /// caller here is shaped.
+    func setAction(target: AnyObject, action: Selector) {
+        if let clickRecognizer { removeGestureRecognizer(clickRecognizer) }
+        let recognizer = NSClickGestureRecognizer(target: target, action: action)
+        addGestureRecognizer(recognizer)
+        clickRecognizer = recognizer
+    }
+
+    /// The fill and the text tone that goes on it. `selectionTextHex` is the
+    /// tone already contrast-verified against an opaque `accentHex` fill
+    /// (SwiftTerm's own selected-text pairing) - the exact pairing this
+    /// pill's fill and label need.
+    func applyTheme(_ theme: HelmTheme) {
+        let accent = HelmTheme.nsColor(theme.accentHex)
+        normalColor = accent
+        hoverColor = accent.hoverShifted(by: 0.10, forMode: theme.mode)
+        let onAccent = HelmTheme.nsColor(theme.selectionTextHex)
+        iconView.contentTintColor = onAccent
+        titleLabel.textColor = onAccent
+    }
+}
+
 /// The app's one table view (GL-16): an `NSTableView` whose selected row can
 /// be activated from the keyboard.
 ///
