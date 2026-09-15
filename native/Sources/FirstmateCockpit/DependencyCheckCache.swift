@@ -26,6 +26,20 @@
 // themselves in a terminal - is picked up within one session, no relaunch
 // needed.
 //
+// **A fourth reader, and the one thing it does differently.**
+// `BackgroundSignalsPoller` runs the same 13-item sweep on its own 15-minute
+// cadence for the Notification Center and the hub's Engineering/Stores cards.
+// It read `UpdatesSource.check` directly until
+// `fm/grandline-poller-dependency-cache-bypass`, so a captain who opened
+// Updates and then sat still paid for the identical sweep twice within
+// minutes. It goes through this cache now - but with its own, deliberately
+// shorter `BackgroundSignalsPoller.sharedCheckMaxAge`, never `defaultTTL`.
+// Using the default would let one poller pass be satisfied by the *previous*
+// poller pass (an entry written near the end of a slow sweep is younger than
+// `pollInterval` when the next tick lands), silently halving the poller's own
+// effective cadence. See that constant's own doc comment - and note
+// `FleetTaskCache`'s TTL is sized against the same trap in reverse.
+//
 // Every explicit "Check"/"Refresh"/"Re-check now" affordance on the three
 // pages passes `forceRefresh: true`, which always runs the real
 // subprocess-backed check and refreshes the shared entry (so the other two
@@ -124,11 +138,33 @@ final class DependencyCheckCache {
     static let inFlightWaitTimeout: TimeInterval = 120
 
     func check(_ item: DependencyItem, forceRefresh: Bool = false, maxAge: TimeInterval = defaultTTL) -> CheckOutcome {
+        checkDated(item, forceRefresh: forceRefresh, maxAge: maxAge).outcome
+    }
+
+    /// The same read as `check(_:)`, plus **when the outcome it returns was
+    /// actually gathered** - `Date()` for a real check this call ran, and the
+    /// original check's timestamp for a cache hit.
+    ///
+    /// Only `BackgroundSignalsPoller` needs this, and it needs it because of
+    /// PR #395's freshness rule: a publish carries when its data was
+    /// *gathered*, never when it was published, and an older reading never
+    /// displaces a newer one (`BackgroundSignalsPoller.acceptsReading`). A
+    /// poller sweep that is partly served from this cache is therefore a
+    /// mixture of vintages, and stamping the whole thing `Date()` would claim
+    /// data is newer than it is - which is exactly the back door #395 closed.
+    /// So the poller stamps its publish with the *oldest* sample that
+    /// contributed to it, and this is what lets it know which one that was.
+    ///
+    /// The three pages deliberately do not use it: each renders rows as it has
+    /// them and `publish*` already defaults to `Date()` for that case.
+    func checkDated(_ item: DependencyItem,
+                    forceRefresh: Bool = false,
+                    maxAge: TimeInterval = defaultTTL) -> (outcome: CheckOutcome, gatheredAt: Date) {
         while true {
             lock.lock()
             if !forceRefresh, let entry = entries[item.id], Date().timeIntervalSince(entry.checkedAt) < maxAge {
                 lock.unlock()
-                return entry.outcome
+                return (entry.outcome, entry.checkedAt)
             }
             if let group = inFlight[item.id] {
                 lock.unlock()
@@ -150,12 +186,13 @@ final class DependencyCheckCache {
             let runner = Self.checkOverrideForTests ?? UpdatesSource.check
             let outcome = runner(item)
 
+            let gatheredAt = Date()
             lock.lock()
-            entries[item.id] = Entry(outcome: outcome, checkedAt: Date())
+            entries[item.id] = Entry(outcome: outcome, checkedAt: gatheredAt)
             inFlight.removeValue(forKey: item.id)
             lock.unlock()
             group.leave()
-            return outcome
+            return (outcome, gatheredAt)
         }
     }
 
