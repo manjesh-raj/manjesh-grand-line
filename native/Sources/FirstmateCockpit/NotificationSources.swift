@@ -12,7 +12,7 @@
 // Call sites (not owned by this file):
 //   - Fleet decisions (#1) / PR ready (#2): `AppShellController.loadView()`,
 //     piggybacking on the existing `onNeedsDecisionCountChanged`/
-//     `onOpenPRCountChanged` callbacks that already drive the rail badges -
+//     `onReadyToMergeCountChanged` callbacks that already drive the rail badges -
 //     no new poll, updates exactly when those pages' own counts do.
 //   - Tool updates (#3) / GitHub Sync (#4) / Vault (#5) / setup drift (#6):
 //     `BackgroundSignalsPoller.swift`, a dedicated slow poll (see that

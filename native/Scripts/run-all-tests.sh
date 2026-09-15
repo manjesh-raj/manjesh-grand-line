@@ -180,6 +180,12 @@ NEEDS_SESSION=(
   # §3K/§3L/§3M: K3's crossfade snapshots a real, ordered-front window's
   # content view, and M2 lays out a real hairline.
   "FM_RUN_THEME_MOTION_WEB_ISLANDS_TESTS"
+  # The modernization audit's one functional finding: mounts the real Review
+  # page, the real Overview page and the real canvas, and reads each "ready to
+  # merge" number off the rendered views. Its source guard half runs with it;
+  # there is no pure-logic-only split, because the defect was a surface that
+  # had stopped calling the shared definition, which only a mounted view sees.
+  "FM_RUN_READY_TO_MERGE_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_SLICE6_TESTS"
   # Phase 6 mounts a real window to follow the real key view loop and drives
   # real accessibility presses - window-backed for the same reason.

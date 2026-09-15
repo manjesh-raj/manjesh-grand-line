@@ -212,7 +212,7 @@ final class FleetNotifier {
     ///
     /// There was no OS banner for this signal at all before F4 - the in-app
     /// Notification Center had `NotificationSources.setPRReady` (a count, fed
-    /// from Review's own `onOpenPRCountChanged`), but nothing ever reached the
+    /// from Review's own `onReadyToMergeCountChanged`), but nothing ever reached the
     /// captain while they were looking at something else. This lives here
     /// rather than in `ReviewController` for the same reason the two posts
     /// above do: this class already owns the "seen since launch" bookkeeping
@@ -229,7 +229,7 @@ final class FleetNotifier {
     /// Called from `ReviewController.render` via `AppShellController` - i.e.
     /// exactly when Review already recomputed its own list, with no new poll.
     func reconcilePRs(_ prs: [MergedPR]) {
-        let mergeable = prs.filter { FleetDataSource.canMerge($0) }
+        let mergeable = FleetDataSource.readyToMerge(prs)
         let currentURLs = Set(mergeable.map(\.url))
         let fresh = mergeable.filter { !seenReadyPRs.contains($0.url) }
         // Assigned, not unioned: a PR whose checks go back to red (or that

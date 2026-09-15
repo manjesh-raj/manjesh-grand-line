@@ -400,6 +400,39 @@ enum FleetDataSource {
         checks == "green" && !(taskID ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+
+    /// The app's one definition of "ready to merge", and therefore the one
+    /// number every surface that renders those words must read.
+    ///
+    /// The UI modernization audit found the phrase being answered by three
+    /// genuinely different questions in the same frame: Review's drill
+    /// subtitle counted `canMerge` ("green and assignable"), its own stat
+    /// tile a few inches away counted bare `checks == "green"`, and Overview's
+    /// greeting, banner, tile and morning briefing counted the *open* PR list
+    /// outright. All three are defensible numbers on their own terms and all
+    /// three rendered under one label, so any two of them could disagree
+    /// without either being wrong - which is exactly what the captain saw
+    /// ("50 open - 0 ready to merge" beside a tile reading 34).
+    ///
+    /// `canMerge` is the definition that survives, because it is the one the
+    /// merge action itself already enforces: a PR with green checks but no
+    /// tracked task has no working path through `bin/fm-pr-merge.sh` (GL-38),
+    /// so calling it "ready to merge" is a claim this app cannot honour. Any
+    /// new surface saying those words calls this, never its own filter -
+    /// `FleetDataSelfTest.checkReadyToMergeIsOneDefinition` fails the build on
+    /// a re-derived `checks == "green"` count elsewhere in `Sources/`.
+    static func readyToMerge(_ prs: [MergedPR]) -> [MergedPR] {
+        prs.filter(canMerge)
+    }
+
+    /// The count form, which is what every one of those surfaces actually
+    /// renders. Separate from `readyToMerge` only so a call site that wants
+    /// the number does not have to spell out `.count` and invite someone to
+    /// reach for `prs.count` instead.
+    static func readyToMergeCount(_ prs: [MergedPR]) -> Int {
+        readyToMerge(prs).count
+    }
+
     /// A guarded merge runs `gh`/`git` against a real remote. Minutes is
     /// plausible on a slow link; unbounded is not acceptable (this is the
     /// call that wedged its own completion handler for a whole session).

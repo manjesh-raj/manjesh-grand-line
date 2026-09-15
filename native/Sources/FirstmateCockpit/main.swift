@@ -2302,6 +2302,15 @@ if ProcessInfo.processInfo.environment["FM_RUN_REVIEW_LOADING_STATE_TESTS"] == "
     exit(ReviewControllerLoadingStateSelfTest.run() ? 0 : 1)
 }
 
+// The UI modernization audit's one functional finding: "ready to merge" was
+// answered by three different questions in one frame. Mounts the real Review
+// and Overview surfaces and reads the numbers off the rendered views, plus a
+// source guard against the next surface bringing its own filter - see
+// ReadyToMergeCountSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_READY_TO_MERGE_TESTS"] == "1" {
+    exit(ReadyToMergeCountSelfTest.run() ? 0 : 1)
+}
+
 // The volume measurement that proves the fix above - a demand-driven
 // `NSTableView` renders hundreds of PR rows without the plain-`NSStackView`
 // blowup #221 shipped. See ReviewPRListVolumeSelfTest.swift's header.
