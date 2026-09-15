@@ -281,5 +281,11 @@ final class HelmPageSidebar: NSView {
     var debugSelectedIndex: Int? { rows.firstIndex { $0.kind == .filter && $0.id == selection } }
     var debugHeaders: [String] { headers.compactMap { $0.placeholderString } }
     func debugClickRow(_ index: Int) { pick(index) }
+
+    /// What each row is actually showing, read off the labels rather than
+    /// recomputed - a check that re-derives a count agrees with itself forever.
+    var debugCounts: [String: String] {
+        Dictionary(rows.map { ($0.id, $0.count.stringValue) }, uniquingKeysWith: { a, _ in a })
+    }
     #endif
 }
