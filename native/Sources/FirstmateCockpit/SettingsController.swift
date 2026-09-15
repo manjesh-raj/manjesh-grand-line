@@ -98,6 +98,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
 
     private var sudoTouchIDStatus: SudoTouchIDStatus = .checking
     private var isHardeningSudo = false
+    private var isDisablingSudo = false
 
     // Connection
     private let shellCwdField = HelmTextField(placeholder: "~ (Home)")
@@ -561,21 +562,28 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         let descLabel = NSTextField(wrappingLabelWithString: desc)
         descLabel.font = .systemFont(ofSize: 11)
         mutedLabel(descLabel)
-        // 16 for the row container's own padding, 12 for the row spacing and
-        // ~160 for the trailing control column (three preset buttons is the
-        // widest one on this page) - the same shape as
-        // `HealthCardView.descriptionWidth`, re-derived on every layout pass
-        // rather than guessed once at 360.
-        wrapping(descLabel, reserve: 16 + 12 + 160)
+        trailing.translatesAutoresizingMaskIntoConstraints = false
+        trailing.setContentHuggingPriority(.required, for: .horizontal)
+
+        // 16 for the row container's own padding, 12 for the row spacing, and
+        // the trailing control column measured rather than guessed - the same
+        // shape as `HealthCardView.descriptionWidth`, which the previous
+        // comment here already cited as the model while still carrying a
+        // hardcoded ~160 for "three preset buttons, the widest one on this
+        // page". That number had drifted: the font-size presets measure 221pt
+        // and the Security row's Enabled + Disable + recheck 187. Under-
+        // reserving is the dangerous direction - AppKit sizes the label's
+        // height for one line at `preferredMaxLayoutWidth`, the text then
+        // wraps narrower than that, and the extra line draws outside the
+        // label's own bounds (the same defect the Docs cards were fixed for).
+        // Floored at the old 160 so no row can ever reserve less than it did.
+        wrapping(descLabel, reserve: 16 + 12 + max(160, ceil(trailing.fittingSize.width)))
 
         let textStack = NSStackView(views: [titleLabel, descLabel])
         textStack.orientation = .vertical
         textStack.alignment = .leading
         textStack.spacing = 2
         textStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        trailing.translatesAutoresizingMaskIntoConstraints = false
-        trailing.setContentHuggingPriority(.required, for: .horizontal)
 
         let row = NSStackView(views: [textStack, trailing])
         row.orientation = .horizontal
@@ -951,6 +959,35 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         case .checking:
             statusView = rowLabel("Checking\u{2026}")
         case .enabled:
+            // The one enabled state with an action: the `pam_tid.so` line is
+            // in a real `/etc/pam.d/sudo_local` this app can edit. The pill
+            // stays - it states what is true - and the button sits beside it,
+            // the same shape the Enable direction has.
+            let disable = HelmButton(title: isDisablingSudo ? "Disabling\u{2026}" : "Disable",
+                                     variant: .secondary, target: self,
+                                     action: #selector(disableSudoTouchIDClicked))
+            disable.isEnabled = !isDisablingSudo
+            disable.toolTip = "Remove the Touch ID line from /etc/pam.d/sudo_local (asks for your password)"
+            let pair = NSStackView(views: [pillView(text: "Enabled", colorHex: theme.ansiHex[2]), disable])
+            pair.orientation = .horizontal
+            pair.alignment = .centerY
+            pair.spacing = 8
+            statusView = pair
+        case .enabledNixDarwin:
+            // Enabled, and the same symlink-into-the-store wall the
+            // not-enabled nix-darwin case hits - so the same answer, pointed
+            // the other way. Deliberately no Disable button: the store is
+            // read-only, and an edit that did land would be regenerated away
+            // by the next rebuild.
+            desc += " It is on, but this Mac is managed by nix-darwin, where /etc/pam.d/sudo_local is regenerated from your flake on every rebuild - set `security.pam.services.sudo_local.touchIdAuth = false;` (or drop the option) in your dotfiles' configuration.nix, then run rebuild.sh."
+            statusView = pillView(text: "Enabled", colorHex: theme.ansiHex[2])
+        case .enabledInSudoFile:
+            // Turning this off means editing /etc/pam.d/sudo, the file Apple
+            // ships and replaces on a system update. This app edits
+            // sudo_local and nothing else, so it says where the line is
+            // rather than offering a button that would press cleanly and
+            // change nothing.
+            desc += " It is on via a pam_tid.so line in /etc/pam.d/sudo itself, not /etc/pam.d/sudo_local - this app only ever edits sudo_local, so remove that line by hand to turn it off."
             statusView = pillView(text: "Enabled", colorHex: theme.ansiHex[2])
         case .notEnabled:
             let button = HelmButton(title: isHardeningSudo ? "Enabling\u{2026}" : "Enable", variant: .primary, target: self, action: #selector(enableSudoTouchIDClicked))
@@ -1018,6 +1055,29 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         onRunCommandTracked("av harden sudo", "sudo av harden sudo") { [weak self] _ in
             guard let self else { return }
             self.isHardeningSudo = false
+            self.checkSudoTouchID()
+        }
+    }
+
+    /// The reverse of `enableSudoTouchIDClicked`, and deliberately its twin:
+    /// the same `onRunCommandTracked` Console tab (so macOS's own `sudo`
+    /// prompt authenticates it), the same in-flight flag disabling the button
+    /// while it runs, and the same re-check on exit - which is what flips the
+    /// row back to `.notEnabled` and its Enable button with no second code
+    /// path deciding that. The command is
+    /// `SudoTouchIDSource.disableCommand()`; see it for why the edit is
+    /// scoped the way it is.
+    @objc private func disableSudoTouchIDClicked() {
+        let command = SudoTouchIDSource.disableCommand()
+        guard !isDisablingSudo, let onRunCommandTracked else {
+            onRunCommand?("Disable Touch ID", command)
+            return
+        }
+        isDisablingSudo = true
+        rebuildSecuritySection()
+        onRunCommandTracked("Disable Touch ID", command) { [weak self] _ in
+            guard let self else { return }
+            self.isDisablingSudo = false
             self.checkSudoTouchID()
         }
     }
