@@ -117,6 +117,30 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
                                              caption: "Needs your attention")
     private let runsTile = HelmStatTile(symbol: "chart.bar.fill", caption: "Runs \u{00B7} last 7 days")
 
+    /// The page's own left navigation column - the captain's correction after
+    /// using the redesign (`fm/grand-line-schedules-sidebar-fullwidth-fix`).
+    ///
+    /// **Why this is not the rail coming back.** Daylight Phase 2 deliberately
+    /// deleted the app-wide `IconRailController` and made `bodyContainer` span
+    /// the window; this is a column *inside* this one destination's body, the
+    /// same page-scoped arrangement Poneglyph has had since
+    /// `fm/grand-line-roomier-poneglyph-vault-ui-li-0f`, and it is the same
+    /// `HelmPageSidebar` component - so the two cannot drift.
+    ///
+    /// **Why a sidebar rather than the filter dropdown the redesign turned
+    /// down.** That decision stands on its own terms: a dropdown asks for an
+    /// interaction to reveal what a section header already states. A sidebar is
+    /// a different control - always visible, and carrying each collection's
+    /// live count, which is the thing a dropdown could not say. It also gives
+    /// the page a second column, which is what keeps a row's line length
+    /// readable now that the row itself is no longer capped.
+    private let sidebar = HelmPageSidebar()
+
+    /// The one id that is an *action* rather than a filter. `StatusFilter`'s
+    /// own raw values cover the rest, so the sidebar and the card agree on
+    /// what a row means without a second mapping.
+    private static let runHistoryRowID = "run-history"
+
     private let activityCard = HelmCard()
     private let activityStack = NSStackView()
     private let overviewCard = HelmCard()
@@ -155,6 +179,8 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
 
+        buildSidebar()
+
         let content = FlippedView()
         content.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(stack)
@@ -173,9 +199,26 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(sidebar)
         root.addSubview(scroll)
         NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            // **The nav column sits outside the scroll view, deliberately.**
+            // It is navigation, so it has to stay reachable - and "Run History"
+            // scrolls the content to the activity panel, which with the column
+            // inside the document would have scrolled the filters themselves
+            // off the top (seen in a real render before this was moved out).
+            // `CredentialVaultController` pins its own sidebar to the page for
+            // the same reason.
+            sidebar.leadingAnchor.constraint(equalTo: root.leadingAnchor,
+                                             constant: HelmMetrics.pageGutter),
+            sidebar.topAnchor.constraint(equalTo: root.topAnchor, constant: 18),
+            sidebar.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor,
+                                            constant: -HelmMetrics.pageGutter),
+        ])
+        NSLayoutConstraint.activate([
+            // The content takes every point the window gains beyond the column.
+            scroll.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor,
+                                            constant: HelmMetrics.s5 - HelmMetrics.pageGutter),
             scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             scroll.topAnchor.constraint(equalTo: root.topAnchor),
             scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
@@ -219,6 +262,63 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         scroll.reflectScrolledClipView(scroll.contentView)
     }
 
+    // MARK: The sidebar
+
+    /// WORKSPACE (the four collections) over MANAGE (the one real entry).
+    ///
+    /// **"Preferences" is deliberately absent.** The reference lists it, and
+    /// this app has no schedule-preferences surface at all - the only
+    /// schedule-shaped setting anywhere is `AppSettings`'
+    /// `didSeedDailyGitHubSyncSchedule`, a one-time seed guard rather than
+    /// anything a captain sets. A nav row that opens nothing is a control that
+    /// lies about what it does, which is the same call
+    /// `CredentialVaultSidebar` already made about the reference's own
+    /// `Favorites` and `Recently deleted` rows. The section stays, so a real
+    /// preferences surface has an obvious place to land.
+    private func buildSidebar() {
+        sidebar.appendHeader("Workspace")
+        for filter in SchedulesCardView.StatusFilter.allCases {
+            sidebar.appendRow(id: filter.rawValue, symbol: filter.symbol, title: filter.title)
+        }
+        sidebar.appendSpacer()
+        sidebar.appendHeader("Manage")
+        // An *action*, not a filter: it reveals the run-history panel this page
+        // already renders rather than narrowing the list, so it must not latch
+        // selected - see `HelmPageSidebar.RowKind`.
+        sidebar.appendRow(id: Self.runHistoryRowID, symbol: "clock.arrow.circlepath",
+                          title: "Run History", kind: .action, showsCount: false)
+        sidebar.select(SchedulesCardView.StatusFilter.all.rawValue)
+
+        sidebar.onSelect = { [weak self] id in
+            guard let self else { return }
+            if id == Self.runHistoryRowID {
+                self.revealRunHistory()
+                return
+            }
+            guard let filter = SchedulesCardView.StatusFilter(rawValue: id) else { return }
+            self.schedulesCard.setStatusFilter(filter)
+            self.onDrillSubtitleChanged?()
+        }
+    }
+
+    /// "Run History" scrolls the page to the activity panel it already has.
+    ///
+    /// Deliberately **not** a second history view: `fm/grand-line-schedules-page-redesign`
+    /// already shipped "Recent activity", reading the real
+    /// `ScheduleRunHistoryStore`, and a per-schedule log already exists behind
+    /// every row's "View History...". A third surface over the same JSONL would
+    /// be one more place for the same numbers to disagree.
+    private func revealRunHistory() {
+        guard let scroll = scrollView, let documentView = scroll.documentView else { return }
+        view.layoutSubtreeIfNeeded()
+        let target = activityCard.convert(activityCard.bounds, to: documentView)
+        // A little headroom above the card, so it lands under the header rather
+        // than flush against it.
+        let y = max(0, target.minY - HelmMetrics.s4)
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: y))
+        scroll.reflectScrolledClipView(scroll.contentView)
+    }
+
     // MARK: Schedules (F11)
 
     /// Wires `SchedulesCardView`'s closures - every one of them is a decision
@@ -255,7 +355,15 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         // truth for what a row shows.
         // The card re-renders on every store change and every run-state
         // change; the header's own line has to follow the same signal.
-        schedulesCard.onStateChanged = { [weak self] in self?.onDrillSubtitleChanged?() }
+        schedulesCard.onStateChanged = { [weak self] in
+            guard let self else { return }
+            self.onDrillSubtitleChanged?()
+            // Typing in the card's own search box changes what each collection
+            // matches, and the card is what knows the query - so the counts
+            // follow the same signal the rows do rather than being recomputed
+            // on a timer or left stale until the next full render.
+            self.refreshSidebarCounts()
+        }
         ScheduleRunner.shared.onRunStateChanged = { [weak self] _ in self?.refreshSchedules() }
         scheduleStore.onChange = { [weak self] in self?.refreshSchedules() }
         refreshSchedules()
@@ -503,7 +611,19 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
                                    runningID: ScheduleRunner.shared.runningScheduleID,
                                    history: history,
                                    theme: theme)
+        refreshSidebarCounts()
+        sidebar.applyTheme(theme)
         renderInsights(schedules, history: history)
+    }
+
+    /// Counted off the very array the rows render, against the card's own
+    /// current search - so a sidebar count and the list beneath it can never
+    /// disagree within a frame.
+    private func refreshSidebarCounts() {
+        guard isViewLoaded else { return }
+        let counts = SchedulesCardView.filterCounts(scheduleStore.schedules,
+                                                    query: schedulesCard.currentSearchQuery)
+        sidebar.setCounts(Dictionary(uniqueKeysWithValues: counts.map { ($0.key.rawValue, $0.value) }))
     }
 
     /// The page-level Refresh. Nothing here re-runs a schedule - it re-reads
@@ -569,6 +689,10 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
     /// click would still be a surprise - and this app confirms every other
     /// record delete (see `HostsController`'s own confirm alert).
     #if FM_SELFTESTS
+    var debugSidebar: HelmPageSidebar { sidebar }
+    var debugScrollOffsetY: CGFloat { scrollView?.contentView.bounds.origin.y ?? -1 }
+    var debugVisibleScheduleRowCount: Int { schedulesCard.debugRowCount }
+
     /// The three summary tiles' rendered values - read off the tiles rather
     /// than recomputed, so a check can see a tile that stopped being repainted.
     var debugStatValues: (active: String, attention: String, runs: String) {
