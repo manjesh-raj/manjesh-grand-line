@@ -490,8 +490,26 @@ enum HerdrThemeSyncSelfTest {
             }
             // A spot-check that the derivation is actually doing something
             // theme-specific, not just echoing one literal everywhere.
-            check(expected.panelBg != expected.sidebarBg,
-                  "panel_bg and sidebar_bg should be distinct tokens, both got \(expected.panelBg)", &ok)
+            //
+            // This used to compare `panelBg` against `sidebarBg` *within*
+            // `.dark` (they used to differ, `backgroundHex` != `chromeBack-
+            // groundHex`) - `fm/grand-line-legacy-terminal-canvas-chrome-
+            // match` deliberately made every legacy theme's `backgroundHex`
+            // equal its own `chromeBackgroundHex` (the terminal canvas now
+            // visually matches the surrounding chrome, everywhere), so
+            // `panel_bg == sidebar_bg` for `.dark` (and every other legacy
+            // theme) is now the CORRECT derived output - it faithfully
+            // mirrors what Grand Line itself displays, per the mapping's own
+            // comment ("these two tokens are already Grand Line's own
+            // established 'content vs. chrome' pair"). The Daylight family is
+            // unaffected (its `paper`/`card` tokens still genuinely differ),
+            // but this file never exercises those two ids, so the check below
+            // proves theme-sensitivity across `.dark`/`.light` instead - a
+            // property that holds regardless of whether panel/sidebar happen
+            // to coincide within either one.
+            let expectedLight = HerdrThemeColors.derive(from: .light)
+            check(expected.panelBg != expectedLight.panelBg,
+                  "panel_bg should vary with the active theme, both .dark and .light got \(expected.panelBg)", &ok)
             check(expected.accent == expected.selectionBg,
                   "accent and selection_bg should match (accentHex == selectionHex in every shipped palette)", &ok)
         }

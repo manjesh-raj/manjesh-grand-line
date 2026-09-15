@@ -629,12 +629,26 @@ enum CodePreviewSelfTest {
 
         // The correction has to be a no-op where nothing needs correcting, or
         // it would be quietly restyling twelve palettes that were already
-        // right. `helm-dark`'s slot 8 is documented as deliberately brightened
-        // to 4.68:1, so it must survive untouched.
-        let helmDark = HelmTheme.allThemes.first { $0.id == "helm-dark" }!
-        let comment = CodePreviewTheme.palette(for: helmDark)[CodePreviewTheme.Key.comment.rawValue]
-        check(comment?.lowercased() == "#" + helmDark.ansiHex[8].lowercased(),
-              "helm-dark's already-legible dim slot should pass through uncorrected, got \(comment ?? "nil")")
+        // right - proved here with one real, currently-true example rather
+        // than only asserted in the aggregate.
+        //
+        // This used to check `helm-dark` (whose ansi[8] is documented as
+        // deliberately brightened to 4.68:1 against `backgroundHex`).
+        // `fm/grand-line-legacy-terminal-canvas-chrome-match` matched every
+        // legacy theme's `backgroundHex` to its own `chromeBackgroundHex` (so
+        // the terminal canvas now visually matches the surrounding chrome,
+        // everywhere) - and `helm-dark`'s own dim slot (`747c86`, tuned
+        // against the *old*, darker `backgroundHex`) only reaches 4.23:1
+        // against the new, lighter one, so it now genuinely needs (and
+        // correctly receives) a small correction rather than passing through
+        // untouched. `helm-light`'s own ansi[8] (`4e5661`) has no such tuning
+        // history but still measures 7.34:1 against its own new
+        // `backgroundHex`, so it is the real, still-uncorrected example that
+        // now proves the no-op guarantee.
+        let helmLight = HelmTheme.allThemes.first { $0.id == "helm-light" }!
+        let comment = CodePreviewTheme.palette(for: helmLight)[CodePreviewTheme.Key.comment.rawValue]
+        check(comment?.lowercased() == "#" + helmLight.ansiHex[8].lowercased(),
+              "helm-light's already-legible dim slot should pass through uncorrected, got \(comment ?? "nil")")
     }
 
     // MARK: Wiring
