@@ -178,6 +178,24 @@ final class AutomationController: NSViewController, DaylightDrillActions {
     private var steps: [AutomationStepState] = SetupStepKind.allCases.map { AutomationStepState(kind: $0) }
     private var isRunning = false
 
+    /// The app's one page-level Refresh control - the same
+    /// `HelmButton(.primary)` + `arrow.clockwise` recipe `ReviewController`,
+    /// `VaultController`, `KubernetesController`, `FleetController` and
+    /// `HomeCanvasController` already use. Deliberately NOT a copy of
+    /// `UpdatesController.checkAllPill`: that one is a hand-rolled
+    /// `HoverHighlightView` because it swaps for a progress bar and a live
+    /// count inside its own toolbar row, and `HelmButton(.primary)` resolves
+    /// to exactly the same accent fill and label pairing - so this is the
+    /// shared definition to reuse rather than a sixth copy of that bespoke
+    /// recipe (`fm/grandline-refresh-button-consistency`).
+    private let refreshButton = HelmButton(title: "Refresh", variant: .primary, symbol: "arrow.clockwise")
+
+    /// Guards the manual re-check against re-entry while its two background
+    /// sweeps are still out, exactly like `ReviewController.refresh`'s own
+    /// `isLoading`. Distinct from `isRunning`, which is the "Run Automation"
+    /// sequencer's own state - a refresh is a read, a run mutates the machine.
+    private var isRefreshing = false
+
     private let runButton = HelmButton(title: "", variant: .primary)
     private let progressSummaryLabel = NSTextField(wrappingLabelWithString: "")
     private let stepperStack = NSStackView()
@@ -203,9 +221,10 @@ final class AutomationController: NSViewController, DaylightDrillActions {
             self?.rebuildAfterThemeChangeIfVisible { self?.rebuildStepper() }
         }
 
-        let subtitle = NSTextField(wrappingLabelWithString: "Runs every setup step below in order, skipping anything already configured on this machine.")
-        subtitle.font = .systemFont(ofSize: 12)
-        subtitle.translatesAutoresizingMaskIntoConstraints = false
+        refreshButton.target = self
+        refreshButton.action = #selector(refreshTapped)
+        refreshButton.toolTip = "Re-check this machine's setup state"
+        refreshButton.translatesAutoresizingMaskIntoConstraints = false
 
         let runCard = card(icon: "bolt.fill", title: "Run Automation", content: buildRunSection())
 
@@ -216,12 +235,11 @@ final class AutomationController: NSViewController, DaylightDrillActions {
         // is assembled - not here, to avoid building every row twice.
         let stepperCard = card(icon: "list.number", title: "Pipeline", content: stepperStack)
 
-        let stack = NSStackView(views: [subtitle, runCard, stepperCard])
+        let stack = NSStackView(views: [runCard, stepperCard])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.setCustomSpacing(16, after: subtitle)
 
         let content = FlippedView()
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -231,7 +249,6 @@ final class AutomationController: NSViewController, DaylightDrillActions {
             stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
             stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
             stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
-            subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
             runCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             stepperCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
@@ -897,20 +914,87 @@ final class AutomationController: NSViewController, DaylightDrillActions {
 
     var onDrillSubtitleChanged: (() -> Void)?
 
-    /// **Deliberately empty.** This page carries its own actions in its own
-    /// toolbar or card header a few points below the drill header -
-    /// its "Run Automation" button, which sits beside the live step line it
-    /// writes into. Hoisting a copy of one
-    /// would either duplicate a control §6.4's cluster exists to
-    /// de-duplicate, or separate the button from the state it reports. The
-    /// header still earns its place through the live subtitle above, which is
-    /// the signal this page states nowhere else in one line.
+    /// §6.4's action cluster - Refresh only, matching `VaultController`'s own
+    /// rule for what belongs here: it is this page's one *page-level* action.
     ///
-    /// Carried over verbatim from `SetupContainerController`'s own (equally
-    /// empty) cluster, which made this same call for all four Engineering
-    /// setup pages at once before `fm/grandline-separate-setup-destinations`
-    /// gave each of them its own destination.
-    var drillHeaderActions: [NSView] { [] }
+    /// **"Run Automation" deliberately stays out**, and that half of this
+    /// cluster's original "deliberately empty" reasoning is unchanged: it sits
+    /// beside the live step line it writes into, so hoisting it would separate
+    /// a button from the state it reports. That reasoning was only ever about
+    /// hoisting an *existing* control; Refresh duplicates nothing and reports
+    /// no state that lives elsewhere on the page, which is exactly the
+    /// category `VaultController`'s cluster describes.
+    var drillHeaderActions: [NSView] { [refreshButton] }
+
+    /// The captain's explicit re-check affordance: re-runs the two real
+    /// background checks this page's setup state is derived from, and always
+    /// bypasses `DependencyCheckCache` (`forceRefresh: true`) - a manual
+    /// Refresh must never be served a hit that Updates or Bootstrap happened
+    /// to cache moments ago, exactly as `UpdatesController`'s own Refresh pill
+    /// and `refreshCheckData(for: .software)` below both already require.
+    ///
+    /// `viewWillAppear`'s automatic first-visit sweep is the one call that
+    /// *should* take a cache hit, and still passes `forceRefresh: false`.
+    ///
+    /// What this moves, since it is not obvious from the pipeline pills:
+    /// both step detail lines (the resolved `~/.dotfiles` path; the
+    /// "N of 13 tracked tools not installed" count), all 13 live tool chips in
+    /// the software checklist, the drill header's own "N of 5 steps ready"
+    /// line, and the `setupDrift` signal the Engineering hub card renders -
+    /// every one of them through the single `rebuildStepper()` choke point the
+    /// two checks already end on.
+    ///
+    /// The numbered pills themselves are *sequencer* state (`steps[].status`,
+    /// `.pending` until a "Run Automation" pass touches them), so a refresh
+    /// deliberately leaves them alone - re-pointing them at live truth would
+    /// change what the Pipeline list means, which is a product decision rather
+    /// than a re-check.
+    @objc private func refreshTapped() {
+        // A run owns `steps[].status` and re-runs these same checks itself,
+        // step by step; a concurrent refresh would race its sweeps for no gain.
+        guard !isRunning, !isRefreshing else { return }
+        isRefreshing = true
+        refreshButton.isEnabled = false
+
+        // Both completions land on main (see each method's own
+        // `DispatchQueue.main.async` hop), so this counter needs no lock.
+        var remaining = 2
+        let finish: () -> Void = { [weak self] in
+            remaining -= 1
+            guard remaining == 0, let self else { return }
+            self.isRefreshing = false
+            self.refreshButton.isEnabled = true
+            self.reportRefreshOutcome()
+        }
+        refreshDotfiles(completion: finish)
+        checkAllSoftware(forceRefresh: true, completion: finish)
+    }
+
+    /// The page can legitimately look unchanged after a refresh (nothing
+    /// drifted, and the pills are sequencer state either way), so the toast is
+    /// what tells the captain the sweep actually ran - the same role
+    /// `UpdatesController.finishCheckAll`'s own toast plays.
+    ///
+    /// GL-14: a step whose check could not answer is reported as unknown, never
+    /// folded into the satisfied count or silently dropped.
+    private func reportRefreshOutcome() {
+        let results = SetupStepKind.allCases.map { stepIsDone($0) }
+        let total = results.count
+        let satisfied = results.filter { $0 == true }.count
+        let unknown = results.filter { $0 == nil }.count
+
+        let message: String
+        if unknown > 0 {
+            message = "Re-checked setup - \(satisfied) of \(total) steps satisfied, \(unknown) couldn\u{2019}t be checked"
+        } else if satisfied == total {
+            message = "Re-checked setup - all \(total) steps satisfied"
+        } else {
+            message = "Re-checked setup - \(satisfied) of \(total) steps satisfied"
+        }
+        if let container = view.window?.contentView {
+            Toast.show(in: container, message: message)
+        }
+    }
 
     /// `fm/grandline-engineering-cards-stale-counts`: the Automation card on
     /// the Engineering hub renders the same `setupDrift` signal Bootstrap's
