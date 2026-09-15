@@ -2628,6 +2628,11 @@ final class HelmAccentRow: NSView {
     /// The kicker's real rendered text, so a test can prove it is unchanged by
     /// something that only touches the chip.
     var debugKickerText: String { kickerLabel.stringValue }
+    /// The row's own body line, as rendered. Overview's answer banner is a
+    /// `HelmAccentRow`, and its meta line is where "N PRs ready to merge" is
+    /// actually spoken - so a count bug in that phrase is only assertable
+    /// through this.
+    var debugMetaText: String { metaLabel.stringValue }
     /// The chip's real rendered text - `nil` when the chip is hidden (no
     /// `chipText` was set), so a test can tell "no chip" from "an empty one".
     var debugChipText: String? { chip.isHidden ? nil : chipLabel.stringValue }
@@ -2710,6 +2715,13 @@ final class HelmStatTile: NSView {
     #if FM_SELFTESTS
     /// See `IconTileView.debugRenderedImage` - same reason.
     var debugRenderedIcon: NSImage? { iconView.image }
+
+    /// The number and the words under it, as rendered. A count bug is only
+    /// visible in the pair: "34" is not wrong until you can see it sitting
+    /// under "ready to merge" beside a header saying 0.
+    var debugMetric: (value: String, caption: String) {
+        (valueLabel.stringValue, captionLabel.stringValue)
+    }
     #endif
     private let valueLabel = NSTextField(labelWithString: "")
     private let captionLabel = NSTextField(labelWithString: "")

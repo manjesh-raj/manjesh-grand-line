@@ -147,20 +147,25 @@ final class ReviewController: NSViewController, DaylightDrillActions {
     var onDrillSubtitleChanged: (() -> Void)?
 
     /// fm/grandline-sidebar-badges: fires every time `render` recomputes the
-    /// full open-PR list - the same `mergedPRs` this page already shows, not
-    /// a narrower or invented filter. `AppShellController` forwards this
-    /// on to `NotificationSources.setPRReady`. It used to also drive the
-    /// rail's own badge, which Daylight Phase 2 removed along with the rail -
-    /// the count itself is unchanged and still comes from this page's own
-    /// refresh.
-    var onOpenPRCountChanged: ((Int) -> Void)?
+    /// list this page shows. `AppShellController` forwards it to
+    /// `NotificationSources.setPRReady`. It used to also drive the rail's own
+    /// badge, which Daylight Phase 2 removed along with the rail.
+    ///
+    /// It carries the *ready-to-merge* count, not the open count, and that is
+    /// the fix rather than a rename: the notification it feeds is titled
+    /// "N PRs ready to merge" and is an `.actionNeeded` entry that "clears
+    /// when merged", so a captain with fifty open red PRs was being told all
+    /// fifty were waiting to be merged. It reads
+    /// `FleetDataSource.readyToMergeCount` now, like every other surface
+    /// saying those words.
+    var onReadyToMergeCountChanged: ((Int) -> Void)?
 
     /// F4: the same `mergedPRs` list this page just rendered, forwarded so a
     /// "PR is green and ready to merge" OS banner (with a real Merge button)
     /// can be posted for it - see `FleetNotifier.reconcilePRs`. Deliberately
     /// the whole list rather than a pre-filtered one: the filter is
     /// `FleetDataSource.canMerge`, and that gate belongs in exactly one place.
-    /// Wired in `AppShellController`, alongside `onOpenPRCountChanged` above,
+    /// Wired in `AppShellController`, alongside the callback above,
     /// so this rides Review's existing refresh triggers and adds no poll.
     var onPRsChanged: (([MergedPR]) -> Void)?
 
@@ -409,16 +414,21 @@ final class ReviewController: NSViewController, DaylightDrillActions {
     var drillHeaderActions: [NSView] { [refreshButton] }
 
     /// §6.4's live subtitle. Derived from the same list the page has already
-    /// rendered (`lastRenderedPRs`) and the same merge gate the rows use
-    /// (`FleetDataSource.canMerge`), so the header, the stat tiles and the
-    /// Merge buttons can never disagree about how many PRs are ready.
+    /// rendered (`lastRenderedPRs`) and the one shared definition of
+    /// readiness (`FleetDataSource.readyToMergeCount`).
+    ///
+    /// This comment used to claim the header, the stat tiles and the Merge
+    /// buttons "can never disagree" - and they did, in a single audit
+    /// screenshot, because only two of the three routed through that gate
+    /// while the tile counted bare `checks == "green"` on its own. Sharing a
+    /// *function* is what makes the claim true; sharing an intention did not.
     ///
     /// GL-14's rule rides along: a failed fetch reports its own explanation
     /// rather than a confident "0 open".
     var drillHeaderSubtitle: String? {
         if let failure = lastFetchFailure { return failure }
         guard hasLoadedOnce else { return "Checking your projects\u{2026}" }
-        let ready = lastRenderedPRs.filter(FleetDataSource.canMerge).count
+        let ready = FleetDataSource.readyToMergeCount(lastRenderedPRs)
         let open = lastRenderedPRs.count
         guard open > 0 else { return "No open pull requests right now" }
         return "\(open) open \u{00B7} \(ready) ready to merge"
@@ -475,7 +485,7 @@ final class ReviewController: NSViewController, DaylightDrillActions {
             bitbucketSectionView.isHidden = false
         }
 
-        onOpenPRCountChanged?(prs.count)
+        onReadyToMergeCountChanged?(FleetDataSource.readyToMergeCount(prs))
         onPRsChanged?(prs)
         // F6: kept so `mergePR` can name the PR it merged (number, title,
         // repo) in the captain's log. The merge button's own identifier
@@ -545,7 +555,12 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         }
         statTiles.removeAll()
 
-        let ready = prs.filter { $0.checks == "green" }.count
+        // One definition of "ready to merge", shared with this page's own
+        // drill subtitle a few inches above it and with every Overview
+        // surface - see `FleetDataSource.readyToMerge`. This tile used to
+        // count bare `checks == "green"`, which is why the audit caught it
+        // reading 34 beside a subtitle reading 0 in the same screenshot.
+        let ready = FleetDataSource.readyToMergeCount(prs)
         let running = prs.filter { $0.checks == "pending" }.count
 
         statsRow.addArrangedSubview(statTile(icon: "arrow.triangle.branch", value: "\(prs.count)", label: "open PRs", tint: .accent))
@@ -718,6 +733,12 @@ final class ReviewController: NSViewController, DaylightDrillActions {
     func debugGitHubRowButtonState(at row: Int) -> (reviewFrame: NSRect, mergeFrame: NSRect, mergeHidden: Bool)? {
         githubList.debugRowButtonState(at: row)
     }
+
+    /// Every stat tile as rendered, so a suite can read what the captain sees
+    /// rather than what `rebuildStats` intended. This page's own drill
+    /// subtitle and its "ready to merge" tile once disagreed in one
+    /// screenshot; only reading both off the rendered views catches that.
+    var debugStatTiles: [(value: String, caption: String)] { statTiles.map { $0.debugMetric } }
     #endif
     var debugBitbucketRowCount: Int { bitbucketList.debugRowCount }
 }

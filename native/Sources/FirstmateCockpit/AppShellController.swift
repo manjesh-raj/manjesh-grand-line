@@ -824,7 +824,7 @@ final class AppShellController: NSViewController {
         // Health card its own rail destination, off the Settings page.
         NotificationSources.navigateToHealth = { [weak self] in self?.show(.health) }
 
-        review.onOpenPRCountChanged = { [weak self] count in
+        review.onReadyToMergeCountChanged = { [weak self] count in
             NotificationSources.setPRReady(count: count) { self?.show(.review) }
         }
         // F4: the OS-banner half of the same signal. The in-app entry above is

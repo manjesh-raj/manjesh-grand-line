@@ -703,7 +703,8 @@ final class FleetController: NSViewController {
                 // a briefing built while the PR scan is still in flight would
                 // report "0 PRs ready" as a fact.
                 self.considerMorningBriefing(snapshot: snapshot,
-                                             prReadyCount: fetched.failureSummary == nil ? merged.count : nil,
+                                             prReadyCount: fetched.failureSummary == nil
+                                                 ? FleetDataSource.readyToMergeCount(merged) : nil,
                                              force: forceBriefing)
             }
         }
@@ -750,9 +751,15 @@ final class FleetController: NSViewController {
             ? "\(Self.weekdayFormatter.string(from: Date())) \u{00B7} the fleet is yours"
             : "Setup isn't finished yet"
 
-        renderBanner(needs: needs, working: working, readyCount: mergedPRs?.count ?? 0,
+        // One definition of "ready to merge" for the banner and the tile
+        // alike - see `FleetDataSource.readyToMerge`. Both used to render the
+        // raw *open* count under that label, which is how this page could say
+        // "50 PRs ready to merge" while the merge-queue card one click away
+        // said "none ready" off the identical array.
+        let readyToMerge = mergedPRs.map(FleetDataSource.readyToMergeCount) ?? 0
+        renderBanner(needs: needs, working: working, readyCount: readyToMerge,
                      prFetchFailure: prFetchFailure, homeOk: snapshot.homeOk)
-        rebuildStats(working: working.count, ready: mergedPRs?.count ?? 0, snapshot: snapshot,
+        rebuildStats(working: working.count, ready: readyToMerge, snapshot: snapshot,
                      prFetchFailure: prFetchFailure)
         currentNeedsTasks = needs
         rebuildNeedsRows(needs)
@@ -1158,5 +1165,18 @@ final class FleetController: NSViewController {
     /// M3.3's quick-ask card, which stayed on this page when the crew chat
     /// moved to its own destination - see `StrawHatQuickAsk.swift`'s header.
     var debugCrewQuickAsk: StrawHatQuickAskCard? { crewQuickAsk }
+
+    /// Drive the real `render` with caller-supplied data, bypassing
+    /// `refresh()`'s background fetch and its real `gh`/`git` calls.
+    func debugRender(snapshot: FleetSnapshot, mergedPRs: [MergedPR]?, prFetchFailure: String? = nil) {
+        render(snapshot: snapshot, mergedPRs: mergedPRs, prFetchFailure: prFetchFailure)
+    }
+
+    /// The answer banner's own body line, as rendered - this is where
+    /// "N PRs ready to merge" is actually spoken to the captain.
+    var debugBannerMeta: String { bannerRow.debugMetaText }
+
+    /// Every stat tile as rendered. See `ReviewController.debugStatTiles`.
+    var debugStatTiles: [(value: String, caption: String)] { statTiles.map { $0.debugMetric } }
     #endif
 }

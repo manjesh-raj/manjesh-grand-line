@@ -531,7 +531,7 @@ final class HomeCanvasController: NSViewController {
             return
         }
         let answer = FleetGreeting.answer(tasks: snapshot.tasks,
-                                          readyCount: mergedPRs?.count ?? 0,
+                                          readyCount: mergedPRs.map(FleetDataSource.readyToMergeCount) ?? 0,
                                           prFetchFailure: prFetchFailure,
                                           homeOk: snapshot.homeOk)
         setHero(tint: answer.tint,
@@ -999,7 +999,7 @@ final class HomeCanvasController: NSViewController {
                 ?? "Reading open pull requests\u{2026}")
             return
         }
-        let ready = prs.filter { FleetDataSource.canMerge($0) }
+        let ready = FleetDataSource.readyToMerge(prs)
         content.subtitle = "\(prs.count) open"
         content.chip = ready.isEmpty ? .mute("none ready") : .ok("\(ready.count) ready")
         if prs.isEmpty {
