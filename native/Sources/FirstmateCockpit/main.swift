@@ -1950,6 +1950,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_SETUP_DATA_LAYER_TESTS"] == "1" {
     exit(SetupDataLayerSelfTest.run() ? 0 : 1)
 }
 
+// The Security card's Disable action: the removal the shipped command really
+// performs, run against scratch files, plus the status split that decides
+// which enabled state may offer that button at all.
+if ProcessInfo.processInfo.environment["FM_RUN_SUDO_TOUCHID_DISABLE_TESTS"] == "1" {
+    exit(SudoTouchIDDisableSelfTest.run() ? 0 : 1)
+}
+
 // Daylight Phase 6 (the last phase): the accessibility sweep and the Reduce
 // Motion audit. Dusk's own colour derivation is measured by
 // FM_RUN_CONTRAST_TESTS, where the palette maths already lives. See
