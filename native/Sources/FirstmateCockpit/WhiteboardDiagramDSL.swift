@@ -73,13 +73,24 @@ struct DiagramDSLError: Error, CustomStringConvertible {
 
 /// One preset from the component library.
 ///
-/// A component is a styled `rectangle` with a bound label, never an image:
-/// `image`/`embeddable`/`iframe` are not in `WhiteboardDiagram.allowedTypes`
-/// (an image skeleton needs a `fileId` for a file already in the scene, and
-/// the other two exist to load a remote URL the page's CSP blocks), so an icon
-/// set would have to be a second asset pipeline for something the canvas
-/// cannot draw. The emoji in the label is the icon, and it survives export,
-/// copy/paste and Excalidraw's own editing for free.
+/// A component is a styled `rectangle` with a bound caption **and a real icon
+/// above it** - an `image` element carrying artwork from `WhiteboardIcons`,
+/// sent to the canvas in the same `loadScene` call that references it.
+///
+/// It was a rectangle and nothing else until
+/// `fm/grand-line-whiteboard-component-icons-overhaul`, and this comment used
+/// to explain why: `image` is not in `WhiteboardDiagram.allowedTypes`, because
+/// an image skeleton needs a `fileId` for a file already in the scene. That is
+/// still true of anything a *model* writes and is why `allowedTypes` is
+/// unchanged - but this file is not a model. It mints the id from a closed
+/// enum and supplies the file itself, which is what
+/// `WhiteboardDiagram.appAuthoredTypes` exists to say.
+///
+/// `emoji` survives as the glyph the Components drop-down shows beside each
+/// name. That is an `NSMenuItem` title in AppKit's own chrome, nowhere near
+/// the canvas - and deliberately *not* the caption any more, both because
+/// there is a real picture now and because an emoji in a bound caption is the
+/// input the vendored Excalidraw truncates (see `WhiteboardLabel`).
 ///
 /// The colours are literal hexes rather than `HelmTint`s, which is the correct
 /// exception rather than an oversight: these are painted *inside* Excalidraw's
@@ -97,6 +108,12 @@ struct DiagramDSLError: Error, CustomStringConvertible {
 /// is organised into `DiagramComponentCategory` drawers and reached through the
 /// popover's Components drop-down; the original seven are unchanged in keyword,
 /// alias, title, emoji and colour, and are re-listed under `Common`.
+///
+/// Every component has artwork, and `WhiteboardIconsSelfTest` asserts it -
+/// `WhiteboardIconLibrary` degrades a missing entry to "no icon, just a
+/// captioned box", which is the right behaviour and also exactly why it needs
+/// asserting: it ships looking like the old palette rather than like a defect.
+/// After adding a case here, run `Scripts/build-whiteboard-icons.py`.
 enum DiagramComponent: String, CaseIterable {
     case server
     case k8sPod
@@ -470,6 +487,11 @@ enum DiagramDSL {
     /// it before the captain commits to inserting it.
     struct Diagram {
         let elements: [[String: Any]]
+        /// The artwork the elements reference, ready for `addFiles`. Empty for
+        /// a diagram whose nodes are all plain (`A --> B` names no component),
+        /// which is what keeps the payload identical to the pre-icon one in
+        /// exactly the case where nothing changed.
+        var files: [[String: Any]] = []
         /// "4 boxes, 3 arrows" - shown live as the captain types, which is the
         /// affordance a deterministic parser can offer and a model cannot.
         let summary: String
@@ -488,6 +510,10 @@ enum DiagramDSL {
         let label: String
         let strokeHex: String
         let fillHex: String
+        /// The palette component this node names, when it names one. Carried
+        /// on the box rather than looked up again later so the artwork, the
+        /// hue and the preview all read one decision.
+        var component: DiagramComponent?
     }
 
     struct PreviewConnector {
@@ -512,7 +538,12 @@ enum DiagramDSL {
 
     // MARK: Geometry
 
-    static let nodeHeight: Double = 60
+    /// Tall enough for an icon above a caption. Was 60 when a node was a box
+    /// with a centred caption and nothing else; the icon needs
+    /// `WhiteboardIconLibrary.size` plus breathing room above the text, and a
+    /// single height for every node is what keeps a row of them aligned
+    /// whether or not each one names a component.
+    static let nodeHeight: Double = 88
     static let nodeMinWidth: Double = 120
     static let nodeMaxWidth: Double = 280
     /// `formatRules` asks a model for "at least 60px of gap between shapes so
@@ -572,7 +603,11 @@ enum DiagramDSL {
     /// new shape and drags it where they want, which they were going to do
     /// regardless.
     static func component(_ component: DiagramComponent, index: Int) -> Diagram {
-        let label = "\(component.emoji) \(component.title)"
+        // The caption is the component's name and nothing else. It used to
+        // carry the emoji that stood in for an icon; that is a real picture
+        // now, and an emoji in a *bound* label is also the input the vendored
+        // Excalidraw truncates - see `WhiteboardLabel`.
+        let label = component.title
         let step: Double = 28
         let x = (Double(index % 8) * step).rounded()
         let y = (Double(index % 8) * step).rounded()
@@ -580,8 +615,10 @@ enum DiagramDSL {
         let box = PreviewBox(x: x, y: y, width: width, height: nodeHeight,
                              label: label,
                              strokeHex: component.strokeColor,
-                             fillHex: component.backgroundColor)
-        return Diagram(elements: [shapeElement(id: "component-\(component.keyword)-\(index)", box: box)],
+                             fillHex: component.backgroundColor,
+                             component: component)
+        return Diagram(elements: nodeElements(id: "component-\(component.keyword)-\(index)", box: box),
+                       files: WhiteboardIconLibrary.files(for: [component]),
                        summary: "1 box",
                        boxes: [box],
                        connectors: [])
@@ -795,14 +832,14 @@ enum DiagramDSL {
 
         let ranks = rankNodes(count: names.count, edges: edges)
         // Labels first, widths from the labels, layout from the widths - in
-        // that order. A typed node's label carries an emoji, so measuring the
-        // bare name and widening the box afterwards would lay the row out
-        // against a width the box does not end up having: the row would sit
-        // slightly off its own centre line, and two typed siblings could eat
-        // into the gap the arrows need.
-        let labels: [String] = names.indices.map { id in
-            kinds[id].map { "\($0.emoji) \(names[id])" } ?? names[id]
-        }
+        // that order, because the box is sized to fit its own caption.
+        //
+        // A typed node's caption used to be prefixed with the component's
+        // emoji, which was the icon before there was a real one. It is the
+        // captain's own node name and nothing else now: the picture is an
+        // image element above it, and an emoji in a *bound* caption is also
+        // the input the vendored Excalidraw truncates (see `WhiteboardLabel`).
+        let labels: [String] = names.map { $0 }
         let widths = labels.map { boxWidth(for: $0) }
 
         var rows: [[Int]] = Array(repeating: [], count: (ranks.max() ?? 0) + 1)
@@ -831,9 +868,10 @@ enum DiagramDSL {
                                  width: frames[id].width, height: nodeHeight,
                                  label: labels[id],
                                  strokeHex: kind?.strokeColor ?? defaultStroke,
-                                 fillHex: kind?.backgroundColor ?? "transparent")
+                                 fillHex: kind?.backgroundColor ?? "transparent",
+                                 component: kind)
             boxes.append(box)
-            elements.append(shapeElement(id: "n\(id)", box: box))
+            elements.append(contentsOf: nodeElements(id: "n\(id)", box: box))
         }
 
         var connectors: [PreviewConnector] = []
@@ -855,7 +893,7 @@ enum DiagramDSL {
                 "end": ["id": "n\(edge.to)"],
             ]
             if let label = edge.label {
-                arrow["label"] = ["text": label, "fontSize": labelFontSize]
+                arrow["label"] = ["text": WhiteboardLabel.renderable(label), "fontSize": labelFontSize]
             }
             elements.append(arrow)
         }
@@ -866,6 +904,7 @@ enum DiagramDSL {
                 message: "that comes to \(elements.count) elements, past the \(WhiteboardDiagram.maxElements)-element limit."))
         }
         return .success(Diagram(elements: elements,
+                                files: WhiteboardIconLibrary.files(for: boxes.compactMap(\.component)),
                                 summary: "\(count(names.count, "box", "boxes")), \(count(edges.count, "arrow", "arrows"))",
                                 boxes: boxes,
                                 connectors: connectors))
@@ -993,10 +1032,11 @@ enum DiagramDSL {
         var labels: [String] = []
         var widths: [Double] = []
         for id in names.indices {
-            let kind = kinds[id]
-            let label = kind.map { "\($0.emoji) \(names[id])" } ?? names[id]
-            labels.append(label)
-            widths.append(boxWidth(for: label))
+            // The captain's own actor name; the component's picture is an
+            // image element above it. See `buildFlowchart` for why the emoji
+            // that used to be prefixed here is gone.
+            labels.append(names[id])
+            widths.append(boxWidth(for: names[id]))
         }
 
         var centres: [Double] = []
@@ -1022,9 +1062,10 @@ enum DiagramDSL {
                                  width: widths[id], height: nodeHeight,
                                  label: labels[id],
                                  strokeHex: kind?.strokeColor ?? defaultStroke,
-                                 fillHex: kind?.backgroundColor ?? "transparent")
+                                 fillHex: kind?.backgroundColor ?? "transparent",
+                                 component: kind)
             boxes.append(box)
-            elements.append(shapeElement(id: "a\(id)", box: box))
+            elements.append(contentsOf: nodeElements(id: "a\(id)", box: box))
 
             connectors.append(PreviewConnector(x1: centres[id], y1: nodeHeight,
                                                x2: centres[id], y2: lifelineBottom,
@@ -1055,7 +1096,7 @@ enum DiagramDSL {
                 "strokeStyle": message.dashed ? "dashed" : "solid",
             ]
             if let label = message.label {
-                arrow["label"] = ["text": label, "fontSize": labelFontSize]
+                arrow["label"] = ["text": WhiteboardLabel.renderable(label), "fontSize": labelFontSize]
             }
             elements.append(arrow)
         }
@@ -1066,6 +1107,7 @@ enum DiagramDSL {
                 message: "that comes to \(elements.count) elements, past the \(WhiteboardDiagram.maxElements)-element limit."))
         }
         return .success(Diagram(elements: elements,
+                                files: WhiteboardIconLibrary.files(for: boxes.compactMap(\.component)),
                                 summary: "\(count(names.count, "actor", "actors")), \(count(messages.count, "message", "messages"))",
                                 boxes: boxes,
                                 connectors: connectors))
@@ -1077,8 +1119,23 @@ enum DiagramDSL {
     /// bare `A --> B` looks exactly like two boxes the captain drew by hand.
     static let defaultStroke = "#1e1e1e"
 
-    private static func shapeElement(id: String, box: PreviewBox) -> [String: Any] {
-        [
+    /// One node: the box, its caption, and - when it names a palette component
+    /// with artwork - the icon sitting above that caption.
+    ///
+    /// The caption stays a *bound* label rather than becoming a second text
+    /// element beside the icon: `formatRules` says so for the AI path and the
+    /// reason is the same here - a bound caption moves, resizes and re-wraps
+    /// with its container, an overlaid one does not, and double-clicking the
+    /// box still edits it. What changed when icons arrived is only that it is
+    /// pinned to the bottom of the box so the icon has the top half.
+    ///
+    /// The icon is a sibling element rather than part of the box because
+    /// Excalidraw has no "shape with a picture in it": a shape carries a
+    /// caption or nothing. Sharing one `groupIds` entry is what makes the pair
+    /// behave as one thing under drag and select, and leaving the *box* as the
+    /// arrow-binding target is what keeps every existing connector working.
+    private static func nodeElements(id: String, box: PreviewBox) -> [[String: Any]] {
+        var shape: [String: Any] = [
             "type": "rectangle",
             "id": id,
             "x": box.x, "y": box.y,
@@ -1087,13 +1144,33 @@ enum DiagramDSL {
             "backgroundColor": box.fillHex,
             "fillStyle": "solid",
             "roundness": ["type": 3],
-            // A bound label, never a separate text element laid over the box:
-            // `formatRules` says so for the AI path and the reason is the same
-            // here - a bound caption moves, resizes and re-wraps with its
-            // container, and an overlaid one does not.
-            "label": ["text": box.label, "fontSize": fontSize],
+            "label": [
+                "text": WhiteboardLabel.renderable(box.label),
+                "fontSize": fontSize,
+                "verticalAlign": "bottom",
+            ],
         ]
+        guard let component = box.component, WhiteboardIconLibrary.hasArtwork(component) else {
+            return [shape]
+        }
+        let group = "\(id)-node"
+        shape["groupIds"] = [group]
+        let icon: [String: Any] = [
+            "type": "image",
+            "id": "\(id)-icon",
+            "x": (box.x + (box.width - WhiteboardIconLibrary.size) / 2).rounded(),
+            "y": (box.y + iconTopInset).rounded(),
+            "width": WhiteboardIconLibrary.size,
+            "height": WhiteboardIconLibrary.size,
+            "fileId": WhiteboardIconLibrary.fileID(for: component),
+            "groupIds": [group],
+        ]
+        return [shape, icon]
     }
+
+    /// How far below the box's top edge the icon sits. The remainder of the
+    /// node's height is what the bottom-aligned caption reads in.
+    static let iconTopInset: Double = 10
 
     private static func count(_ n: Int, _ singular: String, _ plural: String) -> String {
         "\(n) \(n == 1 ? singular : plural)"

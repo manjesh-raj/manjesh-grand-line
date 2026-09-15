@@ -158,6 +158,27 @@ final class DiagramPreviewView: NSView {
             path.lineWidth = 1.2
             path.stroke()
 
+            // A node that names a component carries an icon chip above its
+            // caption on the canvas. This is a *structure* preview - it never
+            // rasterises the real SVG (there is no need, and no cheap way, to
+            // draw it at this size) - so the chip is drawn as the shape it is,
+            // which keeps the miniature's proportions honest about where the
+            // caption will sit rather than centring text the canvas will not.
+            var labelRect = rect
+            if box.component != nil, scale >= Self.labelScaleFloor {
+                let side = min(rect.width * 0.3, rect.height * 0.42)
+                if side >= 4 {
+                    let chip = NSRect(x: rect.midX - side / 2,
+                                      y: rect.maxY - side - rect.height * 0.12,
+                                      width: side, height: side)
+                    let chipPath = NSBezierPath(roundedRect: chip, xRadius: 2, yRadius: 2)
+                    (accent ?? ink).withAlphaComponent(0.55).setFill()
+                    chipPath.fill()
+                    labelRect = NSRect(x: rect.minX, y: rect.minY,
+                                       width: rect.width, height: chip.minY - rect.minY)
+                }
+            }
+
             guard scale >= Self.labelScaleFloor else { continue }
             let font = NSFont.systemFont(ofSize: max(7, min(11, 11 * scale)))
             let attributes: [NSAttributedString.Key: Any] = [
@@ -170,7 +191,8 @@ final class DiagramPreviewView: NSView {
             let clipped = rect.insetBy(dx: 3, dy: 1)
             NSGraphicsContext.saveGraphicsState()
             NSBezierPath(rect: clipped).setClip()
-            text.draw(at: NSPoint(x: rect.midX - size.width / 2, y: rect.midY - size.height / 2),
+            text.draw(at: NSPoint(x: rect.midX - size.width / 2,
+                                  y: labelRect.midY - size.height / 2),
                       withAttributes: attributes)
             NSGraphicsContext.restoreGraphicsState()
         }
@@ -203,7 +225,7 @@ final class WhiteboardDSLController: NSObject, NSPopoverDelegate {
     /// AI sibling's `onGenerated` uses: elements, whether to append, and a
     /// completion carrying a canvas-side refusal so it lands in the popover the
     /// captain is looking at rather than somewhere behind it.
-    var onInsert: (([[String: Any]], Bool, @escaping (String?) -> Void) -> Void)?
+    var onInsert: (([[String: Any]], [[String: Any]], Bool, @escaping (String?) -> Void) -> Void)?
 
     override init() {
         super.init()
@@ -214,7 +236,7 @@ final class WhiteboardDSLController: NSObject, NSPopoverDelegate {
         popover.contentViewController = content
         popover.behavior = .transient
         popover.delegate = self
-        content.onInsert = { [weak self] elements, append, done in
+        content.onInsert = { [weak self] elements, files, append, done in
             // A nil sink has to answer rather than go quiet: the popover shows
             // a spinner until this completion fires, and an unwired canvas
             // would otherwise leave it up forever with nothing to distinguish
@@ -223,7 +245,7 @@ final class WhiteboardDSLController: NSObject, NSPopoverDelegate {
                 done("the canvas isn't connected")
                 return
             }
-            handler(elements, append, done)
+            handler(elements, files, append, done)
         }
         content.onSizeChanged = { [weak self] size in self?.popover.contentSize = size }
         themeObservation = ThemeManager.shared.observe { [weak self] theme in
@@ -291,7 +313,7 @@ final class WhiteboardDSLViewController: NSViewController, NSTextViewDelegate {
     private let appendToggle = NSButton(checkboxWithTitle: "Add to what's already on the board", target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "")
 
-    var onInsert: (([[String: Any]], Bool, @escaping (String?) -> Void) -> Void)?
+    var onInsert: (([[String: Any]], [[String: Any]], Bool, @escaping (String?) -> Void) -> Void)?
     var onSizeChanged: ((NSSize) -> Void)?
 
     private var mode: DiagramDSL.Mode = .flowchart
@@ -568,6 +590,9 @@ final class WhiteboardDSLViewController: NSViewController, NSTextViewDelegate {
             let item = NSMenuItem(title: "\(category.emoji)  \(category.title)", action: nil, keyEquivalent: "")
             let submenu = NSMenu()
             for component in category.components {
+                // The emoji lives here and only here now: an `NSMenuItem`
+                // title in AppKit's own chrome, where nothing truncates it.
+                // The canvas draws the component's real icon instead.
                 let leaf = NSMenuItem(title: "\(component.emoji)  \(component.title)",
                                       action: #selector(componentMenuPicked(_:)), keyEquivalent: "")
                 leaf.target = self
@@ -609,7 +634,7 @@ final class WhiteboardDSLViewController: NSViewController, NSTextViewDelegate {
             return
         }
         setInserting(true)
-        onInsert(diagram.elements, append) { [weak self] failure in
+        onInsert(diagram.elements, diagram.files, append) { [weak self] failure in
             guard let self else { return }
             self.setInserting(false)
             if let failure {

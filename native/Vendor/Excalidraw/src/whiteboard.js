@@ -96,10 +96,110 @@ function Whiteboard({ onReady }) {
   });
 }
 
+/// Pull Excalidraw's own webfonts in before anything is told the canvas is
+/// usable.
+///
+/// **This is a correctness fix, not a polish one.** Excalidraw sizes a text
+/// element by measuring the string on a canvas at conversion time, and then
+/// clips the real render to that width. Its fonts are registered but *lazy* -
+/// a face is only fetched the first time something asks for it - so a diagram
+/// inserted before Excalifont has loaded is measured with the browser's
+/// fallback metrics and drawn in Excalifont, which is the wider of the two.
+/// Measured on this bundle: "RDS / Aurora" measures 88.9 in the fallback and
+/// 106.9 in Excalifont, so 18pt of it was drawn outside its own element and
+/// clipped away - which is what a captain sees as a caption missing its last
+/// few characters.
+///
+/// `document.fonts.ready` alone is not enough and was measured not to be: it
+/// resolves while every lazy face is still `unloaded`, so each one has to be
+/// asked for by name.
+///
+/// Deliberately bounded and deliberately non-fatal. A font that 404s or hangs
+/// must never be the reason the canvas never appears, so every face swallows
+/// its own failure and the whole wait gives up after `FONT_WAIT_MS` - at which
+/// point the board still works and, at worst, a long caption clips exactly as
+/// it did before this existed.
+const FONT_WAIT_MS = 4000;
+
+/// The families the canvas can render with, minus Xiaolai - excluded from the
+/// build (see BUILD-INFO.txt), so asking for it would be a guaranteed 404 on
+/// every launch rather than a useful wait.
+const CANVAS_FONTS = [
+  "Excalifont",
+  "Nunito",
+  "Comic Shanns",
+  "Lilita One",
+  "Cascadia",
+  "Assistant",
+];
+
+/// A string with enough varied glyphs that a real face and the fallback cannot
+/// coincidentally measure the same.
+const FONT_PROBE_TEXT = "RDS / Aurora Wij";
+
+/// Measured width of `FONT_PROBE_TEXT` in `family`, or `NaN` if the canvas is
+/// unavailable.
+function probeWidth(family) {
+  try {
+    const ctx = document.createElement("canvas").getContext("2d");
+    ctx.font = '16px "' + family + '"';
+    return ctx.measureText(FONT_PROBE_TEXT).width;
+  } catch (err) {
+    return NaN;
+  }
+}
+
+/// True once `family` is genuinely being used for measurement.
+///
+/// Deliberately not `document.fonts.check()` and not the resolution of
+/// `document.fonts.load()` - both were measured to answer "yes" while
+/// `measureText` was still returning fallback metrics, which is the only
+/// number that matters here. Comparing against a family that certainly does
+/// not exist tests the thing itself.
+function fontIsInUse(family) {
+  const real = probeWidth(family);
+  const fallback = probeWidth("__grandline_missing_family__");
+  return isFinite(real) && isFinite(fallback) && Math.abs(real - fallback) > 0.5;
+}
+
+function loadCanvasFonts() {
+  if (!document.fonts || !document.fonts.load) return Promise.resolve();
+  const deadline = Date.now() + FONT_WAIT_MS;
+  return new Promise((resolve) => {
+    const attempt = () => {
+      // Asked for by name on every pass rather than once: Excalidraw registers
+      // its faces around the time this first runs, so an early call can match
+      // nothing at all and resolve instantly.
+      CANVAS_FONTS.forEach((family) => {
+        try {
+          document.fonts.load('16px "' + family + '"').catch(() => {});
+        } catch (err) {
+          /* a family this build does not ship is not worth failing over */
+        }
+      });
+      // Only Excalifont is waited *for*. It is what the canvas draws with by
+      // default and what every diagram this app generates uses; the rest are
+      // asked for so a captain who switches font in Excalidraw's own UI has
+      // them warm, but none of them may hold the canvas up.
+      if (fontIsInUse("Excalifont") || Date.now() >= deadline) {
+        resolve();
+        return;
+      }
+      setTimeout(attempt, 50);
+    };
+    attempt();
+  });
+}
+
 const root = createRoot(document.getElementById("app"));
 root.render(
   React.createElement(Whiteboard, {
-    onReady: () => post({ type: "ready" }),
+    // `ready` is what unblocks every native path that puts elements on this
+    // canvas, so waiting for the fonts here is what keeps a caption from being
+    // measured against the wrong metrics - see `loadCanvasFonts`.
+    onReady: () => {
+      loadCanvasFonts().then(() => post({ type: "ready" }));
+    },
   })
 );
 
@@ -135,6 +235,19 @@ const bridge = {
       // `reply` verbatim - logged for debugging, and replaced with one
       // message that is always actionable regardless of what went wrong
       // inside the library.
+      // Icon artwork, when the native side sent any. Files go in *before*
+      // the elements that reference them: an `image` element whose `fileId`
+      // names a file the scene does not have yet renders as a broken
+      // placeholder and stays broken, because nothing re-resolves it later.
+      const files = (payload && payload.files) || [];
+      if (files.length) {
+        api.addFiles(files.map((f) => ({
+          id: f.id,
+          dataURL: f.dataURL,
+          mimeType: f.mimeType || "image/svg+xml",
+          created: Date.now(),
+        })));
+      }
       let converted;
       try {
         converted = convertToExcalidrawElements(skeleton);

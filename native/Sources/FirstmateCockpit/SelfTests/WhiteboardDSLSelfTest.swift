@@ -360,10 +360,20 @@ enum WhiteboardDSLSelfTest {
                           DiagramComponent.k8sPod.strokeColor,
                           DiagramComponent.database.strokeColor],
               "typed nodes: strokes were \(strokes.sorted())")
-        // The emoji is the icon - there is no image element type this canvas
-        // will accept, so the label carries it.
-        check(boxes.contains { labelText($0)?.contains(DiagramComponent.database.emoji) == true },
-              "typed nodes: the database box carries no emoji")
+        // The caption is the captain's own node name, and the picture is a
+        // real image element beside it. This case used to assert the opposite
+        // - that the caption carried the component's emoji - on the premise,
+        // stated in its own comment, that "there is no image element type this
+        // canvas will accept". That premise is what
+        // `fm/grand-line-whiteboard-component-icons-overhaul` changed: the
+        // canvas takes an `image` whose file the same call supplies.
+        check(boxes.allSatisfy { !(labelText($0) ?? "").contains(DiagramComponent.database.emoji) },
+              "typed nodes: a caption still carries an emoji")
+        check(boxes.contains { labelText($0) == "Postgres" },
+              "typed nodes: the database box should be captioned with its own name")
+        let icons = elements(diagram, ofType: "image")
+        check(icons.count == boxes.count,
+              "typed nodes: \(boxes.count) typed boxes but \(icons.count) icons")
         // A hyphen in a name is not an arrow. `api-pod` has to survive whole.
         check(boxes.contains { labelText($0)?.contains("api-pod") == true },
               "typed nodes: \"api-pod\" was torn apart by the arrow tokeniser")
@@ -388,13 +398,35 @@ enum WhiteboardDSLSelfTest {
 
     private static func checkComponentInsertion(_ check: (Bool, String) -> Void) {
         let one = DiagramDSL.component(.database, index: 0)
-        check(one.elements.count == 1, "component insert: expected exactly 1 element")
+        // Two elements, not one, and the caption is the plain title: a
+        // component is a box plus its icon since
+        // `fm/grand-line-whiteboard-component-icons-overhaul`. This case used
+        // to assert the opposite - one rectangle whose caption began with an
+        // emoji - which is the shape the captain reported as "a simple square
+        // with the text and some icon", and whose emoji is also what the
+        // vendored Excalidraw truncates (see `WhiteboardLabel`).
+        check(one.elements.count == 2, "component insert: expected a box and its icon, got \(one.elements.count)")
         check((one.elements.first?["type"] as? String) == "rectangle",
-              "component insert: a component is a rectangle, never an image")
-        check(labelText(one.elements.first ?? [:]) == "\(DiagramComponent.database.emoji) Database",
+              "component insert: the first element should still be the box arrows bind to")
+        check((one.elements.last?["type"] as? String) == "image",
+              "component insert: the second element should be the icon")
+        check(labelText(one.elements.first ?? [:]) == "Database",
               "component insert: label was \(labelText(one.elements.first ?? [:]) ?? "nil")")
+        check(!(labelText(one.elements.first ?? [:]) ?? "").contains(DiagramComponent.database.emoji),
+              "component insert: the caption still carries an emoji")
         check((one.elements.first?["strokeColor"] as? String) == DiagramComponent.database.strokeColor,
               "component insert: the component lost its colour")
+        // The icon travels with the elements that reference it, or it renders
+        // as a broken placeholder and stays broken - nothing re-resolves a
+        // missing file later.
+        check(one.files.count == 1, "component insert: expected the artwork alongside, got \(one.files.count) files")
+        check((one.files.first?["id"] as? String) == (one.elements.last?["fileId"] as? String),
+              "component insert: the icon references a file that was not sent")
+        // One group, so dragging the box brings its icon.
+        let boxGroups = (one.elements.first?["groupIds"] as? [String]) ?? []
+        let iconGroups = (one.elements.last?["groupIds"] as? [String]) ?? []
+        check(!boxGroups.isEmpty && boxGroups == iconGroups,
+              "component insert: the box and its icon are not grouped together")
         check(one.summary == "1 box", "component insert: summary read \"\(one.summary)\"")
 
         // Clicking the same palette button twice must not stack two boxes in
@@ -410,9 +442,18 @@ enum WhiteboardDSLSelfTest {
         // never be a dead end.
         for component in DiagramComponent.allCases {
             let diagram = DiagramDSL.component(component, index: 0)
-            check(diagram.elements.count == 1, "component insert: \(component.rawValue) produced \(diagram.elements.count) elements")
+            check(diagram.elements.count == 2,
+                  "component insert: \(component.rawValue) produced \(diagram.elements.count) elements")
             check((diagram.boxes.first?.width ?? 0) >= DiagramDSL.nodeMinWidth,
                   "component insert: \(component.rawValue) is narrower than the minimum")
+            // Every component in the palette has artwork. A missing entry is
+            // survivable by design (`WhiteboardIconLibrary.file` returns nil
+            // and the node is just a captioned box), which is exactly why it
+            // needs asserting: it would ship looking like the old behaviour.
+            check(WhiteboardIconLibrary.hasArtwork(component),
+                  "component insert: \(component.rawValue) has no icon - regenerate WhiteboardIcons.swift")
+            check(diagram.files.count == 1,
+                  "component insert: \(component.rawValue) sent \(diagram.files.count) files")
         }
     }
 
@@ -490,8 +531,13 @@ enum WhiteboardDSLSelfTest {
         for diagram in samples {
             for element in diagram.elements {
                 let type = (element["type"] as? String) ?? ""
-                check(WhiteboardDiagram.allowedTypes.contains(type),
-                      "invariant: generated a \"\(type)\", which WhiteboardDiagram.allowedTypes refuses")
+                check(WhiteboardDiagram.appAuthoredTypes.contains(type),
+                      "invariant: generated a \"\(type)\", which the page refuses")
+                // The narrower set still holds for everything but the icon,
+                // and the icon is the one type a *model* may not ask for - so
+                // the two sets staying different is itself the property.
+                check(type == "image" || WhiteboardDiagram.allowedTypes.contains(type),
+                      "invariant: \"\(type)\" is app-only but is not the icon")
                 // Nothing this file writes may carry a link, and the page's own
                 // sanitiser is aimed at model output rather than this path - so
                 // the property is asserted here instead of inherited.
@@ -500,6 +546,17 @@ enum WhiteboardDSLSelfTest {
             // The skeleton has to survive the bridge, which is JSON.
             check(JSONSerialization.isValidJSONObject(diagram.elements),
                   "invariant: the generated skeleton is not JSON-serialisable")
+            check(JSONSerialization.isValidJSONObject(diagram.files),
+                  "invariant: the generated file payload is not JSON-serialisable")
+            // Every `fileId` an element names has to be in this diagram's own
+            // files. Excalidraw renders an unresolvable one as a permanently
+            // broken placeholder rather than failing the load, so nothing
+            // downstream would report it.
+            let sent = Set(diagram.files.compactMap { $0["id"] as? String })
+            for element in diagram.elements {
+                guard let fileID = element["fileId"] as? String else { continue }
+                check(sent.contains(fileID), "invariant: element references unsent file \(fileID)")
+            }
         }
     }
 
@@ -618,7 +675,7 @@ enum WhiteboardDSLSelfTest {
         var received: [[String: Any]] = []
         var appended: Bool?
         var calls = 0
-        popover.onInsert = { elements, append, done in
+        popover.onInsert = { elements, _, append, done in
             calls += 1
             received = elements
             appended = append
@@ -644,7 +701,7 @@ enum WhiteboardDSLSelfTest {
 
         // A canvas-side refusal lands in the popover the captain is looking at,
         // rather than silently succeeding.
-        popover.onInsert = { _, _, done in done("the canvas said no") }
+        popover.onInsert = { _, _, _, done in done("the canvas said no") }
         popover.debugInsert()
         check(popover.debugStatusIsError && popover.debugStatus == "the canvas said no",
               "insert: a canvas refusal read \"\(popover.debugStatus)\"")
@@ -661,7 +718,7 @@ enum WhiteboardDSLSelfTest {
         let popover = mountedPopover()
         var appends: [Bool] = []
         var payloads: [[[String: Any]]] = []
-        popover.onInsert = { elements, append, done in
+        popover.onInsert = { elements, _, append, done in
             appends.append(append)
             payloads.append(elements)
             done(nil)
@@ -689,7 +746,7 @@ enum WhiteboardDSLSelfTest {
         }
         _ = database.target?.perform(database.action, with: database)
         check(appends == [true], "palette: a component insert must always append, got \(appends)")
-        check(payloads.first?.count == 1, "palette: expected exactly one element")
+        check(payloads.first?.count == 2, "palette: expected the box and its icon, got \(payloads.first?.count ?? -1)")
         check(((payloads.first?.first?["label"] as? [String: Any])?["text"] as? String)?.contains("Database") == true,
               "palette: the wrong component was inserted")
 
@@ -706,7 +763,7 @@ enum WhiteboardDSLSelfTest {
         // captain has no way to discover, and a drawer nobody can insert from
         // is worse than no drawer.
         var reached = Set<String>()
-        popover.onInsert = { elements, _, done in
+        popover.onInsert = { elements, _, _, done in
             if let label = (elements.first?["label"] as? [String: Any])?["text"] as? String {
                 reached.insert(label)
             }

@@ -146,8 +146,8 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
         // skeleton into elements on this canvas, so the two paths cannot drift
         // apart about what "insert" means or how a canvas-side refusal is
         // reported.
-        dsl.onInsert = { [weak self] elements, append, done in
-            self?.load(elements: elements, append: append, completion: done)
+        dsl.onInsert = { [weak self] elements, files, append, done in
+            self?.load(elements: elements, files: files, append: append, completion: done)
         }
 
         ThemeManager.shared.observe { [weak self] theme in
@@ -198,8 +198,16 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
         refreshElementCount()
     }
 
-    private func load(elements: [[String: Any]], append: Bool, completion: @escaping (String?) -> Void) {
-        webView.call("loadScene", payload: ["elements": elements, "mode": append ? "append" : "replace"]) { [weak self] result in
+    private func load(elements: [[String: Any]],
+                      files: [[String: Any]] = [],
+                      append: Bool,
+                      completion: @escaping (String?) -> Void) {
+        var payload: [String: Any] = ["elements": elements, "mode": append ? "append" : "replace"]
+        // Only sent when there is artwork to send, so a build with no icons -
+        // and every pre-icon saved board reloaded through this path - hands the
+        // page exactly the payload it always got.
+        if !files.isEmpty { payload["files"] = files }
+        webView.call("loadScene", payload: payload) { [weak self] result in
             guard let self else { return }
             switch result {
             case .success(let body):
@@ -486,6 +494,10 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
     var debugComposer: WhiteboardComposerController { composer }
     func debugLoad(elements: [[String: Any]], append: Bool, completion: @escaping (String?) -> Void) {
         load(elements: elements, append: append, completion: completion)
+    }
+    func debugLoadWithFiles(elements: [[String: Any]], files: [[String: Any]], append: Bool,
+                            completion: @escaping (String?) -> Void) {
+        load(elements: elements, files: files, append: append, completion: completion)
     }
     func debugSnapshotBoard(completion: @escaping (Result<[[String: Any]], WhiteboardBridgeError>) -> Void) {
         snapshotBoard(completion: completion)

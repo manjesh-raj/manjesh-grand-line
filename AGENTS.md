@@ -1737,6 +1737,100 @@ record, and "End Incident" feeds that record to the existing postmortem generato
 - **Two suites**: `FM_RUN_WHITEBOARD_TESTS` (pure logic - asset resolution including the `FM_WHITEBOARD_WEB_DIR` precedence, the offline CSP, the prompt's contents, every parse branch, the real `Process` path against a fake `claude`, and the destination tables; runs in CI) and `FM_RUN_WHITEBOARD_VIEW_TESTS` (window-backed - mounts the real page, waits for the real Excalidraw component to report ready, loads a real skeleton through the real bridge, checks append grows the board, and measures the hidden-state gating; in `run-all-tests.sh`'s `NEEDS_SESSION` list).
 - **`fm/grand-line-whiteboard-generate-crash` fixed a real, captain-reported crash: generating a diagram for "Kubernetes request path" (and any prompt where the model groups elements into a boundary box) surfaced a raw JS error, `undefined is not an object (evaluating 'o.children.forEach')`, in the popover.** Root-caused by reading the vendored bundle's own `convertToExcalidrawElements()`: it iterates every `"frame"`/`"magicframe"`-typed skeleton element and calls `.forEach` on its `children` field with **no nil guard** - a frame with no `children` key (which is exactly what an unguided model produces, since the prompt never mentioned the field) throws deep inside the library. Reproduced live, byte-for-byte, with a standalone `WKWebView` loading the real bundle directly - this is the fast, reliable way to reproduce/verify a Whiteboard bug without going through the whole composer/Claude plumbing. Fixed at two layers, deliberately: (1) `WhiteboardDiagram.parse()` now validates a `"frame"` element's `children` is a non-empty array of strings that reference other declared ids in the same skeleton (never itself), refusing with a specific message *before* the skeleton ever reaches the page - the prompt also now documents the requirement with a worked example; (2) `whiteboard.js`'s `loadScene` wraps its own `convertToExcalidrawElements` call in a **second, inner** try/catch that replaces *any* internal library error (not just this one) with one generic, always-actionable message, logging the real detail to the JS console for debugging rather than ever putting it in the reply the captain sees - this is the defense-in-depth half, proven independently by `WhiteboardViewSelfTest.checkFrameChildrenSafetyNet`, which calls `controller.debugLoad` directly (bypassing Swift-side `parse()` entirely) with a malformed frame skeleton. **A change to `src/whiteboard.js` needs `bash Scripts/build-excalidraw-web.sh` re-run before it takes effect** - the app loads the *committed* `web/whiteboard.js` artifact at runtime, never the source, and `swift build` has no way to know the source changed since it isn't a Swift/SPM input. Both new checks were confirmed to actually catch their regressions (not just pass) by re-introducing each bug in isolation, rebuilding, and watching the specific new assertions fail with the exact original symptoms, before restoring the fix. **A real, unrelated self-test race was found and fixed along the way**: `WhiteboardViewSelfTest.checkComposerDrawsOntoTheCanvas`'s second scenario waited on `!composer.debugStatus.contains("Drew") && !composer.debugStatus.isEmpty` - a condition already satisfied by the *synchronous* interim status ("Asking Claude for a diagram…") set the instant the button is clicked, before the async `claude` call even starts. So it never actually waited for the real completion; the stale completion (reading a since-`defer`-deleted fake-`claude` script path) fired later and clobbered whatever test ran next with a spurious "could not start claude: ... No such file or directory". Fixed by waiting for the interim status to be gone (`!contains("Asking")`) instead, matching the positive-outcome wait every other scenario in that file already uses - **any new scenario added to this suite should wait for a specific terminal status, never for "no longer the initial empty/placeholder state," which the interim status can satisfy on its own.**
 
+### Every component draws a real icon, and the captions that used to clip
+
+**`fm/grand-line-whiteboard-component-icons-overhaul`: the captain reported a placed component
+rendering as a blue box with a monitor emoji and the text "S", the rest of the label gone - and,
+separately, that the whole library looked like "a simple square with the text and some icon".** Both
+are fixed. Read `WhiteboardLabel.swift`'s header, `Scripts/build-whiteboard-icons.py`'s docstring
+and `Vendor/Excalidraw/README.md`'s two new sections before extending any of it.
+
+- **The clipped caption was TWO independent bugs, and finding only one of them would have left the
+  captain's own screenshot unfixed.** Every plausible single explanation is wrong, and each was
+  ruled out by measurement rather than reasoning:
+  - **Not the container's size.** The same caption truncates at the same character in a 120pt box,
+    a 260pt box and a 900pt box.
+  - **Not wrapping.** A 240pt-tall container shows one truncated line, not several.
+  - **Not length.** A 30-character ASCII caption renders in full.
+  - **Bug one, the general case: Excalidraw measures a text element before its own webfont has
+    loaded, sizes the element to fallback metrics, and clips the real render to that width.** The
+    rule is exact and was fitted against 11 samples with no exceptions: *a bound caption is clipped
+    iff its Excalifont width exceeds its fallback width + 10* (the bound-text padding). Fixed in
+    `src/whiteboard.js` by not posting `ready` until the font is genuinely in use. Two things that
+    look like that fix and are **not**, both measured: `document.fonts.ready` resolves while every
+    face is still `unloaded`, and `document.fonts.load(spec)` resolves *before* the face is usable
+    by `measureText`. Only polling the measurement against a family that certainly does not exist
+    reports the truth.
+  - **Bug two, and it survives the font fix: a *bound* caption containing `U+FE0F` (VARIATION
+    SELECTOR-16) is truncated regardless.** Proven independent by rendering the emoji caption with
+    all seven Excalifont faces confirmed loaded - still `🖥️ Se`. Proven not to be about emoji at
+    all by `A\u{FE0F}B Server`, which has none and truncates to `AB S`. `WhiteboardLabel` strips
+    both presentation selectors from every caption at the point one is built.
+- **`WhiteboardLabel` must work on `unicodeScalars`, never `Character`s, and shipping it the obvious
+  way makes it a silent no-op.** `U+FE0F` is folded into the grapheme cluster it modifies, so
+  `"\u{1F5A5}\u{FE0F} Server".contains("\u{FE0F}")` is **false** - a `Character`-based filter
+  leaves the selector exactly where it was while reporting success. Caught by its own self-test, not
+  by reading it; the same trap this file already records for CRLF.
+- **The library is 62 real icons now: a white chip carrying the component's glyph in its role hue,
+  generated by `Scripts/build-whiteboard-icons.py` from committed Material Symbols sources.** The
+  caption is the component's plain title (or, for a typed DSL node, the captain's own node name) and
+  carries no emoji at all.
+  - **AWS Architecture Icons are deliberately NOT bundled**, and that is a licence conclusion rather
+    than a scoping one. The asset package ships no licence file of any kind, the icons page grants
+    only permission to *create diagrams*, and the AWS Trademark Guidelines say the opposite of what
+    bundling needs (s3(d) bars sublicensing; s15 declines authorisation for AWS content in third
+    party materials). Service *names* are still used as captions, which is ordinary nominative use.
+  - **The official Kubernetes icons ARE safely licensed** (Apache-2.0 or CC-BY-4.0, per
+    `kubernetes/community`'s own `icons/README.md`) and were verified as such. They are not used
+    because they are full-colour badges in their own visual language, and mixing them would put two
+    icon styles side by side in one diagram. That is a follow-up the captain can ask for, not a
+    licence refusal.
+- **The chip is white-with-a-coloured-glyph because Excalidraw inverts images on a dark canvas, and
+  that was measured.** It applies `invert(93%) hue-rotate(180deg)` to every image in dark theme,
+  **SVG included** - its own guard for SVGs compares the cached mime type against a map with no
+  `svg` key, so it never fires. That transform flips lightness and keeps hue, so a white chip
+  becomes a near-black chip and the glyph stays the same hue a shade lighter, which is what a dark
+  diagram should look like. A solid role-coloured tile with a white glyph - the AWS look - was
+  rendered beside it in both registers and is better in light and visibly inverted in dark, which is
+  the register this app defaults to.
+- **`WhiteboardDiagram.appAuthoredTypes` is one type wider than `allowedTypes`, and the asymmetry is
+  the point.** `image` stays out of the set a *model* may use, for that set's own stated reason: an
+  image skeleton is meaningless without a `fileId` naming a file already in the scene, and a model
+  has no way to put one there. `DiagramDSL` does - it mints the id from a closed enum and sends the
+  matching file in the same `loadScene` call - so widening `allowedTypes` would hand the model the
+  type as well, which is exactly what is being refused.
+- **A node is `[rectangle, image]` in one group, and which element is which matters.** The rectangle
+  stays the arrow-binding target, so every existing connector keeps working; the caption stays a
+  *bound* label (pinned to the bottom, with the icon above) so it still re-centres, re-wraps and
+  double-click-edits with its container. A standalone text element was tried and is **worse**: it
+  clips for exactly the same font reason, and it needs its centre computed by hand.
+- **`whiteboard.js`'s `loadScene` takes an optional `files` array now**, added before the elements
+  that reference it - an `image` whose `fileId` names a file the scene does not have yet renders as
+  a broken placeholder and **stays** broken, because nothing re-resolves it later. The payload is
+  omitted entirely when there is no artwork, so a plain `A --> B` diagram sends byte-for-byte what
+  it always did.
+- **Four assertions elsewhere were inverted rather than deleted**, each having become a record of the
+  old behaviour - the same precedent this file records for `SessionRestoreSelfTest` and
+  `checkSettingsTwoColumnLayout`. The one worth naming states its own now-false premise in its
+  comment: "the emoji is the icon - there is no image element type this canvas will accept".
+- **A pre-existing arrow-binding defect was found and deliberately left alone**: a bound arrow whose
+  endpoints share an x coordinate is drawn slanting well off target. Reproduced with no icons, no
+  groups and no components, and reproduced identically at the node height used *before* this task,
+  so it is neither caused by nor affected by it. See `Vendor/Excalidraw/README.md`.
+- **Verified** with `swift build` (clean, zero warnings in this app's sources), the full suite, and
+  real `WKWebView.takeSnapshot` renders of the real canvas - the palette, a full generated
+  architecture diagram, and both light and dark registers - **without launching the app**, per the
+  README's worktree rule. **Six injected regressions each reproduced by name** (scripted file
+  copies, never `git stash`): the font wait removed (which reported the real numbers, "sized 88.88
+  but renders at 106.93"), the selector sanitiser made a no-op, the emoji put back in the caption,
+  the artwork not sent alongside the element that references it, the generated file drifted from its
+  sources, and a component's box emitted with no icon.
+  - **One of those initially passed and the *test* was the bug**, which is worth repeating: the
+    caption check measured the canvas font at probe time, by which point it had lazily loaded - so
+    with the font race injected, both the assigned width and the "expected" width were the same
+    wrong number and the check passed against the very defect it exists for. It forces the face in
+    from the test first and carries a vacuity guard that fails when the two measurements agree.
+
 ## Session switcher (live SSH sessions)
 
 **`fm/grandline-session-switcher` made an already-live SSH session reachable in one click or one keystroke from anywhere** - before it, switching from a live DEV session to a live PROD session meant leaving the terminal, navigating to Hosts, finding the row and pressing "Connect", a button that looked identical to opening a brand new connection. Four files: `HostSessionRegistry.swift` (the fact), `SessionStripView.swift` (the strip), plus the live-row/palette/shortcut wiring in `HostsController`/`UnifiedSearchProviders`/`main.swift`. Captain-approved mockup: `data/grandline-session-switcher/session-switcher-mockup.html`.
