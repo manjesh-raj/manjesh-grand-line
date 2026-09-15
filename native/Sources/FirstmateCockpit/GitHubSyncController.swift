@@ -7,11 +7,14 @@
 // by hand per repo (`git fetch upstream && git merge` per clone).
 //
 // Visual/interaction pattern copied deliberately, not invented:
-//   - Page shape (subtitle + a "sync all" action card + a repo-list card, both
-//     built with the same rounded `card(icon:title:content:)` chrome, inside
-//     a `FlippedView` + `NSScrollView` for the "empty gap above the header"
+//   - Page shape (a "sync all" action card + a repo-list card, both built
+//     with the same rounded `card(icon:title:content:)` chrome, inside a
+//     `FlippedView` + `NSScrollView` for the "empty gap above the header"
 //     fix): `AutomationController.swift:179-241` (`loadView`) and its `card`
-//     helper at `AutomationController.swift:258-296`.
+//     helper at `AutomationController.swift:258-296`. The page led with a
+//     wrapping subtitle until the captain had it removed - it restated what
+//     the page's own rows already show, and the drill header names the
+//     destination one line above it. The Refresh pill took that space.
 //   - Per-repo row: `ToolRowLayout` (`HelmUIComponents.swift:176-408`), the
 //     exact shared "icon tile + name/detail text + trailing pill/buttons +
 //     expandable command-output log" assembly `UpdatesController`'s per-tool
@@ -90,10 +93,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
             self?.applyTheme()
         }
 
-        let subtitle = NSTextField(wrappingLabelWithString: "Pulls the latest upstream changes into each of your personal forks - fast-forward only, via \u{201c}gh repo sync\u{201d} for a real GitHub fork, or a small local scratch clone for a repo with a manually declared upstream. A repo with commits of its own that upstream doesn\u{2019}t have is left untouched, never force-synced.")
-        subtitle.font = .systemFont(ofSize: 12)
-        subtitle.preferredMaxLayoutWidth = 560
-        subtitle.translatesAutoresizingMaskIntoConstraints = false
+        let toolbarRow = buildToolbarRow()
 
         let syncAllCard = card(icon: "arrow.2.squarepath", title: "Sync All", content: buildSyncAllSection())
 
@@ -113,12 +113,11 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
 
         let reposCard = card(icon: "point.3.connected.trianglepath.dotted", title: "Repos (\(rows.count))", content: rowsStack)
 
-        let stack = NSStackView(views: [subtitle, syncAllCard, reposCard])
+        let stack = NSStackView(views: [toolbarRow, syncAllCard, reposCard])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.setCustomSpacing(16, after: subtitle)
 
         let content = FlippedView()
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -128,7 +127,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
             stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
             stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
             stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
-            subtitle.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            toolbarRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             syncAllCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             reposCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
@@ -188,6 +187,72 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         separators.append(v)
         return v
     }
+
+    // MARK: Toolbar
+
+    /// This page's read-only "re-check every fork" affordance.
+    ///
+    /// Deliberately the shared `HelmRefreshPill` rather than a second copy of
+    /// Setup > Updates' own recipe: the captain asked for "the same refresh
+    /// button as Updates", and one definition is what makes that true a
+    /// release from now. It sits at the trailing edge of the page's first
+    /// row - the position Updates' own pill holds in its toolbar row, and the
+    /// space this page's deleted subtitle used to occupy.
+    ///
+    /// **It is not a quieter "Sync All".** That button is this page's one
+    /// mutating action (it fast-forwards real forks on GitHub); this one only
+    /// re-runs `GitHubSyncSource.check` per repo, which is exactly what
+    /// `viewWillAppear` already does on a first visit. Keeping the two
+    /// visually distinct is why this is a small trailing pill and Sync All
+    /// stays the labelled primary button inside its own card.
+    private let refreshPill = HelmRefreshPill(
+        title: "Refresh", tooltip: "Re-check every fork's sync status")
+
+    /// Swapped in for the pill while a re-check is in flight, the same way
+    /// `UpdatesController` swaps its own pill for a progress readout - a
+    /// sweep that shells out to `gh` per repo takes long enough that a
+    /// button which merely stopped responding would read as broken.
+    private let refreshProgressLabel = NSTextField(labelWithString: "")
+    private var isCheckingAll = false
+
+    /// Laid out with explicit constraints rather than an `NSStackView`:
+    /// AGENTS.md gotcha (10)/(12) - a horizontal stack left at its default
+    /// `.gravityAreas` distribution has no defined rule for who absorbs the
+    /// slack, and a bare `NSView()` spacer has no intrinsic content size, so
+    /// a hugging priority on one would be a no-op. Pinning the pill to the
+    /// trailing edge says what this row means with nothing left to tie-break.
+    private func buildToolbarRow() -> NSView {
+        refreshPill.setAction(target: self, action: #selector(refreshTapped))
+
+        refreshProgressLabel.font = .systemFont(ofSize: 11, weight: .medium)
+        refreshProgressLabel.isHidden = true
+        refreshProgressLabel.lineBreakMode = .byTruncatingTail
+        refreshProgressLabel.translatesAutoresizingMaskIntoConstraints = false
+        // `fm/grandline-bootstrap-window-shrink`: a single-line label whose
+        // text is data, left at `NSTextField`'s default 750 compression
+        // resistance, is a hard floor on the whole window's width - above
+        // `NSLayoutPriorityWindowSizeStayPut` (500). It yields and truncates.
+        refreshProgressLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+
+        let row = NSView()
+        row.translatesAutoresizingMaskIntoConstraints = false
+        row.addSubview(refreshProgressLabel)
+        row.addSubview(refreshPill)
+        NSLayoutConstraint.activate([
+            refreshPill.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            refreshPill.topAnchor.constraint(equalTo: row.topAnchor),
+            refreshPill.bottomAnchor.constraint(equalTo: row.bottomAnchor),
+            refreshProgressLabel.trailingAnchor.constraint(
+                equalTo: refreshPill.leadingAnchor, constant: -10),
+            refreshProgressLabel.centerYAnchor.constraint(equalTo: refreshPill.centerYAnchor),
+            // `>=`, never `==`: an inequality here cannot cap the window.
+            refreshProgressLabel.leadingAnchor.constraint(
+                greaterThanOrEqualTo: row.leadingAnchor),
+        ])
+        return row
+    }
+
+    @objc private func refreshTapped() { checkAll() }
 
     // MARK: Sync All
 
@@ -303,8 +368,49 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
 
     // MARK: Check
 
+    /// Re-checks every repo. Reached both from `viewWillAppear`'s first-visit
+    /// sweep and from the Refresh pill, so the two can never drift apart
+    /// about what a "check" is.
+    ///
+    /// A row already busy (its own Sync now, or a Sync All in flight) is
+    /// skipped by `check(_:)`'s own guard rather than interrupted - a
+    /// read-only refresh must never disturb a mutating sync that is already
+    /// running.
     private func checkAll() {
-        for row in rows { check(row) }
+        guard !isCheckingAll else { return }
+        isCheckingAll = true
+        refreshPill.isHidden = true
+        refreshProgressLabel.isHidden = false
+
+        let total = rows.count
+        refreshProgressLabel.stringValue = "Checking\u{2026} (0/\(total))"
+        guard total > 0 else {
+            finishCheckAll()
+            return
+        }
+
+        var completed = 0
+        for row in rows {
+            check(row) { [weak self] in
+                guard let self else { return }
+                completed += 1
+                self.refreshProgressLabel.stringValue = "Checking\u{2026} (\(completed)/\(total))"
+                if completed == total { self.finishCheckAll() }
+            }
+        }
+    }
+
+    /// No `Toast` here, unlike `UpdatesController.finishCheckAll()`. This
+    /// page already states the outcome in those exact words a few points
+    /// above, in the drill header's own live subtitle ("8 forks - all in
+    /// sync"), and its one existing toast is reserved for Sync All - the
+    /// mutating action, which has no other summary of its own. Keeping the
+    /// toast exclusively on Sync All is also part of what keeps the two
+    /// actions visibly distinct.
+    private func finishCheckAll() {
+        isCheckingAll = false
+        refreshPill.isHidden = false
+        refreshProgressLabel.isHidden = true
     }
 
     private func check(_ row: GitHubSyncRow, completion: (() -> Void)? = nil) {
@@ -546,6 +652,8 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
             v.layer?.backgroundColor = line.withAlphaComponent(0.5).cgColor
         }
         syncAllSummaryLabel.textColor = HelmTheme.mutedInk(theme)
+        refreshPill.applyTheme(theme)
+        refreshProgressLabel.textColor = HelmTheme.mutedInk(theme)
         for row in rows { applyThemeToRow(row) }
     }
 

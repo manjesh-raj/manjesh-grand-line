@@ -254,17 +254,17 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// A prominent, labeled, accent-colored pill (icon + "Refresh") - the
     /// captain's mockup showed this as the page's clear primary action, not a
     /// bare icon glyph, superseding cockpit-native-updates-polish's earlier
-    /// borderless-icon-button decision for this control. Built the same way
-    /// `SettingsController.themeCard`/`sessionCard` build a clickable styled
-    /// card (a plain `NSView` + click gesture) rather than fighting `NSButton`
-    /// for custom padding on a borderless button.
-    /// GL-16: a `HoverHighlightView` (colours left clear, so it renders
-    /// exactly as the plain `NSView` it replaced) purely to inherit that
-    /// component's accessibility press action, focus ring and Return/Space
-    /// handling - this pill is the page's primary action.
-    private let checkAllPill = HoverHighlightView()
-    private let checkAllIcon = NSImageView()
-    private let checkAllLabel = NSTextField(labelWithString: "Refresh")
+    /// borderless-icon-button decision for this control.
+    ///
+    /// The recipe itself now lives in `HelmRefreshPill` (which carries the
+    /// rest of that history, including why it is a `HoverHighlightView`
+    /// rather than an `NSButton`), extracted so Setup > GitHub Sync could
+    /// carry "the same button" and have that stay true - see
+    /// `fm/grand-line-github-sync-page-refresh-cleanup`. This page renders
+    /// exactly as it did before that extraction; every metric moved rather
+    /// than being re-chosen.
+    private let checkAllPill = HelmRefreshPill(
+        title: "Refresh", tooltip: "Check all tools for updates")
     private let checkAllProgressBar = HelmProgressBar()
     private let checkAllProgressLabel = NSTextField(labelWithString: "")
     private var isCheckingAll = false
@@ -308,36 +308,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         // the explicit width above is what holds this column, and the toolbar
         // stack's own `.fill` distribution does the rest.
 
-        checkAllIcon.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
-        checkAllIcon.translatesAutoresizingMaskIntoConstraints = false
-        checkAllLabel.font = .systemFont(ofSize: 12, weight: .semibold)
-        checkAllLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        let pillContent = NSStackView(views: [checkAllIcon, checkAllLabel])
-        pillContent.orientation = .horizontal
-        pillContent.alignment = .centerY
-        pillContent.spacing = 7
-        pillContent.translatesAutoresizingMaskIntoConstraints = false
-
-        checkAllPill.wantsLayer = true
-        checkAllPill.layer?.cornerRadius = 8
-        checkAllPill.translatesAutoresizingMaskIntoConstraints = false
-        checkAllPill.toolTip = "Check all tools for updates"
-        checkAllPill.setAccessibilityRole(.button)
-        checkAllPill.setAccessibilityLabel("Refresh")
-        checkAllPill.accessibilityLabelOverride = "Refresh"
-        checkAllPill.cornerRadius = 8
-        checkAllPill.addSubview(pillContent)
-        NSLayoutConstraint.activate([
-            pillContent.leadingAnchor.constraint(equalTo: checkAllPill.leadingAnchor, constant: 13),
-            pillContent.trailingAnchor.constraint(equalTo: checkAllPill.trailingAnchor, constant: -13),
-            pillContent.topAnchor.constraint(equalTo: checkAllPill.topAnchor, constant: 7),
-            pillContent.bottomAnchor.constraint(equalTo: checkAllPill.bottomAnchor, constant: -7),
-        ])
-        checkAllPill.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(checkAllTapped)))
-        checkAllPill.setContentHuggingPriority(.required, for: .horizontal)
-        checkAllPill.setContentCompressionResistancePriority(.required, for: .horizontal)
+        checkAllPill.setAction(target: self, action: #selector(checkAllTapped))
 
         // G4: the app's own bar, which already handles theme + tint - a stock
         // determinate `NSProgressIndicator` is the one control on this page
@@ -910,36 +881,21 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     private func applyTheme() {
         subtitleLabel.textColor = HelmTheme.mutedInk(theme)
         let line = HelmTheme.nsColor(theme.chromeLineHex)
-        let accent = HelmTheme.nsColor(theme.accentHex)
-        // A real, captain-reported bug lived on the line this replaced:
-        // `checkAllPill.layer?.backgroundColor = accent.cgColor` writes
-        // straight to the CALayer, bypassing `HoverHighlightView`'s own
-        // `normalColor`/`hoverColor` tracking entirely. Neither was ever
-        // assigned for this pill, so both stayed at their construction-time
-        // default of `.clear` - and the moment the cursor entered and left
-        // the pill even once (near-certain, since it's a clickable control
-        // the captain would naturally move toward), `mouseExited` called
-        // `setBackground(normalColor)`, permanently stranding the fill at
-        // `.clear` until the next theme change re-ran this method and wrote
-        // the accent color straight back in. On a light-mode page, a clear
-        // fill behind the near-white `onAccent` icon/label below reads as
-        // "washed out" - on a dark page the same missing fill is far less
-        // noticeable, since white text still reads against a dark
-        // background even with no purple pill under it. Setting
-        // `normalColor` (rather than the layer directly) is what makes a
-        // hover cycle restore the correct fill instead of erasing it -
-        // confirmed live via `UpdatesRefreshButtonThemeSelfTest`.
-        checkAllPill.normalColor = accent
-        checkAllPill.hoverColor = accent.hoverShifted(by: 0.10, forMode: theme.mode)
+        // The pill owns its own fill, and that is load-bearing rather than
+        // tidy. The line this replaced wrote `checkAllPill.layer?
+        // .backgroundColor` straight to the CALayer, bypassing
+        // `HoverHighlightView`'s own `normalColor`/`hoverColor` tracking - so
+        // the first hover cycle's `mouseExited` repainted from a `normalColor`
+        // nobody had set, stranding the fill at `.clear` until the next theme
+        // change wrote the accent straight back in. That was a real,
+        // captain-reported light-mode bug (`UpdatesRefreshButtonThemeSelfTest`
+        // carries the full account). It now lives inside `HelmRefreshPill`,
+        // which is most of the reason that pill is a shared component: a
+        // second page cannot re-derive it wrong.
+        checkAllPill.applyTheme(theme)
         // G4: the shared bar carries its own theme + hue, so this page's own
         // theme pass has to hand it over - it does not observe on its own.
         checkAllProgressBar.applyTheme(theme, hue: RailDestination.updates.domainHue)
-        // `selectionTextHex` is the text tone already contrast-verified
-        // against an opaque `accentHex` fill (SwiftTerm's selected-text
-        // color) - the same pairing this pill's fill/text need.
-        let onAccent = HelmTheme.nsColor(theme.selectionTextHex)
-        checkAllIcon.contentTintColor = onAccent
-        checkAllLabel.textColor = onAccent
         checkAllProgressLabel.textColor = HelmTheme.mutedInk(theme)
         filterTabs.applyTheme(theme)
         for card in cards { card.applyTheme(theme) }
