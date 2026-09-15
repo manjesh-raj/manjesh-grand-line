@@ -242,11 +242,13 @@ jobs:
       # changing a source asset) and shipping a stale artifact was a human
       # remembering to run the script by hand.
       #
-      # Four generators are in scope, and they are exactly the ones whose
+      # Five generators are in scope, and they are exactly the ones whose
       # inputs live in this repository:
       #
       #   build-card-shortcut-icons.py   4 icons, sources in Scripts/assets/
       #   build-rail-icons-batch2.py    15 icons, sources in Scripts/assets/
+      #   build-whiteboard-icons.py     62 component chips, sources in
+      #                                  Scripts/assets/whiteboard-icons/
       #   build-straw-hat-flag.py        the Jolly Roger, source in
       #                                  Scripts/assets/straw-hat-flag/
       #   build-whisper-metal-shader.py  the Metal shader, merged from the
@@ -280,6 +282,9 @@ jobs:
 
       - name: Rail icons (batch 2)
         run: python3 Scripts/build-rail-icons-batch2.py --check
+
+      - name: Whiteboard component icons
+        run: python3 Scripts/build-whiteboard-icons.py --check
 
       - name: Straw Hat Jolly Roger
         run: python3 Scripts/build-straw-hat-flag.py --check

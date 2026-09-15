@@ -2269,6 +2269,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_CONSOLE_COMMAND_COMPOSER_TESTS"] 
 if ProcessInfo.processInfo.environment["FM_RUN_WHITEBOARD_TESTS"] == "1" {
     exit(WhiteboardSelfTest.run() ? 0 : 1)
 }
+// `fm/grand-line-whiteboard-component-icons-overhaul`: the component artwork
+// and the two caption bugs it fixed. Pure logic, so it runs in CI - the live
+// half is in the window-backed view suite.
+if ProcessInfo.processInfo.environment["FM_RUN_WHITEBOARD_ICONS_TESTS"] == "1" {
+    exit(WhiteboardIconsSelfTest.run() ? 0 : 1)
+}
 if ProcessInfo.processInfo.environment["FM_RUN_WHITEBOARD_VIEW_TESTS"] == "1" {
     exit(WhiteboardViewSelfTest.run() ? 0 : 1)
 }

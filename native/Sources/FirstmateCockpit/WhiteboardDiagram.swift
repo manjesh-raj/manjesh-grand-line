@@ -110,6 +110,23 @@ enum WhiteboardDiagram {
         "rectangle", "diamond", "ellipse", "arrow", "line", "text", "frame", "freedraw",
     ]
 
+    /// What the app itself may put on the canvas, which is deliberately one
+    /// type wider than what a *model* may.
+    ///
+    /// `image` stays out of `allowedTypes` for the reason that set's own
+    /// neighbours state: an image skeleton is meaningless without a `fileId`
+    /// naming a file already in the scene, and a model has no way to put one
+    /// there - so a model that asks for an image can only ever draw a broken
+    /// placeholder. `DiagramDSL` is not in that position. It emits an image
+    /// only for its own component artwork, with a `fileId` minted by
+    /// `WhiteboardIconLibrary` from a closed enum, and it sends the matching
+    /// file in the same `loadScene` call that references it.
+    ///
+    /// The asymmetry is the point, so it is a separate constant rather than a
+    /// relaxation of the first: widening `allowedTypes` would hand the model
+    /// the type as well, which is exactly the thing being refused.
+    static let appAuthoredTypes: Set<String> = allowedTypes.union(["image"])
+
     /// Test-only seam, same convention as
     /// `ConsoleCommandComposer.claudePathOverrideForTests`.
     static var claudePathOverrideForTests: String?
@@ -341,6 +358,13 @@ enum WhiteboardDiagram {
     private static func sanitized(_ element: [String: Any]) -> [String: Any] {
         var out = element
         out.removeValue(forKey: "link")
+        // A *standalone* text element is not affected by the truncation
+        // `WhiteboardLabel` documents, but a model is free to hand back the
+        // same caption either way and a reader comparing the two should not
+        // find them spelled differently.
+        if let text = out["text"] as? String {
+            out["text"] = WhiteboardLabel.renderable(text)
+        }
         for (key, value) in out {
             guard let text = value as? String, hasDangerousScheme(text) else { continue }
             out.removeValue(forKey: key)
@@ -350,6 +374,9 @@ enum WhiteboardDiagram {
             for (key, value) in label {
                 guard let text = value as? String, hasDangerousScheme(text) else { continue }
                 label.removeValue(forKey: key)
+            }
+            if let text = label["text"] as? String {
+                label["text"] = WhiteboardLabel.renderable(text)
             }
             out["label"] = label
         }

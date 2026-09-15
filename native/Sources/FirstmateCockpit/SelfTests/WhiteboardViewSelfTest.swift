@@ -92,6 +92,7 @@ enum WhiteboardViewSelfTest {
         }
         check(!controller.debugOverlayVisible, "the overlay should be gone once the canvas is ready")
 
+        checkCaptionsAreNotClipped(controller, webView, check)
         checkThemeAppearance(controller, check)
         checkSceneLoading(controller, check)
         checkFrameChildrenSafetyNet(controller, check)
@@ -133,6 +134,160 @@ enum WhiteboardViewSelfTest {
         view.onPageError = { reported = $0 }
         view.debugHandle(message: ["type": "error", "message": "boom"])
         check(reported == "boom", "a page error should surface with its own message")
+    }
+
+    // MARK: Captions render in full (`fm/grand-line-whiteboard-component-icons-overhaul`)
+
+    /// The captain's report: a component's caption rendered as a few
+    /// characters and the rest was gone.
+    ///
+    /// The mechanism, measured rather than guessed at: Excalidraw sizes a text
+    /// element by measuring the string on a canvas when the element is
+    /// created, and then clips the real render to that width. Its own webfonts
+    /// are registered lazily, so a diagram inserted before Excalifont is in use
+    /// gets measured with the browser's fallback metrics and drawn in
+    /// Excalifont - which is the wider of the two, by 18pt on "RDS / Aurora" -
+    /// and the overflow is clipped away. `whiteboard.js` fixes it by not
+    /// reporting `ready` until the font is genuinely being used for
+    /// measurement.
+    ///
+    /// **Asserted as an outcome, and with no hardcoded width.** A literal would
+    /// be a second copy of Excalifont's metrics, wrong the day the font is
+    /// bumped. What is compared instead is the width Excalidraw *assigned* to a
+    /// real text element against what the page's own canvas measures for that
+    /// string in the canvas's own font: if those two disagree, the render
+    /// overflows the element and text is lost. That is the defect itself, not a
+    /// proxy for it.
+    ///
+    /// A source guard would not do here either - the page can call the font
+    /// loader and still post `ready` too early, which is exactly what the first
+    /// two attempts at this fix did (`document.fonts.ready` resolves while
+    /// every face is still unloaded, and `document.fonts.load()` resolves
+    /// before the face is usable for measurement).
+    private static func checkCaptionsAreNotClipped(_ controller: WhiteboardController,
+                                                   _ webView: WhiteboardWebView,
+                                                   _ check: (Bool, String) -> Void) {
+        // Long, mixed-width, and a real caption from the palette. A short
+        // string would pass whether or not the font had loaded, because the
+        // two measurements only diverge far enough to clip once there are
+        // enough glyphs - which is why the captain saw it on some components
+        // and not others.
+        let samples = ["RDS / Aurora", "Secrets Manager", "Terraform / IaC", "Container image"]
+        var elements: [[String: Any]] = []
+        for (index, text) in samples.enumerated() {
+            elements.append([
+                "type": "text", "id": "caption-\(index)",
+                "x": 0.0, "y": Double(index) * 40.0,
+                "text": text, "fontSize": 16.0,
+            ])
+        }
+
+        var loadError: String?
+        var loaded = false
+        controller.debugLoad(elements: elements, append: false) { loadError = $0; loaded = true }
+        guard waitFor(timeout: 15, until: { loaded }) else {
+            check(false, "captions: the load never completed")
+            return
+        }
+        if let loadError {
+            check(false, "captions: the load failed - \(loadError)")
+            return
+        }
+
+        // What Excalidraw actually assigned.
+        var assigned: [String: Double] = [:]
+        var snapped = false
+        controller.debugSnapshotBoard { result in
+            if case .success(let skeleton) = result {
+                for element in skeleton where (element["type"] as? String) == "text" {
+                    if let text = element["text"] as? String, let width = element["width"] as? Double {
+                        assigned[text] = width
+                    }
+                }
+            }
+            snapped = true
+        }
+        guard waitFor(timeout: 15, until: { snapped }) else {
+            check(false, "captions: the board snapshot never completed")
+            return
+        }
+
+        // What those strings are in the font the canvas renders with - measured
+        // only *after* forcing the face in from here.
+        //
+        // Forcing is what makes this discriminating rather than vacuous. Before
+        // the fix, Excalidraw sized these elements with fallback metrics *and*
+        // a measurement taken here would have hit the same unloaded font, so
+        // the two agreed on the wrong number and the check passed against the
+        // very bug it exists for - confirmed by injection. Loading the face
+        // first means this side is the truth and the assigned side has to match
+        // it.
+        let payload = String(data: (try? JSONSerialization.data(withJSONObject: samples)) ?? Data(),
+                             encoding: .utf8) ?? "[]"
+        webView.evaluateJavaScript("""
+        window.__glCaptionProbe = null;
+        document.fonts.load('16px "Excalifont"')
+          .catch(function () {})
+          .then(function () {
+            var real = document.createElement("canvas").getContext("2d");
+            real.font = '16px "Excalifont"';
+            var none = document.createElement("canvas").getContext("2d");
+            none.font = '16px "__grandline_missing_family__"';
+            var out = { real: {}, fallback: {} };
+            var samples = \(payload);
+            for (var i = 0; i < samples.length; i++) {
+              out.real[samples[i]] = real.measureText(samples[i]).width;
+              out.fallback[samples[i]] = none.measureText(samples[i]).width;
+            }
+            window.__glCaptionProbe = JSON.stringify(out);
+          });
+        """) { _, _ in }
+
+        var real: [String: Double] = [:]
+        var fallback: [String: Double] = [:]
+        let measured = waitFor(timeout: 15) {
+            var settled = false
+            var json: String?
+            webView.evaluateJavaScript("window.__glCaptionProbe") { value, _ in
+                json = value as? String
+                settled = true
+            }
+            let deadline = Date().addingTimeInterval(2)
+            while !settled, Date() < deadline {
+                RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
+            }
+            guard let json, let data = json.data(using: .utf8),
+                  let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: [String: Double]]
+            else { return false }
+            real = parsed["real"] ?? [:]
+            fallback = parsed["fallback"] ?? [:]
+            return !real.isEmpty
+        }
+        guard measured else {
+            check(false, "captions: could not measure the canvas font")
+            return
+        }
+
+        for text in samples {
+            guard let assignedWidth = assigned[text] else {
+                check(false, "captions: \"\(text)\" never reached the canvas")
+                continue
+            }
+            guard let realWidth = real[text], let fallbackWidth = fallback[text] else {
+                check(false, "captions: \"\(text)\" was not measured")
+                continue
+            }
+            // The vacuity guard. If the canvas font is not genuinely in use
+            // here, the comparison below is two fallback numbers agreeing with
+            // each other and proves nothing - so that is a failure of the
+            // check, reported as one, rather than a pass.
+            check(abs(realWidth - fallbackWidth) > 1.0,
+                  "captions: \"\(text)\" measures the same with and without Excalifont "
+                  + "(\(realWidth)) - the font never loaded, so this case cannot tell anything")
+            check(abs(assignedWidth - realWidth) < 1.0,
+                  "captions: \"\(text)\" was sized \(assignedWidth) but renders at \(realWidth) "
+                  + "- the difference is drawn outside the element and clipped away")
+        }
     }
 
     // MARK: Theme correctness of the native chrome (not the embedded canvas)
