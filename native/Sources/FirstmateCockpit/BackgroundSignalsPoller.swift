@@ -24,7 +24,10 @@
 // of the four pages' own on-visit checks are unaffected and still run
 // independently at their existing cadence (page visit / manual refresh) -
 // this poller exists purely so the notification center doesn't go stale
-// between visits, not to replace those pages' own logic.
+// between visits, not to replace those pages' own logic. The tool-update
+// sweep reads through the shared `DependencyCheckCache` those pages already
+// use, so "independently" means "on its own cadence", not "at its own extra
+// subprocess cost" - see `sharedCheckMaxAge`.
 //
 // All four checks run sequentially on one background queue, not
 // concurrently - mirrors `BootstrapController.installAllMissing`'s own
@@ -38,7 +41,42 @@ final class BackgroundSignalsPoller {
     static let shared = BackgroundSignalsPoller()
 
     /// 15 minutes - see the file header for the reasoning.
-    private let pollInterval: TimeInterval = 15 * 60
+    ///
+    /// `static` so `sharedCheckMaxAge` below (and the self-test that guards
+    /// the relationship between them) can be written in terms of it rather
+    /// than repeating the literal.
+    static let pollInterval: TimeInterval = 15 * 60
+
+    /// How old a shared `DependencyCheckCache` entry may be and still satisfy
+    /// **this poller's** sweep. Deliberately not `DependencyCheckCache.
+    /// defaultTTL`, which is what the three Setup pages use.
+    ///
+    /// The fix this exists for is that the poller used to call
+    /// `UpdatesSource.check` directly, so a captain who opened Updates and
+    /// then sat still paid for the identical 13-item sweep twice within
+    /// minutes. Reading through the shared cache closes that - but the window
+    /// has to be short enough that **one poller pass can never be satisfied by
+    /// the previous poller pass**, or this quietly becomes a staleness cache
+    /// rather than a coalescer and the poller's effective cadence halves.
+    ///
+    /// The worst case is an entry written by the *last* item of a slow sweep:
+    /// it is only `pollInterval - (sweep duration)` old when the next tick
+    /// lands, and a sweep may legitimately run until `passWatchdog`. So this
+    /// must stay below `pollInterval - passWatchdog` (10 minutes) with room to
+    /// spare; 5 minutes is that, and is still comfortably wider than "the
+    /// captain opened a Setup page moments ago", which is the whole scenario
+    /// being deduplicated. `AuditEnergyFixesSelfTest`'s own
+    /// `FleetTaskCache.ttl < FleetNotifier.pollInterval / 2` check is the same
+    /// guard for the same class of mistake; ours lives in
+    /// `DependencyCheckCacheSelfTest`.
+    ///
+    /// The price, stated rather than hidden: the poller's published counts can
+    /// now be up to `pollInterval + sharedCheckMaxAge` (20 minutes) old rather
+    /// than 15. That sits inside the envelope this file's own header already
+    /// accepts for a backgrounded app ("your tools are 25 minutes out of date
+    /// rather than 15 is not a cost anyone can perceive"), and the publish
+    /// carries the honest `gatheredAt` either way - see `checkNow`.
+    static let sharedCheckMaxAge: TimeInterval = 5 * 60
 
     /// E3: the heaviest pass in the report's table by a wide margin - tool
     /// checks (`npm`/`brew` per catalog item), fork drift (`gh api`/git x8),
@@ -81,7 +119,10 @@ final class BackgroundSignalsPoller {
     /// anyway. Generous on purpose: a genuinely slow (not hung) pass on a
     /// cold `brew`/`gh` cache can legitimately take minutes, and starting a
     /// second pass alongside it costs real process spawns.
-    private let passWatchdog: TimeInterval = 5 * 60
+    ///
+    /// `static` for the same reason as `pollInterval`: `sharedCheckMaxAge`'s
+    /// own bound is expressed against it.
+    static let passWatchdog: TimeInterval = 5 * 60
 
     /// When the currently-running pass started, `nil` if none is running.
     private var passStartedAt: Date?
@@ -233,7 +274,7 @@ final class BackgroundSignalsPoller {
         // "Not run yet" rather than omitting a service that exists.
         ServiceHealthRegistry.shared.register(.backgroundSignals)
         DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in self?.checkNow() }
-        let t = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
+        let t = Timer.scheduledTimer(withTimeInterval: Self.pollInterval, repeats: true) { [weak self] _ in
             guard let self else { return }
             // E3. Deliberately gated on the *timer* rather than inside
             // `checkNow()`: that method is also the manual/deep-link entry
@@ -291,7 +332,7 @@ final class BackgroundSignalsPoller {
     /// `ShiftNotificationScheduler.poll()`'s own convention.
     func checkNow() {
         switch Self.admit(isChecking: isChecking, passStartedAt: passStartedAt,
-                          now: Date(), watchdog: passWatchdog) {
+                          now: Date(), watchdog: Self.passWatchdog) {
         case .refused:
             return
         case .start:
@@ -317,11 +358,10 @@ final class BackgroundSignalsPoller {
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
             // Computed once and shared with `checkSetupDrift` below (the
-            // Software checklist step reads the exact same per-item
-            // outcomes) rather than shelling out to `brew`/`npm` twice for
-            // the same catalog in one poll pass.
-            let softwareGatheredAt = Date()
-            let softwareStatuses = DependencyCatalog.items.map { UpdatesSource.check($0).status }
+            // Software checklist step reads the exact same per-item outcomes)
+            // rather than shelling out to `brew`/`npm` twice for the same
+            // catalog in one poll pass. See `sweepSoftware`.
+            let (softwareStatuses, softwareGatheredAt) = Self.sweepSoftware()
             self.checkToolUpdates(statuses: softwareStatuses, gatheredAt: softwareGatheredAt)
             self.checkGitHubSync()
             self.checkVault()
@@ -340,6 +380,42 @@ final class BackgroundSignalsPoller {
                 self.passStartedAt = nil
             }
         }
+    }
+
+    /// The 13-item `DependencyCatalog` sweep, and the one piece of this
+    /// poller's pass that is worth testing on its own - so it takes both of
+    /// its collaborators as defaulted parameters and a self-test can drive
+    /// the **real** function against a disposable cache and a counting fake,
+    /// rather than re-implementing the policy it is meant to be checking.
+    /// The other three checks (`gh`, `av`, a dotfiles `git fetch`) have no
+    /// such seam and are deliberately never driven from a suite.
+    ///
+    /// Two decisions live here, both load-bearing:
+    ///
+    /// 1. It reads through the shared `DependencyCheckCache` rather than
+    ///    calling `UpdatesSource.check` directly, so a sweep the captain's own
+    ///    visit to Updates/Bootstrap/Automation already paid for moments ago
+    ///    is not paid for again - and the entries it writes are what those
+    ///    pages' next unforced mount reads. `sharedCheckMaxAge`, never the
+    ///    pages' default TTL: see that constant for why a longer window would
+    ///    quietly halve this poller's own cadence.
+    ///
+    /// 2. The returned `gatheredAt` is the **oldest** sample that contributed,
+    ///    not `Date()`. A partly-cached sweep is a mixture of vintages, and
+    ///    `acceptsReading` compares gather times to decide whether this
+    ///    reading may displace a page's own - so claiming the whole set is as
+    ///    new as its newest half would be the exact overwrite-a-fresher-number
+    ///    bug PR #395 closed, reintroduced through this cache.
+    static func sweepSoftware(cache: DependencyCheckCache = .shared,
+                              items: [DependencyItem] = DependencyCatalog.items)
+        -> (statuses: [DependencyStatus], gatheredAt: Date) {
+        let sampled = items.map {
+            cache.checkDated($0, forceRefresh: false, maxAge: sharedCheckMaxAge)
+        }
+        // `min()` is nil only for an empty catalog, which never happens;
+        // `Date()` is the honest answer for "nothing contributed" anyway.
+        return (sampled.map { $0.outcome.status },
+                sampled.map { $0.gatheredAt }.min() ?? Date())
     }
 
     // MARK: #3 - tool updates

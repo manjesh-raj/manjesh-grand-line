@@ -13,6 +13,16 @@
 // what lets this suite prove "the underlying sweep ran exactly once" as a hard
 // count rather than inferring it from timing or logs.
 //
+// `fm/grandline-poller-dependency-cache-bypass` added the last five cases:
+// `BackgroundSignalsPoller` ran the same 13-item sweep on its own 15-minute
+// cadence while calling `UpdatesSource.check` directly, so it was the one
+// reader of this catalog that never shared anything with the other three -
+// a captain who opened Updates and then sat still paid for the identical
+// sweep twice within minutes. Those cases drive the **real**
+// `BackgroundSignalsPoller.sweepSoftware` (against a disposable cache and the
+// same counting fake) rather than re-implementing its policy, plus the one
+// arithmetic invariant and the one wiring fact no behavioural check can see.
+//
 // Run: `FM_RUN_DEPENDENCY_CHECK_CACHE_TESTS=1 .build/debug/FirstmateCockpit`
 
 // GL-27: compiled into debug builds only. Do not remove this guard when
@@ -32,6 +42,11 @@ enum DependencyCheckCacheSelfTest {
         checkDifferentItemsAreNotCoalescedTogether(&ok)
         checkInvalidateForcesARealRecheck(&ok)
         checkCachedOutcomeNeverTriggersASubprocess(&ok)
+        checkAPageVisitSatisfiesTheNextPollerSweep(&ok)
+        checkAPollerSweepSatisfiesTheNextPageVisit(&ok)
+        checkPollerSweepReportsItsOldestContributingSample(&ok)
+        checkPollerWindowCannotBeSatisfiedByThePreviousPollerSweep(&ok)
+        checkPollerSweepDoesNotBypassTheSharedCache(&ok)
         print(ok ? "DependencyCheckCacheSelfTest: all checks passed" : "DependencyCheckCacheSelfTest: FAILED")
         DependencyCheckCache.checkOverrideForTests = nil
         return ok
@@ -271,6 +286,167 @@ enum DependencyCheckCacheSelfTest {
         }
         if checker.count(item.id) != 0 {
             fail("cachedOutcome must never itself run the real check, got \(checker.count(item.id))", &ok)
+        }
+    }
+    // MARK: The poller shares this sweep too
+    //
+    // Both directions of the acceptance criteria, driven through the real
+    // `BackgroundSignalsPoller.sweepSoftware` with its real
+    // `sharedCheckMaxAge` - only the cache instance and the item list are
+    // injected, so a regression in the poller's own policy (a wrong maxAge, a
+    // reverted direct `UpdatesSource.check`) fails here rather than rendering
+    // plausibly and costing 13 subprocesses every quarter hour.
+
+    /// "A page-triggered check followed shortly by a poller sweep does not
+    /// re-run the same checks." The page sweeps first at the pages' own
+    /// `defaultTTL`; the poller follows moments later at its tighter window
+    /// and must find every entry fresh enough.
+    private static func checkAPageVisitSatisfiesTheNextPollerSweep(_ ok: inout Bool) {
+        print("\n-- a page visit satisfies the poller sweep that follows it --")
+        let checker = CountingChecker()
+        DependencyCheckCache.checkOverrideForTests = checker.callback
+        let cache = DependencyCheckCache()
+        let items = (1...13).map { fakeItem("poller-after-page-\($0)") }
+
+        for item in items { _ = cache.check(item, forceRefresh: false) } // the captain opens Updates
+        let sweep = BackgroundSignalsPoller.sweepSoftware(cache: cache, items: items) // the poller ticks
+
+        if checker.totalCount != items.count {
+            fail("expected \(items.count) real checks total (the poller reusing the page's), got \(checker.totalCount)", &ok)
+        }
+        if sweep.statuses.count != items.count {
+            fail("the poller must still get a status for every item, got \(sweep.statuses.count)", &ok)
+        }
+        // The count alone is not enough, and this is the half that catches the
+        // real regression: a poller that went back to calling
+        // `UpdatesSource.check` itself never touches the fake, so the count
+        // stays at the page's own 13 and the case passes while the bypass is
+        // fully reinstated. Asserting the sweep returned *this cache's*
+        // outcomes is what distinguishes "reused" from "did its own thing".
+        if !sweep.statuses.allSatisfy({ $0 == fakeOutcome(for: "x").status }) {
+            fail("the poller's statuses did not come from the shared cache - it answered from somewhere else entirely", &ok)
+        }
+    }
+
+    /// The other direction, which is what makes this a shared cache rather
+    /// than a poller-side optimisation: the poller's own sweep must leave the
+    /// entries a page's next unforced mount reads.
+    private static func checkAPollerSweepSatisfiesTheNextPageVisit(_ ok: inout Bool) {
+        print("\n-- a poller sweep satisfies the page visit that follows it --")
+        let checker = CountingChecker()
+        DependencyCheckCache.checkOverrideForTests = checker.callback
+        let cache = DependencyCheckCache()
+        let items = (1...13).map { fakeItem("page-after-poller-\($0)") }
+
+        _ = BackgroundSignalsPoller.sweepSoftware(cache: cache, items: items) // the poller ticks first
+        // Asserted before the page runs, because that is the actual property:
+        // the poller must *populate* the shared cache. Checking only the total
+        // afterwards passes vacuously against a poller that wrote nothing -
+        // the page would simply run all 13 itself and the count would match.
+        for item in items where cache.cachedOutcome(for: item) == nil {
+            fail("the poller's sweep left no cache entry for '\(item.id)', so the next page visit pays for it again", &ok)
+        }
+
+        for item in items { _ = cache.check(item, forceRefresh: false) } // then the captain opens Updates
+
+        if checker.totalCount != items.count {
+            fail("expected \(items.count) real checks total (the page reusing the poller's), got \(checker.totalCount)", &ok)
+        }
+    }
+
+    /// PR #395's rule, carried across this cache: a publish carries when its
+    /// data was **gathered**, and a partly-cached sweep is a mixture of
+    /// vintages. Stamping such a sweep `Date()` would claim it is as new as
+    /// its newest half, letting it displace a page's genuinely fresher
+    /// reading through `acceptsReading` - the exact overwrite bug #395 closed.
+    ///
+    /// Deterministic without aging the cache: item A is checked, a real
+    /// measurable pause follows, then the sweep covers A (a cache hit, sampled
+    /// before the pause) and B (a live check, sampled after it). A correct
+    /// sweep reports A's timestamp, so the result must land at or before the
+    /// pause; the `Date()` bug lands after it.
+    private static func checkPollerSweepReportsItsOldestContributingSample(_ ok: inout Bool) {
+        print("\n-- a partly-cached poller sweep reports its oldest sample, not the moment it ran --")
+        let checker = CountingChecker()
+        DependencyCheckCache.checkOverrideForTests = checker.callback
+        let cache = DependencyCheckCache()
+        let cached = fakeItem("vintage-cached")
+        let fresh = fakeItem("vintage-fresh")
+
+        _ = cache.check(cached, forceRefresh: false)
+        let afterTheCachedSample = Date()
+        Thread.sleep(forTimeInterval: 0.2) // wide enough that the two vintages cannot be confused
+        let sweep = BackgroundSignalsPoller.sweepSoftware(cache: cache, items: [cached, fresh])
+
+        if sweep.gatheredAt > afterTheCachedSample {
+            fail("""
+                the sweep reported gatheredAt \(sweep.gatheredAt.timeIntervalSince(afterTheCachedSample))s                 after its oldest sample - it is claiming cached data is as new as the live half, which is                 what lets a poller pass overwrite a fresher page reading
+                """, &ok)
+        }
+        if checker.count(fresh.id) != 1 {
+            fail("the uncached half of the sweep should still have run a real check, got \(checker.count(fresh.id))", &ok)
+        }
+        if checker.count(cached.id) != 1 {
+            fail("the cached half must not have been re-checked, got \(checker.count(cached.id)) runs", &ok)
+        }
+    }
+
+    /// The load-bearing arithmetic, in the shape `AuditEnergyFixesSelfTest`
+    /// already uses for `FleetTaskCache.ttl` vs `FleetNotifier.pollInterval`:
+    /// the poller's window must be short enough that **one poller pass can
+    /// never be satisfied by the previous poller pass**. The worst case is an
+    /// entry written by the last item of a slow sweep, which is only
+    /// `pollInterval - passWatchdog` old when the next tick lands - so a
+    /// window at or above that silently halves the poller's cadence while
+    /// every behavioural case above still passes.
+    private static func checkPollerWindowCannotBeSatisfiedByThePreviousPollerSweep(_ ok: inout Bool) {
+        print("\n-- the poller's cache window is strictly tighter than its own cadence --")
+        let window = BackgroundSignalsPoller.sharedCheckMaxAge
+        let headroom = BackgroundSignalsPoller.pollInterval - BackgroundSignalsPoller.passWatchdog
+        if window >= headroom {
+            fail("""
+                BackgroundSignalsPoller.sharedCheckMaxAge (\(window)s) is no longer below                 pollInterval - passWatchdog (\(headroom)s) - a pass that ran up to the watchdog would                 leave entries young enough to satisfy the next tick, so the poller would publish                 15-minute-old data and skip the sweep entirely
+                """, &ok)
+        }
+        if window >= DependencyCheckCache.defaultTTL {
+            fail("""
+                sharedCheckMaxAge (\(window)s) must stay tighter than the pages' defaultTTL                 (\(DependencyCheckCache.defaultTTL)s); at or above it the poller inherits exactly the                 staleness window the pages accept, which is the cadence-halving case above
+                """, &ok)
+        }
+    }
+
+    /// The wiring half, which no behavioural case can see: `sweepSoftware`
+    /// could be perfect and `checkNow` could still call `UpdatesSource.check`
+    /// itself, costing the full 13 subprocesses every tick while every
+    /// assertion above kept passing. Asserts the poller reaches this cache and
+    /// nothing else.
+    private static func checkPollerSweepDoesNotBypassTheSharedCache(_ ok: inout Bool) {
+        print("\n-- the poller's pass actually goes through the shared cache --")
+        guard let dir = SelfTestSources.appSourceDirectory(),
+              let text = try? String(contentsOf: dir.appendingPathComponent("BackgroundSignalsPoller.swift"),
+                                     encoding: .utf8) else {
+            print("  NOTE: could not read BackgroundSignalsPoller.swift - skipping the source guard")
+            return
+        }
+        // Comments in that file name `UpdatesSource.check` in order to explain
+        // that it is no longer called, so strip whole-line comments first -
+        // the same treatment `AuditSecurityFixesSelfTest.read` applies for the
+        // same reason.
+        let code = text.split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+
+        if code.contains("UpdatesSource.check(") {
+            fail("BackgroundSignalsPoller calls UpdatesSource.check directly again - that is the bypass this fix removed", &ok)
+        }
+        if !code.contains("cache.checkDated(") {
+            fail("sweepSoftware no longer reads through DependencyCheckCache", &ok)
+        }
+        if !code.contains("maxAge: sharedCheckMaxAge") {
+            fail("sweepSoftware no longer passes its own sharedCheckMaxAge - the pages' longer default would halve the poller's cadence", &ok)
+        }
+        if !code.contains("Self.sweepSoftware()") {
+            fail("checkNow no longer calls sweepSoftware, so the pass may be sweeping some other way", &ok)
         }
     }
 }
