@@ -557,6 +557,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
     private func buildHeader() -> NSView {
         subtitleLabel.font = .systemFont(ofSize: 12)
+        Self.yieldsToWindowWidth(subtitleLabel)
         subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
         return subtitleLabel
     }
@@ -579,16 +580,19 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private func buildHomeSection() -> NSView {
         let currentLabel = NSTextField(labelWithString: "Currently active")
         currentLabel.font = .systemFont(ofSize: 12.5, weight: .medium)
+        Self.yieldsToWindowWidth(currentLabel)
 
         currentPathLabel.font = .monospacedSystemFont(ofSize: 11.5, weight: .regular)
         currentPathLabel.lineBreakMode = .byTruncatingMiddle
+        // The measured offender - see `yieldsToWindowWidth`.
+        Self.yieldsToWindowWidth(currentPathLabel)
 
         let desc = NSTextField(wrappingLabelWithString: "The directory firstmate reads projects, backlog, and crew state from. Checked after the FM_HOME / FIRSTMATE_HOME environment variables. Changing it here requires a restart to take effect.")
         desc.font = .systemFont(ofSize: 11)
         // `dynamicLabels` is this file's own muted-text re-theming list -
         // `.secondaryLabelColor` was a fixed system grey that knows nothing
         // about the active palette (audit §5.3).
-        dynamicLabels.append(desc)
+        track(desc)
         desc.textColor = HelmTheme.mutedInk(theme)
         desc.preferredMaxLayoutWidth = 520
 
@@ -830,7 +834,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             detailsButton: NSButton(), logField: NSTextField(wrappingLabelWithString: ""),
             logContainer: NSView(), rowContainer: HoverHighlightView()
         )
-        dynamicLabels.append(contentsOf: [views.nameLabel, views.detailLabel])
+        track(views.nameLabel, views.detailLabel)
 
         let (pillText, pillColor) = setupStatusVisuals(step.status)
         ToolRowLayout.pill(text: pillText, colorHex: pillColor, into: views.pill, label: views.pillLabel)
@@ -851,7 +855,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             reasonLabel.font = .systemFont(ofSize: 10.5)
             reasonLabel.textColor = HelmTheme.nsColor(theme.ansiHex[1])
             reasonLabel.preferredMaxLayoutWidth = 500
-            dynamicLabels.append(reasonLabel)
+            track(reasonLabel)
             let column = NSStackView(views: [row, reasonLabel])
             column.orientation = .vertical
             column.alignment = .leading
@@ -1141,6 +1145,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         ])
 
         let titleLabel = NSTextField(labelWithString: kind.title)
+        Self.yieldsToWindowWidth(titleLabel)
         titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
 
         let chipLabel = NSTextField(labelWithString: "")
@@ -1316,14 +1321,14 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         desc.font = .systemFont(ofSize: 11)
         desc.textColor = HelmTheme.mutedInk(theme)
         desc.preferredMaxLayoutWidth = 520
-        dynamicLabels.append(desc)
+        track(desc)
 
         let hostCount = hostStore.hosts.count
         let snippetCount = snippetStore.snippets.count
         restoreStatusLabel.stringValue = "Currently saved here: \(hostCount) host\(hostCount == 1 ? "" : "s"), \(snippetCount) snippet\(snippetCount == 1 ? "" : "s")."
         restoreStatusLabel.font = .systemFont(ofSize: 11)
         restoreStatusLabel.textColor = HelmTheme.mutedInk(theme)
-        dynamicLabels.append(restoreStatusLabel)
+        track(restoreStatusLabel)
 
         let importButton = HelmButton(title: "Import\u{2026}", variant: .primary, target: self, action: #selector(importRestoreConfigClicked))
 
@@ -1348,10 +1353,12 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         driftDescLabel.preferredMaxLayoutWidth = 520
 
         driftStatusLabel.font = .systemFont(ofSize: 12.5, weight: .medium)
+        Self.yieldsToWindowWidth(driftStatusLabel)
         driftStatusLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         driftStatusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
         driftLastCheckedLabel.font = .systemFont(ofSize: 11)
+        Self.yieldsToWindowWidth(driftLastCheckedLabel)
 
         driftRecheckButton.title = "Re-check now"
         driftRecheckButton.target = self
@@ -1469,7 +1476,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             detailsButton: NSButton(), logField: NSTextField(wrappingLabelWithString: ""),
             logContainer: NSView(), rowContainer: HoverHighlightView()
         )
-        dynamicLabels.append(contentsOf: [views.nameLabel, views.detailLabel])
+        track(views.nameLabel, views.detailLabel)
 
         ToolRowLayout.pill(text: "Drifted", colorHex: theme.ansiHex[1], into: views.pill, label: views.pillLabel, theme: theme)
 
@@ -1553,7 +1560,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         desc.font = .systemFont(ofSize: 11)
         desc.textColor = HelmTheme.mutedInk(theme)
         desc.preferredMaxLayoutWidth = 520
-        dynamicLabels.append(desc)
+        track(desc)
 
         clonePathField.translatesAutoresizingMaskIntoConstraints = false
         let cloneButton = HelmButton(title: "Clone & Bootstrap", variant: .primary, target: self, action: #selector(cloneAndBootstrapClicked))
@@ -1575,7 +1582,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
         let repoLabel = NSTextField(labelWithString: repoPath)
         repoLabel.font = .monospacedSystemFont(ofSize: 11.5, weight: .regular)
-        dynamicLabels.append(repoLabel)
+        track(repoLabel)
         rows.append(repoLabel)
 
         var metaBits: [String] = []
@@ -1585,7 +1592,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             let metaLabel = NSTextField(labelWithString: metaBits.joined(separator: " \u{00B7} "))
             metaLabel.font = .systemFont(ofSize: 11)
             metaLabel.textColor = HelmTheme.mutedInk(theme)
-            dynamicLabels.append(metaLabel)
+            track(metaLabel)
             rows.append(metaLabel)
         }
 
@@ -1638,7 +1645,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             row.font = .monospacedSystemFont(ofSize: 10.5, weight: .regular)
             row.textColor = HelmTheme.mutedInk(theme)
             row.preferredMaxLayoutWidth = 500
-            dynamicLabels.append(row)
+            track(row)
             innerViews.append(row)
             lastCommitRow = row
         }
@@ -1646,7 +1653,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             let more = NSTextField(labelWithString: "+\(commits.count - Self.behindOriginCommitDisplayCap) more")
             more.font = .systemFont(ofSize: 10.5, weight: .regular)
             more.textColor = HelmTheme.mutedInk(theme)
-            dynamicLabels.append(more)
+            track(more)
             innerViews.append(more)
             lastCommitRow = more
         }
@@ -1680,7 +1687,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             inner.topAnchor.constraint(equalTo: banner.topAnchor, constant: 8),
             inner.bottomAnchor.constraint(equalTo: banner.bottomAnchor, constant: -8),
         ])
-        dynamicLabels.append(contentsOf: [title, body])
+        track(title, body)
         return banner
     }
 
@@ -1712,7 +1719,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             inner.topAnchor.constraint(equalTo: banner.topAnchor, constant: 8),
             inner.bottomAnchor.constraint(equalTo: banner.bottomAnchor, constant: -8),
         ])
-        dynamicLabels.append(contentsOf: [title, body])
+        track(title, body)
         return banner
     }
 
@@ -1730,7 +1737,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         dotfilesStatusLabel.font = .systemFont(ofSize: 11)
         dotfilesStatusLabel.preferredMaxLayoutWidth = 500
         dotfilesStatusLabel.isHidden = true
-        dynamicLabels.append(dotfilesStatusLabel)
+        track(dotfilesStatusLabel)
 
         let section = NSStackView(views: [label, row, dotfilesStatusLabel])
         section.orientation = .vertical
@@ -1752,7 +1759,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             detailsButton: NSButton(), logField: NSTextField(wrappingLabelWithString: ""),
             logContainer: NSView(), rowContainer: HoverHighlightView()
         )
-        dynamicLabels.append(contentsOf: [views.nameLabel, views.detailLabel])
+        track(views.nameLabel, views.detailLabel)
 
         let (pillText, pillColor) = managedStatusVisuals(item.status)
         ToolRowLayout.pill(text: pillText, colorHex: pillColor, into: views.pill, label: views.pillLabel)
@@ -1792,7 +1799,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         desc.font = .systemFont(ofSize: 11)
         desc.textColor = HelmTheme.mutedInk(theme)
         desc.preferredMaxLayoutWidth = 520
-        dynamicLabels.append(desc)
+        track(desc)
         agentStack.addArrangedSubview(desc)
         desc.widthAnchor.constraint(equalTo: agentStack.widthAnchor).isActive = true
 
@@ -1816,7 +1823,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             detailsButton: NSButton(), logField: NSTextField(wrappingLabelWithString: ""),
             logContainer: NSView(), rowContainer: HoverHighlightView()
         )
-        dynamicLabels.append(contentsOf: [views.nameLabel, views.detailLabel])
+        track(views.nameLabel, views.detailLabel)
 
         let (pillText, pillColor) = agentStatusVisuals(item.status)
         ToolRowLayout.pill(text: pillText, colorHex: pillColor, into: views.pill, label: views.pillLabel)
@@ -1921,7 +1928,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
             let categoryLabel = NSTextField(labelWithString: category)
             categoryLabel.font = .systemFont(ofSize: 12, weight: .semibold)
-            dynamicLabels.append(categoryLabel)
+            track(categoryLabel)
             softwareStack.addArrangedSubview(categoryLabel)
             categoryLabel.widthAnchor.constraint(equalTo: softwareStack.widthAnchor).isActive = true
 
@@ -1947,7 +1954,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             detailsButton: NSButton(), logField: NSTextField(wrappingLabelWithString: ""),
             logContainer: NSView(), rowContainer: HoverHighlightView()
         )
-        dynamicLabels.append(contentsOf: [views.nameLabel, views.detailLabel])
+        track(views.nameLabel, views.detailLabel)
 
         let (pillText, pillColor) = softwareStatusVisuals(row.status)
         ToolRowLayout.pill(text: pillText, colorHex: pillColor, into: views.pill, label: views.pillLabel)
@@ -2093,7 +2100,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         intro.font = .systemFont(ofSize: 11)
         intro.textColor = HelmTheme.mutedInk(theme)
         intro.preferredMaxLayoutWidth = 520
-        dynamicLabels.append(intro)
+        track(intro)
         notSyncedStack.addArrangedSubview(intro)
         intro.widthAnchor.constraint(equalTo: notSyncedStack.widthAnchor).isActive = true
 
@@ -2131,13 +2138,13 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private func notSyncedStaticRow(title: String, body: String) -> NSView {
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = .systemFont(ofSize: 12.5, weight: .medium)
-        dynamicLabels.append(titleLabel)
+        track(titleLabel)
 
         let bodyLabel = NSTextField(wrappingLabelWithString: body)
         bodyLabel.font = .systemFont(ofSize: 11)
         bodyLabel.textColor = HelmTheme.mutedInk(theme)
         bodyLabel.preferredMaxLayoutWidth = 520
-        dynamicLabels.append(bodyLabel)
+        track(bodyLabel)
 
         let section = NSStackView(views: [titleLabel, bodyLabel])
         section.orientation = .vertical
@@ -2154,13 +2161,13 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     private func notSyncedHardenerRow(title: String, body: String, extra: [NSView] = [], trailing: [NSView] = []) -> NSView {
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = .systemFont(ofSize: 12.5, weight: .medium)
-        dynamicLabels.append(titleLabel)
+        track(titleLabel)
 
         let bodyLabel = NSTextField(wrappingLabelWithString: body)
         bodyLabel.font = .systemFont(ofSize: 11)
         bodyLabel.textColor = HelmTheme.mutedInk(theme)
         bodyLabel.preferredMaxLayoutWidth = 520
-        dynamicLabels.append(bodyLabel)
+        track(bodyLabel)
 
         var rows: [NSView] = [titleLabel, bodyLabel]
         rows.append(contentsOf: extra)
@@ -2270,7 +2277,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             warning.font = .systemFont(ofSize: 11, weight: .semibold)
             warning.textColor = HelmTheme.nsColor(theme.ansiHex[3])
             warning.preferredMaxLayoutWidth = 520
-            dynamicLabels.append(warning)
+            track(warning)
             extra.append(warning)
 
             let checkbox = NSButton(checkboxWithTitle: "I understand the disruption above and want to continue", target: self, action: #selector(homebrewDisruptionToggled))
@@ -2406,6 +2413,69 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     /// existing "re-theme on `ThemeManager.shared.observe`" convention
     /// (see `HelmTheme.swift`) needs a per-refresh list to walk instead of
     /// a fixed set of `@IBOutlet`-style properties.
+
+    /// Lets a single-line label truncate instead of forcing the window's width.
+    ///
+    /// **The window-size rule this file had never applied.** A window only
+    /// holds its own size at `NSLayoutPriorityWindowSizeStayPut` (500), so any
+    /// content constraint above that can move the window instead of yielding
+    /// to it - AGENTS.md records the same class shipping three times already
+    /// (`ToolRowLayout`'s name column, Tools' landing-grid title, F9's eighth
+    /// action button). An `NSTextField` defaults to **750** horizontal
+    /// compression resistance, which is above stay-put, so any single-line
+    /// label whose text is *data* rather than fixed copy - a filesystem path,
+    /// a git remote URL, a status line - becomes a hard floor on the whole
+    /// window at whatever width that string happens to need.
+    ///
+    /// Measured on this page before the fix: with `FM_HOME` pointing at a
+    /// deeply nested directory, `currentPathLabel` reported an intrinsic width
+    /// of **825pt**, which put the page's own fitting width at **973pt** - so
+    /// a window asked for 960 came back 973. That is the audit's own
+    /// "~975pt" number (`data/grandline-ui-modernization-audit/report.md`
+    /// §"Visiting Bootstrap can force the whole window ~500pt narrower"),
+    /// and the captain's real paths (`/Users/manjesh/manjesh/firstmate`,
+    /// `.../projects/manjesh-config`) are exactly this shape.
+    ///
+    /// `.byTruncatingTail` matters as much as the priority: a truncation mode
+    /// only ever fires once something has genuinely made the label's *frame*
+    /// narrower than its text, which at 750 never happened - `currentPathLabel`
+    /// had asked for `.byTruncatingMiddle` since it was written and never once
+    /// got it. An existing truncating mode is left alone.
+    ///
+    /// **Wrapping labels are deliberately excluded.** Their intrinsic width is
+    /// their `preferredMaxLayoutWidth` (<= 520 everywhere on this page, well
+    /// under any real window), so they are not a floor - and squeezing one
+    /// below the width its one-line intrinsic *height* was computed at is the
+    /// documented "second line draws outside its own bounds" defect.
+    @discardableResult
+    private static func yieldsToWindowWidth(_ label: NSTextField) -> NSTextField {
+        guard !(label.cell?.wraps ?? false) else { return label }
+        label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        switch label.lineBreakMode {
+        case .byTruncatingHead, .byTruncatingMiddle, .byTruncatingTail: break
+        default: label.lineBreakMode = .byTruncatingTail
+        }
+        return label
+    }
+
+    /// Appends to `dynamicLabels` (this file's muted-text re-theming list) and
+    /// applies `yieldsToWindowWidth` in one step, so a label created here can
+    /// never be added to the page without the window-size rule above.
+    /// `BootstrapWindowShrinkSelfTest` fails the build on a bare
+    /// `dynamicLabels.append`, which is what stops the next label from
+    /// re-introducing the floor.
+    #if FM_SELFTESTS
+    /// `FirstmateHome.root` is a `static let` resolved once at process start,
+    /// so a self-test cannot reach the real failure by setting `FM_HOME` - it
+    /// drives the same label directly instead. Deliberately the *label*, not a
+    /// string setter, so the test measures whatever the page really renders.
+    var debugHomePathLabel: NSTextField { currentPathLabel }
+    #endif
+
+    private func track(_ labels: NSTextField...) {
+        for label in labels { dynamicLabels.append(Self.yieldsToWindowWidth(label)) }
+    }
+
     private var dynamicLabels: [NSTextField] = []
 
     private func clearStack(_ stack: NSStackView) {
@@ -2419,7 +2489,7 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         let label = NSTextField(labelWithString: text)
         label.font = .systemFont(ofSize: 12)
         label.textColor = HelmTheme.mutedInk(theme)
-        dynamicLabels.append(label)
+        track(label)
         return label
     }
 

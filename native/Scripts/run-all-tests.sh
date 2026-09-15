@@ -133,6 +133,9 @@ NEEDS_SESSION=(
   # (`FM_RUN_CREDENTIAL_VAULT_TESTS`) is pure logic and deliberately NOT here.
   "FM_RUN_CREDENTIAL_VAULT_VIEW_TESTS"
   "FM_RUN_APP_SHELL_BODY_WIDTH_TESTS"
+  # Mounts the real shell in a real window and sweeps its width, to prove
+  # Bootstrap's own labels can no longer dictate it.
+  "FM_RUN_BOOTSTRAP_WINDOW_SHRINK_TESTS"
   # The UI modernization audit's A1/A2/A3: a real window's own titlebar
   # chrome, a real laid-out bar, and a real scroll offset. None of the three
   # is answerable without a window.
