@@ -847,9 +847,9 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         row.detailLabel.stringValue = row.detail
         row.logField.stringValue = row.log.isEmpty ? "No output yet." : row.log
 
-        let (pillText, pillColorHex) = pillVisuals(row.status)
-        ToolRowLayout.pill(text: pillText, colorHex: pillColorHex, into: row.pill, label: row.pillLabel)
-
+        // The pill itself is painted by `applyThemeToRow` (called further
+        // down this method), not here - see that method's own note for why
+        // the theme pass has to be the single owner of it.
         let busy = row.status == .checking || row.status == .updating
         row.pill.isHidden = busy
         row.checkButton.isHidden = busy
@@ -943,7 +943,21 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         // (`.upToDate`, `.unknown`, or a busy `.checking`/`.updating`) keeps
         // the exact flat/compact look it always has.
         let needsAttention = row.status.showsUpdateButton
-        let attentionHex = needsAttention ? pillVisuals(row.status).1 : nil
+        let (pillText, pillColorHex) = pillVisuals(row.status)
+        // The status pill is painted HERE rather than in `render`, for the
+        // reason `GitHubSyncController.applyThemeToRow` states in full: the
+        // pill bakes one theme's fill and label tone into its layer, nothing
+        // re-resolves them, and `ToolRowLayout.applyTheme` below never
+        // touches it - so painting it only on a *status* change left a theme
+        // switch mid-sweep with some rows' pills in the old palette and the
+        // rest in the new one. The captain saw exactly that here: two rows
+        // both reading "Update Available", one a light tan pill and the other
+        // a solid dark one, while the amber card border they share (derived
+        // from `attentionHex` below, which was already re-resolved on every
+        // theme pass) matched correctly on both.
+        ToolRowLayout.pill(text: pillText, colorHex: pillColorHex,
+                           into: row.pill, label: row.pillLabel, theme: theme)
+        let attentionHex = needsAttention ? pillColorHex : nil
         // §7's "the update row is a warn signal row with an amber primary
         // Update". The warn half was already true - `.updateAvailable`
         // resolves `ansiHex[3]`, the palette's own amber - and §6.5's Daylight
@@ -963,5 +977,28 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         )
         row.progressLabel.textColor = HelmTheme.mutedInk(theme)
     }
-}
 
+    #if FM_SELFTESTS
+    // MARK: Probe surface (debug builds only, GL-27)
+
+    var debugRowCount: Int { rows.count }
+
+    /// Drives the real status-change path a completed check takes.
+    func debugSetStatus(_ status: DependencyStatus, atRow index: Int) {
+        guard rows.indices.contains(index) else { return }
+        rows[index].status = status
+        rows[index].detail = "probe"
+        render(rows[index])
+    }
+
+    /// What the pill is ACTUALLY painted with - see
+    /// `GitHubSyncController.debugPillPaint` for why this reads back rather
+    /// than re-derives.
+    func debugPillPaint(atRow index: Int) -> (fill: CGColor?, label: NSColor?, text: String)? {
+        guard rows.indices.contains(index) else { return nil }
+        let row = rows[index]
+        return (row.pill.layer?.backgroundColor, row.pillLabel.textColor, row.pillLabel.stringValue)
+    }
+    #endif
+
+}
