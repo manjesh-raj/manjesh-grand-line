@@ -904,13 +904,25 @@ enum DaylightModuleSelfTest {
     // icon the captain has muscle memory for.
 
     private static func checkBarDestinationIcons(_ ok: inout Bool) {
-        print("\n-- bar quick-access icons: Sticky Board, Code Preview, Tasks, Straw Hat Pirates, Poneglyph --")
+        print("\n-- bar quick-access icons: Sticky Board, Code Preview, Tasks, Straw Hat Pirates, Poneglyph, Console --")
         let bar = DaylightBarController()
         bar.loadView()
         bar.view.frame = NSRect(x: 0, y: 0, width: 1200, height: DaylightBarController.height + DaylightBarController.topMargin)
         bar.view.layoutSubtreeIfNeeded()
 
-        let expected: [RailDestination] = [.stickyBoard, .codePreview, .shift, .strawHat, .poneglyph]
+        // Typed out as a literal rather than read back from
+        // `debugDestinationButtons()`, for the same reason `lockedMembership`
+        // above is: a test that derives its expectation from the thing it is
+        // checking would pass for *any* set of icons in *any* order. Adding
+        // one is therefore a deliberate two-place edit - which is what made
+        // `fm/grandline-daylight-console-shortcut`'s own seven-site wiring
+        // (declaration, target/action loop, `addSubview`, the constraint
+        // chain, `keyViewChain`, `iconSquares`, `debugDestinationButtons`)
+        // verifiable rather than merely compiled. Only two of those seven
+        // fail loudly - a missing constraint collapses the row, a missing
+        // `addSubview` traps on "no common ancestor". The other five render a
+        // pixel-identical bar, and each was confirmed to fail here by name.
+        let expected: [RailDestination] = [.stickyBoard, .codePreview, .shift, .strawHat, .poneglyph, .console]
         let buttons = bar.debugDestinationButtons()
         guard buttons.count == expected.count else {
             fail("expected \(expected.count) quick-access icons, found \(buttons.count)", &ok)
@@ -950,7 +962,8 @@ enum DaylightModuleSelfTest {
 
         // Order, measured rather than assumed: the captain's own reviewed
         // layout is search -> Recents -> Sticky Board -> Code Preview ->
-        // Tasks -> theme toggle -> bell -> avatar.
+        // Tasks -> Straw Hat Pirates -> Poneglyph -> Console -> theme toggle
+        // -> bell -> avatar.
         let searchMaxX = bar.debugSearchPill().frame.maxX
         let toggleMinX = bar.debugThemeToggleButton().frame.minX
         let bellMinX = bar.notificationCenter.bell.frame.minX
