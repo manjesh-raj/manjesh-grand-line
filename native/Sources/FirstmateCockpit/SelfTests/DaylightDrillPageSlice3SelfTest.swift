@@ -75,6 +75,7 @@ enum DaylightDrillPageSlice3SelfTest {
                       checkRowRecipeAndSignalWash,
                       checkUpdateButtonIsAmberPrimary,
                       checkTimeColumnAndTicks,
+                      checkAutomationRefreshAffordance,
                       checkNoWindowWidthFloor] {
             var ok = true
             check(&ok)
@@ -173,6 +174,106 @@ enum DaylightDrillPageSlice3SelfTest {
         return found
     }
 
+    // MARK: Automation's manual re-check (fm/grand-line-automation-page-refresh-cleanup)
+
+    /// The captain asked for two things on this page: the standing subtitle
+    /// gone, and a Refresh matching the Updates page's own so the setup
+    /// checks can be re-run without leaving and re-entering.
+    ///
+    /// Both are invisible in a diff *and* in a render once wrong:
+    ///
+    ///   - A reinstated subtitle looks like ordinary explanatory copy.
+    ///   - A Refresh wired to nothing renders perfectly and does nothing -
+    ///     this codebase's most-repeated failure mode for a hoisted control.
+    ///   - A Refresh built as a fresh view per read would be a *copy* rather
+    ///     than the instance `refreshTapped` enables and disables, so the
+    ///     button on screen would never grey out while its sweeps are out.
+    ///     `DaylightDrillPageSlice4SelfTest` pins the same property for
+    ///     Vault's own Refresh, for the same reason.
+    ///   - A Refresh that ALSO sits in the page body is the duplication
+    ///     §6.4's cluster exists to remove.
+    ///
+    /// **The click itself is deliberately not driven here**, for this file's
+    /// own header reason: `refreshTapped` runs the real 13-item
+    /// `DependencyCheckCache` sweep with `forceRefresh: true` plus a real
+    /// `git fetch`, so firing it would shell out against the machine running
+    /// the suite. That half was verified live against a real mounted shell
+    /// (the click disabled the button, both sweeps completed, the dotfiles
+    /// path and the "N of 13 tracked tools not installed" line both moved, and
+    /// a second click worked - i.e. no stuck in-flight flag). What is pinned
+    /// here is everything a cheap, deterministic check genuinely can pin.
+    private static func checkAutomationRefreshAffordance(_ ok: inout Bool) {
+        print("\n-- Automation: subtitle gone, Refresh hoisted and wired --")
+
+        guard let entry = makeSetupPages().first(where: { $0.0 == .automation }),
+              let page = entry.1 as? AutomationController else {
+            print("  FAIL could not build AutomationController")
+            ok = false
+            return
+        }
+        let window = mount(page)
+        _ = window
+
+        let stale = labels(in: page.view, containing: "Runs every setup step below in order")
+        if !stale.isEmpty {
+            print("  FAIL the removed subtitle is back (\(stale.count) label(s))")
+            ok = false
+        } else {
+            print("  OK   standing subtitle is gone from the page body")
+        }
+
+        let actions = page.drillHeaderActions
+        guard actions.count == 1, let refresh = actions.first as? NSButton else {
+            print("  FAIL expected exactly one header action, got \(actions.count)")
+            ok = false
+            return
+        }
+        if refresh.title != "Refresh" {
+            print("  FAIL header action is titled \"\(refresh.title)\", want \"Refresh\"")
+            ok = false
+        }
+        if !(refresh is HelmButton) {
+            print("  FAIL Refresh is a \(type(of: refresh)) - it must be the app's shared HelmButton")
+            ok = false
+        }
+
+        // Wired, without firing it: a nil target/action, or a selector the
+        // target does not implement, is exactly "renders fine, does nothing".
+        guard let action = refresh.action else {
+            print("  FAIL Refresh has no action - it would render perfectly and do nothing")
+            ok = false
+            return
+        }
+        if refresh.target !== page {
+            print("  FAIL Refresh's target is not the page")
+            ok = false
+        }
+        if !page.responds(to: action) {
+            print("  FAIL page does not respond to \(NSStringFromSelector(action))")
+            ok = false
+        }
+
+        // The same instance every read - `refreshTapped` disables *this* one.
+        if page.drillHeaderActions.first !== refresh {
+            print("  FAIL drillHeaderActions rebuilds its button per read")
+            ok = false
+        }
+
+        // Hoisted, not duplicated.
+        if buttons(in: page.view).contains(where: { $0 === refresh }) {
+            print("  FAIL Refresh is in the page body as well as the header")
+            ok = false
+        }
+
+        // "Run Automation" stays on the page, beside the line it writes into.
+        if !buttons(in: page.view).contains(where: { $0.title.contains("Run Automation") }) {
+            print("  FAIL \"Run Automation\" left the page body")
+            ok = false
+        }
+
+        print("  OK   header action: \(type(of: refresh)) \"\(refresh.title)\" -> \(NSStringFromSelector(action)), enabled=\(refresh.isEnabled)")
+    }
+
     // MARK: 1 + 2 - each setup page owns its own drill header (§6.4)
 
     /// **Rewritten, not retired, by `fm/grandline-separate-setup-destinations`.**
@@ -215,11 +316,16 @@ enum DaylightDrillPageSlice3SelfTest {
             seen[dest] = line
             print("  \(dest.title.padding(toLength: 12, withPad: " ", startingAt: 0)) -> \(line)")
 
-            // §6.4's cluster is deliberately empty on all four - see any of
-            // their `drillHeaderActions` doc comments. Asserted so a later
-            // change that fills one does so on purpose.
+            // §6.4's cluster is deliberately empty on three of the four - see
+            // each page's own `drillHeaderActions` doc comment. Automation is
+            // the exception: `fm/grand-line-automation-page-refresh-cleanup`
+            // gave it the app's shared page-level Refresh, which duplicates no
+            // control that lives elsewhere on that page (the original "empty"
+            // reasoning was only ever about hoisting "Run Automation").
+            // Reported either way so a later change that fills one does so on
+            // purpose rather than by accident.
             if !page.drillHeaderActions.isEmpty {
-                print("  note \(dest.title) now carries \(page.drillHeaderActions.count) header action(s) - update the property's doc comment")
+                print("  note \(dest.title) carries \(page.drillHeaderActions.count) header action(s) - keep the property's doc comment current")
             }
 
             // The tab strip that produced the captain's "everything is lumped
