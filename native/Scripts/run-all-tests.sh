@@ -145,6 +145,10 @@ NEEDS_SESSION=(
   "FM_RUN_CANVAS_LISTS_CONTROLS_TESTS"
   # The session switcher mounts a real `AppShellController` in a real window.
   "FM_RUN_SESSION_SWITCHER_TESTS"
+  # The status pill's one-treatment-per-status guarantee: mounts the real
+  # GitHub Sync and Updates pages in a real window and drives real theme
+  # changes through them.
+  "FM_RUN_STATUS_PILL_THEME_TESTS"
   # `fm/grandline-k8s-cluster-tail`: mounts the real `.kubernetes` destination
   # in a real window. Its pure-logic half (FM_RUN_KUBE_BRIDGE_TESTS) is
   # deliberately not here - that one runs in CI.

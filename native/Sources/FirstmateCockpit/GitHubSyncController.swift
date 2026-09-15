@@ -434,9 +434,9 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         row.detailLabel.stringValue = row.detail
         row.logField.stringValue = row.log.isEmpty ? "No output yet." : row.log
 
-        let (pillText, pillColorHex) = pillVisuals(row.status)
-        ToolRowLayout.pill(text: pillText, colorHex: pillColorHex, into: row.pill, label: row.pillLabel)
-
+        // The pill itself is painted by `applyThemeToRow` (called at the end
+        // of this method), not here - see that method's own note for why the
+        // theme pass has to be the single owner of it.
         let busy = row.status == .checking || row.status == .syncing
         row.pill.isHidden = busy
         row.syncButton.isHidden = busy || !row.status.showsSyncButton
@@ -475,7 +475,31 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         // detection. `.inSync`/`.notAFork`/`.unknown` (and a busy
         // `.checking`/`.syncing`) keep today's flat/compact look.
         let needsAttention = failed || row.status.showsSyncButton
-        let attentionHex = needsAttention ? pillVisuals(row.status).1 : nil
+        let (pillText, pillColorHex) = pillVisuals(row.status)
+        // The status pill is painted HERE rather than in `render` - a real,
+        // captain-reported bug lived on that split. `ToolRowLayout.pill`
+        // resolves a fill and a label tone for one specific theme and bakes
+        // both into the layer; nothing re-resolves them later, and
+        // `ToolRowLayout.applyTheme` below deliberately never touches the
+        // pill (it is passed as one of `build`'s `statusViews`, not as part
+        // of `Views`' own chrome). So while the pill was painted only from
+        // `render` - i.e. only when a row's *status* changed - a theme switch
+        // left every pill wearing the palette it was last painted in, and
+        // because each repo's check completes on its own schedule, a switch
+        // mid-sweep left the rows that had already reported wearing the old
+        // theme and the rest wearing the new one: eight rows all reading
+        // "In Sync", rendered in two different treatments at once. Painting
+        // it from the theme pass closes that by construction, since `render`
+        // ends by calling this method - one owner, reached by both a status
+        // change and a theme change.
+        //
+        // `theme:` is passed explicitly rather than left to the parameter's
+        // `ThemeManager.shared.theme` default: this controller keeps its own
+        // `theme` copy, and a pill resolved against a different theme than
+        // the row around it is exactly the class of split this fixes.
+        ToolRowLayout.pill(text: pillText, colorHex: pillColorHex,
+                           into: row.pill, label: row.pillLabel, theme: theme)
+        let attentionHex = needsAttention ? pillColorHex : nil
         ToolRowLayout.applyTheme(
             row.toolRowViews, theme: theme, detailFailed: failed,
             cardStyle: needsAttention, attentionHex: attentionHex, accentBar: needsAttention
@@ -493,4 +517,29 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         syncAllSummaryLabel.textColor = HelmTheme.mutedInk(theme)
         for row in rows { applyThemeToRow(row) }
     }
+
+    #if FM_SELFTESTS
+    // MARK: Probe surface (debug builds only, GL-27)
+
+    var debugRowCount: Int { rows.count }
+
+    /// Drives the real status-change path a completed check takes.
+    func debugSetStatus(_ status: GitHubSyncStatus, atRow index: Int) {
+        guard rows.indices.contains(index) else { return }
+        rows[index].status = status
+        rows[index].detail = "probe"
+        render(rows[index])
+    }
+
+    /// What the pill is ACTUALLY painted with, read back off the layer and the
+    /// label rather than re-derived - the whole bug was that the painted value
+    /// and the current theme had drifted apart, so a check that re-derives
+    /// cannot see it.
+    func debugPillPaint(atRow index: Int) -> (fill: CGColor?, label: NSColor?, text: String)? {
+        guard rows.indices.contains(index) else { return nil }
+        let row = rows[index]
+        return (row.pill.layer?.backgroundColor, row.pillLabel.textColor, row.pillLabel.stringValue)
+    }
+    #endif
+
 }
