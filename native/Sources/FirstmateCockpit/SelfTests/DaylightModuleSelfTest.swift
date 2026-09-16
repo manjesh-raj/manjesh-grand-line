@@ -484,8 +484,7 @@ enum DaylightModuleSelfTest {
         // minimum column width. Anything wider only makes the text shorter.
         let narrow = HomeCanvasController.minModuleWidth
 
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 700),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1200, height: 700, styleMask: [.titled, .resizable])
         let host = NSView(frame: window.contentLayoutRect)
         window.contentView = host
 
@@ -1042,8 +1041,7 @@ enum DaylightModuleSelfTest {
 
         // Measured, not reasoned: a real window carrying the bar has to hold a
         // width well below \u{00A7}6.3's own comfortable floor.
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 200),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1200, height: 200, styleMask: [.titled, .resizable])
         window.contentViewController = bar
         for width in [CGFloat(1400), 900, 640, 520, 420] {
             window.setFrame(NSRect(x: 0, y: 0, width: width, height: 200), display: true)
@@ -1060,8 +1058,7 @@ enum DaylightModuleSelfTest {
     private static func checkCanvasAndDrillHeader(_ ok: inout Bool) {
         print("\n-- shell: the canvas is the landing, every drill page has a back button --")
         withScratchEnv {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
-                                  styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+            let window = OffScreenProbe.window(width: 1400, height: 900, styleMask: [.titled, .resizable])
             let hostStore = HostStore()
             let keyStore = SSHKeyStore()
             let snippetStore = SnippetStore()
@@ -1303,8 +1300,7 @@ enum DaylightModuleSelfTest {
         }
 
         withScratchEnv {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
-                                  styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+            let window = OffScreenProbe.window(width: 1400, height: 900, styleMask: [.titled, .resizable])
             let hostStore = HostStore()
             let keyStore = SSHKeyStore()
             let snippetStore = SnippetStore()

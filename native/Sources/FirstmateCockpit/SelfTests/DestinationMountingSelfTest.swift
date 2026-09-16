@@ -913,12 +913,7 @@ enum DestinationMountingSelfTest {
     }
 
     private static func makeMountedShell() -> (window: NSWindow, shell: AppShellController) {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1220, height: 720),
-            styleMask: [.titled, .resizable],
-            backing: .buffered,
-            defer: false
-        )
+        let window = OffScreenProbe.window(width: 1220, height: 720, styleMask: [.titled, .resizable])
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()

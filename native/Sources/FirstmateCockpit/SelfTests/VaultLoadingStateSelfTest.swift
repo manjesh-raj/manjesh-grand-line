@@ -66,8 +66,7 @@ enum VaultLoadingStateSelfTest {
 
     private static func mounted() -> (NSWindow, VaultController) {
         let controller = VaultController()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 800),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1000, height: 800)
         window.contentView = controller.view
         controller.view.frame = NSRect(x: 0, y: 0, width: 1000, height: 800)
         controller.view.layoutSubtreeIfNeeded()

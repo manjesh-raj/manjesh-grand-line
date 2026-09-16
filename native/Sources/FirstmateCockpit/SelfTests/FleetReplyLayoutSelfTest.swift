@@ -75,8 +75,7 @@ enum FleetReplyLayoutSelfTest {
         // four store dependencies off this page along with the chat, so this
         // page's whole surface is now the one store F7's reply rows read.
         let controller = FleetController(shiftStore: ShiftStore())
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 800),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1100, height: 800, styleMask: [.titled, .resizable])
         window.contentViewController = controller
         window.setFrame(NSRect(x: 0, y: 0, width: 1100, height: 800), display: false)
         controller.view.layoutSubtreeIfNeeded()

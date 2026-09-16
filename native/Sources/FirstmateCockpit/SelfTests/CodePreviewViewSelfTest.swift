@@ -74,8 +74,7 @@ enum CodePreviewViewSelfTest {
         let store = CodePreviewStore(root: scratch)
         let controller = CodePreviewController(store: store)
 
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1000, height: 700, styleMask: [.titled, .resizable])
         window.contentView = controller.view
         // A window only becomes genuinely `.visible` to the window server for
         // a process that is a UI app - a suite run from a terminal is
@@ -305,8 +304,7 @@ enum CodePreviewViewSelfTest {
 
         // The relaunch.
         let second = CodePreviewController(store: CodePreviewStore(root: root))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 900, height: 600)
         window.contentView = second.view
         window.orderFront(nil)
         guard waitFor(timeout: 30, until: { second.debugWebView.isReady }) else {
@@ -481,8 +479,7 @@ enum CodePreviewViewSelfTest {
 
         let store = CodePreviewStore(root: root)
         let controller = CodePreviewController(store: store)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 900, height: 600)
         window.contentView = controller.view
         window.orderFront(nil)
         defer { window.orderOut(nil) }
@@ -535,8 +532,7 @@ enum CodePreviewViewSelfTest {
 
         let store = CodePreviewStore(root: root)
         let controller = CodePreviewController(store: store)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 900, height: 600)
         window.contentView = controller.view
         window.orderFront(nil)
         defer { window.orderOut(nil) }

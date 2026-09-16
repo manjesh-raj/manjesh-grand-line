@@ -83,8 +83,7 @@ enum DaylightDrillPageSelfTest {
     }
 
     private static func mount(_ controller: NSViewController, width: CGFloat = 1200) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 820),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: width, height: 820)
         window.contentView = controller.view
         controller.view.frame = NSRect(x: 0, y: 0, width: width, height: 820)
         controller.view.layoutSubtreeIfNeeded()
@@ -687,8 +686,7 @@ enum DaylightDrillPageSelfTest {
 
         func floor(of controller: NSViewController, widths: [CGFloat], label: String) {
             let host = NSView(frame: NSRect(x: 0, y: 0, width: 1400, height: 800))
-            let window = NSWindow(contentRect: host.frame, styleMask: [.titled, .resizable],
-                                  backing: .buffered, defer: false)
+            let window = OffScreenProbe.window(size: host.frame.size, styleMask: [.titled, .resizable])
             window.contentView = host
             controller.view.translatesAutoresizingMaskIntoConstraints = false
             host.addSubview(controller.view)

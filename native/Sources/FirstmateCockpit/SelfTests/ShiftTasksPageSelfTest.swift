@@ -234,10 +234,10 @@ enum ShiftTasksPageSelfTest {
 
     private static func mount(store: ShiftStore) -> (ShiftController, NSWindow) {
         let controller = ShiftController(store: store)
-        // Far off-screen and `orderFront`, never `makeKeyAndOrderFront`: this
-        // machine may be running the captain's own instance.
-        let window = NSWindow(contentRect: NSRect(x: -20_000, y: 0, width: 1440, height: 940),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        // `OffScreenProbe.window(...)` and `orderFront`, never
+        // `makeKeyAndOrderFront`: this machine may be running the captain's
+        // own instance.
+        let window = OffScreenProbe.window(width: 1440, height: 940, styleMask: [.titled, .resizable])
         window.contentView = controller.view
         window.orderFront(nil)
         controller.viewWillAppear()

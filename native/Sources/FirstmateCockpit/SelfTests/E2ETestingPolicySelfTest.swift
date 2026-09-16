@@ -46,6 +46,7 @@ enum E2ETestingPolicySelfTest {
     static func run() -> Bool {
         var ok = true
         checkWindowBackedSuitesAreDeclared(&ok)
+        checkSuitesUseTheOffScreenProbeFactory(&ok)
         checkTheScriptStillOffersBothModes(&ok)
         checkThisProcessCannotReachTheCaptainsRealData(&ok)
         checkEveryGrandLineDocsStoreHonoursShiftDir(&ok)
@@ -154,19 +155,92 @@ enum E2ETestingPolicySelfTest {
 
     /// Whether a suite's source mounts a real window.
     ///
-    /// `NSWindow(` is the marker: every window-backed suite in this repo builds
-    /// its own window rather than being handed one, so the constructor call is
-    /// a reliable, greppable signal. Comment lines are stripped first, since
-    /// several suites *discuss* `NSWindow` in their headers without creating
-    /// one - counting those would add suites to the list that do not need to
-    /// be there, which costs blocking CI coverage for no reason.
+    /// `OffScreenProbe.window(` is the marker: every window-backed suite goes
+    /// through that one factory, which is what keeps its window off the
+    /// captain's display (see `OffScreenProbeWindow.swift`). A bare
+    /// `NSWindow(` still counts too - `checkSuitesUseTheOffScreenProbeFactory`
+    /// below forbids one, and a suite that reintroduces it must not *also*
+    /// fall out of the `NEEDS_SESSION` list and lose its CI coverage.
+    ///
+    /// Comment lines are stripped first, since several suites *discuss* these
+    /// names in their headers without creating a window - counting those would
+    /// add suites to the list that do not need to be there, which costs
+    /// blocking CI coverage for no reason.
     private static func mountsAWindow(_ source: String) -> Bool {
         for rawLine in source.split(separator: "\n", omittingEmptySubsequences: false) {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
             if line.hasPrefix("//") || line.hasPrefix("///") { continue }
-            if line.contains("NSWindow(") { return true }
+            if line.contains("OffScreenProbe.window(") { return true }
+            if line.contains("NSWindow(contentRect") { return true }
         }
         return false
+    }
+
+    /// No suite may build its own `NSWindow`.
+    ///
+    /// The scout report behind `OffScreenProbeWindow.swift` caught these
+    /// windows live on the captain's physical display: ~20 suites hand-rolled
+    /// `NSWindow(contentRect: NSRect(x: -20_000, ...))` and believed that
+    /// parked them off-screen, and it does not - AppKit's initial placement
+    /// ignores the origin and `orderFront` re-constrains whatever survives.
+    /// Routing every one of them through `OffScreenProbe.window(...)` is the
+    /// fix; this is what stops the next suite hand-rolling one again, because
+    /// a leaked window is invisible in a diff and only shows up as a stray
+    /// panel on someone else's screen.
+    /// The one way to build a bare window in `SelfTests/` on purpose.
+    ///
+    /// Deliberately a per-site trailing marker rather than a whole-file
+    /// exemption: the only legitimate reason to construct one is a control
+    /// case that has to observe the *unfixed* behaviour, and that is a single
+    /// line, not a file's worth of licence.
+    private static let probeExemptionMarker = "OffScreenProbe-exempt:"
+
+    private static func checkSuitesUseTheOffScreenProbeFactory(_ ok: inout Bool) {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: selfTestsDirectory, includingPropertiesForKeys: nil) else {
+            fail("could not list \(selfTestsDirectory.path)", &ok)
+            return
+        }
+        let suites = files.filter { $0.pathExtension == "swift" }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        guard suites.count >= 90 else {
+            fail("found only \(suites.count) files in SelfTests/ - has the directory moved?", &ok)
+            return
+        }
+
+        var offenders: [String] = []
+        var usingFactory = 0
+        for file in suites {
+            let name = file.lastPathComponent
+            // The factory's own file, which is the one place that is allowed
+            // to name the constructor.
+            guard name != "OffScreenProbeWindow.swift", name != "E2ETestingPolicySelfTest.swift" else { continue }
+            guard let source = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            var sawFactory = false
+            for (index, rawLine) in source.split(separator: "\n", omittingEmptySubsequences: false).enumerated() {
+                let line = rawLine.trimmingCharacters(in: .whitespaces)
+                if line.hasPrefix("//") || line.hasPrefix("///") { continue }
+                if line.contains("OffScreenProbe.window(") { sawFactory = true }
+                if line.contains("NSWindow(contentRect"), !line.contains(probeExemptionMarker) {
+                    offenders.append("\(name):\(index + 1)")
+                }
+            }
+            if sawFactory { usingFactory += 1 }
+        }
+
+        // A scan that matches nothing must fail loudly rather than pass
+        // vacuously.
+        guard usingFactory >= 30 else {
+            fail("only \(usingFactory) suite(s) use OffScreenProbe.window( - the factory's name must have "
+                 + "changed, so this guard is no longer checking anything", &ok)
+            return
+        }
+        if !offenders.isEmpty {
+            fail("\(offenders.count) self-test site(s) build a bare NSWindow instead of going through "
+                 + "OffScreenProbe.window(...): \(offenders.joined(separator: ", "))\n"
+                 + "      A hand-rolled window is not off-screen, whatever origin it is given - see "
+                 + "OffScreenProbeWindow.swift's header for the measurements.", &ok)
+        }
     }
 
     // MARK: Checks
@@ -221,6 +295,10 @@ enum E2ETestingPolicySelfTest {
         for file in suites {
             let name = file.deletingPathExtension().lastPathComponent
             guard name != "E2ETestingPolicySelfTest" else { continue }   // this file
+            // Shared helpers, not suites: they have no FM_RUN_* flag by
+            // design, and `OffScreenProbeWindow` is the one file that is
+            // *supposed* to name the window constructor.
+            guard name != "OffScreenProbeWindow", name != "SelfTestSources" else { continue }
             guard let source = try? String(contentsOf: file, encoding: .utf8) else { continue }
             guard mountsAWindow(source) else { continue }
             windowBacked += 1

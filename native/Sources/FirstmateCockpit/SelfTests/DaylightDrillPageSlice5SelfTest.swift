@@ -132,8 +132,7 @@ enum DaylightDrillPageSlice5SelfTest {
     }
 
     private static func mount(_ controller: NSViewController, width: CGFloat = 1200) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 820),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: width, height: 820)
         window.contentView = controller.view
         controller.view.frame = NSRect(x: 0, y: 0, width: width, height: 820)
         controller.view.layoutSubtreeIfNeeded()
@@ -737,8 +736,7 @@ enum DaylightDrillPageSlice5SelfTest {
                                      durationSeconds: 30, date: Date())
 
         func floor(of controller: NSViewController, label: String, reload: (() -> Void)? = nil) {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 820),
-                                  styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+            let window = OffScreenProbe.window(width: 1400, height: 820, styleMask: [.titled, .resizable])
             window.contentViewController = controller
             reload?()
             for width in [1400.0, 1100.0, 900.0] as [CGFloat] {

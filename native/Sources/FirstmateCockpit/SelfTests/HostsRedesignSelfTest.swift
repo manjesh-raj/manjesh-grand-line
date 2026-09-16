@@ -62,9 +62,11 @@ enum HostsRedesignSelfTest {
 
     /// A fresh page over scratch stores, mounted in an off-screen window.
     ///
-    /// Parked at `x: -20_000` and never made key: this machine may be running
-    /// the captain's own instance, and a suite must never put a window on their
-    /// screen or take their focus.
+    /// Built by `OffScreenProbe.window(...)` and never made key: this machine
+    /// may be running the captain's own instance, and a suite must never put a
+    /// window on their screen or take their focus. Note the parking is the
+    /// window type's own doing - an `x: -20_000` handed to `NSWindow.init` is
+    /// discarded by AppKit, which is how this used to leak.
     private static func page(hosts: [Host] = [],
                              keys: [SSHKey] = [],
                              snippets: [Snippet] = [],
@@ -90,8 +92,7 @@ enum HostsRedesignSelfTest {
             return HostSession(hostID: id, label: "live", accentHex: nil,
                                startedAt: Date().addingTimeInterval(-600), state: .connected)
         }
-        let window = NSWindow(contentRect: NSRect(x: -20_000, y: 0, width: width, height: 860),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: width, height: 860)
         window.contentView = controller.view
         controller.view.frame = NSRect(x: 0, y: 0, width: width, height: 860)
         controller.view.layoutSubtreeIfNeeded()

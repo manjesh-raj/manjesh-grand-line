@@ -72,8 +72,7 @@ enum DaylightDrillPageSlice4SelfTest {
     }
 
     private static func mount(_ controller: NSViewController, width: CGFloat = 1200) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 820),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: width, height: 820)
         window.contentView = controller.view
         controller.view.frame = NSRect(x: 0, y: 0, width: width, height: 820)
         controller.view.layoutSubtreeIfNeeded()
@@ -447,8 +446,7 @@ enum DaylightDrillPageSlice4SelfTest {
                                             status: .needsAttention(issueCount: 9))])
 
         for (name, page) in [("Log Analyzer", analyzer as NSViewController), ("Vault", vault)] {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 820),
-                                  styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+            let window = OffScreenProbe.window(width: 1400, height: 820, styleMask: [.titled, .resizable])
             window.contentView = page.view
             page.view.layoutSubtreeIfNeeded()
             // Shrink well below the page's comfortable width: a content

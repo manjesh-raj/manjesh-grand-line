@@ -332,6 +332,11 @@ NEEDS_SESSION=(
   # cases. The `claude` half runs against a disposable fake script, never the
   # real binary.
   "FM_RUN_COMMAND_LIBRARY_AI_TESTS"
+  # Builds real windows and orders them in, to prove a self-test's own window
+  # never reaches the captain's display (`OffScreenProbeWindow.swift`). It
+  # needs real `NSScreen.screens` to measure against, and says so and skips
+  # where there are none.
+  "FM_RUN_OFF_SCREEN_PROBE_TESTS"
 )
 
 # Suites that need this machine specifically, not merely a window server.

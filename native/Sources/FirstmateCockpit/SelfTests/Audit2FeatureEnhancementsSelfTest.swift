@@ -350,8 +350,7 @@ enum Audit2FeatureEnhancementsSelfTest {
 
     /// Mirrors `SessionSwitcherSelfTest.makeMountedShell`.
     private static func makeShell() -> (window: NSWindow, shell: AppShellController) {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 800),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1400, height: 800, styleMask: [.titled, .resizable])
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()
@@ -374,8 +373,7 @@ enum Audit2FeatureEnhancementsSelfTest {
     private static func makeConsole() -> (window: NSWindow, controller: ConsoleController) {
         let controller = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(),
                                            isFirstmateConsole: false)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 900, height: 600)
         window.contentViewController = controller
         controller.view.layoutSubtreeIfNeeded()
         return (window, controller)

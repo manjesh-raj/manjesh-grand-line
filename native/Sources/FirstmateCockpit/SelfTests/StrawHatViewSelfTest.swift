@@ -119,8 +119,7 @@ enum StrawHatViewSelfTest {
                                             commandLibraryStore: commandLibraryStore,
                                             stickyStore: stickyStore,
                                             scheduleStore: scheduleStore)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: width, height: height, styleMask: [.titled, .resizable])
         window.contentViewController = controller
         window.setFrame(NSRect(x: 0, y: 0, width: width, height: height), display: false)
         controller.view.layoutSubtreeIfNeeded()
@@ -180,8 +179,7 @@ enum StrawHatViewSelfTest {
         // Fleet is back to the two tabs F6 gave it. Asserted against the real
         // strip, not against the enum, so a tab left in the UI would fail.
         let fleet = FleetController(shiftStore: ShiftStore())
-        let fleetWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 800),
-                                   styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let fleetWindow = OffScreenProbe.window(width: 1100, height: 800, styleMask: [.titled, .resizable])
         fleetWindow.contentViewController = fleet
         fleet.view.layoutSubtreeIfNeeded()
         check(fleet.debugTabIDs == ["overview", "log"],
@@ -208,8 +206,7 @@ enum StrawHatViewSelfTest {
             docsRunbookStore: DocsRunbookStore(),
             codePreviewStore: CodePreviewStore(),
             commandLibraryStore: CommandLibraryStore()))
-        let canvasWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
-                                    styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let canvasWindow = OffScreenProbe.window(width: 1400, height: 900, styleMask: [.titled, .resizable])
         canvasWindow.contentViewController = canvas
         canvas.view.layoutSubtreeIfNeeded()
         canvas.debugRenderNow()
@@ -386,8 +383,7 @@ enum StrawHatViewSelfTest {
             docsRunbookStore: DocsRunbookStore(),
             codePreviewStore: CodePreviewStore(),
             commandLibraryStore: CommandLibraryStore()))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1400, height: 900, styleMask: [.titled, .resizable])
         window.contentViewController = canvas
         canvas.view.layoutSubtreeIfNeeded()
 
@@ -826,8 +822,7 @@ enum StrawHatViewSelfTest {
                 reference.trailingAnchor.constraint(equalTo: host.trailingAnchor),
                 reference.topAnchor.constraint(equalTo: host.topAnchor),
             ])
-            let refWindow = NSWindow(contentRect: host.frame, styleMask: [.titled],
-                                     backing: .buffered, defer: false)
+            let refWindow = OffScreenProbe.window(size: host.frame.size)
             refWindow.contentView = host
             reference.applyTheme(theme)
             host.layoutSubtreeIfNeeded()
@@ -1754,8 +1749,7 @@ enum StrawHatViewSelfTest {
     /// card cannot be. Every assertion is about placement and routing.
     private static func checkQuickAskCard(_ ok: inout Bool) {
         let fleet = FleetController(shiftStore: ShiftStore())
-        let fleetWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 800),
-                                   styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let fleetWindow = OffScreenProbe.window(width: 1100, height: 800, styleMask: [.titled, .resizable])
         fleetWindow.contentViewController = fleet
         fleet.view.layoutSubtreeIfNeeded()
 

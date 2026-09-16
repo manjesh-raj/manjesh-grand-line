@@ -421,8 +421,7 @@ enum CommandLibraryAISelfTest {
                                          command: DevOpsCommand) -> CommandLibraryAIViewController? {
         let controller = CommandLibraryAIController()
         let host = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 40))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 400, height: 300)
         window.contentView?.addSubview(host)
         let content = controller.debugContent
         _ = content.view          // force loadView

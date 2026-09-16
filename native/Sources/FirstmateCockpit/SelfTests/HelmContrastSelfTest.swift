@@ -1103,8 +1103,7 @@ enum HelmContrastSelfTest {
         inner.addArrangedSubview(row2)
         row2.widthAnchor.constraint(equalTo: inner.widthAnchor).isActive = true
         vc.view = content
-        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
-                           styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let win = OffScreenProbe.window(width: 400, height: 300, styleMask: [.titled, .resizable])
         win.contentViewController = vc
         win.setFrame(NSRect(x: -30000, y: -30000, width: target, height: 300), display: false)
         win.layoutIfNeeded()
@@ -1165,8 +1164,7 @@ enum HelmContrastSelfTest {
         tightStack.addArrangedSubview(row3)
         row3.widthAnchor.constraint(equalTo: tightStack.widthAnchor).isActive = true
         tightVC.view = tightHost
-        let tightWin = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 200),
-                                styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let tightWin = OffScreenProbe.window(width: 400, height: 200, styleMask: [.titled, .resizable])
         tightWin.contentViewController = tightVC
         tightWin.setFrame(NSRect(x: -30000, y: -30000, width: narrow, height: 200), display: false)
         tightWin.layoutIfNeeded()

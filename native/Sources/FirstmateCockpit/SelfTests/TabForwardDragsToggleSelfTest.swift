@@ -79,12 +79,7 @@ enum TabForwardDragsToggleSelfTest {
     /// `ConsoleController` mounted in a real, off-screen `NSWindow`.
     private static func makeTestConsole() -> (window: NSWindow, controller: ConsoleController) {
         let controller = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(), isFirstmateConsole: false)
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
-            styleMask: [.titled],
-            backing: .buffered,
-            defer: false
-        )
+        let window = OffScreenProbe.window(width: 900, height: 600)
         window.contentViewController = controller
         controller.view.layoutSubtreeIfNeeded()
         return (window, controller)

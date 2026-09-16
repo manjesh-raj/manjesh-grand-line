@@ -526,8 +526,7 @@ enum WindowChromeFusionSelfTest {
     /// view owns its bottom edge, or a title-only page parks its title above
     /// an empty line instead of centring it in the bar.
     private static func test_a2TitleOnlyCollapsesTheSubtitle() -> String? {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: rowHeight),
-                              styleMask: [.borderless], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 600, height: rowHeight, styleMask: [.borderless])
         let header = HelmDrillHeader()
         header.translatesAutoresizingMaskIntoConstraints = false
         let root = window.contentView!
@@ -822,9 +821,11 @@ enum WindowChromeFusionSelfTest {
         // The traffic-light widgets ignore a click in a window that is not
         // key - measured: with `orderFront` alone this case reports a dead
         // zoom against the *fixed* code too, which would make it useless.
-        // `makeKey` on a window parked at x=-20_000 in an `.accessory`
-        // process shows nothing and does not activate the app, so it never
-        // takes focus from whatever the captain is looking at.
+        // `makeKey` on an `OffScreenProbe` window in an `.accessory` process
+        // reaches no display and does not activate the app, so it never takes
+        // focus from whatever the captain is looking at. (The parking is the
+        // window type's own doing - see `OffScreenProbeWindow.swift`; the
+        // `x: -20_000` this comment used to credit was discarded by AppKit.)
         window.makeKeyAndOrderFront(nil)
         root.layoutSubtreeIfNeeded()
 
@@ -901,22 +902,26 @@ enum WindowChromeFusionSelfTest {
 
     private static func makeWindow(fused: Bool) -> NSWindow {
         let mask: NSWindow.StyleMask = [.titled, .closable, .miniaturizable, .resizable]
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1220, height: 720),
-                              styleMask: mask, backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1220, height: 720, styleMask: mask)
         window.title = "Probe"
         let controller = NSViewController()
         controller.view = NSView(frame: NSRect(x: 0, y: 0, width: 1220, height: 720))
         window.contentViewController = controller
         if fused { WindowChromeFusion.apply(to: window) }
-        window.setFrame(NSRect(x: -20_000, y: 0, width: 1220, height: 720), display: false)
+        // A *frame* of this size, not a content rect. `test_a1FusionReclaimsHeight`
+        // measures the fused window's content view growing into the reclaimed
+        // 32pt titlebar, which is only a difference if the stock and fused
+        // windows have the same outer frame. The origin is the probe window's
+        // own pinned one - see `OffScreenProbeWindow.swift`.
+        window.setFrame(NSRect(origin: window.frame.origin, size: NSSize(width: 1220, height: 720)),
+                        display: false)
         window.orderFront(nil)
         return window
     }
 
     private static func makeMountedShell() -> (window: NSWindow, shell: AppShellController) {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1220, height: 720),
-                              styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-                              backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1220, height: 720,
+                                           styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView])
         WindowChromeFusion.apply(to: window)
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
@@ -933,7 +938,10 @@ enum WindowChromeFusionSelfTest {
                                                  isFirstmateConsole: false) }
         )
         window.contentViewController = shell
-        window.setFrame(NSRect(x: -20_000, y: 0, width: 1220, height: 720), display: false)
+        // Frame, not content rect - the A2/A3 cases measure the bar against the
+        // window's own height. The origin is pinned off-screen by the probe.
+        window.setFrame(NSRect(origin: window.frame.origin, size: NSSize(width: 1220, height: 720)),
+                        display: false)
         return (window, shell)
     }
 

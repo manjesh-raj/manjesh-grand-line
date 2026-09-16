@@ -63,8 +63,7 @@ enum InputSurfaceSelfTest {
     /// A real window with a real content view, laid out once so every control
     /// has a frame. Never ordered front.
     private static func makeWindow(_ views: [NSView], height: CGFloat = 240) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: height),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 520, height: height)
         let content = NSView(frame: NSRect(x: 0, y: 0, width: 520, height: height))
         window.contentView = content
         var previous: NSView?

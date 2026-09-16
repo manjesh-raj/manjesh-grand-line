@@ -86,8 +86,7 @@ enum DaylightDrillPageSlice2SelfTest {
     }
 
     private static func mount(_ controller: NSViewController, width: CGFloat = 1200) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 820),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: width, height: 820)
         window.contentView = controller.view
         controller.view.frame = NSRect(x: 0, y: 0, width: width, height: 820)
         controller.view.layoutSubtreeIfNeeded()
@@ -272,8 +271,7 @@ enum DaylightDrillPageSlice2SelfTest {
         // make the "did not move" comparison below vacuous.
         let host = ConsoleController(keyStore: keyStore, snippetStore: snippetStore,
                                      isFirstmateConsole: false)
-        let hostWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 820),
-                                  styleMask: [.titled], backing: .buffered, defer: false)
+        let hostWindow = OffScreenProbe.window(width: 1200, height: 820)
         hostWindow.contentViewController = host
         host.view.layoutSubtreeIfNeeded()
         defer { _ = hostWindow }
@@ -330,8 +328,7 @@ enum DaylightDrillPageSlice2SelfTest {
         // never show the card in any palette.
         let shared = ConsoleController(keyStore: keyStore, snippetStore: snippetStore,
                                        isFirstmateConsole: true)
-        let sharedWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 820),
-                                    styleMask: [.titled], backing: .buffered, defer: false)
+        let sharedWindow = OffScreenProbe.window(width: 1200, height: 820)
         sharedWindow.contentViewController = shared
         defer { _ = sharedWindow }
         shared.view.layoutSubtreeIfNeeded()
@@ -552,9 +549,7 @@ enum DaylightDrillPageSlice2SelfTest {
         ServiceHealthRegistry.shared.recordSuccess(.scheduledAutomations)
 
         func floor(of controller: NSViewController, label: String, widths: [CGFloat]) {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: widths[0], height: 820),
-                                  styleMask: [.titled, .resizable],
-                                  backing: .buffered, defer: false)
+            let window = OffScreenProbe.window(width: widths[0], height: 820, styleMask: [.titled, .resizable])
             window.contentViewController = controller
             for width in widths {
                 window.setFrame(NSRect(x: 0, y: 0, width: width, height: 820), display: true)

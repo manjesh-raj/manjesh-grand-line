@@ -130,8 +130,7 @@ enum UpdatesRefreshButtonThemeSelfTest {
     }
 
     private static func mount(_ controller: NSViewController, width: CGFloat = 900) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 720),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: width, height: 720)
         window.contentView = controller.view
         controller.view.frame = NSRect(x: 0, y: 0, width: width, height: 720)
         controller.view.layoutSubtreeIfNeeded()

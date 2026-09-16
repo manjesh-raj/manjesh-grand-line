@@ -1949,6 +1949,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_E2E_TESTING_POLICY_TESTS"] == "1"
     exit(E2ETestingPolicySelfTest.run() ? 0 : 1)
 }
 
+// Proof that a self-test's own window never reaches the captain's display -
+// the measured half of `OffScreenProbeWindow.swift`, whose predecessor
+// convention was documented as invisible and was not.
+if ProcessInfo.processInfo.environment["FM_RUN_OFF_SCREEN_PROBE_TESTS"] == "1" {
+    exit(OffScreenProbeSelfTest.run() ? 0 : 1)
+}
+
 // The full-app audit's §7: regression coverage for the Docs Playbook's
 // WKWebView subresource-cache fix (`fm/grandline-docs-webview-cache-fix`),
 // which shipped with none.

@@ -120,8 +120,7 @@ enum DaylightDrillPageSlice6SelfTest {
     }
 
     private static func mount(_ controller: NSViewController, width: CGFloat = 1400) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 900),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: width, height: 900)
         window.contentView = controller.view
         controller.view.frame = NSRect(x: 0, y: 0, width: width, height: 900)
         controller.view.layoutSubtreeIfNeeded()
@@ -338,8 +337,7 @@ enum DaylightDrillPageSlice6SelfTest {
         let longest = ToolKind.allCases.max { $0.description.count < $1.description.count }!
         let maxLines = ToolsController.plateNoteLinesForTests
 
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 700),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1200, height: 700, styleMask: [.titled, .resizable])
         let host = NSView(frame: window.contentLayoutRect)
         window.contentView = host
         defer { window.close() }
@@ -719,8 +717,7 @@ enum DaylightDrillPageSlice6SelfTest {
 
         for (name, controller) in [("Tools", ToolsController() as NSViewController),
                                    ("Settings", makeSettings() as NSViewController)] {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1500, height: 900),
-                                  styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+            let window = OffScreenProbe.window(width: 1500, height: 900, styleMask: [.titled, .resizable])
             window.contentViewController = controller
             for width in [CGFloat(1500), 1100, 900, 760, 1400] {
                 window.setFrame(NSRect(x: 0, y: 0, width: width, height: 900), display: true)

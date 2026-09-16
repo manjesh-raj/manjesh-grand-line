@@ -87,13 +87,13 @@ enum IncidentResumeSelfTest {
 
     /// A real host-page console in a real off-screen window.
     ///
-    /// Ordered far off-screen and never made key: this machine runs the
-    /// captain's own instance, and a suite must not take focus.
+    /// Built by `OffScreenProbe.window(...)`, so it cannot reach a display,
+    /// and never made key: this machine runs the captain's own instance, and
+    /// a suite must not take focus.
     private static func makeHostConsole(identity: ConsoleHostIdentity?) -> (NSWindow, ConsoleController) {
         let controller = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(),
                                            isFirstmateConsole: false)
-        let window = NSWindow(contentRect: NSRect(x: -20_000, y: -20_000, width: 900, height: 600),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 900, height: 600)
         window.contentViewController = controller
         controller.hostIdentity = identity
         controller.view.layoutSubtreeIfNeeded()
@@ -211,8 +211,7 @@ enum IncidentResumeSelfTest {
             _ = seedIncident(root: root, title: "belongs to a host page")
             let controller = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(),
                                                isFirstmateConsole: true)
-            let window = NSWindow(contentRect: NSRect(x: -20_000, y: -20_000, width: 900, height: 600),
-                                  styleMask: [.titled], backing: .buffered, defer: false)
+            let window = OffScreenProbe.window(width: 900, height: 600)
             window.contentViewController = controller
             controller.view.layoutSubtreeIfNeeded()
             defer { _ = window }

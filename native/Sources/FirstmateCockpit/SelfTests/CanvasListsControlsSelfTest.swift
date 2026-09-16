@@ -757,7 +757,8 @@ enum CanvasListsControlsSelfTest {
 
     // MARK: - Harness
 
-    /// A window far off-screen and merely ordered front - never
+    /// A window built by `OffScreenProbe.window(...)` - structurally unable to
+    /// reach a display - and merely ordered front, never
     /// `makeKeyAndOrderFront`/`activate`. The captain's own instance shares
     /// this machine, and a suite has no business taking their focus.
     ///
@@ -766,9 +767,7 @@ enum CanvasListsControlsSelfTest {
     /// ordered in has no `windowNumber`, and events routed at it go nowhere -
     /// which reads exactly like "the handler is not wired".
     private static func makeWindow(_ content: NSView, size: NSSize) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(origin: NSPoint(x: -20_000, y: 0), size: size),
-                              styleMask: [.titled, .resizable],
-                              backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(size: size, styleMask: [.titled, .resizable])
         window.contentView = content
         window.orderFront(nil)
         content.layoutSubtreeIfNeeded()

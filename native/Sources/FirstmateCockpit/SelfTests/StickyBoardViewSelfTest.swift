@@ -46,8 +46,7 @@ enum StickyBoardViewSelfTest {
             }
         }
 
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 620),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 900, height: 620, styleMask: [.titled, .resizable])
         let controller = StickyBoardController()
         window.contentView = controller.view
         // A window only becomes genuinely composited for a process that is a
@@ -104,8 +103,7 @@ enum StickyBoardViewSelfTest {
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = true
         scroll.documentView = canvas
-        let window = NSWindow(contentRect: NSRect(x: -20_000, y: -20_000, width: 600, height: 400),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 600, height: 400)
         window.contentView = scroll
         window.contentView?.layoutSubtreeIfNeeded()
 

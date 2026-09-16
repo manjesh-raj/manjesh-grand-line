@@ -116,8 +116,7 @@ enum RecentDestinationsSelfTest {
     /// `SessionSwitcherSelfTest.makeMountedShell` so both suites drive the
     /// same real object graph.
     private static func makeMountedShell() -> (window: NSWindow, shell: AppShellController, keyStore: SSHKeyStore, snippetStore: SnippetStore) {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 800),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1400, height: 800, styleMask: [.titled, .resizable])
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()
@@ -624,8 +623,7 @@ enum RecentDestinationsSelfTest {
 
     private static func test_barButtonSitsBeforeStickyBoardAfterSearch() -> String? {
         let bar = DaylightBarController()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 80),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1400, height: 80)
         window.contentViewController = bar
         bar.view.layoutSubtreeIfNeeded()
 

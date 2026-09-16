@@ -266,12 +266,7 @@ enum BootstrapWindowShrinkSelfTest {
     /// the content's fitting size in the first place. Parked far off screen so
     /// it can never disturb anything on a shared machine.
     private static func makeMountedShell() -> (window: NSWindow, shell: AppShellController) {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1220, height: 720),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
+        let window = OffScreenProbe.window(width: 1220, height: 720, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView])
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()

@@ -469,7 +469,7 @@ final class AppShellController: NSViewController {
             // `isActive` checks. Only a genuine break or a genuinely stale
             // frame pays for a resolve (4 across a launch plus four resizes,
             // all of them real work).
-            self.reassertBodyContainerWidthTie()
+            self.reassertBodyContainerWidthTie(insideLayoutPass: true)
         }
         view = root
 
@@ -1273,13 +1273,27 @@ final class AppShellController: NSViewController {
     /// point of #231's fix is that the frame is correct *immediately* after a
     /// resize, and `AppShellBodyWidthSelfTest` asserts exactly that
     /// synchronously.
-    private func reassertBodyContainerWidthTie() {
-        // `fm/grand-line-body-width-selfheal-layout-fix`: this now also runs
-        // from `ChromeFusionRootView.layout()`, and it *ends* by forcing a
-        // layout pass - so a repair re-enters `layout()` -> `onLayout` ->
-        // here. That is bounded on its own whenever the repair succeeds (the
-        // second entry finds the tie active and the width correct, and
-        // returns), and **measured: removing this guard does not hang or
+    /// - Parameter insideLayoutPass: `true` only from
+    ///   `ChromeFusionRootView.layout()`. AppKit forbids a nested
+    ///   `layoutSubtreeIfNeeded()` while a view is already being laid out -
+    ///   "It's not legal to call -layoutSubtreeIfNeeded on a view which is
+    ///   already being laid out. If you are implementing the view's -layout
+    ///   method, you can call -[super layout] instead." - and on macOS 14 that
+    ///   is a trap, not a log: it crashed `AppShellBodyWidthSelfTest` with
+    ///   `Trace/BPT trap: 5` on CI. It needs no nested pass either, because it
+    ///   is already inside one: marking the view dirty schedules the very next
+    ///   pass, which is where the repair lands. Only the callers that are *not*
+    ///   in a layout pass (launch, and the resize notification) force one.
+    private func reassertBodyContainerWidthTie(insideLayoutPass: Bool = false) {
+        // `fm/grand-line-body-width-selfheal-layout-fix`: this also runs from
+        // `ChromeFusionRootView.layout()`. It used to force a layout pass from
+        // there too, which re-entered `layout()` -> `onLayout` -> here; that is
+        // what `insideLayoutPass` (above) now stops, because AppKit traps on a
+        // nested pass. This guard still covers the callers that *do* force one
+        // (launch, and the resize notification): a repair re-enters, and that
+        // is bounded on its own whenever it succeeds (the second entry finds
+        // the tie active and the width correct, and returns), and **measured:
+        // removing this guard does not hang or
         // recurse in `AppShellBodyWidthSelfTest`.** It is kept because the
         // one case it protects is exactly the case this whole repair exists
         // for: a required-constraint conflict the resolve cannot actually
@@ -1323,8 +1337,29 @@ final class AppShellController: NSViewController {
         // before this task and exercises only the resize path - fails with
         // the body frozen at its pre-break 1512.
         view.needsLayout = true
+        #if FM_SELFTESTS
+        // Proves the guard below is genuinely reached - it was, 12 times in
+        // `AppShellBodyWidthSelfTest` - so a check that the forcing count is
+        // zero cannot pass just because nothing ever got here.
+        if insideLayoutPass { AppShellController.repairsInsideALayoutPassForTests += 1 }
+        #endif
+        guard !insideLayoutPass else { return }
+        #if FM_SELFTESTS
+        // Unreachable with the guard above in place; 12 without it. This is the
+        // count that must stay 0 - AppKit traps on a nested layout pass.
+        if insideLayoutPass { AppShellController.nestedLayoutForcingsForTests += 1 }
+        #endif
         view.layoutSubtreeIfNeeded()
     }
+
+    #if FM_SELFTESTS
+    /// How many times the repair ran *from inside* `ChromeFusionRootView.layout()`.
+    /// Non-zero is what stops the guard below passing vacuously.
+    static var repairsInsideALayoutPassForTests = 0
+    /// How many times it forced a nested `layoutSubtreeIfNeeded()` from inside a
+    /// layout pass. Must stay 0 - AppKit traps on it (macOS 14).
+    static var nestedLayoutForcingsForTests = 0
+    #endif
 
     /// Re-entrancy guard for the above - see its own doc comment.
     private var isReassertingBodyContainerWidthTie = false

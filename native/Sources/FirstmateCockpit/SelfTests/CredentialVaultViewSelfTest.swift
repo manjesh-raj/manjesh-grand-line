@@ -73,11 +73,10 @@ enum CredentialVaultViewSelfTest {
         AppLockGate.shared.setLocked(false)
         defer { AppLockGate.shared.setLocked(wasLocked) }
 
-        let window = NSWindow(contentRect: NSRect(x: -20_000, y: 0, width: 1200, height: 700),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1200, height: 700, styleMask: [.titled, .resizable])
         NSApp.setActivationPolicy(.accessory)
-        // Ordered front - far off-screen, so nothing appears on the captain's
-        // display - because a window that was never ordered in reports
+        // Ordered front - an `OffScreenProbe` window stays off every display
+        // even while ordered in and key - because a window never ordered in reports
         // `isVisible == false`, which several visibility gates read. Never
         // `makeKeyAndOrderFront`/`activate`: this machine runs the captain's
         // own instance.
@@ -1004,8 +1003,7 @@ enum CredentialVaultViewSelfTest {
     /// cheaper deterministic stand-in for the real thing.
     private static func checkListBodyFillsItsCard(_ check: (Bool, String) -> Void) {
         print("\n-- the list is on screen, not just in the data source --")
-        let window = NSWindow(contentRect: NSRect(x: -20_000, y: 0, width: 1220, height: 720),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1220, height: 720, styleMask: [.titled, .resizable])
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()

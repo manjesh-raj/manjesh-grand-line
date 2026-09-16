@@ -76,12 +76,7 @@ enum BlockViewHierarchySelfTest {
     /// differently in some Auto Layout edge cases than one that's fully
     /// mounted the way production code actually has it.
     private static func makeMountedContainer() -> (window: NSWindow, root: NSView, container: BlockContainerView) {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 480),
-            styleMask: [.titled],
-            backing: .buffered,
-            defer: false
-        )
+        let window = OffScreenProbe.window(width: 640, height: 480)
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 480))
         window.contentView = root
 

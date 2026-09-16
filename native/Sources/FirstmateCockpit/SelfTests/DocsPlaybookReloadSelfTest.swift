@@ -102,11 +102,11 @@ enum DocsPlaybookReloadSelfTest {
     }
 
     private static func mount(_ controller: NSViewController) -> NSWindow {
-        // Ordered front so WebKit gives the page a live content process, but
-        // positioned far off-screen: this machine may be running the captain's
-        // own instance, and a suite must never put a window on their display.
-        let window = NSWindow(contentRect: NSRect(x: -20_000, y: -20_000, width: 1200, height: 800),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        // Ordered front so WebKit gives the page a live content process.
+        // `OffScreenProbe.window(...)` is what keeps it off every display
+        // while it is: this machine may be running the captain's own instance,
+        // and a suite must never put a window on their screen.
+        let window = OffScreenProbe.window(width: 1200, height: 800)
         window.contentViewController = controller
         window.orderFront(nil)
         controller.view.layoutSubtreeIfNeeded()
