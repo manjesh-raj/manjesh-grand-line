@@ -616,6 +616,18 @@ final class FleetController: NSViewController {
         return logContainer
     }
 
+    /// Show the captain's log.
+    ///
+    /// A deep link, for a caller that wants the app's activity feed rather
+    /// than this page's dashboard - today the Hosts sidebar's TOOLS > Activity
+    /// row. Goes through `switchTab` rather than re-deriving anything, so the
+    /// pill, the two containers and the feed's own re-render all happen
+    /// exactly as they do for a click.
+    func showLogTab() {
+        guard isViewLoaded else { return }
+        switchTab(.log)
+    }
+
     private func switchTab(_ tab: OverviewTab) {
         activeTab = tab
         // Keeps the pill right when the tab was changed from somewhere other

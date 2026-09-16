@@ -931,6 +931,14 @@ final class DaylightBarController: NSViewController {
     func debugLogoutClicked() { logoutClicked() }
     #endif
 
+    /// Ask for the logout confirmation and, if it is accepted, log out.
+    ///
+    /// Exposed so a second affordance (the Hosts sidebar's user row) reaches
+    /// the **same** single confirmation - one definition of the copy, the
+    /// destructiveness and the Return mapping, rather than a near-copy that
+    /// drifts.
+    func requestLogout() { logoutClicked() }
+
     private func logoutClicked() {
         // G3: themed; Return still logs out, as it did here.
         guard HelmConfirm.confirm(

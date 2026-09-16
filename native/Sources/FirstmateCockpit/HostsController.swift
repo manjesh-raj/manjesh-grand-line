@@ -145,6 +145,41 @@ final class HostsController: NSViewController, DaylightDrillActions {
     /// the detail panel simply re-fills from whichever list is showing.
     private let sideStack = HostsSideStack()
 
+    /// The reference mockup's **left** navigation column.
+    ///
+    /// `fm/grand-line-hosts-page-redesign` scoped one out by name ("this
+    /// page's nav is its three tabs, and a `HelmPageSidebar` duplicating them
+    /// would be the same control twice, a row apart"); the captain used what
+    /// that shipped, put it beside his own reference, and asked for the column
+    /// back - the same correction Schedules already took in
+    /// `fm/grand-line-schedules-sidebar-fullwidth-fix`. See
+    /// `HostsSidebar.swift`'s header for the full note, including why the tab
+    /// strip stays and how the two are kept as one mechanism.
+    private let sidebar = HelmPageSidebar(surface: .panel, countStyle: .badge)
+    private let keychainCard = HostsKeychainCard()
+    private let userRow = HostsUserRow()
+
+    /// The sidebar's TOOLS rows. Both forwarded rather than reached for - this
+    /// page has never known what an `AppShellController` is, and a nav row
+    /// must not be the first thing to teach it (the same shape as
+    /// `onOpenCommandPalette` above).
+    ///
+    /// **Both point at something real**, which is the rule a nav row lives or
+    /// dies by here: `onOpenActivity` opens the app's own captain's log (the
+    /// one activity feed it has, and the one that carries the host-scoped
+    /// incident and investigation events), and `onOpenCommands` opens the
+    /// DevOps Commands destination. The reference's other sidebar entries have
+    /// nothing behind them and are absent rather than drawn inert, exactly as
+    /// `CredentialVaultSidebar` and `SchedulesController` each decided for
+    /// their own reference's extra rows.
+    var onOpenActivity: (() -> Void)?
+    var onOpenCommands: (() -> Void)?
+    /// The user row's two menu items, routed by the shell into the *same*
+    /// `show(.settings)` and the same single logout confirmation the floating
+    /// bar's avatar uses - never a second copy of either.
+    var onOpenSettings: (() -> Void)?
+    var onLogout: (() -> Void)?
+
     /// The reference's `.filterbar`. "Online" is the one of its three chips
     /// this app can actually answer - the app's `HostSessionRegistry` knows
     /// which hosts have a live session (`liveSession`). Its "All environments"
@@ -241,6 +276,8 @@ final class HostsController: NSViewController, DaylightDrillActions {
         // anchors: activating a constraint between two views with no common
         // ancestor throws (`fm/grandline-docs-no-window-fix`'s own finding).
         root.addSubview(sideStack)
+        root.addSubview(sidebar)
+        buildSidebar()
 
         buildHostsTab()
         buildKeysTab()
@@ -281,7 +318,20 @@ final class HostsController: NSViewController, DaylightDrillActions {
             column.topAnchor.constraint(equalTo: root.topAnchor, constant: HelmMetrics.s5),
             column.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -HelmMetrics.pageGutter),
 
-            tabs.leadingAnchor.constraint(equalTo: column.leadingAnchor),
+            // The nav column sits at the page's leading edge; everything else
+            // starts after it. A `HelmPageSidebar` is deliberately **outside**
+            // any scroll view the page has, for the reason `SchedulesController`
+            // records: it is navigation, so it has to stay reachable.
+            sidebar.leadingAnchor.constraint(equalTo: column.leadingAnchor),
+            sidebar.topAnchor.constraint(equalTo: column.topAnchor),
+            // A **required** `==`, not the `<=` Poneglyph and Schedules use:
+            // this column carries a bottom-anchored footer (the keychain card
+            // and the user row), and that footer only reaches the page's
+            // bottom if the column does - see `HelmPageSidebar.setFooter`.
+            sidebar.bottomAnchor.constraint(equalTo: column.bottomAnchor),
+
+            tabs.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor,
+                                          constant: HelmMetrics.s4),
             // The tab row sits over the content column only. Letting it span
             // the side stack too would imply the panels beside it switch with
             // the tab, which is exactly what they do not do.
@@ -313,7 +363,8 @@ final class HostsController: NSViewController, DaylightDrillActions {
             tabView.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(tabView)
             NSLayoutConstraint.activate([
-                tabView.leadingAnchor.constraint(equalTo: column.leadingAnchor),
+                tabView.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor,
+                                                 constant: HelmMetrics.s4),
                 tabView.trailingAnchor.constraint(equalTo: sideStack.leadingAnchor,
                                                   constant: -HelmMetrics.s4),
                 tabView.topAnchor.constraint(equalTo: tabs.bottomAnchor, constant: HelmMetrics.s4),
@@ -351,6 +402,84 @@ final class HostsController: NSViewController, DaylightDrillActions {
     /// window itself has to give. Held *below* `NSLayoutPriorityWindowSizeStayPut`
     /// at the one place it is applied, so it can never become a window floor.
     static let contentMinimumWidth: CGFloat = 360
+
+    // MARK: The sidebar
+
+    /// Row ids. The three WORKSPACE rows reuse `HostsTab`'s own raw values, so
+    /// the sidebar and the tab strip are keyed by one vocabulary and a switch
+    /// from either control resolves to the same `HostsTab` - that shared key is
+    /// what makes them one mechanism rather than two controls that have to be
+    /// remembered to agree.
+    private static let activityRowID = "tools.activity"
+    private static let commandsRowID = "tools.commands"
+
+    private func buildSidebar() {
+        sidebar.appendHeader("Workspace")
+        for tab in HostsTab.allCases {
+            sidebar.appendRow(id: tab.rawValue, symbol: Self.sidebarSymbol(for: tab), title: tab.title)
+        }
+        sidebar.appendSpacer()
+        sidebar.appendHeader("Tools")
+        // **Actions, not filters**: neither narrows the list below, so neither
+        // may latch selected - a row that stayed lit would claim the list had
+        // been filtered to something (`HelmPageSidebar.RowKind`).
+        sidebar.appendRow(id: Self.activityRowID, symbol: "clock.arrow.circlepath",
+                          title: "Activity", kind: .action, showsCount: false)
+        sidebar.appendRow(id: Self.commandsRowID, symbol: "list.bullet.rectangle",
+                          title: "Commands", kind: .action, showsCount: false)
+        sidebar.select(activeTab.rawValue)
+
+        sidebar.onSelect = { [weak self] id in
+            guard let self else { return }
+            switch id {
+            case Self.activityRowID: self.onOpenActivity?()
+            case Self.commandsRowID: self.onOpenCommands?()
+            default:
+                guard let tab = HostsTab(rawValue: id) else { return }
+                self.select(tab: tab)
+            }
+        }
+
+        userRow.onOpenSettings = { [weak self] in self?.onOpenSettings?() }
+        userRow.onLogout = { [weak self] in self?.onLogout?() }
+
+        let footer = NSStackView(views: [keychainCard, userRow])
+        footer.orientation = .vertical
+        footer.alignment = .leading
+        footer.spacing = HelmMetrics.s2
+        footer.translatesAutoresizingMaskIntoConstraints = false
+        for row in [keychainCard, userRow] as [NSView] {
+            row.widthAnchor.constraint(equalTo: footer.widthAnchor).isActive = true
+        }
+        sidebar.setFooter(footer)
+    }
+
+    /// Each row takes the glyph its own card header already uses, so one
+    /// concept is not drawn two ways a column apart.
+    private static func sidebarSymbol(for tab: HostsTab) -> String {
+        switch tab {
+        case .hosts: return "server.rack"
+        case .keys: return "key.fill"
+        case .snippets: return "chevron.left.forwardslash.chevron.right"
+        }
+    }
+
+    /// The nav counts and the keychain card, from the same three stores the
+    /// lists render and the same biometry probe the Workspace panel reads - so
+    /// the two columns either side of the page can never disagree within a
+    /// frame.
+    private func refreshSidebar() {
+        let hosts = hostStore.hosts
+        sidebar.setCounts([
+            HostsTab.hosts.rawValue: hosts.count,
+            HostsTab.keys.rawValue: keyStore.keys.count,
+            HostsTab.snippets.rawValue: snippetStore.snippets.count,
+        ])
+        keychainCard.setState(keys: keyStore.keys.count,
+                              hostsOnManagedKeys: hosts.filter { $0.keyID != nil }.count,
+                              hosts: hosts.count,
+                              touchIDAvailable: CredentialVaultKeyStore.biometryAvailable)
+    }
 
     // MARK: Side panels
 
@@ -647,6 +776,10 @@ final class HostsController: NSViewController, DaylightDrillActions {
     func select(tab: HostsTab, moveTabControl: Bool = true) {
         activeTab = tab
         if moveTabControl { tabs?.select(tab.rawValue) }
+        // One mechanism, two controls: `select(_:)` moves the row without
+        // firing `onSelect`, so a switch from either side lands in exactly one
+        // place and the two can never show different tabs.
+        sidebar.select(tab.rawValue)
         hostsTabView.isHidden = tab != .hosts
         keysTabView.isHidden = tab != .keys
         snippetsTabView.isHidden = tab != .snippets
@@ -711,11 +844,15 @@ final class HostsController: NSViewController, DaylightDrillActions {
         keysList.applyTheme(theme)
         snippetsList.applyTheme(theme)
         sideStack.applyTheme(theme)
+        sidebar.applyTheme(theme)
+        keychainCard.applyTheme(theme)
+        userRow.applyTheme(theme)
     }
 
     // MARK: Hosts data
 
     private func reloadHosts() {
+        refreshSidebar()
         rebuildTagChips()
         applyHostFilter(searchField.stringValue)
     }
@@ -844,6 +981,12 @@ final class HostsController: NSViewController, DaylightDrillActions {
     func debugHostRowItem(labelled label: String) -> HostsListSection.Item? {
         lastHostItems.first { $0.isRecord && $0.content.title == label }
     }
+
+    /// The nav column and its footer, so a suite can assert what they are
+    /// really showing rather than re-deriving it from the stores.
+    var debugSidebar: HelmPageSidebar { sidebar }
+    var debugKeychainCard: HostsKeychainCard { keychainCard }
+    var debugUserRow: HostsUserRow { userRow }
     #endif
 
     private func normalizedGroup(_ host: Host) -> String? {
@@ -950,6 +1093,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
     // MARK: Keys data
 
     private func reloadKeys() {
+        refreshSidebar()
         var items = keyStore.keys.map { keyItem($0) }
         if items.isEmpty {
             items = [.empty(symbol: "key.fill",
@@ -987,6 +1131,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
     // MARK: Snippets data
 
     private func reloadSnippets() {
+        refreshSidebar()
         var items = snippetStore.snippets.map { snippetItem($0) }
         if items.isEmpty {
             items = [.empty(symbol: "chevron.left.forwardslash.chevron.right",

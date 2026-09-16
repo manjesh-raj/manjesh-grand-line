@@ -185,6 +185,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // makes the button do what its label says. Forwarded rather than
         // reached for - that page has never known what an `AppDelegate` is.
         hostsPanel.onOpenCommandPalette = { [weak self] in self?.showUnifiedSearch() }
+        // The Hosts sidebar's TOOLS rows and its user row. Every one opens
+        // something that really exists - see `HostsController.onOpenActivity`
+        // for why a nav row with nothing behind it is absent here rather than
+        // drawn inert.
+        hostsPanel.onOpenActivity = { [weak self] in self?.appShell.openFleetLog() }
+        hostsPanel.onOpenCommands = { [weak self] in self?.appShell.show(.commandLibrary) }
+        hostsPanel.onOpenSettings = { [weak self] in self?.appShell.show(.settings) }
+        hostsPanel.onLogout = { [weak self] in self?.appShell.requestLogout() }
         // Nav-redesign task, item 3: Add/Edit Host is a dedicated full-page
         // window, not a sheet on this ~240pt-wide panel.
         appShell.onPresentHostEditor = { [weak self] host in
