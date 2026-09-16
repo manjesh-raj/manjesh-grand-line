@@ -537,7 +537,39 @@ final class HostsController: NSViewController, DaylightDrillActions {
 
         // The reference's `.filterbar`, beside the tag chips it already had:
         // one real toggle ("Online"), and no invented ones - see `onlineChip`.
-        let filterRow = NSStackView(views: [onlineChip, tagsScroll])
+        //
+        // `filterSpacer` is a flexible trailing member that is ALWAYS in
+        // layout, and it is load-bearing rather than tidiness.
+        //
+        // Without it the row's only flexible member is `tagsScroll` - which
+        // `rebuildTagChips` hides whenever no host carries a tag. That is the
+        // common case, and it is the captain's own data: his hosts record an
+        // environment in `group`, not in `tags`. An `NSStackView` drops a
+        // hidden arranged subview out of layout entirely (gotcha (11)'s own
+        // stack exemption), so the row becomes just `onlineChip` - whose
+        // horizontal hugging is `.required` two lines below. `filterRow`'s
+        // width is tied to `top`'s, and `top` is pinned to both edges of
+        // `hostsTabView`, all at required priority, so that one chip's
+        // intrinsic width became a *required* ceiling on the entire content
+        // column. Measured on a real shell at the captain's own 1467pt
+        // window: the content column collapsed to 74pt - the chip - while the
+        // side stack took the remaining 1329pt. That is exactly his report:
+        // no host list at all, and the rail stretched across the page.
+        //
+        // The collapse constraint is a real low-priority `width == 0`, never a
+        // hugging priority: a bare `NSView` has no intrinsic content size, so
+        // `setContentHuggingPriority` on one is a documented no-op (gotcha
+        // (12), and `fm/grandline-visual-polish-round2` paid for that lesson
+        // once already). Being optional, it yields when the spacer is the only
+        // thing left to stretch, and holds the spacer collapsed the rest of
+        // the time so the tag strip keeps the slack it had before.
+        let filterSpacer = NSView()
+        filterSpacer.translatesAutoresizingMaskIntoConstraints = false
+        let spacerCollapsed = filterSpacer.widthAnchor.constraint(equalToConstant: 0)
+        spacerCollapsed.priority = .defaultLow
+        spacerCollapsed.isActive = true
+
+        let filterRow = NSStackView(views: [onlineChip, tagsScroll, filterSpacer])
         filterRow.orientation = .horizontal
         filterRow.alignment = .centerY
         filterRow.spacing = HelmMetrics.s2
@@ -1205,6 +1237,13 @@ final class HostsController: NSViewController, DaylightDrillActions {
 
     #if FM_SELFTESTS
     var debugSideStack: HostsSideStack { sideStack }
+    /// Whether the tag strip has left the filter row's layout.
+    ///
+    /// The vacuity guard for `checkTwoColumnLayoutSurvivesUntaggedHosts`: that
+    /// case only exercises the collapse it exists for while this is `true`, so
+    /// a fixture that drifts back to tagged hosts has to fail loudly rather
+    /// than pass while testing nothing.
+    var debugTagStripIsHidden: Bool { tagsScroll.isHidden }
     var debugOnlineChip: HelmButton { onlineChip }
     func debugSetOnlineOnly(_ on: Bool) {
         onlineChip.state = on ? .on : .off

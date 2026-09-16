@@ -39,6 +39,7 @@ enum HostsRedesignSelfTest {
         print("== Hosts redesign: two columns, real panels ==")
         var ok = true
         checkTwoColumnLayout(&ok)
+        checkTwoColumnLayoutSurvivesUntaggedHosts(&ok)
         checkWorkspaceReadsTheStores(&ok)
         checkDetailFollowsSelectionAndTab(&ok)
         checkDetailActionsAreTheRealOnes(&ok)
@@ -103,6 +104,26 @@ enum HostsRedesignSelfTest {
         host.tags = ["DEV"]
         host.accentHex = "#E6A72B"
         return host
+    }
+
+    /// The captain's own two hosts, in the shape his real `hosts.json` holds
+    /// them: an environment recorded in `group`, and **no tags at all**.
+    ///
+    /// That shape is the whole point of the fixture. Every other case here
+    /// seeds `devHost()`/`prodHost()`, which carry tags - and a tagged host is
+    /// exactly the case the collapse this file's
+    /// `checkTwoColumnLayoutSurvivesUntaggedHosts` guards against cannot
+    /// happen in, because the tag strip stays in layout and absorbs the row's
+    /// slack. Seeding only tagged hosts is why the original redesign shipped
+    /// this bug with a green suite.
+    private static func untaggedGroupedHosts() -> [Host] {
+        var dev = Host(label: "DEV Bastion", address: "ec2-44-206-131-135.compute-1.amazonaws.com")
+        dev.username = "centos"
+        dev.group = "DEV"
+        var prod = Host(label: "Prod Bastion", address: "ec2-3-208-58-234.compute-1.amazonaws.com")
+        prod.username = "ec2-user"
+        prod.group = "Prod"
+        return [dev, prod]
     }
 
     private static func prodHost() -> Host {
@@ -177,6 +198,61 @@ enum HostsRedesignSelfTest {
             }
         }
         if ok { print("  OK - content + \(fmt(HostsSideStack.width))pt side column tile the page, no window floor") }
+    }
+
+    /// The two columns survive a host list with **no tags on any host**.
+    ///
+    /// This is the captain's own data shape, and it is what
+    /// `checkTwoColumnLayout` above cannot see: that case seeds tagged hosts,
+    /// so the tag strip stays in layout and quietly absorbs the filter row's
+    /// slack. With no tags anywhere, `rebuildTagChips` hides the strip, an
+    /// `NSStackView` drops a hidden arranged subview out of layout entirely,
+    /// and the row is left holding only the "Online" chip - whose horizontal
+    /// hugging is `.required`. The row's width is tied to the search field's
+    /// stack, which is pinned to both edges of the tab view, all required, so
+    /// that one chip became a required *ceiling* on the whole content column.
+    ///
+    /// Measured before the fix, at the captain's own 1467pt window: the
+    /// content column collapsed to 74pt - the chip - while the side stack took
+    /// the remaining 1329pt. No host list, and the rail across the page.
+    ///
+    /// Asserted as arithmetic rather than against the broken numbers, so the
+    /// case states the property (the two columns tile the page) rather than
+    /// the symptom.
+    private static func checkTwoColumnLayoutSurvivesUntaggedHosts(_ ok: inout Bool) {
+        print("\n-- two columns hold when no host carries a tag --")
+        let (controller, window, _) = page(hosts: untaggedGroupedHosts(), width: 1467)
+        defer { _ = window }
+        let state = controller.debugState()
+        let stack = controller.debugSideStack
+
+        // The fixture has to genuinely reach the hidden-strip branch, or this
+        // case passes without exercising the bug at all.
+        guard controller.debugTagStripIsHidden else {
+            fail("the tag strip is visible - this fixture no longer reaches the branch it exists for", &ok)
+            return
+        }
+
+        let expected = state.rootWidth
+            - HelmMetrics.pageGutter * 2
+            - HelmMetrics.s4
+            - HostsSideStack.width
+        if abs(state.hostsCardFrame.width - expected) > 0.5 {
+            fail("content column is \(fmt(state.hostsCardFrame.width))pt, want \(fmt(expected))pt "
+                 + "- an untagged host list collapses the page's primary content", &ok)
+        }
+        if abs(stack.frame.width - HostsSideStack.width) > 0.5 {
+            fail("side column is \(fmt(stack.frame.width))pt, want \(fmt(HostsSideStack.width))pt "
+                 + "- the rail has taken the list's width", &ok)
+        }
+        // Both hosts plus the pinned Firstmate row plus two group headers.
+        if state.hostRowCount < 3 {
+            fail("the list rendered \(state.hostRowCount) row(s) - the hosts are missing", &ok)
+        }
+        if ok {
+            print("  OK - content \(fmt(state.hostsCardFrame.width))pt + "
+                  + "\(fmt(stack.frame.width))pt rail, with the tag strip hidden")
+        }
     }
 
     private static func widthConstraintsAtOrAbove(_ priority: NSLayoutConstraint.Priority,
