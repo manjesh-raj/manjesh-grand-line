@@ -135,8 +135,7 @@ enum DaylightDrillPageSlice3SelfTest {
     /// `contentViewController`, which would fire the appearance callbacks that
     /// start the setup pages' real check sweeps (see the file header).
     private static func mount(_ controller: NSViewController, width: CGFloat = 1200) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 820),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: width, height: 820)
         window.contentView = controller.view
         controller.view.frame = NSRect(x: 0, y: 0, width: width, height: 820)
         controller.view.layoutSubtreeIfNeeded()
@@ -717,9 +716,7 @@ enum DaylightDrillPageSlice3SelfTest {
         store.add(AutomationSchedule(action: .configBackupExport, cadence: .daily(hour: 3, minute: 15)))
 
         func floor(of controller: NSViewController, label: String, widths: [CGFloat]) {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: widths[0], height: 820),
-                                  styleMask: [.titled, .resizable],
-                                  backing: .buffered, defer: false)
+            let window = OffScreenProbe.window(width: widths[0], height: 820, styleMask: [.titled, .resizable])
             // `contentView`, not `contentViewController` - see the file header:
             // appearance callbacks would start the setup pages' real sweeps.
             window.contentView = controller.view

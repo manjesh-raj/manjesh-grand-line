@@ -53,8 +53,7 @@ enum AuditPerfFixesSelfTest {
 
     private static func mountedCard(visible: Bool) -> (NSWindow, HealthCardView) {
         let card = HealthCardView()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 700),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 900, height: 700)
         window.contentView = card.card
         card.card.frame = NSRect(x: 0, y: 0, width: 900, height: 700)
         card.card.isHidden = !visible

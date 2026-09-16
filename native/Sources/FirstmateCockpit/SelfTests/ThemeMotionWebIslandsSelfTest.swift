@@ -98,11 +98,11 @@ enum ThemeMotionWebIslandsSelfTest {
         return try? String(contentsOf: dir.appendingPathComponent(name), encoding: .utf8)
     }
 
-    /// Far off-screen: this machine may be running the captain's own
-    /// instance, so nothing this suite builds should appear on his display.
+    /// `OffScreenProbe.window(...)`, which cannot reach a display: this
+    /// machine may be running the captain's own instance, so nothing this
+    /// suite builds should appear on his screen.
     private static func makeWindow(_ content: NSView) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: -20_000, y: 0, width: 600, height: 400),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 600, height: 400)
         window.contentView = content
         content.layoutSubtreeIfNeeded()
         // A window that was never ordered in is not `isVisible`, which the

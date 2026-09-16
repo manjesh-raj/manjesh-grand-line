@@ -65,8 +65,7 @@ enum WhiteboardViewSelfTest {
             return false
         }
 
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 700),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1000, height: 700, styleMask: [.titled, .resizable])
         let controller = WhiteboardController()
         window.contentView = controller.view
         // A window only becomes genuinely `.visible` to the window server for

@@ -408,8 +408,7 @@ enum AppKitAuditSelfTest {
         let schedule = AutomationSchedule(action: .driftCheck, cadence: .daily(hour: 9, minute: 0))
         let sheet = ScheduleHistoryController(schedule: schedule,
                                               historyStore: ScheduleRunHistoryStore(directory: scratchDir()))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 480),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 460, height: 480)
         window.contentView = sheet.view
         sheet.view.layoutSubtreeIfNeeded()
         return (sheet, window)

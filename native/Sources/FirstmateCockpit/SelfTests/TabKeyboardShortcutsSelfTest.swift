@@ -265,8 +265,7 @@ enum TabKeyboardShortcutsSelfTest {
 
         // A second window stands in for a popover/sheet/panel: the composer,
         // the ⌘K palette, quick capture and every editor sheet each own one.
-        let other = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 120),
-                             styleMask: [.titled], backing: .buffered, defer: false)
+        let other = OffScreenProbe.window(width: 200, height: 120)
         if shortcuts.handle(event(in: other, "t", [.command])) {
             return "⌘T in another window was consumed - a popover or sheet must keep its own keystrokes"
         }
@@ -319,8 +318,7 @@ enum TabKeyboardShortcutsSelfTest {
 
     private static func test_toolsConformance() -> String? {
         let tools = ToolsController()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 900, height: 600)
         window.contentViewController = tools
         tools.view.layoutSubtreeIfNeeded()
 
@@ -348,12 +346,7 @@ enum TabKeyboardShortcutsSelfTest {
 
     private static func makeTestConsole() -> (window: NSWindow, controller: ConsoleController) {
         let controller = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(), isFirstmateConsole: false)
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
-            styleMask: [.titled],
-            backing: .buffered,
-            defer: false
-        )
+        let window = OffScreenProbe.window(width: 900, height: 600)
         window.contentViewController = controller
         controller.view.layoutSubtreeIfNeeded()
         return (window, controller)

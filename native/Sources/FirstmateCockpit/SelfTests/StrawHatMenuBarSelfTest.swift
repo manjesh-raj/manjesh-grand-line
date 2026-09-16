@@ -468,8 +468,7 @@ enum StrawHatMenuBarSelfTest {
         let controller = StrawHatController(shiftStore: ShiftStore(),
                                             commandLibraryRoot: FileManager.default.temporaryDirectory
                                                 .appendingPathComponent("fm-straw-hat-menubar-roster", isDirectory: true))
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 800),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1100, height: 800, styleMask: [.titled, .resizable])
         window.contentViewController = controller
         controller.view.layoutSubtreeIfNeeded()
 

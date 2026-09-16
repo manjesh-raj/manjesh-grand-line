@@ -75,8 +75,7 @@ enum OverlaysModernizationSelfTest {
     }
 
     private static func makeWindow(_ content: NSView) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: -20_000, y: 0, width: 700, height: 600),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 700, height: 600)
         window.contentView = content
         content.layoutSubtreeIfNeeded()
         return window

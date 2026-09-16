@@ -86,12 +86,7 @@ enum ReviewControllerLoadingStateSelfTest {
     /// check behaves differently for a view with no window at all.
     private static func makeMountedController() -> (window: NSWindow, controller: ReviewController) {
         let controller = ReviewController()
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1100, height: 800),
-            styleMask: [.titled],
-            backing: .buffered,
-            defer: false
-        )
+        let window = OffScreenProbe.window(width: 1100, height: 800)
         window.contentView = controller.view
         controller.view.frame = NSRect(x: 0, y: 0, width: 1100, height: 800)
         controller.view.layoutSubtreeIfNeeded()

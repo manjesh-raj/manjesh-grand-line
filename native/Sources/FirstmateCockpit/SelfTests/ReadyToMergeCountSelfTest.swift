@@ -139,8 +139,7 @@ enum ReadyToMergeCountSelfTest {
         print("\n-- Review: the drill subtitle and the stat tile, one frame --")
 
         let controller = ReviewController()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 800),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1100, height: 800, styleMask: [.titled, .resizable])
         window.contentViewController = controller
         window.setFrame(NSRect(x: 0, y: 0, width: 1100, height: 800), display: false)
         controller.view.layoutSubtreeIfNeeded()
@@ -194,8 +193,7 @@ enum ReadyToMergeCountSelfTest {
 
             // Overview's own page: the answer banner and the clickable tile.
             let fleet = FleetController(shiftStore: ShiftStore())
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 900),
-                                  styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+            let window = OffScreenProbe.window(width: 1200, height: 900, styleMask: [.titled, .resizable])
             window.contentViewController = fleet
             fleet.view.layoutSubtreeIfNeeded()
             fleet.debugRender(snapshot: snapshot, mergedPRs: prs)
@@ -221,8 +219,7 @@ enum ReadyToMergeCountSelfTest {
                 shiftStore: ShiftStore(), hostStore: HostStore(), scheduleStore: ScheduleStore(),
                 logAnalyzerStore: LogAnalyzerStore(), docsRunbookStore: DocsRunbookStore(),
                 codePreviewStore: CodePreviewStore(), commandLibraryStore: CommandLibraryStore()))
-            let canvasWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 900),
-                                        styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+            let canvasWindow = OffScreenProbe.window(width: 1400, height: 900, styleMask: [.titled, .resizable])
             canvasWindow.contentViewController = canvas
             canvas.view.layoutSubtreeIfNeeded()
             canvas.select(space: .overview)

@@ -123,12 +123,7 @@ enum ReviewPRRowButtonLayoutSelfTest {
             }
         )
 
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 900, height: 700),
-            styleMask: [.titled],
-            backing: .buffered,
-            defer: false
-        )
+        let window = OffScreenProbe.window(width: 900, height: 700)
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 700))
         window.contentView = root
         root.addSubview(list)

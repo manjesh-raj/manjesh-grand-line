@@ -158,8 +158,7 @@ enum TerminalSelectionRenderSelfTest {
                                    clickOnly: Bool = false,
                                    jitter: Bool = false,
                                    sentBytes: inout [UInt8]) -> Render? {
-        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(size: size)
         let view = CockpitTerminalView(frame: NSRect(origin: .zero, size: size))
         view.sentToChildForTests = []
         view.prefersLocalSelection = localSelection

@@ -261,13 +261,13 @@ enum ShiftBoardViewSelfTest {
 
     private static func mount(store: ShiftStore) -> (ShiftController, NSWindow) {
         let controller = ShiftController(store: store)
-        // Far off-screen and `orderFront`, never `makeKeyAndOrderFront`: this
+        // `OffScreenProbe.window(...)` and `orderFront`, never
+        // `makeKeyAndOrderFront`: this
         // machine may be running the captain's own instance, and an event
         // needs a real `windowNumber` to route by - a window that was never
         // ordered in has none, which reads exactly like "the handler is not
         // wired".
-        let window = NSWindow(contentRect: NSRect(x: -20_000, y: 0, width: 1300, height: 900),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1300, height: 900, styleMask: [.titled, .resizable])
         window.contentView = controller.view
         window.orderFront(nil)
         controller.viewWillAppear()

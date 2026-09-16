@@ -59,12 +59,7 @@ enum NotificationCenterSRELeadSelfTest {
 
     private static func makeStartedTestConsole(tabCount: Int) -> (window: NSWindow, controller: ConsoleController, tabIDs: [UUID]) {
         let controller = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(), isFirstmateConsole: false)
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
-            styleMask: [.titled],
-            backing: .buffered,
-            defer: false
-        )
+        let window = OffScreenProbe.window(width: 900, height: 600)
         window.contentViewController = controller
         controller.view.layoutSubtreeIfNeeded()
 

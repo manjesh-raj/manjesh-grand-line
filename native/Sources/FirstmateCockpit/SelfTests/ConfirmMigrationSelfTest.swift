@@ -139,8 +139,7 @@ enum ConfirmMigrationSelfTest {
     }
 
     private static func makeWindow(_ content: NSView) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: -20_000, y: 0, width: 900, height: 700),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 900, height: 700)
         window.contentView = content
         content.layoutSubtreeIfNeeded()
         return window
@@ -325,9 +324,7 @@ enum ConfirmMigrationSelfTest {
                 check(measured.width >= HelmConfirmView.width,
                       "\(theme.id)/\(name): measured width \(measured.width) is under the minimum")
 
-                let window = NSWindow(contentRect: NSRect(x: -20_000, y: 0,
-                                                          width: measured.width, height: measured.height),
-                                      styleMask: [.titled], backing: .buffered, defer: false)
+                let window = OffScreenProbe.window(width: measured.width, height: measured.height)
                 window.contentView = content
                 window.layoutIfNeeded()
                 content.layoutSubtreeIfNeeded()

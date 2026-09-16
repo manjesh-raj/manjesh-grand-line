@@ -286,12 +286,7 @@ enum AppShellBodyWidthSelfTest {
     /// isn't on screen, and keeping it off screen means this test can never
     /// visibly disturb anything on a shared machine.
     private static func makeMountedShell() -> (window: NSWindow, shell: AppShellController) {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1220, height: 720),
-            styleMask: [.titled, .resizable],
-            backing: .buffered,
-            defer: false
-        )
+        let window = OffScreenProbe.window(width: 1220, height: 720, styleMask: [.titled, .resizable])
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()
@@ -652,8 +647,7 @@ enum AppShellBodyWidthSelfTest {
     /// still real, load-bearing code that a future edit could genuinely break.
     private static func test_healthCardLayoutConverges() -> String? {
         withScratchEnv {
-            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 620, height: 700),
-                                  styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+            let window = OffScreenProbe.window(width: 620, height: 700, styleMask: [.titled, .resizable])
             let health = HealthController()
             window.contentViewController = health
             // Force the non-overlay scroller style: without a real mouse
@@ -724,8 +718,7 @@ enum AppShellBodyWidthSelfTest {
         // window must never visibly disturb a shared machine. `layout()` +
         // `displayIfNeeded()` still resolve tracking areas for a view that is
         // genuinely part of a real window's view hierarchy.
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 400, height: 300, styleMask: [.titled, .resizable])
 
         weak var weakCard: HelmModuleCard?
         autoreleasepool {

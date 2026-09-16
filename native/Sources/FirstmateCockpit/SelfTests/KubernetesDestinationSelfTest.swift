@@ -156,8 +156,7 @@ enum KubernetesDestinationSelfTest {
         private(set) var openHostsCalls = 0
 
         init(offerTabs: Bool = true) {
-            window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 780),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+            window = OffScreenProbe.window(width: 1200, height: 780, styleMask: [.titled, .resizable])
             controller = KubernetesController(sessions: sessions)
             let feedTab = KubeFeedTab(id: feedTabID, name: "EKS Bastion \u{00B7} k8s feed", terminal: fake)
             var access = KubeSessionAccess()

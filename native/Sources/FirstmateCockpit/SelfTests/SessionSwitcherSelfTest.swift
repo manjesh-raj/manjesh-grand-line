@@ -107,8 +107,7 @@ enum SessionSwitcherSelfTest {
     /// `AppShellBodyWidthSelfTest.makeMountedShell` so both suites drive the
     /// same real object graph.
     private static func makeMountedShell() -> (window: NSWindow, shell: AppShellController, hosts: HostStore) {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 800),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1400, height: 800, styleMask: [.titled, .resizable])
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()
@@ -143,14 +142,14 @@ enum SessionSwitcherSelfTest {
     /// session - so the inactive pill has a ✕.
     private static func makeStrip() -> (window: NSWindow, strip: SessionStripView,
                                         active: UUID, inactive: UUID) {
-        // Positioned far off-screen and ordered front, never made key: real
+        // Built off-screen by `OffScreenProbe.window(...)` and ordered front,
+        // never made key: real
         // mouse-event routing needs a real `windowNumber` (a window that was
         // never ordered in has none, and `NSEvent.mouseEvent` then routes
         // nowhere), while activating the app would steal focus from the
         // captain's own running instance on a shared machine. `orderFront` on
         // an `.accessory` process does neither.
-        let window = NSWindow(contentRect: NSRect(x: -20_000, y: -20_000, width: 900, height: 200),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 900, height: 200)
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 200))
         let strip = SessionStripView()
         strip.translatesAutoresizingMaskIntoConstraints = false

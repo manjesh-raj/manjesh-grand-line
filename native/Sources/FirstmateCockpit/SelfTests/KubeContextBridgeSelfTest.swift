@@ -854,20 +854,15 @@ enum KubeContextBridgeSelfTest {
     /// `SRELeadPerTabSelfTest.makeStartedTestConsole()`.
     /// `orderFront` is opt-in: `window.isVisible` is `false` for a window
     /// that was never ordered in, which the page-level half of 3.2's
-    /// on-screen test reads. Ordered far off-screen so nothing appears on the
-    /// captain's own display, and never `makeKeyAndOrderFront`/`activate` -
-    /// this machine runs their real instance.
+    /// on-screen test reads - and an `OffScreenProbe` window stays off every
+    /// display while still reporting `isVisible`, which is exactly why this
+    /// suite did not have to change. Never `makeKeyAndOrderFront`/`activate` -
+    /// this machine runs the captain's real instance.
     private static func makeStartedKubeContextTestConsole(tabCount: Int, orderFront: Bool = false) -> (window: NSWindow, controller: ConsoleController, tabIDs: [UUID]) {
         let controller = ConsoleController(keyStore: SSHKeyStore(), snippetStore: SnippetStore(), isFirstmateConsole: false)
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
-            styleMask: [.titled],
-            backing: .buffered,
-            defer: false
-        )
+        let window = OffScreenProbe.window(width: 900, height: 600)
         window.contentViewController = controller
         if orderFront {
-            window.setFrameOrigin(NSPoint(x: -20_000, y: 0))
             window.orderFront(nil)
         }
         controller.view.layoutSubtreeIfNeeded()

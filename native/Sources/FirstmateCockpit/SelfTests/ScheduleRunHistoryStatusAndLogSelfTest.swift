@@ -243,8 +243,7 @@ enum ScheduleRunHistoryStatusAndLogSelfTest {
                 log: entry.log))
         }
         let sheet = ScheduleHistoryController(schedule: schedule, historyStore: store)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 460, height: 480),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 460, height: 480)
         window.contentView = sheet.view
         sheet.view.layoutSubtreeIfNeeded()
         return (sheet, window)
@@ -316,8 +315,7 @@ enum ScheduleRunHistoryStatusAndLogSelfTest {
             log: "repo-a: some real detail\nrepo-b: another line")
 
         let controller = ScheduleRunLogController(entry: entry)
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 460),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 560, height: 460)
         window.contentView = controller.view
         controller.view.layoutSubtreeIfNeeded()
         defer { window.contentView = nil }

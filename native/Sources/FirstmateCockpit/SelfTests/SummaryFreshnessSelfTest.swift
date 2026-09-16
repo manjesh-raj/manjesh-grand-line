@@ -413,8 +413,7 @@ enum SummaryFreshnessSelfTest {
         private let window: NSWindow
 
         init() {
-            window = NSWindow(contentRect: NSRect(x: -20_000, y: 0, width: 1400, height: 900),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+            window = OffScreenProbe.window(width: 1400, height: 900, styleMask: [.titled, .resizable])
             let hostStore = HostStore()
             let keyStore = SSHKeyStore()
             let snippetStore = SnippetStore()

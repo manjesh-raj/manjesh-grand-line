@@ -134,12 +134,7 @@ enum AppShellDrillHeaderTitleSelfTest {
     /// Matches `AppShellBodyWidthSelfTest.makeMountedShell()` exactly - a real
     /// `AppShellController` inside a real, never-ordered-front `NSWindow`.
     private static func makeMountedShell() -> (window: NSWindow, shell: AppShellController) {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1220, height: 720),
-            styleMask: [.titled, .resizable],
-            backing: .buffered,
-            defer: false
-        )
+        let window = OffScreenProbe.window(width: 1220, height: 720, styleMask: [.titled, .resizable])
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()
@@ -167,8 +162,7 @@ enum AppShellDrillHeaderTitleSelfTest {
     private static let rowHeight = DaylightBarController.height
 
     private static func makeMountedHeader(width: CGFloat = 500) -> (window: NSWindow, header: HelmDrillHeader) {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: rowHeight),
-                              styleMask: [.borderless], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: width, height: rowHeight, styleMask: [.borderless])
         let header = HelmDrillHeader()
         header.translatesAutoresizingMaskIntoConstraints = false
         let root = window.contentView!

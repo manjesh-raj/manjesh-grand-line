@@ -90,8 +90,7 @@ enum LockScreenSelfTest {
     /// which case 4 has to account for.
     private static func mount(_ controller: LockScreenController,
                               size: NSSize = NSSize(width: 1220, height: 760)) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(size: size)
         window.contentView = controller.view
         controller.view.frame = NSRect(origin: .zero, size: size)
         controller.view.layoutSubtreeIfNeeded()

@@ -354,8 +354,7 @@ enum BarNavigationModernizationSelfTest {
         let saved = HelmFocusVisibility.overrideForTests
         defer { HelmFocusVisibility.overrideForTests = saved }
 
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 60),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 200, height: 60)
         window.setFrame(NSRect(x: -20_000, y: 0, width: 200, height: 60), display: false)
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 60))
         window.contentView = root
@@ -523,8 +522,7 @@ enum BarNavigationModernizationSelfTest {
         // Off-screen, so nothing lands on the captain's own display. The panel
         // follows its anchor's window and `HelmBarPanel.position` deliberately
         // clamps only to the anchor's *own* screen, of which there is none here.
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1200, height: 120),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1200, height: 120)
         window.setFrame(NSRect(x: -20_000, y: 0, width: 1200, height: 120), display: false)
         window.contentView = bar.view
         bar.view.layoutSubtreeIfNeeded()
@@ -597,9 +595,7 @@ enum BarNavigationModernizationSelfTest {
     }
 
     private static func makeMountedShell() -> (window: NSWindow, shell: AppShellController) {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1220, height: 720),
-                              styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-                              backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1220, height: 720, styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView])
         WindowChromeFusion.apply(to: window)
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()

@@ -107,8 +107,7 @@ enum TopNavPillPressedStateSelfTest {
     // MARK: Fixtures
 
     private static func mount(_ controller: NSViewController, width: CGFloat = 1100) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: 80),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: width, height: 80)
         window.contentView = controller.view
         controller.view.frame = NSRect(x: 0, y: 0, width: width, height: 80)
         controller.view.layoutSubtreeIfNeeded()

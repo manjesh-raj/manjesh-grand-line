@@ -206,8 +206,7 @@ enum DaylightHardeningSelfTest {
     // MARK: Accessibility - the key view loop
 
     private static func makeShell() -> (NSWindow, AppShellController) {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1300, height: 800),
-                              styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1300, height: 800, styleMask: [.titled, .resizable])
         let hostStore = HostStore()
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()

@@ -156,8 +156,7 @@ enum DaylightChromeSelfTest {
     }
 
     private static func mount(_ controller: NSViewController) {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 800),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 700, height: 800)
         window.contentView = controller.view
         controller.view.layoutSubtreeIfNeeded()
     }

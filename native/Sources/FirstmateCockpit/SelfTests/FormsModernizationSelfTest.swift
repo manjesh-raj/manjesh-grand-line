@@ -88,12 +88,11 @@ enum FormsModernizationSelfTest {
         setenv("FM_SHIFT_DIR", dir.appendingPathComponent("shift").path, 1)
     }
 
-    /// A real window, far off-screen. Never `makeKeyAndOrderFront`/`activate` -
-    /// this machine runs the captain's own instance.
+    /// A real window that cannot reach a display (`OffScreenProbe.window`).
+    /// Never `makeKeyAndOrderFront`/`activate` - this machine runs the
+    /// captain's own instance.
     private static func makeWindow(_ content: NSView) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: -20_000, y: 0, width: 700, height: 820),
-                              styleMask: [.titled, .closable, .resizable],
-                              backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 700, height: 820, styleMask: [.titled, .closable, .resizable])
         window.contentView = content
         content.layoutSubtreeIfNeeded()
         return window
@@ -224,9 +223,7 @@ enum FormsModernizationSelfTest {
 
     private static func checkHostEditorWindowIsFused(_ ok: inout Bool) {
         print("\n-- F2(a): the Host editor is a fused window, not a stock titlebar --")
-        let window = NSWindow(contentRect: NSRect(x: -20_000, y: 0, width: 640, height: 780),
-                              styleMask: [.titled, .closable, .miniaturizable, .resizable],
-                              backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 640, height: 780, styleMask: [.titled, .closable, .miniaturizable, .resizable])
         WindowChromeFusion.apply(to: window)
 
         var problems: [String] = []

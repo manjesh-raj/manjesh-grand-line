@@ -57,8 +57,7 @@ enum AuditUIFixesSelfTest {
     // MARK: Helpers
 
     private static func mount(_ view: NSView, width: CGFloat, height: CGFloat) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: width, height: height),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: width, height: height)
         window.contentView = view
         view.frame = NSRect(x: 0, y: 0, width: width, height: height)
         view.layoutSubtreeIfNeeded()

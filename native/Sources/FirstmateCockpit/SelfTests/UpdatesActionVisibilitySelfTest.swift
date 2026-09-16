@@ -78,8 +78,7 @@ enum UpdatesActionVisibilitySelfTest {
     /// every category card and row on its own, which is all this needs.
     private static func mount() -> (UpdatesController, NSWindow) {
         let c = UpdatesController()
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1100, height: 1400),
-                              styleMask: [.titled], backing: .buffered, defer: false)
+        let window = OffScreenProbe.window(width: 1100, height: 1400)
         window.contentView = c.view
         c.view.frame = NSRect(x: 0, y: 0, width: 1100, height: 1400)
         c.view.layoutSubtreeIfNeeded()
