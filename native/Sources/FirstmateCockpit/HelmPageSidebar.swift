@@ -27,6 +27,32 @@
 // `CountStyle` and `setFooter(_:)` below are for. All three are opt-in and
 // default to what Poneglyph and Schedules already had, so a page taking its
 // own reference's treatment cannot restyle theirs.
+//
+// **Four callers now**, Tasks having asked for a row per project in
+// `fm/grand-line-tasks-sidebar-project-list`. Three more additions, every one
+// of them opt-in for the same reason:
+//
+//   - `RowIndicator.dot` - a row led by a filled colour dot rather than an SF
+//     Symbol, which is what a *project* row is: an identity marker, not an
+//     icon for an action.
+//   - **Row groups.** A row's selection is scoped to its group, because a
+//     page can carry two genuinely orthogonal one-of-many filters at once
+//     (Tasks filters by *slice* and by *project*, and picking a project must
+//     not un-pick "All tasks"). Every existing caller stays in the one default
+//     group and cannot tell the difference.
+//   - `setSections(_:)`. The append API builds a column once; a project list
+//     changes while the page is open, so this one is declarative and rebuilds
+//     - preserving each group's selection across the rebuild, which is what
+//     stops a re-render dropping the captain's filter.
+//
+// The rows live in a scroll view, so a captain with twenty projects gets a
+// scrolling nav rather than rows drawn over the footer. The column is still
+// content-sized for a caller that pins only `bottom <=` (Poneglyph,
+// Schedules): the equality that does that sits at priority 499, below
+// `NSLayoutPriorityWindowSizeStayPut`, so a caller that *does* give the column
+// a definite height (Hosts and Tasks, both of which pin their bottom so a
+// footer lands on the page's own bottom edge) simply wins and the content
+// scrolls.
 
 import AppKit
 
@@ -80,6 +106,60 @@ final class HelmPageSidebar: NSView {
         case badge
     }
 
+    /// What leads a row: an SF Symbol (an action or a slice) or a filled
+    /// colour dot (an identity - a project).
+    enum RowIndicator {
+        case symbol(String)
+        case dot(HelmTint)
+    }
+
+    /// The group every row built through the append API belongs to, and the
+    /// one `select(_:)`/`selection` talk about.
+    static let defaultGroup = "default"
+
+    /// One row, for the declarative `setSections(_:)` path.
+    struct Row {
+        var id: String
+        var indicator: RowIndicator
+        var title: String
+        var kind: RowKind = .filter
+        var group: String = HelmPageSidebar.defaultGroup
+        var showsCount: Bool = true
+
+        init(id: String, indicator: RowIndicator, title: String,
+             kind: RowKind = .filter, group: String = HelmPageSidebar.defaultGroup,
+             showsCount: Bool = true) {
+            self.id = id
+            self.indicator = indicator
+            self.title = title
+            self.kind = kind
+            self.group = group
+            self.showsCount = showsCount
+        }
+    }
+
+    /// A titled run of rows. `header` is `nil` for an untitled run.
+    struct Section {
+        var header: String?
+        var rows: [Row]
+
+        init(header: String?, rows: [Row]) {
+            self.header = header
+            self.rows = rows
+        }
+    }
+
+    /// One muted text link in a `setFooter(links:)` footer.
+    struct FooterLink {
+        var id: String
+        var title: String
+
+        init(id: String, title: String) {
+            self.id = id
+            self.title = title
+        }
+    }
+
     static let width: CGFloat = 208
 
     private let surface: Surface
@@ -92,21 +172,28 @@ final class HelmPageSidebar: NSView {
     /// always was (`bottom <=` this view's own bottom, so the column hugs its
     /// rows and a page may pin it with an inequality).
     private var footer: NSView?
-    private var stackBottom: NSLayoutConstraint!
+    private var scrollBottom: NSLayoutConstraint!
 
-    /// Fired with the row's id. A `.filter` row has already moved the
-    /// selection by the time this runs; an `.action` row has not.
+    /// Fired with the row's id. A `.filter` row has already moved its **own
+    /// group's** selection by the time this runs; an `.action` row has not. A
+    /// `setFooter(links:)` link fires this too, with its own id.
     var onSelect: ((String) -> Void)?
 
-    /// The selected `.filter` row's id. Only ever a filter row - an action
-    /// never becomes the selection.
-    private(set) var selection: String?
+    /// The selected `.filter` row's id in the default group. Only ever a
+    /// filter row - an action never becomes a selection.
+    var selection: String? { selections[Self.defaultGroup] }
 
+    private let scroll = NSScrollView()
+    private let document = FlippedView()
     private let stack = NSStackView()
-    private var rows: [(button: HoverHighlightView, id: String, kind: RowKind,
-                        icon: NSImageView, label: NSTextField, count: NSTextField,
-                        chip: NSView?)] = []
+    private var rows: [(button: HoverHighlightView, id: String, kind: RowKind, group: String,
+                        icon: NSImageView, dot: NSView, label: NSTextField, count: NSTextField,
+                        chip: NSView?, indicator: RowIndicator)] = []
     private var headers: [NSTextField] = []
+    private var selections: [String: String] = [:]
+    private var linkItems: [(button: HoverHighlightView, id: String, label: NSTextField)] = []
+    private var linkSeparators: [NSTextField] = []
+    private var linkDivider: NSView?
     private var theme: HelmTheme = ThemeManager.shared.theme
 
     // MARK: Build
@@ -138,13 +225,57 @@ final class HelmPageSidebar: NSView {
         // lay their rows out exactly where they always did. A `.panel` column
         // has a border to keep clear of.
         let inset = surface == .panel ? Metrics.panelInset : 0
-        stackBottom = stack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -inset)
+
+        // The rows scroll, so a column with more rows than the page is tall
+        // gets a scrolling nav rather than rows drawn over a footer. No
+        // scroller: a non-overlay vertical scroller reserves a real ~15pt
+        // track that would narrow this 208pt column (gotcha (4)), and the
+        // wheel/trackpad still scrolls without one.
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = false
+        scroll.hasHorizontalScroller = false
+        scroll.autohidesScrollers = true
+        scroll.verticalScrollElasticity = .none
+        // A plain `NSView()` document is **not** flipped, so a document
+        // shorter than its clip view rests against the *bottom* of it and
+        // leaves a gap above the first row (gotcha (9)). `FlippedView` is this
+        // app's fix for that, and every scroll-backed surface here uses it.
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(stack)
+        scroll.documentView = document
+        addSubview(scroll)
+
+        scrollBottom = scroll.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
-            stack.topAnchor.constraint(equalTo: topAnchor, constant: inset),
-            stackBottom,
+            scroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            scroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            scroll.topAnchor.constraint(equalTo: topAnchor, constant: inset),
+            scrollBottom,
+
+            // Gotcha (4): the document is pinned to the **clip** view, never
+            // the scroll view itself - and only on the axis that does not
+            // scroll. A vertical pin would fight the clip view's own bounds
+            // origin, which is what scrolling moves.
+            document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+            stack.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: document.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: document.bottomAnchor),
         ])
+
+        // A scroll view has no intrinsic height, so without this the column
+        // would be ambiguous: it is the only thing driving the height when
+        // nothing else does (content-sized, exactly as before this component
+        // grew a scroll view - which is what Poneglyph and Schedules, pinning
+        // only `bottom <=`, rely on), and it breaks cleanly for a caller that
+        // genuinely pins the column's bottom (Hosts, Tasks), leaving the
+        // content to scroll. At `contentTie` (499) it sits below
+        // `NSLayoutPriorityWindowSizeStayPut`, so it can never be a floor on
+        // how short the window may get (gotcha (13)).
+        let contentHeight = scroll.heightAnchor.constraint(equalTo: document.heightAnchor)
+        contentHeight.priority = HelmDaylightPriority.contentTie
+        contentHeight.isActive = true
 
         // A fixed column, so the content beside it takes every point the window
         // gains - but **below `NSLayoutPriorityWindowSizeStayPut`** (gotcha
@@ -201,17 +332,45 @@ final class HelmPageSidebar: NSView {
     /// only labels.
     func appendRow(id: String, symbol: String, title: String,
                    kind: RowKind = .filter, showsCount: Bool = true) {
+        appendRow(Row(id: id, indicator: .symbol(symbol), title: title,
+                      kind: kind, showsCount: showsCount))
+    }
+
+    func appendRow(_ spec: Row) {
         let button = HoverHighlightView()
         button.translatesAutoresizingMaskIntoConstraints = false
         button.wantsLayer = true
         button.cornerRadius = HelmMetrics.rControl
 
+        // Both leads are built and exactly one is shown - the arrangement
+        // `HelmAccentRow` already uses for its gradient-vs-symbol badge, so a
+        // theme change never has to rebuild a row. They share one 16pt column
+        // so a dot row's label lines up with a symbol row's.
         let icon = NSImageView()
-        icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold))
+        if case let .symbol(name) = spec.indicator {
+            icon.image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+                .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 12, weight: .semibold))
+        }
         icon.translatesAutoresizingMaskIntoConstraints = false
         icon.setContentHuggingPriority(.required, for: .horizontal)
         icon.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let dot = NSView()
+        dot.wantsLayer = true
+        dot.layer?.cornerRadius = Metrics.dotSize / 2
+        dot.translatesAutoresizingMaskIntoConstraints = false
+        dot.setContentHuggingPriority(.required, for: .horizontal)
+        dot.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        switch spec.indicator {
+        case .symbol: dot.isHidden = true
+        case .dot: icon.isHidden = true
+        }
+
+        let title = spec.title
+        let id = spec.id
+        let kind = spec.kind
+        let showsCount = spec.showsCount
 
         let label = NSTextField(labelWithString: title)
         label.font = HelmType.caption()
@@ -257,11 +416,15 @@ final class HelmPageSidebar: NSView {
             countHost = count
         }
 
-        for child in [icon, label, countHost] as [NSView] { button.addSubview(child) }
+        for child in [icon, dot, label, countHost] as [NSView] { button.addSubview(child) }
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: Metrics.rowInset),
             icon.centerYAnchor.constraint(equalTo: button.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: 16),
+            icon.widthAnchor.constraint(equalToConstant: Metrics.indicatorColumn),
+            dot.centerXAnchor.constraint(equalTo: icon.centerXAnchor),
+            dot.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+            dot.widthAnchor.constraint(equalToConstant: Metrics.dotSize),
+            dot.heightAnchor.constraint(equalToConstant: Metrics.dotSize),
             label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: HelmMetrics.s2),
             label.centerYAnchor.constraint(equalTo: button.centerYAnchor),
             countHost.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: HelmMetrics.s1),
@@ -277,8 +440,40 @@ final class HelmPageSidebar: NSView {
         button.accessibilityRoleOverride = kind == .filter ? .radioButton : .button
         button.accessibilityLabelOverride = title
         button.identifier = NSUserInterfaceItemIdentifier(id)
-        rows.append((button, id, kind, icon, label, count, chip))
+        rows.append((button, id, kind, spec.group, icon, dot, label, count, chip, spec.indicator))
         appendFullWidth(button)
+    }
+
+    // MARK: Declarative composition
+
+    /// Rebuild the whole column from a description of it.
+    ///
+    /// Declarative rather than append-only because a project list changes
+    /// while the page is open, and each group's selection is carried across
+    /// the rebuild - a re-render that silently dropped the captain's project
+    /// filter would be a worse bug than the missing rows this exists for.
+    func setSections(_ sections: [Section]) {
+        let carried = selections
+        for view in stack.arrangedSubviews {
+            stack.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        rows.removeAll()
+        headers.removeAll()
+
+        for (index, section) in sections.enumerated() {
+            if index > 0 { appendSpacer() }
+            if let header = section.header { appendHeader(header) }
+            for row in section.rows { appendRow(row) }
+        }
+
+        // A selection pointing at a row that has since gone away would leave
+        // the column showing nothing selected while the page is still filtered
+        // by it, so it is dropped rather than kept.
+        selections = carried.filter { group, id in
+            rows.contains { $0.group == group && $0.id == id && $0.kind == .filter }
+        }
+        applyTheme(theme)
     }
 
     private func appendFullWidth(_ view: NSView) {
@@ -300,6 +495,10 @@ final class HelmPageSidebar: NSView {
         /// A `.badge` count's pill.
         static let badgeHeight: CGFloat = 18
         static let badgeInset: CGFloat = HelmMetrics.s2 - 2
+        /// One column for both leads, so a dot row's label starts where a
+        /// symbol row's does.
+        static let indicatorColumn: CGFloat = 16
+        static let dotSize: CGFloat = 8
     }
 
     // MARK: Footer
@@ -318,15 +517,107 @@ final class HelmPageSidebar: NSView {
         view.translatesAutoresizingMaskIntoConstraints = false
         addSubview(view)
         let inset = surface == .panel ? Metrics.panelInset : 0
-        stackBottom.isActive = false
-        stackBottom = stack.bottomAnchor.constraint(lessThanOrEqualTo: view.topAnchor,
-                                                    constant: -Metrics.footerGap)
+        scrollBottom.isActive = false
+        scrollBottom = scroll.bottomAnchor.constraint(equalTo: view.topAnchor,
+                                                      constant: -Metrics.footerGap)
         NSLayoutConstraint.activate([
             view.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
             view.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
             view.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset),
-            stackBottom,
+            scrollBottom,
         ])
+    }
+
+    /// A footer of muted text links, the shape the Tasks reference draws -
+    /// built on top of `setFooter(_:)` rather than beside it, so this column
+    /// has exactly one footer mechanism and a page can have only one footer.
+    ///
+    /// Each link fires `onSelect` with its own id. An empty array removes the
+    /// footer, restoring the column to hugging its rows.
+    func setFooter(links: [FooterLink]) {
+        linkItems.removeAll()
+        linkSeparators.removeAll()
+        linkDivider = nil
+        guard !links.isEmpty else {
+            clearFooter()
+            return
+        }
+
+        let divider = NSView()
+        divider.wantsLayer = true
+        divider.translatesAutoresizingMaskIntoConstraints = false
+        divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
+        linkDivider = divider
+
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = HelmMetrics.s2
+        row.translatesAutoresizingMaskIntoConstraints = false
+
+        for (index, link) in links.enumerated() {
+            if index > 0 {
+                let separator = NSTextField(labelWithString: "\u{00B7}")
+                separator.font = HelmType.captionSmall()
+                linkSeparators.append(separator)
+                row.addArrangedSubview(separator)
+            }
+            let button = HoverHighlightView()
+            button.wantsLayer = true
+            button.cornerRadius = HelmMetrics.rChip
+            button.translatesAutoresizingMaskIntoConstraints = false
+
+            let label = NSTextField(labelWithString: link.title)
+            label.font = HelmType.captionSmall()
+            label.translatesAutoresizingMaskIntoConstraints = false
+            button.addSubview(label)
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: HelmMetrics.s1),
+                label.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -HelmMetrics.s1),
+                label.topAnchor.constraint(equalTo: button.topAnchor, constant: 4),
+                label.bottomAnchor.constraint(equalTo: button.bottomAnchor, constant: -4),
+            ])
+            button.addGestureRecognizer(
+                NSClickGestureRecognizer(target: self, action: #selector(footerLinkClicked(_:))))
+            button.accessibilityRoleOverride = .button
+            button.accessibilityLabelOverride = link.title
+            button.identifier = NSUserInterfaceItemIdentifier(link.id)
+            linkItems.append((button, link.id, label))
+            row.addArrangedSubview(button)
+        }
+
+        let container = NSView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(divider)
+        container.addSubview(row)
+        NSLayoutConstraint.activate([
+            divider.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: Metrics.rowInset),
+            divider.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -Metrics.rowInset),
+            divider.topAnchor.constraint(equalTo: container.topAnchor),
+            row.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: Metrics.rowInset),
+            row.trailingAnchor.constraint(lessThanOrEqualTo: container.trailingAnchor,
+                                          constant: -Metrics.rowInset),
+            row.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: HelmMetrics.s2),
+            row.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        setFooter(container)
+        applyTheme(theme)
+    }
+
+    private func clearFooter() {
+        guard let existing = footer else { return }
+        existing.removeFromSuperview()
+        footer = nil
+        let inset = surface == .panel ? Metrics.panelInset : 0
+        scrollBottom.isActive = false
+        scrollBottom = scroll.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset)
+        scrollBottom.isActive = true
+    }
+
+    @objc private func footerLinkClicked(_ sender: NSClickGestureRecognizer) {
+        guard let view = sender.view,
+              let item = linkItems.first(where: { $0.button === view }) else { return }
+        onSelect?(item.id)
     }
 
     // MARK: Selection and counts
@@ -340,16 +631,24 @@ final class HelmPageSidebar: NSView {
     private func pick(_ index: Int) {
         guard index < rows.count else { return }
         let row = rows[index]
-        if row.kind == .filter { select(row.id) }
+        if row.kind == .filter { select(row.id, inGroup: row.group) }
         onSelect?(row.id)
     }
 
-    /// Move the selection without firing `onSelect` - what a caller restoring
-    /// state wants, and the same split `HelmSegmentedTabs.select(_:)` draws.
-    func select(_ id: String?) {
-        selection = id
+    /// Move the default group's selection without firing `onSelect` - what a
+    /// caller restoring state wants, and the same split
+    /// `HelmSegmentedTabs.select(_:)` draws.
+    func select(_ id: String?) { select(id, inGroup: Self.defaultGroup) }
+
+    /// Move one group's selection. A group is an independent one-of-many set,
+    /// so this never touches any other group's.
+    func select(_ id: String?, inGroup group: String) {
+        selections[group] = id
         applyTheme(theme)
     }
+
+    /// The selected `.filter` row's id in `group`, if any.
+    func selection(inGroup group: String) -> String? { selections[group] }
 
     /// Keyed by row id. A row built with `showsCount: false` ignores whatever
     /// it is handed here, so a caller need not special-case its action rows.
@@ -390,7 +689,7 @@ final class HelmPageSidebar: NSView {
         }
 
         for row in rows {
-            let isSelected = row.kind == .filter && row.id == selection
+            let isSelected = row.kind == .filter && row.id == selections[row.group]
             // A selected row's label takes the corrected accent - never the raw
             // hue, which is audit §5.7's defect (`HelmContrast`'s own rule: a
             // tint is safe as a fill and is not automatically safe as text).
@@ -400,6 +699,17 @@ final class HelmPageSidebar: NSView {
                 theme: theme)
             row.label.textColor = isSelected ? selectedInk : ink
             row.icon.contentTintColor = isSelected ? selectedInk : muted
+            // The dot carries the **raw** tint, deliberately: it is the same
+            // hue this project's board cards and filter chip already paint
+            // (`ShiftProjectPalette`), and a sidebar dot that corrected itself
+            // would be a different colour from the board for the same project -
+            // which is the one thing an identity marker must not be. §2.4's own
+            // caveat covers it: the dot sits beside a label naming the project,
+            // so it is redundant decoration rather than the sole carrier of
+            // meaning.
+            if case let .dot(tint) = row.indicator {
+                row.dot.layer?.backgroundColor = HelmTheme.nsColor(tint.hex(in: theme)).cgColor
+            }
             row.count.textColor = isSelected && countStyle == .badge ? selectedInk : muted
             if let chip = row.chip {
                 chip.layer?.cornerRadius = Metrics.badgeHeight / 2
@@ -419,6 +729,16 @@ final class HelmPageSidebar: NSView {
             row.button.hoverColor = isSelected ? selectedFill : hoverFill
             row.button.layer?.cornerRadius = HelmMetrics.rControl
         }
+
+        linkDivider?.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex)
+            .withAlphaComponent(0.6).cgColor
+        for separator in linkSeparators { separator.textColor = muted }
+        for item in linkItems {
+            item.label.textColor = muted
+            item.button.normalColor = .clear
+            item.button.hoverColor = hoverFill
+            item.button.layer?.cornerRadius = HelmMetrics.rChip
+        }
     }
 
     #if FM_SELFTESTS
@@ -426,13 +746,58 @@ final class HelmPageSidebar: NSView {
     var debugRowTitles: [String] { rows.map { $0.label.stringValue } }
     var debugRowIDs: [String] { rows.map { $0.id } }
     var debugRowCounts: [String] { rows.map { $0.count.stringValue } }
-    var debugSelectedIndex: Int? { rows.firstIndex { $0.kind == .filter && $0.id == selection } }
+    var debugSelectedIndex: Int? {
+        rows.firstIndex { $0.kind == .filter && $0.id == selections[$0.group] }
+    }
+    var debugRowGroups: [String] { rows.map { $0.group } }
+
+    /// The ids of the rows that are **actually rendering selected**, not the
+    /// ids `select(_:inGroup:)` was handed - a check that reads the stored
+    /// value passes for a selection pointing at a row that is not in that
+    /// group at all.
+    var debugSelectedRowIDs: [String] {
+        rows.filter { $0.kind == .filter && $0.id == selections[$0.group] }.map { $0.id }
+    }
+
+    /// Whether each row shows a dot (`true`) or a symbol (`false`), read off
+    /// the views rather than the spec - a check that re-derives what it asked
+    /// for agrees with itself forever.
+    var debugRowUsesDot: [Bool] { rows.map { !$0.dot.isHidden && $0.icon.isHidden } }
+
+    /// A dot row's painted fill.
+    func debugDotColor(id: String) -> NSColor? {
+        guard let row = rows.first(where: { $0.id == id }),
+              !row.dot.isHidden, let cg = row.dot.layer?.backgroundColor else { return nil }
+        return NSColor(cgColor: cg)
+    }
+
+    var debugFooterLinkTitles: [String] { linkItems.map { $0.label.stringValue } }
+    func debugClickFooterLink(_ id: String) {
+        guard let item = linkItems.first(where: { $0.id == id }) else { return }
+        onSelect?(item.id)
+    }
+
+    /// How far the footer's own bottom edge sits above the column's. A footer
+    /// floating halfway up an otherwise empty column is not a footer, and that
+    /// is what a column pinned only `bottom <=` would give.
+    ///
+    /// This view is not flipped, so the bottom edge is `minY` - reading
+    /// `maxY` here measures the distance to the *top* and reports a correct
+    /// footer as its whole height out of place.
+    var debugFooterBottomGap: CGFloat {
+        guard let footer else { return .nan }
+        return footer.frame.minY - bounds.minY
+    }
     var debugHeaders: [String] { headers.compactMap { $0.placeholderString } }
     var debugRowKinds: [String] { rows.map { $0.kind == .filter ? "filter" : "action" } }
     var debugHasFooter: Bool { footer != nil }
     var debugSurfaceIsPanel: Bool { surface == .panel }
     var debugHasCountBadges: Bool { rows.contains { $0.chip != nil } }
     func debugClickRow(_ index: Int) { pick(index) }
+    func debugRowIndex(id: String) -> Int? { rows.firstIndex { $0.id == id } }
+    /// Drives the real row's own handler by id, so a caller cannot pass by
+    /// re-deriving a position the column does not actually use.
+    func debugClickRow(id: String) { if let index = debugRowIndex(id: id) { pick(index) } }
 
     /// What each row is actually showing, read off the labels rather than
     /// recomputed - a check that re-derives a count agrees with itself forever.

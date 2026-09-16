@@ -1112,6 +1112,16 @@ final class ShiftProjectFilterBar: NSView {
         rebuild(theme: theme)
     }
 
+    /// Move the chip without firing `onSelect` - what the sidebar's own
+    /// project rows want when they are the control that moved, and the same
+    /// split `HelmSegmentedTabs.select(_:)` and `HelmPageSidebar.select(_:)`
+    /// already draw.
+    func select(_ projectID: String?) {
+        guard projectID != selectedProjectID else { return }
+        selectedProjectID = projectID
+        rebuild(theme: ThemeManager.shared.theme)
+    }
+
     private func rebuild(theme: HelmTheme) {
         for view in stack.arrangedSubviews {
             stack.removeArrangedSubview(view)

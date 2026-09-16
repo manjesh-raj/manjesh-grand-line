@@ -196,6 +196,244 @@ enum ShiftTasksPageSelfTest {
                   "the three columns must never be ragged, got \(heights.map(fmt))")
         }
 
+
+        // MARK: The column lists every project, in that project's own colour
+        //
+        // The defect this closes: the column collapsed the whole project set
+        // into one "Projects 5" count row, so the one place a captain would
+        // look to see *which* projects exist showed a number. The data was
+        // already there and already listed individually by the board's own
+        // filter chips - nothing iterated it into nav rows.
+
+        withScratchStore { store in
+            let names = ["Manjesh Grand Line", "Deploy engine", "Pramata Platform"]
+            let ids = names.map { seedProject(store, name: $0) }
+
+            let (controller, window) = mount(store: store)
+            defer { window.orderOut(nil) }
+            let column = controller.debugSidebar
+
+            check(column.debugHeaders == ["Workspace", "Projects", "Smart views"],
+                  "the column's three groups, got \(column.debugHeaders)")
+
+            for (index, name) in names.enumerated() {
+                let id = ShiftController.debugProjectRowID(ids[index])
+                check(column.debugRowTitles.contains(name),
+                      "the column should list the project \"\(name)\", got \(column.debugRowTitles)")
+                // The dot is the same stable hue this project's board cards and
+                // filter chip already paint. Compared **component-wise**:
+                // `HelmContrast.ratio` is a luminance comparison, so two
+                // different hues of similar brightness pass it.
+                let expected = HelmTheme.nsColor(
+                    ShiftProjectPalette.tint(forProjectID: ids[index]).hex(in: ThemeManager.shared.theme))
+                guard let painted = column.debugDotColor(id: id) else {
+                    check(false, "\(name) should be led by a dot, not a symbol")
+                    continue
+                }
+                check(sameColour(painted, expected),
+                      "\(name)'s dot must be its board colour, got \(painted) want \(expected)")
+            }
+
+            // A project row is an identity, not an action: it must never wear
+            // an SF Symbol where a colour dot belongs, and the workspace rows
+            // must never wear a dot.
+            let dotted = zip(column.debugRowTitles, column.debugRowUsesDot)
+                .filter { $0.1 }.map { $0.0 }
+            check(Set(dotted) == Set(names),
+                  "exactly the project rows carry a dot, got \(dotted)")
+        }
+
+        // MARK: Picking a project filters the board and moves the chip row
+        //
+        // One filter, two controls - never two filters. A sidebar that set a
+        // second, independent project filter would leave the chip row above
+        // the board showing a different answer to the same question.
+
+        withScratchStore { store in
+            let alpha = seedProject(store, name: "Alpha")
+            let beta = seedProject(store, name: "Beta")
+            let inAlpha = seed(store, title: "In alpha", status: .todo, due: nil, project: alpha)
+            let inBeta = seed(store, title: "In beta", status: .todo, due: nil, project: beta)
+
+            let (controller, window) = mount(store: store)
+            defer { window.orderOut(nil) }
+
+            controller.debugSelectSidebarRow(ShiftController.debugProjectRowID(alpha))
+            drainMainQueue(turns: 5)
+            check(controller.debugProjectFilter == alpha,
+                  "clicking a project row filters by it, got \(controller.debugProjectFilter ?? "nil")")
+            check(controller.debugVisibleTaskIDs(.backlog) == [inAlpha],
+                  "the board should show only Alpha's task, got \(controller.debugVisibleTaskIDs(.backlog))")
+            check(controller.debugProjectFilterBar?.selectedProjectID == alpha,
+                  "the chip row must move with it, got "
+                  + "\(controller.debugProjectFilterBar?.selectedProjectID ?? "nil")")
+            check(controller.debugSidebar.debugSelectedRowIDs
+                    .contains(ShiftController.debugProjectRowID(alpha)),
+                  "the picked project row is the one rendering selected, got "
+                  + "\(controller.debugSidebar.debugSelectedRowIDs)")
+
+            // Clicking the selected project clears it, matching the chip row's
+            // own toggle rather than inventing a second gesture.
+            controller.debugSelectSidebarRow(ShiftController.debugProjectRowID(alpha))
+            drainMainQueue(turns: 5)
+            check(controller.debugProjectFilter == nil,
+                  "clicking the selected project clears the filter")
+            check(Set(controller.debugVisibleTaskIDs(.backlog)) == Set([inAlpha, inBeta]),
+                  "clearing it shows every project again")
+        }
+
+        // MARK: A project and a slice are orthogonal
+        //
+        // They are two one-of-many questions, so they live in two selection
+        // groups: picking a project must not un-pick "All tasks".
+
+        withScratchStore { store in
+            let alpha = seedProject(store, name: "Alpha")
+            _ = seed(store, title: "Due today, alpha", status: .todo,
+                     due: dateString(daysFromNow: 0), project: alpha)
+            _ = seed(store, title: "Undated, alpha", status: .todo, due: nil, project: alpha)
+
+            let (controller, window) = mount(store: store)
+            defer { window.orderOut(nil) }
+
+            controller.debugSelectSidebarRow("due_today")
+            controller.debugSelectSidebarRow(ShiftController.debugProjectRowID(alpha))
+            drainMainQueue(turns: 5)
+            check(controller.debugTaskScope == "due_today",
+                  "picking a project must leave the slice alone, got \(controller.debugTaskScope)")
+            // Read off the rows that are really rendering selected: a project
+            // row sharing the Workspace group would take the highlight away
+            // from the slice, which is exactly what two groups prevent.
+            check(controller.debugSidebar.debugSelectedRowIDs
+                    == ["due_today", ShiftController.debugProjectRowID(alpha)],
+                  "the slice and the project must both render selected, got "
+                  + "\(controller.debugSidebar.debugSelectedRowIDs)")
+            check(controller.debugVisibleTaskIDs(.backlog).count == 1,
+                  "both filters apply at once, got \(controller.debugVisibleTaskIDs(.backlog).count) task(s)")
+        }
+
+        // MARK: Smart views are backed by fields the record really carries
+
+        withScratchStore { store in
+            let hot = seedPriority(store, title: "Hot", priority: .high)
+            _ = seedPriority(store, title: "Ordinary", priority: .normal)
+
+            let (controller, window) = mount(store: store)
+            defer { window.orderOut(nil) }
+
+            controller.debugSelectSidebarRow("my_priorities")
+            drainMainQueue(turns: 5)
+            check(controller.debugVisibleTaskIDs(.backlog) == [hot],
+                  "My priorities is the captain's own high-priority mark, got "
+                  + "\(controller.debugVisibleTaskIDs(.backlog))")
+
+            // Everything seeded here was written moments ago, so the window is
+            // exercised by what it *keeps*, and the assertion that matters is
+            // that the slice is a real filter rather than a relabelled "all".
+            controller.debugSelectSidebarRow("recently_updated")
+            drainMainQueue(turns: 5)
+            check(controller.debugVisibleTaskIDs(.backlog).count == 2,
+                  "a task written seconds ago is recently updated, got "
+                  + "\(controller.debugVisibleTaskIDs(.backlog).count)")
+        }
+
+        // MARK: The footer links are wired to something real
+
+        withScratchStore { store in
+            let (controller, window) = mount(store: store)
+            defer { window.orderOut(nil) }
+
+            check(controller.debugSidebar.debugFooterLinkTitles == ["Settings", "Shortcuts"],
+                  "the footer's two links, got \(controller.debugSidebar.debugFooterLinkTitles)")
+
+            var navigated: RailDestination?
+            var openedPalette = false
+            controller.onNavigateToDestination = { navigated = $0 }
+            controller.onOpenCommandPalette = { openedPalette = true }
+            controller.debugSidebar.debugClickFooterLink("footer.settings")
+            controller.debugSidebar.debugClickFooterLink("footer.shortcuts")
+            check(navigated == .settings, "Settings opens the Settings destination, got \(String(describing: navigated))")
+            check(openedPalette, "Shortcuts opens the command palette")
+
+            // ...and it sits on the column's own bottom edge, which is the
+            // whole reason this page pins its column's bottom rather than
+            // letting it hug its content the way its two sibling pages do.
+            check(abs(controller.debugSidebar.debugFooterBottomGap) < 1,
+                  "the footer belongs on the column's bottom edge, sitting "
+                  + "\(fmt(controller.debugSidebar.debugFooterBottomGap))pt above it")
+            // ...and the column itself reaches the page's bottom, which is the
+            // other half: a column left to hug its content puts a correctly
+            // bottom-pinned footer halfway up an empty page.
+            let pageBottomGap = controller.debugSidebar.frame.minY - controller.view.bounds.minY
+            check(abs(pageBottomGap - HelmMetrics.pageGutter) < 1,
+                  "the column runs to the page's bottom inset, stopping "
+                  + "\(fmt(pageBottomGap))pt up instead of \(fmt(HelmMetrics.pageGutter))pt")
+        }
+
+        // MARK: More projects than fit, and none at all
+        //
+        // The column has to survive both ends: a fresh profile with no
+        // projects, and a captain with far more than the page was drawn with.
+        // A column that grew past the window would draw its rows over the
+        // footer, so the nav content scrolls instead - and neither end may
+        // change the column's own width, which reaches `bodyContainer` and so
+        // the window (gotcha (13)).
+
+        withScratchStore { store in
+            let (controller, window) = mount(store: store)
+            defer { window.orderOut(nil) }
+            check(controller.debugSidebar.debugRowUsesDot.allSatisfy { !$0 },
+                  "an empty project set lists no project rows")
+            check(controller.debugSidebar.debugHeaders.contains("Projects"),
+                  "...and the group header still says where projects go")
+        }
+
+        withScratchStore { store in
+            for index in 1...25 { _ = seedProject(store, name: "Project \(index)") }
+            let (controller, window) = mount(store: store)
+            defer { window.orderOut(nil) }
+
+            check(controller.debugSidebar.debugRowUsesDot.filter { $0 }.count == 25,
+                  "every project gets a row, got "
+                  + "\(controller.debugSidebar.debugRowUsesDot.filter { $0 }.count)")
+
+            for height in [940.0, 700.0, 1200.0] as [CGFloat] {
+                window.setFrame(NSRect(x: window.frame.minX, y: window.frame.minY,
+                                       width: 1440, height: height), display: true)
+                controller.view.layoutSubtreeIfNeeded()
+                let column = controller.debugSidebar
+                check(fmt(column.frame.width) == fmt(HelmPageSidebar.width),
+                      "the column stays \(fmt(HelmPageSidebar.width))pt wide at height \(fmt(height)), "
+                      + "got \(fmt(column.frame.width))")
+                check(column.frame.maxY <= controller.view.bounds.height + 0.5,
+                      "and never grows past the page at height \(fmt(height))")
+            }
+        }
+
+        // MARK: The column survives leaving the page and coming back
+
+        withScratchStore { store in
+            let alpha = seedProject(store, name: "Alpha")
+            let (controller, window) = mount(store: store)
+            defer { window.orderOut(nil) }
+
+            controller.debugSelectSidebarRow(ShiftController.debugProjectRowID(alpha))
+            drainMainQueue(turns: 5)
+            controller.showWeeklyReview()
+            drainMainQueue(turns: 5)
+            check(!controller.debugSidebarIsVisible, "the column hides on Weekly Review")
+            controller.debugRender()
+            controller.showDashboard()
+            drainMainQueue(turns: 5)
+            check(controller.debugSidebarIsVisible, "and comes back on My Tasks")
+            check(controller.debugProjectFilter == alpha,
+                  "a re-render must not silently drop the captain's project filter")
+            check(controller.debugSidebar.debugSelectedRowIDs
+                    .contains(ShiftController.debugProjectRowID(alpha)),
+                  "...and the column must still render it selected, got "
+                  + "\(controller.debugSidebar.debugSelectedRowIDs)")
+        }
+
         if failures.isEmpty {
             print("ShiftTasksPageSelfTest: PASS")
             return true
@@ -223,13 +461,41 @@ enum ShiftTasksPageSelfTest {
 
     @discardableResult
     private static func seed(_ store: ShiftStore, title: String,
-                             status: ShiftTaskStatus, due: String?) -> String {
+                             status: ShiftTaskStatus, due: String?,
+                             project: String? = nil) -> String {
         var task = ShiftTask.fresh()
         task.title = title
         task.status = status
         task.dueDate = due
+        task.projectID = project
         store.addTask(task)
         return task.id
+    }
+
+    @discardableResult
+    private static func seedProject(_ store: ShiftStore, name: String) -> String {
+        var project = ShiftProject.fresh()
+        project.name = name
+        store.addProject(project)
+        return project.id
+    }
+
+    @discardableResult
+    private static func seedPriority(_ store: ShiftStore, title: String,
+                                     priority: ShiftPriority) -> String {
+        var task = ShiftTask.fresh()
+        task.title = title
+        task.priority = priority
+        store.addTask(task)
+        return task.id
+    }
+
+    /// Component-wise, never `HelmContrast.ratio`: that compares relative
+    /// *luminance*, so two entirely different hues of similar brightness pass
+    /// it - a trap this codebase has walked into twice.
+    private static func sameColour(_ a: NSColor, _ b: NSColor) -> Bool {
+        let lhs = HelmContrast.components(a), rhs = HelmContrast.components(b)
+        return abs(lhs.0 - rhs.0) < 0.01 && abs(lhs.1 - rhs.1) < 0.01 && abs(lhs.2 - rhs.2) < 0.01
     }
 
     private static func mount(store: ShiftStore) -> (ShiftController, NSWindow) {
