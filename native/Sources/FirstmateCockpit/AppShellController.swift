@@ -870,6 +870,11 @@ final class AppShellController: NSViewController {
 
         review.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         shift.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        // The Tasks column's footer links, forwarded rather than owned - that
+        // page knows nothing about the shell or the palette
+        // (`onSearchTapped`'s own convention).
+        shift.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
+        shift.onOpenCommandPalette = { [weak self] in self?.onSearchTapped?() }
         hostsPanel.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Hosts is the first migrated page whose *actions* change while it is
         // on screen: §6.4's cluster carries the add action for the tab that is

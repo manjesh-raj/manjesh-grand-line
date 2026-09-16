@@ -108,25 +108,40 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     ], selected: ShiftTasksView.board.rawValue, size: .compact)
 
     /// Which slice of the captain's tasks the page is showing - the sidebar's
-    /// Workspace rows.
+    /// Workspace and Smart views rows.
     ///
-    /// Deliberately **not** a second project filter: the chip row above the
-    /// board already owns that, and it is the control the captain named in his
-    /// own list of what this page needs. Two surfaces filtering by project
-    /// would be one idea wearing two controls. What the sidebar carries is the
-    /// slice the chips cannot state - "what is due today", "what is late" -
-    /// each with a live count.
+    /// Deliberately **not** a project filter: that is its own orthogonal
+    /// question and lives in its own sidebar group (and in the chip row above
+    /// the board, which shows and sets the same one `projectFilter` - one
+    /// filter reachable from two controls, never two filters). What a scope
+    /// carries is the slice neither of those can state - "what is due today",
+    /// "what is late", "what did I mark high", "what have I touched lately".
     ///
     /// `String`-backed because `HelmPageSidebar` deals in caller-owned row ids,
     /// the same reason `ShiftTasksView` and `ShiftTopLevelView` are.
     enum ShiftTaskScope: String, CaseIterable {
         case all, dueToday = "due_today", overdue
+        case myPriorities = "my_priorities", recentlyUpdated = "recently_updated"
+
+        /// The Workspace group: the slices that carry a live count, each one
+        /// also stated by a stat tile at the top of the page.
+        static let workspaceCases: [ShiftTaskScope] = [.all, .dueToday, .overdue]
+
+        /// The Smart views group - derived slices with no tile of their own.
+        ///
+        /// Both are backed by fields `ShiftTask` genuinely carries
+        /// (`priority`, `updatedAt`); neither invents a signal, which is why
+        /// the reference's two smart views are the two that shipped and not a
+        /// third that would have needed a new persisted field.
+        static let smartViewCases: [ShiftTaskScope] = [.myPriorities, .recentlyUpdated]
 
         var title: String {
             switch self {
             case .all: return "All tasks"
             case .dueToday: return "Due today"
             case .overdue: return "Overdue"
+            case .myPriorities: return "My priorities"
+            case .recentlyUpdated: return "Recently updated"
             }
         }
 
@@ -137,9 +152,15 @@ final class ShiftController: NSViewController, DaylightDrillActions {
             case .all: return "tray.full"
             case .dueToday: return "sun.max"
             case .overdue: return "exclamationmark.triangle"
+            case .myPriorities: return "bolt"
+            case .recentlyUpdated: return "clock.arrow.circlepath"
             }
         }
     }
+
+    /// How far back "Recently updated" looks. A week, the same window the Done
+    /// column already uses - so "recent" means one thing on this page.
+    private static let recentlyUpdatedWindowDays = 7
 
     private var taskScope: ShiftTaskScope = .all
 
@@ -148,10 +169,37 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// page-scoped column is not the deleted app-wide rail coming back).
     private let sidebar = HelmPageSidebar()
 
+    /// The hairline between the nav column and the page - the reference's own
+    /// `border-right` on its `aside`, and the one thing that makes the column
+    /// read as a column rather than as rows floating on the page. Hidden with
+    /// the column itself on Weekly Review.
+    private let sidebarDivider = NSView()
+
     /// Action rows: these scroll to a panel rather than filtering anything, so
     /// they are `.action` rows and never take the selection.
     private static let followUpsRowID = "jump.followUps"
-    private static let projectsRowID = "jump.projects"
+
+    /// The sidebar's Projects group. A row there selects independently of the
+    /// Workspace/Smart-views rows, because "which slice" and "which project"
+    /// are two orthogonal questions - picking a project must not un-pick
+    /// "All tasks".
+    private static let projectGroup = "projects"
+    private static let projectRowPrefix = "project."
+    private static func projectRowID(_ id: String) -> String { projectRowPrefix + id }
+
+    private static let settingsRowID = "footer.settings"
+    private static let shortcutsRowID = "footer.shortcuts"
+
+    /// What the Projects section was last built from, so a re-render only
+    /// rebuilds the column when the project set genuinely changed - a rebuild
+    /// on every render would churn the column on every keystroke elsewhere on
+    /// the page (the same guard `KubernetesController.renderPodPicker` keeps).
+    private var sidebarProjectSignature: String?
+
+    /// Forwarded rather than owned - this controller knows nothing about the
+    /// shell (`AppShellController.onSearchTapped`'s own convention).
+    var onNavigateToDestination: ((RailDestination) -> Void)?
+    var onOpenCommandPalette: (() -> Void)?
 
     /// Two constraints, one active at a time: the content starts after the
     /// column while it is showing, and at the page edge while it is not (Weekly
@@ -376,6 +424,9 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(sidebar)
+        sidebarDivider.wantsLayer = true
+        sidebarDivider.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(sidebarDivider)
         root.addSubview(scroll)
 
         // **The column sits outside the scroll view**, the same call
@@ -387,8 +438,20 @@ final class ShiftController: NSViewController, DaylightDrillActions {
             sidebar.leadingAnchor.constraint(equalTo: root.leadingAnchor,
                                              constant: HelmMetrics.pageGutter),
             sidebar.topAnchor.constraint(equalTo: root.topAnchor, constant: 24),
-            sidebar.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor,
+            // An equality, not `<=` as the other two `HelmPageSidebar` pages
+            // use: this column has a footer, and a footer floating halfway up
+            // an otherwise empty column is not what a footer is. The column's
+            // own content-height constraint is optional (499), so this simply
+            // wins and the nav scrolls if it ever outgrows the page - which is
+            // exactly what a captain with twenty projects needs.
+            sidebar.bottomAnchor.constraint(equalTo: root.bottomAnchor,
                                             constant: -HelmMetrics.pageGutter),
+
+            sidebarDivider.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor,
+                                                    constant: HelmMetrics.s4),
+            sidebarDivider.widthAnchor.constraint(equalToConstant: 1),
+            sidebarDivider.topAnchor.constraint(equalTo: root.topAnchor),
+            sidebarDivider.bottomAnchor.constraint(equalTo: root.bottomAnchor),
         ])
 
         // `contentStack` carries its own `pageGutter` inset inside the scroll,
@@ -804,6 +867,8 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         projectFilterBar.onSelect = { [weak self] projectID in
             guard let self else { return }
             self.projectFilter = projectID
+            // `render` re-points the sidebar's Projects group at this, so the
+            // two controls can never show different answers to one question.
             self.render()
         }
 
@@ -905,6 +970,20 @@ final class ShiftController: NSViewController, DaylightDrillActions {
             return taskScope == .dueToday
                 ? cal.isDate(due, inSameDayAs: Date())
                 : due < cal.startOfDay(for: Date())
+        case .myPriorities:
+            // Outstanding work the captain themselves marked high - not a
+            // ranking this page invented.
+            return task.status != .completed && task.status != .cancelled && task.priority == .high
+        case .recentlyUpdated:
+            // `updatedAt` is written by `ShiftStore` on every real edit, so
+            // this is a fact about the record rather than a guess. A task
+            // whose timestamp cannot be parsed is *excluded*: claiming it was
+            // touched this week would be worse than leaving it out.
+            guard let updated = ShiftStore.date(fromISO8601: task.updatedAt) else { return false }
+            guard let cutoff = Calendar.current.date(byAdding: .day,
+                                                     value: -Self.recentlyUpdatedWindowDays,
+                                                     to: Date()) else { return false }
+            return updated >= cutoff
         }
     }
 
@@ -917,18 +996,11 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     // MARK: The sidebar
 
     private func buildSidebar() {
-        sidebar.appendHeader("Workspace")
-        for scope in ShiftTaskScope.allCases {
-            sidebar.appendRow(id: scope.rawValue, symbol: scope.symbol, title: scope.title)
-        }
-        sidebar.appendSpacer()
-        sidebar.appendHeader("Sections")
-        // Neither of these filters anything - they move the page to a panel
-        // further down it, so they are `.action` rows and the Workspace
-        // selection stays where the captain left it.
-        sidebar.appendRow(id: Self.followUpsRowID, symbol: "bell", title: "Follow-ups", kind: .action)
-        sidebar.appendRow(id: Self.projectsRowID, symbol: "shippingbox", title: "Projects", kind: .action)
-        sidebar.select(taskScope.rawValue)
+        rebuildSidebarSections(projects: store.projects)
+        sidebar.setFooter(links: [
+            .init(id: Self.settingsRowID, title: "Settings"),
+            .init(id: Self.shortcutsRowID, title: "Shortcuts"),
+        ])
 
         sidebar.onSelect = { [weak self] id in
             guard let self else { return }
@@ -937,15 +1009,79 @@ final class ShiftController: NSViewController, DaylightDrillActions {
                 self.render()
                 return
             }
+            if id.hasPrefix(Self.projectRowPrefix) {
+                self.pickProjectFromSidebar(String(id.dropFirst(Self.projectRowPrefix.count)))
+                return
+            }
+            switch id {
+            case Self.settingsRowID:
+                self.onNavigateToDestination?(.settings)
+                return
+            case Self.shortcutsRowID:
+                self.onOpenCommandPalette?()
+                return
+            default:
+                break
+            }
             // An action row from Weekly Review has to take the captain back to
             // the board first - the panel it scrolls to is not on that view.
             if self.topLevelView != .dashboard { self.switchTopLevelView(.dashboard) }
             switch id {
             case Self.followUpsRowID: self.scrollToPanel(self.followUpPanel)
-            case Self.projectsRowID: self.scrollToPanel(self.projectsPanel)
             default: break
             }
         }
+    }
+
+    /// The column's three groups, rebuilt from the live project list.
+    ///
+    /// **The Projects group is the whole point of this column's redesign.**
+    /// Before it the sidebar collapsed every project into one "Projects 5"
+    /// count row, so the one place a captain would look to see *which*
+    /// projects exist showed a number instead - the projects were already
+    /// modelled (`ShiftStore.projects`) and already listed individually by the
+    /// board's own filter chips; nothing iterated them into nav rows.
+    ///
+    /// Each row's dot takes `ShiftProjectPalette.tint(forProjectID:)`, the
+    /// same stable per-project hue the board cards' accent bars and the filter
+    /// chips already paint, so one project is one colour everywhere.
+    private func rebuildSidebarSections(projects: [ShiftProject]) {
+        sidebar.setSections([
+            .init(header: "Workspace", rows:
+                ShiftTaskScope.workspaceCases.map {
+                    .init(id: $0.rawValue, indicator: .symbol($0.symbol), title: $0.title)
+                }
+                // Follow-ups scrolls to a panel rather than filtering, so it is
+                // an `.action` row and never takes the selection.
+                + [.init(id: Self.followUpsRowID, indicator: .symbol("bell"),
+                         title: "Follow-ups", kind: .action)]),
+            .init(header: "Projects", rows: projects.map { project in
+                .init(id: Self.projectRowID(project.id),
+                      indicator: .dot(ShiftProjectPalette.tint(forProjectID: project.id)),
+                      title: project.name.isEmpty ? "Untitled project" : project.name,
+                      group: Self.projectGroup,
+                      showsCount: false)
+            }),
+            .init(header: "Smart views", rows: ShiftTaskScope.smartViewCases.map {
+                .init(id: $0.rawValue, indicator: .symbol($0.symbol), title: $0.title,
+                      showsCount: false)
+            }),
+        ])
+        sidebarProjectSignature = Self.projectSignature(projects)
+    }
+
+    private static func projectSignature(_ projects: [ShiftProject]) -> String {
+        projects.map { "\($0.id)\u{1}\($0.name)" }.joined(separator: "\u{2}")
+    }
+
+    /// One filter, two controls. Clicking the already-selected project clears
+    /// it, matching the chip row's own toggle, and the chip row is moved to
+    /// match rather than being left showing something else.
+    private func pickProjectFromSidebar(_ projectID: String) {
+        projectFilter = projectFilter == projectID ? nil : projectID
+        projectFilterBar.select(projectFilter)
+        if topLevelView != .dashboard { switchTopLevelView(.dashboard) }
+        render()
     }
 
     /// Scrolls the page so a panel sits just under the top edge. The document
@@ -1137,6 +1273,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         // an ordinary hidden `NSView` keeps its constraints.
         let showsSidebar = view == .dashboard
         sidebar.isHidden = !showsSidebar
+        sidebarDivider.isHidden = !showsSidebar
         scrollLeadingWithSidebar?.isActive = showsSidebar
         scrollLeadingFullWidth?.isActive = !showsSidebar
         if view == .weeklyReview { renderWeeklyReview() }
@@ -1338,14 +1475,27 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         // The column's counts come from the very same arrays the tiles were
         // just built from, so the two can never report different numbers for
         // one word.
+        // The Projects group is rebuilt only when the project set genuinely
+        // changed - a rebuild tears every row down, and doing that on every
+        // render would churn the column (and drop its hover state) on every
+        // unrelated edit elsewhere on the page.
+        if Self.projectSignature(store.projects) != sidebarProjectSignature {
+            rebuildSidebarSections(projects: store.projects)
+        }
         sidebar.setCounts([
             ShiftTaskScope.all.rawValue: tasks.count,
             ShiftTaskScope.dueToday.rawValue: dueToday.count,
             ShiftTaskScope.overdue.rawValue: overdue.count,
             Self.followUpsRowID: pendingFollowUps.count,
-            Self.projectsRowID: store.projects.count,
         ])
         sidebar.select(taskScope.rawValue)
+        // A filter pinned to a project that has since gone away would hide
+        // every task with no way to tell why - the same guard the chip row
+        // keeps for itself.
+        if let filter = projectFilter, !store.projects.contains(where: { $0.id == filter }) {
+            projectFilter = nil
+        }
+        sidebar.select(projectFilter.map(Self.projectRowID), inGroup: Self.projectGroup)
 
         let sortedTasks = tasks.sorted(by: Self.byDueDateThenCreated)
         taskListView.setTasks(sortedTasks.filter(matchesFilters), projects: store.projects)
@@ -1986,13 +2136,13 @@ final class ShiftController: NSViewController, DaylightDrillActions {
 
     /// Drives the real column's own handler, so a test cannot pass against a
     /// row wired to nothing.
-    func debugSelectSidebarRow(_ id: String) { sidebar.debugClickRow(sidebarRowIndex(id)) }
+    func debugSelectSidebarRow(_ id: String) { sidebar.debugClickRow(id: id) }
 
-    private func sidebarRowIndex(_ id: String) -> Int {
-        var ids = ShiftTaskScope.allCases.map(\.rawValue)
-        ids += [Self.followUpsRowID, Self.projectsRowID]
-        return ids.firstIndex(of: id) ?? 0
-    }
+    /// The sidebar row id for a project, so a check can drive the real row
+    /// rather than reaching into `projectFilter` directly.
+    static func debugProjectRowID(_ projectID: String) -> String { projectRowID(projectID) }
+    static var debugProjectGroup: String { projectGroup }
+    var debugProjectFilter: String? { projectFilter }
 
     /// The task ids each board column is showing, after every filter.
     func debugVisibleTaskIDs(_ column: ShiftBoardColumn) -> [String] {
@@ -2081,6 +2231,8 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         tabs.applyTheme(theme)
         tasksViewToggle.applyTheme(theme)
         sidebar.applyTheme(theme)
+        sidebarDivider.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex)
+            .withAlphaComponent(0.6).cgColor
         projectFilterBar.applyTheme(theme)
         boardView.applyTheme(theme)
         boardHint.textColor = muted
