@@ -36,9 +36,9 @@ import AppKit
 enum HostsRedesignSelfTest {
 
     static func run() -> Bool {
-        print("== Hosts redesign: two columns, real panels ==")
+        print("== Hosts redesign: three columns, real panels ==")
         var ok = true
-        checkTwoColumnLayout(&ok)
+        checkThreeColumnLayout(&ok)
         checkTwoColumnLayoutSurvivesUntaggedHosts(&ok)
         checkWorkspaceReadsTheStores(&ok)
         checkDetailFollowsSelectionAndTab(&ok)
@@ -47,6 +47,12 @@ enum HostsRedesignSelfTest {
         checkOnlineChipNarrowsTheList(&ok)
         checkQuickActionsAreRealAndWired(&ok)
         checkToolbarShortcutSitsBesideConsole(&ok)
+        checkSidebarIsComposedFromTheReference(&ok)
+        checkSidebarAndTabsAreOneMechanism(&ok)
+        checkSidebarCountsComeFromTheStores(&ok)
+        checkKeychainCardReadsRealState(&ok)
+        checkToolsRowsAreWiredToRealDestinations(&ok)
+        checkUserRowIsRealAndWired(&ok)
         print(ok ? "\nPASS" : "\nFAIL")
         return ok
     }
@@ -156,20 +162,43 @@ enum HostsRedesignSelfTest {
     /// content column has to be *exactly* whatever the page, the gutters and
     /// the fixed side column leave, or the page has quietly stopped filling its
     /// own width - which is the complaint this redesign exists to answer.
-    private static func checkTwoColumnLayout(_ ok: inout Bool) {
-        print("\n-- two columns, and neither one is a window floor --")
+    /// **Inverted, not deleted, when `fm/grand-line-hosts-sidebar-restore` put
+    /// the nav column back.** This used to assert two columns, because
+    /// `fm/grand-line-hosts-page-redesign` had scoped a `HelmPageSidebar` out
+    /// by name; the captain used what that shipped, put it beside his own
+    /// reference and asked for the column back. So the shape being asserted
+    /// moved, and the guarantees around it did not: three fixed-or-flexible
+    /// columns that tile the page exactly, and not one of them a window floor.
+    /// Re-adding the column has to come here and read why it went, which is
+    /// this codebase's own convention for an assertion that has become a
+    /// record of an overturned decision.
+    private static func checkThreeColumnLayout(_ ok: inout Bool) {
+        print("\n-- three columns, and none of them is a window floor --")
         let (controller, window, _) = page(hosts: [devHost(), prodHost()])
         defer { _ = window }
 
         let stack = controller.debugSideStack
         let state = controller.debugState()
+        guard let nav = findSidebar(in: controller.view) else {
+            fail("no HelmPageSidebar in the page - the nav column is missing", &ok)
+            return
+        }
         let expected = state.rootWidth
             - HelmMetrics.pageGutter * 2
+            - HelmPageSidebar.width
+            - HelmMetrics.s4
             - HostsSideStack.width
             - HelmMetrics.s4
         if abs(state.hostsCardFrame.width - expected) > 0.5 {
             fail("content column is \(fmt(state.hostsCardFrame.width))pt, want \(fmt(expected))pt "
-                 + "(page \(fmt(state.rootWidth)) - gutters - \(fmt(HostsSideStack.width))pt side column)", &ok)
+                 + "(page \(fmt(state.rootWidth)) - gutters - \(fmt(HelmPageSidebar.width))pt nav "
+                 + "- \(fmt(HostsSideStack.width))pt side column)", &ok)
+        }
+        if abs(nav.frame.width - HelmPageSidebar.width) > 0.5 {
+            fail("nav column is \(fmt(nav.frame.width))pt, want \(fmt(HelmPageSidebar.width))pt", &ok)
+        }
+        if abs(nav.frame.minX - HelmMetrics.pageGutter) > 0.5 {
+            fail("nav column starts at \(fmt(nav.frame.minX))pt, want the page gutter", &ok)
         }
         if abs(stack.frame.width - HostsSideStack.width) > 0.5 {
             fail("side column is \(fmt(stack.frame.width))pt, want \(fmt(HostsSideStack.width))pt", &ok)
@@ -185,20 +214,60 @@ enum HostsRedesignSelfTest {
         let floors = widthConstraintsAtOrAbove(NSLayoutConstraint.Priority(500),
                                                in: controller.view,
                                                matching: [HostsSideStack.width,
+                                                          HelmPageSidebar.width,
                                                           HostsController.contentMinimumWidth])
         if !floors.isEmpty {
             fail("\(floors.count) column constraint(s) at or above windowSizeStayPut: \(floors)", &ok)
         }
 
-        // The page must genuinely hold a narrow window.
-        for width in [1016.0, 1100.0] as [CGFloat] {
+        // **The page must genuinely hold a narrow window**, and the way that
+        // is measured moved with the third column.
+        //
+        // This used to read `view.fittingSize.width <= width`. That is a
+        // page's *preferred* width, not a floor - every column here is pinned
+        // at `HelmDaylightPriority.contentTie` (499), below
+        // `NSLayoutPriorityWindowSizeStayPut`, so all three yield before the
+        // window has to - and a three-column page legitimately prefers more
+        // than 1016pt while still resolving correctly at it. Measured: the
+        // preference is a flat 1198.5 at every swept width while the three
+        // columns tile 1016 exactly. Asserting the preference would therefore
+        // have failed for a page that is behaving perfectly, so what is
+        // asserted instead is the thing that was ever really meant - that at a
+        // narrow window the three columns still tile the page with nothing
+        // overflowing it. The *window* half of the same guarantee is
+        // `AppShellBodyWidthSelfTest`, which sweeps every destination.
+        for width in [1016.0, 1100.0, 1900.0] as [CGFloat] {
             controller.view.frame = NSRect(x: 0, y: 0, width: width, height: 860)
             controller.view.layoutSubtreeIfNeeded()
-            if controller.view.fittingSize.width > width {
-                fail("at \(fmt(width))pt the page demands \(fmt(controller.view.fittingSize.width))pt", &ok)
+            let s = controller.debugState()
+            guard let nav = findSidebar(in: controller.view) else { continue }
+            let tiled = HelmMetrics.pageGutter + nav.frame.width + HelmMetrics.s4
+                + s.hostsCardFrame.width + HelmMetrics.s4
+                + controller.debugSideStack.frame.width + HelmMetrics.pageGutter
+            if abs(tiled - width) > 0.5 {
+                fail("at \(fmt(width))pt the three columns tile \(fmt(tiled))pt "
+                     + "(nav \(fmt(nav.frame.width)) + content \(fmt(s.hostsCardFrame.width)) "
+                     + "+ side \(fmt(controller.debugSideStack.frame.width)))", &ok)
+            }
+            if s.hostsCardFrame.width < 1 {
+                fail("at \(fmt(width))pt the content column collapsed", &ok)
             }
         }
-        if ok { print("  OK - content + \(fmt(HostsSideStack.width))pt side column tile the page, no window floor") }
+        if ok {
+            print("  OK - \(fmt(HelmPageSidebar.width))pt nav + content + "
+                  + "\(fmt(HostsSideStack.width))pt side column tile the page, no window floor")
+        }
+    }
+
+    /// The real page's own nav column, found by walking the tree rather than
+    /// asked for through an accessor - so a column that exists but was never
+    /// added to the view hierarchy fails here rather than passing.
+    static func findSidebar(in view: NSView) -> HelmPageSidebar? {
+        if let nav = view as? HelmPageSidebar { return nav }
+        for child in view.subviews {
+            if let found = findSidebar(in: child) { return found }
+        }
+        return nil
     }
 
     /// The two columns survive a host list with **no tags on any host**.
@@ -221,7 +290,7 @@ enum HostsRedesignSelfTest {
     /// case states the property (the two columns tile the page) rather than
     /// the symptom.
     private static func checkTwoColumnLayoutSurvivesUntaggedHosts(_ ok: inout Bool) {
-        print("\n-- two columns hold when no host carries a tag --")
+        print("\n-- the columns hold when no host carries a tag --")
         let (controller, window, _) = page(hosts: untaggedGroupedHosts(), width: 1467)
         defer { _ = window }
         let state = controller.debugState()
@@ -238,6 +307,8 @@ enum HostsRedesignSelfTest {
             - HelmMetrics.pageGutter * 2
             - HelmMetrics.s4
             - HostsSideStack.width
+            - HelmMetrics.s4
+            - HelmPageSidebar.width
         if abs(state.hostsCardFrame.width - expected) > 0.5 {
             fail("content column is \(fmt(state.hostsCardFrame.width))pt, want \(fmt(expected))pt "
                  + "- an untagged host list collapses the page's primary content", &ok)
@@ -551,6 +622,215 @@ enum HostsRedesignSelfTest {
             fail("clicking the Hosts icon opened \(opened.map(\.title))", &ok)
         }
         if ok { print("  OK - Hosts is the last icon, immediately after Console, and navigates") }
+    }
+    // MARK: - The nav column (fm/grand-line-hosts-sidebar-restore)
+
+    /// The captain's reference draws four things in this column, and each one
+    /// is checked for **where it came from**, not that a view exists - the same
+    /// standard the panels on the other side of the page are held to, and the
+    /// reason it matters here is that the reference itself is full of invented
+    /// data (a hardcoded 68% keychain bar, a decorative user row).
+    private static func checkSidebarIsComposedFromTheReference(_ ok: inout Bool) {
+        print("\n-- the nav column is present, panelled, and grouped as the reference groups it --")
+        let (controller, window, _) = page(hosts: [devHost(), prodHost()])
+        defer { _ = window }
+        guard let nav = findSidebar(in: controller.view) else {
+            fail("no HelmPageSidebar in the real page's view tree", &ok)
+            return
+        }
+        // Genuinely rendered, not merely constructed: the bug this restores
+        // from was that the column was never built at all, and a check that
+        // only asked the controller for its property would pass for a column
+        // that never reached the tree.
+        if nav.isHidden || nav.alphaValue < 0.99 || nav.frame.width < 1 || nav.frame.height < 1 {
+            fail("the nav column is in the tree but not rendered: hidden=\(nav.isHidden) "
+                 + "alpha=\(nav.alphaValue) frame=\(nav.frame)", &ok)
+        }
+        if nav.debugHeaders != ["Workspace", "Tools"] {
+            fail("section headers are \(nav.debugHeaders), want [Workspace, Tools]", &ok)
+        }
+        if nav.debugRowTitles != ["Hosts", "SSH Keys", "Snippets", "Activity", "Commands"] {
+            fail("rows are \(nav.debugRowTitles)", &ok)
+        }
+        // WORKSPACE narrows the list; TOOLS leaves it alone. A TOOLS row that
+        // latched selected would claim the list had been filtered to something
+        // (`HelmPageSidebar.RowKind`).
+        if nav.debugRowKinds != ["filter", "filter", "filter", "action", "action"] {
+            fail("row kinds are \(nav.debugRowKinds) - a TOOLS row must not latch", &ok)
+        }
+        if !nav.debugSurfaceIsPanel { fail("the column is not a panel surface", &ok) }
+        if !nav.debugHasCountBadges { fail("the WORKSPACE counts are not badges", &ok) }
+        if !nav.debugHasFooter { fail("the column has no footer (keychain card + user row)", &ok) }
+        // The footer is bottom-anchored, which is the whole reason this page
+        // pins the column's bottom with a required `==` rather than the `<=`
+        // Poneglyph and Schedules use.
+        let card = controller.debugKeychainCard
+        let user = controller.debugUserRow
+        let cardInNav = card.convert(card.bounds, to: nav)
+        let userInNav = user.convert(user.bounds, to: nav)
+        // `HelmPageSidebar` is a plain `NSView`, which is **not flipped** - so
+        // y grows upward and the visually-lower user row has the *smaller*
+        // origin. Writing these two the flipped way round is what a first pass
+        // here did, and it fails against a column that is laid out correctly.
+        if nav.isFlipped {
+            fail("the nav column became flipped - the geometry below reads the wrong way round", &ok)
+        }
+        if cardInNav.minY < userInNav.maxY - 0.5 {
+            fail("the keychain card does not sit above the user row "
+                 + "(card minY \(fmt(cardInNav.minY)), user maxY \(fmt(userInNav.maxY)))", &ok)
+        }
+        let bottomGap = userInNav.minY
+        if bottomGap < -0.5 || bottomGap > HelmPageSidebar.Metrics.panelInset + 0.5 {
+            fail("the footer sits \(fmt(bottomGap))pt off the column's bottom - it is not anchored there", &ok)
+        }
+        if ok { print("  OK - WORKSPACE(3) over TOOLS(2), panelled, badged, with a bottom-anchored footer") }
+    }
+
+    /// The tab strip stays (the captain's own target screenshot shows both), so
+    /// the two controls have to be **one mechanism** - which is the thing
+    /// `fm/grand-line-hosts-page-redesign` was right to worry about when it
+    /// scoped a column out, and the thing that makes keeping both safe.
+    private static func checkSidebarAndTabsAreOneMechanism(_ ok: inout Bool) {
+        print("\n-- the nav column and the tab strip are one mechanism --")
+        let (controller, window, _) = page(hosts: [devHost()])
+        defer { _ = window }
+        guard let nav = findSidebar(in: controller.view) else {
+            fail("no nav column", &ok); return
+        }
+        if nav.selection != HostsTab.hosts.rawValue {
+            fail("the column opens on \(nav.selection ?? "nil"), want hosts", &ok)
+        }
+        nav.debugClickRow(1)
+        if controller.currentTab != .keys {
+            fail("clicking SSH Keys left the page on \(controller.currentTab)", &ok)
+        }
+        controller.select(tab: .snippets)
+        if nav.selection != HostsTab.snippets.rawValue {
+            fail("switching to Snippets left the column on \(nav.selection ?? "nil")", &ok)
+        }
+        // A TOOLS row navigates away; it must move neither the tab nor the
+        // selection under it.
+        var activity = 0
+        controller.onOpenActivity = { activity += 1 }
+        nav.debugClickRow(3)
+        if activity != 1 { fail("the Activity row fired \(activity) time(s)", &ok) }
+        if controller.currentTab != .snippets {
+            fail("the Activity row changed the tab to \(controller.currentTab)", &ok)
+        }
+        if nav.selection != HostsTab.snippets.rawValue {
+            fail("the Activity row moved the selection to \(nav.selection ?? "nil")", &ok)
+        }
+        if ok { print("  OK - either control moves both, and a TOOLS row moves neither") }
+    }
+
+    private static func checkSidebarCountsComeFromTheStores(_ ok: inout Bool) {
+        print("\n-- the nav counts are the stores' own, and follow a write --")
+        let (controller, window, hostStore) = page(hosts: [devHost()],
+                                                   keys: [navKey("work"), navKey("legacy")],
+                                                   snippets: [navSnippet("tail")])
+        defer { _ = window }
+        guard let nav = findSidebar(in: controller.view) else { fail("no nav column", &ok); return }
+        let want = [HostsTab.hosts.rawValue: "1", HostsTab.keys.rawValue: "2",
+                    HostsTab.snippets.rawValue: "1"]
+        for (id, value) in want where nav.debugCounts[id] != value {
+            fail("\(id) reads \(nav.debugCounts[id] ?? "nil"), want \(value)", &ok)
+        }
+        // Read off the rendered labels and then driven by a real store write -
+        // a check that re-derived the number would agree with itself forever.
+        hostStore.add(prodHost())
+        if nav.debugCounts[HostsTab.hosts.rawValue] != "2" {
+            fail("after adding a host the count reads "
+                 + "\(nav.debugCounts[HostsTab.hosts.rawValue] ?? "nil"), want 2", &ok)
+        }
+        if ok { print("  OK - 1/2/1 from the real stores, and the host count follows a write") }
+    }
+
+    /// The reference's bar is a hardcoded 68%. This one is a real fraction of
+    /// the saved fleet, and a fleet with nothing in it reports none rather than
+    /// implying 0% (GL-14).
+    private static func checkKeychainCardReadsRealState(_ ok: inout Bool) {
+        print("\n-- the keychain card is real state, never the reference's demo numbers --")
+        var managed = devHost()
+        let k = navKey("work")
+        managed.keyID = k.id
+        let (controller, window, _) = page(hosts: [managed, prodHost()], keys: [k, navKey("legacy")])
+        defer { _ = window }
+        let card = controller.debugKeychainCard
+        if card.debugVerdict != "Protected" {
+            fail("verdict is \(card.debugVerdict) with two keys saved", &ok)
+        }
+        if !card.debugDetail.hasPrefix("2 keys") {
+            fail("detail is \(card.debugDetail) - the key count is not the store's", &ok)
+        }
+        if abs(card.debugFraction - 0.5) > 0.001 {
+            fail("the bar reads \(card.debugFraction), want 0.5 (1 of 2 hosts on a managed key)", &ok)
+        }
+        if card.debugDetail.contains("Touch ID") != CredentialVaultKeyStore.biometryAvailable {
+            fail("the biometry line does not match the real probe "
+                 + "(\(CredentialVaultKeyStore.biometryAvailable))", &ok)
+        }
+
+        let (empty, emptyWindow, _) = page()
+        defer { _ = emptyWindow }
+        if empty.debugKeychainCard.debugVerdict != "Empty" {
+            fail("an empty keychain reads \(empty.debugKeychainCard.debugVerdict)", &ok)
+        }
+        if empty.debugKeychainCard.debugFraction != 0 {
+            fail("a fleet with no hosts reports a fraction of "
+                 + "\(empty.debugKeychainCard.debugFraction)", &ok)
+        }
+        if ok { print("  OK - Protected/2 keys/0.5 from the stores, and no fabricated fraction when empty") }
+    }
+
+    /// A nav row that opens nothing is a control that lies about what it does -
+    /// which is why the reference's other sidebar entries are absent here
+    /// rather than drawn inert, exactly as `CredentialVaultSidebar` and
+    /// `SchedulesController` each decided for their own reference's extras.
+    private static func checkToolsRowsAreWiredToRealDestinations(_ ok: inout Bool) {
+        print("\n-- both TOOLS rows open something that really exists --")
+        let (controller, window, _) = page()
+        defer { _ = window }
+        guard let nav = findSidebar(in: controller.view) else { fail("no nav column", &ok); return }
+        var activity = 0, commands = 0
+        controller.onOpenActivity = { activity += 1 }
+        controller.onOpenCommands = { commands += 1 }
+        nav.debugClickRow(3)
+        nav.debugClickRow(4)
+        if activity != 1 { fail("Activity fired \(activity) time(s)", &ok) }
+        if commands != 1 { fail("Commands fired \(commands) time(s)", &ok) }
+        if ok { print("  OK - Activity and Commands each reach their forwarded closure") }
+    }
+
+    private static func checkUserRowIsRealAndWired(_ ok: inout Bool) {
+        print("\n-- the user row is the real account, and its menu does what it names --")
+        let (controller, window, _) = page()
+        defer { _ = window }
+        let row = controller.debugUserRow
+        let expected = HostsUserRow.currentUserName()
+        if row.debugName != expected {
+            fail("the row reads \(row.debugName), want the real account name \(expected)", &ok)
+        }
+        if row.debugName.isEmpty { fail("the account name is empty", &ok) }
+        if row.debugInitial != String(expected.prefix(1)).uppercased() {
+            fail("the avatar initial is \(row.debugInitial)", &ok)
+        }
+        var settings = 0, logout = 0
+        controller.onOpenSettings = { settings += 1 }
+        controller.onLogout = { logout += 1 }
+        row.debugPickSettings()
+        row.debugPickLogout()
+        if settings != 1 { fail("Settings fired \(settings) time(s)", &ok) }
+        if logout != 1 { fail("Log Out fired \(logout) time(s)", &ok) }
+        if ok { print("  OK - \(expected) from NSFullUserName(), with both menu items wired") }
+    }
+
+    private static func navKey(_ label: String) -> SSHKey {
+        SSHKey(label: label, type: .ed25519, publicKey: "ssh-ed25519 AAAA",
+               fingerprint: "SHA256:\(label)")
+    }
+
+    private static func navSnippet(_ label: String) -> Snippet {
+        Snippet(label: label, command: "echo \(label)")
     }
 }
 #endif

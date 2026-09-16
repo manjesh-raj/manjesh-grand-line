@@ -189,6 +189,7 @@ enum AppShellBodyWidthSelfTest {
             ("theWidthRepairNeverForcesANestedLayoutPass", test_repairNeverForcesANestedLayoutPass),
             ("bodyContainerTracksWindowAcrossRealisticWidths", test_widthTracksAcrossRealisticWidths),
             ("bodyContainerTracksWindowAcrossAllDestinations", test_widthTracksAcrossAllDestinations),
+            ("bodyContainerTracksWindowWithSeededHosts", test_widthTracksWithSeededHosts),
             ("bodyContainerTracksWindowAcrossAllSpaces", test_widthTracksAcrossAllSpaces),
             ("healthCardDescriptionWidthConverges", test_healthCardLayoutConverges),
             ("moduleCardDeallocatesAfterRemoval", test_moduleCardTrackingAreaDoesNotLeak),
@@ -286,9 +287,14 @@ enum AppShellBodyWidthSelfTest {
     /// fires `NSWindow.didResizeNotification` for a window that exists but
     /// isn't on screen, and keeping it off screen means this test can never
     /// visibly disturb anything on a shared machine.
-    private static func makeMountedShell() -> (window: NSWindow, shell: AppShellController) {
+    private static func makeMountedShell(seedHosts: [Host] = [])
+        -> (window: NSWindow, shell: AppShellController) {
         let window = OffScreenProbe.window(width: 1220, height: 720, styleMask: [.titled, .resizable])
         let hostStore = HostStore()
+        // Seeded **before** the shell is built, so the Hosts page renders with
+        // real rows (and, for a tagged host, its tag strip) from its very first
+        // layout pass rather than after one.
+        for host in seedHosts { hostStore.add(host) }
         let keyStore = SSHKeyStore()
         let snippetStore = SnippetStore()
         let shiftStore = ShiftStore()
@@ -595,6 +601,62 @@ enum AppShellBodyWidthSelfTest {
     /// wider-than-requested width for every destination shown after it, at a
     /// window width below roughly 1290pt), and reapplying the fix passes it
     /// again.
+    /// The same guarantee as the sweep below, with the Hosts page holding real
+    /// data - which is the one shape that sweep cannot reach on its own.
+    ///
+    /// **Why this case exists.** `withScratchEnv` points every store at an
+    /// empty scratch file, so the Hosts page in the sweep below renders zero
+    /// rows and, in particular, no tag strip. Two of that page's widest
+    /// demands only exist with real hosts in it: the tag chip row
+    /// (`fm/grand-line-hosts-page-layout-regression-fix`'s own subject) and,
+    /// since `fm/grand-line-hosts-sidebar-restore`, a third column. Measured
+    /// with tagged hosts the page's *preferred* width is 1198.5 - comfortably
+    /// above the 1100pt window swept here - and that is fine, because every
+    /// column is pinned at `HelmDaylightPriority.contentTie` (499), below
+    /// `NSLayoutPriorityWindowSizeStayPut`. This case is what proves that
+    /// distinction holds rather than being argued: a page that merely *prefers*
+    /// more must still let the window be whatever the window is.
+    private static func test_widthTracksWithSeededHosts() -> String? {
+        withScratchEnv {
+            var dev = Host(label: "DEV Bastion", address: "ec2-44-206-131-135.compute-1.amazonaws.com")
+            dev.username = "centos"
+            dev.tags = ["DEV"]
+            var prod = Host(label: "Prod Bastion", address: "ec2-3-208-58-234.compute-1.amazonaws.com")
+            prod.username = "ec2-user"
+            prod.tags = ["PROD"]
+            // An untagged, grouped host too: the tag strip is an
+            // `NSStackView` arranged subview that leaves layout entirely when
+            // it is hidden, so the two branches are genuinely different
+            // layouts and both are swept.
+            var plain = Host(label: "Build box", address: "build.internal")
+            plain.username = "ci"
+            plain.group = "CI"
+
+            let (window, shell) = makeMountedShell(seedHosts: [dev, prod, plain])
+            var failures: [String] = []
+            shell.show(.hosts)
+            for width in [CGFloat(1016), 1100, 1220, 1512, 2000, 1100] {
+                window.setFrame(NSRect(x: 0, y: 0, width: width, height: 900), display: true)
+                let actual = shell.bodyContainerFrameForTests.width
+                if abs(actual - width) >= 0.5 {
+                    failures.append("hosts (seeded) at width \(width): expected bodyContainer \(width), got \(actual)")
+                }
+            }
+            // And the shape the brief's own "switch away and back" asks for:
+            // a destination visited in between must not leave a floor behind.
+            for other in [RailDestination.console, .overview, .settings] {
+                shell.show(other)
+                shell.show(.hosts)
+                window.setFrame(NSRect(x: 0, y: 0, width: 1016, height: 900), display: true)
+                let actual = shell.bodyContainerFrameForTests.width
+                if abs(actual - 1016) >= 0.5 {
+                    failures.append("hosts (seeded, after visiting \(other)) at 1016: got \(actual)")
+                }
+            }
+            return failures.isEmpty ? nil : failures.joined(separator: " | ")
+        }
+    }
+
     private static func test_widthTracksAcrossAllDestinations() -> String? {
         withScratchEnv {
             let (window, shell) = makeMountedShell()

@@ -1179,6 +1179,12 @@ final class HelmProgressBar: NSView {
         if let observation { ThemeManager.shared.unobserve(observation) }
     }
 
+    #if FM_SELFTESTS
+    /// What the bar is really showing, read off its own state - a check that
+    /// re-derives the fraction agrees with itself forever.
+    var debugFraction: Double { fraction }
+    #endif
+
     func configure(fraction: Double) {
         indeterminate = false
         self.fraction = min(1, max(0, fraction))

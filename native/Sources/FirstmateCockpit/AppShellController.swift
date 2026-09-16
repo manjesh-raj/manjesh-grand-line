@@ -2679,6 +2679,20 @@ final class AppShellController: NSViewController {
     /// follow-up/project - each opens the same editor sheet the Shift page's
     /// own row click already uses, so there is exactly one "open this task"
     /// behavior regardless of entry point.
+    /// The app's own activity feed - Overview's captain's log.
+    ///
+    /// Wired to the Hosts sidebar's TOOLS > Activity row. `show(_:)` mounts
+    /// the destination if this is its first visit, which is why the tab switch
+    /// follows rather than precedes it.
+    func openFleetLog() {
+        show(.overview)
+        overview.showLogTab()
+    }
+
+    /// The Hosts sidebar's user row, routed into the bar's own single logout
+    /// confirmation rather than a second copy of it.
+    func requestLogout() { bar.requestLogout() }
+
     func openShiftTask(id: String) {
         show(.shift)
         shift.openTask(id: id)

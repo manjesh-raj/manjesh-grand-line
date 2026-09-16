@@ -21,6 +21,12 @@
 // instead of `CredentialCategory`, so a second page can have one without a
 // near-copy drifting from the first (this codebase's own repeated lesson -
 // see `HelmRefreshPill`'s header for the same extraction, same reasoning).
+//
+// **Three callers now**, Hosts having asked for one in
+// `fm/grand-line-hosts-sidebar-restore` - which is what `Surface`,
+// `CountStyle` and `setFooter(_:)` below are for. All three are opt-in and
+// default to what Poneglyph and Schedules already had, so a page taking its
+// own reference's treatment cannot restyle theirs.
 
 import AppKit
 
@@ -39,7 +45,54 @@ final class HelmPageSidebar: NSView {
         case action
     }
 
+    /// Does the column paint a surface of its own, or sit straight on the
+    /// page?
+    ///
+    /// **Opt-in, and `.plain` is the default on purpose.** Poneglyph and
+    /// Schedules both shipped this column flush on the page background, and
+    /// this enum exists so a third page can take the reference mockup's
+    /// panelled treatment without restyling the two that did not ask for it -
+    /// the same "widen the shared component, leave every existing caller
+    /// byte-identical" shape `HelmButton.gradientFill` and
+    /// `HelmAccentRow.gradientBadge` already use here.
+    enum Surface {
+        /// No fill, no border - the column is just its rows. Poneglyph and
+        /// Schedules.
+        case plain
+        /// `HelmCard`'s own fill/border/radius, so the column reads as a panel
+        /// beside the page's cards rather than as loose rows. Hosts.
+        case panel
+    }
+
+    /// How a row's count is drawn.
+    ///
+    /// **Opt-in, `.plain` by default**, same reasoning as `Surface` above:
+    /// Poneglyph and Schedules shipped the plain right-aligned number this
+    /// component was extracted with, and a third page taking its reference's
+    /// badge must not restyle theirs.
+    enum CountStyle {
+        /// Right-aligned plain text - a column of six rows carries six numbers
+        /// and no extra chrome.
+        case plain
+        /// A small filled pill, which is what the Hosts reference draws: a
+        /// muted chip on a resting row, an accent-tinted one on the selected
+        /// row.
+        case badge
+    }
+
     static let width: CGFloat = 208
+
+    private let surface: Surface
+    private let countStyle: CountStyle
+
+    /// Bottom-anchored content, below the rows: `setFooter(_:)`'s view.
+    ///
+    /// Absent unless a caller sets one, which is what keeps the two pages that
+    /// predate it unchanged - with no footer the stack is pinned exactly as it
+    /// always was (`bottom <=` this view's own bottom, so the column hugs its
+    /// rows and a page may pin it with an inequality).
+    private var footer: NSView?
+    private var stackBottom: NSLayoutConstraint!
 
     /// Fired with the row's id. A `.filter` row has already moved the
     /// selection by the time this runs; an `.action` row has not.
@@ -51,13 +104,23 @@ final class HelmPageSidebar: NSView {
 
     private let stack = NSStackView()
     private var rows: [(button: HoverHighlightView, id: String, kind: RowKind,
-                        icon: NSImageView, label: NSTextField, count: NSTextField)] = []
+                        icon: NSImageView, label: NSTextField, count: NSTextField,
+                        chip: NSView?)] = []
     private var headers: [NSTextField] = []
     private var theme: HelmTheme = ThemeManager.shared.theme
 
     // MARK: Build
 
+    init(surface: Surface = .plain, countStyle: CountStyle = .plain) {
+        self.surface = surface
+        self.countStyle = countStyle
+        super.init(frame: .zero)
+        build()
+    }
+
     override init(frame frameRect: NSRect) {
+        self.surface = .plain
+        self.countStyle = .plain
         super.init(frame: frameRect)
         build()
     }
@@ -71,11 +134,16 @@ final class HelmPageSidebar: NSView {
         stack.spacing = 2
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
+        // `.plain` keeps a zero inset, so the two pages that predate `Surface`
+        // lay their rows out exactly where they always did. A `.panel` column
+        // has a border to keep clear of.
+        let inset = surface == .panel ? Metrics.panelInset : 0
+        stackBottom = stack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -inset)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            stack.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            stack.topAnchor.constraint(equalTo: topAnchor, constant: inset),
+            stackBottom,
         ])
 
         // A fixed column, so the content beside it takes every point the window
@@ -161,16 +229,44 @@ final class HelmPageSidebar: NSView {
         count.setContentCompressionResistancePriority(.required, for: .horizontal)
         count.isHidden = !showsCount
 
-        for child in [icon, label, count] as [NSView] { button.addSubview(child) }
+        // A `.badge` count is drawn by a container's layer, never by the
+        // label's own `backgroundColor`: with `drawsBackground` the *cell*
+        // paints a square fill over whatever the layer holds, so the corners
+        // would never round (the `NSTextField` overpaint trap `HelmField`'s
+        // header records).
+        var chip: NSView?
+        let countHost: NSView
+        if countStyle == .badge {
+            let holder = NSView()
+            holder.translatesAutoresizingMaskIntoConstraints = false
+            holder.wantsLayer = true
+            holder.addSubview(count)
+            NSLayoutConstraint.activate([
+                count.leadingAnchor.constraint(equalTo: holder.leadingAnchor, constant: Metrics.badgeInset),
+                count.trailingAnchor.constraint(equalTo: holder.trailingAnchor, constant: -Metrics.badgeInset),
+                count.centerYAnchor.constraint(equalTo: holder.centerYAnchor),
+                holder.heightAnchor.constraint(equalToConstant: Metrics.badgeHeight),
+                holder.widthAnchor.constraint(greaterThanOrEqualToConstant: Metrics.badgeHeight + 2),
+            ])
+            holder.setContentHuggingPriority(.required, for: .horizontal)
+            holder.setContentCompressionResistancePriority(.required, for: .horizontal)
+            holder.isHidden = !showsCount
+            chip = holder
+            countHost = holder
+        } else {
+            countHost = count
+        }
+
+        for child in [icon, label, countHost] as [NSView] { button.addSubview(child) }
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: Metrics.rowInset),
             icon.centerYAnchor.constraint(equalTo: button.centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 16),
             label.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: HelmMetrics.s2),
             label.centerYAnchor.constraint(equalTo: button.centerYAnchor),
-            count.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: HelmMetrics.s1),
-            count.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -Metrics.rowInset),
-            count.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+            countHost.leadingAnchor.constraint(greaterThanOrEqualTo: label.trailingAnchor, constant: HelmMetrics.s1),
+            countHost.trailingAnchor.constraint(equalTo: button.trailingAnchor, constant: -Metrics.rowInset),
+            countHost.centerYAnchor.constraint(equalTo: button.centerYAnchor),
             button.heightAnchor.constraint(equalToConstant: Metrics.rowHeight),
         ])
 
@@ -181,7 +277,7 @@ final class HelmPageSidebar: NSView {
         button.accessibilityRoleOverride = kind == .filter ? .radioButton : .button
         button.accessibilityLabelOverride = title
         button.identifier = NSUserInterfaceItemIdentifier(id)
-        rows.append((button, id, kind, icon, label, count))
+        rows.append((button, id, kind, icon, label, count, chip))
         appendFullWidth(button)
     }
 
@@ -195,6 +291,42 @@ final class HelmPageSidebar: NSView {
         static let rowHeight: CGFloat = 34
         static let rowInset: CGFloat = HelmMetrics.s3 - 2
         static let sectionGap: CGFloat = HelmMetrics.s3
+        /// The padding a `.panel` column keeps between its border and its
+        /// rows. The reference mockup's own sidebar padding (12) over its row
+        /// padding (10), which is `rowInset` above.
+        static let panelInset: CGFloat = HelmMetrics.s3
+        /// The gap between the last row and a footer.
+        static let footerGap: CGFloat = HelmMetrics.s4
+        /// A `.badge` count's pill.
+        static let badgeHeight: CGFloat = 18
+        static let badgeInset: CGFloat = HelmMetrics.s2 - 2
+    }
+
+    // MARK: Footer
+
+    /// Bottom-anchored content under the rows - the reference's keychain card
+    /// and user row.
+    ///
+    /// **A page that sets one has to pin this column's bottom with a required
+    /// `==`, not the `<=` Poneglyph and Schedules use.** Without a footer this
+    /// view hugs its rows, so an inequality is right; with one, the footer is
+    /// pinned to this view's own bottom edge, and that edge only reaches the
+    /// page's bottom if the page says so.
+    func setFooter(_ view: NSView) {
+        footer?.removeFromSuperview()
+        footer = view
+        view.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(view)
+        let inset = surface == .panel ? Metrics.panelInset : 0
+        stackBottom.isActive = false
+        stackBottom = stack.bottomAnchor.constraint(lessThanOrEqualTo: view.topAnchor,
+                                                    constant: -Metrics.footerGap)
+        NSLayoutConstraint.activate([
+            view.leadingAnchor.constraint(equalTo: leadingAnchor, constant: inset),
+            view.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -inset),
+            view.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -inset),
+            stackBottom,
+        ])
     }
 
     // MARK: Selection and counts
@@ -229,6 +361,7 @@ final class HelmPageSidebar: NSView {
             // 0. Hiding it would make the sidebar's shape change as the captain
             // types, which is worse than a zero.
             row.count.alphaValue = value == 0 ? 0.55 : 1
+            row.chip?.alphaValue = value == 0 ? 0.55 : 1
         }
     }
 
@@ -236,14 +369,19 @@ final class HelmPageSidebar: NSView {
 
     func applyTheme(_ theme: HelmTheme) {
         self.theme = theme
+        // A `.plain` column never touches its own layer, so the two pages that
+        // predate `Surface` render exactly as before.
+        if surface == .panel {
+            HelmCard.applyCardSurface(to: self, theme: theme)
+        }
         let muted = HelmTheme.mutedInk(theme)
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let accent = HelmTheme.nsColor(theme.accentHex)
         // The same accent wash `HelmAccentRow` paints for its own selected
         // card, so a selected nav row and a selected list row are one idiom.
-        let surface = HelmTheme.nsColor(theme.chromeBackgroundHex)
-        let selectedFill = surface.blended(withFraction: HelmAccentRow.selectionWash, of: accent) ?? surface
-        let hoverFill = surface.blended(withFraction: HelmAccentRow.selectionWash / 2.5, of: accent) ?? surface
+        let surfaceColor = HelmTheme.nsColor(theme.chromeBackgroundHex)
+        let selectedFill = surfaceColor.blended(withFraction: HelmAccentRow.selectionWash, of: accent) ?? surfaceColor
+        let hoverFill = surfaceColor.blended(withFraction: HelmAccentRow.selectionWash / 2.5, of: accent) ?? surfaceColor
 
         for header in headers {
             header.attributedStringValue = NSAttributedString(
@@ -262,7 +400,17 @@ final class HelmPageSidebar: NSView {
                 theme: theme)
             row.label.textColor = isSelected ? selectedInk : ink
             row.icon.contentTintColor = isSelected ? selectedInk : muted
-            row.count.textColor = muted
+            row.count.textColor = isSelected && countStyle == .badge ? selectedInk : muted
+            if let chip = row.chip {
+                chip.layer?.cornerRadius = Metrics.badgeHeight / 2
+                // The selected badge takes a stronger wash of the same accent
+                // the row already carries, so the two read as one object; a
+                // resting one takes the theme's own line tone rather than a
+                // hue, because it is carrying a number, not a state.
+                chip.layer?.backgroundColor = isSelected
+                    ? (surfaceColor.blended(withFraction: HelmAccentRow.selectionWash * 2.2, of: accent) ?? surfaceColor).cgColor
+                    : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.55).cgColor
+            }
             // Both colours, never `layer.backgroundColor` directly: a
             // `HoverHighlightView` owns persistent hover state, and a direct
             // layer write is stranded by the next `mouseExited`
@@ -280,6 +428,10 @@ final class HelmPageSidebar: NSView {
     var debugRowCounts: [String] { rows.map { $0.count.stringValue } }
     var debugSelectedIndex: Int? { rows.firstIndex { $0.kind == .filter && $0.id == selection } }
     var debugHeaders: [String] { headers.compactMap { $0.placeholderString } }
+    var debugRowKinds: [String] { rows.map { $0.kind == .filter ? "filter" : "action" } }
+    var debugHasFooter: Bool { footer != nil }
+    var debugSurfaceIsPanel: Bool { surface == .panel }
+    var debugHasCountBadges: Bool { rows.contains { $0.chip != nil } }
     func debugClickRow(_ index: Int) { pick(index) }
 
     /// What each row is actually showing, read off the labels rather than
