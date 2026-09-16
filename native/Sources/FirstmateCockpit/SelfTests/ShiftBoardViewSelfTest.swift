@@ -267,7 +267,19 @@ enum ShiftBoardViewSelfTest {
         // needs a real `windowNumber` to route by - a window that was never
         // ordered in has none, which reads exactly like "the handler is not
         // wired".
-        let window = OffScreenProbe.window(width: 1300, height: 900, styleMask: [.titled, .resizable])
+        // `needsWindowServerMouse`: this is the app's only suite that drives a
+        // real `NSDraggingSession` (`ShiftBoardViews.swift:334` is the app's
+        // only `beginDraggingSession` call). It starts one and never sends a
+        // matching mouse-up, so in a window the window server ignores the
+        // session sits waiting and the later `debugClickChip` blocks behind it
+        // in `NSCoreDragManager._dragUntilMouseUp`. Measured over five runs
+        // each: **1-3s** here, **4-25s** fully off-screen - which is what hit
+        // CI's 300s per-suite bound twice, against ~4s on `main`. So this one
+        // window is invisible by alpha rather than by position; see
+        // `OffScreenProbeWindow.swift`'s "one exception" section.
+        let window = OffScreenProbe.window(width: 1300, height: 900,
+                                           styleMask: [.titled, .resizable],
+                                           needsWindowServerMouse: true)
         window.contentView = controller.view
         window.orderFront(nil)
         controller.viewWillAppear()

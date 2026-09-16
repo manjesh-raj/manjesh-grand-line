@@ -186,6 +186,7 @@ enum AppShellBodyWidthSelfTest {
             ("bodyContainerWidthTracksASeriesOfResizes", test_widthTracksResizeSeries),
             ("widthSelfHealsAfterATieIsSilentlyBroken", test_widthSelfHealsAfterTieBroken),
             ("widthSelfHealsOnALayoutPassWithNoResize", test_widthSelfHealsOnALayoutPassWithNoResize),
+            ("theWidthRepairNeverForcesANestedLayoutPass", test_repairNeverForcesANestedLayoutPass),
             ("bodyContainerTracksWindowAcrossRealisticWidths", test_widthTracksAcrossRealisticWidths),
             ("bodyContainerTracksWindowAcrossAllDestinations", test_widthTracksAcrossAllDestinations),
             ("bodyContainerTracksWindowAcrossAllSpaces", test_widthTracksAcrossAllSpaces),
@@ -385,6 +386,49 @@ enum AppShellBodyWidthSelfTest {
     /// `reassertBodyContainerWidthTie()` from `ChromeFusionRootView`'s
     /// `onLayout` hook leaves the tie inactive after the layout pass, and
     /// restoring it passes again.
+    /// The repair must never call `layoutSubtreeIfNeeded()` from inside
+    /// `ChromeFusionRootView.layout()`.
+    ///
+    /// AppKit forbids it - "It's not legal to call -layoutSubtreeIfNeeded on a
+    /// view which is already being laid out" - and on **macOS 14 it traps**
+    /// rather than logs: this suite died with `Trace/BPT trap: 5` on CI while
+    /// passing on a macOS 26 developer machine, which is exactly the shape of
+    /// bug a local run cannot be trusted to catch.
+    ///
+    /// The repair is still allowed to force a pass from a caller that is *not*
+    /// in a layout pass (launch, and the resize notification), which is what
+    /// `widthSelfHealsAfterATieIsSilentlyBroken` above covers.
+    private static func test_repairNeverForcesANestedLayoutPass() -> String? {
+        withScratchEnv {
+            AppShellController.repairsInsideALayoutPassForTests = 0
+            AppShellController.nestedLayoutForcingsForTests = 0
+
+            let (window, shell) = makeMountedShell()
+            defer { window.close() }
+            // The widths this suite already sweeps - the conflicting-constraint
+            // resizes are what drive AppKit to lay out repeatedly.
+            for width in [1440.0, 1016.0, 1900.0, 1100.0] as [CGFloat] {
+                window.setFrame(NSRect(x: 0, y: 0, width: width, height: 900), display: true)
+                shell.view.layoutSubtreeIfNeeded()
+            }
+
+            // Not vacuous: the repair has to have genuinely run from inside a
+            // layout pass, or "it forced none" says nothing at all.
+            guard AppShellController.repairsInsideALayoutPassForTests > 0 else {
+                return "the repair never ran from inside a layout pass, so this case cannot tell "
+                    + "the fix from its absence - has ChromeFusionRootView.onLayout stopped "
+                    + "calling reassertBodyContainerWidthTie(insideLayoutPass:)?"
+            }
+            guard AppShellController.nestedLayoutForcingsForTests == 0 else {
+                return "the width repair forced "
+                    + "\(AppShellController.nestedLayoutForcingsForTests) nested layout pass(es) "
+                    + "from inside ChromeFusionRootView.layout(). AppKit traps on that (macOS 14): "
+                    + "mark the view dirty and let the next pass do it."
+            }
+            return nil
+        }
+    }
+
     private static func test_widthSelfHealsOnALayoutPassWithNoResize() -> String? {
         withScratchEnv {
             let (window, shell) = makeMountedShell()

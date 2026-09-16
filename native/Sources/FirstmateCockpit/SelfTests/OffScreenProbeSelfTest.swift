@@ -42,6 +42,7 @@ enum OffScreenProbeSelfTest {
         checkZoomKeepsItOffScreen(&ok)
         checkAPlainWindowWouldHaveLeaked(&ok)
         checkTheWindowIsStillLogicallyVisible(&ok)
+        checkTheDragOptOutIsInvisibleAndStillGetsMouse(&ok)
 
         print(ok ? "OffScreenProbeSelfTest: all checks passed"
                  : "OffScreenProbeSelfTest: FAILED")
@@ -67,7 +68,7 @@ enum OffScreenProbeSelfTest {
     private static func checkTheFactoryParksTheWindow(_ ok: inout Bool) {
         let window = OffScreenProbe.window(width: 900, height: 600)
         defer { window.close() }
-        guard OffScreenProbe.isOffScreen(window) else {
+        guard OffScreenProbe.isInvisible(window) else {
             fail("a freshly built probe window is on a display: \(describe(window))", &ok)
             return
         }
@@ -86,12 +87,12 @@ enum OffScreenProbeSelfTest {
         defer { window.close() }
 
         window.orderFront(nil)
-        guard OffScreenProbe.isOffScreen(window) else {
+        guard OffScreenProbe.isInvisible(window) else {
             fail("orderFront put the probe window on a display: \(describe(window))", &ok)
             return
         }
         window.makeKeyAndOrderFront(nil)
-        guard OffScreenProbe.isOffScreen(window) else {
+        guard OffScreenProbe.isInvisible(window) else {
             fail("makeKeyAndOrderFront put the probe window on a display: \(describe(window))", &ok)
             return
         }
@@ -111,7 +112,7 @@ enum OffScreenProbeSelfTest {
 
         for width in [1440.0, 1016.0, 1900.0] as [CGFloat] {
             window.setFrame(NSRect(x: 0, y: 0, width: width, height: 900), display: true)
-            guard OffScreenProbe.isOffScreen(window) else {
+            guard OffScreenProbe.isInvisible(window) else {
                 fail("a resize to \(width) put the probe window on a display: \(describe(window))", &ok)
                 return
             }
@@ -123,12 +124,12 @@ enum OffScreenProbeSelfTest {
         }
 
         window.setContentSize(NSSize(width: 640, height: 480))
-        guard OffScreenProbe.isOffScreen(window) else {
+        guard OffScreenProbe.isInvisible(window) else {
             fail("setContentSize put the probe window on a display: \(describe(window))", &ok)
             return
         }
         window.setFrameOrigin(NSPoint(x: 100, y: 100))
-        guard OffScreenProbe.isOffScreen(window) else {
+        guard OffScreenProbe.isInvisible(window) else {
             fail("setFrameOrigin put the probe window on a display: \(describe(window)) - "
                 + "setFrameOrigin does not route through setFrame and needs its own override", &ok)
             return
@@ -149,7 +150,7 @@ enum OffScreenProbeSelfTest {
 
         let before = window.frame
         window.zoom(nil)
-        guard OffScreenProbe.isOffScreen(window) else {
+        guard OffScreenProbe.isInvisible(window) else {
             fail("zoom put the probe window on a display: \(describe(window))", &ok)
             return
         }
@@ -175,13 +176,13 @@ enum OffScreenProbeSelfTest {
                              styleMask: [.titled], backing: .buffered, defer: false)
         defer { plain.close() }
         plain.setFrameOrigin(OffScreenProbe.parkedOrigin)
-        guard OffScreenProbe.isOffScreen(plain) else {
+        guard OffScreenProbe.isInvisible(plain) else {
             fail("a plain NSWindow did not even hold its parked origin before being ordered in - "
                 + "this control case can no longer tell the fix from its absence", &ok)
             return
         }
         plain.orderFront(nil)
-        guard !OffScreenProbe.isOffScreen(plain) else {
+        guard !OffScreenProbe.isInvisible(plain) else {
             fail("a plain NSWindow stayed off-screen through orderFront, so the constrainFrameRect "
                 + "override is not what is keeping the probe window off the display - this suite "
                 + "would pass with the fix removed", &ok)
@@ -205,8 +206,46 @@ enum OffScreenProbeSelfTest {
                 + "observable would silently change behaviour", &ok)
             return
         }
-        guard OffScreenProbe.isOffScreen(window) else {
+        guard OffScreenProbe.isInvisible(window) else {
             fail("visible and on a display: \(describe(window))", &ok)
+            return
+        }
+    }
+
+    /// The one documented exception: a suite driving a real `NSDraggingSession`
+    /// gets on-screen geometry and invisibility by alpha instead.
+    ///
+    /// Both halves are asserted, because each fails differently: a window that
+    /// is not actually transparent is the leak this whole file exists to stop,
+    /// and one that sets `ignoresMouseEvents` wedges the very drag session the
+    /// opt-out exists to let finish (measured - see the header).
+    private static func checkTheDragOptOutIsInvisibleAndStillGetsMouse(_ ok: inout Bool) {
+        let window = OffScreenProbe.window(width: 800, height: 600,
+                                           styleMask: [.titled, .resizable],
+                                           needsWindowServerMouse: true)
+        defer { window.close() }
+        window.orderFront(nil)
+
+        guard window.alphaValue == 0 else {
+            fail("the drag opt-out must be fully transparent, got alpha \(window.alphaValue) - "
+                + "it sits on a real screen, so alpha is the only thing keeping it unseen", &ok)
+            return
+        }
+        guard OffScreenProbe.isInvisible(window) else {
+            fail("the drag opt-out is visible: \(describe(window))", &ok)
+            return
+        }
+        guard !window.ignoresMouseEvents else {
+            fail("the drag opt-out sets ignoresMouseEvents - measured, that reproduces the hang it "
+                + "exists to avoid, because it is the same 'the window server will not deliver "
+                + "mouse events here' condition that off-screen already was", &ok)
+            return
+        }
+        // The point of the opt-out: this one *is* on a screen, so the contrast
+        // with every other probe window is real rather than a naming choice.
+        guard NSScreen.screens.contains(where: { $0.frame.intersects(window.frame) }) else {
+            fail("the drag opt-out is off-screen after all (\(window.frame)) - then it buys nothing "
+                + "over the default and the drag session will still hang", &ok)
             return
         }
     }
