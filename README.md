@@ -98,6 +98,26 @@ Follow any existing `*SelfTest.swift`. The convention that matters:
 - Put the file in `SelfTests/` and wrap its contents in `#if FM_SELFTESTS` / `#endif`, so it stays out of the release binary. `FM_RUN_PHASE3_POLISH_TESTS` fails if a file in that directory is missing the guard.
 - A suite that greps the app's own sources must resolve its root through `SelfTestSources.appSourceDirectory()`, never from `#filePath`'s own directory - that would now point at `SelfTests/`, and every such guard *skips* when it cannot find its sentinel, so it would keep printing OK while checking nothing.
 
+### Window-backed or pure logic? (pick before you write it)
+
+A suite is one or the other, and the choice is not a style preference - it decides whether the suite guards the **blocking** CI job or only ever runs locally. Getting it wrong costs real coverage, silently: a misclassified suite still passes, so nothing looks wrong.
+
+**It is window-backed only if what it *asserts* cannot be observed without a real window or login session.** In practice that is one of:
+
+- real hover, press, focus-ring or first-responder behaviour;
+- real rendered geometry or pixels (a frame that only resolves once laid out in a window, a `cacheDisplay` render, a real scroll offset);
+- a real `NSPanel`, `NSPopover`, sheet, `NSStatusItem` or drag session;
+- real window-server visibility or occlusion.
+
+**Everything else is pure logic and must not be window-backed** - a pure function, a parser, a data transformation, a state machine, a source guard, a real-file or subprocess round trip. Needing `AppKit` is not the test: offscreen `NSImage` work and pure geometry maths need no window server. Nor is "it lives next to a window-backed case" - when one feature needs both, **split the file**, the way `FM_RUN_WHITEBOARD_TESTS` / `FM_RUN_WHITEBOARD_VIEW_TESTS` and `FM_RUN_CREDENTIAL_VAULT_TESTS` / `FM_RUN_CREDENTIAL_VAULT_VIEW_TESTS` already do. That split is what keeps the cheap half CI-enforced.
+
+The one thing that makes a suite window-backed operationally is being listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh`. `E2ETestingPolicySelfTest` enforces **both** directions of the rule, so neither mistake can ship:
+
+- a suite that builds a window and is *not* listed fails (it would run on the blocking job by accident of the runner having a window server);
+- a suite that is listed and builds *no* window fails, unless its entry carries a trailing `# session-not-window: <why>` marker - which is how the handful whose controller builds a real `NSPanel` declare themselves.
+
+If a test would have to give up a real assertion to move to the cheaper harness, it stays where it is. Moving a test must never weaken what it verifies.
+
 ## Environment variables
 
 Behaviour overrides. Everything here is optional; the app has working defaults for all of it.

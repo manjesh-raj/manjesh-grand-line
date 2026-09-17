@@ -125,6 +125,23 @@ SKIP_FLAGS=(
 # A GitHub-hosted macOS runner does have one for the primary user, but a
 # self-hosted or headless runner may not, and a suite that hangs waiting for
 # one is worse in CI than a suite that is honestly skipped.
+#
+# MEMBERSHIP IS EARNED, NOT DEFAULTED. An entry here costs blocking-CI
+# coverage: `--ci` skips it, so it only ever runs locally or on the
+# non-blocking windowed job. A suite belongs here only if what it *asserts*
+# genuinely cannot be observed without a real window/session - real hover,
+# press or focus-ring behaviour, real rendered geometry or pixels, a real
+# NSPanel/NSPopover/sheet, real window-server visibility. Pure functions,
+# parsers, data transformations and state machines do not belong here even
+# when they live next door to something that does; split the file instead
+# (FM_RUN_WHITEBOARD_TESTS / FM_RUN_WHITEBOARD_VIEW_TESTS is the model).
+# `E2ETestingPolicySelfTest` enforces both directions of this.
+#
+# A suite that needs a session WITHOUT constructing an `NSWindow` itself -
+# one whose controller builds a real `NSPanel`, say - states that with a
+# trailing `# session-not-window: <why>` marker on its own entry. That is
+# deliberately a per-entry marker with a stated reason rather than a blanket
+# allowlist, the same shape as `OffScreenProbe-exempt:` above.
 NEEDS_SESSION=(
   # The AppKit-expert audit fixes: M5 measures a real sheet footer.
   "FM_RUN_APPKIT_AUDIT_TESTS"
@@ -228,12 +245,12 @@ NEEDS_SESSION=(
   "FM_RUN_REVIEW_LOADING_STATE_TESTS"
   "FM_RUN_REVIEW_PR_LIST_VOLUME_TESTS"
   "FM_RUN_REVIEW_PR_ROW_BUTTON_LAYOUT_TESTS"
-  "FM_RUN_UNIFIED_SEARCH_LAYOUT_TESTS"
+  "FM_RUN_UNIFIED_SEARCH_LAYOUT_TESTS"  # session-not-window: UnifiedSearchController builds a real NSPanel
   # Audit §5.1: builds the two real palettes (a real `NSPanel` plus a real
   # `HelmSearchField`) to read their lock-gate registration back. The §5
   # pure-logic suite - FM_RUN_AUDIT_SECURITY_FIXES_TESTS - is deliberately not
   # here and does run in CI.
-  "FM_RUN_AUDIT_SECURITY_LOCK_TESTS"
+  "FM_RUN_AUDIT_SECURITY_LOCK_TESTS"  # session-not-window: builds the two real NSPanel palettes
   # Audit #2 §5.1: mounts real `ConsoleController`s in a real `NSWindow` and
   # drives real lock transitions, to prove a locked app forks no tab process,
   # steals no terminal focus and opens no incident card. Its pure-logic half -
@@ -242,8 +259,6 @@ NEEDS_SESSION=(
   "FM_RUN_AUDIT2_SECURITY_LOCK_TESTS"
   "FM_RUN_SRE_LEAD_PER_TAB_TESTS"
   "FM_RUN_NOTIFICATION_CENTER_SRE_LEAD_TESTS"
-  "FM_RUN_SHIFT_ATTACHMENT_WELL_TESTS"
-  "FM_RUN_TERMINAL_WRAP_REDRAW_TESTS"
   "FM_RUN_VAULT_LOADING_STATE_TESTS"
   "FM_RUN_AUDIT_UI_FIXES_TESTS"
   "FM_RUN_AUDIT_PERF_FIXES_TESTS"
@@ -266,9 +281,6 @@ NEEDS_SESSION=(
   # covers the logic half and does run in CI.
   "FM_RUN_CODE_PREVIEW_VIEW_TESTS"
   "FM_RUN_CONTRAST_TESTS"
-  # Reads and writes the machine's real Keychain (and can prompt), which a
-  # runner has no unlocked login keychain for.
-  "FM_RUN_VAULT_DATA_TESTS"
   # Mounts real ScheduleHistoryController/ScheduleRunLogController instances
   # and touches the real pasteboard - window-backed for the same reason as
   # FM_RUN_APPKIT_AUDIT_TESTS' own M5/M6 cases.
