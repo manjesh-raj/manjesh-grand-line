@@ -36,6 +36,7 @@ final class AppSettings {
         static let morningBriefingRecord = "fm.morningBriefingRecord"
         static let didSeedDailyGitHubSyncSchedule = "fm.didSeedDailyGitHubSyncSchedule"
         static let sessionRestoreState = "fm.sessionRestoreState"
+        static let terminalShortcuts = "fm.terminalShortcuts"
     }
 
     /// GL-P3 (audit §6.10): the defaults store is injectable.
@@ -126,22 +127,46 @@ final class AppSettings {
     /// Dictation's configurable shortcut (phase 2, fm/grandline-dictation-
     /// phase2) - replaces the phase-1 fixed Right ⌥ Option combo. Stored as
     /// JSON `Data` (via `Codable`) rather than a fourth/fifth/sixth flat key,
-    /// since `DictationShortcut` is a small, cohesive value that's always
+    /// since `KeyChord` is a small, cohesive value that's always
     /// read/written as one unit - there's no scenario where only its keyCode
     /// or only its modifier flags would be read independently. Falls back to
-    /// `.defaultShortcut` (Right ⌥ Option) whenever nothing's been saved yet
+    /// `.dictationDefault` (Right ⌥ Option) whenever nothing's been saved yet
     /// or the stored value fails to decode.
-    var dictationShortcut: DictationShortcut {
+    var dictationShortcut: KeyChord {
         get {
             guard let data = defaults.data(forKey: Keys.dictationShortcut),
-                  let decoded = try? JSONDecoder().decode(DictationShortcut.self, from: data) else {
-                return .defaultShortcut
+                  let decoded = try? JSONDecoder().decode(KeyChord.self, from: data) else {
+                return .dictationDefault
             }
             return decoded
         }
         set {
             guard let data = try? JSONEncoder().encode(newValue) else { return }
             defaults.set(data, forKey: Keys.dictationShortcut)
+        }
+    }
+
+    /// Settings > Terminal Shortcuts' nine configurable Console bindings
+    /// (`fm/grand-line-terminal-shortcuts-settings`) - moving between tabs,
+    /// splitting a terminal, and moving between the panes that produces.
+    ///
+    /// One JSON value rather than nine flat keys, on the same "always read
+    /// and written as a unit" reasoning `dictationShortcut` above already
+    /// follows. `TerminalShortcutSet` falls back per action, so a stored
+    /// value that decodes but is missing an entry - or a captain who has only
+    /// ever rebound one of the nine - keeps the shipped default for the rest
+    /// rather than the whole set resetting.
+    var terminalShortcuts: TerminalShortcutSet {
+        get {
+            guard let data = defaults.data(forKey: Keys.terminalShortcuts),
+                  let decoded = try? JSONDecoder().decode(TerminalShortcutSet.self, from: data) else {
+                return .defaults
+            }
+            return decoded
+        }
+        set {
+            guard let data = try? JSONEncoder().encode(newValue) else { return }
+            defaults.set(data, forKey: Keys.terminalShortcuts)
         }
     }
 

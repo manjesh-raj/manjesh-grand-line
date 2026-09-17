@@ -596,7 +596,11 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
         composer.onRunInTerminal = { [weak self] command in
             CommandRiskConfirmation.confirmAIAuthored(command: command,
                                                       source: "Compose") {
-                self?.currentTab?.terminal.send(txt: command + "\n")
+                // The focused pane: a composed command belongs in the
+                // terminal the captain is looking at, which after a split is
+                // not necessarily the tab's primary one.
+                guard let self, let tab = self.currentTab else { return }
+                self.focusedTerminal(of: tab).send(txt: command + "\n")
             }
         }
 
@@ -756,6 +760,9 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
         appearanceWorkDeferredByLock = false
         hasAppeared = true
         for tab in tabs where !tab.started { startTab(tab) }
+        // A pane split while the page was off screen defers its shell exactly
+        // like a tab does.
+        startDeferredSplitPanes()
         if let tab = currentTab { focusTerminal(of: tab) }
         resumeActiveIncidentIfNeeded()
     }
@@ -784,7 +791,9 @@ final class ConsoleController: NSViewController, LocalProcessTerminalViewDelegat
     /// very same launch path `viewDidAppear` does.
     func focusTerminal(of tab: TabModel) {
         guard AppLockGate.shared.allows(.terminalFocus) else { return }
-        view.window?.makeFirstResponder(tab.terminal)
+        // The focused *pane*, which for an unsplit tab is its only terminal.
+        let terminal = focusedTerminal(of: tab)
+        view.window?.makeFirstResponder(terminal)
     }
 
     override func viewDidDisappear() {

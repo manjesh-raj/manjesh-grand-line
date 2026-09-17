@@ -25,9 +25,15 @@ extension ConsoleController {
     /// Create a terminal view wired for this console: the paste-hardening
     /// subclass, this delegate, the current font + theme, and a generous
     /// scrollback so history is retained (SwiftTerm's default is only 500 lines).
+    ///
+    /// `fm/grand-line-terminal-shortcuts-settings`: this no longer mounts the
+    /// view. A terminal now lives inside a `TerminalPaneView` inside the
+    /// tab's `TerminalSplitContainer`, and it is that container which carries
+    /// the four `terminalInset` constraints into `content` that this method
+    /// used to put on the terminal itself. Nothing about the resulting frame
+    /// changed for a tab that is never split.
     func makeTerminal() -> CockpitTerminalView {
         let term = CockpitTerminalView(frame: .zero)
-        term.translatesAutoresizingMaskIntoConstraints = false
         term.processDelegate = self
         term.font = currentFont()
         // Retain a real scrollback so shells keep their history reachable.
@@ -37,20 +43,31 @@ extension ConsoleController {
         // `scrollSensitivity` defaults to a native 1.0. So the WezTerm feel the
         // captain wants is the shell tab's default here; we just give it history.
         term.terminal?.changeScrollback(scrollbackLines)
-        // `terminalInset` on all four sides, fixed for this controller's whole
-        // lifetime - see its own doc comment. Nothing here ever changes when
-        // SRE Lead opens or closes, which is the entire reason the card look
-        // can exist at all without reflowing this buffer.
-        let inset = terminalInset
-        content.addSubview(term, positioned: .below, relativeTo: cardChrome)
-        NSLayoutConstraint.activate([
-            term.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: inset),
-            term.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -inset),
-            term.topAnchor.constraint(equalTo: content.topAnchor, constant: inset),
-            term.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -inset),
-        ])
         theme.apply(to: term)
         return term
+    }
+
+    /// Mount a tab's pane tree where its single terminal used to sit.
+    ///
+    /// `terminalInset` on all four sides, fixed for this controller's whole
+    /// lifetime - see its own doc comment. Nothing here ever changes when SRE
+    /// Lead opens or closes, which is the entire reason the card look can
+    /// exist at all without reflowing any buffer.
+    func mountSplitContainer(for tab: TabModel) {
+        let container = tab.splits
+        container.translatesAutoresizingMaskIntoConstraints = false
+        let inset = terminalInset
+        content.addSubview(container, positioned: .below, relativeTo: cardChrome)
+        NSLayoutConstraint.activate([
+            container.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: inset),
+            container.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -inset),
+            container.topAnchor.constraint(equalTo: content.topAnchor, constant: inset),
+            container.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -inset),
+        ])
+        container.applyTheme(theme)
+        let pane = makePane(terminal: tab.terminal, in: tab)
+        tab.primaryPane = pane
+        container.adoptPrimary(pane)
     }
 
     /// Finding 6 (cockpit-audit-core, captain decision): port the Tools
@@ -159,6 +176,10 @@ extension ConsoleController {
         if case .ssh = launch, kubeContextBadgeOptIn {
             tab.kubeContextBadgeOptIn = true
         }
+
+        // The pane tree goes in before anything else touches the tab's views:
+        // `adoptPrimary` is what puts this tab's terminal on screen at all.
+        mountSplitContainer(for: tab)
 
         let chip = TabChipView(tabID: tab.id, name: name)
         let id = tab.id
@@ -590,8 +611,12 @@ extension ConsoleController {
         tab.isClosing = true
         cleanupSSHKeyTempFile(tab)
         tab.kubeContextBridge?.stop()
-        tab.terminal.terminate()
-        tab.terminal.removeFromSuperview()
+        // Tears down every pane, the primary one included - `teardownAll`
+        // terminates each child process and releases each pane's focus
+        // registration, which a bare `terminal.terminate()` would leave behind
+        // for any pane the captain had split off.
+        tab.splits.teardownAll()
+        tab.splits.removeFromSuperview()
         tab.blockContainer?.removeFromSuperview()
         tabs.remove(at: idx)
 
@@ -675,6 +700,14 @@ extension ConsoleController {
         select(tabID: tabs[index].id)
     }
 
+    /// `TabShortcutHandling`. The shape the protocol's own `selectTab(byOffset:)`
+    /// needs; the wrapping arithmetic lives there, once, for both pages.
+    var tabShortcutCount: Int { tabs.count }
+    var tabShortcutSelectedIndex: Int? {
+        guard let current = currentTab else { return nil }
+        return tabs.firstIndex { $0 === current }
+    }
+
     /// `TabShortcutHandling`. A thin alias for `reconnectActive()` so the
     /// protocol can name one method both a console and the connection-less
     /// Tools page can answer.
@@ -705,7 +738,12 @@ extension ConsoleController {
 
     // MARK: Selection
 
-    func activeTerminal() -> CockpitTerminalView? { currentTab?.terminal }
+    /// The terminal the captain is typing into - the focused pane's.
+    ///
+    /// Find and copy act on what is in front of you, so they follow the
+    /// focused pane rather than the tab's primary one. For a tab that was
+    /// never split the two are the same terminal.
+    func activeTerminal() -> CockpitTerminalView? { currentTab.map { focusedTerminal(of: $0) } }
 
     func select(tabID: UUID, focus: Bool = true) {
         guard let tab = tabs.first(where: { $0.id == tabID }) else { return }
@@ -868,6 +906,9 @@ extension ConsoleController {
         // `claude -p` turn is a one-shot `Process` `SRELeadRunner` owns and
         // waits on directly (`ask`'s completion), not something this
         // delegate callback observes.
+        // A split pane exiting is not this tab's session dropping - it is
+        // handled (and never auto-reconnected) separately.
+        if handleSplitPaneTermination(source: source, exitCode: exitCode) { return }
         guard let tab = tabs.first(where: { $0.terminal === source }) else { return }
         if tab.isClosing { return }
         cleanupSSHKeyTempFile(tab)

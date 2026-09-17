@@ -3,7 +3,7 @@
 // Permanent, dependency-free self-test for Dictation phase 2's pure data
 // layer (fm/grandline-dictation-phase2) - `DictationStore`'s history/
 // vocabulary persistence (real scratch files, never the captain's real
-// `FM_DICTATION_DIR`) and `DictationShortcut`'s encode/decode + display-string
+// `FM_DICTATION_DIR`) and `KeyChord`'s encode/decode + display-string
 // logic. Same convention as `HostStoreSelfTest.swift`/`ShiftStoreSelfTest.swift`
 // - drives the real store against a real temp directory, reloading via a
 // fresh instance between steps to catch anything that only "worked" because
@@ -78,13 +78,13 @@ enum DictationDataSelfTest {
             check(reloadedAgain.vocabulary == ["Manjesh"], "a removal should also survive a reload", &ok)
         }
 
-        // 4. `DictationShortcut` round-trips through JSON exactly as
+        // 4. `KeyChord` round-trips through JSON exactly as
         //    `AppSettings.dictationShortcut` stores it.
         do {
-            let combo = DictationShortcut(keyCode: 2, modifierFlagsRaw: NSEventModifierFlagsCommandShift, isModifierOnly: false)
+            let combo = KeyChord(keyCode: 2, modifierFlagsRaw: NSEventModifierFlagsCommandShift, isModifierOnly: false)
             let data = try? JSONEncoder().encode(combo)
             check(data != nil, "a shortcut should encode to JSON", &ok)
-            if let data, let decoded = try? JSONDecoder().decode(DictationShortcut.self, from: data) {
+            if let data, let decoded = try? JSONDecoder().decode(KeyChord.self, from: data) {
                 check(decoded == combo, "a shortcut should decode back to an identical value", &ok)
             } else {
                 check(false, "a shortcut should decode back from its own encoded JSON", &ok)
@@ -94,8 +94,8 @@ enum DictationDataSelfTest {
         // 5. Display strings for a few known combos - a modifier-only
         //    default (Right ⌥ Option) and a regular-key combo (⌘⇧D).
         do {
-            check(DictationShortcut.defaultShortcut.displayString == "Right ⌥", "the default shortcut should display as 'Right ⌥'", &ok)
-            let combo = DictationShortcut(keyCode: 2, modifierFlagsRaw: NSEventModifierFlagsCommandShift, isModifierOnly: false)
+            check(KeyChord.dictationDefault.displayString == "Right ⌥", "the default shortcut should display as 'Right ⌥'", &ok)
+            let combo = KeyChord(keyCode: 2, modifierFlagsRaw: NSEventModifierFlagsCommandShift, isModifierOnly: false)
             check(combo.displayString == "⇧⌘D", "⌘⇧D should display in the standard ⇧⌘ ordering", &ok)
         }
 

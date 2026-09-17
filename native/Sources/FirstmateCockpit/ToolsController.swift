@@ -737,6 +737,14 @@ final class ToolsController: NSViewController, DaylightDrillActions, TabShortcut
         selectTab(id: tabs[index].id)
     }
 
+    /// `TabShortcutHandling`. The shape the protocol's own `selectTab(byOffset:)`
+    /// needs; the wrapping arithmetic lives there, once, for both pages.
+    var tabShortcutCount: Int { tabs.count }
+    var tabShortcutSelectedIndex: Int? {
+        guard let current = currentTab else { return nil }
+        return tabs.firstIndex { $0 === current }
+    }
+
     /// `TabShortcutHandling`. A tool tab runs no process, so there is nothing
     /// to reconnect - a deliberate no-op rather than a protocol flag every
     /// caller would have to branch on. ⌘R on this page therefore does nothing

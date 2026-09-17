@@ -130,7 +130,7 @@ struct BackupSettings: Codable {
 /// vocabulary and the default shortcut still round-trips meaningfully.
 struct BackupDictation: Codable {
     var vocabulary: [String]?
-    var shortcut: DictationShortcut?
+    var shortcut: KeyChord?
 
     static func fromCurrent(store: DictationStore) -> BackupDictation {
         BackupDictation(vocabulary: store.vocabulary, shortcut: AppSettings.shared.dictationShortcut)
@@ -280,7 +280,7 @@ enum BackupImport {
     /// same host set), then falls back to a case-insensitive label match (a
     /// host/snippet recreated with a new id since the export still counts as
     /// "the same thing, possibly changed" rather than a duplicate).
-    static func diff(bundle: GrandLineBackup, existingHosts: [Host], existingSnippets: [Snippet], existingKeys: [SSHKey], existingVocabulary: [String] = [], existingShortcut: DictationShortcut? = nil) -> Preview {
+    static func diff(bundle: GrandLineBackup, existingHosts: [Host], existingSnippets: [Snippet], existingKeys: [SSHKey], existingVocabulary: [String] = [], existingShortcut: KeyChord? = nil) -> Preview {
         var hostRows: [BackupHostDiffRow] = []
         var rejectedHostWarnings: [String] = []
         for bundleHost in bundle.hosts {

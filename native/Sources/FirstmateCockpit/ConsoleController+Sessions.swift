@@ -267,7 +267,8 @@ extension ConsoleController {
     /// tab is currently in front. A no-op with no tabs, which cannot happen
     /// in practice (closing the last tab always opens a fresh one).
     func runSnippetInActiveTab(_ snippet: Snippet) {
-        currentTab?.terminal.send(txt: snippet.command + "\n")
+        guard let tab = currentTab else { return }
+        focusedTerminal(of: tab).send(txt: snippet.command + "\n")
     }
 
     /// The DevOps Command Library's "Send to Terminal" action (fm/grandline-
@@ -276,7 +277,8 @@ extension ConsoleController {
     /// currently in front" behavior, just for an already-substituted command
     /// string instead of a saved `Snippet`.
     func sendCommandLibraryTextToActiveTab(_ text: String) {
-        currentTab?.terminal.send(txt: text + "\n")
+        guard let tab = currentTab else { return }
+        focusedTerminal(of: tab).send(txt: text + "\n")
     }
 
     /// Delete a tab's materialized key scratch dir, if it has one. Called

@@ -327,6 +327,11 @@ NEEDS_SESSION=(
   # and a real `ToolsController` in real windows, and needs a real
   # `windowNumber` for `event.window` to resolve at all.
   "FM_RUN_TAB_KEYBOARD_SHORTCUTS_TESTS"
+  # The configurable Console shortcuts and the split panes six of them drive:
+  # every geometry case mounts a real `ConsoleController` in a real window and
+  # measures real pane frames, which is the only thing that can tell a split
+  # that sized its panes from one that built two and gave one of them zero.
+  "FM_RUN_TERMINAL_SHORTCUTS_TESTS"
   # Command Library Phase 3's AI actions: mounts the real popover content view
   # (a real `NSViewController` in a real window) alongside its pure-logic
   # cases. The `claude` half runs against a disposable fake script, never the

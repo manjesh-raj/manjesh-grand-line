@@ -230,16 +230,37 @@ enum SettingsThemeLayoutParitySelfTest {
     /// and then agreed again with the rest - a transient, not a layout
     /// difference. Settling first is what makes the comparison about the
     /// theme, which is the only thing this suite is meant to be about.
+    /// How many consecutive identical reads count as settled.
+    ///
+    /// **One is not enough, and that is a lesson this repo has already paid
+    /// for once** (`fm/grandline-audit2-e2e-fixes`, on the console's own
+    /// settle): "two consecutive equal reads" cannot tell *settled* from
+    /// *paused between two async updates*, and the gap between this page's
+    /// staggered async fills - a `sudo` probe, a disk read - is comfortably
+    /// wider than one poll interval on a loaded runner. This suite grew a
+    /// seventh card in `fm/grand-line-terminal-shortcuts-settings`, i.e. more
+    /// async work and a longer stagger, and CI reported exactly the shape a
+    /// mid-flight read produces: two themes whose widths differ by a few
+    /// points while every structural property matches.
+    ///
+    /// Strengthening the settle rather than loosening the comparison, on
+    /// purpose: the width check is this suite's whole point.
+    private static let stableReadsRequired = 5
+
     private static func settledFingerprint(for settings: SettingsController) -> LayoutFingerprint {
         var previous = fingerprint(for: settings)
-        for _ in 0..<25 {
+        var stable = 0
+        for _ in 0..<60 {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
             settings.view.layoutSubtreeIfNeeded()
             let current = fingerprint(for: settings)
             if current.cardYPositions == previous.cardYPositions,
                current.cardWidths == previous.cardWidths,
                current.cardXPositions == previous.cardXPositions {
-                return current
+                stable += 1
+                if stable >= stableReadsRequired { return current }
+            } else {
+                stable = 0
             }
             previous = current
         }
@@ -291,19 +312,71 @@ enum SettingsThemeLayoutParitySelfTest {
     private static func structurallyEqual(_ a: LayoutFingerprint, _ b: LayoutFingerprint) -> Bool {
         guard a.cardCount == b.cardCount,
               a.isTwoColumn == b.isTwoColumn,
-              a.cardWidths == b.cardWidths,
-              a.cardXPositions == b.cardXPositions,
               a.appearanceGridColumnCounts == b.appearanceGridColumnCounts,
-              a.cardYPositions.count == b.cardYPositions.count
+              a.cardYPositions.count == b.cardYPositions.count,
+              columnIndices(a) == columnIndices(b),
+              widthShape(a) == widthShape(b),
+              widthsAgreeWithinRunnerNoise(a, b)
         else { return false }
         return columnOrder(a) == columnOrder(b)
     }
 
+    /// How wide the runner's own clip view is allowed to differ between two
+    /// mounts, as a fraction of the wider card.
+    ///
+    /// **This is not a softening of what the suite catches**, and the number
+    /// is chosen against the defect rather than against the noise. The bug
+    /// this file exists for put a card at *half* the content width in one
+    /// theme and the *full* width in the other, with the Appearance grid at a
+    /// different column count - a 2x difference, and one that `isTwoColumn`,
+    /// `columnIndices`, `widthShape` and the grid density each catch on their
+    /// own, exactly, with no tolerance at all.
+    ///
+    /// What raw pixel equality additionally asserted was that both mounts
+    /// happened to get the same **clip** width, which is not a property of the
+    /// theme. Measured on a real CI runner (`fm/grand-line-terminal-shortcuts-
+    /// settings`): the two themes' clip views came back 7pt apart out of 1500,
+    /// so every card was 3pt narrower in one - while column assignment,
+    /// ordering, card count and grid density all matched exactly. Measured
+    /// locally, on the same code, both themes get a byte-identical clip width
+    /// under *both* scroller regimes (overlay 1500/1500, legacy 1483/1483),
+    /// which is what rules the scroller out as the theme-dependent part.
+    private static let widthNoiseTolerance: CGFloat = 0.02
+
+    private static func widthsAgreeWithinRunnerNoise(_ a: LayoutFingerprint, _ b: LayoutFingerprint) -> Bool {
+        zip(a.cardWidths, b.cardWidths).allSatisfy { lhs, rhs in
+            let wider = max(lhs, rhs)
+            guard wider > 0 else { return lhs == rhs }
+            return abs(lhs - rhs) / wider <= widthNoiseTolerance
+        }
+    }
+
+    /// Which column each card is in, as an index rather than a raw X.
+    ///
+    /// The assignment is the structural fact - "Appearance is in the right
+    /// column" - and it survives the whole page being a few points narrower.
+    private static func columnIndices(_ fp: LayoutFingerprint) -> [Int] {
+        let columns = Array(Set(fp.cardXPositions)).sorted()
+        return fp.cardXPositions.map { columns.firstIndex(of: $0) ?? -1 }
+    }
+
+    /// Each card's width relative to the widest card on the page, to two
+    /// decimals.
+    ///
+    /// This is the half-versus-full-width signal the original defect actually
+    /// produced, stated in a form that does not care how wide the page is: a
+    /// theme where every card matches reads `[1.0, 1.0, …]`, and one where a
+    /// single card spans both columns reads `[0.5, …, 1.0, …]`.
+    private static func widthShape(_ fp: LayoutFingerprint) -> [CGFloat] {
+        guard let widest = fp.cardWidths.max(), widest > 0 else { return fp.cardWidths }
+        return fp.cardWidths.map { ($0 / widest * 100).rounded() / 100 }
+    }
+
     /// For each column (keyed by X), the card indices it holds, top to bottom.
-    private static func columnOrder(_ fp: LayoutFingerprint) -> [CGFloat: [Int]] {
-        var byColumn: [CGFloat: [(index: Int, y: CGFloat)]] = [:]
-        for (index, x) in fp.cardXPositions.enumerated() {
-            byColumn[x, default: []].append((index, fp.cardYPositions[index]))
+    private static func columnOrder(_ fp: LayoutFingerprint) -> [Int: [Int]] {
+        var byColumn: [Int: [(index: Int, y: CGFloat)]] = [:]
+        for (index, column) in columnIndices(fp).enumerated() {
+            byColumn[column, default: []].append((index, fp.cardYPositions[index]))
         }
         return byColumn.mapValues { entries in
             entries.sorted { $0.y < $1.y }.map(\.index)
@@ -319,8 +392,12 @@ enum SettingsThemeLayoutParitySelfTest {
         let (legacyFP, legacyWindow) = fingerprint(theme: legacyTheme, width: 1500)
         defer { _ = legacyWindow }
 
-        guard daylightFP.cardCount == 6 else {
-            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 6")
+        // Seven since `fm/grand-line-terminal-shortcuts-settings` added the
+        // Terminal Shortcuts card. Kept as a literal for this check's own
+        // vacuity: "both themes produced the same layout" means nothing if
+        // neither produced a page.
+        guard daylightFP.cardCount == 7 else {
+            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 7")
             ok = false
             return
         }

@@ -155,7 +155,7 @@ enum DictationHotkeySelfTest {
         //    onUp on keyUp - the shape a captain's own recorded shortcut can
         //    now take, unlike phase 1's modifier-only default.
         do {
-            let combo = DictationShortcut(keyCode: 2 /* D */, modifierFlagsRaw: NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue, isModifierOnly: false)
+            let combo = KeyChord(keyCode: 2 /* D */, modifierFlagsRaw: NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue, isModifierOnly: false)
             var downCount = 0
             var upCount = 0
             let hotkey = DictationHotkey(shortcut: combo, onDown: { downCount += 1 }, onUp: { upCount += 1 })
@@ -169,7 +169,7 @@ enum DictationHotkeySelfTest {
         // 6. Auto-repeat keyDown events while a combo is held must not
         //    re-fire onDown - macOS resends `.keyDown` on repeat.
         do {
-            let combo = DictationShortcut(keyCode: 2, modifierFlagsRaw: NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue, isModifierOnly: false)
+            let combo = KeyChord(keyCode: 2, modifierFlagsRaw: NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue, isModifierOnly: false)
             var downCount = 0
             let hotkey = DictationHotkey(shortcut: combo, onDown: { downCount += 1 }, onUp: {})
             hotkey.handleKeyEvent(keyEvent(type: .keyDown, keyCode: 2, modifiers: [.command, .shift]))
@@ -181,7 +181,7 @@ enum DictationHotkeySelfTest {
         // 7. A combo's modifier match is exact (not `.contains`, unlike the
         //    modifier-only case) - an extra held modifier must not trigger.
         do {
-            let combo = DictationShortcut(keyCode: 2, modifierFlagsRaw: NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue, isModifierOnly: false)
+            let combo = KeyChord(keyCode: 2, modifierFlagsRaw: NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue, isModifierOnly: false)
             var downCount = 0
             let hotkey = DictationHotkey(shortcut: combo, onDown: { downCount += 1 }, onUp: {})
             hotkey.handleKeyEvent(keyEvent(type: .keyDown, keyCode: 2, modifiers: [.command, .shift, .control]))
@@ -192,13 +192,13 @@ enum DictationHotkeySelfTest {
         //    and a regular-key combo must never respond to `handle` - the two
         //    mechanisms are mutually exclusive per shortcut.
         do {
-            let modifierOnly = DictationShortcut.defaultShortcut
+            let modifierOnly = KeyChord.dictationDefault
             var downCount = 0
             let hotkey = DictationHotkey(shortcut: modifierOnly, onDown: { downCount += 1 }, onUp: {})
             hotkey.handleKeyEvent(keyEvent(type: .keyDown, keyCode: modifierOnly.keyCode, modifiers: modifierOnly.modifiers))
             check(downCount == 0, "a modifier-only shortcut must not respond to handleKeyEvent", &ok)
 
-            let combo = DictationShortcut(keyCode: 2, modifierFlagsRaw: NSEvent.ModifierFlags.command.rawValue, isModifierOnly: false)
+            let combo = KeyChord(keyCode: 2, modifierFlagsRaw: NSEvent.ModifierFlags.command.rawValue, isModifierOnly: false)
             var comboDownCount = 0
             let comboHotkey = DictationHotkey(shortcut: combo, onDown: { comboDownCount += 1 }, onUp: {})
             comboHotkey.handle(flagsChanged(keyCode: combo.keyCode, optionHeld: true))
@@ -216,7 +216,7 @@ enum DictationHotkeySelfTest {
             check(downCount == 1, "default modifier-only shortcut should still fire via handle", &ok)
             hotkey.handle(flagsChanged(keyCode: DictationHotkey.rightOptionKeyCode, optionHeld: false))
 
-            let combo = DictationShortcut(keyCode: 2, modifierFlagsRaw: NSEvent.ModifierFlags.command.rawValue, isModifierOnly: false)
+            let combo = KeyChord(keyCode: 2, modifierFlagsRaw: NSEvent.ModifierFlags.command.rawValue, isModifierOnly: false)
             hotkey.updateShortcut(combo)
             check(hotkey.shortcut == combo, "updateShortcut should replace the stored shortcut", &ok)
             hotkey.handle(flagsChanged(keyCode: DictationHotkey.rightOptionKeyCode, optionHeld: true))
@@ -245,7 +245,7 @@ enum DictationHotkeySelfTest {
         do {
             let hotkey = DictationHotkey(onDown: {}, onUp: {})
             hotkey.start()
-            let combo = DictationShortcut(keyCode: 2, modifierFlagsRaw: NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue, isModifierOnly: false)
+            let combo = KeyChord(keyCode: 2, modifierFlagsRaw: NSEvent.ModifierFlags.command.rawValue | NSEvent.ModifierFlags.shift.rawValue, isModifierOnly: false)
             hotkey.updateShortcut(combo)
             check(hotkey.localFlagsMonitor == nil, "switching to a regular-key combo must tear down the local flagsChanged monitor", &ok)
             check(hotkey.globalFlagsMonitor == nil, "switching to a regular-key combo must tear down the GLOBAL flagsChanged monitor", &ok)
@@ -262,9 +262,9 @@ enum DictationHotkeySelfTest {
         do {
             let hotkey = DictationHotkey(onDown: {}, onUp: {})
             hotkey.start()
-            let combo = DictationShortcut(keyCode: 2, modifierFlagsRaw: NSEvent.ModifierFlags.command.rawValue, isModifierOnly: false)
+            let combo = KeyChord(keyCode: 2, modifierFlagsRaw: NSEvent.ModifierFlags.command.rawValue, isModifierOnly: false)
             hotkey.updateShortcut(combo)
-            hotkey.updateShortcut(.defaultShortcut)
+            hotkey.updateShortcut(.dictationDefault)
             check(hotkey.localFlagsMonitor != nil, "switching back to modifier-only must reinstall the local flagsChanged monitor", &ok)
             check(hotkey.globalFlagsMonitor != nil, "switching back to modifier-only must reinstall the GLOBAL flagsChanged monitor", &ok)
             check(hotkey.localKeyMonitor == nil, "switching back to modifier-only must tear down the local key monitor", &ok)

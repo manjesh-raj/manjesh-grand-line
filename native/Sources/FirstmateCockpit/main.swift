@@ -457,8 +457,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // so the *live* hotkey instance actually picks it up - a plain
         // settings write with no restart would leave the old monitor
         // installed (see `DictationHotkey.updateShortcut`'s own header).
-        appShell.onDictationShortcutChanged = { [weak self] shortcut in
+        appShell.onKeyChordChanged = { [weak self] shortcut in
             self?.dictationHotkey.updateShortcut(shortcut)
+        }
+        // Settings > Terminal Shortcuts writes `AppSettings.terminalShortcuts`
+        // itself and reports the change here so the *live* monitor picks it
+        // up on the very next keystroke - the same reason Dictation's
+        // recorder reports rather than relying on a settings read per event.
+        appShell.onTerminalShortcutsChanged = { [weak self] shortcuts in
+            self?.tabShortcuts.updateTerminalShortcuts(shortcuts)
         }
         // E2: turning the toggle off releases any engine that is still
         // resident, so the captain's "off" takes effect now rather than at the
@@ -2186,7 +2193,7 @@ if ProcessInfo.processInfo.environment["FM_RUN_DICTATION_HOTKEY_TESTS"] == "1" {
 }
 
 // `fm/grandline-dictation-phase2`: same convention, for `DictationStore`'s
-// history/vocabulary persistence and `DictationShortcut`'s encode/decode +
+// history/vocabulary persistence and `KeyChord`'s encode/decode +
 // display-string logic - see DictationDataSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_DICTATION_DATA_TESTS"] == "1" {
     exit(DictationDataSelfTest.run() ? 0 : 1)
@@ -2633,6 +2640,11 @@ if ProcessInfo.processInfo.environment["FM_RUN_COMMAND_LIBRARY_AI_TESTS"] == "1"
 // Tab menu's removal - the pure matching table (including the near-misses it
 // must NOT claim, notably the session switcher's own ⌘⌃1-9) plus the monitor's
 // real gating, driven through real NSEvents against a real ConsoleController.
+// See TerminalShortcutsSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_SHORTCUTS_TESTS"] == "1" {
+    exit(TerminalShortcutsSelfTest.run() ? 0 : 1)
+}
+
 // See TabKeyboardShortcutsSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_TAB_KEYBOARD_SHORTCUTS_TESTS"] == "1" {
     exit(TabKeyboardShortcutsSelfTest.run() ? 0 : 1)

@@ -31,17 +31,25 @@ extension ConsoleController {
     /// feature is enabled - see `TabModel.blockViewOptIn`) always shows raw
     /// `terminal` regardless of `blockViewShowing`.
     func updateTabViewVisibility(_ tab: TabModel) {
+        // `fm/grand-line-terminal-shortcuts-settings`: the tab's *pane tree*
+        // is what is shown or hidden now, not its primary terminal - hiding
+        // only that one would leave a background tab's split panes drawn over
+        // the current tab. Hiding the container is also what keeps every
+        // pane's display gating correct for free:
+        // `CockpitTerminalView.refreshDisplayGating` reads
+        // `isHiddenOrHasHiddenAncestor`, so a hidden ancestor suspends each
+        // pane's redraw exactly as hiding the terminal itself used to.
         let isCurrent = (tab === currentTab)
         guard isCurrent else {
-            tab.terminal.isHidden = true
+            tab.splits.isHidden = true
             tab.blockContainer?.isHidden = true
             return
         }
         if blockViewShowing, let container = tab.blockContainer {
-            tab.terminal.isHidden = true
+            tab.splits.isHidden = true
             container.isHidden = false
         } else {
-            tab.terminal.isHidden = false
+            tab.splits.isHidden = false
             tab.blockContainer?.isHidden = true
         }
     }
