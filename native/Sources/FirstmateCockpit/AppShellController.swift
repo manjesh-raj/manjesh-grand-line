@@ -1333,10 +1333,21 @@ final class AppShellController: NSViewController {
             needsLayout = true
             AppLog.ui.error("bodyContainer trailing tie had been deactivated by AppKit - reactivated")
         }
+        // Checked *before* the body-vs-root test below, because when `root`
+        // itself has drifted that test is blind: `bodyContainer` correctly
+        // matches a `root` that is the wrong size. See
+        // `windowContentWidthIsStale()`.
+        if windowContentWidthIsStale() {
+            resyncRootWidthToWindow()
+            needsLayout = true
+        }
         if !needsLayout, bodyContainerWidthIsStale() {
             needsLayout = true
         }
-        guard needsLayout else { return }
+        guard needsLayout else {
+            deferredRepairsSinceHealthy = 0
+            return
+        }
         isReassertingBodyContainerWidthTie = true
         defer { isReassertingBodyContainerWidthTie = false }
         // **`needsLayout = true` is load-bearing here, and this cost a real
@@ -1358,14 +1369,67 @@ final class AppShellController: NSViewController {
         // zero cannot pass just because nothing ever got here.
         if insideLayoutPass { AppShellController.repairsInsideALayoutPassForTests += 1 }
         #endif
-        guard !insideLayoutPass else { return }
+        guard !insideLayoutPass else {
+            // **`view.needsLayout = true` above is swallowed when it is set
+            // from inside this view's own `layout()`, and that is measured,
+            // not assumed.** A standalone probe that re-marks itself dirty
+            // from inside `layout()` and asks for five further passes gets
+            // **zero**, while the same mark made *outside* `layout()` is
+            // honoured every time. So #412's "marking the view dirty
+            // schedules the very next pass, which is where the repair lands"
+            // is not true: from the layout-pass trigger - the only
+            // *continuous* trigger this repair has - the flag is discarded
+            // and nothing further happens, which left the repair effectively
+            // back at its pre-#412 "can't survive past the very next resize"
+            // behaviour for anything a constraint reactivation alone does not
+            // cure.
+            //
+            // A nested `layoutSubtreeIfNeeded()` is not the answer (AppKit
+            // forbids it, and traps on macOS 14 - see this method's own
+            // `insideLayoutPass` note), so the repair is queued for the next
+            // run loop turn instead, where forcing one is legal.
+            scheduleDeferredRepair()
+            return
+        }
         #if FM_SELFTESTS
-        // Unreachable with the guard above in place; 12 without it. This is the
-        // count that must stay 0 - AppKit traps on a nested layout pass.
+        // Unreachable by construction - the guard above returns first. Kept as
+        // the sentinel `theWidthRepairNeverForcesANestedLayoutPass` asserts on:
+        // without it that case's "stayed 0" assertion would be vacuous, and a
+        // future refactor that moved or dropped the guard would go unnoticed.
         if insideLayoutPass { AppShellController.nestedLayoutForcingsForTests += 1 }
         #endif
         view.layoutSubtreeIfNeeded()
     }
+
+    /// Run the repair again on the next run loop turn - i.e. once this layout
+    /// pass has finished and forcing a fresh one is legal again.
+    ///
+    /// Bounded on purpose. If the drift is genuinely unfixable (a required
+    /// constraint conflict the resolve cannot satisfy), an unbounded
+    /// re-queue would spin the main thread at run loop cadence; the existing
+    /// re-entrancy guard's own reasoning applies here verbatim - **a
+    /// visibly-wrong window is a far better failure than a hung app.** The
+    /// budget is reset every time the repair finds nothing wrong, so an app
+    /// that is healthy between two drifts always gets its full allowance.
+    private func scheduleDeferredRepair() {
+        guard !pendingDeferredRepair else { return }
+        guard deferredRepairsSinceHealthy < Self.maxDeferredRepairsSinceHealthy else { return }
+        pendingDeferredRepair = true
+        deferredRepairsSinceHealthy += 1
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pendingDeferredRepair = false
+            self.reassertBodyContainerWidthTie()
+        }
+    }
+
+    /// Whether a deferred repair is already queued - one at a time.
+    private var pendingDeferredRepair = false
+
+    /// Consecutive deferred repairs since the last pass that found nothing
+    /// wrong. See `scheduleDeferredRepair()` for why this is bounded.
+    private var deferredRepairsSinceHealthy = 0
+    private static let maxDeferredRepairsSinceHealthy = 4
 
     #if FM_SELFTESTS
     /// How many times the repair ran *from inside* `ChromeFusionRootView.layout()`.
@@ -1388,6 +1452,51 @@ final class AppShellController: NSViewController {
         let expected = view.bounds.width
         guard expected > 0 else { return false }
         return abs(bodyContainer.frame.width - expected) > 0.5
+    }
+
+    /// The width `root` (this window's `contentView`) *should* have: the
+    /// window's own content width.
+    ///
+    /// `fm/grand-line-window-glitch-fix`: `bodyContainerWidthIsStale()` above
+    /// measures `bodyContainer` against `root`, on the assumption - stated in
+    /// `reassertBodyContainerWidthTie`'s own doc comment, and inherited from
+    /// the scout report that produced #412 - that "the OS keeps `contentView`
+    /// in sync with the window unconditionally". **That assumption is false,
+    /// and it is the whole reason the black-region glitch recurred after #412
+    /// shipped.** Measured live on the captain's own running app: the window
+    /// was 1512pt wide (its titlebar window reported exactly that) while its
+    /// content window reported 1064pt, with the backing surface 1512pt and
+    /// drawn only to 1063pt - 449pt of undrawn black. Reproduced here exactly:
+    /// window 1512 / `contentView` 1064, at which point `bodyContainer` is
+    /// *correctly* 1064 and `bodyContainerWidthIsStale()` answers **no**, so
+    /// the repair returns having found nothing wrong. Ordinary layout passes
+    /// do not fix it; only a window resize does - which is precisely the
+    /// captain's "I had to resize/restart" experience, and why his log carried
+    /// zero reactivation lines (no constraint was ever deactivated).
+    ///
+    /// So the repair needs a second, independent reference: `root` measured
+    /// against the *window*, which is the one geometry AppKit genuinely owns
+    /// and keeps authoritative.
+    ///
+    /// Width only, deliberately. Every measurement of this bug - and the
+    /// method this lives in - is about width; repairing height too would widen
+    /// a narrowly-understood fix into geometry this bug never exercised.
+    private func windowContentWidthIsStale() -> Bool {
+        guard let window = view.window, window.contentView === view else { return false }
+        let expected = window.contentRect(forFrameRect: window.frame).width
+        guard expected > 0, view.bounds.width > 0 else { return false }
+        return abs(view.bounds.width - expected) > 0.5
+    }
+
+    /// Resync `root` to the window's own content width. See
+    /// `windowContentWidthIsStale()` for why this is needed at all.
+    private func resyncRootWidthToWindow() {
+        guard let window = view.window else { return }
+        let expected = window.contentRect(forFrameRect: window.frame).width
+        guard expected > 0 else { return }
+        let actual = view.bounds.width
+        AppLog.ui.error("contentView width had drifted from the window's (\(actual, privacy: .public) vs \(expected, privacy: .public)) - resynced")
+        view.setFrameSize(NSSize(width: expected, height: view.bounds.height))
     }
 
     deinit {

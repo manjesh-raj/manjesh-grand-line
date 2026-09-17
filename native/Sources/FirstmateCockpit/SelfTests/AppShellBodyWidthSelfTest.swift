@@ -186,6 +186,7 @@ enum AppShellBodyWidthSelfTest {
             ("bodyContainerWidthTracksASeriesOfResizes", test_widthTracksResizeSeries),
             ("widthSelfHealsAfterATieIsSilentlyBroken", test_widthSelfHealsAfterTieBroken),
             ("widthSelfHealsOnALayoutPassWithNoResize", test_widthSelfHealsOnALayoutPassWithNoResize),
+            ("widthSelfHealsWhenContentViewDriftsFromTheWindow", test_widthSelfHealsWhenContentViewDrifts),
             ("theWidthRepairNeverForcesANestedLayoutPass", test_repairNeverForcesANestedLayoutPass),
             ("bodyContainerTracksWindowAcrossRealisticWidths", test_widthTracksAcrossRealisticWidths),
             ("bodyContainerTracksWindowAcrossAllDestinations", test_widthTracksAcrossAllDestinations),
@@ -473,6 +474,76 @@ enum AppShellBodyWidthSelfTest {
             guard abs(width - expected) < 0.5 else {
                 return "the width tie reported itself active after the layout pass but does not bind: expected "
                     + "bodyContainer width \(expected), got \(width)"
+            }
+            return nil
+        }
+    }
+
+    /// `fm/grand-line-window-glitch-fix`: the captain's black-region glitch
+    /// recurring *after* #412 shipped its self-heal - reproduced here as the
+    /// exact geometry measured live on his own running app.
+    ///
+    /// His window was **1512pt** wide (its titlebar window reported exactly
+    /// that, and its backing surface was 1512pt) while its content window
+    /// reported **1064pt**, with content drawn only to 1063pt - **449pt of
+    /// undrawn black**, and his own screenshot cut the *top bar* at the same
+    /// x, which is what identifies it as `contentView` rather than any one
+    /// page. His log carried **zero** reactivation lines, so no constraint had
+    /// been deactivated: the tie was active and `bodyContainer` correctly
+    /// matched a `root` that was itself the wrong size, which is precisely the
+    /// state `bodyContainerWidthIsStale()` cannot see. It cleared only when
+    /// the window was resized.
+    ///
+    /// Deliberately distinct from its two siblings above:
+    /// `widthSelfHealsAfterATieIsSilentlyBroken` and
+    /// `widthSelfHealsOnALayoutPassWithNoResize` both start by *deactivating*
+    /// the tie, and both then prove binding via a `setFrame` - i.e. via the
+    /// resize trigger that has always worked. Neither can see this one, and
+    /// the vacuity guard below keeps it that way.
+    private static func test_widthSelfHealsWhenContentViewDrifts() -> String? {
+        withScratchEnv {
+            let (window, shell) = makeMountedShell()
+            window.setFrame(NSRect(x: 0, y: 0, width: 1512, height: 950), display: true)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+
+            guard let content = window.contentView else { return "setup failed: window has no content view" }
+            let expected = window.contentRect(forFrameRect: window.frame).width
+            guard abs(content.bounds.width - expected) < 0.5 else {
+                return "setup failed: contentView is \(content.bounds.width) against a \(expected)-wide window "
+                    + "before this case forced any drift"
+            }
+
+            // The live signature: the content view alone goes narrow while the
+            // window stays full width.
+            content.setFrameSize(NSSize(width: 1064, height: content.bounds.height))
+            guard abs(content.bounds.width - 1064) < 0.5 else {
+                return "setup failed: could not force the contentView drift (got \(content.bounds.width))"
+            }
+            // Vacuity guard: the tie must still be ACTIVE. If forcing the drift
+            // also deactivated it, this case would be reproducing the
+            // already-covered broken-tie scenario and would pass for the wrong
+            // reason.
+            guard shell.bodyWidthTieIsActiveForTests else {
+                return "setup failed: forcing the contentView drift also deactivated the width tie, so this case "
+                    + "would be reproducing the already-covered broken-tie scenario rather than the drift"
+            }
+
+            // Ordinary run loop turns only - no `setFrame`, so no
+            // `didResizeNotification`. The resize path is exactly what the
+            // captain had to trigger by hand, and is what this case must not
+            // rely on.
+            RunLoop.main.run(until: Date().addingTimeInterval(1.0))
+
+            let rootWidth = shell.view.bounds.width
+            guard abs(rootWidth - expected) < 0.5 else {
+                return "contentView stayed \(rootWidth) wide against a \(expected)-wide window after ordinary "
+                    + "layout passes with no resize - so the window keeps a full-width surface while only "
+                    + "\(rootWidth) of it is ever drawn, which is the undrawn black region the captain "
+                    + "reported (it clears only when the window is resized)"
+            }
+            let body = shell.bodyContainerFrameForTests.width
+            guard abs(body - expected) < 0.5 else {
+                return "contentView resynced to \(rootWidth) but bodyContainer stayed \(body)"
             }
             return nil
         }
