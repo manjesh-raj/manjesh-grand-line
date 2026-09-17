@@ -46,6 +46,7 @@ enum E2ETestingPolicySelfTest {
     static func run() -> Bool {
         var ok = true
         checkWindowBackedSuitesAreDeclared(&ok)
+        checkSessionOnlySuitesReallyNeedASession(&ok)
         checkSuitesUseTheOffScreenProbeFactory(&ok)
         checkTheScriptStillOffersBothModes(&ok)
         checkThisProcessCannotReachTheCaptainsRealData(&ok)
@@ -105,17 +106,28 @@ enum E2ETestingPolicySelfTest {
     /// `FM_RUN_[A-Z_]+` over the block reads those as members and silently
     /// inflates the list, which is exactly the sort of false pass a guard must
     /// not have.
-    private static func needsSessionFlags(in script: String) -> Set<String>? {
+    /// Returns each entry's flag mapped to whatever trailing text follows it
+    /// on the same line (a `# session-not-window: ...` marker, or "").
+    private static func needsSessionFlags(in script: String) -> [String: String]? {
         guard let start = script.range(of: "\nNEEDS_SESSION=(\n") else { return nil }
         let rest = script[start.upperBound...]
         guard let end = rest.range(of: "\n)\n") else { return nil }
         let body = rest[..<end.lowerBound]
 
-        var flags: Set<String> = []
+        var flags: [String: String] = [:]
         for rawLine in body.split(separator: "\n", omittingEmptySubsequences: false) {
             let line = rawLine.trimmingCharacters(in: .whitespaces)
-            guard line.hasPrefix("\""), line.hasSuffix("\"") else { continue }
-            flags.insert(String(line.dropFirst().dropLast()))
+            guard line.hasPrefix("\"") else { continue }
+            let afterOpenQuote = line.dropFirst()
+            guard let closeQuote = afterOpenQuote.firstIndex(of: "\"") else { continue }
+            let flag = String(afterOpenQuote[..<closeQuote])
+            // Anything after the closing quote is a trailing `# ...` comment.
+            // That is where a `session-not-window:` marker lives, so it has to
+            // be kept rather than discarded - and an entry must still parse
+            // when it carries one, which a `hasSuffix("\"")` test does not.
+            let trailing = String(afterOpenQuote[afterOpenQuote.index(after: closeQuote)...])
+                .trimmingCharacters(in: .whitespaces)
+            flags[flag] = trailing
         }
         return flags
     }
@@ -245,6 +257,100 @@ enum E2ETestingPolicySelfTest {
 
     // MARK: Checks
 
+
+    /// The marker that lets a `NEEDS_SESSION` entry stay listed without
+    /// constructing an `NSWindow` of its own.
+    ///
+    /// Per-entry and with a stated reason, deliberately - the same shape as
+    /// `probeExemptionMarker` above, and for the same reason: the legitimate
+    /// cases are a handful of suites whose *controller* builds a real
+    /// `NSPanel`, not a standing licence for a file.
+    private static let sessionNotWindowMarker = "session-not-window:"
+
+    /// The reverse of `checkWindowBackedSuitesAreDeclared`: every suite listed
+    /// in `NEEDS_SESSION` really does need a session.
+    ///
+    /// **Why this direction matters, and why it was missing.** The existing
+    /// check only ever asked "does a window-backed suite have CI coverage
+    /// declared?". Nothing asked the opposite, so a pure-logic suite could sit
+    /// in that list indefinitely - and `--ci` skips the list, so the cost is
+    /// silent: the suite runs locally, passes, looks healthy, and never once
+    /// guards the blocking build. Three had accumulated exactly that way
+    /// (`FM_RUN_VAULT_DATA_TESTS`, `FM_RUN_TERMINAL_WRAP_REDRAW_TESTS`,
+    /// `FM_RUN_SHIFT_ATTACHMENT_WELL_TESTS`), two of them declaring "pure
+    /// logic, no window/view hierarchy" in their own headers while listed as
+    /// needing a window server.
+    ///
+    /// The failure mode this prevents is the one the captain named: a new
+    /// feature adds a heavyweight session-backed test by copying whatever the
+    /// nearest existing test looked like, when the thing under test is a
+    /// parser or a state machine that a plain function call can exercise.
+    /// A test does not get cheaper by being written; it gets cheaper by being
+    /// classified honestly, and that classification is now checkable.
+    ///
+    /// Confirmed to catch a real regression: re-adding any of the three flags
+    /// above to `NEEDS_SESSION` fails this check by name.
+    private static func checkSessionOnlySuitesReallyNeedASession(_ ok: inout Bool) {
+        guard let script = try? String(contentsOf: runnerScript, encoding: .utf8),
+              let declared = needsSessionFlags(in: script) else {
+            fail("could not read NEEDS_SESSION from \(runnerScript.path)", &ok)
+            return
+        }
+        guard let mainSource = try? String(contentsOf: mainSwift, encoding: .utf8) else {
+            fail("could not read \(mainSwift.path)", &ok)
+            return
+        }
+        guard declared.count >= 30 else {
+            fail("parsed only \(declared.count) NEEDS_SESSION entries - the array's shape must have changed", &ok)
+            return
+        }
+
+        // flag -> suite enum name. `flagsByEnumName` maps the other way, and
+        // a flag is unique per suite, so inverting it is safe.
+        var enumByFlag: [String: String] = [:]
+        for (enumName, flag) in flagsByEnumName(in: mainSource) { enumByFlag[flag] = enumName }
+        guard enumByFlag.count >= 90 else {
+            fail("mapped only \(enumByFlag.count) flags to suite enums in main.swift - has the dispatch shape changed?", &ok)
+            return
+        }
+
+        var strays: [String] = []
+        var exempt = 0
+        var confirmed = 0
+
+        for (flag, trailing) in declared.sorted(by: { $0.key < $1.key }) {
+            guard let enumName = enumByFlag[flag] else {
+                // The script guards this direction itself (it errors out on a
+                // listed flag main.swift no longer dispatches), so this is
+                // only reachable mid-rename - not worth failing twice for.
+                continue
+            }
+            let file = selfTestsDirectory.appendingPathComponent("\(enumName).swift")
+            guard let source = try? String(contentsOf: file, encoding: .utf8) else { continue }
+
+            if mountsAWindow(source) { confirmed += 1; continue }
+            if trailing.contains(sessionNotWindowMarker) { exempt += 1; continue }
+            strays.append("\(flag)  (\(enumName).swift)")
+        }
+
+        // A scan that resolves nothing must fail loudly rather than pass
+        // vacuously.
+        guard confirmed >= 30 else {
+            fail("only \(confirmed) NEEDS_SESSION entr(ies) resolved to a window-backed suite - "
+                 + "the flag->suite mapping must have broken, so this guard is checking nothing", &ok)
+            return
+        }
+
+        if !strays.isEmpty {
+            let listed = strays.map { "      - " + $0 }.joined(separator: "\n")
+            fail("\(strays.count) suite(s) are listed in NEEDS_SESSION but build no window:\n" + listed
+                 + "\n      Either they are pure logic and belong out of that list (so they guard the"
+                 + "\n      blocking CI job), or they need a session for some other real reason - in"
+                 + "\n      which case say so with a trailing `# \(sessionNotWindowMarker) <why>` on the entry.", &ok)
+        }
+        print("  \(declared.count) NEEDS_SESSION entr(ies): \(confirmed) build a window, \(exempt) exempt with a stated reason")
+    }
+
     /// Every suite that mounts a real `NSWindow` is declared in
     /// `NEEDS_SESSION`.
     ///
@@ -310,7 +416,7 @@ enum E2ETestingPolicySelfTest {
                 unmapped.append(name)
                 continue
             }
-            if !declared.contains(flag) { missing.append("\(flag)  (\(name).swift)") }
+            if declared[flag] == nil { missing.append("\(flag)  (\(name).swift)") }
         }
 
         guard windowBacked >= 30 else {
