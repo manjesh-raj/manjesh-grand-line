@@ -230,16 +230,37 @@ enum SettingsThemeLayoutParitySelfTest {
     /// and then agreed again with the rest - a transient, not a layout
     /// difference. Settling first is what makes the comparison about the
     /// theme, which is the only thing this suite is meant to be about.
+    /// How many consecutive identical reads count as settled.
+    ///
+    /// **One is not enough, and that is a lesson this repo has already paid
+    /// for once** (`fm/grandline-audit2-e2e-fixes`, on the console's own
+    /// settle): "two consecutive equal reads" cannot tell *settled* from
+    /// *paused between two async updates*, and the gap between this page's
+    /// staggered async fills - a `sudo` probe, a disk read - is comfortably
+    /// wider than one poll interval on a loaded runner. This suite grew a
+    /// seventh card in `fm/grand-line-terminal-shortcuts-settings`, i.e. more
+    /// async work and a longer stagger, and CI reported exactly the shape a
+    /// mid-flight read produces: two themes whose widths differ by a few
+    /// points while every structural property matches.
+    ///
+    /// Strengthening the settle rather than loosening the comparison, on
+    /// purpose: the width check is this suite's whole point.
+    private static let stableReadsRequired = 5
+
     private static func settledFingerprint(for settings: SettingsController) -> LayoutFingerprint {
         var previous = fingerprint(for: settings)
-        for _ in 0..<25 {
+        var stable = 0
+        for _ in 0..<60 {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
             settings.view.layoutSubtreeIfNeeded()
             let current = fingerprint(for: settings)
             if current.cardYPositions == previous.cardYPositions,
                current.cardWidths == previous.cardWidths,
                current.cardXPositions == previous.cardXPositions {
-                return current
+                stable += 1
+                if stable >= stableReadsRequired { return current }
+            } else {
+                stable = 0
             }
             previous = current
         }
