@@ -135,8 +135,12 @@ enum Audit2SecurityFixesSelfTest {
     /// place. Eight call sites each remembering a gate is how one of them
     /// stops remembering.
     private static func test_focusChokePoint() -> String? {
+        // `+Splits.swift` joined the family with split panes
+        // (`fm/grand-line-terminal-shortcuts-settings`) and is swept for the
+        // same reason as the rest: focusing a pane is focusing a live PTY.
         let files = ["ConsoleController.swift", "ConsoleController+Tabs.swift",
-                     "ConsoleController+Sessions.swift", "ConsoleController+Toolbar.swift"]
+                     "ConsoleController+Sessions.swift", "ConsoleController+Toolbar.swift",
+                     "ConsoleController+Splits.swift"]
         var terminalFocusSites = 0
         for file in files {
             guard let source = read(file) else { return "could not read \(file)" }

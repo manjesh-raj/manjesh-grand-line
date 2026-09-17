@@ -196,6 +196,26 @@ final class TabModel {
     /// `.notStarted`.
     var kubeContextBadgeStatus: KubeContextBadgeStatus = .notStarted
 
+    /// This tab's pane tree (`fm/grand-line-terminal-shortcuts-settings`).
+    ///
+    /// Pinned into `ConsoleController.content` with exactly the four
+    /// constraints `terminal` used to carry, at the same `terminalInset` - so
+    /// an unsplit tab is one terminal at the same frame it always had, one
+    /// plain view further down the hierarchy. Splitting replaces its single
+    /// child with an `NSSplitView`; see `TerminalSplit.swift`.
+    ///
+    /// `terminal` above is still this tab's **primary** pane, and every
+    /// tab-scoped feature stays bound to it on purpose: SRE Lead's bridge,
+    /// the kube context badge, the block tracker and the Log Analyzer capture
+    /// all mean "this tab's session", which is the thing the tab was opened
+    /// for. Only the actions that are about what the captain is *typing into*
+    /// right now - Compose, a snippet, find, copy - follow the focused pane.
+    let splits = TerminalSplitContainer(frame: .zero)
+
+    /// This tab's primary pane, the one wrapping `terminal`. Held so the
+    /// console can hand it to `splits` and find it again without searching.
+    var primaryPane: TerminalPane?
+
     init(name: String, launch: TabLaunch, terminal: CockpitTerminalView, accentHex: String? = nil) {
         self.name = name
         self.launch = launch

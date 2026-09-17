@@ -319,8 +319,12 @@ enum SettingsThemeLayoutParitySelfTest {
         let (legacyFP, legacyWindow) = fingerprint(theme: legacyTheme, width: 1500)
         defer { _ = legacyWindow }
 
-        guard daylightFP.cardCount == 6 else {
-            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 6")
+        // Seven since `fm/grand-line-terminal-shortcuts-settings` added the
+        // Terminal Shortcuts card. Kept as a literal for this check's own
+        // vacuity: "both themes produced the same layout" means nothing if
+        // neither produced a page.
+        guard daylightFP.cardCount == 7 else {
+            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 7")
             ok = false
             return
         }

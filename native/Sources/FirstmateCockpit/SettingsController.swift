@@ -175,6 +175,14 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         let connection = card(icon: "network", tint: .info, title: "Connection", subtitle: "Where new terminal tabs open", content: buildConnectionSection())
         let appearance = card(icon: "paintpalette", tint: .violet, title: "Appearance", subtitle: "\(HelmTheme.allThemes.count) Helm themes, light and dark", content: buildAppearanceSection())
         let terminal = card(icon: "terminal", tint: .warn, title: "Terminal", subtitle: "Font size and behavior", content: buildTerminalSection())
+        // Immediately after Terminal, and its own card rather than four more
+        // rows inside that one: these are nine bindings with a recorder each,
+        // which is a different kind of thing from a font size and two
+        // toggles, and burying them under "Font size and behavior" would make
+        // the card's own subtitle untrue.
+        let shortcuts = card(icon: "command", tint: .accent, title: "Terminal Shortcuts",
+                             subtitle: "Move between tabs, and split a terminal into panes",
+                             content: buildTerminalShortcutsSection())
         // F12. Its own card rather than a fourth row inside Terminal: this is
         // not a terminal preference, it is the one place in the app that opts
         // into a daily `claude -p` call, and the card's subtitle is where that
@@ -193,7 +201,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         // than a fixed stack, so `cardsInOrder` is the content and
         // `rebuildCardLayout()` is the arrangement. Order is the reading order
         // in one column and the round-robin source in two.
-        cardsInOrder = [connection, appearance, terminal, briefing, security, backup]
+        cardsInOrder = [connection, appearance, terminal, shortcuts, briefing, security, backup]
 
         let stack = cardsContainer
         stack.orientation = .vertical
@@ -556,7 +564,25 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         return l
     }
 
-    private func descRow(title: String, desc: String, trailing: NSView) -> NSView {
+    /// `alignsTrailingToEdge` pins the trailing control to the row's own
+    /// trailing edge instead of letting it sit wherever the description text
+    /// happens to end.
+    ///
+    /// This is AGENTS.md's gotcha (10) in the shipped helper: `row` below is a
+    /// horizontal `NSStackView` left at the default `.gravityAreas`
+    /// distribution, which has no rule for who absorbs the leftover width -
+    /// so the hugging priorities set on `textStack` and `trailing` do nothing,
+    /// and a short description leaves its control stranded mid-row. Every
+    /// card on this page has always looked that way and with four rows of
+    /// similar-length copy it reads fine.
+    ///
+    /// Terminal Shortcuts is nine rows whose descriptions vary from four words
+    /// to two lines, where the same behaviour puts nine recorders at nine
+    /// different x positions and reads as broken - seen in a real render. So
+    /// it opts in, and the default is deliberately left alone rather than
+    /// quietly restyling the four cards nobody asked about.
+    private func descRow(title: String, desc: String, trailing: NSView,
+                         alignsTrailingToEdge: Bool = false) -> NSView {
         let titleLabel = NSTextField(labelWithString: title)
         titleLabel.font = .systemFont(ofSize: 12.5, weight: .medium)
         let descLabel = NSTextField(wrappingLabelWithString: desc)
@@ -590,6 +616,12 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         row.alignment = .centerY
         row.spacing = 12
         row.translatesAutoresizingMaskIntoConstraints = false
+        if alignsTrailingToEdge {
+            // With a rule for who stretches, the priorities already set above
+            // finally bite: `textStack` is `.defaultLow` and takes the slack,
+            // `trailing` is `.required` and stays its own size, at the edge.
+            row.distribution = .fill
+        }
 
         // Shared hover helper (task brief #2): a subtle highlight on mouse
         // enter/exit, both colors theme-derived - see `applyTheme` for the
@@ -888,6 +920,106 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             row.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
         }
         return section
+    }
+
+    // MARK: Terminal shortcuts
+
+    /// One recorder per action, so a change can be pushed straight back into
+    /// the row that made it (a reset has to move all nine labels at once).
+    private var shortcutRecorders: [TerminalShortcutAction: KeyChordRecorderView] = [:]
+    private var resetShortcutsButton: HelmButton?
+
+    /// Set by the app delegate: "a binding changed, tell the live monitor".
+    ///
+    /// Forwarded rather than reached for, the same shape
+    /// `onDictationShortcutChanged` already has one feature over - this page
+    /// knows nothing about `TabKeyboardShortcuts`, and a recorder the captain
+    /// just used takes effect on the next keypress rather than the next
+    /// launch.
+    var onTerminalShortcutsChanged: ((TerminalShortcutSet) -> Void)?
+
+    private func buildTerminalShortcutsSection() -> NSView {
+        var views: [NSView] = []
+
+        for group in TerminalShortcutAction.Group.allCases {
+            if !views.isEmpty { views.append(separator()) }
+            views.append(groupHeading(group.title))
+            for action in TerminalShortcutAction.allCases where action.group == group {
+                // `.command`: a Console shortcut has to be a real key with a
+                // modifier. See `KeyChordRecorderView.Mode`.
+                let recorder = KeyChordRecorderView(shortcut: AppSettings.shared.terminalShortcuts[action],
+                                                    mode: .command)
+                // One width for all nine, so they read as a column.
+                //
+                // `descRow` reserves room for its trailing control by
+                // measuring that control's own fitting size, and a recorder
+                // sizes itself to whatever chord it is showing - so leaving
+                // them to their natural widths gives every row a different
+                // reserve and lands nine controls at nine different x
+                // positions. Seen in a real render before it was fixed. Wide
+                // enough for the longest shipped default (⌃⌘Return) and for
+                // the recording prompt to stay readable.
+                recorder.widthAnchor.constraint(equalToConstant: 168).isActive = true
+                recorder.onChange = { [weak self] chord in self?.shortcutChanged(action, to: chord) }
+                shortcutRecorders[action] = recorder
+                views.append(descRow(title: action.title, desc: action.detail, trailing: recorder,
+                                     alignsTrailingToEdge: true))
+            }
+        }
+
+        let reset = HelmButton(title: "Reset to defaults", variant: .secondary,
+                               target: self, action: #selector(resetTerminalShortcuts))
+        resetShortcutsButton = reset
+        views.append(separator())
+        views.append(descRow(title: "Defaults",
+                             desc: "Put all nine back to the bindings this app ships with.",
+                             trailing: reset, alignsTrailingToEdge: true))
+
+        let section = NSStackView(views: views)
+        section.orientation = .vertical
+        section.alignment = .leading
+        section.spacing = 12
+        for row in views {
+            row.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
+        }
+        refreshShortcutControls()
+        return section
+    }
+
+    /// A small muted heading so the nine rows read as three ideas.
+    private func groupHeading(_ title: String) -> NSView {
+        let label = NSTextField(labelWithString: title.uppercased())
+        label.font = HelmType.kicker()
+        mutedLabel(label)
+        let row = NSStackView(views: [label])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.translatesAutoresizingMaskIntoConstraints = false
+        return row
+    }
+
+    private func shortcutChanged(_ action: TerminalShortcutAction, to chord: KeyChord) {
+        var set = AppSettings.shared.terminalShortcuts
+        set[action] = chord
+        AppSettings.shared.terminalShortcuts = set
+        onTerminalShortcutsChanged?(set)
+        refreshShortcutControls()
+    }
+
+    @objc private func resetTerminalShortcuts() {
+        var set = AppSettings.shared.terminalShortcuts
+        set.reset()
+        AppSettings.shared.terminalShortcuts = set
+        onTerminalShortcutsChanged?(set)
+        // Every recorder, not just the ones the captain changed: `reset()`
+        // clears the whole map, so a row still showing a custom chord would
+        // be showing a binding that no longer exists.
+        for (action, recorder) in shortcutRecorders { recorder.shortcut = set[action] }
+        refreshShortcutControls()
+    }
+
+    private func refreshShortcutControls() {
+        resetShortcutsButton?.isEnabled = AppSettings.shared.terminalShortcuts.hasCustomBindings
     }
 
     // MARK: Morning briefing (F12)
@@ -1242,6 +1374,10 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         let line = HelmTheme.nsColor(theme.chromeLineHex)
         let muted = HelmTheme.mutedInk(theme)
         for card in cards { card.applyTheme(theme) }
+        // The recorders paint their own chrome and their own recording state,
+        // so they take the theme directly rather than through any of the
+        // label/hover registries below.
+        for recorder in shortcutRecorders.values { recorder.applyTheme(theme) }
         // Sections that rebuild rather than re-theme register a fresh label
         // every time, so drop the ones whose view is gone - same convention
         // `rebuildSecuritySection` already applies to `hoverRows`. Safe to do

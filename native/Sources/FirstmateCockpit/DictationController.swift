@@ -58,7 +58,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
     private let statusChipLabel = NSTextField(labelWithString: "")
 
     private let shortcutPanel = HelmCard()
-    private let shortcutRecorder: DictationShortcutRecorderView
+    private let shortcutRecorder: KeyChordRecorderView
     private let shortcutResetButton = HelmButton(title: "", variant: .secondary)
     private let shortcutDetailLabel = NSTextField(wrappingLabelWithString: "")
     private var shortcutTextStack = NSStackView()
@@ -117,7 +117,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
     /// only edits the persisted preference and reports the change, matching
     /// how `SettingsController.onFontSizeStep` forwards rather than owning
     /// the live console it affects.
-    var onShortcutChanged: ((DictationShortcut) -> Void)?
+    var onShortcutChanged: ((KeyChord) -> Void)?
 
     /// Fired when the "Use local Whisper engine" toggle changes, so whoever
     /// owns the live `DictationEngine` can drop a resident engine the moment
@@ -129,7 +129,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
 
     init(store: DictationStore) {
         self.store = store
-        self.shortcutRecorder = DictationShortcutRecorderView(shortcut: AppSettings.shared.dictationShortcut)
+        self.shortcutRecorder = KeyChordRecorderView(shortcut: AppSettings.shared.dictationShortcut)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -916,15 +916,15 @@ final class DictationController: NSViewController, DaylightDrillActions {
         refresh()
     }
 
-    private func shortcutChanged(_ newShortcut: DictationShortcut) {
+    private func shortcutChanged(_ newShortcut: KeyChord) {
         AppSettings.shared.dictationShortcut = newShortcut
         onShortcutChanged?(newShortcut)
         render()
     }
 
     @objc private func resetShortcutTapped() {
-        shortcutRecorder.shortcut = .defaultShortcut
-        shortcutChanged(.defaultShortcut)
+        shortcutRecorder.shortcut = .dictationDefault
+        shortcutChanged(.dictationDefault)
     }
 
     @objc private func cleanupToggled() {

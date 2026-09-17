@@ -344,7 +344,11 @@ extension ConsoleController {
         view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
 
         for tab in tabs {
-            theme.apply(to: tab.terminal)
+            // Every pane, not just the primary one: a split pane is a real
+            // terminal and a theme change that reached only the tab's first
+            // one would leave the others on the previous palette.
+            for pane in tab.splits.panes { theme.apply(to: pane.terminal) }
+            tab.splits.applyTheme(theme)
             tab.blockContainer?.applyTheme(theme)
         }
 

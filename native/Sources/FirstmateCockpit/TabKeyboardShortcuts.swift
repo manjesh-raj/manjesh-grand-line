@@ -90,6 +90,36 @@ protocol TabShortcutHandling: AnyObject {
     /// ⌘7 with three tabs open does nothing rather than clamping to the last
     /// tab - clamping would make a mistyped shortcut silently switch tabs.
     func selectTab(atIndex index: Int)
+
+    /// How many tabs this page has, and which one is in front.
+    ///
+    /// `fm/grand-line-terminal-shortcuts-settings` added these two so the
+    /// *relative* moves below can be written once, here, rather than as the
+    /// same four lines of wrapping arithmetic in both conforming controllers.
+    /// Each page keeps its own tab collection; all this asks for is its
+    /// shape.
+    var tabShortcutCount: Int { get }
+    var tabShortcutSelectedIndex: Int? { get }
+}
+
+extension TabShortcutHandling {
+
+    /// Move `offset` tabs along, wrapping at either end.
+    ///
+    /// Wrapping, unlike `selectTab(atIndex:)`'s deliberate refusal to clamp,
+    /// because the two shortcuts mean different things: ⌘3 names a specific
+    /// tab and a mistyped one must not quietly land somewhere else, while
+    /// "next" on the last tab has exactly one sensible answer and stopping
+    /// dead there would make the shortcut useless in a two-tab strip.
+    ///
+    /// Routed through `selectTab(atIndex:)` - the same method ⌘1…⌘9 and every
+    /// chip click funnel into - so there is one definition of what selecting
+    /// a tab does, and nothing here duplicates it.
+    func selectTab(byOffset offset: Int) {
+        let count = tabShortcutCount
+        guard count > 1, let current = tabShortcutSelectedIndex else { return }
+        selectTab(atIndex: (current + offset + count) % count)
+    }
 }
 
 /// One keystroke's meaning. `Equatable` so a self-test can assert the whole
@@ -175,9 +205,25 @@ final class TabKeyboardShortcuts {
     /// - a popover, a sheet, the ⌘K palette - is left alone.
     private let mainWindow: () -> NSWindow?
 
-    init(target: @escaping () -> TabShortcutHandling?, mainWindow: @escaping () -> NSWindow?) {
+    /// The captain's own bindings (`fm/grand-line-terminal-shortcuts-settings`).
+    ///
+    /// Held rather than read from `AppSettings` per keystroke, and swapped by
+    /// `updateTerminalShortcuts(_:)` when Settings changes one - the same
+    /// live-apply shape `DictationHotkey.updateShortcut(_:)` already uses, and
+    /// for the same reason: a recorder the captain just used should take
+    /// effect on the next keypress, not the next launch.
+    private(set) var terminalShortcuts: TerminalShortcutSet
+
+    init(target: @escaping () -> TabShortcutHandling?,
+         mainWindow: @escaping () -> NSWindow?,
+         terminalShortcuts: TerminalShortcutSet = AppSettings.shared.terminalShortcuts) {
         self.target = target
         self.mainWindow = mainWindow
+        self.terminalShortcuts = terminalShortcuts
+    }
+
+    func updateTerminalShortcuts(_ shortcuts: TerminalShortcutSet) {
+        terminalShortcuts = shortcuts
     }
 
     func start() {
@@ -198,8 +244,17 @@ final class TabKeyboardShortcuts {
     /// the monitor closure above is a one-line adapter over exactly this.
     @discardableResult
     func handle(_ event: NSEvent) -> Bool {
-        guard let shortcut = TabShortcut.from(characters: event.charactersIgnoringModifiers,
-                                              modifiers: event.modifierFlags) else { return false }
+        // The captain's own binding is looked up first and **wins** on a
+        // collision with the fixed table. A captain who deliberately recorded
+        // ⌘T as "split right" meant it; the table is what this app chose, and
+        // a choice the captain made explicitly outranks one it made for them.
+        // Nothing in the shipped defaults collides - see
+        // `TerminalShortcuts.swift`'s own collision check - so this only ever
+        // decides a case somebody created on purpose.
+        let configured = terminalShortcuts.action(forKeyCode: event.keyCode, modifiers: event.modifierFlags)
+        let fixed = TabShortcut.from(characters: event.charactersIgnoringModifiers,
+                                     modifiers: event.modifierFlags)
+        guard configured != nil || fixed != nil else { return false }
         // Audit #2 §5.2. Deliberately *before* the window and responder tests
         // rather than folded into them: those two answer "is this keystroke
         // meant for the tab strip", which is a different question from "may
@@ -211,8 +266,47 @@ final class TabKeyboardShortcuts {
         guard let window = mainWindow(), event.window === window else { return false }
         guard !Self.isEditingText(in: window) else { return false }
         guard let target = target() else { return false }
-        shortcut.perform(on: target)
-        return true
+        if let configured {
+            return Self.perform(configured, on: target)
+        }
+        fixed?.perform(on: target)
+        return fixed != nil
+    }
+
+    /// Run a configured action against whichever page is showing.
+    ///
+    /// Returns whether it was actually performed, and an action this page
+    /// cannot do leaves the keystroke alone rather than swallowing it - the
+    /// Tools page has tabs but no terminals, so its ⌃⌘→ is nobody's and
+    /// should reach the rest of the app rather than dying here. Same posture
+    /// as the lock gate above.
+    ///
+    /// Internal (not `private`) so a self-test can drive the dispatch without
+    /// synthesising an event.
+    @discardableResult
+    static func perform(_ action: TerminalShortcutAction, on target: TabShortcutHandling) -> Bool {
+        switch action {
+        case .nextTab:
+            target.selectTab(byOffset: 1)
+            return true
+        case .previousTab:
+            target.selectTab(byOffset: -1)
+            return true
+        case .splitRight, .splitLeft, .splitDown,
+             .focusNextPane, .focusPreviousPane, .closePane, .zoomPane:
+            guard let splits = target as? TerminalSplitHandling else { return false }
+            switch action {
+            case .splitRight: splits.splitTerminal(.right)
+            case .splitLeft: splits.splitTerminal(.left)
+            case .splitDown: splits.splitTerminal(.down)
+            case .focusNextPane: splits.focusSplitPane(offset: 1)
+            case .focusPreviousPane: splits.focusSplitPane(offset: -1)
+            case .closePane: splits.closeSplitPane()
+            case .zoomPane: splits.toggleSplitPaneZoom()
+            default: return false
+            }
+            return true
+        }
     }
 
     /// Is the captain mid-edit in a real text control?

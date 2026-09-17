@@ -323,9 +323,19 @@ final class AppShellController: NSViewController {
     /// combo - the app delegate is what actually owns the live
     /// `DictationHotkey` instance, matching `onFontSizeStep`'s own
     /// forward-don't-own convention.
-    var onDictationShortcutChanged: ((DictationShortcut) -> Void)? {
+    var onKeyChordChanged: ((KeyChord) -> Void)? {
         get { dictation.onShortcutChanged }
         set { dictation.onShortcutChanged = newValue }
+    }
+
+    /// Fired whenever a Settings > Terminal Shortcuts recorder captures a new
+    /// combo, or the captain resets them all. Forwarded to the app delegate,
+    /// which owns the live `TabKeyboardShortcuts` monitor - the same
+    /// forward-don't-own convention `onKeyChordChanged` above already follows
+    /// for Dictation's own hotkey.
+    var onTerminalShortcutsChanged: ((TerminalShortcutSet) -> Void)? {
+        get { settings.onTerminalShortcutsChanged }
+        set { settings.onTerminalShortcutsChanged = newValue }
     }
 
     /// E2: the Dictation page's local-Whisper toggle, forwarded the same way -

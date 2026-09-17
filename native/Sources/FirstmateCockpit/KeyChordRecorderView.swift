@@ -1,6 +1,8 @@
 // Manjesh Grand Line - native macOS app.
 //
-// Dictation's shortcut recorder (phase 2, fm/grandline-dictation-phase2): a
+// The app's one shortcut recorder (`fm/grand-line-terminal-shortcuts-settings`
+// generalised it out of Dictation, which built it in phase 2,
+// fm/grandline-dictation-phase2): a
 // small, self-built `NSView` control - click it, press the desired key/
 // modifier combo, it's captured and reported via `onChange`. Built directly
 // rather than adding any external dependency, per the task brief - this app
@@ -23,9 +25,21 @@
 //     modifier-only state (a modifier held right before a regular key was
 //     always "part of a combo," not a shortcut on its own).
 //
+// ## `Mode`, and why it is not a caller-side validation
+//
+// Dictation's trigger is *held*, so a bare modifier is the right shape for it,
+// and a bare key with no modifiers is fine too. A Console command shortcut is
+// neither: a modifier-only "split right" would fire every time the captain
+// reached for ⌘, and an unmodified `W` would eat the letter they were typing
+// into their shell. `.command` refuses both **while recording** rather than
+// after - so the captain sees "Add ⌘, ⌥, ⌃ or ⇧" and presses again, instead
+// of pressing a combo, watching it appear in the row, and finding out later
+// that it was silently discarded or, worse, that it works and steals a
+// keystroke from the shell.
+//
 // Deliberately out of scope: a modifier-only combo made of *two or more*
 // modifier keys with no regular key (e.g. "hold ⌘ then ⇧, release both").
-// `DictationShortcut.isModifierOnly` combos are single-key by construction -
+// `KeyChord.isModifierOnly` combos are single-key by construction -
 // matching OpenSuperWhisper's own convention (Right ⌥ Option, one physical
 // key) and every "hold to record" affordance a captain would realistically
 // want. Recording two modifiers with no regular key still produces a usable
@@ -34,22 +48,38 @@
 
 import AppKit
 
-final class DictationShortcutRecorderView: NSView {
+final class KeyChordRecorderView: NSView {
+
+    /// What this recorder will accept.
+    enum Mode {
+        /// Anything: a held modifier on its own, or a regular key with or
+        /// without modifiers. Dictation's hold-to-record trigger.
+        case any
+        /// A regular key carrying at least one of ⌘⌥⌃⇧ - the only shape a
+        /// command shortcut may take. See the header.
+        case command
+    }
+
     private let label = NSTextField(labelWithString: "")
+    private let mode: Mode
+    /// Set when a keystroke was captured but refused by `mode`, so the label
+    /// can say what is wrong instead of appearing to have done nothing.
+    private var rejection: String?
     private var isRecording = false
     private var pendingModifierKeyCode: UInt16?
     private var pendingModifierFlags: NSEvent.ModifierFlags = []
     private var currentTheme: HelmTheme?
 
-    var shortcut: DictationShortcut {
+    var shortcut: KeyChord {
         didSet { updateLabel() }
     }
     /// Fired once a new combo is captured - never fired for a cancelled
     /// recording (Escape, or clicking away).
-    var onChange: ((DictationShortcut) -> Void)?
+    var onChange: ((KeyChord) -> Void)?
 
-    init(shortcut: DictationShortcut) {
+    init(shortcut: KeyChord, mode: Mode = .any) {
         self.shortcut = shortcut
+        self.mode = mode
         super.init(frame: .zero)
         wantsLayer = true
         layer?.cornerRadius = 7
@@ -80,6 +110,7 @@ final class DictationShortcutRecorderView: NSView {
 
     private func beginRecording() {
         isRecording = true
+        rejection = nil
         pendingModifierKeyCode = nil
         pendingModifierFlags = []
         updateLabel()
@@ -88,6 +119,7 @@ final class DictationShortcutRecorderView: NSView {
 
     private func cancelRecording() {
         isRecording = false
+        rejection = nil
         pendingModifierKeyCode = nil
         updateLabel()
         refreshThemeAppearance()
@@ -102,8 +134,16 @@ final class DictationShortcutRecorderView: NSView {
             cancelRecording()
             return
         }
-        let mods = event.modifierFlags.intersection(DictationShortcut.relevantModifierMask)
-        finalize(DictationShortcut(keyCode: event.keyCode, modifierFlagsRaw: mods.rawValue, isModifierOnly: false))
+        let mods = event.modifierFlags.intersection(KeyChord.relevantModifierMask)
+        let chord = KeyChord(keyCode: event.keyCode, modifierFlagsRaw: mods.rawValue, isModifierOnly: false)
+        guard accepts(chord) else {
+            // Stay recording: the captain meant to set a shortcut, and the
+            // useful next thing is for their second attempt to land.
+            rejection = "Add ⌘, ⌥, ⌃ or ⇧"
+            updateLabel()
+            return
+        }
+        finalize(chord)
     }
 
     override func flagsChanged(with event: NSEvent) {
@@ -111,17 +151,35 @@ final class DictationShortcutRecorderView: NSView {
             super.flagsChanged(with: event)
             return
         }
-        let mods = event.modifierFlags.intersection(DictationShortcut.relevantModifierMask)
+        let mods = event.modifierFlags.intersection(KeyChord.relevantModifierMask)
         if !mods.isEmpty, pendingModifierKeyCode == nil {
             pendingModifierKeyCode = event.keyCode
             pendingModifierFlags = mods
         } else if mods.isEmpty, let keyCode = pendingModifierKeyCode {
-            finalize(DictationShortcut(keyCode: keyCode, modifierFlagsRaw: pendingModifierFlags.rawValue, isModifierOnly: true))
+            let chord = KeyChord(keyCode: keyCode, modifierFlagsRaw: pendingModifierFlags.rawValue, isModifierOnly: true)
+            guard accepts(chord) else {
+                pendingModifierKeyCode = nil
+                rejection = "Needs a key, not a modifier on its own"
+                updateLabel()
+                return
+            }
+            finalize(chord)
         }
     }
 
-    private func finalize(_ newShortcut: DictationShortcut) {
+    /// Internal (not `private`) so a self-test can assert the refusal rule
+    /// without synthesising events - the two capture paths above are one-line
+    /// adapters over exactly this.
+    func accepts(_ chord: KeyChord) -> Bool {
+        switch mode {
+        case .any: return true
+        case .command: return !chord.isModifierOnly && chord.hasModifiers
+        }
+    }
+
+    private func finalize(_ newShortcut: KeyChord) {
         isRecording = false
+        rejection = nil
         pendingModifierKeyCode = nil
         shortcut = newShortcut
         onChange?(newShortcut)
@@ -129,7 +187,11 @@ final class DictationShortcutRecorderView: NSView {
     }
 
     private func updateLabel() {
-        label.stringValue = isRecording ? "Press a key or combo… (Esc to cancel)" : shortcut.displayString
+        guard isRecording else {
+            label.stringValue = shortcut.displayString
+            return
+        }
+        label.stringValue = rejection ?? "Press a key or combo… (Esc to cancel)"
     }
 
     func applyTheme(_ theme: HelmTheme) {

@@ -83,7 +83,7 @@ enum BackupSelfTest {
         let dictationStoreA = DictationStore()
         dictationStoreA.addVocabularyWord("Pramata")
         dictationStoreA.addVocabularyWord("Grand Line")
-        let shortcutA = DictationShortcut(keyCode: 2, modifierFlagsRaw: NSEvent.ModifierFlags([.command, .shift]).rawValue, isModifierOnly: false)
+        let shortcutA = KeyChord(keyCode: 2, modifierFlagsRaw: NSEvent.ModifierFlags([.command, .shift]).rawValue, isModifierOnly: false)
         AppSettings.shared.dictationShortcut = shortcutA
         // Real usage data - must never appear in the exported bundle, see
         // this file's header and `BackupData.swift`'s header.
@@ -151,7 +151,7 @@ enum BackupSelfTest {
         // Machine B already has one of the two words, case-differently
         // spelled - the diff should still recognize it as already present.
         dictationStoreB.addVocabularyWord("pramata")
-        let shortcutB = DictationShortcut.defaultShortcut
+        let shortcutB = KeyChord.dictationDefault
         check(hostStoreB.hosts.isEmpty && snippetStoreB.snippets.isEmpty, "machine B starts with empty stores")
 
         guard let readBackData = try? Data(contentsOf: bundleURL), let readBack = try? GrandLineBackupFile.decode(readBackData) else {
