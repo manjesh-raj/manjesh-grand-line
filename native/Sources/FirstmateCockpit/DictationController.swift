@@ -1025,11 +1025,10 @@ final class DictationController: NSViewController, DaylightDrillActions {
     }
     func debugSetStatus(_ status: DictationStatus) { setStatus(status) }
     func debugRenderVocabulary() { renderVocabulary() }
-    // AUDIT3-PROBE
-    var debugStatusIconTile: NSView { statusIconTile }
-    var debugStatusTextStack: NSView { statusTextStack }
-    var debugModelReadyPill: NSView { modelReadyPill }
-    var debugStatusChip: NSView { statusChip }
+    /// The chip's rendered frame - review #3's B10 is a *width*, and the
+    /// property that was wrong (`setContentHuggingPriority` on a view with no
+    /// intrinsic size) reads as correct from the outside.
+    var debugModelReadyPillFrame: NSRect { modelReadyPill.frame }
     #endif
 
     /// Requests each permission directly via `DictationPermissions`' static

@@ -302,6 +302,10 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         ShiftTaskListView.rowHeight * CGFloat(taskFollowUpVisibleRows)
     }
 
+    #if FM_SELFTESTS
+    static var debugTaskFollowUpPanelBodyHeight: CGFloat { taskFollowUpPanelBodyHeight }
+    #endif
+
     init(store: ShiftStore) {
         self.store = store
         super.init(nibName: nil, bundle: nil)

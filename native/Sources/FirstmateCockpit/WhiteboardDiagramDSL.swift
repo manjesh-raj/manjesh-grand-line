@@ -706,36 +706,60 @@ enum DiagramDSL {
     /// treating `ns:pod` on its own line as a node called `ns` is the same bug
     /// one step earlier.
     static func splitLabel(_ statement: String) -> (head: String, label: String?) {
-        guard let searchFrom = indexAfterLastArrow(in: statement) else { return (statement, nil) }
-        guard let colon = statement[searchFrom...].firstIndex(of: ":") else { return (statement, nil) }
-        let head = String(statement[statement.startIndex..<colon]).trimmingCharacters(in: .whitespaces)
-        let label = String(statement[statement.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
-        return (head, label.isEmpty ? nil : label)
+        // Review #3's B18. A colon means two different things and only its
+        // *surroundings* tell them apart:
+        //
+        //  - Part of a name - `svc:v2`, `ns:pod`, `image:tag`. No whitespace
+        //    around it, and it may appear anywhere in the statement.
+        //  - The edge-label separator - `A --> B: HTTPS`. Written with a space
+        //    after it, and only ever after the arrow chain.
+        //
+        // So a colon separates only when **both** hold: there is an arrow
+        // before it (a lone node has no edge to label, and the parser already
+        // discards a label there), and it is followed by whitespace or the end
+        // of the statement.
+        //
+        // "the first colon anywhere" - what this used to do - tore
+        // `svc:v2 --> db` into a head of `svc` and a label of `v2 --> db`.
+        // "the first colon after the *last* arrow" is no better in the other
+        // direction: the last arrow in `A --> B: maps a->b` is the one inside
+        // the label, so the label is lost entirely and the statement parses as
+        // a three-node chain. Only the whitespace test separates all four.
+        guard let searchFrom = indexAfterFirstArrow(in: statement) else { return (statement, nil) }
+        var index = searchFrom
+        while index < statement.endIndex {
+            defer { index = statement.index(after: index) }
+            guard statement[index] == ":" else { continue }
+            let next = statement.index(after: index)
+            let separates = next == statement.endIndex
+                || statement[next].isWhitespace
+            guard separates else { continue }
+            let head = String(statement[statement.startIndex..<index]).trimmingCharacters(in: .whitespaces)
+            let label = String(statement[next...]).trimmingCharacters(in: .whitespaces)
+            return (head, label.isEmpty ? nil : label)
+        }
+        return (statement, nil)
     }
 
-    /// The index just past the last `-->`/`->` in `statement`, or `nil` when it
-    /// has no arrow at all.
+    /// The index just past the first `-->`/`->` in `statement`, or `nil` when
+    /// it has no arrow at all.
     ///
     /// `-->` is tested before `->` for the same reason `splitOnArrows` does it
     /// in that order: the shorter token otherwise matches the longer one's own
     /// tail and reports an end index one character early.
-    private static func indexAfterLastArrow(in statement: String) -> String.Index? {
+    private static func indexAfterFirstArrow(in statement: String) -> String.Index? {
         let chars = Array(statement)
-        var last: Int?
         var i = 0
         while i < chars.count {
             if i + 2 < chars.count, chars[i] == "-", chars[i + 1] == "-", chars[i + 2] == ">" {
-                last = i + 3
-                i += 3
-            } else if i + 1 < chars.count, chars[i] == "-", chars[i + 1] == ">" {
-                last = i + 2
-                i += 2
-            } else {
-                i += 1
+                return statement.index(statement.startIndex, offsetBy: i + 3)
             }
+            if i + 1 < chars.count, chars[i] == "-", chars[i + 1] == ">" {
+                return statement.index(statement.startIndex, offsetBy: i + 2)
+            }
+            i += 1
         }
-        guard let last else { return nil }
-        return statement.index(statement.startIndex, offsetBy: last)
+        return nil
     }
 
     /// A node segment: either a bare name, or `kind(Name)` naming a component.

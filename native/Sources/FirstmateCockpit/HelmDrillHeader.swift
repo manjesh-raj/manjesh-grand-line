@@ -48,6 +48,11 @@ final class HelmDrillHeader: NSView {
 
     /// The back button, matching the bar's own icon-button side so the
     /// leading cluster reads in one language with the trailing one.
+    /// The narrowest the title/subtitle column may be squeezed - review #3's
+    /// B6. The point is that a drill page always says which page it is, not
+    /// that the whole name survives.
+    static let titleMinWidth: CGFloat = 80
+
     static let backButtonSide: CGFloat = DaylightBarIconButton.side
 
     /// The back action - `AppShellController` wires it to `show(.homeCanvas)`,
@@ -123,10 +128,36 @@ final class HelmDrillHeader: NSView {
         // made smaller. Compression resistance - the half that could cap the
         // window, and the half that makes the title truncate first, exactly
         // as the wordmark it replaces already did - stays `.defaultLow`.
+        //
+        // **Review #3's B6 raises compression resistance off `.defaultLow`.**
+        // At 250 the page's own name was the single cheapest thing in the
+        // whole bar to give up: every other item - the ten quick-access icon
+        // squares, the action buttons, the bell, the avatar - is `.required`,
+        // and the search pill's own preferred width sits at 400. So a narrow
+        // window spent the *title's* width first and kept a 230pt search pill
+        // and ten icons at full size beside it. Measured at a 1000pt window:
+        // the title fell from 84pt to 56 while the pill stayed 230, and on the
+        // real Schedules page at 1100 the cluster showed an icon and two
+        // buttons with no title or subtitle at all.
+        //
+        // `pillLabelCompressionPriority` (450) is the band the space pills
+        // already use for exactly this - above `DaylightSearchPill
+        // .preferredWidthPriority` (400), so the pill gives up its slack
+        // first, and below `NSLayoutPriorityWindowSizeStayPut` (500), so none
+        // of this can widen the window (gotcha (13)).
         for label in [titleLabel, subtitleLabel] {
-            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            label.setContentCompressionResistancePriority(
+                DaylightBarController.pillLabelCompressionPriority, for: .horizontal)
             label.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         }
+        // A floor, so the title truncates but never disappears. Same shape and
+        // priority as the space pills' own `pillLabelMinWidth` - enough for a
+        // word and its ellipsis - and at `contentTie` (499) it is the last
+        // thing to give before the window's own size preference.
+        let titleFloor = textColumn.widthAnchor.constraint(
+            greaterThanOrEqualToConstant: Self.titleMinWidth)
+        titleFloor.priority = HelmDaylightPriority.contentTie
+        titleFloor.isActive = true
 
         textColumn.translatesAutoresizingMaskIntoConstraints = false
         textColumn.addSubview(titleLabel)
@@ -339,5 +370,8 @@ final class HelmDrillHeader: NSView {
     /// Fires the real back path a click or a VoiceOver press would.
     @discardableResult
     func debugActivateBack() -> Bool { backButton.performPrimaryAction() }
+    /// The title's rendered width - review #3's B6 asserts it never falls
+    /// below `titleMinWidth`, which is a thing only the laid-out label knows.
+    var debugTitleWidth: CGFloat { titleLabel.frame.width }
     #endif
 }

@@ -187,9 +187,11 @@ enum AppShellBodyWidthSelfTest {
             ("widthSelfHealsAfterATieIsSilentlyBroken", test_widthSelfHealsAfterTieBroken),
             ("widthSelfHealsOnALayoutPassWithNoResize", test_widthSelfHealsOnALayoutPassWithNoResize),
             ("widthSelfHealsWhenContentViewDriftsFromTheWindow", test_widthSelfHealsWhenContentViewDrifts),
+            ("widthSelfHealsWhenTheShowingPageDriftsFromTheBody", test_widthSelfHealsWhenPageDrifts),
             ("theWidthRepairNeverForcesANestedLayoutPass", test_repairNeverForcesANestedLayoutPass),
             ("bodyContainerTracksWindowAcrossRealisticWidths", test_widthTracksAcrossRealisticWidths),
             ("bodyContainerTracksWindowAcrossAllDestinations", test_widthTracksAcrossAllDestinations),
+            ("bodyHeightTracksWindowAcrossAllDestinations", test_heightTracksAcrossAllDestinations),
             ("bodyContainerTracksWindowWithSeededHosts", test_widthTracksWithSeededHosts),
             ("bodyContainerTracksWindowAcrossAllSpaces", test_widthTracksAcrossAllSpaces),
             ("healthCardDescriptionWidthConverges", test_healthCardLayoutConverges),
@@ -479,6 +481,106 @@ enum AppShellBodyWidthSelfTest {
         }
     }
 
+    /// Review 3, B1: the **third** reference. `bodyContainer` can match `root`
+    /// and `root` can match the window while the *page* inside them is still
+    /// laid out narrow.
+    ///
+    /// Review #3's own sweep caught exactly that: from `.schedules` onward,
+    /// ten destinations rendered into **973.5pt** inside a 1512pt window -
+    /// 973.5 being the Log Analyzer's own `fittingSize.width`, i.e. a page
+    /// shown ten destinations earlier whose preferred width the rest had
+    /// adopted. Neither of the two cases above can see it, and that is not a
+    /// gap in how they were written: both of their operands are correct in
+    /// this state, so there is nothing for either to compare unequal.
+    ///
+    /// The vacuity guards keep it that way - the destination's own ties stay
+    /// **active** throughout (this is a live tie that lost a resolve, not a
+    /// broken one), and `bodyContainer` is asserted correct before and after.
+    private static func test_widthSelfHealsWhenPageDrifts() -> String? {
+        withScratchEnv {
+            let (window, shell) = makeMountedShell()
+            window.setFrame(NSRect(x: 0, y: 0, width: 1512, height: 900), display: true)
+            guard let content = window.contentView else { return "setup failed: window has no content view" }
+            // A page with a real preferred width of its own, which is where
+            // the reported 973.5 came from.
+            shell.show(.logAnalyzer)
+            content.needsLayout = true
+            content.layoutSubtreeIfNeeded()
+
+            let body = shell.bodyContainerFrameForTests.width
+            guard let healthy = shell.showingDestinationWidthForTests else {
+                return "setup failed: no destination is showing"
+            }
+            guard abs(healthy - body) < 0.5 else {
+                return "setup failed: the page was already \(healthy) inside a \(body)pt body"
+            }
+            guard !shell.showingDestinationWidthIsStaleForTests else {
+                return "setup failed: the staleness check already reported a drift before this case caused one"
+            }
+
+            // The captain's own number, and the page's own fitting width.
+            let drifted = CGFloat(973.5)
+            shell.debugShrinkShowingDestinationForTests(to: drifted)
+            guard let after = shell.showingDestinationWidthForTests, abs(after - drifted) < 0.5 else {
+                return "setup failed: could not put the page at \(drifted) (it is at "
+                    + "\(shell.showingDestinationWidthForTests ?? -1))"
+            }
+            guard shell.showingDestinationWidthIsStaleForTests else {
+                return "setup failed: a page at \(drifted) inside a \(body)pt body is not reported stale, "
+                    + "so this case would prove nothing"
+            }
+            // The two references that already existed must both still be
+            // happy - otherwise one of them would repair this and the third
+            // comparison would be untested.
+            guard abs(shell.bodyContainerFrameForTests.width - body) < 0.5 else {
+                return "setup failed: shrinking the page also moved bodyContainer, so the older checks cover this"
+            }
+
+            // One ordinary layout pass, no resize. The page comes back.
+            content.needsLayout = true
+            content.layoutSubtreeIfNeeded()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+
+            let repaired = shell.showingDestinationWidthForTests ?? -1
+            guard abs(repaired - body) < 0.5 else {
+                return "the showing page stayed \(repaired) inside a \(body)pt body after a layout pass - "
+                    + "the page's own tie is never re-derived, which is the ~450pt of unpainted window the "
+                    + "captain reported"
+            }
+            guard !shell.showingDestinationWidthIsStaleForTests else {
+                return "the page's width was repaired but the staleness check still reports a drift"
+            }
+
+            // **And a source guard, because the assertion above is not
+            // attributable and saying so is the honest thing.** A frame set
+            // directly on a constraint-managed view leaves Auto Layout's own
+            // engine holding the correct solution, so the forced pass above
+            // re-applies it whether or not the repair consulted this third
+            // reference at all - measured: with the comparison deleted, every
+            // behavioural assertion in this case still passes. What the
+            // comparison genuinely adds is that the repair *notices*, which is
+            // what turns "a pass happened to run" into "a pass is forced", and
+            // there is no in-process way to make the engine's own solution
+            // stale without resizing the window - the same limitation
+            // `bodyWidthTieIsActiveForTests` was written for one case up.
+            guard let dir = SelfTestSources.appSourceDirectory(),
+                  let source = try? String(contentsOf: dir.appendingPathComponent("AppShellController.swift"),
+                                           encoding: .utf8) else {
+                print("  NOTE could not locate the app's sources; skipping B1's wiring guard")
+                return nil
+            }
+            let code = source.split(separator: "\n", omittingEmptySubsequences: false)
+                .map(String.init)
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+                .joined(separator: "\n")
+            guard code.contains("if !needsLayout, showingDestinationWidthIsStale()") else {
+                return "the width repair no longer consults the showing page's own width - "
+                    + "the two references it keeps can both agree while the page inside them is narrow"
+            }
+            return nil
+        }
+    }
+
     /// `fm/grand-line-window-glitch-fix`: the captain's black-region glitch
     /// recurring *after* #412 shipped its self-heal - reproduced here as the
     /// exact geometry measured live on his own running app.
@@ -762,6 +864,59 @@ enum AppShellBodyWidthSelfTest {
                 let expected = CGFloat(1100)
                 if abs(actual - expected) >= 0.5 {
                     failures.append("(revisit) \(dest) at width 1100: expected bodyContainer \(expected), got \(actual)")
+                }
+            }
+
+            return failures.isEmpty ? nil : failures.joined(separator: " | ")
+        }
+    }
+
+    /// Review 3, B5: a page's own content must never make the *window* taller.
+    ///
+    /// The width cases above are the fifth-and-counting guard against a page
+    /// putting a floor under the window's width. This is the same class on the
+    /// other axis, and it had none: the Hosts page's three side panels were
+    /// stacked with no scroll view of their own, so their combined required
+    /// height reached `bodyContainer` through a required chain and - because
+    /// this window is driven by `contentViewController`, which re-derives its
+    /// frame from the content's fitting size (AGENTS.md gotcha (3)) - pushed
+    /// the whole window taller. Measured before the fix: a window asked for
+    /// 750pt of content came back 906.
+    ///
+    /// Two things are asserted, and only together do they mean anything. The
+    /// window's content height must be the height it was asked for (the
+    /// symptom), and `bodyContainer` must genuinely fill the body area
+    /// underneath the bar (without which a window that merely *stayed* small
+    /// while the body collapsed would pass).
+    private static func test_heightTracksAcrossAllDestinations() -> String? {
+        withScratchEnv {
+            let (window, shell) = makeMountedShell()
+            var failures: [String] = []
+
+            // Deliberately short - shorter than the Hosts side stack's own
+            // content needs, which is the only height at which the defect is
+            // visible at all. A tall window satisfies the floor by accident.
+            for height in [CGFloat(750), 900] {
+                for dest in RailDestination.allCases {
+                    shell.show(dest)
+                    window.setFrame(NSRect(x: 0, y: 0, width: 1512, height: height), display: true)
+                    guard let content = window.contentView else {
+                        failures.append("\(dest): the window lost its content view")
+                        continue
+                    }
+                    let contentHeight = content.bounds.height
+                    let asked = window.contentRect(forFrameRect: window.frame).height
+                    if abs(contentHeight - asked) >= 0.5 {
+                        failures.append("\(dest) at \(height): the page drove the window's content height to \(contentHeight), not \(asked)")
+                    }
+                    // The body is pinned `reservedTopHeight` below the top and
+                    // flush with the bottom, so in AppKit's unflipped content
+                    // view that is minY 0 and maxY `contentHeight - inset`.
+                    let body = shell.bodyContainerFrameForTests
+                    let expectedMaxY = contentHeight - DaylightBarController.reservedTopHeight
+                    if abs(body.minY) >= 0.5 || abs(body.maxY - expectedMaxY) >= 0.5 {
+                        failures.append("\(dest) at \(height): bodyContainer is \(body), want minY 0 and maxY \(expectedMaxY)")
+                    }
                 }
             }
 

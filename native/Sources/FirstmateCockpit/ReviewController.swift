@@ -750,6 +750,11 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         githubList.debugRowButtonState(at: row)
     }
 
+    /// The chip text a rendered GitHub row is showing - review #3's B2. The
+    /// defect was a row's own wording disagreeing with the counts above it, so
+    /// this reads the painted label rather than re-deriving it.
+    func debugGitHubRowChipText(at row: Int) -> String? { githubList.debugRowChipText(at: row) }
+
     /// Every stat tile as rendered, so a suite can read what the captain sees
     /// rather than what `rebuildStats` intended. This page's own drill
     /// subtitle and its "ready to merge" tile once disagreed in one

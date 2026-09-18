@@ -810,7 +810,13 @@ enum DaylightModuleSelfTest {
         print("\n-- floating bar: \u{00A7}6.3's geometry, five pills, and no `.behindWindow` vibrancy --")
         let bar = DaylightBarController()
         bar.loadView()
-        bar.view.frame = NSRect(x: 0, y: 0, width: 1200, height: DaylightBarController.height + DaylightBarController.topMargin)
+        // 1512, the captain's own screen width, deliberately above
+        // `DaylightBarController.quickAccessCollapseWidth`: review #3's B6
+        // gives the shortcut row back to the drill title on a narrow bar, so
+        // below that width every one of these buttons is legitimately zero
+        // wide and what this case measures would not exist. The expanded row
+        // is the state it was written for.
+        bar.view.frame = NSRect(x: 0, y: 0, width: 1512, height: DaylightBarController.height + DaylightBarController.topMargin)
         bar.view.layoutSubtreeIfNeeded()
 
         let geometry = bar.geometryForTests
@@ -906,7 +912,13 @@ enum DaylightModuleSelfTest {
         print("\n-- bar quick-access icons: Sticky Board, Code Preview, Tasks, Straw Hat Pirates, Poneglyph, Console --")
         let bar = DaylightBarController()
         bar.loadView()
-        bar.view.frame = NSRect(x: 0, y: 0, width: 1200, height: DaylightBarController.height + DaylightBarController.topMargin)
+        // 1512, the captain's own screen width, deliberately above
+        // `DaylightBarController.quickAccessCollapseWidth`: review #3's B6
+        // gives the shortcut row back to the drill title on a narrow bar, so
+        // below that width every one of these buttons is legitimately zero
+        // wide and what this case measures would not exist. The expanded row
+        // is the state it was written for.
+        bar.view.frame = NSRect(x: 0, y: 0, width: 1512, height: DaylightBarController.height + DaylightBarController.topMargin)
         bar.view.layoutSubtreeIfNeeded()
 
         // Typed out as a literal rather than read back from

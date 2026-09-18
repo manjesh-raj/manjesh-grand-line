@@ -402,6 +402,12 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// notification centre and on the Engineering hub card - GL-30's own rule
     /// that a result still true after a toast would have faded belongs there
     /// rather than in a pill on somebody else's page.
+    #if FM_SELFTESTS
+    /// Drive the real gate - B8's whole defect was *where* a toast was shown,
+    /// so a test that called `Toast.show` itself would assert nothing.
+    func debugShowCompletionToast(_ message: String) { showToastIfOnScreen(message) }
+    #endif
+
     private func showToastIfOnScreen(_ message: String) {
         guard !view.isHidden, let container = view.window?.contentView else { return }
         Toast.show(in: container, message: message)

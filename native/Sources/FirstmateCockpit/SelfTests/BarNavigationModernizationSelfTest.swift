@@ -95,7 +95,13 @@ enum BarNavigationModernizationSelfTest {
     private static func test_b1BarMaterialPerThemeFamily() -> String? {
         let bar = DaylightBarController()
         bar.loadView()
-        bar.view.frame = NSRect(x: 0, y: 0, width: 1200,
+        // 1512, the captain's own screen width, deliberately above
+        // `DaylightBarController.quickAccessCollapseWidth`: review #3's B6
+        // gives the shortcut row back to the drill title on a narrow bar, so
+        // below that width every one of these buttons is legitimately zero
+        // wide and what this case measures would not exist. The expanded row
+        // is the state it was written for.
+        bar.view.frame = NSRect(x: 0, y: 0, width: 1512,
                                 height: DaylightBarController.height + DaylightBarController.topMargin)
         bar.view.layoutSubtreeIfNeeded()
 
@@ -192,13 +198,38 @@ enum BarNavigationModernizationSelfTest {
                 + "B2 asks for one shape, and an outboard badge zone is what made it two"
         }
 
+        // Hidden squares are skipped, and review #3's B6 is why there is now
+        // one: the shortcut row collapses into a "More destinations" overflow
+        // button on a narrow bar, so at any width exactly one of the two is
+        // on screen and the other is legitimately zero wide. The overflow
+        // button is measured below, in the state where it *is* shown - the
+        // point of B2 is that every square the captain can see is one shape,
+        // not that every square that exists is.
         var squares: [(String, NSView)] = [("bell", bar.notificationCenter.bell)]
-        for button in bar.debugIconSquares() {
+        for button in bar.debugIconSquares() where !button.isHidden {
             squares.append((button.accessibilityLabel() ?? "icon", button))
         }
         for (name, view) in squares {
             guard abs(view.frame.width - side) < 0.5, abs(view.frame.height - side) < 0.5 else {
                 return "\(name) measures \(view.frame.size), expected \(side)x\(side) - one square, not several"
+            }
+        }
+
+        // The collapsed state, so the overflow button is held to the same
+        // shape rather than exempted by being hidden when this case runs.
+        bar.view.frame = NSRect(x: 0, y: 0, width: 1100,
+                                height: DaylightBarController.height + DaylightBarController.topMargin)
+        bar.view.layoutSubtreeIfNeeded()
+        let overflow = bar.debugQuickAccessOverflowButton()
+        guard !overflow.isHidden else {
+            return "the bar did not collapse its shortcut row at 1100pt, so the overflow square is untested"
+        }
+        guard abs(overflow.frame.width - side) < 0.5, abs(overflow.frame.height - side) < 0.5 else {
+            return "the overflow square measures \(overflow.frame.size), expected \(side)x\(side)"
+        }
+        for button in bar.debugIconSquares() where !button.isHidden {
+            guard abs(button.frame.width - side) < 0.5, abs(button.frame.height - side) < 0.5 else {
+                return "collapsed: \(button.accessibilityLabel() ?? "icon") measures \(button.frame.size)"
             }
         }
 
@@ -575,7 +606,13 @@ enum BarNavigationModernizationSelfTest {
     private static func makeLaidOutBar() -> DaylightBarController {
         let bar = DaylightBarController()
         bar.loadView()
-        bar.view.frame = NSRect(x: 0, y: 0, width: 1200,
+        // 1512, the captain's own screen width, deliberately above
+        // `DaylightBarController.quickAccessCollapseWidth`: review #3's B6
+        // gives the shortcut row back to the drill title on a narrow bar, so
+        // below that width every one of these buttons is legitimately zero
+        // wide and what this case measures would not exist. The expanded row
+        // is the state it was written for.
+        bar.view.frame = NSRect(x: 0, y: 0, width: 1512,
                                 height: DaylightBarController.height + DaylightBarController.topMargin)
         bar.view.layoutSubtreeIfNeeded()
         return bar

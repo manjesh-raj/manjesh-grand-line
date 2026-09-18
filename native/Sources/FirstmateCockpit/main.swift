@@ -1937,6 +1937,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_HOSTS_REDESIGN_TESTS"] == "1" {
     exit(HostsRedesignSelfTest.run() ? 0 : 1)
 }
 
+// Review #3's bug list (`data/grandline-full-review-3/report.md` §1/§1b), for
+// the findings with no existing suite of their own. Window-backed - most of
+// them are geometry, and geometry with no window is geometry nobody measured -
+// so it sits in `run-all-tests.sh`'s `NEEDS_SESSION` list.
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT3_BUG_FIXES_TESTS"] == "1" {
+    exit(Audit3BugFixesSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_DAYLIGHT_MODULE_TESTS"] == "1" {
     exit(DaylightModuleSelfTest.run() ? 0 : 1)
 }

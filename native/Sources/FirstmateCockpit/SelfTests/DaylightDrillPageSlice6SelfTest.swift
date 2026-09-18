@@ -384,6 +384,34 @@ enum DaylightDrillPageSlice6SelfTest {
                 print("  ok   \(step.title): \(maxLines) lines need \(fmt(worstCase)) "
                     + "of \(fmt(anatomy.bodyAreaHeight)) at \(fmt(narrowest))pt")
             }
+
+            // Review #3, B7, and the half the bound above cannot see: a note
+            // label that is `.byTruncatingTail` renders **one** line however
+            // many `maximumNumberOfLines` allows, so every assertion here
+            // passed while the longest description on the page showed as
+            // "Compare two files line by li..." inside a body sized for four
+            // lines. Read what rendered.
+            let rendered = anatomy.noteRenderedLineCounts.first ?? 0
+            // Vacuity guard: this only means anything while the fixture's own
+            // description genuinely cannot fit on one line at this width. If a
+            // future catalogue's longest tool description gets short, say so
+            // rather than reporting a pass for a check that stopped checking.
+            let oneLine = (longest.description as NSString)
+                .size(withAttributes: [.font: HelmType.caption()]).width
+            if oneLine <= narrowest {
+                print("  NOTE the longest description now fits one line at \(fmt(narrowest))pt; "
+                    + "the wrap check has nothing to measure")
+            } else if rendered < 2 {
+                print("  FAIL \(step.title): the note rendered \(rendered) line(s) at \(fmt(narrowest))pt - "
+                    + "a \(longest.description.count)-character description cannot fit on one; "
+                    + "the label is truncating rather than wrapping")
+                ok = false
+            } else if rendered > maxLines {
+                print("  FAIL \(step.title): the note rendered \(rendered) lines, past its own cap of \(maxLines)")
+                ok = false
+            } else {
+                print("  ok   \(step.title): the note really wraps (\(rendered) of \(maxLines) lines)")
+            }
             plate.removeFromSuperview()
         }
 

@@ -78,6 +78,7 @@ enum ConfirmMigrationSelfTest {
         for check in [checkEveryCallSiteGatesItsEffect,
                       checkKeptSystemAlertsAreExactlyTheSevenNamed,
                       checkComponentContract,
+                      checkEscapeArrivesAsARealKeyEvent,
                       checkDestructiveConfirmSemantics,
                       checkScheduleDelete,
                       checkRunbookDelete,
@@ -390,6 +391,10 @@ enum ConfirmMigrationSelfTest {
         clickView.onAnswer = { answers.append($0) }
         clickView.debugClickConfirm()
         clickView.debugClickCancel()
+        // NOTE: this one is a `performClick`, which reaches the button's
+        // action whether or not that button is in the key-equivalent walk -
+        // i.e. it cannot see B15. `checkEscapeArrivesAsARealKeyEvent` below is
+        // the case that can; this one only pins the action wiring.
         clickView.debugPressEscape()
         if answers != [.confirm, .cancel, .cancel] {
             problems.append("clicks produced \(answers), want [confirm, cancel, cancel]")
@@ -404,6 +409,80 @@ enum ConfirmMigrationSelfTest {
     }
 
     // MARK: 4. DestructiveConfirm - the shared helper, 7 call sites
+
+    // MARK: Escape, dispatched the way the key really is
+
+    /// Review 3, B15: the zero-sized Escape button was `isHidden`, and
+    /// `NSView.performKeyEquivalent(with:)` skips a hidden subview - so on
+    /// every `confirmIsDefault: false` dialog (the ~10 destructive ones this
+    /// button exists for) Escape reached nothing at all.
+    ///
+    /// Nothing the component-contract case reads can see that: `keyEquivalent`
+    /// is still `"\u{1b}"` on a hidden button, and `performClick` calls the
+    /// action directly rather than going through the dispatch that was broken.
+    /// So this drives a **real** `NSEvent` through the real
+    /// `performKeyEquivalent`, which is the one mechanism the fix is about.
+    private static func checkEscapeArrivesAsARealKeyEvent(_ ok: inout Bool) {
+        print("\n-- B15: Escape reaches the dialog as a real key event --")
+        var problems: [String] = []
+
+        guard let escape = NSEvent.keyEvent(with: .keyDown,
+                                            location: .zero,
+                                            modifierFlags: [],
+                                            timestamp: ProcessInfo.processInfo.systemUptime,
+                                            windowNumber: 0,
+                                            context: nil,
+                                            characters: "\u{1b}",
+                                            charactersIgnoringModifiers: "\u{1b}",
+                                            isARepeat: false,
+                                            keyCode: 53) else {
+            print("  NOTE could not synthesize an Escape key event; skipping")
+            return
+        }
+
+        // Both directions of `confirmIsDefault`, because the defect only bit
+        // the `false` one - where Cancel carries Return and the zero-sized
+        // button is the *only* thing carrying Escape.
+        for defaultsToConfirm in [false, true] {
+            var request = HelmConfirm.Request(title: "Delete this?", body: "It cannot be undone.")
+            request.confirmTitle = "Delete"
+            request.destructive = true
+            request.confirmIsDefault = defaultsToConfirm
+            let view = HelmConfirm.makeContent(request)
+            let window = makeWindow(view)
+            var answers: [HelmConfirm.Response] = []
+            view.onAnswer = { answers.append($0) }
+
+            let handled = window.performKeyEquivalent(with: escape)
+            let label = defaultsToConfirm ? "confirmIsDefault: true" : "confirmIsDefault: false"
+            if !handled {
+                problems.append("\(label): performKeyEquivalent returned false - nothing claimed Escape")
+            }
+            if answers != [.cancel] {
+                problems.append("\(label): a real Escape produced \(answers), want [cancel]")
+            }
+            window.orderOut(nil)
+        }
+
+        // The mechanism itself, stated so a future edit knows what it may not
+        // do: `isHidden` puts the button back outside the walk, and no
+        // assertion about `keyEquivalent` would notice.
+        var request = HelmConfirm.Request(title: "Delete this?", body: "")
+        request.confirmTitle = "Delete"
+        request.confirmIsDefault = false
+        let view = HelmConfirm.makeContent(request)
+        _ = makeWindow(view)
+        if view.debugEscapeButtonIsHidden {
+            problems.append("the Escape button is hidden, so performKeyEquivalent skips it")
+        }
+
+        if problems.isEmpty {
+            print("  OK   a real Escape key event cancels, both default mappings")
+        } else {
+            for p in problems { print("  FAIL \(p)") }
+            ok = false
+        }
+    }
 
     private static func checkDestructiveConfirmSemantics(_ ok: inout Bool) {
         print("\n-- G3: DestructiveConfirm (7 call sites) is unchanged in every way that matters --")

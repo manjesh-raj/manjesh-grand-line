@@ -49,6 +49,7 @@ enum WhiteboardDSLSelfTest {
 
         checkFlowchartParsing(check)
         checkLabelledEdge(check)
+        checkColonsInsideNodeNames(check)
         checkFlowchartLayout(check)
         checkChainsAndCycles(check)
         checkSequenceSpacing(check)
@@ -162,6 +163,47 @@ enum WhiteboardDSLSelfTest {
         guard let bare = built("A --> B", .flowchart, check, "unlabelled edge") else { return }
         check(elements(bare, ofType: "arrow").first?["label"] == nil,
               "unlabelled edge: an arrow with no label should carry no label field")
+    }
+
+    /// Review 3, B18: a colon that is part of a *node name* is not an edge
+    /// label, and the two are told apart by where the last arrow is.
+    ///
+    /// `splitLabel` used to take the first colon anywhere in the statement, so
+    /// every name carrying one - an image tag, a versioned service, a
+    /// `namespace:pod` - was torn in half and the remainder rendered as an edge
+    /// caption. The pure function is asserted directly as well as through a
+    /// real build, because the split is the whole decision and a build can
+    /// only ever show its consequences.
+    private static func checkColonsInsideNodeNames(_ check: (Bool, String) -> Void) {
+        let versioned = DiagramDSL.splitLabel("svc:v2 --> db")
+        check(versioned.head == "svc:v2 --> db" && versioned.label == nil,
+              "colon in a name: \"svc:v2 --> db\" split into head \"\(versioned.head)\" / label \(versioned.label ?? "nil")")
+
+        // No arrow at all: a lone node declaring its own name, which must
+        // survive whole rather than becoming a head plus a caption.
+        let lone = DiagramDSL.splitLabel("ns:pod")
+        check(lone.head == "ns:pod" && lone.label == nil,
+              "colon in a lone node: split into head \"\(lone.head)\" / label \(lone.label ?? "nil")")
+
+        // A colon in the *target* name, which is the case a "first colon
+        // after the first arrow" rule gets wrong.
+        let target = DiagramDSL.splitLabel("app --> image:tag")
+        check(target.head == "app --> image:tag" && target.label == nil,
+              "colon in a target name: head \"\(target.head)\" / label \(target.label ?? "nil")")
+
+        // A genuine label still wins, including one that contains its own
+        // colon: the separator is the first colon *followed by whitespace*,
+        // and a colon inside a name never is.
+        let labelled = DiagramDSL.splitLabel("A --> B: image:tag")
+        check(labelled.head == "A --> B" && labelled.label == "image:tag",
+              "labelled edge with a colon: head \"\(labelled.head)\" / label \(labelled.label ?? "nil")")
+
+        guard let diagram = built("svc:v2 --> db", .flowchart, check, "colon in a name") else { return }
+        let names = Set(elements(diagram, ofType: "rectangle").compactMap { labelText($0) })
+        check(names == ["svc:v2", "db"],
+              "colon in a name: expected boxes named svc:v2 and db, got \(names.sorted())")
+        check(elements(diagram, ofType: "arrow").first?["label"] == nil,
+              "colon in a name: the version suffix was rendered as an edge label")
     }
 
     // MARK: Layout

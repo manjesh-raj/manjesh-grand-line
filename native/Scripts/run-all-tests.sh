@@ -143,6 +143,10 @@ SKIP_FLAGS=(
 # deliberately a per-entry marker with a stated reason rather than a blanket
 # allowlist, the same shape as `OffScreenProbe-exempt:` above.
 NEEDS_SESSION=(
+  # Review #3's bug fixes: most are geometry, measured on real mounted pages in
+  # a real window (a clipped Kanban column, a stretched Settings card, a
+  # content-sized chip, the drill title's floor).
+  "FM_RUN_AUDIT3_BUG_FIXES_TESTS"
   # The AppKit-expert audit fixes: M5 measures a real sheet footer.
   "FM_RUN_APPKIT_AUDIT_TESTS"
   # The credential vault's UI half mounts the real `.vault` destination in a

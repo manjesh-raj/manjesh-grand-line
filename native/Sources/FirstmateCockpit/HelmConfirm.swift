@@ -518,8 +518,14 @@ final class HelmConfirmView: NSView {
     var debugEscapeCancels: Bool {
         cancelButton?.keyEquivalent == "\u{1b}" || escapeButton?.keyEquivalent == "\u{1b}"
     }
-    /// Fire Escape exactly as the key would.
+    /// Fire Escape's *action*. Deliberately not "exactly as the key would" -
+    /// `performClick` bypasses `performKeyEquivalent`'s own walk, which is the
+    /// dispatch B15 broke. `ConfirmMigrationSelfTest` drives a real `NSEvent`
+    /// for that; this only pins the action wiring.
     func debugPressEscape() { escapeButton?.performClick(nil) ?? cancelButton?.performClick(nil) }
+    /// B15: `NSView.performKeyEquivalent(with:)` skips a hidden subview, so a
+    /// hidden Escape button is unreachable by the one mechanism it exists for.
+    var debugEscapeButtonIsHidden: Bool { escapeButton?.isHidden ?? false }
     var debugConfirmVariant: HelmButton.Variant? { confirmButton?.variant }
     func debugClickConfirm() { confirmButton?.performClick(nil) }
     func debugClickCancel() { cancelButton?.performClick(nil) }

@@ -992,6 +992,17 @@ final class HelmModuleCard: NSView {
         /// tell a loading state from real content without exposing the body
         /// enum itself.
         let noteTexts: [String]
+        /// How many lines each note label **actually renders**, at the width
+        /// it actually has.
+        ///
+        /// Review #3's B7: the note label was `.byTruncatingTail`, which *is*
+        /// the single-line mode - it lays the whole string out on one line and
+        /// ellipsises it - so `maximumNumberOfLines` had nothing to count and
+        /// a long description rendered one line inside a body sized for
+        /// several. Nothing derived from `maximumNumberOfLines`, from
+        /// `fittingSize` or from the body's height can see that; only the real
+        /// line count can.
+        let noteRenderedLineCounts: [Int]
         /// Every big-number / metric-styled line the body rendered.
         let metricTexts: [String]
         /// The height the card actually resolved to - `standardHeight` in
@@ -1018,6 +1029,37 @@ final class HelmModuleCard: NSView {
         applyHoverState(animated: false)
     }
 
+    /// Lay `label`'s own attributed string out in a container of its own real
+    /// width and count the line fragments.
+    ///
+    /// Deliberately mirrors the label's `lineBreakMode` and
+    /// `maximumNumberOfLines` rather than assuming either: the whole point is
+    /// that a `.byTruncatingTail` label answers 1 here however many lines its
+    /// maximum allows.
+    private static func renderedLineCount(of label: NSTextField) -> Int {
+        let width = label.bounds.width
+        guard width > 0 else { return 0 }
+        let storage = NSTextStorage(attributedString: label.attributedStringValue)
+        let container = NSTextContainer(size: NSSize(width: width, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        container.lineBreakMode = label.lineBreakMode
+        container.maximumNumberOfLines = label.maximumNumberOfLines
+        let manager = NSLayoutManager()
+        manager.addTextContainer(container)
+        storage.addLayoutManager(manager)
+        manager.ensureLayout(for: container)
+        var lines = 0
+        var glyph = 0
+        while glyph < manager.numberOfGlyphs {
+            var effective = NSRange()
+            _ = manager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: &effective)
+            guard effective.length > 0 else { break }
+            glyph = NSMaxRange(effective)
+            lines += 1
+        }
+        return lines
+    }
+
     var anatomyForTests: Anatomy {
         Anatomy(hasRibbon: ribbon.superlayer != nil,
                 ribbonHeight: Self.ribbonHeight,
@@ -1035,6 +1077,7 @@ final class HelmModuleCard: NSView {
                 accessibilityLabel: card.accessibilityLabelOverride,
                 peekRowCount: peekTextLabels.count,
                 noteTexts: noteLabels.map(\.stringValue),
+                noteRenderedLineCounts: noteLabels.map(Self.renderedLineCount(of:)),
                 metricTexts: metricLabels.map(\.stringValue),
                 cardHeight: frame.height,
                 bodyAreaHeight: bodyContainer.frame.height,
@@ -1045,9 +1088,6 @@ final class HelmModuleCard: NSView {
     /// VoiceOver press would.
     @discardableResult
     func debugActivate() -> Bool { card.performPrimaryAction() }
-    // AUDIT3-PROBE
-    var debugNoteLabels: [NSTextField] { noteLabels }
-    var debugBodyContainerWidth: CGFloat { bodyContainer.bounds.width }
 }
 
 // MARK: - Priorities

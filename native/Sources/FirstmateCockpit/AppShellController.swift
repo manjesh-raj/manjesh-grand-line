@@ -1344,6 +1344,26 @@ final class AppShellController: NSViewController {
         if !needsLayout, bodyContainerWidthIsStale() {
             needsLayout = true
         }
+        // The **third** reference, and review #3's B1.
+        //
+        // The two above compare `bodyContainer` to `root` and `root` to the
+        // window. Both can agree while the *page* is still laid out narrow:
+        // every destination is pinned leading and trailing to `bodyContainer`
+        // (see `embed`), so a showing destination whose frame is narrower than
+        // that container is a broken tie on its own - and neither existing
+        // test can see it, because both of their operands are correct.
+        //
+        // That is the state review #3's sweep caught: from `.schedules`
+        // onward, ten destinations rendered into **973.5pt** inside a 1512pt
+        // window - 973.5 being the Log Analyzer's own `fittingSize.width`, a
+        // page shown ten destinations earlier, i.e. one page's preferred width
+        // adopted by the rest. It did not reproduce on a second run with the
+        // same binary, which is what a tie that loses a resolve and is never
+        // re-derived looks like from outside, and it matches the captain's own
+        // "sometimes, cleared by a resize or a restart".
+        if !needsLayout, showingDestinationWidthIsStale() {
+            needsLayout = true
+        }
         guard needsLayout else {
             deferredRepairsSinceHealthy = 0
             return
@@ -1452,6 +1472,25 @@ final class AppShellController: NSViewController {
         let expected = view.bounds.width
         guard expected > 0 else { return false }
         return abs(bodyContainer.frame.width - expected) > 0.5
+    }
+
+    /// Is the destination currently on screen laid out narrower (or wider)
+    /// than the container it is pinned to?
+    ///
+    /// Review #3's B1 - see the call site for the evidence. Logs the page's own
+    /// `fittingSize.width` alongside the two frames, because that number is
+    /// what identifies *which* page's preference was adopted: a live
+    /// recurrence is then attributable from the log alone rather than needing
+    /// a render sweep to work out where 973.5 came from.
+    private func showingDestinationWidthIsStale() -> Bool {
+        guard let destination = visibleDestinationView() else { return false }
+        let expected = bodyContainer.bounds.width
+        guard expected > 0, destination.frame.width > 0 else { return false }
+        guard abs(destination.frame.width - expected) > 0.5 else { return false }
+        AppLog.ui.error("""
+            the showing destination is laid out at \(destination.frame.width, privacy: .public)pt             inside a \(expected, privacy: .public)pt body (its own fitting width is             \(destination.fittingSize.width, privacy: .public)) - re-deriving
+            """)
+        return true
     }
 
     /// The width `root` (this window's `contentView`) *should* have: the
@@ -1624,6 +1663,36 @@ final class AppShellController: NSViewController {
     /// actually distinguishes the two builds.
     var bodyWidthTieIsActiveForTests: Bool {
         bodyLeadingConstraint.isActive && bodyTrailingConstraint.isActive
+    }
+
+    // MARK: B1 probe surface (review #3)
+
+    /// The width the destination currently on screen is laid out at.
+    ///
+    /// The third reference `reassertBodyContainerWidthTie` compares against,
+    /// exposed so a suite can read the same number the repair reads rather
+    /// than re-deriving which view is showing.
+    var showingDestinationWidthForTests: CGFloat? {
+        visibleDestinationView()?.frame.width
+    }
+
+    /// What `showingDestinationWidthIsStale()` currently answers.
+    var showingDestinationWidthIsStaleForTests: Bool { showingDestinationWidthIsStale() }
+
+    /// Put the showing destination's frame at `width` without touching its
+    /// constraints - the state B1 is about.
+    ///
+    /// A destination is pinned leading and trailing to `bodyContainer` by
+    /// `embed`, and those ties stay active here: the defect was never a
+    /// *broken* tie (the two cases above already cover that) but a live one
+    /// whose frame had lost a resolve and was never re-derived, which is why
+    /// neither of the other two comparisons could see it - both of their own
+    /// operands were correct throughout.
+    func debugShrinkShowingDestinationForTests(to width: CGFloat) {
+        guard let destination = visibleDestinationView() else { return }
+        var frame = destination.frame
+        frame.size.width = width
+        destination.frame = frame
     }
 
     /// GL-37: which destination slots have actually been built.

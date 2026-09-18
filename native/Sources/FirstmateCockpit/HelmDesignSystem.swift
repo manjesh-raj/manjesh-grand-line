@@ -3162,6 +3162,13 @@ final class HelmEmptyState: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
+    #if FM_SELFTESTS
+    /// What the watermark is *actually drawing* - review #3's B4. A check that
+    /// asked whether artwork was passed in would pass against the slab being
+    /// drawn, which is the defect.
+    var debugWatermarkImage: NSImage? { watermark.image }
+    #endif
+
     /// Rewrites the copy on an already-built instance - for a reused table
     /// cell, or a state whose text depends on live data.
     func setText(title: String? = nil, body: String) {

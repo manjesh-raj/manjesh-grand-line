@@ -179,6 +179,45 @@ enum ReadyToMergeCountSelfTest {
         // disagreement by deleting the information.
         check(number(before: "open", in: subtitle) == expectedOpen,
               "and still reports \(expectedOpen) open beside it", &ok)
+
+        // **And the rows themselves** - review #3's B2.
+        //
+        // This sweep read the tiles and the subtitle only, which is exactly
+        // why #392's own fix could unify every count on the page and leave the
+        // row chip on the old `checks == "green"` test: 29 rows each wearing a
+        // green "Ready to merge" chip under a subtitle reading 0. Same
+        // question, one row down, and nothing asked it.
+        //
+        // Read off the rendered row, not re-derived: a check that computed the
+        // expected label from the `MergedPR` would agree with itself whatever
+        // rule the row used.
+        let readyLabel = "Ready to merge"
+        var rowsSayingReady = 0
+        for row in 0..<controller.debugGithubRowCount {
+            guard let chip = controller.debugGitHubRowChipText(at: row) else {
+                fail("GitHub row \(row) rendered no chip at all", &ok)
+                continue
+            }
+            if chip == readyLabel { rowsSayingReady += 1 }
+        }
+        check(rowsSayingReady == expectedReady,
+              "\(expectedReady) row chip(s) say \"\(readyLabel)\" (counted \(rowsSayingReady))", &ok)
+        if rowsSayingReady != expectedReady {
+            fail("review #3's B2 is back: \(rowsSayingReady) rows claim \"\(readyLabel)\" under a "
+                 + "subtitle and tile that both say \(expectedReady)", &ok)
+        }
+
+        // The green-but-untracked PR keeps its green tint and loses only the
+        // claim: "Checks green" is true and strictly weaker, and it is what
+        // tells the captain why that row has no Merge button either.
+        let untrackedRow = fixture().firstIndex { $0.checks == "green" && $0.taskID == nil }
+        if let untrackedRow, untrackedRow < controller.debugGithubRowCount {
+            let chip = controller.debugGitHubRowChipText(at: untrackedRow)
+            check(chip == "Checks green",
+                  "the green-but-untracked row says \"Checks green\" (said \(chip ?? "nil"))", &ok)
+        } else {
+            fail("the fixture no longer carries a green-but-untracked PR - this check is vacuous", &ok)
+        }
     }
 
     // MARK: Overview - hero, banner and tile, off one array

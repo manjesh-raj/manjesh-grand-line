@@ -201,6 +201,7 @@ private final class ReviewPRRowCellView: NSView {
     var debugReviewButtonFrame: NSRect { reviewButton.frame }
     var debugMergeButtonFrame: NSRect { mergeButton.frame }
     var debugMergeButtonHidden: Bool { mergeButton.isHidden }
+    var debugChipText: String? { accentRow.debugChipText }
 }
 
 /// The demand-driven replacement for a plain `NSStackView` of `HelmAccentRow`
@@ -361,6 +362,19 @@ final class ReviewPRListView: NSView {
             return nil
         }
         return (cell.debugReviewButtonFrame, cell.debugMergeButtonFrame, cell.debugMergeButtonHidden)
+    }
+
+    /// The chip text the row at `row` is actually rendering.
+    ///
+    /// Review #3's B2: the whole defect was a row *saying* something the
+    /// counts beside it disagreed with, so the assertion has to read what the
+    /// row painted rather than re-derive it from the `MergedPR` - a check that
+    /// recomputed the label would agree with itself for any labelling rule.
+    func debugRowChipText(at row: Int) -> String? {
+        guard let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: true) as? ReviewPRRowCellView else {
+            return nil
+        }
+        return cell.debugChipText
     }
 }
 
