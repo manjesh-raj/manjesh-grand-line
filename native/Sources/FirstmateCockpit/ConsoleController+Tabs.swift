@@ -828,6 +828,15 @@ extension ConsoleController {
         for tab in tabs {
             cleanupSSHKeyTempFile(tab)
             tab.kubeContextBridge?.stop()
+            // Review #3's B14: `closeTab` was the only caller of
+            // `teardownAll()`, so every path that disposes of a whole *page*
+            // rather than one tab - `AppShellController.removeHostConsole`
+            // when a host is deleted mid-session, and the app delegate on
+            // quit - left every split pane's own `zsh -l` child running and
+            // its `HelmFocusSensing` registration alive. The tab's primary
+            // terminal was never the leak: `TerminalPane.teardown()` is what
+            // stops a *split* pane's process, and nothing here called it.
+            tab.splits.teardownAll()
         }
         // Host-page disconnect (design brief Part B) - tear down every
         // tab's own SRE Lead session (`fm/grandline-sre-lead-per-tab`: each

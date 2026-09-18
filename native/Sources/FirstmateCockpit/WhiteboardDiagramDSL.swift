@@ -682,16 +682,60 @@ enum DiagramDSL {
 
     /// Peels a trailing `: label` off a statement.
     ///
-    /// Split on the **first** colon, before any arrow splitting: a label is
-    /// free text and may legitimately contain an arrow (`A --> B: maps a->b`),
-    /// so tokenizing arrows first would tear the label apart. Splitting on the
-    /// first colon also leaves a later one alone, which is what keeps a URL in
-    /// a label intact.
+    /// The colon that separates a label is the **first one after the last
+    /// arrow**, never simply the first one in the line.
+    ///
+    /// A label is free text and may legitimately contain an arrow
+    /// (`A --> B: maps a->b`), so this still runs *before* arrow splitting and
+    /// a colon inside the label - a URL's, say - is still left alone. What
+    /// changed (review #3's B18) is the other end: a **node name** may contain
+    /// a colon too, and the shapes that do are the common ones in this app's
+    /// own subject matter - `ns:pod`, `image:tag`, `host:port`. Splitting on
+    /// the first colon turned `svc:v2 --> db` into head `svc` and label
+    /// `v2 --> db`, at which point the head carries no arrow and the whole
+    /// line is refused as "no arrow" - a legal diagram rejected with a message
+    /// about something the captain did write.
+    ///
+    /// Anchoring on the last arrow keeps both properties at once, because a
+    /// label always follows every arrow on the line while a node name always
+    /// precedes at least one.
+    ///
+    /// A statement with **no** arrow is a lone node declaration, and this
+    /// returns the whole thing as the head: neither caller does anything with
+    /// a label there (both discard it in their own no-arrow branch), and
+    /// treating `ns:pod` on its own line as a node called `ns` is the same bug
+    /// one step earlier.
     static func splitLabel(_ statement: String) -> (head: String, label: String?) {
-        guard let colon = statement.firstIndex(of: ":") else { return (statement, nil) }
+        guard let searchFrom = indexAfterLastArrow(in: statement) else { return (statement, nil) }
+        guard let colon = statement[searchFrom...].firstIndex(of: ":") else { return (statement, nil) }
         let head = String(statement[statement.startIndex..<colon]).trimmingCharacters(in: .whitespaces)
         let label = String(statement[statement.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
         return (head, label.isEmpty ? nil : label)
+    }
+
+    /// The index just past the last `-->`/`->` in `statement`, or `nil` when it
+    /// has no arrow at all.
+    ///
+    /// `-->` is tested before `->` for the same reason `splitOnArrows` does it
+    /// in that order: the shorter token otherwise matches the longer one's own
+    /// tail and reports an end index one character early.
+    private static func indexAfterLastArrow(in statement: String) -> String.Index? {
+        let chars = Array(statement)
+        var last: Int?
+        var i = 0
+        while i < chars.count {
+            if i + 2 < chars.count, chars[i] == "-", chars[i + 1] == "-", chars[i + 2] == ">" {
+                last = i + 3
+                i += 3
+            } else if i + 1 < chars.count, chars[i] == "-", chars[i + 1] == ">" {
+                last = i + 2
+                i += 2
+            } else {
+                i += 1
+            }
+        }
+        guard let last else { return nil }
+        return statement.index(statement.startIndex, offsetBy: last)
     }
 
     /// A node segment: either a bare name, or `kind(Name)` naming a component.

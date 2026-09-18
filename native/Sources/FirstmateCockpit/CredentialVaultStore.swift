@@ -53,6 +53,22 @@ enum VaultUnlockOutcome: Equatable {
     case unreadable(String)
     case noVaultYet
     case failed(String)
+    /// The Touch ID key this Mac has stored no longer opens this vault file.
+    ///
+    /// Review #3's B17. Kept apart from `wrongPassword` because it is not one:
+    /// nothing was typed, so there is nothing for the captain to have got
+    /// wrong, and the honest next step ("unlock with your password") is the
+    /// opposite of the one `wrongPassword` implies. Counting it as a failed
+    /// attempt also throttled the *password* path after five taps of a Touch
+    /// ID button that could never have worked - a captain locked out of their
+    /// own credentials by a key they never chose to use.
+    ///
+    /// The realistic way to get here is the one this vault is built for: the
+    /// file is git-synced, the vault was re-keyed on another Mac, and the
+    /// re-keyed file arrived here while this Mac's Keychain still holds the
+    /// old derived key (`changeMasterPassword` removes the stored key on the
+    /// Mac it runs on, and has no reach into any other).
+    case staleTouchIDKey
 }
 
 /// Whether a vault exists, and - if reading it went wrong - the fact that it
@@ -451,19 +467,33 @@ final class CredentialVaultStore {
                     completion(.failed(error.localizedDescription))
                     return
                 }
-                completion(self.finishUnlock(loaded, file: onDisk, method: "Touch ID"))
+                completion(self.finishUnlock(loaded, file: onDisk, method: "Touch ID",
+                                             keyCameFromKeychain: true))
             }
         }
     }
 
     private func finishUnlock(_ derived: Result<CredentialVaultKey, Error>,
                               file onDisk: CredentialVaultFile,
-                              method: String) -> VaultUnlockOutcome {
+                              method: String,
+                              keyCameFromKeychain: Bool = false) -> VaultUnlockOutcome {
         switch derived {
         case .failure(let error):
             return .failed(error.localizedDescription)
         case .success(let key):
             guard CredentialVaultCrypto.verifierOpens(onDisk.verifier, with: key) else {
+                // B17: a stored key that no longer matches is a stale key, not
+                // a wrong password - so it is reported as one, it is removed
+                // (it can never open this file again, and leaving it there
+                // means the same dead end on every later tap), and it is
+                // **not** counted. `failedAttempts` and the throttle it drives
+                // exist to slow down guessing at the password, and nothing was
+                // guessed here.
+                if keyCameFromKeychain {
+                    CredentialVaultKeyStore.remove()
+                    AppLog.keychain.error("credential vault: the stored Touch ID key no longer opens this vault - removed it")
+                    return .staleTouchIDKey
+                }
                 failedAttempts += 1
                 if failedAttempts >= Self.attemptsBeforeThrottle {
                     // Escalating: 30s after the fifth, doubling each further

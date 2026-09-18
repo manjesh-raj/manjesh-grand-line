@@ -2922,10 +2922,26 @@ final class AppShellController: NSViewController {
     /// Returns nil once the app has moved, or a message the crew's link row
     /// shows in place.
     func openSRELeadForCrew(hostHint: String?) -> String? {
-        let live = sessions.sessions
+        // **`isConnected`, not merely "in the registry"** - review #3's B16.
+        // Since the two-state registry (#338) `sessions` also carries
+        // `.restored` entries: a host page F2 brought back at launch, mounted
+        // but deliberately never started, precisely so a relaunch does not
+        // fork every saved host's `ssh` at once. Revealing one of those from a
+        // one-click crew link is what makes its `viewDidAppear` fork the
+        // connection - and prompt for Touch ID to materialise the key - which
+        // is exactly the thing this method's own header says it will not do.
+        // The header predates the registry gaining a second state; the
+        // predicate is what makes it true again.
+        let live = sessions.sessions.filter(\.isConnected)
         guard !live.isEmpty else {
+            // Distinguished on purpose: "you have pages open but nothing is
+            // actually connected" is a different thing to say than "you have
+            // no host sessions", and only one of them is answered by opening
+            // Hosts and pressing Connect on a row that is already there.
             show(.hosts)
-            return "You don't have a live host session right now - connect one from Hosts and ask me again."
+            return sessions.sessions.isEmpty
+                ? "You don't have a live host session right now - connect one from Hosts and ask me again."
+                : "None of your host pages are connected right now - open one from Hosts and connect it, then ask me again."
         }
 
         let chosen: HostSession
@@ -2942,7 +2958,16 @@ final class AppShellController: NSViewController {
                 chosen = only
             } else if partial.isEmpty {
                 show(.hosts)
-                return "I don't have a live session called \u{201C}\(hint)\u{201D} - here are your hosts."
+                // B16: a hint that matches a page which is open but not
+                // connected gets its own answer rather than "I don't have a
+                // session called that" - the captain can see that page in
+                // Hosts, so denying it exists would read as a bug.
+                let restoredMatch = sessions.sessions.contains {
+                    !$0.isConnected && $0.label.lowercased().contains(needle)
+                }
+                return restoredMatch
+                    ? "\u{201C}\(hint)\u{201D} is open but not connected - connect it from Hosts and ask me again."
+                    : "I don't have a live session called \u{201C}\(hint)\u{201D} - here are your hosts."
             } else {
                 show(.hosts)
                 return "More than one live session matches \u{201C}\(hint)\u{201D}, so I'd rather you picked."
