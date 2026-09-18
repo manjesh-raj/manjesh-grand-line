@@ -573,8 +573,27 @@ final class DictationController: NSViewController, DaylightDrillActions {
         modelStatusLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         modelStatusLabel.translatesAutoresizingMaskIntoConstraints = false
 
+        // **The hugging has to be on the label, not on the pill** - review
+        // #3's B10.
+        //
+        // `modelReadyPill` is a plain `NSView` with no intrinsic content size,
+        // so the two calls below it are a documented no-op (gotcha (12)): a
+        // hugging priority only ever constrains a view against its *own*
+        // intrinsic size, and this one has none. Its real width is its label's
+        // plus `ToolRowLayout.pill`'s 9pt insets, so the label is the only
+        // place that can say "content-sized". Without it, `.fill` picked this
+        // chip as the row's flexible member and the "Model ready" pill
+        // rendered **1208pt wide** at a 1512pt window - measured.
+        //
+        // Deliberately here rather than inside `ToolRowLayout.pill`, which
+        // ~20 call sites share: making every chip in the app rigid was tried
+        // and measured to collapse this page's own card to 163pt, because at
+        // least one of those rows depends on its chip being the view that
+        // absorbs slack. One page's bug, fixed on that page.
         modelReadyPill.setContentHuggingPriority(.required, for: .horizontal)
         modelReadyPill.setContentCompressionResistancePriority(.required, for: .horizontal)
+        modelReadyPillLabel.setContentHuggingPriority(.required, for: .horizontal)
+        modelReadyPillLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
         modelReadyPill.isHidden = true
 
         // G4: the app's own bar rather than the stock determinate one.
@@ -598,7 +617,22 @@ final class DictationController: NSViewController, DaylightDrillActions {
         modelDeleteButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         modelDeleteButton.translatesAutoresizingMaskIntoConstraints = false
 
-        let modelRow = NSStackView(views: [modelStatusLabel, modelReadyPill, modelProgressBar, modelDeleteButton, modelActionButton])
+        // **The row needs a flexible member that is always present** - the
+        // other half of B10, and the reason the hugging fix above is safe.
+        //
+        // `modelStatusLabel` is the row's flexible member while it is visible,
+        // and `.ready` is exactly the state that hides it in favour of the
+        // chip. With the chip rigid and the label gone, a `.fill` row had
+        // nothing left to stretch, so it hugged its own content and - because
+        // this page's width is constraint-driven - took the whole page down to
+        // its fitting width with it (measured: 391pt at a 1512pt window). A
+        // bare `NSView` has no intrinsic content size, which makes it the
+        // stack's natural stretch target; that property is what had been
+        // accidentally falling to the chip.
+        let modelSpacer = NSView()
+        modelSpacer.translatesAutoresizingMaskIntoConstraints = false
+
+        let modelRow = NSStackView(views: [modelStatusLabel, modelReadyPill, modelSpacer, modelProgressBar, modelDeleteButton, modelActionButton])
         modelRow.orientation = .horizontal
         modelRow.alignment = .centerY
         modelRow.spacing = 10
@@ -991,6 +1025,10 @@ final class DictationController: NSViewController, DaylightDrillActions {
     }
     func debugSetStatus(_ status: DictationStatus) { setStatus(status) }
     func debugRenderVocabulary() { renderVocabulary() }
+    /// The chip's rendered frame - review #3's B10 is a *width*, and the
+    /// property that was wrong (`setContentHuggingPriority` on a view with no
+    /// intrinsic size) reads as correct from the outside.
+    var debugModelReadyPillFrame: NSRect { modelReadyPill.frame }
     #endif
 
     /// Requests each permission directly via `DictationPermissions`' static

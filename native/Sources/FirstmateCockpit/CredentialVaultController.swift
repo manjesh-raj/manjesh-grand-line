@@ -611,6 +611,13 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
             render()
         case .failed(let message):
             unlockView.showMessage(message)
+        case .staleTouchIDKey:
+            // B17: says what actually happened and what to do about it, and
+            // re-renders because the Touch ID button has to go - the store
+            // removed the key that made it offerable, so leaving it on screen
+            // would offer a second tap that cannot work either.
+            unlockView.showMessage("The stored Touch ID key no longer matches this vault - unlock with your password.")
+            render()
         }
     }
 

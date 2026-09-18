@@ -286,7 +286,25 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// scroll internally once its content overflows, rather than the
     /// enclosing card growing to fit - see `buildTaskSection`/
     /// `buildFollowUpSection`.
-    private static let taskFollowUpPanelBodyHeight: CGFloat = 280
+    ///
+    /// **A whole number of rows, derived rather than written down** - review
+    /// #3's B11. The shared constant was a flat 280 against a 78pt row, which
+    /// is 3.59 rows: the fourth row rendered with its kicker sliced off at the
+    /// bottom edge, which reads as clipped rather than as "there is more,
+    /// scroll". Both lists are `NSTableView`s with a fixed `rowHeight`, so
+    /// snapping the box to `visibleRows * rowHeight` makes the cut land
+    /// exactly on a row boundary and the next row is simply below the fold.
+    /// `rowHeight` itself is `HelmType.scaledRowHeight`-driven, so a literal
+    /// could not have stayed whole across the captain's chrome text sizes
+    /// either.
+    private static let taskFollowUpVisibleRows = 4
+    private static var taskFollowUpPanelBodyHeight: CGFloat {
+        ShiftTaskListView.rowHeight * CGFloat(taskFollowUpVisibleRows)
+    }
+
+    #if FM_SELFTESTS
+    static var debugTaskFollowUpPanelBodyHeight: CGFloat { taskFollowUpPanelBodyHeight }
+    #endif
 
     init(store: ShiftStore) {
         self.store = store

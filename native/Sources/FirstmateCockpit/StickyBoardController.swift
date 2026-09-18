@@ -592,6 +592,13 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     var debugStore: StickyBoardStore { store }
     var debugCanvas: StickyBoardCanvasView { canvas }
     var debugBoardCard: NSView { boardCard }
+    /// How far down the (flipped) canvas the floating board header reaches -
+    /// review #3's B12 measures the cascade's first row against this rather
+    /// than against `headerClearance`, so the constant cannot drift away from
+    /// the header it was measured from.
+    var debugBoardHeaderBottomInset: CGFloat {
+        boardHeader.convert(boardHeader.bounds, to: scrollView).maxY
+    }
     var debugNoteViews: [String: StickyNoteView] { noteViews }
     var debugOverlayVisible: Bool { !overlayContainer.isHidden }
     var debugFooterText: String { footer.stringValue }

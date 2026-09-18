@@ -713,6 +713,9 @@ final class HostsSideStack: NSView {
     let detail = HostsDetailPanel()
     let quickActions = HostsQuickActionsPanel()
 
+    private let scroll = NSScrollView()
+    private let document = FlippedView()
+
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
@@ -722,19 +725,68 @@ final class HostsSideStack: NSView {
         stack.alignment = .leading
         stack.spacing = HelmMetrics.s4
         stack.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(stack)
+
+        // **The three cards scroll, and that is a window-*height* fix** -
+        // review #3's B5.
+        //
+        // Both bottom pins here were already `<=`, which is what makes the
+        // column end above the page's gutter rather than stretching a card -
+        // and neither of them lets the column be *shorter* than its content.
+        // Nothing else in the chain did either: each panel's own labels are
+        // required-height, the stack is required to its own top, and the page
+        // pins that top under the tab strip. So the whole column was a
+        // required floor on the window's height, and it is the height twin of
+        // the width class this app has fixed five times: measured at 1100x750,
+        // showing Hosts and then selecting a host took the page's required
+        // fitting height to **830pt against a 750pt window**, and it never
+        // shrank back.
+        //
+        // A scroll view is the one shape that lets the content be taller than
+        // the space it is given. `HelmPageSidebar` reached the same conclusion
+        // for its own rows; this is that mechanism, with its three rules
+        // intact: a `FlippedView` document (gotcha (9) - a plain one rests
+        // against the *bottom* of a short clip view), pinned to the **clip**
+        // view and only on the axis that does not scroll (gotcha (4)), and no
+        // scroller, because a non-overlay one reserves a real ~15pt track.
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.drawsBackground = false
+        scroll.hasVerticalScroller = false
+        scroll.hasHorizontalScroller = false
+        scroll.autohidesScrollers = true
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(stack)
+        scroll.documentView = document
+        addSubview(scroll)
+
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
+            scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: topAnchor),
             // `<=`, not `==`: the three cards size to their own content and the
             // column simply ends above the page's bottom gutter rather than
             // stretching one of them to fill it.
-            stack.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
+            scroll.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
+
+            document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+            stack.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: document.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: document.bottomAnchor),
         ])
         for panel in [workspace, detail, quickActions] as [NSView] {
             panel.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
+
+        // A scroll view has no intrinsic height, so this is the only thing
+        // giving the column one: it prefers to be exactly as tall as its cards
+        // (which is what every window big enough gets, unchanged), and at
+        // `contentTie` (499) it sits below `NSLayoutPriorityWindowSizeStayPut`,
+        // so it can never be a floor on how short the window may get - gotcha
+        // (13), and the whole point of the fix. `HelmPageSidebar` uses the
+        // identical constraint for the identical reason.
+        let contentHeight = scroll.heightAnchor.constraint(equalTo: document.heightAnchor)
+        contentHeight.priority = HelmDaylightPriority.contentTie
+        contentHeight.isActive = true
 
         let columnWidth = widthAnchor.constraint(equalToConstant: Self.width)
         columnWidth.priority = HelmDaylightPriority.contentTie

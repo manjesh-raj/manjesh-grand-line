@@ -57,6 +57,22 @@ enum Toast {
         show(in: container, message: message, undo: onUndo)
     }
 
+    /// Marks a presented pill so a suite can count what is really on screen.
+    ///
+    /// Review #3's B8 is about *where* a toast lands, and a toast is a plain
+    /// `NSView` in whatever container it was handed - there is no other way to
+    /// ask "is one showing here" from outside.
+    static let pillIdentifier = NSUserInterfaceItemIdentifier("helm.toast.pill")
+
+    #if FM_SELFTESTS
+    /// How many toast pills are currently in `root`'s view tree.
+    static func debugCount(in root: NSView) -> Int {
+        var found = root.identifier == pillIdentifier ? 1 : 0
+        for sub in root.subviews { found += debugCount(in: sub) }
+        return found
+    }
+    #endif
+
     static func show(in container: NSView, message: String) {
         show(in: container, message: message, undo: nil)
     }
@@ -123,6 +139,7 @@ enum Toast {
         let pill = NSView()
         pill.translatesAutoresizingMaskIntoConstraints = false
         pill.alphaValue = 0
+        pill.identifier = Self.pillIdentifier
         pill.addSubview(stack)
 
         container.addSubview(pill)

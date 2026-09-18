@@ -326,13 +326,31 @@ final class HelmConfirmView: NSView {
         // safe thing is the whole point. An `NSAlert` never had that problem
         // because AppKit assigns Return and Escape independently.
         //
-        // A zero-sized hidden button carries Escape instead.
+        // A zero-sized button carries Escape instead.
         // `performKeyEquivalent:` reaches it regardless of first responder,
         // which is the same mechanism `HelmFormSheet`'s own footer relies on.
+        //
+        // **`alphaValue = 0`, never `isHidden`** - review #3's B15, and the
+        // reason that button shipped doing nothing at all.
+        // `NSView.performKeyEquivalent(with:)` walks `subviews` and skips any
+        // that are hidden, so a hidden button's key equivalent is unreachable
+        // by the one mechanism it exists to be reached by. Confirmed with a
+        // real `NSEvent` through `performKeyEquivalent`: it returned `false`
+        // and nothing was cancelled, on every `confirmIsDefault: false`
+        // dialog - i.e. exactly the ~10 destructive ones this was added to
+        // protect. `ConfirmMigrationSelfTest` stayed green because it read
+        // `keyEquivalent` and called `performClick`, neither of which goes
+        // near the dispatch that was broken.
+        //
+        // Zero-sized and fully transparent is still invisible, and unlike
+        // `isHidden` it stays in the responder/key-equivalent walk.
+        // `cancelOperation(_:)` is implemented below as well: the two answer
+        // different dispatches (a key equivalent versus the responder chain's
+        // own Escape action), and the dialog should cancel on either.
         if request.cancelTitle != nil {
             let escape = NSButton(title: "", target: self, action: #selector(cancelClicked))
             escape.keyEquivalent = "\u{1b}"
-            escape.isHidden = true
+            escape.alphaValue = 0
             escape.translatesAutoresizingMaskIntoConstraints = false
             escapeButton = escape
             addSubview(escape)
@@ -469,6 +487,19 @@ final class HelmConfirmView: NSView {
 
     @objc private func confirmClicked() { onAnswer?(.confirm) }
     @objc private func cancelClicked() { onAnswer?(.cancel) }
+
+    /// Escape, arriving through the responder chain rather than as a key
+    /// equivalent - `NSResponder`'s own documented "the user wants out" action.
+    ///
+    /// Belt to `escapeButton`'s brace (B15). A modal session dispatches Escape
+    /// as a key equivalent first, which the button handles; a dialog whose
+    /// first responder is a text field inside a caller-supplied accessory gets
+    /// it here instead. Only offered when the request has a Cancel: a dialog
+    /// with no way to say no must not acquire one silently.
+    override func cancelOperation(_ sender: Any?) {
+        guard cancelButton != nil || escapeButton != nil else { return }
+        onAnswer?(.cancel)
+    }
     @objc private func extraClicked() { onAnswer?(.extra) }
 
     #if FM_SELFTESTS
@@ -487,8 +518,14 @@ final class HelmConfirmView: NSView {
     var debugEscapeCancels: Bool {
         cancelButton?.keyEquivalent == "\u{1b}" || escapeButton?.keyEquivalent == "\u{1b}"
     }
-    /// Fire Escape exactly as the key would.
+    /// Fire Escape's *action*. Deliberately not "exactly as the key would" -
+    /// `performClick` bypasses `performKeyEquivalent`'s own walk, which is the
+    /// dispatch B15 broke. `ConfirmMigrationSelfTest` drives a real `NSEvent`
+    /// for that; this only pins the action wiring.
     func debugPressEscape() { escapeButton?.performClick(nil) ?? cancelButton?.performClick(nil) }
+    /// B15: `NSView.performKeyEquivalent(with:)` skips a hidden subview, so a
+    /// hidden Escape button is unreachable by the one mechanism it exists for.
+    var debugEscapeButtonIsHidden: Bool { escapeButton?.isHidden ?? false }
     var debugConfirmVariant: HelmButton.Variant? { confirmButton?.variant }
     func debugClickConfirm() { confirmButton?.performClick(nil) }
     func debugClickCancel() { cancelButton?.performClick(nil) }

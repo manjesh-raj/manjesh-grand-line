@@ -566,7 +566,29 @@ final class ShiftBoardColumnView: NSView {
     /// sliver; the ceiling is what makes a long pile scroll inside its own
     /// card instead of making the page taller than the window.
     static let minBodyHeight: CGFloat = 96
-    static let maxBodyHeight: CGFloat = 420
+
+    /// The ceiling, **derived from what `visibleRows` cards can actually be**
+    /// rather than written down as a number.
+    ///
+    /// Review #3's B3: this was the literal 420, and the plan above it costs a
+    /// card carrying a meta line at `cardRowHeightWithMeta` - so four of those
+    /// plus their three gaps need 436, and the clamp sliced 16pt off the
+    /// fourth card, cutting its priority chip. The plan was right; the cap
+    /// was 16pt short of the plan's own worst case. A literal could not stay
+    /// right either: both card heights go through `HelmType.scaledRowHeight`,
+    /// so the gap widens again at the captain's "Larger" chrome text size.
+    ///
+    /// Computing the cap from the same two constants the plan uses is what
+    /// makes "a full column shows `visibleRows` cards in full" true by
+    /// construction at every text scale. It stays a *cap*: a column whose
+    /// cards genuinely need more than this (a wrapped title, which no count
+    /// can predict - see `applyBodyHeight`) still scrolls inside its own card
+    /// rather than making the page taller than the window, which is the job
+    /// this constant has always had.
+    static var maxBodyHeight: CGFloat {
+        let rows = CGFloat(ShiftBoardView.visibleRows)
+        return ShiftBoardView.cardRowHeightWithMeta * rows + HelmMetrics.s2 * (rows - 1)
+    }
 
     /// How many cards a column will actually build.
     ///

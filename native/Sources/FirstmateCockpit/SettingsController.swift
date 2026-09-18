@@ -392,19 +392,71 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             // bites here; the content-level one is a no-op on a view with no
             // intrinsic size.
             column.setClippingResistancePriority(.defaultLow, for: .horizontal)
+            // Review #3's B9: **the column must hug its own content
+            // vertically, or its cards get stretched to fill it.**
+            //
+            // A vertical `NSStackView` left at the default `.gravityAreas`
+            // distribution has no rule for which arranged subview absorbs
+            // leftover height, so whatever slack the column is given lands on
+            // one card by Auto Layout's own tie-breaking - measured here as
+            // the one-row Connection card resolving to **504pt against its own
+            // 133pt fitting height**, i.e. 371pt of empty card. The row below
+            // is already `.top`-aligned, so the honest shape is simply that no
+            // slack exists: `setHuggingPriority` is the *stack*-level API, the
+            // one that bites on a view with no intrinsic content size (gotcha
+            // (12) - the content-level call would be a no-op here).
+            //
+            // Vertical only. The horizontal pair above is what keeps this
+            // column off the window-width floor and is deliberately untouched.
+            column.setHuggingPriority(.required, for: .vertical)
             for card in column.arrangedSubviews {
                 card.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
             }
             return column
         }
 
-        let row = NSStackView(views: columns)
-        row.orientation = .horizontal
-        row.alignment = .top
-        row.distribution = .fillEqually
-        row.spacing = HelmMetrics.s4
+        // **A plain container with explicit constraints, not an
+        // `NSStackView`** - review #3's B9, and the reason is measured.
+        //
+        // This was a horizontal stack at `.fillEqually` with `alignment =
+        // .top`, which reads as "each column keeps its own height" and does
+        // not behave that way: the stack also installs a `bottom == bottom`
+        // alignment constraint, so the shorter column was stretched to the
+        // taller one's height (1291 against its own 920pt of content) and the
+        // 371pt of slack landed on one card. A vertical `NSStackView` at the
+        // default `.gravityAreas` has no rule for who absorbs leftover height,
+        // and a `HelmCard` has no intrinsic content size, so hugging priorities
+        // on either the column or the cards are a no-op there (gotcha (12)) -
+        // measured, `setHuggingPriority(.required, for: .vertical)` on the
+        // column changed nothing. The result on screen was the one-row
+        // Connection card rendering **504pt tall against a 133pt fitting
+        // height**.
+        //
+        // Four constraints per column say exactly what was meant instead: both
+        // start at the row's top, neither may exceed its bottom, and the row
+        // shrink-wraps onto the taller of the two. A column then takes its own
+        // content height from its own `.gravityAreas` chain, with no slack to
+        // distribute, so every card keeps its natural height.
+        let row = NSView()
         row.translatesAutoresizingMaskIntoConstraints = false
-        row.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        for column in columns { row.addSubview(column) }
+        let left = columns[0], right = columns[1]
+        // Priority 1, below everything: "and take the smallest height that
+        // satisfies all of the above" - the same shrink-wrap idiom
+        // `HelmDrillHeader` uses for its own cluster.
+        let shrinkWrap = row.heightAnchor.constraint(equalToConstant: 0)
+        shrinkWrap.priority = NSLayoutConstraint.Priority(1)
+        NSLayoutConstraint.activate([
+            left.leadingAnchor.constraint(equalTo: row.leadingAnchor),
+            right.leadingAnchor.constraint(equalTo: left.trailingAnchor, constant: HelmMetrics.s4),
+            right.trailingAnchor.constraint(equalTo: row.trailingAnchor),
+            left.widthAnchor.constraint(equalTo: right.widthAnchor),
+            left.topAnchor.constraint(equalTo: row.topAnchor),
+            right.topAnchor.constraint(equalTo: row.topAnchor),
+            left.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor),
+            right.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor),
+            shrinkWrap,
+        ])
         cardsContainer.addArrangedSubview(row)
         row.widthAnchor.constraint(equalTo: cardsContainer.widthAnchor).isActive = true
         layoutDidChangeWidths()

@@ -68,6 +68,8 @@ enum TerminalShortcutsSelfTest {
             ("eachDirectionPutsTheNewPaneWhereItSays", test_splitDirections),
             ("closingAPaneGivesItsSpaceBack", test_closePane),
             ("theLastPaneCannotBeClosed", test_lastPaneSurvives),
+            ("thePrimaryPaneCannotBeClosed", test_primaryPaneSurvives),
+            ("shuttingDownTearsDownEverySplitPane", test_shutdownTearsDownSplitPanes),
             ("zoomFillsTheTabAndPutsItBack", test_zoom),
             ("focusCyclesThroughEveryPaneAndWraps", test_focusCycle),
             ("aBackgroundTabsPanesAreHiddenToo", test_backgroundTabPanes),
@@ -371,6 +373,121 @@ enum TerminalShortcutsSelfTest {
             return "closing the only pane left \(tab.splits.paneCount) - ⌘W closes a tab, this must not"
         }
         guard console.tabs.count == 1 else { return "closing the only pane closed the tab" }
+        return nil
+    }
+
+    /// Review 3, B13: the *primary* pane cannot be closed either.
+    ///
+    /// The last-pane guard above is not the same rule and does not imply this
+    /// one: with a split open there genuinely is another pane to fall back to,
+    /// so `closePane` happily removed the primary - and the primary wraps
+    /// `TabModel.terminal`, a `let` ~50 tab-scoped consumers read as "this
+    /// tab's session" (the SRE Lead bridge, the kube-context badge, the block
+    /// tracker, the Log Analyzer capture, the window title). Closing it killed
+    /// that session while every one of them went on pointing at it.
+    ///
+    /// Asserted as three separate things, because a pane *count* is satisfied
+    /// by a tree that kept two panes and killed the right session anyway.
+    private static func test_primaryPaneSurvives() -> String? {
+        let (window, console) = makeConsole(tabs: 1)
+        defer { teardown(window, console) }
+        guard let tab = console.currentTab else { return "no current tab" }
+        guard let primary = tab.primaryPane else { return "the tab has no primary pane" }
+
+        console.splitFocusedPane(.right)
+        settle(console)
+        guard tab.splits.paneCount == 2 else { return "splitting produced \(tab.splits.paneCount) panes" }
+
+        // Put the keyboard back in the primary - the split focused the new
+        // pane, and this is the state a captain reaches by clicking back into
+        // the one they started in.
+        console.focusPane(primary, in: tab)
+        guard tab.splits.focusedPane === primary else { return "could not focus the primary pane" }
+
+        console.closeFocusedPane()
+        settle(console)
+
+        guard tab.splits.paneCount == 2 else {
+            return "closing the primary pane left \(tab.splits.paneCount) - it must be refused while a sibling exists"
+        }
+        guard tab.splits.panes.contains(where: { $0 === primary }) else {
+            return "the primary pane is gone from the container"
+        }
+        // The session itself, which is what the ~50 consumers actually hold.
+        guard tab.splits.panes.contains(where: { $0.terminal === tab.terminal }) else {
+            return "the tab's own terminal is no longer one of its panes"
+        }
+        guard let content = window.contentView, tab.terminal.isDescendant(of: content) else {
+            return "the tab's own terminal was removed from the window's view tree"
+        }
+        guard let primaryPane = tab.splits.panes.first(where: { $0 === primary }), !primaryPane.isClosing else {
+            return "the primary pane was torn down by a close-pane keystroke"
+        }
+        // And the sibling really can still be closed - otherwise "refuses the
+        // primary" would be indistinguishable from "refuses everything".
+        guard let sibling = tab.splits.panes.first(where: { $0 !== primary }) else {
+            return "no sibling pane to close"
+        }
+        console.focusPane(sibling, in: tab)
+        console.closeFocusedPane()
+        settle(console)
+        guard tab.splits.paneCount == 1 else {
+            return "closing a non-primary pane left \(tab.splits.paneCount) panes"
+        }
+        return nil
+    }
+
+    /// Review 3, B14: quitting has to reach a tab's *split* panes, not just
+    /// its primary terminal.
+    ///
+    /// `shutdown()` walked `tabs` and terminated `tab.terminal`, which is one
+    /// shell per tab however many a captain had split it into - so every
+    /// extra pane's login shell outlived the app, orphaned, with its view
+    /// still holding a focus registration.
+    ///
+    /// A pane count after the fact cannot see that on its own (a container
+    /// emptied without terminating anything reports zero too), so the child
+    /// processes are read directly.
+    private static func test_shutdownTearsDownSplitPanes() -> String? {
+        let (window, console) = makeConsole(tabs: 1)
+        defer { window.contentView = nil }
+        guard let tab = console.currentTab else { return "no current tab" }
+
+        console.splitFocusedPane(.right)
+        settle(console)
+        console.splitFocusedPane(.down)
+        settle(console)
+        guard tab.splits.paneCount == 3 else { return "expected 3 panes, got \(tab.splits.paneCount)" }
+
+        let panes = tab.splits.panes
+        // Vacuity guard: with nothing torn down to begin with there is nothing
+        // for shutdown to miss, and every assertion below would pass for free.
+        guard panes.allSatisfy({ !$0.isClosing && $0.view.superview != nil }) else {
+            return "a pane was already torn down before shutdown, so this case would prove nothing"
+        }
+
+        console.shutdown()
+
+        guard tab.splits.paneCount == 0 else {
+            return "shutdown left \(tab.splits.paneCount) pane(s) in the container"
+        }
+        // `isClosing` is what `TerminalPane.teardown()` sets, so this is the
+        // direct evidence that `teardownAll` reached *every* pane rather than
+        // the container merely emptying its own array. Deliberately not the
+        // child processes: this harness never calls `viewDidAppear`, so no
+        // pane's shell is ever started (`hasAppeared` gates `startSplitPane`)
+        // and a liveness check here would pass whatever shutdown did.
+        let missed = panes.enumerated().filter { !$0.element.isClosing }.map(\.offset)
+        guard missed.isEmpty else {
+            return "shutdown never tore down pane(s) \(missed) of \(panes.count) - their shells would outlive the app"
+        }
+        // Each pane's own view leaves the tree. (Its *terminal* stays inside
+        // that view - `teardown()` removes the pane, not the terminal from the
+        // pane - so asserting on the terminal's superview would fail for a
+        // correct teardown.)
+        for (i, pane) in panes.enumerated() where pane.view.superview != nil {
+            return "pane \(i) is still in a view tree after shutdown"
+        }
         return nil
     }
 

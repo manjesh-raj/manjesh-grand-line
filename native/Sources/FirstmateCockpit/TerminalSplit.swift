@@ -346,12 +346,41 @@ final class TerminalSplitContainer: NSView {
 
     // MARK: Closing
 
+    /// The pane wrapping the tab's own `TabModel.terminal`.
+    ///
+    /// Set once by `ConsoleController.addTab` and never reassigned. `closePane`
+    /// reads it to refuse closing it - see that method.
+    weak var primaryPane: TerminalPane?
+
     /// Remove `pane` and give its space to its sibling. Refuses to remove the
     /// last pane - a tab always has at least one terminal, and closing the
-    /// tab is ⌘W's job.
+    /// tab is ⌘W's job - **and refuses to remove the primary pane**, which is
+    /// review #3's B13.
+    ///
+    /// The primary pane wraps `TabModel.terminal`, a `let` that ~50 consumers
+    /// read as "this tab's session": the SRE Lead bridge, the kube-context
+    /// badge, the block tracker, the Log Analyzer capture, the window title
+    /// and `focusedTerminal(of:)`'s own fallback. Closing it ran
+    /// `pane.teardown()`, which terminates that terminal's process and detaches
+    /// its view - **reproduced live**: split once, click back into the original
+    /// pane, press the close-pane chord, and the tab's real session went from
+    /// running to terminated while the tab stayed open and every one of those
+    /// consumers kept talking to the corpse. On a host page that is the SSH
+    /// connection. Worse, `handleSplitPaneTermination` deliberately skips the
+    /// primary, so its exit fell through to the tab's own `processTerminated`
+    /// and, with "Reconnect automatically" on, re-forked the launch into the
+    /// detached view.
+    ///
+    /// Refusing is the honest size for this feature. Promoting a survivor to
+    /// primary would mean re-pointing every one of those consumers at a
+    /// different terminal mid-session, which is a much larger change than the
+    /// capability is worth; `ConsoleController.closeFocusedPane` turns the
+    /// refusal into a one-line explanation in the pane rather than a silent
+    /// no-op, so the chord never just appears to do nothing.
     @discardableResult
     func closePane(_ pane: TerminalPane) -> Bool {
         guard panes.count > 1, panes.contains(where: { $0 === pane }) else { return false }
+        guard pane !== primaryPane else { return false }
         unzoom()
 
         let view = pane.view

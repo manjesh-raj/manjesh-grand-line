@@ -594,14 +594,30 @@ final class ReviewController: NSViewController, DaylightDrillActions {
         return parts.first
     }
 
-    /// Maps a PR's real `checks` state (green / red / pending / none) to the
-    /// row's tint and chip text. `.good` reads "Ready to merge" rather than
-    /// merely "checks pass" because that is the state a captain can actually
-    /// act on - green checks with no other blocker is what this page treats
-    /// as ready, matching `rebuildStats`'s identical definition.
-    private func checksVisuals(_ checks: String) -> (tint: HelmTint, chipLabel: String) {
-        switch checks {
-        case "green": return (.good, "Ready to merge")
+    /// Maps a PR to the row's tint and chip text.
+    ///
+    /// **The chip reads "Ready to merge" only for a PR that genuinely is**,
+    /// i.e. one `FleetDataSource.readyToMerge` counts - green checks *and* a
+    /// tracked task, which is the same `canMerge` gate the Merge button and
+    /// `bin/fm-pr-merge.sh` itself use.
+    ///
+    /// Review #3's B2. #392 unified every *count* on this page onto that one
+    /// definition and left the row chip on the old bare `checks == "green"`
+    /// test, so the exact defect that fix was written to kill was still on
+    /// screen one row down: 29 rows each wearing a green "Ready to merge" chip
+    /// under a subtitle reading "38 open \u{00B7} 0 ready to merge" and a stat tile
+    /// reading 0. All three numbers were right; the *chip* was answering a
+    /// different question under the same words.
+    ///
+    /// Green-but-untracked keeps the green tint - its checks really did pass,
+    /// and that is worth seeing - but says "Checks green", which is the true
+    /// and strictly weaker claim. It is also the honest one for this app:
+    /// with no task id there is no working merge path from here at all (GL-38),
+    /// which is why that row carries no Merge button either.
+    private func checksVisuals(_ pr: MergedPR) -> (tint: HelmTint, chipLabel: String) {
+        switch pr.checks {
+        case "green":
+            return (.good, FleetDataSource.canMerge(pr) ? "Ready to merge" : "Checks green")
         case "red": return (.critical, "Checks failing")
         case "pending": return (.warn, "Checks running")
         default: return (.neutral, "No checks")
@@ -733,6 +749,11 @@ final class ReviewController: NSViewController, DaylightDrillActions {
     func debugGitHubRowButtonState(at row: Int) -> (reviewFrame: NSRect, mergeFrame: NSRect, mergeHidden: Bool)? {
         githubList.debugRowButtonState(at: row)
     }
+
+    /// The chip text a rendered GitHub row is showing - review #3's B2. The
+    /// defect was a row's own wording disagreeing with the counts above it, so
+    /// this reads the painted label rather than re-deriving it.
+    func debugGitHubRowChipText(at row: Int) -> String? { githubList.debugRowChipText(at: row) }
 
     /// Every stat tile as rendered, so a suite can read what the captain sees
     /// rather than what `rebuildStats` intended. This page's own drill

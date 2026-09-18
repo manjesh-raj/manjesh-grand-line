@@ -151,13 +151,13 @@ private final class ReviewPRRowCellView: NSView {
     /// (`pr.checks == "green"`, #226's fix) and actually mergeable through
     /// this action (`pr.taskID != nil`) - never revert this back to
     /// `pr.source == "work"` alone.
-    func configure(pr: MergedPR, checksVisuals: (String) -> (tint: HelmTint, chipLabel: String),
+    func configure(pr: MergedPR, checksVisuals: (MergedPR) -> (tint: HelmTint, chipLabel: String),
                    theme: HelmTheme, actionReveal: HelmAccentRow.ActionReveal) {
         // D1: fifty rows each shouting a bordered "Review" button is what the
         // audit measured. The row's own state stays visible (the signal dot
         // and the checks chip); the buttons go quiet until aimed at.
         accentRow.actionReveal = actionReveal
-        let visuals = checksVisuals(pr.checks)
+        let visuals = checksVisuals(pr)
 
         var kickerParts: [String] = []
         if !pr.repo.isEmpty { kickerParts.append(pr.repo) }
@@ -201,6 +201,9 @@ private final class ReviewPRRowCellView: NSView {
     var debugReviewButtonFrame: NSRect { reviewButton.frame }
     var debugMergeButtonFrame: NSRect { mergeButton.frame }
     var debugMergeButtonHidden: Bool { mergeButton.isHidden }
+    #if FM_SELFTESTS
+    var debugChipText: String? { accentRow.debugChipText }
+    #endif
 }
 
 /// The demand-driven replacement for a plain `NSStackView` of `HelmAccentRow`
@@ -238,7 +241,7 @@ final class ReviewPRListView: NSView {
     private var theme: HelmTheme = ThemeManager.shared.theme
     private let emptyTitle: String
     private let emptyBody: String
-    private let checksVisuals: (String) -> (tint: HelmTint, chipLabel: String)
+    private let checksVisuals: (MergedPR) -> (tint: HelmTint, chipLabel: String)
     private weak var actionTarget: AnyObject?
     private let reviewAction: Selector
     private let mergeAction: Selector
@@ -260,7 +263,7 @@ final class ReviewPRListView: NSView {
 
     init(emptyTitle: String, emptyBody: String,
          actionTarget: AnyObject, reviewAction: Selector, mergeAction: Selector,
-         checksVisuals: @escaping (String) -> (tint: HelmTint, chipLabel: String)) {
+         checksVisuals: @escaping (MergedPR) -> (tint: HelmTint, chipLabel: String)) {
         self.emptyTitle = emptyTitle
         self.emptyBody = emptyBody
         self.actionTarget = actionTarget
@@ -362,6 +365,21 @@ final class ReviewPRListView: NSView {
         }
         return (cell.debugReviewButtonFrame, cell.debugMergeButtonFrame, cell.debugMergeButtonHidden)
     }
+
+    /// The chip text the row at `row` is actually rendering.
+    ///
+    /// Review #3's B2: the whole defect was a row *saying* something the
+    /// counts beside it disagreed with, so the assertion has to read what the
+    /// row painted rather than re-derive it from the `MergedPR` - a check that
+    /// recomputed the label would agree with itself for any labelling rule.
+    #if FM_SELFTESTS
+    func debugRowChipText(at row: Int) -> String? {
+        guard let cell = tableView.view(atColumn: 0, row: row, makeIfNecessary: true) as? ReviewPRRowCellView else {
+            return nil
+        }
+        return cell.debugChipText
+    }
+    #endif
 }
 
 extension ReviewPRListView: NSTableViewDataSource, NSTableViewDelegate {

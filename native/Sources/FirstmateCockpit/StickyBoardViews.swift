@@ -27,6 +27,23 @@ enum StickyBoardMetrics {
     static let noteMargin: CGFloat = 28
     static let noteCascadeStep: CGFloat = 26
 
+    /// How far down the canvas the first row of notes starts, so a
+    /// freshly-cascaded note clears the "CASE: MY THOUGHTS" header that floats
+    /// over the board's top-left corner.
+    ///
+    /// Review #3's B12: the first note started at `noteMargin` (28) on a
+    /// **flipped** canvas, i.e. 28pt from the top, while the header occupies
+    /// the band from `HelmMetrics.s3` (12) to 12 + its own ~56pt height - so
+    /// the note's whole title line sat underneath it.
+    ///
+    /// Measured against the real header rather than guessed, and
+    /// `StickyBoardViewSelfTest` re-measures it: a board with one note must
+    /// have that note's top below the header's bottom. Kept here rather than
+    /// asked of the view because `cascadeOrigin` is a pure function two
+    /// callers reach with no board mounted at all (`StrawHatProposalExecutor`
+    /// places a crew-proposed note before this page has ever been built).
+    static let headerClearance: CGFloat = 84
+
     /// Resize bounds. The minimum is what still fits the title line, the pin,
     /// the overflow button and one line of body text without clipping; the
     /// maximum keeps one note from becoming the whole board (and keeps
@@ -64,15 +81,18 @@ enum StickyBoardMetrics {
         let stepX = noteSize.width + noteMargin
         let stepY = noteSize.height + noteMargin
         let usableWidth = canvasSize.width - noteSize.width - noteMargin
-        let usableHeight = canvasSize.height - noteSize.height - noteMargin
+        let usableHeight = canvasSize.height - noteSize.height - headerClearance
         let columns = max(1, Int(usableWidth / stepX))
         let rows = max(1, Int(usableHeight / stepY))
         let slot = max(0, index) % (columns * rows)
         let col = slot % columns
         let row = slot / columns
         let cascade = CGFloat(max(0, index) / (columns * rows)) * noteCascadeStep
+        // B12: `headerClearance`, not `noteMargin`, for the first row's own
+        // y - the header floats over the canvas's top-left rather than
+        // sitting above it, so the top band is genuinely unavailable.
         return clampOrigin(CGPoint(x: noteMargin + CGFloat(col) * stepX + cascade,
-                                   y: noteMargin + CGFloat(row) * stepY + cascade))
+                                   y: headerClearance + CGFloat(row) * stepY + cascade))
     }
 }
 
@@ -643,7 +663,18 @@ final class StickyNoteView: NSView {
 
     /// The reference photo's cards are labelled; an unlabelled note should
     /// still say where the label goes rather than hiding the field.
-    static let titlePlaceholder = "Title"
+    ///
+    /// Review #3's B12: this was the single word "Title", drawn in the note's
+    /// own bold hand font at 42% - which on a hand-lettered card reads as a
+    /// note somebody actually titled "Title" rather than as an empty field.
+    /// An imperative reads as an invitation, and the styling below drops it to
+    /// the regular weight and a fainter ink so it cannot be mistaken for the
+    /// captain's own writing.
+    static let titlePlaceholder = "Add a title\u{2026}"
+    /// Fainter than the 0.42 the bold version used - a placeholder is a hint,
+    /// and this one sits on paper stock rather than in a sunken field, so it
+    /// has no well to mark it out as an input.
+    static let titlePlaceholderAlpha: CGFloat = 0.30
 
     init(note: StickyNote) {
         self.noteID = note.id
@@ -841,8 +872,10 @@ final class StickyNoteView: NSView {
         titleField.font = StickyFont.handBold(HelmType.scaled(14))
         titleField.placeholderAttributedString = NSAttributedString(
             string: Self.titlePlaceholder,
-            attributes: [.font: StickyFont.handBold(HelmType.scaled(14)),
-                         .foregroundColor: ink.withAlphaComponent(0.42)])
+            // Regular, not `handBold` - the title itself is bold, so a bold
+            // placeholder is indistinguishable from a real one at a glance.
+            attributes: [.font: StickyFont.hand(HelmType.scaled(14)),
+                         .foregroundColor: ink.withAlphaComponent(Self.titlePlaceholderAlpha)])
         textView.textColor = ink
         textView.insertionPointColor = ink
         resizeHandle.applyInk(ink)

@@ -204,6 +204,37 @@ final class DaylightBarController: NSViewController {
     /// depends on whether the window is in full screen.
     private var leadingInsetConstraint: NSLayoutConstraint!
     private let searchPill = DaylightSearchPill()
+
+    /// B6: the seven quick-access shortcuts collapse into this one menu below
+    /// `quickAccessCollapseWidth`. Built always, shown only when collapsed.
+    private let quickAccessOverflowButton = DaylightBarIconButton(
+        symbol: "ellipsis",
+        tooltip: "More destinations",
+        accessibilityLabel: "More destinations")
+
+    /// The bar width below which the quick-access row gives way to
+    /// `quickAccessOverflowButton` - review #3's B6.
+    ///
+    /// Seven icon squares cost 7 x (34 + `s2`) = 294pt of a bar that also has
+    /// to carry the drill cluster, the search pill, Recents, the theme toggle,
+    /// the bell and the avatar. They are `.required`, so below about this
+    /// width they were keeping their full size while the page's own *name*
+    /// truncated beside them - the finding's own "the title is the only
+    /// compressible thing in the row". Collapsing them buys back 260pt, which
+    /// is more than the title ever needed.
+    ///
+    /// 1300, the finding's own figure: above it every shortcut fits with the
+    /// title intact at its natural width, which is the common case on the
+    /// captain's own 1512pt window.
+    static let quickAccessCollapseWidth: CGFloat = 1300
+
+    /// Whether the shortcuts are currently collapsed. Tracked so
+    /// `viewDidLayout` only rebuilds on a real crossing.
+    private var quickAccessCollapsed = false
+
+    private var quickAccessWidths: [NSLayoutConstraint] = []
+    private var hostsToOverflowGap: NSLayoutConstraint!
+    private var quickAccessOverflowWidth: NSLayoutConstraint!
     /// The light/dark quick-toggle, moved here from Console's own toolbar
     /// (`fm/grandline-daylight-theme-toggle-relocate`) - it flips the whole
     /// app's theme, not just one page's, so it belongs on the app-wide bar
@@ -408,6 +439,9 @@ final class DaylightBarController: NSViewController {
 
         themeToggleButton.target = self
         themeToggleButton.action = #selector(themeToggleClicked)
+        quickAccessOverflowButton.target = self
+        quickAccessOverflowButton.action = #selector(quickAccessOverflowClicked)
+        quickAccessOverflowButton.isHidden = true
 
         for button in [stickyBoardButton, codePreviewButton, tasksButton, strawHatButton, poneglyphButton, consoleButton, hostsButton] {
             button.target = self
@@ -428,6 +462,7 @@ final class DaylightBarController: NSViewController {
         bar.addSubview(poneglyphButton)
         bar.addSubview(consoleButton)
         bar.addSubview(hostsButton)
+        bar.addSubview(quickAccessOverflowButton)
         bar.addSubview(themeToggleButton)
         bar.addSubview(notificationCenter.bell)
         bar.addSubview(avatar)
@@ -523,10 +558,12 @@ final class DaylightBarController: NSViewController {
             consoleButton.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
             consoleButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
 
-            hostsButton.trailingAnchor.constraint(equalTo: themeToggleButton.leadingAnchor, constant: -HelmMetrics.s2),
             hostsButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            hostsButton.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
             hostsButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
+
+            quickAccessOverflowButton.trailingAnchor.constraint(equalTo: themeToggleButton.leadingAnchor, constant: -HelmMetrics.s2),
+            quickAccessOverflowButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            quickAccessOverflowButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
 
             themeToggleButton.trailingAnchor.constraint(equalTo: notificationCenter.bell.leadingAnchor, constant: -HelmMetrics.s2),
             themeToggleButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
@@ -543,6 +580,22 @@ final class DaylightBarController: NSViewController {
             avatar.widthAnchor.constraint(equalToConstant: 34),
             avatar.heightAnchor.constraint(equalToConstant: 34),
         ])
+
+        // B6: the seven shortcuts' own widths and the gap they leave in front
+        // of the overflow button are the two things `setQuickAccessCollapsed`
+        // drives. Width **and** gap, because a hidden plain `NSView` keeps its
+        // constraints - gotcha (11) - so `isHidden` alone would leave 294pt of
+        // invisible demand exactly where the fix is meant to reclaim it.
+        quickAccessWidths = quickAccessButtons.map { button in
+            let width = button.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side)
+            width.isActive = true
+            return width
+        }
+        hostsToOverflowGap = hostsButton.trailingAnchor.constraint(
+            equalTo: quickAccessOverflowButton.leadingAnchor, constant: -HelmMetrics.s2)
+        hostsToOverflowGap.isActive = true
+        quickAccessOverflowWidth = quickAccessOverflowButton.widthAnchor.constraint(equalToConstant: 0)
+        quickAccessOverflowWidth.isActive = true
 
         themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
         // `ThemeManager.observe` fires synchronously at registration, which
@@ -795,6 +848,7 @@ final class DaylightBarController: NSViewController {
         chain.append(poneglyphButton)
         chain.append(consoleButton)
         chain.append(hostsButton)
+        chain.append(quickAccessOverflowButton)
         chain.append(themeToggleButton)
         chain.append(notificationCenter.bell)
         chain.append(avatar)
@@ -806,7 +860,69 @@ final class DaylightBarController: NSViewController {
     /// its own badge geometry and its own `applyTheme`.
     private var iconSquares: [DaylightBarIconButton] {
         [recentDestinations.button, stickyBoardButton, codePreviewButton,
-         tasksButton, strawHatButton, poneglyphButton, consoleButton, hostsButton, themeToggleButton]
+         tasksButton, strawHatButton, poneglyphButton, consoleButton, hostsButton,
+         quickAccessOverflowButton, themeToggleButton]
+    }
+
+    /// The seven destination shortcuts, in visual order - the row B6 collapses.
+    ///
+    /// Recents is deliberately not one: it is already a single dropdown, not a
+    /// destination shortcut, and folding one menu into another menu buys
+    /// nothing. The theme toggle and the bell are not shortcuts at all.
+    private var quickAccessButtons: [DaylightDestinationButton] {
+        [stickyBoardButton, codePreviewButton, tasksButton,
+         strawHatButton, poneglyphButton, consoleButton, hostsButton]
+    }
+
+    /// Collapse the shortcut row into `quickAccessOverflowButton`, or put it
+    /// back - review #3's B6.
+    ///
+    /// Each button is hidden **and** zero-width, and the gap in front of the
+    /// overflow button closes with them: an ordinary hidden `NSView` keeps
+    /// every constraint it had (gotcha (11)), so hiding alone would reclaim
+    /// nothing. The overflow button is the mirror image - zero-width and
+    /// hidden while the row is showing, so the expanded bar is laid out
+    /// exactly as it was before this existed.
+    private func setQuickAccessCollapsed(_ collapsed: Bool) {
+        guard collapsed != quickAccessCollapsed else { return }
+        quickAccessCollapsed = collapsed
+        for (button, width) in zip(quickAccessButtons, quickAccessWidths) {
+            button.isHidden = collapsed
+            width.constant = collapsed ? 0 : DaylightBarIconButton.side
+        }
+        quickAccessOverflowButton.isHidden = !collapsed
+        quickAccessOverflowWidth.constant = collapsed ? DaylightBarIconButton.side : 0
+        hostsToOverflowGap.constant = collapsed ? 0 : -HelmMetrics.s2
+    }
+
+    /// The collapsed row's menu - the same destinations, in the same order,
+    /// reaching the same `onSelectDestination`. A shortcut that changed what it
+    /// did depending on the window's width would be worse than no shortcut.
+    @objc private func quickAccessOverflowClicked() {
+        let menu = quickAccessMenu()
+        menu.popUp(positioning: nil,
+                   at: NSPoint(x: 0, y: quickAccessOverflowButton.bounds.height + 4),
+                   in: quickAccessOverflowButton)
+    }
+
+    private func quickAccessMenu() -> NSMenu {
+        let menu = NSMenu()
+        for button in quickAccessButtons {
+            let item = NSMenuItem(title: button.destination.title,
+                                  action: #selector(quickAccessMenuPicked(_:)),
+                                  keyEquivalent: "")
+            item.target = self
+            item.image = HelmSymbol.image(button.destination.symbol, pointSize: 13, weight: .medium)
+            item.representedObject = button.destination.rawValue
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    @objc private func quickAccessMenuPicked(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let destination = RailDestination(rawValue: raw) else { return }
+        onSelectDestination?(destination)
     }
 
     /// B2's "active": light the shortcut for the destination the captain is
@@ -980,6 +1096,12 @@ final class DaylightBarController: NSViewController {
         if abs(leadingInsetConstraint.constant - wantedInset) > 0.01 {
             leadingInsetConstraint.constant = wantedInset
         }
+        // B6: the shortcut row gives way below `quickAccessCollapseWidth`.
+        // Measured off the bar's own width rather than the window's, because
+        // the bar is what the row has to fit inside.
+        if bar.bounds.width > 0 {
+            setQuickAccessCollapsed(bar.bounds.width < Self.quickAccessCollapseWidth)
+        }
     }
 
     private func applyTheme(_ theme: HelmTheme) {
@@ -1146,6 +1268,19 @@ final class DaylightBarController: NSViewController {
     #endif
 
     func debugSearchPill() -> NSView { searchPill }
+
+    /// B6's three seams: the drill title's rendered width, the overflow button
+    /// itself, and the menu it pops - built by the same method the click uses,
+    /// so a test drives the real items rather than a copy of the list.
+    ///
+    /// GL-27: guarded, because `HelmDrillHeader.debugTitleWidth` is - a
+    /// `debug*` hook left in a production file keeps shipping, which is the
+    /// gap that phase's own sweep closed for `ConsoleController`.
+    #if FM_SELFTESTS
+    func debugDrillTitleWidth() -> CGFloat { drillNav.debugTitleWidth }
+    func debugQuickAccessOverflowButton() -> DaylightBarIconButton { quickAccessOverflowButton }
+    func debugQuickAccessOverflowMenu() -> NSMenu { quickAccessMenu() }
+    #endif
 
     /// Re-themes this instance directly, bypassing `ThemeManager.setTheme` -
     /// which persists to the real `UserDefaults` domain this process shares

@@ -360,9 +360,27 @@ enum CanvasListsControlsSelfTest {
 
     /// The finding: "big pages open onto beige silence ... add the
     /// destination's own artwork (the base64 icons already exist)".
+    /// **This used to assert the watermark image was the destination's raster
+    /// itself, and review #3's B4 overturns exactly that half.** Every one of
+    /// this app's ~20 destination icons is a fully opaque 128x128 app-icon
+    /// square (measured - none has a transparent corner to mask by), so at
+    /// D4's 26% a "watermark" was a grey rectangle sitting behind the copy
+    /// rather than a silhouette of anything. A slab is swapped for the
+    /// destination's own SF Symbol.
+    ///
+    /// What D4 was actually about - the empty state carries its destination's
+    /// identity, quietly, as decoration rather than as an announced element -
+    /// is unchanged and still asserted. Only "identity means this raster" is
+    /// inverted, and the cut-out case below is what keeps the narrowing
+    /// honest: an artwork that genuinely has transparency is still used.
     private static func test_d4EmptyStateArtwork() -> String? {
         guard let art = RailDestination.kubernetes.drillHeaderArtwork else {
             return "the Kubernetes destination has no artwork to put on its empty state"
+        }
+        // Vacuity guard: this case only says anything while the artwork it is
+        // handed really is the opaque-slab shape B4 is about.
+        guard HelmEmptyState.artworkIsOpaqueSlab(art) else {
+            return "the Kubernetes artwork is no longer an opaque slab, so the B4 branch is untested here"
         }
         let state = HelmEmptyState(symbol: "bolt.horizontal.circle", title: "No live host session",
                                    body: "Connect a host first.", size: .standard, artwork: art)
@@ -370,9 +388,16 @@ enum CanvasListsControlsSelfTest {
         defer { window.orderOut(nil) }
         state.layoutSubtreeIfNeeded()
 
+        guard let drawn = state.debugWatermarkImage else {
+            return "the empty state is showing no watermark at all - D4's identity mark is gone"
+        }
+        if drawn === art {
+            return "the watermark is the raster tile itself - at 26% that is a grey rectangle behind the "
+                 + "copy, not a silhouette (review #3's B4)"
+        }
         let images = state.subviews.compactMap { $0 as? NSImageView }
-        guard let watermark = images.first(where: { $0.image === art }) else {
-            return "the empty state is not showing its destination's artwork"
+        guard let watermark = images.first(where: { $0.image === drawn }) else {
+            return "the watermark image is not in the empty state's own view tree"
         }
         if watermark.alphaValue > 0.35 || watermark.alphaValue < 0.15 {
             return "the watermark is at \(watermark.alphaValue) - the finding's band is 25-30%, and above "
@@ -381,6 +406,27 @@ enum CanvasListsControlsSelfTest {
         if watermark.isAccessibilityElement() {
             return "the watermark announces itself; it is decoration, and the copy beside it already says "
                  + "everything it says"
+        }
+
+        // The other direction: a mark that genuinely is cut out keeps today's
+        // behaviour byte-for-byte. Without this, "never draw the artwork"
+        // would pass just as happily as "never draw a slab".
+        let cutOut = NSImage(size: NSSize(width: 64, height: 64))
+        cutOut.lockFocus()
+        NSColor.black.setFill()
+        NSBezierPath(ovalIn: NSRect(x: 8, y: 8, width: 48, height: 48)).fill()
+        cutOut.unlockFocus()
+        guard !HelmEmptyState.artworkIsOpaqueSlab(cutOut) else {
+            return "the fixture's cut-out mark reads as an opaque slab, so the other direction is untested"
+        }
+        let cutOutState = HelmEmptyState(symbol: "bolt.horizontal.circle", title: "No live host session",
+                                         body: "Connect a host first.", size: .standard, artwork: cutOut)
+        let cutOutWindow = makeWindow(cutOutState, size: NSSize(width: 700, height: 420))
+        defer { cutOutWindow.orderOut(nil) }
+        cutOutState.layoutSubtreeIfNeeded()
+        guard cutOutState.debugWatermarkImage === cutOut else {
+            return "a genuinely cut-out mark is no longer drawn - B4 narrows the slab case, it does not "
+                 + "remove the watermark"
         }
         return nil
     }

@@ -559,7 +559,16 @@ final class HelmModuleCard: NSView {
         label.font = HelmType.caption()
         label.isSelectable = false
         label.maximumNumberOfLines = max(1, maxLines)
-        label.lineBreakMode = .byTruncatingTail
+        // **`.byWordWrapping`, not `.byTruncatingTail`** - the other half of
+        // review #3's B7, and the half no wrap width could have fixed.
+        // `.byTruncatingTail` *is* the single-line mode: it tells the cell to
+        // lay the whole string out on one line and put an ellipsis at the end,
+        // so `maximumNumberOfLines = 2` had nothing to count. Measured on a
+        // real 300pt card, a 97-character note still rendered one line and
+        // used 15pt of a 101pt body. With wrapping on, `maximumNumberOfLines`
+        // is what bounds it and AppKit ellipsises the *last* line, which is
+        // the behaviour the property was set for.
+        label.lineBreakMode = .byWordWrapping
         label.translatesAutoresizingMaskIntoConstraints = false
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         noteLabels.append(label)
@@ -860,8 +869,40 @@ final class HelmModuleCard: NSView {
         // Always instant here - a window resize must not slide the ribbon
         // behind the card's own relayout.
         applyRibbonGeometry(animated: false)
-        for label in noteLabels { label.preferredMaxLayoutWidth = bodyContainer.bounds.width }
+        applyNoteWrapWidth()
         applyShadow(ThemeManager.shared.theme, raised: isHovering)
+    }
+
+    /// Give every wrapping note label the width it will really be laid out at.
+    ///
+    /// **Derived from this view's own `bounds`, never from `bodyContainer`'s** -
+    /// review #3's B7. A view's `layout()` runs *before* its descendants get
+    /// their frames, so reading `bodyContainer.bounds.width` there returns 0 on
+    /// the first pass; a `preferredMaxLayoutWidth` of 0 means "no wrap width",
+    /// the label takes its single-line intrinsic height, and nothing marks this
+    /// card dirty again afterwards (`layoutSubtreeIfNeeded` only descends into
+    /// views already flagged `needsLayout`). Measured on a real 300pt card: the
+    /// wrap width stayed 0, every note rendered as **one truncated line**, and
+    /// the body used 15pt of its 101pt area - which is the ~90pt of empty card
+    /// under a cut-off sentence the finding describes, on every Tools plate and
+    /// every Daylight-family canvas card.
+    ///
+    /// This view's own width *is* known when its `layout()` runs (its parent
+    /// set the frame), and the body's width is a fixed inset off it - the same
+    /// "re-derive from a geometry you already have" shape
+    /// `HealthCardView.layoutDidChange` and `SettingsController
+    /// .layoutDidChangeWidths` use.
+    ///
+    /// Only assigned on a real change: `preferredMaxLayoutWidth` invalidates
+    /// the label's intrinsic size, which schedules another pass, and writing
+    /// the same value every pass would keep scheduling them.
+    private func applyNoteWrapWidth() {
+        let available = bounds.width - Self.horizontalInset * 2
+        guard available > 0 else { return }
+        for label in noteLabels where abs(label.preferredMaxLayoutWidth - available) > 0.5 {
+            label.preferredMaxLayoutWidth = available
+            label.invalidateIntrinsicContentSize()
+        }
     }
 
     private func applyShadow(_ theme: HelmTheme, raised: Bool) {
@@ -951,6 +992,17 @@ final class HelmModuleCard: NSView {
         /// tell a loading state from real content without exposing the body
         /// enum itself.
         let noteTexts: [String]
+        /// How many lines each note label **actually renders**, at the width
+        /// it actually has.
+        ///
+        /// Review #3's B7: the note label was `.byTruncatingTail`, which *is*
+        /// the single-line mode - it lays the whole string out on one line and
+        /// ellipsises it - so `maximumNumberOfLines` had nothing to count and
+        /// a long description rendered one line inside a body sized for
+        /// several. Nothing derived from `maximumNumberOfLines`, from
+        /// `fittingSize` or from the body's height can see that; only the real
+        /// line count can.
+        let noteRenderedLineCounts: [Int]
         /// Every big-number / metric-styled line the body rendered.
         let metricTexts: [String]
         /// The height the card actually resolved to - `standardHeight` in
@@ -977,6 +1029,37 @@ final class HelmModuleCard: NSView {
         applyHoverState(animated: false)
     }
 
+    /// Lay `label`'s own attributed string out in a container of its own real
+    /// width and count the line fragments.
+    ///
+    /// Deliberately mirrors the label's `lineBreakMode` and
+    /// `maximumNumberOfLines` rather than assuming either: the whole point is
+    /// that a `.byTruncatingTail` label answers 1 here however many lines its
+    /// maximum allows.
+    private static func renderedLineCount(of label: NSTextField) -> Int {
+        let width = label.bounds.width
+        guard width > 0 else { return 0 }
+        let storage = NSTextStorage(attributedString: label.attributedStringValue)
+        let container = NSTextContainer(size: NSSize(width: width, height: .greatestFiniteMagnitude))
+        container.lineFragmentPadding = 0
+        container.lineBreakMode = label.lineBreakMode
+        container.maximumNumberOfLines = label.maximumNumberOfLines
+        let manager = NSLayoutManager()
+        manager.addTextContainer(container)
+        storage.addLayoutManager(manager)
+        manager.ensureLayout(for: container)
+        var lines = 0
+        var glyph = 0
+        while glyph < manager.numberOfGlyphs {
+            var effective = NSRange()
+            _ = manager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: &effective)
+            guard effective.length > 0 else { break }
+            glyph = NSMaxRange(effective)
+            lines += 1
+        }
+        return lines
+    }
+
     var anatomyForTests: Anatomy {
         Anatomy(hasRibbon: ribbon.superlayer != nil,
                 ribbonHeight: Self.ribbonHeight,
@@ -994,6 +1077,7 @@ final class HelmModuleCard: NSView {
                 accessibilityLabel: card.accessibilityLabelOverride,
                 peekRowCount: peekTextLabels.count,
                 noteTexts: noteLabels.map(\.stringValue),
+                noteRenderedLineCounts: noteLabels.map(Self.renderedLineCount(of:)),
                 metricTexts: metricLabels.map(\.stringValue),
                 cardHeight: frame.height,
                 bodyAreaHeight: bodyContainer.frame.height,
