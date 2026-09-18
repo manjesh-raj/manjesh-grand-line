@@ -67,6 +67,10 @@ extension ConsoleController {
         container.applyTheme(theme)
         let pane = makePane(terminal: tab.terminal, in: tab)
         tab.primaryPane = pane
+        // B13: the container refuses to close this one - see
+        // `TerminalSplit.closePane`. Told here rather than looked up, because
+        // `TerminalSplitContainer` has no reference back to its `TabModel`.
+        tab.splits.primaryPane = pane
         container.adoptPrimary(pane)
     }
 

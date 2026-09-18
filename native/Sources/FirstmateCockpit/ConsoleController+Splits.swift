@@ -111,6 +111,17 @@ extension ConsoleController {
     /// into "close this whole session" would be the worst possible surprise.
     func closeFocusedPane() {
         guard let tab = currentTab, let pane = tab.splits.focusedPane else { return }
+        // B13: the primary pane wraps the tab's own session, which ~50
+        // tab-scoped consumers read through `TabModel.terminal` - so closing
+        // it is refused rather than silently killing that session out from
+        // under them (`TerminalSplit.closePane` carries the full reasoning).
+        // Said out loud in the pane itself: a chord that appears to do nothing
+        // is its own bug, and this is the one case where "close pane" has an
+        // answer other than closing one.
+        if pane === tab.primaryPane, tab.splits.panes.count > 1 {
+            pane.terminal.feed(text: "\r\n  \u{1b}[2m[this is the tab's own session - close the tab with \u{2318}W, or close one of its split panes]\u{1b}[0m\r\n")
+            return
+        }
         guard tab.splits.closePane(pane) else { return }
         if let next = tab.splits.focusedPane { focusPane(next, in: tab) }
     }

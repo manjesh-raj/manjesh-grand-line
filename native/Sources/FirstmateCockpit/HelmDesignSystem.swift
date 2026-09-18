@@ -2993,6 +2993,44 @@ final class HelmEmptyState: NSView {
     static let watermarkOpacity: CGFloat = 0.26
     static let watermarkSide: CGFloat = 116
 
+    /// Whether the watermark is drawing the destination's SF Symbol rather
+    /// than the raster it was handed - see `artworkIsOpaqueSlab`.
+    private var watermarkUsesSymbol = false
+
+    /// Is this image a solid rectangle rather than a silhouette?
+    ///
+    /// **Review #3's B4, and the measurement that decides the fix.** D4's
+    /// watermark was designed when the only artwork in the app was one flag,
+    /// and it draws whatever it is handed at 26% behind the copy. #363/#365
+    /// then added ~19 raster *app-icon squares*, every one of them fully
+    /// opaque edge to edge - measured, all four corners at alpha 1.0 on
+    /// Kubernetes, Whiteboard, Code Preview, Docs and the Jolly Roger alike -
+    /// so at 26% the whole tile reads as a grey slab sitting behind the title
+    /// and the first lines of body copy, not as a faint identity mark.
+    ///
+    /// Masking to a silhouette is not available: these images have no alpha to
+    /// mask by. So a slab is swapped for the destination's own SF Symbol,
+    /// which is a genuine silhouette and is the same identity by another
+    /// drawing - the finding's own first suggestion. A future artwork that
+    /// really is cut out (transparent corners) keeps today's behaviour
+    /// byte-for-byte.
+    ///
+    /// Corner sampling rather than a full alpha scan: it is the cheap question
+    /// that separates "a rounded icon tile" from "a cut-out mark", and it runs
+    /// once per empty state.
+    static func artworkIsOpaqueSlab(_ image: NSImage) -> Bool {
+        guard let tiff = image.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff),
+              rep.pixelsWide > 1, rep.pixelsHigh > 1 else { return false }
+        let w = rep.pixelsWide - 1, h = rep.pixelsHigh - 1
+        for (x, y) in [(0, 0), (w, 0), (0, h), (w, h)] {
+            guard let alpha = rep.colorAt(x: x, y: y)?.alphaComponent, alpha > 0.95 else {
+                return false
+            }
+        }
+        return true
+    }
+
     /// D4's entrance: "a 250ms fade+rise on first appearance".
     static let entranceDuration: TimeInterval = 0.25
     static let entranceRise: CGFloat = 8
@@ -3087,7 +3125,11 @@ final class HelmEmptyState: NSView {
         // rather than as content - `watermarkOpacity` is the finding's own
         // 25-30% band.
         if let artwork {
-            watermark.image = artwork
+            // B4: a raster that is really a solid tile is swapped for the
+            // destination's own glyph; `applyTheme` is what renders and tints
+            // it, since a symbol has to follow the theme and a raster must not.
+            watermarkUsesSymbol = Self.artworkIsOpaqueSlab(artwork)
+            if !watermarkUsesSymbol { watermark.image = artwork }
             watermark.imageScaling = .scaleProportionallyUpOrDown
             watermark.alphaValue = Self.watermarkOpacity
             watermark.translatesAutoresizingMaskIntoConstraints = false
@@ -3201,6 +3243,18 @@ final class HelmEmptyState: NSView {
         // ever visible.
         tile.isHidden = !theme.isDaylight
         iconView.isHidden = theme.isDaylight
+        if watermarkUsesSymbol {
+            // The same glyph the tile shows, drawn large and faint. Tinted
+            // `mutedInk` rather than left at a template's default so it reads
+            // as a watermark in both registers, and re-derived here so it
+            // follows a theme change like every other colour on this view.
+            watermark.contentTintColor = muted
+            watermark.image = HelmSymbol.image(symbolName,
+                                               pointSize: Self.watermarkSide,
+                                               weight: .regular,
+                                               hierarchicalColor: muted,
+                                               accessibilityDescription: nil)
+        }
         tile.applyTheme(theme)
         if theme.isDaylight {
             titleLabel.font = HelmType.rounded(HelmType.scaled(15), .heavy)

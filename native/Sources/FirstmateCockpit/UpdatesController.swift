@@ -384,9 +384,27 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         let message = updateCount > 0
             ? "Checked \(rows.count) tools, \(updateCount) update\(updateCount == 1 ? "" : "s") available"
             : "Checked \(rows.count) tools - all up to date"
-        if let container = view.window?.contentView {
-            Toast.show(in: container, message: message)
-        }
+        showToastIfOnScreen(message)
+    }
+
+    /// A toast, but only while this page is the one being looked at.
+    ///
+    /// Review #3's B8. A toast is presented on `window.contentView`, so it
+    /// floats over the *window* rather than over the page that raised it - and
+    /// this page's sweep is slow (13 real `brew`/`npm` checks), so a captain
+    /// who starts one and navigates on gets "Checked 13 tools, 2 updates
+    /// available" landing on Automation or GitHub Sync, pages that did no such
+    /// thing. Every destination stays mounted and is only hidden (GL-37), so
+    /// `!view.isHidden` is the exact question "is this page on screen".
+    ///
+    /// Nothing is lost by staying quiet: `renderStats` publishes the same
+    /// count to `BackgroundSignalsPoller`, which is what puts it in the
+    /// notification centre and on the Engineering hub card - GL-30's own rule
+    /// that a result still true after a toast would have faded belongs there
+    /// rather than in a pill on somebody else's page.
+    private func showToastIfOnScreen(_ message: String) {
+        guard !view.isHidden, let container = view.window?.contentView else { return }
+        Toast.show(in: container, message: message)
     }
 
     // MARK: Stats strip
@@ -803,9 +821,10 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
 
     private func showSuccess(row: UpdateRow, outcome: UpdateOutcome) {
         let message = "\(row.item.name) updated to \(outcome.newVersionLabel ?? "latest")"
-        if let container = view.window?.contentView {
-            Toast.show(in: container, message: message)
-        }
+        // B8: same gate. An update is slower than a check, so this is the more
+        // likely of the two to land on a page the captain has moved on to -
+        // and the `notify` below is the off-screen half either way.
+        showToastIfOnScreen(message)
         notify(title: "\(row.item.name) updated", body: message)
     }
 

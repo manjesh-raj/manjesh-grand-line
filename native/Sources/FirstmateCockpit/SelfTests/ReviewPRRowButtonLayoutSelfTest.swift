@@ -113,9 +113,10 @@ enum ReviewPRRowButtonLayoutSelfTest {
             actionTarget: target,
             reviewAction: #selector(DummyTarget.noop(_:)),
             mergeAction: #selector(DummyTarget.noop(_:)),
-            checksVisuals: { checks in
-                switch checks {
-                case "green": return (.good, "Ready to merge")
+            checksVisuals: { pr in
+                switch pr.checks {
+                case "green":
+                    return (.good, FleetDataSource.canMerge(pr) ? "Ready to merge" : "Checks green")
                 case "red": return (.critical, "Checks failing")
                 case "pending": return (.warn, "Checks running")
                 default: return (.neutral, "No checks")

@@ -151,13 +151,13 @@ private final class ReviewPRRowCellView: NSView {
     /// (`pr.checks == "green"`, #226's fix) and actually mergeable through
     /// this action (`pr.taskID != nil`) - never revert this back to
     /// `pr.source == "work"` alone.
-    func configure(pr: MergedPR, checksVisuals: (String) -> (tint: HelmTint, chipLabel: String),
+    func configure(pr: MergedPR, checksVisuals: (MergedPR) -> (tint: HelmTint, chipLabel: String),
                    theme: HelmTheme, actionReveal: HelmAccentRow.ActionReveal) {
         // D1: fifty rows each shouting a bordered "Review" button is what the
         // audit measured. The row's own state stays visible (the signal dot
         // and the checks chip); the buttons go quiet until aimed at.
         accentRow.actionReveal = actionReveal
-        let visuals = checksVisuals(pr.checks)
+        let visuals = checksVisuals(pr)
 
         var kickerParts: [String] = []
         if !pr.repo.isEmpty { kickerParts.append(pr.repo) }
@@ -238,7 +238,7 @@ final class ReviewPRListView: NSView {
     private var theme: HelmTheme = ThemeManager.shared.theme
     private let emptyTitle: String
     private let emptyBody: String
-    private let checksVisuals: (String) -> (tint: HelmTint, chipLabel: String)
+    private let checksVisuals: (MergedPR) -> (tint: HelmTint, chipLabel: String)
     private weak var actionTarget: AnyObject?
     private let reviewAction: Selector
     private let mergeAction: Selector
@@ -260,7 +260,7 @@ final class ReviewPRListView: NSView {
 
     init(emptyTitle: String, emptyBody: String,
          actionTarget: AnyObject, reviewAction: Selector, mergeAction: Selector,
-         checksVisuals: @escaping (String) -> (tint: HelmTint, chipLabel: String)) {
+         checksVisuals: @escaping (MergedPR) -> (tint: HelmTint, chipLabel: String)) {
         self.emptyTitle = emptyTitle
         self.emptyBody = emptyBody
         self.actionTarget = actionTarget

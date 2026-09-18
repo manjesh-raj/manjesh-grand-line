@@ -559,7 +559,16 @@ final class HelmModuleCard: NSView {
         label.font = HelmType.caption()
         label.isSelectable = false
         label.maximumNumberOfLines = max(1, maxLines)
-        label.lineBreakMode = .byTruncatingTail
+        // **`.byWordWrapping`, not `.byTruncatingTail`** - the other half of
+        // review #3's B7, and the half no wrap width could have fixed.
+        // `.byTruncatingTail` *is* the single-line mode: it tells the cell to
+        // lay the whole string out on one line and put an ellipsis at the end,
+        // so `maximumNumberOfLines = 2` had nothing to count. Measured on a
+        // real 300pt card, a 97-character note still rendered one line and
+        // used 15pt of a 101pt body. With wrapping on, `maximumNumberOfLines`
+        // is what bounds it and AppKit ellipsises the *last* line, which is
+        // the behaviour the property was set for.
+        label.lineBreakMode = .byWordWrapping
         label.translatesAutoresizingMaskIntoConstraints = false
         label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         noteLabels.append(label)
@@ -860,8 +869,40 @@ final class HelmModuleCard: NSView {
         // Always instant here - a window resize must not slide the ribbon
         // behind the card's own relayout.
         applyRibbonGeometry(animated: false)
-        for label in noteLabels { label.preferredMaxLayoutWidth = bodyContainer.bounds.width }
+        applyNoteWrapWidth()
         applyShadow(ThemeManager.shared.theme, raised: isHovering)
+    }
+
+    /// Give every wrapping note label the width it will really be laid out at.
+    ///
+    /// **Derived from this view's own `bounds`, never from `bodyContainer`'s** -
+    /// review #3's B7. A view's `layout()` runs *before* its descendants get
+    /// their frames, so reading `bodyContainer.bounds.width` there returns 0 on
+    /// the first pass; a `preferredMaxLayoutWidth` of 0 means "no wrap width",
+    /// the label takes its single-line intrinsic height, and nothing marks this
+    /// card dirty again afterwards (`layoutSubtreeIfNeeded` only descends into
+    /// views already flagged `needsLayout`). Measured on a real 300pt card: the
+    /// wrap width stayed 0, every note rendered as **one truncated line**, and
+    /// the body used 15pt of its 101pt area - which is the ~90pt of empty card
+    /// under a cut-off sentence the finding describes, on every Tools plate and
+    /// every Daylight-family canvas card.
+    ///
+    /// This view's own width *is* known when its `layout()` runs (its parent
+    /// set the frame), and the body's width is a fixed inset off it - the same
+    /// "re-derive from a geometry you already have" shape
+    /// `HealthCardView.layoutDidChange` and `SettingsController
+    /// .layoutDidChangeWidths` use.
+    ///
+    /// Only assigned on a real change: `preferredMaxLayoutWidth` invalidates
+    /// the label's intrinsic size, which schedules another pass, and writing
+    /// the same value every pass would keep scheduling them.
+    private func applyNoteWrapWidth() {
+        let available = bounds.width - Self.horizontalInset * 2
+        guard available > 0 else { return }
+        for label in noteLabels where abs(label.preferredMaxLayoutWidth - available) > 0.5 {
+            label.preferredMaxLayoutWidth = available
+            label.invalidateIntrinsicContentSize()
+        }
     }
 
     private func applyShadow(_ theme: HelmTheme, raised: Bool) {
@@ -1004,6 +1045,9 @@ final class HelmModuleCard: NSView {
     /// VoiceOver press would.
     @discardableResult
     func debugActivate() -> Bool { card.performPrimaryAction() }
+    // AUDIT3-PROBE
+    var debugNoteLabels: [NSTextField] { noteLabels }
+    var debugBodyContainerWidth: CGFloat { bodyContainer.bounds.width }
 }
 
 // MARK: - Priorities
