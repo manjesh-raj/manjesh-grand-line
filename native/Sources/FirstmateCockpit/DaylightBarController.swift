@@ -1272,9 +1272,15 @@ final class DaylightBarController: NSViewController {
     /// B6's three seams: the drill title's rendered width, the overflow button
     /// itself, and the menu it pops - built by the same method the click uses,
     /// so a test drives the real items rather than a copy of the list.
+    ///
+    /// GL-27: guarded, because `HelmDrillHeader.debugTitleWidth` is - a
+    /// `debug*` hook left in a production file keeps shipping, which is the
+    /// gap that phase's own sweep closed for `ConsoleController`.
+    #if FM_SELFTESTS
     func debugDrillTitleWidth() -> CGFloat { drillNav.debugTitleWidth }
     func debugQuickAccessOverflowButton() -> DaylightBarIconButton { quickAccessOverflowButton }
     func debugQuickAccessOverflowMenu() -> NSMenu { quickAccessMenu() }
+    #endif
 
     /// Re-themes this instance directly, bypassing `ThemeManager.setTheme` -
     /// which persists to the real `UserDefaults` domain this process shares
