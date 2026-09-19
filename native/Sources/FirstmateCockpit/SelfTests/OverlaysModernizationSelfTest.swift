@@ -55,6 +55,7 @@ enum OverlaysModernizationSelfTest {
                       checkPaletteFooterStrip,
                       checkMenuSymbolsAreTemplates,
                       checkDictationWaveform,
+                      checkDictationHUDIsASystemMaterial,
                       checkLockScreenSeaAndField] {
             var ok = true
             check(&ok)
@@ -303,6 +304,92 @@ enum OverlaysModernizationSelfTest {
 
         if problems.isEmpty {
             print("  OK   animates, stops, and holds still under Reduce Motion")
+        } else {
+            for p in problems { print("  FAIL \(p)") }
+            ok = false
+        }
+    }
+
+    // MARK: 5b. Review #3 §7 - the HUD reads as a system overlay, not as a card
+
+    /// The dictation HUD is a real system-HUD material, not a flat dark fill.
+    ///
+    /// The HUD is deliberately the one fixed-look surface in the app, and that
+    /// was fine while the app itself was light. Dusk is the default now, and a
+    /// flat `calibratedWhite: 0.08` pill sits within a few percent of Dusk's
+    /// own card and page surfaces - so the one overlay whose whole job is to
+    /// say "this is the system, not Grand Line" rendered in Grand Line's own
+    /// tones.
+    ///
+    /// What separates macOS's own volume/brightness HUD from an app's chrome
+    /// is translucency over whatever is genuinely behind it, which no flat
+    /// colour can imitate. So the assertions are about the mechanism that
+    /// produces that - the material, the blending mode, the state and the
+    /// pinned appearance - rather than about a sampled pixel, which in an
+    /// off-screen probe with nothing behind the panel would tell us nothing
+    /// about the property that matters.
+    ///
+    /// **Discriminating power first**: the pill only exists once a real state
+    /// has built the panel, so this asserts it is there before asserting
+    /// anything about it.
+    private static func checkDictationHUDIsASystemMaterial(_ ok: inout Bool) {
+        print("\n-- §7: the dictation HUD reads as a system overlay under any theme --")
+        let hud = DictationHUDController()
+        var problems: [String] = []
+
+        hud.handle(.recording)
+        guard let pill = hud.debugPill else {
+            print("  FAIL the HUD built no pill at all")
+            ok = false
+            return
+        }
+        guard let effect = pill as? NSVisualEffectView else {
+            problems.append("the pill is a \(type(of: pill)), not an NSVisualEffectView - a flat fill cannot read as a system HUD")
+            for p in problems { print("  FAIL \(p)") }
+            ok = false
+            hud.handle(.ready)
+            return
+        }
+        if effect.material != .hudWindow {
+            problems.append("material is \(effect.material.rawValue), expected .hudWindow")
+        }
+        if effect.blendingMode != .behindWindow {
+            problems.append("blending is \(effect.blendingMode.rawValue) - only .behindWindow composites against the app underneath")
+        }
+        if effect.state != .active {
+            problems.append("state is \(effect.state.rawValue) - a nonactivating panel never becomes key, so .followsWindowActiveState leaves the material inactive")
+        }
+        if effect.appearance?.name != .vibrantDark {
+            problems.append("appearance is \(effect.appearance?.name.rawValue ?? "nil"), expected vibrantDark so the HUD looks the same on a Light OS")
+        }
+        // The capsule has to clip the material, or it draws square corners
+        // behind the rounded border.
+        if effect.layer?.masksToBounds != true {
+            problems.append("the material is not clipped to the capsule")
+        }
+        if (effect.layer?.cornerRadius ?? 0) <= 0 {
+            problems.append("no corner radius on the pill")
+        }
+        // And it is still not theme-aware: nothing in this file reaches
+        // `ThemeManager`, which is what keeps the HUD identical over every
+        // app the captain dictates into.
+        if let dir = SelfTestSources.appSourceDirectory(),
+           let raw = try? String(contentsOf: dir.appendingPathComponent("DictationHUD.swift"), encoding: .utf8) {
+            let code = raw.split(separator: "\n", omittingEmptySubsequences: false)
+                .map { line -> Substring in
+                    guard let slashes = line.range(of: "//") else { return line }
+                    return line[line.startIndex..<slashes.lowerBound]
+                }.joined(separator: "\n")
+            if code.contains("ThemeManager") {
+                problems.append("the HUD must not follow the app's theme - it floats over other apps")
+            }
+        } else {
+            problems.append("could not read DictationHUD.swift - this half of the check silently passes otherwise")
+        }
+        hud.handle(.ready)
+
+        if problems.isEmpty {
+            print("  OK   .hudWindow material, behind-window blending, active, vibrantDark, clipped, theme-free")
         } else {
             for p in problems { print("  FAIL \(p)") }
             ok = false

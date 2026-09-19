@@ -55,10 +55,36 @@
 // Deliberately NOT theme-aware (unlike almost everything else in this app -
 // see `ThemeManager.swift`'s own checklist): this HUD floats over arbitrary
 // other apps' windows, not over Grand Line's own chrome, so a fixed
-// dark/translucent "system HUD" look (matching Control Center's own on-
-// screen indicators) reads correctly against any background regardless of
+// "system HUD" look reads correctly against any background regardless of
 // which Helm theme Grand Line itself is currently using - there is no
 // "background" of this app's own for it to blend with.
+//
+// ## Review #3 §7: a flat dark fill is not what makes a HUD read as one
+//
+// The premise above is still right; the *execution* stopped working when
+// Dusk became the app's default theme. The pill was a flat
+// `NSColor(calibratedWhite: 0.08, alpha: 0.92)` layer fill, which is within
+// a few percent of Dusk's own card and page surfaces - so a HUD whose whole
+// job is to say "this is the system talking, not the app" rendered in the
+// app's own tones and read as one more Grand Line card that happened to be
+// floating.
+//
+// What actually separates macOS's own volume/brightness HUD from an app's
+// chrome is not its darkness, it is that it is **translucent over whatever
+// is genuinely behind it**: an `NSVisualEffectView` with the `.hudWindow`
+// material and `.behindWindow` blending, so the desktop, the browser or the
+// editor underneath shows through, live, and moves when they do. No flat
+// fill can imitate that, because the thing that makes it read as an overlay
+// is precisely that it is not a solid colour. So `ensurePanel` builds the
+// pill as that view instead, pinned to `.vibrantDark` so the material's own
+// light/dark choice is this HUD's and not the OS appearance setting's.
+//
+// **This is the one legitimate `.behindWindow` case in this app**, and it is
+// the exact inverse of AGENTS.md gotcha (8): that trap is a full-size
+// destination or window root using `.behindWindow` and compositing against
+// the *desktop* when it meant to blend with its own window. Here the desktop
+// (and whatever app is over it) is genuinely what is behind this borderless,
+// clear-backgrounded panel, and compositing against it is the whole point.
 import AppKit
 
 enum DictationHUDVisualState: Equatable {
@@ -298,12 +324,32 @@ final class DictationHUDController {
         let content = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
         content.wantsLayer = true
 
-        let pillView = NSView()
+        // Review #3 §7 - see this file's header. A real system HUD material
+        // rather than a flat dark fill, so the HUD is translucent over
+        // whatever app the captain is dictating into instead of matching
+        // Dusk's own surfaces.
+        let pillView = NSVisualEffectView()
+        pillView.material = .hudWindow
+        pillView.blendingMode = .behindWindow
+        // `.active` rather than `.followsWindowActiveState`: this panel is a
+        // `.nonactivatingPanel` that must never become key, so the
+        // window-state default would leave the material permanently inactive
+        // (i.e. a flat fill again, which is the defect).
+        pillView.state = .active
+        // The material picks light or dark from the effective appearance, and
+        // this HUD's identity is fixed - a captain on an OS set to Light must
+        // still get the dark system-HUD look, exactly as Apple's own does.
+        pillView.appearance = NSAppearance(named: .vibrantDark)
         pillView.wantsLayer = true
         pillView.layer?.cornerRadius = height / 2
-        pillView.layer?.backgroundColor = NSColor(calibratedWhite: 0.08, alpha: 0.92).cgColor
+        // Without this the material draws square corners behind the rounded
+        // border, which reads as a rectangle with a ring painted on it.
+        pillView.layer?.masksToBounds = true
+        // Kept, and brighter than before: the hairline is what gives the
+        // capsule an edge against a light document underneath, where the
+        // material alone is nearly the same value as the page.
         pillView.layer?.borderWidth = 1
-        pillView.layer?.borderColor = NSColor(calibratedWhite: 1, alpha: 0.12).cgColor
+        pillView.layer?.borderColor = NSColor(calibratedWhite: 1, alpha: 0.22).cgColor
         pillView.translatesAutoresizingMaskIntoConstraints = false
         self.pill = pillView
 
@@ -462,5 +508,10 @@ final class DictationHUDController {
         variableTimer != nil || iconView.layer?.animation(forKey: Self.pulseAnimationKey) != nil
     }
     var debugUsesVariableColor: Bool { variableTimer != nil }
+
+    /// Review #3 §7: the pill, so a test can assert it is a real system-HUD
+    /// material rather than a flat fill in the app's own tones. Building the
+    /// panel is what creates it, so a caller must have driven a state first.
+    var debugPill: NSView? { pill }
     #endif
 }
