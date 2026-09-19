@@ -105,6 +105,24 @@ final class CredentialVaultStore {
     private var vaultKey: CredentialVaultKey?
     private var file: CredentialVaultFile?
 
+    /// The decrypted credentials as of the last successful load or write -
+    /// i.e. what this machine believes is *also* on disk right now.
+    ///
+    /// Full review #3's **S2**. `credentials` is what the captain has in
+    /// front of them and `file` is the sealed snapshot it came from, but
+    /// neither answers the question a write actually has to ask: "of the
+    /// differences between memory and disk, which are *mine*?" Without a
+    /// third, pristine copy there is no way to tell a credential this machine
+    /// deleted from one another machine added, so the only available
+    /// behaviours were "always overwrite" (the bug) or "always reload" (which
+    /// would throw away the captain's own edit instead). See
+    /// `adoptOnDiskChangesIfNeeded`.
+    private var baseline: [VaultCredential] = []
+
+    /// S2: a scheduled flush of audit-only state (reveal/copy timestamps).
+    /// Nil when nothing is pending. See `recordUse`.
+    private var pendingAuditFlush: DispatchWorkItem?
+
     private(set) var credentials: [VaultCredential] = []
     private(set) var auditLog: [VaultAuditEvent] = []
     private(set) var settings: VaultSettings = .default
@@ -358,6 +376,7 @@ final class CredentialVaultStore {
             vaultKey = key
             file = newFile
             credentials = []
+            baseline = []
             auditLog = []
             settings = .default
             failedAttempts = 0
@@ -532,6 +551,10 @@ final class CredentialVaultStore {
                 vaultKey = key
                 file = onDisk
                 credentials = items
+                // S2: memory and disk agree at this instant, which is what
+                // makes this the reference point every later write's merge is
+                // measured against.
+                baseline = items
                 auditLog = log
                 settings = loadedSettings
                 failedAttempts = 0
@@ -572,11 +595,18 @@ final class CredentialVaultStore {
     /// idle", "manual").
     func lock(reason: String) {
         guard isUnlocked else { return }
+        // S2: any reveal/copy timestamps still waiting on the debounce are
+        // written here rather than dropped. They ride the same `persist` the
+        // lock record does, so batching costs the audit trail nothing - a
+        // lock is the one event guaranteed to follow every use.
+        pendingAuditFlush?.cancel()
+        pendingAuditFlush = nil
         append(.init(kind: .locked, detail: reason))
         persistAuditOnly("lock record")
         vaultKey = nil
         file = nil
         credentials = []
+        baseline = []
         auditLog = []
         settings = .default
         // M1: run the guarded clear rather than abandoning it.
@@ -743,9 +773,56 @@ final class CredentialVaultStore {
         guard isUnlocked, let index = credentials.firstIndex(where: { $0.id == id }) else { return }
         credentials[index].lastUsedAt = Date()
         append(.init(kind: kind, itemID: id, itemTitle: credentials[index].title))
-        // Persisted like any other change: an audit trail that only survived
-        // while the window stayed open would not be one.
-        _ = finishWrite(returning: ())
+        // S2: **not** `finishWrite`. Looking at a credential is not a change
+        // to it, and treating it as one cost two things that both matter:
+        //
+        //  - Every reveal and every copy rewrote and re-sealed the entire
+        //    file and then told the git sync to commit and push. The commit
+        //    timestamps on the git host therefore recorded *when the captain
+        //    looked at a credential* - metadata the vault's whole design goes
+        //    out of its way not to leak, published to a remote.
+        //  - Each of those writes was also a full-file overwrite from memory,
+        //    which is the exact shape of the data-loss path above. Reveal and
+        //    copy are the two most frequent actions in this feature, so they
+        //    were also the most frequent chance to hit it.
+        //
+        // The timestamp still reaches disk - an audit trail that only
+        // survived while the window stayed open would not be one - just
+        // batched, and never by itself a reason to commit. `lock()` flushes
+        // whatever is still pending, and a lock always follows a use.
+        onChange?()
+        scheduleAuditFlush()
+    }
+
+    /// How long reveal/copy bookkeeping waits before it is written. Long
+    /// enough that a captain working through several credentials produces one
+    /// write rather than a dozen, short enough that a hard kill loses at most
+    /// a few seconds of "last used" timestamps - which is the least valuable
+    /// state in this store, and the only state batching can lose.
+    static let auditFlushDelay: TimeInterval = 20
+
+    /// Coalesce audit-only writes. Re-arming on each use is deliberate: a run
+    /// of reveals inside the window settles into one write at the end of it.
+    private func scheduleAuditFlush() {
+        pendingAuditFlush?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.isUnlocked else { return }
+            self.pendingAuditFlush = nil
+            self.persistAuditOnly("use record")
+        }
+        pendingAuditFlush = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.auditFlushDelay, execute: work)
+    }
+
+    /// Write any pending audit-only state now. Test seam, and the hook a
+    /// future terminate-time flush would use - `lock()` covers the real app's
+    /// path today, since the vault is always locked before the key is
+    /// dropped.
+    func flushPendingAuditWritesNow() {
+        guard pendingAuditFlush != nil, isUnlocked else { return }
+        pendingAuditFlush?.cancel()
+        pendingAuditFlush = nil
+        persistAuditOnly("use record")
     }
 
     // MARK: Settings
@@ -914,7 +991,11 @@ final class CredentialVaultStore {
             settings.touchIDUnlockEnabled = false
         }
         do {
-            try persist()
+            // `adoptingOnDiskChanges: false` - see `persist`'s own parameter
+            // note. A re-key replaces the header this write is measured
+            // against, and this method already did the narrower salt check
+            // above.
+            try persist(adoptingOnDiskChanges: false)
         } catch {
             vaultKey = previousKey
             file = previousFile
@@ -1032,8 +1113,20 @@ final class CredentialVaultStore {
     /// Re-seal everything and write it, then tell the sync. Every mutator ends
     /// here, so there is exactly one write path and exactly one place the
     /// debounced commit is triggered from.
-    private func persist() throws {
+    ///
+    /// - Parameter adoptingOnDiskChanges: whether to reconcile with whatever
+    ///   is on disk first (S2). Only `finishPasswordChange` passes `false`,
+    ///   and it has to: a re-key deliberately replaces the KDF header and
+    ///   verifier this machine is holding, so from the adoption logic's point
+    ///   of view the file it is about to write looks exactly like the "a
+    ///   different password was set elsewhere" case it exists to refuse.
+    ///   That path does its own drift check by salt, which is the older and
+    ///   narrower version of this one.
+    private func persist(adoptingOnDiskChanges: Bool = true) throws {
         guard let vaultKey, let current = file else { throw CredentialVaultStoreError.locked }
+        let base = adoptingOnDiskChanges
+            ? try adoptOnDiskChangesIfNeeded(vaultKey: vaultKey, lastKnown: current)
+            : current
         let entries = try credentials.map { credential in
             CredentialVaultFile.Entry(
                 id: credential.id,
@@ -1042,7 +1135,7 @@ final class CredentialVaultStore {
                                                         purpose: CredentialVaultCrypto.itemPurpose(credential.id))
             )
         }
-        var updated = current
+        var updated = base
         updated.formatVersion = CredentialVaultFile.currentFormatVersion
         updated.items = entries
         updated.auditLog = try CredentialVaultCrypto.seal(auditLog, vaultKey: vaultKey, purpose: Self.auditPurpose)
@@ -1059,18 +1152,145 @@ final class CredentialVaultStore {
         // starter kit rather than a defensible default.
         try AtomicWrite.data(data, to: fileURL, sensitive: true)
         file = updated
+        // Memory and disk agree again, so this is the new "what is also on
+        // disk" for the next write's three-way merge. Updated only after the
+        // write actually succeeded - a failed write leaves the old baseline
+        // in place, which is correct: disk still holds the old content.
+        baseline = credentials
+    }
+
+    /// S2: reconcile with anything that changed the file underneath us, and
+    /// return the header to build this write on top of.
+    ///
+    /// ## The bug this exists for
+    ///
+    /// `CredentialVaultSync` never pulls, but `ShiftGitSync.pullNow` does a
+    /// whole-tree `merge --ff-only` every five minutes - which updates
+    /// `vault.enc.json` on disk while `file`/`credentials` stay exactly as
+    /// they were. Before this, every `persist()` rewrote the entire file from
+    /// that stale memory. So: Mac A has the vault unlocked, Mac B adds a
+    /// credential and pushes, A's pull fast-forwards, and A's five-minute
+    /// **auto-lock** fires - `lock()` persists its audit record, the whole
+    /// file is rewritten from A's stale set, and B's credential is gone from
+    /// the live file. Silently, and recoverable only from git history.
+    ///
+    /// ## What it does instead
+    ///
+    /// A three-way merge against `baseline` - the decrypted set as of the
+    /// last time memory and disk agreed. For each id:
+    ///
+    /// - on disk but not in `baseline`: **added elsewhere**, so take it.
+    /// - in `baseline` but gone from disk: **deleted elsewhere**, and gone
+    ///   from memory too, so nothing to do. Still in memory means this
+    ///   machine has it open; keeping it is the safe direction, since a
+    ///   credential wrongly kept is visible and deletable while one wrongly
+    ///   dropped is not.
+    /// - in both, and this machine did not touch it: take the on-disk
+    ///   version.
+    /// - in both, and both sides changed it: this machine's edit wins. It is
+    ///   the one a human just made and is looking at, and the losing version
+    ///   is still in git history. This is the only genuinely lossy case and
+    ///   it is logged as such.
+    ///
+    /// A re-key elsewhere is **not** merged - see the `verifier` guard.
+    private func adoptOnDiskChangesIfNeeded(vaultKey: CredentialVaultKey,
+                                            lastKnown: CredentialVaultFile) throws -> CredentialVaultFile {
+        guard let data = try? Data(contentsOf: fileURL),
+              let onDisk = try? JSONDecoder().decode(CredentialVaultFile.self, from: data) else {
+            // No file, or one this build cannot decode. Neither is this
+            // write's call to interpret: GL-01's load path
+            // (`StoreLoadFailure.decodeJSON`) is what backs an undecodable
+            // vault up and reports it, and `createVault` is the legitimate
+            // no-file case. Proceeding writes what we have, which is what
+            // happened before this method existed.
+            return lastKnown
+        }
+        guard onDisk.items != lastKnown.items else { return lastKnown }
+
+        // The KDF header and verifier are untouched by an ordinary write
+        // (`persist` copies them forward), so either one moving means a
+        // *password change* landed from another machine. This machine's key
+        // does not open that file, so every item in it would fail to
+        // authenticate - there is nothing to merge, and writing anyway would
+        // replace a vault we cannot read with one the other machine cannot.
+        // Refusing is the only non-destructive answer.
+        guard onDisk.kdf == lastKnown.kdf, onDisk.verifier == lastKnown.verifier else {
+            AppLog.store.error("credential vault: the file on disk was re-keyed elsewhere - refusing to overwrite it")
+            throw CredentialVaultStoreError.rekeyedElsewhere
+        }
+
+        var mine = Dictionary(uniqueKeysWithValues: credentials.map { ($0.id, $0) })
+        let base = Dictionary(uniqueKeysWithValues: baseline.map { ($0.id, $0) })
+        // The order this machine already had, so a merge replaces *values*
+        // without reshuffling the array. Anything genuinely new is appended.
+        var order = credentials.map(\.id)
+        var adopted = 0
+        var conflicts = 0
+
+        for entry in onDisk.items {
+            guard let theirs = try? CredentialVaultCrypto.open(
+                VaultCredential.self,
+                from: entry.payload,
+                vaultKey: vaultKey,
+                purpose: CredentialVaultCrypto.itemPurpose(entry.id)) else {
+                // An item that will not authenticate under a key that opened
+                // the rest of the file. Skipping it keeps this machine's
+                // write going rather than wedging the vault, and the item is
+                // untouched on disk for the load path to report on.
+                AppLog.store.error("credential vault: an item on disk did not authenticate during merge - left it alone")
+                continue
+            }
+            let wasKnown = base[entry.id]
+            if wasKnown == nil {
+                // Added on another machine after our last agreement.
+                if mine[entry.id] == nil {
+                    adopted += 1
+                    order.append(entry.id)
+                }
+                mine[entry.id] = theirs
+            } else if let known = wasKnown, known == theirs {
+                // They did not change it; whatever memory holds stands.
+                continue
+            } else if let ours = mine[entry.id], let known = wasKnown, ours == known {
+                // They changed it and we did not.
+                mine[entry.id] = theirs
+                adopted += 1
+            } else if mine[entry.id] != nil {
+                // Both changed it. Ours wins, loudly.
+                conflicts += 1
+            } else {
+                // We deleted it and they edited it. The delete is this
+                // machine's explicit instruction, so honour it.
+                continue
+            }
+        }
+
+        if adopted > 0 || conflicts > 0 {
+            AppLog.store.info("credential vault: the file changed under an unlocked vault - adopted \(adopted, privacy: .public) item(s), \(conflicts, privacy: .public) kept this machine's version")
+        }
+        credentials = order.compactMap { mine[$0] }
+        return onDisk
     }
 
     /// Persist a write whose *outcome the caller does not branch on* - an
-    /// unlock/lock/sync audit event. GL-10's rule still applies: the failure is
-    /// reported rather than swallowed by a `try?`, which is what three call
-    /// sites here originally did. It deliberately returns nothing: an unlock
-    /// must not fail because its own audit event could not be written.
+    /// unlock/lock/sync/use audit event. GL-10's rule still applies: the
+    /// failure is reported rather than swallowed by a `try?`, which is what
+    /// three call sites here originally did. It deliberately returns nothing:
+    /// an unlock must not fail because its own audit event could not be
+    /// written.
+    ///
+    /// **It does not `markDirty()`** (S2). Only a real credential mutation is
+    /// a reason to commit and push: an audit event records something this
+    /// machine *did*, and publishing each one to a git remote turns the
+    /// commit log into a timeline of when the captain unlocked their vault
+    /// and looked at which secret. The events are still durable - they are
+    /// written to the file here, and ride the next real mutation's commit
+    /// like any other content of it. `syncNow()` still pushes on demand,
+    /// which is what that button is for.
     private func persistAuditOnly(_ what: String) {
         do {
             try persist()
             PersistenceFailureReporter.reportSuccess()
-            gitSync?.markDirty()
         } catch {
             PersistenceFailureReporter.report(what: "the credential vault's \(what)",
                                               path: fileURL.path, error: error)
@@ -1127,6 +1347,12 @@ enum CredentialVaultStoreError: LocalizedError, Equatable {
     case notFound
     case duplicate
     case vaultAlreadyExists
+    /// S2: the file on disk carries a different KDF header or verifier than
+    /// the one this machine unlocked, i.e. the master password was changed on
+    /// another machine and pulled in underneath us. This machine's key opens
+    /// nothing in that file, so there is no merge to do and overwriting would
+    /// destroy it.
+    case rekeyedElsewhere
 
     var errorDescription: String? {
         switch self {
@@ -1134,6 +1360,8 @@ enum CredentialVaultStoreError: LocalizedError, Equatable {
         case .notFound: return "That credential is no longer in the vault."
         case .duplicate: return "That credential is already in the vault."
         case .vaultAlreadyExists: return "A vault already exists here. Unlock it instead of creating a new one."
+        case .rekeyedElsewhere:
+            return "The vault's master password was changed on another Mac. Lock and unlock this vault with the new password before saving."
         }
     }
 }
