@@ -27,7 +27,7 @@ as they are rather than rewritten across 180 files.
 ## Contents
 
 - [Working in this repository](#working-in-this-repository) - worktrees, the shared stash, the shared working tree
-- [Build, run, test](#build-run-test)
+- [Build, run, test](#build-run-test) - the two CI lanes, and the vendored patches a sync must re-apply
 - [Verification conventions](#verification-conventions) - how a change is proved here
 - [Writing a self-test](#writing-a-self-test)
 - [The AppKit gotcha catalogue](#the-appkit-gotcha-catalogue) - 14 measured traps
@@ -264,6 +264,30 @@ does not emit, and a 5.10-only redundant-downcast warning that 6.x does not. A
 warning-clean build says nothing about the other compiler. Bump the image label,
 the assertion and `native/README.md`'s Requirements together.
 
+### Vendored dependencies carry patches, and a sync must re-apply them
+
+Everything under `native/Vendor/` is committed source, not a remote package -
+there are no remote SPM dependencies and no `Package.resolved`. `SwiftTerm`
+carries **five local patches**, each because the thing it fixes has no
+`public`/`open` seam upstream, so a re-sync is a five-patch re-apply and the
+realistic failure is a hunk lost in a merge rather than a deliberate removal.
+Every one of those then fails *silently*, in a way this project has already
+paid for once each.
+
+- The pin, the per-patch verdict against the current upstream, the re-apply
+  table and the four-command upstream check live in
+  `native/Vendor/SwiftTerm/README.md`. **Read it before touching or bumping
+  that tree**, and record the result of a check even when the answer is "stay
+  pinned".
+- The standing decision is **stay pinned and re-check on a schedule** (183
+  days, tracked in `native/MANUAL-CHECKS.md`). A newer tag on its own is not a
+  reason to bump; an upstream security fix, or a patch's root cause being fixed
+  or gaining a hook upstream, is.
+- `FM_RUN_VENDORED_PATCHES_TESTS` asserts all five patches are still present, so
+  a sync that drops one fails by name. It matches its markers with comments
+  stripped, because a merge that drops the code under a doc comment leaves the
+  comment - and the comment names the symbol.
+
 ### The two CI lanes
 
 Both are blocking. `test` runs the headless-safe suites; `test-windowed` runs
@@ -405,7 +429,16 @@ fails unless its entry carries a trailing marker.
   whatever origin it is given, and these were caught live on the captain's
   display).
 - Use the shared assertion helpers in `SelfTestAssertions.swift` rather than a
-  local `check`/`fail` pair.
+  local `check`/`fail` pair. The free `check(_:_:_:)`/`fail(_:_:)` match the
+  signatures the hand-rolled copies used, so a suite needs no adapter at all
+  unless its helper is nested inside a case function and captures that
+  function's own accumulator - which is the one thing a free function cannot
+  do, and the reason an adapter is allowed. What is banned is a *copy*, and
+  `E2ETestingPolicySelfTest.checkSuitesUseTheSharedAssertions` enforces it: a
+  `check`/`fail` helper in that directory whose body does not reach
+  `SelfTestAssertions` fails the run. A helper that genuinely owns a
+  comparison (a tolerance, a numeric expectation) is fine - only its
+  *reporting* has to go through the shared prefixes.
 - Never touch real captain data. Point every store at a scratch path; the
   `#if FM_SELFTESTS` block in `main.swift` is the backstop that covers a store
   reachable from a bare production constructor, and a new such store needs an
