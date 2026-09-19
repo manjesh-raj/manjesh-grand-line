@@ -1779,6 +1779,16 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     if (ProcessInfo.processInfo.environment["FM_CODE_PREVIEW_DIR"] ?? "").isEmpty {
         setenv("FM_CODE_PREVIEW_DIR", scratchRoot.appendingPathComponent("code-snippets", isDirectory: true).path, 1)
     }
+    // Review #3's UX12: `StrawHatTranscriptStore()` is a new store reachable
+    // from a bare production constructor - `StrawHatController` builds one -
+    // so it needs an entry here **before its first suite**, which is the rule
+    // this block exists to enforce. Without it, any suite that mounts an
+    // `AppShellController` (which mounts that controller) would write the
+    // crew's conversations into `ShiftGitSync.shared`'s real working tree: a
+    // live clone of the captain's own private `manjesh-config`.
+    if (ProcessInfo.processInfo.environment["FM_STRAW_HAT_DIR"] ?? "").isEmpty {
+        setenv("FM_STRAW_HAT_DIR", scratchRoot.appendingPathComponent("straw-hat", isDirectory: true).path, 1)
+    }
     // The credential vault (`fm/implement-grand-line-secrets-vault-poneg-ad`),
     // for exactly the reason the Sticky Board note above spells out and with
     // more at stake than any other entry in this block: `CredentialVaultStore()`
@@ -2036,6 +2046,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_COMMAND_LIBRARY_TESTS"] == "1" {
 // ⌘N routing table - see `NavigationCoherenceSelfTest.swift`'s header.
 if ProcessInfo.processInfo.environment["FM_RUN_NAVIGATION_COHERENCE_TESTS"] == "1" {
     exit(NavigationCoherenceSelfTest.run() ? 0 : 1)
+}
+
+// Review #3's UX12: the crew's conversations surviving a quit, and nothing
+// reaching that file unredacted - see `StrawHatTranscriptSelfTest.swift`.
+if ProcessInfo.processInfo.environment["FM_RUN_STRAW_HAT_TRANSCRIPT_TESTS"] == "1" {
+    exit(StrawHatTranscriptSelfTest.run() ? 0 : 1)
 }
 
 // Review #3's UX7: the "Push to → Tomorrow / Next week" date arithmetic -
