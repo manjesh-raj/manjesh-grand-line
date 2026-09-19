@@ -1041,7 +1041,7 @@ final class HomeCanvasController: NSViewController {
         var clauses = Array(record.clauses.prefix(Self.briefingClauseCap(forCardWidth: cardWidth)))
         let hidden = record.clauses.count - clauses.count
         if hidden > 0 {
-            clauses.append(BriefingClause(text: "+\(hidden) more on Overview.", target: .none))
+            clauses.append(BriefingClause(text: "+\(hidden) more on Fleet.", target: .none))
         }
         content.body = .paragraph(clauses)
     }

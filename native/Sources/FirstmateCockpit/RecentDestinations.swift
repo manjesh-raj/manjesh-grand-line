@@ -106,11 +106,18 @@ enum RecentDestinationKind: Equatable {
     /// A row's kicker - which space this destination belongs to, read from
     /// the module table rather than a second copy of that mapping (per
     /// `DaylightModule.space(forDestination:)`'s own "one mapping, not two
-    /// that can disagree" doc comment). Falls back to "Overview" for the two
-    /// destinations no module opens (`.homeCanvas`/`.overview` themselves).
+    /// that can disagree" doc comment). Falls back to the canvas's own space
+    /// title for the two destinations no module opens (`.homeCanvas`/
+    /// `.overview` themselves).
+    ///
+    /// Review #3 §7: that fallback is read from `DaylightSpace.overview.title`
+    /// rather than spelled out, so renaming the space renames the kicker with
+    /// it. A hardcoded copy is exactly how this app came to have three names
+    /// for two things.
     var kicker: String {
         switch self {
-        case .rail(let dest): return DaylightModule.space(forDestination: dest)?.title ?? "Overview"
+        case .rail(let dest):
+            return DaylightModule.space(forDestination: dest)?.title ?? DaylightSpace.overview.title
         case .host: return "Hosts"
         }
     }

@@ -113,10 +113,17 @@ final class FleetController: NSViewController {
 
     // MARK: F6 - the "Log" tab (captain's log)
 
-    /// F6: Overview is two tabs now - the live dashboard, and a durable,
+    /// F6: this page is two tabs - the live dashboard, and a durable,
     /// reverse-chronological record of what has already happened. Same
-    /// `HelmSegmentedTabs` shape Shift/Docs/Hosts already use; "Overview"
+    /// `HelmSegmentedTabs` shape Shift/Docs/Hosts already use; the dashboard
     /// stays the default.
+    ///
+    /// **The first tab is labelled "Dashboard", not "Overview"** (review #3
+    /// §7). This destination is called "Fleet" in the rail title, in its drill
+    /// header and on its canvas card, so a tab repeating the page's own name
+    /// says nothing - and "Overview" was the canvas's word, which is what made
+    /// three names read as three places. "Dashboard" is what this tab already
+    /// calls itself in every comment in this file.
     ///
     /// `fm/polish-straw-hat-overview-card-and-voice-c8d3` removed a third tab
     /// ("Crew"). Phases 1-3 put the Straw Hat Pirates chat here; the captain's
@@ -129,7 +136,7 @@ final class FleetController: NSViewController {
         case overview, log
         var title: String {
             switch self {
-            case .overview: return "Overview"
+            case .overview: return "Dashboard"
             case .log: return "Log"
             }
         }
