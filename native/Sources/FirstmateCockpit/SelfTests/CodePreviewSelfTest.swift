@@ -44,9 +44,100 @@ enum CodePreviewSelfTest {
         checkNameSanitising(check)
         checkThemePalette(check)
         checkDestinationWiring(check)
+        checkFirstLineAutoTitle(check)
 
         print(ok ? "CodePreviewSelfTest: OK" : "CodePreviewSelfTest: FAILURES")
         return ok
+    }
+
+    // MARK: First-line auto-title (review #3's UX11)
+
+    /// The finding: "the tab is named from the filename, so pasting a snippet
+    /// and forgetting to rename leaves `snippet-3.txt` in the synced repo
+    /// forever."
+    ///
+    /// The slug lands in a **filename in a git repo**, so what is asserted is
+    /// the shape it has to hold on every machine that clones it - not just
+    /// that it produced something.
+    private static func checkFirstLineAutoTitle(_ check: (Bool, String) -> Void) {
+        // Only a placeholder stem is eligible. This is the guard that stops a
+        // name the captain chose being overwritten, so it is checked first and
+        // in both directions.
+        check(CodePreviewAutoTitle.isUntitled("snippet-3.txt"),
+              "UX11: snippet-3.txt should be recognised as an untitled placeholder")
+        check(CodePreviewAutoTitle.isUntitled("snippet-12.py"),
+              "UX11: the placeholder test must survive the language detector renaming the extension")
+        check(!CodePreviewAutoTitle.isUntitled("deploy-notes.md"),
+              "UX11: a named snippet must never be treated as untitled")
+        check(!CodePreviewAutoTitle.isUntitled("snippet-notes.txt"),
+              "UX11: only snippet-<number> is a placeholder, not any snippet-*")
+        check(!CodePreviewAutoTitle.isUntitled("snippet-.txt"),
+              "UX11: snippet- with no index is not a placeholder")
+
+        // The ordinary case.
+        check(CodePreviewAutoTitle.stem(fromFirstLineOf: "Deploy checklist for the API\nstep one") == "deploy-checklist-for-the-api",
+              "UX11: a plain first line should slug into a filename stem, got "
+              + String(describing: CodePreviewAutoTitle.stem(fromFirstLineOf: "Deploy checklist for the API\nstep one")))
+
+        // Leading blank lines are skipped - a pasted snippet very often starts
+        // with one.
+        check(CodePreviewAutoTitle.stem(fromFirstLineOf: "\n\n   rollback plan") == "rollback-plan",
+              "UX11: blank leading lines should be skipped")
+
+        // Comment leaders are stripped: the interesting words follow them.
+        check(CodePreviewAutoTitle.stem(fromFirstLineOf: "// parse the ingress log") == "parse-the-ingress-log",
+              "UX11: a // comment leader should be stripped")
+        check(CodePreviewAutoTitle.stem(fromFirstLineOf: "# rotate the certs") == "rotate-the-certs",
+              "UX11: a # comment leader should be stripped")
+        check(CodePreviewAutoTitle.stem(fromFirstLineOf: "<!-- release notes -->") == "release-notes",
+              "UX11: an HTML comment leader should be stripped")
+
+        // A shebang names the interpreter, not the snippet - `usr-bin-env-bash`
+        // would be a worse name than the placeholder it replaced.
+        check(CodePreviewAutoTitle.stem(fromFirstLineOf: "#!/usr/bin/env bash\nrestore the database") == "restore-the-database",
+              "UX11: a shebang should be skipped in favour of the next real line, got "
+              + String(describing: CodePreviewAutoTitle.stem(fromFirstLineOf: "#!/usr/bin/env bash\nrestore the database")))
+
+        // Nothing worth naming it after leaves the placeholder alone, which is
+        // the safe direction.
+        check(CodePreviewAutoTitle.stem(fromFirstLineOf: "") == nil,
+              "UX11: empty content should not produce a name")
+        check(CodePreviewAutoTitle.stem(fromFirstLineOf: "   \n\n  ") == nil,
+              "UX11: whitespace-only content should not produce a name")
+        check(CodePreviewAutoTitle.stem(fromFirstLineOf: "{{{}}}") == nil,
+              "UX11: punctuation-only content should not produce a name")
+        check(CodePreviewAutoTitle.stem(fromFirstLineOf: "12345") == nil,
+              "UX11: a digits-only first line would read as another placeholder index")
+
+        // **The self-renaming trap.** A derived stem that itself looks like a
+        // placeholder would make `isUntitled` true again, so the snippet would
+        // rename itself on every subsequent edit.
+        check(CodePreviewAutoTitle.stem(fromFirstLineOf: "snippet 4") == nil,
+              "UX11: a stem that looks like a placeholder would make the snippet rename itself forever")
+
+        // The shape a filename has to hold. A minified first line is real, and
+        // a 300-character filename in a synced repo is a nuisance on every
+        // machine that clones it.
+        let long = String(repeating: "word ", count: 80)
+        guard let longStem = CodePreviewAutoTitle.stem(fromFirstLineOf: long) else {
+            check(false, "UX11: a long first line should still produce a name")
+            return
+        }
+        check(longStem.count <= CodePreviewAutoTitle.maxStemLength,
+              "UX11: the stem is \(longStem.count) characters, over the \(CodePreviewAutoTitle.maxStemLength) cap")
+        check(!longStem.hasSuffix("-"), "UX11: a truncated stem should not end on a hyphen")
+
+        // Every stem this can produce has to survive the store's own
+        // sanitiser unchanged - if it did not, the name on the tab and the
+        // name on disk would differ, which is the two-sources-of-truth bug
+        // `renameTab` already guards against.
+        for line in ["Deploy checklist for the API", "// parse the ingress log",
+                     "rollback plan", "<!-- release notes -->"] {
+            guard let stem = CodePreviewAutoTitle.stem(fromFirstLineOf: line) else { continue }
+            let name = "\(stem).txt"
+            check(CodePreviewStore.sanitize(name) == name,
+                  "UX11: the derived name \"\(name)\" is changed by the store's sanitiser")
+        }
     }
 
     // MARK: Assets
