@@ -80,6 +80,7 @@ enum CredentialVaultViewSelfTest {
         window.orderFront(nil)
 
         checkCreateAndUnlock(scratch: scratch, window: window, check)
+        checkCreationStatesNoRecovery(scratch: scratch, window: window, check)
         checkRevealAndCopyAreSeparate(scratch: scratch, window: window, check)
         checkSearchAndCategoryFilter(scratch: scratch, window: window, check)
         checkDeleteConfirmAndUndo(scratch: scratch, window: window, check)
@@ -175,6 +176,67 @@ enum CredentialVaultViewSelfTest {
         check(!store.isUnlocked, "clicking Lock should lock the store")
         check(controller.debugIsUnlockShowing, "clicking Lock should show the gate again")
         check(store.credentials.isEmpty, "locking should drop the decrypted model")
+    }
+
+    /// Review #3's UX8: the gate screen "asks for the master password with no
+    /// hint of what happens when it is forgotten".
+    ///
+    /// Three things, and the third is the one with behaviour behind it:
+    /// the sentence is said plainly at creation time, the strength meter is a
+    /// meter rather than only a word, and **the vault cannot be created until
+    /// the captain confirms they wrote the password down**.
+    private static func checkCreationStatesNoRecovery(scratch: URL, window: NSWindow,
+                                                      _ check: (Bool, String) -> Void) {
+        print("\n-- UX8: the create gate says there is no recovery, and makes you confirm it --")
+        let (controller, _) = mounted(scratch, name: "ux8", window: window, createVault: false)
+        let gate = controller.debugUnlockView
+
+        check(gate.debugRecoveryWarningVisible,
+              "UX8: the create state should show the no-recovery warning")
+        // The exact claim, not merely some words: "there is no recovery" and
+        // "write it down" are the two things the finding asks to be stated.
+        let warning = gate.debugRecoveryWarningText.lowercased()
+        check(warning.contains("no recovery"),
+              "UX8: the warning does not say there is no recovery: \"\(gate.debugRecoveryWarningText)\"")
+        check(warning.contains("write it down"),
+              "UX8: the warning does not tell the captain to write it down: \"\(gate.debugRecoveryWarningText)\"")
+        check(gate.debugStrengthBarVisible, "UX8: the create state should show a strength meter")
+
+        // The gate itself. A too-short password, a mismatch and an unticked
+        // box each hold the button closed - and the box is the one this
+        // finding is about, so it is checked with everything else satisfied.
+        check(!gate.debugPrimaryButton.isEnabled,
+              "UX8: Create should start disabled - nothing has been typed or confirmed")
+
+        gate.debugPasswordField.stringValue = "a-long-enough-passphrase"
+        gate.debugConfirmField.stringValue = "a-long-enough-passphrase"
+        gate.debugFieldsChanged()
+        check(!gate.debugPrimaryButton.isEnabled,
+              "UX8: a matching, strong password with the box unticked should still not be creatable - "
+              + "the confirmation step is the whole finding")
+
+        gate.debugSavedItRow.isOn = true
+        gate.debugFieldsChanged()
+        check(gate.debugPrimaryButton.isEnabled,
+              "UX8: ticking the confirmation with a matching, strong password should enable Create")
+
+        // A mismatch re-closes it even with the box ticked, so the new gate
+        // stacks with the checks that were already there rather than replacing
+        // them.
+        gate.debugConfirmField.stringValue = "something-else-entirely"
+        gate.debugFieldsChanged()
+        check(!gate.debugPrimaryButton.isEnabled,
+              "UX8: a mismatched confirmation should close the gate again even with the box ticked")
+
+        // The unlock state must not carry any of it: an existing vault's owner
+        // has already been told, and a disabled Unlock button behind a
+        // confirmation they cannot see would lock them out of their own vault.
+        gate.setMode(.unlock(touchIDAvailable: false))
+        check(!gate.debugRecoveryWarningVisible,
+              "UX8: the unlock state should not show the creation warning")
+        check(!gate.debugStrengthBarVisible, "UX8: the unlock state should not show a strength meter")
+        check(gate.debugPrimaryButton.isEnabled,
+              "UX8: Unlock must never be gated by the creation confirmation")
     }
 
     private static func checkRevealAndCopyAreSeparate(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {

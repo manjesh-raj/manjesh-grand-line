@@ -48,6 +48,28 @@ final class CredentialVaultUnlockView: NSView {
     private let passwordField = HelmSecureTextField(placeholder: "Master password")
     private let confirmField = HelmSecureTextField(placeholder: "Confirm master password")
     private let strengthLabel = NSTextField(labelWithString: "")
+    /// Review #3's UX8: "a password manager owes the user that sentence at
+    /// *creation* time ('There is no recovery. Write this down.'), plus a
+    /// strength meter and a 'confirm you saved it' step."
+    ///
+    /// The sentence already existed - as the tail of a five-clause subtitle
+    /// paragraph, which is exactly where a reader's eye does not go. It is its
+    /// own tinted card now, above the fields rather than below them, because
+    /// the one moment it changes behaviour is *before* the captain has chosen
+    /// a password rather than after.
+    private var recoveryWarningCard: NSView?
+    private let recoveryWarningLabel = NSTextField(wrappingLabelWithString:
+        "There is no recovery. If you forget this password, every credential in "
+        + "this vault is gone - Grand Line cannot reset it, and neither can anyone else. "
+        + "Write it down somewhere safe before you continue.")
+    /// The meter half. The label alone said "Strength: Fair", which is a
+    /// verdict rather than a meter - this is the same `HelmProgressBar` the
+    /// Hosts keychain card already uses, so the app draws one bar, not two.
+    private let strengthBar = HelmProgressBar()
+    /// The "confirm you saved it" step. The create button is disabled until
+    /// this is on.
+    private let savedItRow = HelmToggleRow(
+        title: "I have written my master password down somewhere safe")
     private let messageLabel = NSTextField(wrappingLabelWithString: "")
     private let primaryButton = HelmButton(title: "Unlock", variant: .primary)
     private let touchIDButton = HelmButton(title: "Unlock with Touch ID", variant: .secondary, symbol: "touchid")
@@ -83,6 +105,10 @@ final class CredentialVaultUnlockView: NSView {
         // shows - `HelmSecureTextField` is an `NSSecureTextField`, so this is
         // the ordinary control-text-did-change path.
         passwordField.delegate = self
+        // The gate reads both fields, so both have to report a change - before
+        // this, typing a matching confirmation left the button disabled until
+        // something else happened to re-evaluate it.
+        confirmField.delegate = self
         primaryButton.target = self
         primaryButton.action = #selector(primaryClicked)
         primaryButton.keyEquivalent = "\r"
@@ -97,10 +123,33 @@ final class CredentialVaultUnlockView: NSView {
         column.alignment = .leading
         column.spacing = HelmMetrics.s3
         column.translatesAutoresizingMaskIntoConstraints = false
-        for view in [iconTile, titleLabel, subtitleLabel, passwordField, confirmField,
-                     strengthLabel, messageLabel, primaryButton, orRow, touchIDButton] as [NSView] {
+        recoveryWarningLabel.font = HelmType.caption()
+        savedItRow.onToggle = { [weak self] in self?.updateCreateAvailability() }
+        let warningCard = NSView()
+        warningCard.wantsLayer = true
+        warningCard.translatesAutoresizingMaskIntoConstraints = false
+        recoveryWarningLabel.translatesAutoresizingMaskIntoConstraints = false
+        warningCard.addSubview(recoveryWarningLabel)
+        NSLayoutConstraint.activate([
+            recoveryWarningLabel.leadingAnchor.constraint(equalTo: warningCard.leadingAnchor, constant: HelmMetrics.s3),
+            recoveryWarningLabel.trailingAnchor.constraint(equalTo: warningCard.trailingAnchor, constant: -HelmMetrics.s3),
+            recoveryWarningLabel.topAnchor.constraint(equalTo: warningCard.topAnchor, constant: HelmMetrics.s3),
+            recoveryWarningLabel.bottomAnchor.constraint(equalTo: warningCard.bottomAnchor, constant: -HelmMetrics.s3),
+        ])
+        recoveryWarningCard = warningCard
+
+        // Order matters: the warning sits **above** the fields. The one moment
+        // "there is no recovery" changes what a captain does is before they
+        // choose a password, not after.
+        for view in [iconTile, titleLabel, subtitleLabel, warningCard, passwordField, confirmField,
+                     strengthBar, strengthLabel, savedItRow, messageLabel,
+                     primaryButton, orRow, touchIDButton] as [NSView] {
             column.addArrangedSubview(view)
         }
+        for view in [warningCard, strengthBar, savedItRow] as [NSView] {
+            view.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
+        }
+        strengthBar.heightAnchor.constraint(equalToConstant: HelmProgressBar.height).isActive = true
         // The two fields and the primary action fill the column's width; the
         // labels and the icon tile keep their own size. Without the width ties
         // a leading-aligned vertical stack leaves both fields at their
@@ -151,6 +200,12 @@ final class CredentialVaultUnlockView: NSView {
             passwordField.placeholderString = "Master password"
             confirmField.isHidden = false
             strengthLabel.isHidden = false
+            strengthBar.isHidden = false
+            recoveryWarningCard?.isHidden = false
+            savedItRow.isHidden = false
+            // A fresh gate every time this state is entered: a captain who
+            // backed out of creation and came back has not confirmed anything.
+            savedItRow.isOn = false
             primaryButton.title = "Create Poneglyph"
             primaryButton.isHidden = false
             orLabel.isHidden = true
@@ -165,6 +220,10 @@ final class CredentialVaultUnlockView: NSView {
             passwordField.placeholderString = "Master password"
             confirmField.isHidden = true
             strengthLabel.isHidden = true
+            strengthBar.isHidden = true
+            recoveryWarningCard?.isHidden = true
+            savedItRow.isHidden = true
+            primaryButton.isEnabled = true
             primaryButton.title = "Unlock"
             primaryButton.isHidden = false
             orLabel.isHidden = !touchIDAvailable
@@ -177,6 +236,9 @@ final class CredentialVaultUnlockView: NSView {
             passwordField.isHidden = true
             confirmField.isHidden = true
             strengthLabel.isHidden = true
+            strengthBar.isHidden = true
+            recoveryWarningCard?.isHidden = true
+            savedItRow.isHidden = true
             // Deliberately no primary action. See this file's header: offering
             // "create a new vault" here is how real credentials get destroyed.
             primaryButton.isHidden = true
@@ -208,6 +270,16 @@ final class CredentialVaultUnlockView: NSView {
 
     #if FM_SELFTESTS
     var debugPasswordField: HelmSecureTextField { passwordField }
+    var debugConfirmField: HelmSecureTextField { confirmField }
+    /// UX8's "confirm you saved it" step, and the gate it drives.
+    var debugSavedItRow: HelmToggleRow { savedItRow }
+    var debugPrimaryButton: HelmButton { primaryButton }
+    var debugRecoveryWarningText: String { recoveryWarningLabel.stringValue }
+    var debugRecoveryWarningVisible: Bool { recoveryWarningCard?.isHidden == false }
+    var debugStrengthBarVisible: Bool { !strengthBar.isHidden }
+    /// Drives the same path `controlTextDidChange` does, so a suite can set a
+    /// field and have the gate re-evaluate exactly as typing would.
+    func debugFieldsChanged() { updateStrength() }
     #endif
 
     func focusPasswordField() {
@@ -253,11 +325,63 @@ final class CredentialVaultUnlockView: NSView {
         guard !password.isEmpty else {
             strengthLabel.stringValue = "At least \(CredentialVaultPasswordStrength.minimumLength) characters. A long passphrase beats a short complicated one."
             strengthLabel.textColor = HelmTheme.mutedInk(theme)
+            strengthBar.configure(fraction: 0)
+            updateCreateAvailability()
             return
         }
         let strength = CredentialVaultPasswordStrength.evaluate(password)
         strengthLabel.stringValue = "Strength: \(strength.label)"
         strengthLabel.textColor = CredentialVaultInk.text(strength.tint, in: theme)
+        strengthBar.configure(fraction: Self.strengthFraction(strength))
+        strengthBar.applyTheme(theme, hue: Self.strengthHue(strength))
+        updateCreateAvailability()
+    }
+
+    /// How full the meter is for each verdict.
+    ///
+    /// `tooShort` is deliberately not zero: an empty field is zero, and a
+    /// password that is genuinely too short is further along than nothing.
+    /// Derived from the enum's own `rawValue` rather than a second table, so a
+    /// fifth verdict cannot be added without the bar following it.
+    static func strengthFraction(_ strength: CredentialVaultPasswordStrength) -> Double {
+        let maximum = Double(CredentialVaultPasswordStrength.strong.rawValue)
+        return (Double(strength.rawValue) + 1) / (maximum + 1)
+    }
+
+    /// The bar's hue tracks the label's tint, so the meter and the word beside
+    /// it can never disagree about whether a password is good.
+    static func strengthHue(_ strength: CredentialVaultPasswordStrength) -> HelmDomainHue {
+        switch strength.tint {
+        case .critical: return .rose
+        case .warn: return .amber
+        default: return .teal
+        }
+    }
+
+    /// UX8's "confirm you saved it" gate.
+    ///
+    /// The create button is disabled until the password is long enough, the
+    /// two fields match **and** the captain has ticked the confirmation. The
+    /// gate is a real disable rather than a rejection after the click,
+    /// because the point of the step is to be read before the password is
+    /// committed - a dialog that says "you should have written it down" after
+    /// the vault exists is not a step, it is a reproach.
+    ///
+    /// `primaryClicked` still re-checks all three. A disabled button is a
+    /// courtesy; the guard is the contract, and Return in a text field reaches
+    /// the action directly.
+    private func updateCreateAvailability() {
+        guard case .create = mode else { return }
+        primaryButton.isEnabled = canCreate
+    }
+
+    /// Whether the create action may proceed - one definition, read by both
+    /// the button's enabled state and the action's own guard.
+    private var canCreate: Bool {
+        let password = passwordField.stringValue
+        return CredentialVaultPasswordStrength.evaluate(password) != .tooShort
+            && password == confirmField.stringValue
+            && savedItRow.isOn
     }
 
     // MARK: Actions
@@ -275,6 +399,11 @@ final class CredentialVaultUnlockView: NSView {
             guard password == confirm else {
                 showMessage("The two passwords don't match.")
                 window?.makeFirstResponder(confirmField)
+                return
+            }
+            guard savedItRow.isOn else {
+                showMessage("Write your master password down first, then tick the box. "
+                            + "There is no way to recover it later.", tint: .warn)
                 return
             }
             onCreate?(password)
@@ -307,6 +436,27 @@ final class CredentialVaultUnlockView: NSView {
         if let infoCard {
             HelmCard.applyCardSurface(to: infoCard, theme: theme, cornerRadius: HelmMetrics.rRow)
         }
+        // UX8's warning wears the app's own "this matters" surface rather than
+        // a plain card, and its text goes through `CredentialVaultInk` like
+        // every other tinted string on this page - a tinted hue is safe as a
+        // fill and is NOT automatically safe as text (AGENTS.md's colour
+        // rules), and `FM_RUN_CONTRAST_TESTS` sweeps every theme.
+        if let recoveryWarningCard {
+            recoveryWarningCard.wantsLayer = true
+            recoveryWarningCard.layer?.cornerRadius = HelmMetrics.rRow
+            // `HelmContrast.tintedSurface` resolves the wash and the label
+            // *together*, which is the whole point: AGENTS.md's colour rule is
+            // that a `HelmTint` hue is safe as a fill and is NOT automatically
+            // safe as text, and this is the component that settles both at
+            // once rather than leaving the label to be guessed at.
+            // `FM_RUN_CONTRAST_TESTS` sweeps every theme against the floor.
+            let resolved = HelmContrast.tintedSurface(tintHex: HelmTint.warn.hex(in: theme),
+                                                      theme: theme,
+                                                      target: HelmContrast.textTarget)
+            recoveryWarningCard.layer?.backgroundColor = resolved.fill.cgColor
+            recoveryWarningLabel.textColor = resolved.foreground
+        }
+        savedItRow.applyTheme(theme)
         if !messageLabel.stringValue.isEmpty {
             // Re-resolve against the new theme rather than leaving a colour
             // computed against the previous one - the staleness class
