@@ -477,7 +477,8 @@ final class AppShellController: NSViewController {
             logAnalyzerStore: LogAnalyzerStore(),
             docsRunbookStore: DocsRunbookStore(),
             codePreviewStore: codePreviewStore,
-            commandLibraryStore: commandLibraryStore))
+            commandLibraryStore: commandLibraryStore,
+            stickyBoardStore: stickyBoard.store))
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -591,6 +592,10 @@ final class AppShellController: NSViewController {
         // it's still reachable via the console toolbar's own magnifying-glass
         // icon (`ConsoleController.showFind`) and the Edit menu's `⌘F`.
         bar.onSearchTapped = { [weak self] in self?.onSearchTapped?() }
+        // UX1: the overflow menu's "All Destinations…" row, forwarded to
+        // whoever owns the overlay (the app delegate), exactly like the search
+        // pill forwards ⌘K rather than owning the palette.
+        bar.onShowAllDestinations = { [weak self] in self?.onShowAllDestinations?() }
 
         // GL-37: the destination table. One line per body view replaces the
         // six hand-maintained per-destination edit sites this used to need
@@ -615,6 +620,9 @@ final class AppShellController: NSViewController {
         mounter.register(DestinationSlot(id: .kubernetes, title: RailDestination.kubernetes.title, mountsEagerly: false, controller: kubernetes))
         mounter.register(DestinationSlot(id: .tools, title: RailDestination.tools.title, mountsEagerly: false, controller: tools))
         mounter.register(DestinationSlot(id: .whiteboard, title: RailDestination.whiteboard.title, mountsEagerly: false, controller: whiteboard))
+        // UX10: the board raises a note to promote; this controller is the
+        // one place that holds both destinations.
+        stickyBoard.onMakeTaskFromNote = { [weak self] note in self?.makeTaskFromStickyNote(note) }
         mounter.register(DestinationSlot(id: .stickyBoard, title: RailDestination.stickyBoard.title, mountsEagerly: false, controller: stickyBoard))
         mounter.register(DestinationSlot(id: .codePreview, title: RailDestination.codePreview.title, mountsEagerly: false, controller: codePreview))
         mounter.register(DestinationSlot(id: .commandLibrary, title: RailDestination.commandLibrary.title, mountsEagerly: false, controller: commandLibrary))
@@ -2275,6 +2283,159 @@ final class AppShellController: NSViewController {
     /// The canvas itself, for a caller that wants the hub without changing
     /// the space (the app delegate's launch landing).
     @objc func showHomeCanvas() { show(.homeCanvas) }
+
+    /// The Go menu's five space items (⌘1-⌘5) - UX4's "give ⌘1-⌘5 to the
+    /// spaces (the original Daylight spec)".
+    ///
+    /// This wrapper existed once and was deleted with the View menu
+    /// (`fm/grandline-console-tabs-restore-tabmenu-fix` - see `buildMenu`'s
+    /// own note). It comes back in the same shape it had: the menu carries the
+    /// 1-based `shortcutIndex` in its tag, and `selectSpace(_:)` - which the
+    /// bar's own pills call - does the work, so a menu item and a pill click
+    /// cannot diverge.
+    @objc func selectSpaceByShortcut(_ sender: NSMenuItem) {
+        guard let space = DaylightSpace.allCases.first(where: { $0.shortcutIndex == sender.tag }) else { return }
+        selectSpace(space)
+    }
+
+    /// The Go menu's per-destination rows - UX3's "a 'Go' menu listing every
+    /// destination".
+    ///
+    /// Keyed off the destination's own raw value in `representedObject`, the
+    /// same shape the bar's quick-access overflow menu uses, so neither has to
+    /// hold a parallel array of tags.
+    @objc func selectDestinationFromMenu(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let destination = RailDestination(rawValue: raw) else { return }
+        show(destination)
+    }
+
+    // MARK: The configurable quick-access row and the all-destinations map (UX1/UX2)
+
+    /// Raised when something asks for the all-destinations overlay. Owned by
+    /// the app delegate, which owns the overlay itself - the same shape as
+    /// `onSearchTapped`.
+    var onShowAllDestinations: (() -> Void)?
+
+    /// Pin or unpin `destination` on the floating bar's shortcut row, persist
+    /// the result, and redraw the row.
+    ///
+    /// The one write path. `AppSettings.quickAccess` is the store of record and
+    /// the bar holds only a cache of what it drew, so a caller that wrote the
+    /// setting directly would leave the bar stale until the next launch.
+    func toggleQuickAccessPin(_ destination: RailDestination) {
+        let next = AppSettings.shared.quickAccess.toggling(destination)
+        AppSettings.shared.quickAccess = next
+        bar.setQuickAccess(next)
+    }
+
+    /// Whether `destination` is currently pinned - what the overlay's context
+    /// menu reads to decide between "Pin to bar" and "Unpin from bar".
+    func isQuickAccessPinned(_ destination: RailDestination) -> Bool {
+        AppSettings.shared.quickAccess.contains(destination)
+    }
+
+    // MARK: Contextual ⌘N (UX4)
+
+    /// What ⌘N would create right now - the File menu re-reads this on every
+    /// open so the item's own title says which thing it means.
+    ///
+    /// `hostsPanel.currentTab` is consulted only for `.hosts`; see
+    /// `ContextualNewAction.forDestination`.
+    var contextualNewAction: ContextualNewAction {
+        guard case .rail(let destination)? = currentDestinationKind else {
+            // A host page is not a `RailDestination` at all. It is a console,
+            // and a console owns nothing creatable, so it takes the same
+            // universal-capture fallback every other such page takes.
+            return .task
+        }
+        return ContextualNewAction.forDestination(
+            destination,
+            hostsTab: destination == .hosts ? hostsPanel.currentTab : nil)
+    }
+
+    /// Perform whatever ⌘N means on the page that is showing.
+    ///
+    /// Every branch dispatches the *existing* menu action rather than
+    /// re-implementing the creation, which is the same rule
+    /// `UnifiedSearchActionProvider` follows: one way to create each thing, so
+    /// a fix to the sheet cannot miss an entry point.
+    @objc func newContextualItem() {
+        switch contextualNewAction {
+        case .task: newShiftTaskFromMenu()
+        case .host: newHostFromMenu()
+        case .sshKey: newKeyFromMenu()
+        case .snippet: newSnippetFromMenu()
+        case .stickyNote: newStickyNoteFromMenu()
+        case .codeSnippet: newCodeSnippetFromMenu()
+        case .credential: newCredentialFromMenu()
+        case .schedule: newScheduleFromMenu()
+        case .command: newCommandFromMenu()
+        case .runbook: newRunbookFromMenu()
+        }
+    }
+
+    /// The five creation verbs UX4 found with no shortcut and no menu item at
+    /// all. Each follows the established shape - select the destination first
+    /// so the sheet has something to present over, then act on it - so they
+    /// work from wherever the captain happened to be.
+    @objc func newStickyNoteFromMenu() {
+        show(.stickyBoard)
+        stickyBoard.addNoteFromMenu()
+    }
+
+    /// UX10's "Make a task" promotion. The board raises a note; this navigates
+    /// to Tasks and opens the editor already filled in.
+    ///
+    /// Wired here rather than on the board because this controller is the one
+    /// place that holds both destinations - the same forward-don't-own shape
+    /// every other cross-destination action in this app uses.
+    private func makeTaskFromStickyNote(_ note: StickyNote) {
+        show(.shift)
+        shift.presentTaskEditor(prefilledFrom: note)
+    }
+
+    @objc func newCodeSnippetFromMenu() {
+        show(.codePreview)
+        codePreview.newSnippetFromMenu()
+    }
+
+    @objc func newCredentialFromMenu() {
+        show(.poneglyph)
+        poneglyph.newCredentialFromMenu()
+    }
+
+    @objc func newScheduleFromMenu() {
+        show(.schedules)
+        schedules.newScheduleFromMenu()
+    }
+
+    @objc func newCommandFromMenu() {
+        show(.commandLibrary)
+        commandLibrary.newCommandFromMenu()
+    }
+
+    @objc func newRunbookFromMenu() {
+        show(.runbooks)
+        runbooks.newRunbookFromMenu()
+    }
+
+    /// UX1's "Lock Poneglyph" ⌘K verb.
+    ///
+    /// Deliberately does **not** navigate first, unlike every creation verb
+    /// above: locking the vault is a thing a captain does *because* they are
+    /// walking away, and dragging them onto the vault page to do it would be
+    /// the opposite of what they asked for. The slot is mounted if this is its
+    /// first use - GL-37 - and locking an already-locked vault is a no-op.
+    @objc func lockPoneglyph() {
+        // A vault whose page has never been built has never been unlocked, so
+        // there is nothing to lock - and `lockFromMenu` reaches the page's own
+        // views, which would force a full mount just to re-lock an already
+        // locked store. `isViewLoaded` is the honest test for "has this page
+        // ever existed", and it is what keeps this verb free on a cold app.
+        guard poneglyph.isViewLoaded else { return }
+        poneglyph.lockFromMenu()
+    }
 
     /// Fix 1: connect to `host` (its own dedicated page). The first call for
     /// a given host builds its `ConsoleController` (via `makeHostConsole`),

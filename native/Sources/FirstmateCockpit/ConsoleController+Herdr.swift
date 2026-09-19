@@ -119,6 +119,10 @@ extension HerdrRestartButtonStatus {
 // MARK: - Wiring
 
 extension ConsoleController {
+    /// UX14: the bell entry a failed herdr restart leaves, cleared by the next
+    /// restart that works.
+    static let restartFailureNotificationID = "herdr-restart-failed"
+
 
     /// Called once from `loadView()`, only for the shared Firstmate console
     /// - see `herdrRestartButton`'s own doc comment for why. Mirrors
@@ -311,12 +315,18 @@ extension ConsoleController {
                 guard let self else { return }
                 if result.ok {
                     AppLog.ui.info("herdr restart: server stopped")
+                    // UX14: a restart that works clears what a previous
+                    // failure left in the bell.
+                    Feedback.clear(id: Self.restartFailureNotificationID)
                     Toast.show(in: self.view,
                               message: "Herdr server restarted. Panes reconnect automatically the next time herdr connects.")
                 } else {
                     let reason = result.failureSummary ?? "unknown reason"
                     AppLog.ui.error("herdr restart: \"herdr server stop\" failed - \(reason, privacy: .public)")
-                    Toast.show(in: self.view, message: "Herdr restart failed: \(reason)")
+                    // UX14: the server is still down after the toast goes.
+                    Feedback.report("Herdr restart failed", kind: .failure, persistence: .lasting,
+                                    in: self.view, id: Self.restartFailureNotificationID,
+                                    detail: reason)
                 }
                 // Re-check right away so the button reflects reality (a
                 // stopped server reports `running: false`, which

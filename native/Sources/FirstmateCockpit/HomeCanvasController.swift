@@ -67,6 +67,12 @@ final class HomeCanvasController: NSViewController {
         /// that), and this one caches its records in memory, so the card's
         /// count is a field read rather than a directory scan.
         let commandLibraryStore: CommandLibraryStore
+        /// UX5's sticky-note peek. GL-23: the **`StickyBoardController`'s own
+        /// instance**, injected like every other store here rather than
+        /// constructed - this store caches its notes in memory, so a second
+        /// copy would diverge from the board's within a session and race its
+        /// writes.
+        let stickyBoardStore: StickyBoardStore
     }
 
     /// §6.1's grid: minimum column width 255, gap 16.
@@ -119,6 +125,9 @@ final class HomeCanvasController: NSViewController {
     // MARK: State pushed in from elsewhere
 
     private var fleetSnapshot: FleetSnapshot?
+    /// When `applyFleet` last delivered a reading - UX5's hero detail line.
+    /// `nil` until the first one lands, which is the "reading now" state.
+    private var fleetReadAt: Date?
     private var mergedPRs: [MergedPR]?
     private var prFetchFailure: String?
     /// `nil` until the engine has pushed one. The Dictation module then falls
@@ -447,6 +456,10 @@ final class HomeCanvasController: NSViewController {
     /// visit, so the canvas gets real fleet numbers without asking for them.
     func applyFleet(snapshot: FleetSnapshot, mergedPRs: [MergedPR]?, prFetchFailure: String?) {
         self.fleetSnapshot = snapshot
+        // UX5: the hero's all-clear detail line is freshness now rather than a
+        // restatement of the two cards below it - see `heroDetail`. This is
+        // the moment the reading was taken.
+        self.fleetReadAt = Date()
         self.mergedPRs = mergedPRs
         self.prFetchFailure = prFetchFailure
         guard isViewLoaded else { return }
@@ -520,6 +533,49 @@ final class HomeCanvasController: NSViewController {
                     detail: space.subtitle)
             return
         }
+        // Review #3's UX13: "a guided 'your first host / your first task'
+        // empty state on the canvas" for a genuinely first-run state.
+        //
+        // The **hero** rather than a new card, because the hero is where a
+        // first-time reader's eye already goes and because "nothing needs you
+        // right now" is exactly the wrong first sentence for someone who has
+        // not put anything in yet. It is technically true and completely
+        // unhelpful - the same class of thing GL-14 is about, one step up:
+        // reporting an all-clear over an app with no data in it.
+        //
+        // **It must never hide a verdict that needs the captain**, which is
+        // why this is not simply "no local data -> show the invitation". The
+        // three stores it counts are *local* - saved hosts, tasks, sticky
+        // notes - and none of them is what `FleetGreeting` reports on: a
+        // crewmate can be parked on a decision while this machine has nothing
+        // saved on it at all (a new Mac, a second user, a fresh clone), and a
+        // cheerful "Welcome aboard" over a task that is blocked waiting for an
+        // answer would be strictly worse than the all-clear this finding
+        // already objects to.
+        //
+        // So a needs-you answer wins, and the invitation is shown only where
+        // the hero would otherwise be reporting nothing worth reading: before
+        // the first fetch lands, or over a genuine all-clear. Caught by
+        // `CanvasListsControlsSelfTest`'s C1 case, which mounts exactly that
+        // combination - a parked fleet task over empty local stores.
+        let answerIfAny = fleetSnapshot.map {
+            FleetGreeting.answer(tasks: $0.tasks,
+                                 readyCount: mergedPRs.map(FleetDataSource.readyToMergeCount) ?? 0,
+                                 prFetchFailure: prFetchFailure,
+                                 homeOk: $0.homeOk)
+        }
+        let heroHasNothingUrgent = answerIfAny.map { $0.metaRestatesCards } ?? true
+        if heroHasNothingUrgent,
+           let firstRun = Self.firstRunHeroCopy(hosts: sources.hostStore.hosts.count,
+                                                tasks: sources.shiftStore.activeTasks.count,
+                                                notes: sources.stickyBoardStore.activeNotes.count) {
+            setHero(tint: nil,
+                    symbol: "sailboat.fill",
+                    kicker: "",
+                    title: firstRun.title,
+                    detail: firstRun.detail)
+            return
+        }
         guard let snapshot = fleetSnapshot else {
             // GL-14: nothing has been measured yet, so the hero says so
             // rather than rendering an all-clear it cannot stand behind.
@@ -538,7 +594,72 @@ final class HomeCanvasController: NSViewController {
                 symbol: answer.badgeSymbol,
                 kicker: answer.kicker,
                 title: answer.title,
-                detail: answer.meta)
+                detail: heroDetail(for: answer))
+    }
+
+    /// The hero's detail line on **the hub**, which is the one surface that
+    /// draws cards under it - review #3's UX5.
+    ///
+    /// The all-clear `meta` enumerates exactly the two cards immediately
+    /// below the hero ("N crew working" is the Fleet card's subtitle, the PR
+    /// clause is the Merge queue card, "nobody is parked" is the absence of
+    /// the Fleet card's warn chip), so on this page it is the third statement
+    /// of one fact. It is replaced with the one thing none of those cards can
+    /// say: **how fresh the all-clear is**. "Nothing needs you" read four
+    /// seconds ago and "nothing needs you" read forty minutes ago are
+    /// genuinely different claims, and until now the hub gave a captain no way
+    /// to tell them apart - the same shape of gap GL-14 is about.
+    ///
+    /// Every other branch keeps `meta` verbatim, and `FleetController`'s own
+    /// banner is untouched - see `Answer.metaRestatesCards`.
+    private func heroDetail(for answer: FleetGreeting.Answer) -> String {
+        guard answer.metaRestatesCards else { return answer.meta }
+        return "Fleet read \(Self.freshnessPhrase(since: fleetReadAt))."
+    }
+
+    /// "just now" / "4 minutes ago" / "at 09:14" - deliberately coarse.
+    ///
+    /// A ticking seconds counter on a hub a captain leaves open all day would
+    /// be motion for its own sake (and `HelmMotion`'s whole point is that this
+    /// app does not do that); this line is re-derived when the fleet is read
+    /// and when the canvas re-renders, which is exactly when the answer
+    /// changes in a way worth reading.
+    static func freshnessPhrase(since date: Date?, now: Date = Date()) -> String {
+        guard let date else { return "just now" }
+        let seconds = now.timeIntervalSince(date)
+        if seconds < 90 { return "just now" }
+        let minutes = Int((seconds / 60).rounded())
+        if minutes < 60 { return "\(minutes) minutes ago" }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        return "at \(formatter.string(from: date))"
+    }
+
+    /// What the hub says to a captain who has not put anything in yet -
+    /// review #3's UX13. `nil` once they have, which is the overwhelmingly
+    /// common case and the reason this is a guard rather than a mode.
+    ///
+    /// **Three stores, all empty**, deliberately - not one. A captain with
+    /// tasks but no hosts is not new, they just do not use hosts; showing
+    /// them "add your first host" would be the app misreading its own user.
+    /// The condition is "this app has never been used", and the honest test
+    /// for that is that nothing at all has been put into it.
+    ///
+    /// Pure and `static` so `DaylightModuleSelfTest` can assert both
+    /// directions without a canvas - and the second direction is the one that
+    /// matters, since a first-run banner that outstayed its welcome would be
+    /// a permanent fixture on a working captain's hub.
+    ///
+    /// A `nil` tint at the call site is load-bearing: this is an invitation,
+    /// not a verdict, and `setHero` drops the surface and the kicker for a
+    /// `nil` tint precisely so a hero that has measured nothing cannot look
+    /// like one reporting good news.
+    static func firstRunHeroCopy(hosts: Int, tasks: Int, notes: Int) -> (title: String, detail: String)? {
+        guard hosts == 0, tasks == 0, notes == 0 else { return nil }
+        return (title: "Welcome aboard",
+                detail: "Nothing is saved here yet. Add your first host (\u{2318}\u{2303}N) to keep a "
+                    + "connection, or your first task (\u{2318}N) to keep a to-do. "
+                    + "\u{2318}\u{21E7}D shows every page this app has.")
     }
 
     /// The hero's four strings and its badge, from one place.
@@ -1539,7 +1660,35 @@ final class HomeCanvasController: NSViewController {
         // `RailDestination.drillHeaderArtwork`'s `.stickyBoard` case.
         content.artwork = StickyNotesIcon.image
         content.subtitle = "quick notes"
-        content.body = .note("Jot down a thought on a colored sticky note, anywhere on the board.")
+        // UX5: "give each module card a genuinely useful peek (Tasks: due
+        // today; Console: last command; Sticky: newest note) rather than a
+        // static summary." Tasks and Console already had theirs; this card was
+        // one of the static ones the finding is about - the same sentence on
+        // every visit whether the board held nothing or forty notes.
+        //
+        // Newest first, which is the opposite of the store's own order
+        // (`notes` is sorted oldest-first, because that is the board's
+        // stacking order) - a peek of three answers "what was I just
+        // thinking", not "what did I think first".
+        // `activeNotes`, not every note: UX10 gave the board an archive, and a
+        // hub peek that counted archived notes would report a board fuller
+        // than the one the captain sees.
+        let newest = sources.stickyBoardStore.activeNotes.sorted { $0.createdAt > $1.createdAt }
+        guard !newest.isEmpty else {
+            content.body = .note("Jot down a thought on a colored sticky note, anywhere on the board.")
+            return
+        }
+        content.chip = .mute(newest.count == 1 ? "1 note" : "\(newest.count) notes")
+        content.body = .peekRows(newest.prefix(HelmModuleCard.maxPeekRows).map { note in
+            HelmModulePeekRow(state: .idle,
+                              // The same title-or-first-line fallback ⌘K's own
+                              // sticky rows use, so one note reads the same way
+                              // wherever it is listed.
+                              text: UnifiedSearchStickyNoteProvider.displayTitle(for: note),
+                              // The colour is the one thing a captain
+                              // actually sorts these by on the board itself.
+                              value: note.color.rawValue.capitalized)
+        })
     }
 
     /// `names()` rather than `list()`: this needs "how many, and what are they

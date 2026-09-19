@@ -250,10 +250,22 @@ enum ReadyToMergeCountSelfTest {
             }
 
             // The canvas hero, fed the same array the page pushes it.
+            // **Not a first-run app.** Review #3's UX13 gave the hub its own
+            // hero for a captain with nothing saved, and this case runs over
+            // empty scratch stores - which is exactly that state, so without a
+            // seeded task the hero below is legitimately the welcome banner
+            // and carries no ready count to read. One task is the cheapest way
+            // to say "this app has been used"; `NavigationCoherenceSelfTest`
+            // asserts the first-run half.
+            let shiftStore = ShiftStore()
+            var seeded = ShiftTask.fresh()
+            seeded.title = "a task, so the hub is not in its first-run state"
+            shiftStore.addTask(seeded)
             let canvas = HomeCanvasController(sources: .init(
-                shiftStore: ShiftStore(), hostStore: HostStore(), scheduleStore: ScheduleStore(),
+                shiftStore: shiftStore, hostStore: HostStore(), scheduleStore: ScheduleStore(),
                 logAnalyzerStore: LogAnalyzerStore(), docsRunbookStore: DocsRunbookStore(),
-                codePreviewStore: CodePreviewStore(), commandLibraryStore: CommandLibraryStore()))
+                codePreviewStore: CodePreviewStore(), commandLibraryStore: CommandLibraryStore(),
+                stickyBoardStore: StickyBoardStore()))
             let canvasWindow = OffScreenProbe.window(width: 1400, height: 900, styleMask: [.titled, .resizable])
             canvasWindow.contentViewController = canvas
             canvas.view.layoutSubtreeIfNeeded()
@@ -261,13 +273,26 @@ enum ReadyToMergeCountSelfTest {
             canvas.applyFleet(snapshot: snapshot, mergedPRs: prs, prFetchFailure: nil)
             canvas.view.layoutSubtreeIfNeeded()
 
+            // **Review #3's UX5 deliberately took the count off this hero**,
+            // and this assertion inverts rather than being deleted.
+            //
+            // The hub hero's all-clear detail used to enumerate the two cards
+            // drawn directly under it - "N crew working / N PRs ready" - which
+            // is exactly the "the same fact appears three times" the finding
+            // is about. On the hub it is a freshness line now; the *Overview
+            // page's* banner, which has no cards under it, still carries the
+            // count and is still asserted above.
+            //
+            // So what this case checks here is the thing that actually
+            // mattered: that the hub does not state a ready count of its own
+            // that could contradict the merge-queue card below it. A hero
+            // re-deriving that number is the defect this whole suite exists
+            // to prevent, and a hero that does not state it cannot.
             let hero = canvas.greetingForTests.subtitle
-            if let fromHero = number(before: "PRs ready to merge", in: hero) {
-                check(fromHero == expectedReady,
-                      "the canvas hero says \(expectedReady) PRs ready to merge (said \(fromHero))", &ok)
-            } else {
-                fail("could not read a ready count out of the hero: \"\(hero)\"", &ok)
-            }
+            check(number(before: "PRs ready to merge", in: hero) == nil,
+                  "the hub hero is restating the merge-queue card's count again: \"\(hero)\"", &ok)
+            check(hero.hasPrefix("Fleet read "),
+                  "the hub hero should carry UX5's freshness line, got \"\(hero)\"", &ok)
 
             // The merge-queue card is the surface that was already right, and
             // it is the one the hero visibly contradicted on the same canvas.

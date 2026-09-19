@@ -36,6 +36,8 @@ final class AppSettings {
         static let morningBriefingRecord = "fm.morningBriefingRecord"
         static let didSeedDailyGitHubSyncSchedule = "fm.didSeedDailyGitHubSyncSchedule"
         static let terminalShortcuts = "fm.terminalShortcuts"
+        static let quickAccess = "fm.quickAccess"
+        static let hasSeenWelcome = "fm.hasSeenWelcome"
     }
 
     /// GL-P3 (audit §6.10): the defaults store is injectable.
@@ -264,5 +266,43 @@ final class AppSettings {
     var sessionRestoreState: SessionRestoreState? {
         get { SessionRestoreStore.load(defaults: defaults) }
         set { SessionRestoreStore.save(newValue) }
+    }
+
+    /// Review #3's UX13: whether the first-run welcome sheet has been shown.
+    ///
+    /// Set when the sheet closes by any route, including Skip - a captain who
+    /// dismissed it has decided, and re-asking on the next launch would be the
+    /// app overruling them.
+    ///
+    /// Defaults to `false`, which means an existing captain sees it once after
+    /// upgrading. That is deliberate rather than an oversight: half of what it
+    /// says is about things this batch just added (the all-destinations map,
+    /// the configurable bar), so it is a genuine what-is-new for them too.
+    var hasSeenWelcome: Bool {
+        get { defaults.bool(forKey: Keys.hasSeenWelcome) }
+        set { defaults.set(newValue, forKey: Keys.hasSeenWelcome) }
+    }
+
+    /// Review #3's UX1/UX2: which destinations the floating bar's shortcut row
+    /// carries, and in what order - see `QuickAccessConfiguration`.
+    ///
+    /// JSON-encoded, on the same "one cohesive value, always read and written
+    /// as a unit" reasoning as `dictationShortcut`/`morningBriefingRecord`
+    /// above. An absent or undecodable value resolves to the seven shortcuts
+    /// the bar shipped with, so a captain who never touches this - and a
+    /// captain whose stored value this build cannot read - sees the bar they
+    /// already had rather than an empty one.
+    var quickAccess: QuickAccessConfiguration {
+        get {
+            guard let data = defaults.data(forKey: Keys.quickAccess),
+                  let decoded = try? JSONDecoder().decode(QuickAccessConfiguration.self, from: data) else {
+                return QuickAccessConfiguration()
+            }
+            return decoded
+        }
+        set {
+            guard let data = try? JSONEncoder().encode(newValue) else { return }
+            defaults.set(data, forKey: Keys.quickAccess)
+        }
     }
 }

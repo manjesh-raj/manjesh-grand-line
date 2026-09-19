@@ -368,3 +368,109 @@ enum CodePreviewLanguageDetector {
         CodePreviewLanguage.named(id)
     }
 }
+
+// MARK: - First-line auto-title (review #3's UX11)
+
+/// Naming a pasted snippet from its own first line.
+///
+/// Review #3's UX11: "the tab is named from the filename, so pasting a snippet
+/// and forgetting to rename leaves `snippet-3.txt` in the synced repo forever."
+/// That is the real cost - not the tab label, but a permanent file in the
+/// captain's config repo whose name says nothing about what is in it, which
+/// nobody will ever go back and fix.
+///
+/// The same discipline `CodePreviewLanguageDetector` already follows next
+/// door: this only ever fires while the snippet is genuinely **undecided** -
+/// still wearing a `snippet-N` placeholder and never renamed by hand - so a
+/// name the captain chose is never overwritten, and pasting more text into an
+/// already-named snippet cannot make its name flip-flop.
+///
+/// Pure logic, so `CodePreviewSelfTest` can assert the slugging without a
+/// store, a web view or a window.
+enum CodePreviewAutoTitle {
+    /// The placeholder stem `CodePreviewStore.nextUntitledName` mints.
+    static let untitledStem = "snippet-"
+
+    /// Whether `name`'s basename is still one of those placeholders.
+    ///
+    /// Matched on the *stem* rather than the whole filename, because the
+    /// language detector renames the extension underneath this - a pasted
+    /// Python snippet is `snippet-3.py` by the time a first line exists.
+    static func isUntitled(_ name: String) -> Bool {
+        let stem = (name as NSString).deletingPathExtension
+        guard stem.hasPrefix(untitledStem) else { return false }
+        let suffix = stem.dropFirst(untitledStem.count)
+        return !suffix.isEmpty && suffix.allSatisfy(\.isNumber)
+    }
+
+    /// The longest a derived stem may be.
+    ///
+    /// A tab chip truncates, but the *filename* does not - and this one lands
+    /// in a git-synced repo, where a 300-character name from a minified line
+    /// is a real nuisance on every machine that clones it.
+    static let maxStemLength = 40
+
+    /// A filename stem derived from `content`'s first meaningful line, or
+    /// `nil` when there is nothing worth naming it after.
+    ///
+    /// "Meaningful" skips blank lines and the comment/markup leaders a first
+    /// line most often carries - `#!`, `//`, `#`, `*`, `--`, `<!--` - because
+    /// the interesting words are what follow them. A shebang is skipped whole
+    /// rather than slugged: `usr-bin-env-python3` names the interpreter, not
+    /// the snippet.
+    static func stem(fromFirstLineOf content: String) -> String? {
+        for rawLine in content.components(separatedBy: .newlines) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty { continue }
+            // A shebang says what runs this, never what it is.
+            if line.hasPrefix("#!") { continue }
+            let stripped = stripLeaders(line)
+            guard let slug = slugify(stripped) else { continue }
+            return slug
+        }
+        return nil
+    }
+
+    private static func stripLeaders(_ line: String) -> String {
+        var result = line
+        for leader in ["<!--", "///", "//", "/*", "*/", "#", "--", "*", ";", "%"] where result.hasPrefix(leader) {
+            result = String(result.dropFirst(leader.count))
+            break
+        }
+        return result.trimmingCharacters(in: .whitespaces)
+    }
+
+    /// Lower-cased, hyphen-separated, ASCII alphanumerics only.
+    ///
+    /// Deliberately narrow: this becomes a filename in a git repo that syncs
+    /// between machines, so anything a shell, a filesystem or a checkout on
+    /// another platform could object to is dropped rather than escaped.
+    /// `CodePreviewStore.sanitize` is still the final authority on the way in -
+    /// this just means it rarely has to do anything.
+    private static func slugify(_ text: String) -> String? {
+        var parts: [String] = []
+        var current = ""
+        for character in text {
+            if character.isLetter || character.isNumber, character.isASCII {
+                current.append(Character(character.lowercased()))
+            } else if !current.isEmpty {
+                parts.append(current)
+                current = ""
+            }
+            if parts.joined(separator: "-").count >= maxStemLength { break }
+        }
+        if !current.isEmpty { parts.append(current) }
+        guard !parts.isEmpty else { return nil }
+        var slug = parts.joined(separator: "-")
+        if slug.count > maxStemLength {
+            slug = String(slug.prefix(maxStemLength))
+            // Never end on the hyphen a truncation happened to land on.
+            while slug.hasSuffix("-") { slug.removeLast() }
+        }
+        // A stem made only of digits would read as another placeholder index,
+        // and one that looks like `snippet-4` would make `isUntitled` true
+        // again - so the snippet would keep re-naming itself on every edit.
+        guard !slug.allSatisfy(\.isNumber), !isUntitled(slug) else { return nil }
+        return slug
+    }
+}

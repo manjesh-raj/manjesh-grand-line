@@ -264,8 +264,24 @@ enum Audit3BugFixesSelfTest {
         let expanded = bar.debugDestinationButtons().filter { !$0.isHidden }
         check(expanded.count == bar.debugDestinationButtons().count,
               "every shortcut shows at 1512pt (\(expanded.count))", &ok)
-        check(bar.debugQuickAccessOverflowButton().isHidden,
-              "and the overflow button is not there", &ok)
+        // **Review #3's UX2 capped the drawn row at six**, so the overflow
+        // button is now present even on a wide bar - it carries the seventh
+        // pinned shortcut. This assertion is inverted rather than deleted:
+        // what B6 was really about is that a *narrow* bar gives the row's
+        // width back to the title, which is still checked below.
+        let pinned = bar.quickAccessConfiguration.pinned
+        check(pinned.count > QuickAccessConfiguration.visibleLimit,
+              "the default row (\(pinned.count)) no longer exceeds UX2's cap - this case's "
+              + "overflow checks would be vacuous", &ok)
+        check(!bar.debugQuickAccessOverflowButton().isHidden,
+              "the overflow button should carry the shortcuts past UX2's cap", &ok)
+
+        // The row's own width while expanded, so the collapse below is
+        // measured as a real reclaim rather than assumed.
+        let expandedRowWidth = bar.debugQuickAccessRow().frame.width
+        check(expandedRowWidth > 100,
+              "the expanded shortcut row has no width (\(expandedRowWidth)) - the collapse "
+              + "check below would be vacuous", &ok)
 
         bar.view.frame = NSRect(x: 0, y: 0, width: 1100, height: height)
         bar.view.layoutSubtreeIfNeeded()
@@ -273,24 +289,29 @@ enum Audit3BugFixesSelfTest {
         check(collapsed.isEmpty, "at 1100pt the row is gone (\(collapsed.count) still showing)", &ok)
         check(!bar.debugQuickAccessOverflowButton().isHidden,
               "and the overflow button has taken its place", &ok)
-        // Hidden **and** zero-width: an ordinary hidden `NSView` keeps its
-        // constraints, so a check that only read `isHidden` would pass while
-        // the row still cost its full 294pt (gotcha (11)).
-        let widths = bar.debugDestinationButtons().map(\.frame.width)
-        check(widths.allSatisfy { $0 < 0.5 },
-              "the collapsed shortcuts really give their width back (\(widths))", &ok)
+        // **The width really comes back**, which is the half B6 exists for.
+        // UX2 moved the buttons into an `NSStackView`, so a hidden arranged
+        // subview genuinely leaves layout (the one exemption to gotcha (11))
+        // and the *row* collapses - which is what to measure now. Reading the
+        // buttons' own frames would report their last laid-out size and pass
+        // while the row still cost its full width.
+        let collapsedRowWidth = bar.debugQuickAccessRow().frame.width
+        check(collapsedRowWidth < 0.5,
+              "the collapsed shortcut row still costs \(collapsedRowWidth)pt "
+              + "(was \(expandedRowWidth)pt expanded)", &ok)
 
-        // Nothing is lost: the menu reaches the same destinations, in order,
-        // through the same callback a click on the icon uses.
+        // Nothing is lost: the menu reaches every pinned destination, in
+        // order, through the same callback a click on the icon uses. **Every
+        // pinned one, not just the six drawn** - a collapsed bar has no icons
+        // at all, so the menu is the only way to any of them.
         var picked: [RailDestination] = []
         bar.onSelectDestination = { picked.append($0) }
         let menu = bar.debugQuickAccessOverflowMenu()
         for item in menu.items where item.action != nil {
             _ = item.target?.perform(item.action, with: item)
         }
-        let expected = bar.debugDestinationButtons().map(\.destination)
-        check(picked == expected,
-              "the menu reports \(expected.map(\.title)) (reported \(picked.map(\.title)))", &ok)
+        check(picked == pinned,
+              "the collapsed menu should reach \(pinned.map(\.title)) (reached \(picked.map(\.title)))", &ok)
     }
 
     // MARK: B8 - a toast belongs to the page that raised it

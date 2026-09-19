@@ -232,8 +232,7 @@ final class DaylightBarController: NSViewController {
     /// `viewDidLayout` only rebuilds on a real crossing.
     private var quickAccessCollapsed = false
 
-    private var quickAccessWidths: [NSLayoutConstraint] = []
-    private var hostsToOverflowGap: NSLayoutConstraint!
+    private var rowToOverflowGap: NSLayoutConstraint!
     private var quickAccessOverflowWidth: NSLayoutConstraint!
     /// The light/dark quick-toggle, moved here from Console's own toolbar
     /// (`fm/grandline-daylight-theme-toggle-relocate`) - it flips the whole
@@ -257,31 +256,25 @@ final class DaylightBarController: NSViewController {
     /// Code Preview already set: the group reads in the order the captain
     /// asked for each shortcut, and adding one never moves an icon a captain
     /// has already built muscle memory for.
-    private let stickyBoardButton = DaylightDestinationButton(destination: .stickyBoard)
-    private let codePreviewButton = DaylightDestinationButton(destination: .codePreview)
-    private let tasksButton = DaylightDestinationButton(destination: .shift)
-    /// The captain asked for two more, in the same message: one-click jumps
-    /// to the Straw Hat Pirates crew chat and to Poneglyph (his own personal
-    /// credential vault) - both reached often enough from elsewhere that a
-    /// space switch plus a card click is friction, matching every other icon
-    /// in this group. Straw Hat Pirates sits first (the more central, daily
-    /// feature); Poneglyph sits right before the theme toggle.
-    private let strawHatButton = DaylightDestinationButton(destination: .strawHat)
-    private let poneglyphButton = DaylightDestinationButton(destination: .poneglyph)
-    /// The captain's own later ask, in its own message: a one-click jump to
-    /// Console. It appends to the trailing end of this group per the
-    /// convention above - Console is reached often, but slotting it in by
-    /// topic (beside Tasks, say) would move five icons a captain already has
-    /// muscle memory for. So it sits last, immediately before the theme
-    /// toggle, and Poneglyph keeps every icon before it exactly where it was.
-    private let consoleButton = DaylightDestinationButton(destination: .console)
-    /// The captain's own ask: a direct shortcut to Hosts, "immediately next to
-    /// the existing console/terminal icon". Console was the trailing-most icon
-    /// in this group, so appending after it satisfies both that and this
-    /// group's own convention (a new icon appends to the trailing end, never
-    /// gets slotted in by topic - which is what stops adding one from moving an
-    /// icon the captain already has muscle memory for).
-    private let hostsButton = DaylightDestinationButton(destination: .hosts)
+    /// The row itself, as a stack of buttons rebuilt from
+    /// `QuickAccessConfiguration` rather than seven `private let`s with a
+    /// hand-written constraint chain between them - review #3's UX1/UX2. See
+    /// `QuickAccessConfiguration.swift`'s header for why the captain owning
+    /// this list replaces the old "append, never slot in by topic" rule rather
+    /// than merely relaxing it.
+    ///
+    /// AGENTS.md gotcha (12): the *stack*-level priority APIs are the ones
+    /// that bite on a view with no intrinsic content size, so the row holds
+    /// its width with `setHuggingPriority`/`setClippingResistancePriority`
+    /// and never with the content-priority pair.
+    private let quickAccessRow = NSStackView()
+    /// The buttons currently in `quickAccessRow`, in visual order - rebuilt
+    /// wholesale by `rebuildQuickAccessRow()`, never mutated in place.
+    private var quickAccessRowButtons: [DaylightDestinationButton] = []
+    /// The pinned list this bar last drew. Owned here only as a cache of what
+    /// is on screen; `AppSettings.quickAccess` is the store of record and
+    /// `setQuickAccess(_:)` is the one way in.
+    private var quickAccess = QuickAccessConfiguration()
     /// The "Recents" dropdown (`fm/grandline-recents-navigation`) - a captain
     /// review of four back/forward-style approaches chose this one. It first
     /// shipped right after the space pills (never next to the logo the
@@ -299,6 +292,10 @@ final class DaylightBarController: NSViewController {
     /// Forwarded, never owned - the bar has no idea what a destination *is*,
     /// exactly as it has no idea what a space means (`onSelectSpace`).
     var onSelectDestination: ((RailDestination) -> Void)?
+    /// UX1: the overflow menu's own way into the all-destinations map, so the
+    /// row that the map configures carries a route to it. Forwarded, never
+    /// owned - the bar has no idea what an overlay is.
+    var onShowAllDestinations: (() -> Void)?
     private let avatar = HoverTrackingButton()
     private let avatarGradient = CAGradientLayer()
     /// B5: a borderless `HelmBarPanel`, like the bell's and Recents' - see
@@ -443,10 +440,12 @@ final class DaylightBarController: NSViewController {
         quickAccessOverflowButton.action = #selector(quickAccessOverflowClicked)
         quickAccessOverflowButton.isHidden = true
 
-        for button in [stickyBoardButton, codePreviewButton, tasksButton, strawHatButton, poneglyphButton, consoleButton, hostsButton] {
-            button.target = self
-            button.action = #selector(destinationButtonClicked(_:))
-        }
+        quickAccessRow.orientation = .horizontal
+        quickAccessRow.spacing = HelmMetrics.s2
+        quickAccessRow.distribution = .fill
+        quickAccessRow.translatesAutoresizingMaskIntoConstraints = false
+        quickAccessRow.setHuggingPriority(.required, for: .horizontal)
+        quickAccessRow.setClippingResistancePriority(.required, for: .horizontal)
 
         buildAvatar()
 
@@ -455,13 +454,7 @@ final class DaylightBarController: NSViewController {
         bar.addSubview(drillActions)
         bar.addSubview(searchPill)
         bar.addSubview(recentDestinations.button)
-        bar.addSubview(stickyBoardButton)
-        bar.addSubview(codePreviewButton)
-        bar.addSubview(tasksButton)
-        bar.addSubview(strawHatButton)
-        bar.addSubview(poneglyphButton)
-        bar.addSubview(consoleButton)
-        bar.addSubview(hostsButton)
+        bar.addSubview(quickAccessRow)
         bar.addSubview(quickAccessOverflowButton)
         bar.addSubview(themeToggleButton)
         bar.addSubview(notificationCenter.bell)
@@ -523,43 +516,13 @@ final class DaylightBarController: NSViewController {
             searchPill.trailingAnchor.constraint(equalTo: recentDestinations.button.leadingAnchor, constant: -HelmMetrics.s2),
             searchPill.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
 
-            recentDestinations.button.trailingAnchor.constraint(equalTo: stickyBoardButton.leadingAnchor, constant: -HelmMetrics.s2),
+            recentDestinations.button.trailingAnchor.constraint(equalTo: quickAccessRow.leadingAnchor, constant: -HelmMetrics.s2),
             recentDestinations.button.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             recentDestinations.button.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
             recentDestinations.button.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
 
-            stickyBoardButton.trailingAnchor.constraint(equalTo: codePreviewButton.leadingAnchor, constant: -HelmMetrics.s2),
-            stickyBoardButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            stickyBoardButton.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
-            stickyBoardButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
-
-            codePreviewButton.trailingAnchor.constraint(equalTo: tasksButton.leadingAnchor, constant: -HelmMetrics.s2),
-            codePreviewButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            codePreviewButton.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
-            codePreviewButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
-
-            tasksButton.trailingAnchor.constraint(equalTo: strawHatButton.leadingAnchor, constant: -HelmMetrics.s2),
-            tasksButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            tasksButton.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
-            tasksButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
-
-            strawHatButton.trailingAnchor.constraint(equalTo: poneglyphButton.leadingAnchor, constant: -HelmMetrics.s2),
-            strawHatButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            strawHatButton.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
-            strawHatButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
-
-            poneglyphButton.trailingAnchor.constraint(equalTo: consoleButton.leadingAnchor, constant: -HelmMetrics.s2),
-            poneglyphButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            poneglyphButton.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
-            poneglyphButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
-
-            consoleButton.trailingAnchor.constraint(equalTo: hostsButton.leadingAnchor, constant: -HelmMetrics.s2),
-            consoleButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            consoleButton.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
-            consoleButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
-
-            hostsButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-            hostsButton.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
+            quickAccessRow.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            quickAccessRow.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
 
             quickAccessOverflowButton.trailingAnchor.constraint(equalTo: themeToggleButton.leadingAnchor, constant: -HelmMetrics.s2),
             quickAccessOverflowButton.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
@@ -581,21 +544,23 @@ final class DaylightBarController: NSViewController {
             avatar.heightAnchor.constraint(equalToConstant: 34),
         ])
 
-        // B6: the seven shortcuts' own widths and the gap they leave in front
-        // of the overflow button are the two things `setQuickAccessCollapsed`
-        // drives. Width **and** gap, because a hidden plain `NSView` keeps its
-        // constraints - gotcha (11) - so `isHidden` alone would leave 294pt of
-        // invisible demand exactly where the fix is meant to reclaim it.
-        quickAccessWidths = quickAccessButtons.map { button in
-            let width = button.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side)
-            width.isActive = true
-            return width
-        }
-        hostsToOverflowGap = hostsButton.trailingAnchor.constraint(
+        // B6 (and now UX2's cap): the row's gap in front of the overflow
+        // button closes with it, and the overflow button's own width goes to
+        // zero when there is nothing for it to show.
+        //
+        // **`isHidden` alone reclaims nothing** - an ordinary hidden `NSView`
+        // keeps every constraint it had, gotcha (11) - which is why the width
+        // is driven rather than only the visibility. The row itself is an
+        // `NSStackView`, so its *arranged* subviews genuinely do leave layout
+        // when hidden (the one place that distinction works in our favour),
+        // and the row collapses to zero width on its own once every button in
+        // it is hidden.
+        rowToOverflowGap = quickAccessRow.trailingAnchor.constraint(
             equalTo: quickAccessOverflowButton.leadingAnchor, constant: -HelmMetrics.s2)
-        hostsToOverflowGap.isActive = true
+        rowToOverflowGap.isActive = true
         quickAccessOverflowWidth = quickAccessOverflowButton.widthAnchor.constraint(equalToConstant: 0)
         quickAccessOverflowWidth.isActive = true
+        setQuickAccess(AppSettings.shared.quickAccess)
 
         themeToken = ThemeManager.shared.observe { [weak self] theme in self?.applyTheme(theme) }
         // `ThemeManager.observe` fires synchronously at registration, which
@@ -841,13 +806,7 @@ final class DaylightBarController: NSViewController {
         chain += pills.map { $0.container }
         chain.append(searchPill)
         chain.append(recentDestinations.button)
-        chain.append(stickyBoardButton)
-        chain.append(codePreviewButton)
-        chain.append(tasksButton)
-        chain.append(strawHatButton)
-        chain.append(poneglyphButton)
-        chain.append(consoleButton)
-        chain.append(hostsButton)
+        chain += quickAccessRowButtons
         chain.append(quickAccessOverflowButton)
         chain.append(themeToggleButton)
         chain.append(notificationCenter.bell)
@@ -859,45 +818,101 @@ final class DaylightBarController: NSViewController {
     /// is deliberately not here - it is a `NotificationBellButton`, which owns
     /// its own badge geometry and its own `applyTheme`.
     private var iconSquares: [DaylightBarIconButton] {
-        [recentDestinations.button, stickyBoardButton, codePreviewButton,
-         tasksButton, strawHatButton, poneglyphButton, consoleButton, hostsButton,
-         quickAccessOverflowButton, themeToggleButton]
+        [recentDestinations.button] + quickAccessRowButtons
+            + [quickAccessOverflowButton, themeToggleButton]
     }
 
-    /// The seven destination shortcuts, in visual order - the row B6 collapses.
+    // MARK: The configurable shortcut row (UX1/UX2)
+
+    /// Point the bar at a pinned list. The one way the row changes.
     ///
-    /// Recents is deliberately not one: it is already a single dropdown, not a
-    /// destination shortcut, and folding one menu into another menu buys
-    /// nothing. The theme toggle and the bell are not shortcuts at all.
-    private var quickAccessButtons: [DaylightDestinationButton] {
-        [stickyBoardButton, codePreviewButton, tasksButton,
-         strawHatButton, poneglyphButton, consoleButton, hostsButton]
+    /// Idempotent and safe before the view is loaded (the initial call is made
+    /// from `loadView` itself, and `AppShellController` calls it again whenever
+    /// the captain pins or unpins from the overlay).
+    func setQuickAccess(_ configuration: QuickAccessConfiguration) {
+        quickAccess = configuration
+        guard isViewLoaded else { return }
+        rebuildQuickAccessRow()
+    }
+
+    /// The pinned list the bar is currently drawing - what the overlay's
+    /// context menu reads to decide whether it says "Pin" or "Unpin".
+    var quickAccessConfiguration: QuickAccessConfiguration { quickAccess }
+
+    /// Rebuild the row wholesale.
+    ///
+    /// Wholesale rather than diffed on purpose: the row is at most six
+    /// buttons, rebuilding it is imperceptible, and a diff would be a second
+    /// place for the row's order to be decided. `NSStackView` removes an
+    /// arranged subview's constraints with it, so there is nothing of the old
+    /// row left to fight the new one.
+    private func rebuildQuickAccessRow() {
+        for button in quickAccessRowButtons {
+            quickAccessRow.removeArrangedSubview(button)
+            button.removeFromSuperview()
+        }
+        quickAccessRowButtons = quickAccess.visible.map { destination in
+            let button = DaylightDestinationButton(destination: destination)
+            button.target = self
+            button.action = #selector(destinationButtonClicked(_:))
+            button.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                button.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
+                button.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
+            ])
+            quickAccessRow.addArrangedSubview(button)
+            return button
+        }
+        applyQuickAccessVisibility()
+        // The row's buttons are new views, so the theme they were built
+        // without has to be handed to them - `ThemeManager.observe`'s closure
+        // already ran for this controller long before this rebuild.
+        applyTheme(ThemeManager.shared.theme)
+    }
+
+    /// Whether the overflow button has anything to show right now: the
+    /// captain's overflow pins while the row is expanded, or the whole row
+    /// while it is collapsed.
+    private var overflowDestinations: [RailDestination] {
+        quickAccessCollapsed ? quickAccess.pinned : quickAccess.overflow
+    }
+
+    /// Apply the current collapsed/expanded state to the views.
+    ///
+    /// Split out of `setQuickAccessCollapsed` so a *rebuild* lands in the
+    /// right state too - a row rebuilt while the window is narrow used to come
+    /// back expanded, which is the bug this separation exists to make
+    /// impossible.
+    private func applyQuickAccessVisibility() {
+        for button in quickAccessRowButtons { button.isHidden = quickAccessCollapsed }
+        let showsOverflow = !overflowDestinations.isEmpty
+        quickAccessOverflowButton.isHidden = !showsOverflow
+        quickAccessOverflowWidth.constant = showsOverflow ? DaylightBarIconButton.side : 0
+        // The gap belongs between two *visible* things. With the row collapsed
+        // it has zero width of its own, and with no overflow button there is
+        // nothing on the other side of the gap.
+        rowToOverflowGap.constant = (quickAccessCollapsed || !showsOverflow) ? 0 : -HelmMetrics.s2
     }
 
     /// Collapse the shortcut row into `quickAccessOverflowButton`, or put it
     /// back - review #3's B6.
     ///
-    /// Each button is hidden **and** zero-width, and the gap in front of the
-    /// overflow button closes with them: an ordinary hidden `NSView` keeps
-    /// every constraint it had (gotcha (11)), so hiding alone would reclaim
-    /// nothing. The overflow button is the mirror image - zero-width and
-    /// hidden while the row is showing, so the expanded bar is laid out
-    /// exactly as it was before this existed.
+    /// The buttons are `NSStackView` arranged subviews now, so hiding them
+    /// genuinely removes their width from layout - the one case where gotcha
+    /// (11)'s "a hidden view keeps its constraints" does not apply, and the
+    /// reason this no longer drives a width constraint per button.
     private func setQuickAccessCollapsed(_ collapsed: Bool) {
         guard collapsed != quickAccessCollapsed else { return }
         quickAccessCollapsed = collapsed
-        for (button, width) in zip(quickAccessButtons, quickAccessWidths) {
-            button.isHidden = collapsed
-            width.constant = collapsed ? 0 : DaylightBarIconButton.side
-        }
-        quickAccessOverflowButton.isHidden = !collapsed
-        quickAccessOverflowWidth.constant = collapsed ? DaylightBarIconButton.side : 0
-        hostsToOverflowGap.constant = collapsed ? 0 : -HelmMetrics.s2
+        applyQuickAccessVisibility()
     }
 
-    /// The collapsed row's menu - the same destinations, in the same order,
-    /// reaching the same `onSelectDestination`. A shortcut that changed what it
-    /// did depending on the window's width would be worse than no shortcut.
+    /// The overflow menu - the destinations the bar is not drawing as icons,
+    /// in the captain's own order, reaching the same `onSelectDestination`.
+    ///
+    /// A shortcut that changed what it did depending on the window's width
+    /// would be worse than no shortcut, which is why a collapsed bar lists the
+    /// *whole* pinned row here rather than only its overflow tail.
     @objc private func quickAccessOverflowClicked() {
         let menu = quickAccessMenu()
         menu.popUp(positioning: nil,
@@ -907,15 +922,24 @@ final class DaylightBarController: NSViewController {
 
     private func quickAccessMenu() -> NSMenu {
         let menu = NSMenu()
-        for button in quickAccessButtons {
-            let item = NSMenuItem(title: button.destination.title,
+        for destination in overflowDestinations {
+            let item = NSMenuItem(title: destination.title,
                                   action: #selector(quickAccessMenuPicked(_:)),
                                   keyEquivalent: "")
             item.target = self
-            item.image = HelmSymbol.image(button.destination.symbol, pointSize: 13, weight: .medium)
-            item.representedObject = button.destination.rawValue
+            item.image = HelmSymbol.image(destination.symbol, pointSize: 13, weight: .medium)
+            item.representedObject = destination.rawValue
             menu.addItem(item)
         }
+        if !menu.items.isEmpty { menu.addItem(NSMenuItem.separator()) }
+        // The way into UX1's map from the row the map configures - so a
+        // captain who wants a different shortcut can get there without first
+        // knowing the ⌘⇧D chord.
+        let all = NSMenuItem(title: "All Destinations\u{2026}",
+                             action: #selector(allDestinationsPicked), keyEquivalent: "")
+        all.target = self
+        all.image = HelmSymbol.image("square.grid.3x3", pointSize: 13, weight: .medium)
+        menu.addItem(all)
         return menu
     }
 
@@ -924,6 +948,8 @@ final class DaylightBarController: NSViewController {
               let destination = RailDestination(rawValue: raw) else { return }
         onSelectDestination?(destination)
     }
+
+    @objc private func allDestinationsPicked() { onShowAllDestinations?() }
 
     /// B2's "active": light the shortcut for the destination the captain is
     /// actually looking at, and only that one.
@@ -1238,9 +1264,7 @@ final class DaylightBarController: NSViewController {
     /// same recognizer a captain's mouse would.
     /// The bar's quick-access destination icons, in visual order
     /// (leading -> trailing).
-    func debugDestinationButtons() -> [DaylightDestinationButton] {
-        [stickyBoardButton, codePreviewButton, tasksButton, strawHatButton, poneglyphButton, consoleButton, hostsButton]
-    }
+    func debugDestinationButtons() -> [DaylightDestinationButton] { quickAccessRowButtons }
 
     func debugThemeToggleButton() -> DaylightThemeToggleButton { themeToggleButton }
 
@@ -1280,6 +1304,10 @@ final class DaylightBarController: NSViewController {
     func debugDrillTitleWidth() -> CGFloat { drillNav.debugTitleWidth }
     func debugQuickAccessOverflowButton() -> DaylightBarIconButton { quickAccessOverflowButton }
     func debugQuickAccessOverflowMenu() -> NSMenu { quickAccessMenu() }
+    /// The row itself, so a suite can measure the width UX2's collapse
+    /// reclaims - the buttons are arranged subviews now, so their own frames
+    /// are not where that shows up.
+    func debugQuickAccessRow() -> NSView { quickAccessRow }
     #endif
 
     /// Re-themes this instance directly, bypassing `ThemeManager.setTheme` -

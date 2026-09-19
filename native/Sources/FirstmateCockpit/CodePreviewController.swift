@@ -217,7 +217,14 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     // MARK: Lifecycle
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 620))
+        // UX11: the page's own root accepts a dropped file, so a captain can
+        // drag a file onto the page from anywhere on it rather than hunting
+        // for a well. A `WKWebView` swallows its own drags, so the editor
+        // rectangle itself is not a drop target - dropping onto the toolbar,
+        // the status bar or the page's margins is what works, which is why the
+        // highlight is drawn around the whole page rather than around a zone.
+        let root = CodePreviewDropView(frame: NSRect(x: 0, y: 0, width: 900, height: 620))
+        root.onDropFiles = { [weak self] urls in self?.openDroppedFiles(urls) }
         root.wantsLayer = true
         view = root
 
@@ -754,6 +761,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         }
 
         autoDetectLanguageIfNeeded(for: snippet)
+        autoTitleIfNeeded(for: snippet)
         store.save(name: snippet.name, content: content)
         let wasPersisted = snippet.persisted
         snippet.persisted = true
@@ -780,6 +788,41 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         guard let detected = CodePreviewLanguageDetector.detect(snippet.content) else { return }
         guard detected.id != snippet.language.id else { return }
         apply(language: detected, to: snippet, overridden: false)
+    }
+
+    /// Names a pasted snippet from its own first line, if it is still unnamed -
+    /// review #3's UX11.
+    ///
+    /// The same three-part guard `autoDetectLanguageIfNeeded` above uses, and
+    /// for the same reason: this must never overwrite a name the captain
+    /// chose, and it must not be able to fire twice and make a snippet's name
+    /// flip-flop as they keep typing.
+    ///
+    ///   - `languageOverridden` also covers a hand rename (`renameTab` sets
+    ///     it), so a deliberately named tab is out of scope immediately;
+    ///   - `isUntitled` is the positive test - only a `snippet-N` stem is
+    ///     eligible, and the derived stem can never itself look like one;
+    ///   - once it has fired, the stem is no longer `snippet-N`, so it cannot
+    ///     fire again. There is no "already titled" flag to keep in step.
+    ///
+    /// Runs **after** language detection, deliberately: detection renames the
+    /// extension, and doing it the other way round would rename the file
+    /// twice for one paste.
+    private func autoTitleIfNeeded(for snippet: OpenSnippet) {
+        guard !snippet.languageOverridden, CodePreviewAutoTitle.isUntitled(snippet.name) else { return }
+        guard let stem = CodePreviewAutoTitle.stem(fromFirstLineOf: snippet.content) else { return }
+        let ext = (snippet.name as NSString).pathExtension
+        let target = ext.isEmpty ? stem : "\(stem).\(ext)"
+        guard target != snippet.name else { return }
+        let landed = snippet.persisted
+            ? store.rename(from: snippet.name, to: target)
+            : uniqueName(target, excluding: snippet.key)
+        snippet.name = landed
+        snippet.chip.setName(landed)
+        // The order sidecar holds names, so a rename has to update it or the
+        // tab jumps to wherever its new name sorts on the next launch - §6.6a.
+        persistTabOrder()
+        refreshStatusBar()
     }
 
     /// Moves a snippet onto `language` - which, because the extension is the
@@ -822,6 +865,65 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         guard let snippet = store.list().first(where: { $0.id == name }) else { return }
         _ = addTab(name: snippet.id, content: snippet.content, persisted: true, select: true)
     }
+
+    /// UX4: the File menu's contextual ⌘N on this page, and `⌘K`'s "New Code
+    /// Snippet" verb - the page's own toolbar action, not a second copy.
+    func newSnippetFromMenu() { newSnippetTapped() }
+
+    /// UX11's drag-and-drop file open: "the page has no […] drop-a-file-to-
+    /// open".
+    ///
+    /// Each file becomes a tab named after the file, carrying the file's own
+    /// extension - so the language is right for free (the extension *is* the
+    /// language here, see `CodePreviewStore`'s header) and the auto-title above
+    /// never fires on it, because the name is not a `snippet-N` placeholder.
+    ///
+    /// **Bounded, and it says so when it refuses.** A dropped file is
+    /// arbitrary - a 2GB core dump, a JPEG, something unreadable - and this
+    /// page keeps every open snippet's text in memory and writes it to a
+    /// git-synced repo. So a file is read only when it is within
+    /// `maximumDroppedFileBytes` and decodes as UTF-8 text, and a refusal is
+    /// stated rather than silent (GL-14's spirit: a file that did not open and
+    /// a file that opened empty are different things, and must read
+    /// differently).
+    private func openDroppedFiles(_ urls: [URL]) {
+        var opened = 0
+        var refused: [String] = []
+        for url in urls {
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            guard size <= Self.maximumDroppedFileBytes else {
+                refused.append("\(url.lastPathComponent) is too large to open here")
+                continue
+            }
+            guard let data = try? Data(contentsOf: url), let text = String(data: data, encoding: .utf8) else {
+                refused.append("\(url.lastPathComponent) is not a text file")
+                continue
+            }
+            // "" excludes nothing, which is right: this is a brand new tab,
+            // so every already-open name is genuinely taken.
+            let name = uniqueName(CodePreviewStore.sanitize(url.lastPathComponent), excluding: "")
+            let snippet = addTab(name: name, content: text, persisted: false, select: true)
+            // Dropped, not pasted: the captain named this by choosing a file,
+            // so neither the auto-title nor the language detector should ever
+            // second-guess it.
+            snippet.languageOverridden = true
+            snippetChanged(key: snippet.key, content: text)
+            opened += 1
+        }
+        if !refused.isEmpty {
+            Toast.show(in: view, message: refused.joined(separator: " \u{00B7} "))
+        } else if opened > 0 {
+            onDrillSubtitleChanged?()
+        }
+    }
+
+    /// The largest file this page will read from a drop.
+    ///
+    /// 2 MB: comfortably past any source file a person reads, and far short of
+    /// the log and dump sizes that would otherwise land in memory, in Monaco
+    /// and in the captain's synced config repo. The Log Analyzer is where a
+    /// large file belongs.
+    static let maximumDroppedFileBytes = 2 * 1024 * 1024
 
     @objc private func newSnippetTapped() {
         addTab(name: nextUntitledName(), content: "", persisted: false, select: true)
@@ -1069,6 +1171,88 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     func debugRename(from: String, to: String) {
         guard let snippet = open.first(where: { $0.name == from }) else { return }
         renameTab(key: snippet.key, to: to)
+    }
+    #endif
+}
+
+// MARK: - The page's file-drop root (review #3's UX11)
+
+/// The Code Preview page's root view, which accepts dropped files.
+///
+/// The same four-override recipe `LogAnalyzerController`'s own drop well uses,
+/// and deliberately the same shape rather than a second one - a drop target
+/// that highlighted differently on two pages of one app would read as two
+/// different affordances.
+///
+/// It accepts **any** file and lets the controller decide: the filter that
+/// matters is "is this readable text, and is it small enough", which cannot be
+/// answered from an extension. Refusing by extension would also mean refusing
+/// the extension-less files (`Makefile`, `Dockerfile`, a shell script) that are
+/// exactly what someone drags onto a code viewer.
+final class CodePreviewDropView: NSView {
+    var onDropFiles: (([URL]) -> Void)?
+
+    private var isHighlighted = false {
+        didSet { needsDisplay = true }
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        registerForDraggedTypes([.fileURL])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    private func urls(from sender: NSDraggingInfo) -> [URL] {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        let objects = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: options)
+        return (objects as? [URL] ?? []).filter { url in
+            // A directory is not something this page can open, and dropping a
+            // folder of 400 files would open 400 tabs.
+            var isDirectory: ObjCBool = false
+            let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            return exists && !isDirectory.boolValue
+        }
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        let accepted = !urls(from: sender).isEmpty
+        isHighlighted = accepted
+        return accepted ? .copy : []
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) { isHighlighted = false }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        isHighlighted = false
+        let files = urls(from: sender)
+        guard !files.isEmpty else { return false }
+        onDropFiles?(files)
+        return true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard isHighlighted else { return }
+        let accent = HelmTheme.nsColor(ThemeManager.shared.theme.accentHex)
+        let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 2, dy: 2),
+                                xRadius: HelmMetrics.rCard, yRadius: HelmMetrics.rCard)
+        accent.withAlphaComponent(0.08).setFill()
+        path.fill()
+        accent.withAlphaComponent(0.8).setStroke()
+        path.lineWidth = 2
+        path.stroke()
+    }
+
+    #if FM_SELFTESTS
+    /// So a suite can drive the real accept/refuse decision without a live
+    /// drag session, which needs a window server and a mouse.
+    func debugAcceptedURLs(_ urls: [URL]) -> [URL] {
+        urls.filter { url in
+            var isDirectory: ObjCBool = false
+            let exists = FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory)
+            return exists && !isDirectory.boolValue
+        }
     }
     #endif
 }

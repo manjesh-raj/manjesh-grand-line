@@ -2177,7 +2177,12 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
                 if outcome.ok {
                     Toast.show(in: self.view, message: "\(item.name) installed")
                 } else {
-                    Toast.show(in: self.view, message: "\(item.name) install failed")
+                    // UX14: the tool is still missing after the toast goes,
+                    // and Bootstrap is a page a captain visits once and leaves.
+                    Feedback.report("\(item.name) install failed", kind: .failure,
+                                    persistence: .lasting, in: self.view,
+                                    id: "bootstrap-install-\(item.name)",
+                                    detail: "Setup \u{00B7} Bootstrap")
                 }
                 completion(outcome.ok)
             }

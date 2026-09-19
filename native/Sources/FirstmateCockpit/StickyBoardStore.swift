@@ -327,6 +327,21 @@ final class StickyBoardStore {
 
     private(set) var notes: [StickyNote] = []
 
+    /// The notes on the board - review #3's UX10.
+    ///
+    /// `notes` deliberately stays "every note", because that is what the file
+    /// holds and what `persist` writes; splitting the stored array would make
+    /// archiving a move between two collections and give the writer two places
+    /// to get wrong. The board asks for this instead.
+    var activeNotes: [StickyNote] { notes.filter { !$0.isArchived } }
+
+    /// The archive drawer's contents, newest-archived first - which is the
+    /// order someone looking for "the thing I put away earlier" wants, and the
+    /// opposite of the board's own oldest-first stacking order.
+    var archivedNotes: [StickyNote] {
+        notes.filter(\.isArchived).sorted { ($0.archivedAt ?? .distantPast) > ($1.archivedAt ?? .distantPast) }
+    }
+
     private var notesPath: String { root.appendingPathComponent("notes.yaml").path }
 
     // MARK: GL-01 - refuse to overwrite a file this store could not read.
@@ -533,6 +548,25 @@ final class StickyBoardStore {
         return removed
     }
 
+    /// Archive a note, or put it back on the board - review #3's UX10.
+    ///
+    /// Deliberately not a delete: the finding's complaint is that the board
+    /// "is a dead end after ~12 notes", and the answer to a full corkboard is
+    /// somewhere to put things, not a bin. Returns the note's new state so a
+    /// caller can offer an Undo that restores the value it already had
+    /// (GL-33) rather than guessing at it.
+    @discardableResult
+    func setArchived(id: String, archived: Bool, now: Date = Date()) -> StickyNote? {
+        guard let index = notes.firstIndex(where: { $0.id == id }) else { return nil }
+        // Idempotent: re-archiving an archived note must not move its
+        // `archivedAt`, or the drawer's newest-first order would reshuffle on
+        // a doubled click.
+        guard notes[index].isArchived != archived else { return notes[index] }
+        notes[index].archivedAt = archived ? now : nil
+        persist()
+        return notes[index]
+    }
+
     /// The undo half of `deleteNote` - re-inserts a note that was just
     /// removed, restoring its exact original id/text/color/position/
     /// rotation/created-at. A no-op if a note with that id already exists
@@ -634,6 +668,13 @@ final class StickyBoardStore {
         m[ShiftYamlBridge.key("height")] = .double(n.height)
         m[ShiftYamlBridge.key("rotation")] = .double(n.rotationDegrees)
         m[ShiftYamlBridge.key("created_at")] = ShiftYamlBridge.str(ShiftYamlBridge.isoString(n.createdAt))
+        // UX10. Written only when set, so an un-archived note's record is
+        // byte-identical to what this store has always produced - a key
+        // appearing on every note in the captain's git-synced repo would make
+        // this change a diff on every line of a file it did not need to touch.
+        if let archivedAt = n.archivedAt {
+            m[ShiftYamlBridge.key("archived_at")] = ShiftYamlBridge.str(ShiftYamlBridge.isoString(archivedAt))
+        }
         return .dictionary(m)
     }
 
@@ -670,8 +711,13 @@ final class StickyBoardStore {
         let size = StickyBoardMetrics.clampSize(CGSize(
             width: dict[ShiftYamlBridge.key("width")]?.double ?? Double(StickyBoardMetrics.noteSize.width),
             height: dict[ShiftYamlBridge.key("height")]?.double ?? Double(StickyBoardMetrics.noteSize.height)))
+        // UX10's own new field, under the rule the comment above states: an
+        // absent key is "not archived", never a decode failure. A note written
+        // by an older build has no `archived_at` and must still load.
+        let archivedAt = ShiftYamlBridge.date(dict[ShiftYamlBridge.key("archived_at")])
         return StickyNote(id: id, title: title, text: text, color: color, x: x, y: y2,
                           width: Double(size.width), height: Double(size.height),
-                          rotationDegrees: rotation, createdAt: createdAt)
+                          rotationDegrees: rotation, createdAt: createdAt,
+                          archivedAt: archivedAt)
     }
 }

@@ -199,7 +199,8 @@ enum StrawHatViewSelfTest {
             logAnalyzerStore: LogAnalyzerStore(),
             docsRunbookStore: DocsRunbookStore(),
             codePreviewStore: CodePreviewStore(),
-            commandLibraryStore: CommandLibraryStore()))
+            commandLibraryStore: CommandLibraryStore(),
+            stickyBoardStore: StickyBoardStore()))
         let canvasWindow = OffScreenProbe.window(width: 1400, height: 900, styleMask: [.titled, .resizable])
         canvasWindow.contentViewController = canvas
         canvas.view.layoutSubtreeIfNeeded()
@@ -376,7 +377,8 @@ enum StrawHatViewSelfTest {
             logAnalyzerStore: LogAnalyzerStore(),
             docsRunbookStore: DocsRunbookStore(),
             codePreviewStore: CodePreviewStore(),
-            commandLibraryStore: CommandLibraryStore()))
+            commandLibraryStore: CommandLibraryStore(),
+            stickyBoardStore: StickyBoardStore()))
         let window = OffScreenProbe.window(width: 1400, height: 900, styleMask: [.titled, .resizable])
         window.contentViewController = canvas
         canvas.view.layoutSubtreeIfNeeded()

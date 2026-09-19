@@ -143,6 +143,7 @@ grep -rhoE '"FM_[A-Z0-9_]+"' native/Sources/FirstmateCockpit/*.swift | tr -d '"'
 | `FM_COMMAND_LIBRARY_DIR` | The DevOps command library only |
 | `FM_STICKY_BOARD_DIR` | The Sticky Board's `notes.yaml`. Falls back to `FM_SHIFT_DIR`, then the synced clone |
 | `FM_CODE_PREVIEW_DIR` | The Code Preview panel's snippet files. Falls back to `FM_SHIFT_DIR`, then the synced clone |
+| `FM_STRAW_HAT_DIR` | The Straw Hat crew's saved conversations (redacted). Falls back to `FM_SHIFT_DIR`, then the synced clone |
 | `FM_SHIFT_GIT_CLONE_PATH` | Where the `manjesh-config` clone lives |
 | `FM_SHIFT_REMOTE_URL` | The remote Shift clones/pulls/pushes (point at a disposable local bare repo for tests) |
 | `FM_DICTATION_DIR` | Dictation history + vocabulary |

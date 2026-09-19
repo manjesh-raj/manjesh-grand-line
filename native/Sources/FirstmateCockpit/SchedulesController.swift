@@ -657,6 +657,10 @@ final class SchedulesController: NSViewController, DaylightDrillActions {
         refreshSchedules()
     }
 
+    /// UX4: the File menu's contextual ⌘N on this page - the same editor the
+    /// Schedules card's own "New schedule" action opens.
+    func newScheduleFromMenu() { presentScheduleEditor(editing: nil) }
+
     private func presentScheduleEditor(editing: AutomationSchedule?) {
         let editor = ScheduleEditorController(schedule: editing)
         editor.onSave = { [weak self] schedule in

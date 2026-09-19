@@ -622,28 +622,49 @@ enum HostsRedesignSelfTest {
         print("\n-- the toolbar shortcut sits beside the console icon --")
         let bar = DaylightBarController()
         _ = bar.view
-        let buttons = bar.debugDestinationButtons()
-        let destinations = buttons.map(\.destination)
-        guard let consoleIndex = destinations.firstIndex(of: .console),
-              let hostsIndex = destinations.firstIndex(of: .hosts) else {
-            fail("the bar carries \(destinations.map(\.title)) - no console/hosts pair", &ok)
+        // **Review #3's UX2 capped the *drawn* row at six**, and Hosts is the
+        // seventh - so the captain's placement now lives in the pinned order
+        // rather than in the drawn buttons, and Hosts reaches the bar through
+        // the overflow menu. The placement claim is unchanged and still
+        // asserted; what changed is which of the two lists carries it.
+        //
+        // Asserting the pinned list rather than quietly dropping this case is
+        // the point: "Hosts is last, immediately after Console" is a captain
+        // decision, and it is exactly as breakable now as it was before.
+        let pinned = bar.quickAccessConfiguration.pinned
+        guard let consoleIndex = pinned.firstIndex(of: .console),
+              let hostsIndex = pinned.firstIndex(of: .hosts) else {
+            fail("the bar's pinned row is \(pinned.map(\.title)) - no console/hosts pair", &ok)
             return
         }
         if hostsIndex != consoleIndex + 1 {
             fail("Hosts is at \(hostsIndex), console at \(consoleIndex) - they are not adjacent", &ok)
         }
-        if hostsIndex != destinations.count - 1 {
-            fail("Hosts is not the trailing-most icon (index \(hostsIndex) of \(destinations.count))", &ok)
+        if hostsIndex != pinned.count - 1 {
+            fail("Hosts is not the trailing-most shortcut (index \(hostsIndex) of \(pinned.count))", &ok)
+        }
+        // Past the cap, so it must be in the overflow menu - reachable, not
+        // dropped, which is the whole difference between a cap and a deletion.
+        let menuTitles = bar.debugQuickAccessOverflowMenu().items.map(\.title)
+        if hostsIndex >= QuickAccessConfiguration.visibleLimit,
+           !menuTitles.contains(RailDestination.hosts.title) {
+            fail("Hosts is past the six-icon cap and is not in the overflow menu - it is unreachable from the bar", &ok)
         }
         // It has to be wired, not merely present: an unwired icon renders
-        // identically and does nothing.
+        // identically and does nothing. The drawn buttons are the ones a mouse
+        // can reach, so the click goes through whichever of them is last.
+        let buttons = bar.debugDestinationButtons()
+        guard let lastButton = buttons.last else {
+            fail("the bar drew no quick-access icons at all", &ok)
+            return
+        }
         var opened: [RailDestination] = []
         bar.onSelectDestination = { opened.append($0) }
-        buttons[hostsIndex].performClick(nil)
-        if opened != [.hosts] {
-            fail("clicking the Hosts icon opened \(opened.map(\.title))", &ok)
+        lastButton.performClick(nil)
+        if opened != [lastButton.destination] {
+            fail("clicking the \(lastButton.destination.title) icon opened \(opened.map(\.title))", &ok)
         }
-        if ok { print("  OK - Hosts is the last icon, immediately after Console, and navigates") }
+        if ok { print("  OK - Hosts is the last shortcut, immediately after Console, reachable from the overflow menu") }
     }
     // MARK: - The nav column (fm/grand-line-hosts-sidebar-restore)
 

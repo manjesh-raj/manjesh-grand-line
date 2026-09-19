@@ -628,6 +628,11 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         return "\(minutes) minute\(minutes == 1 ? "" : "s")"
     }
 
+    /// UX1's "Lock Poneglyph" ⌘K verb - the page's own Lock button action,
+    /// not a second copy, so a locked vault ends up in exactly the same state
+    /// whichever way it was asked.
+    func lockFromMenu() { lockTapped() }
+
     @objc private func lockTapped() {
         store.lock(reason: "manual")
         dismissOpenSheets()
@@ -754,6 +759,14 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
     }
 
     // MARK: Sheets
+
+    /// UX4: the File menu's contextual ⌘N on this page, and `⌘K`'s "New
+    /// Credential" verb - the page's own "+ Add" action, not a second copy.
+    ///
+    /// The vault's own lock state still governs what happens next: `addTapped`
+    /// is what a click on that button runs, so a locked vault refuses this
+    /// exactly as it refuses the button.
+    func newCredentialFromMenu() { addTapped() }
 
     @objc private func addTapped() {
         noteInteraction()

@@ -922,8 +922,32 @@ final class StickyNoteView: NSView {
         return f
     }()
 
+    /// Review #3's UX10: the two organisation primitives the finding calls
+    /// "the obvious gesture for a scratch-thought tool" - somewhere to put a
+    /// note that is done with, and a way to turn one into real work.
+    ///
+    /// Forwarded, never performed here: this view knows what a note looks
+    /// like and nothing about a store or a task, exactly as it already knows
+    /// nothing about deleting one (`onDeleteRequested`).
+    var onArchiveRequested: (() -> Void)?
+    var onUnarchiveRequested: (() -> Void)?
+    var onMakeTaskRequested: (() -> Void)?
+
+    /// Whether this note is in the archive, so the menu offers the right verb.
+    /// Set by the controller when it builds the view and when it re-renders.
+    var isArchived = false
+
     @objc private func overflowClicked(_ sender: NSButton) {
         let menu = NSMenu()
+        if isArchived {
+            menu.addItem(withTitle: "Put Back on the Board",
+                         action: #selector(unarchiveClicked), keyEquivalent: "")
+        } else {
+            menu.addItem(withTitle: "Make a Task\u{2026}", action: #selector(makeTaskClicked), keyEquivalent: "")
+            menu.addItem(.separator())
+            menu.addItem(withTitle: "Archive Note", action: #selector(archiveClicked), keyEquivalent: "")
+        }
+        menu.addItem(.separator())
         menu.addItem(withTitle: "Delete Note", action: #selector(deleteClicked), keyEquivalent: "")
         menu.items.forEach { $0.target = self }
         menu.popUp(positioning: nil, at: NSPoint(x: sender.bounds.width, y: sender.bounds.height), in: sender)
@@ -932,6 +956,10 @@ final class StickyNoteView: NSView {
     @objc private func deleteClicked() {
         onDeleteRequested?()
     }
+
+    @objc private func archiveClicked() { onArchiveRequested?() }
+    @objc private func unarchiveClicked() { onUnarchiveRequested?() }
+    @objc private func makeTaskClicked() { onMakeTaskRequested?() }
 
     /// So a freshly created note can be focused for immediate typing
     /// (`StickyBoardController.newNoteTapped`). The **title** is what a new

@@ -392,10 +392,38 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
 
     // MARK: The turn cycle
 
+    // MARK: Transcript persistence (review #3's UX12, M1.4's persistence half)
+
+    /// Where conversations are kept across a quit - see
+    /// `StrawHatTranscriptStore`'s header for what is and is not written.
+    private let transcripts = StrawHatTranscriptStore()
+
+    /// The conversation currently being had. Replaced wholesale by "New
+    /// conversation", which is what makes a conversation a unit rather than
+    /// one endless log.
+    private var transcript = StrawHatTranscript()
+
+    /// Record a turn and write it.
+    ///
+    /// Called after the turn has already been appended to the chat view, so
+    /// what reaches disk is exactly what the captain saw - and a failure to
+    /// persist can never stop a reply being shown.
+    private func record(_ text: String,
+                        speaker: StrawHatTranscriptMessage.Speaker,
+                        member: String? = nil) {
+        transcript = StrawHatTranscriptStore.appending(text, speaker: speaker, member: member,
+                                                       to: transcript)
+        transcripts.save(transcript)
+    }
+
     @objc func newConversationTapped() {
         runner?.reset()
         turnInFlight = false
         resolvedProposals.removeAll()
+        // UX12: the conversation that is ending has already been written turn
+        // by turn, so starting a new one is simply starting a new file - there
+        // is nothing to flush, and nothing is lost if the app dies here.
+        transcript = StrawHatTranscript()
         chat.clearMessages()
         chat.setInputEnabled(true)
         canvasState = StrawHatCanvasState()
@@ -479,6 +507,7 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
         }
 
         chat.append(.captain(text))
+        record(text, speaker: .captain)
 
         // Phase 2.5: the runner sets its own tool session up from these roots
         // once, on first use, and tears it down with itself. A captain who
@@ -557,6 +586,7 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
         case .envelope(let sections):
             for section in sections {
                 chat.append(.crew(section))
+                record(section.text, speaker: .crew, member: section.speaker?.rawValue)
                 rendered.append(section)
                 if let speaker = section.speaker, !spoke.contains(speaker) { spoke.append(speaker) }
                 if preview == nil { preview = Self.previewLine(of: section.text) }
@@ -568,10 +598,12 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
                                            text: "That reply didn't come through cleanly - try asking again.",
                                            proposals: [], droppedProposalCount: 0, followup: nil)
                 chat.append(.crew(note))
+                record(note.text, speaker: .crew, member: nil)
                 rendered = [note]
             } else {
                 let section = StrawHatSection.text(StrawHatCrew.speaker, text)
                 chat.append(.crew(section))
+                record(section.text, speaker: .crew, member: StrawHatCrew.speaker.rawValue)
                 rendered = [section]
                 spoke = [StrawHatCrew.speaker]
                 preview = Self.previewLine(of: text)

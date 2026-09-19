@@ -80,6 +80,7 @@ enum CredentialVaultViewSelfTest {
         window.orderFront(nil)
 
         checkCreateAndUnlock(scratch: scratch, window: window, check)
+        checkCreationStatesNoRecovery(scratch: scratch, window: window, check)
         checkRevealAndCopyAreSeparate(scratch: scratch, window: window, check)
         checkSearchAndCategoryFilter(scratch: scratch, window: window, check)
         checkDeleteConfirmAndUndo(scratch: scratch, window: window, check)
@@ -177,6 +178,67 @@ enum CredentialVaultViewSelfTest {
         check(store.credentials.isEmpty, "locking should drop the decrypted model")
     }
 
+    /// Review #3's UX8: the gate screen "asks for the master password with no
+    /// hint of what happens when it is forgotten".
+    ///
+    /// Three things, and the third is the one with behaviour behind it:
+    /// the sentence is said plainly at creation time, the strength meter is a
+    /// meter rather than only a word, and **the vault cannot be created until
+    /// the captain confirms they wrote the password down**.
+    private static func checkCreationStatesNoRecovery(scratch: URL, window: NSWindow,
+                                                      _ check: (Bool, String) -> Void) {
+        print("\n-- UX8: the create gate says there is no recovery, and makes you confirm it --")
+        let (controller, _) = mounted(scratch, name: "ux8", window: window, createVault: false)
+        let gate = controller.debugUnlockView
+
+        check(gate.debugRecoveryWarningVisible,
+              "UX8: the create state should show the no-recovery warning")
+        // The exact claim, not merely some words: "there is no recovery" and
+        // "write it down" are the two things the finding asks to be stated.
+        let warning = gate.debugRecoveryWarningText.lowercased()
+        check(warning.contains("no recovery"),
+              "UX8: the warning does not say there is no recovery: \"\(gate.debugRecoveryWarningText)\"")
+        check(warning.contains("write it down"),
+              "UX8: the warning does not tell the captain to write it down: \"\(gate.debugRecoveryWarningText)\"")
+        check(gate.debugStrengthBarVisible, "UX8: the create state should show a strength meter")
+
+        // The gate itself. A too-short password, a mismatch and an unticked
+        // box each hold the button closed - and the box is the one this
+        // finding is about, so it is checked with everything else satisfied.
+        check(!gate.debugPrimaryButton.isEnabled,
+              "UX8: Create should start disabled - nothing has been typed or confirmed")
+
+        gate.debugPasswordField.stringValue = "a-long-enough-passphrase"
+        gate.debugConfirmField.stringValue = "a-long-enough-passphrase"
+        gate.debugFieldsChanged()
+        check(!gate.debugPrimaryButton.isEnabled,
+              "UX8: a matching, strong password with the box unticked should still not be creatable - "
+              + "the confirmation step is the whole finding")
+
+        gate.debugSavedItRow.isOn = true
+        gate.debugFieldsChanged()
+        check(gate.debugPrimaryButton.isEnabled,
+              "UX8: ticking the confirmation with a matching, strong password should enable Create")
+
+        // A mismatch re-closes it even with the box ticked, so the new gate
+        // stacks with the checks that were already there rather than replacing
+        // them.
+        gate.debugConfirmField.stringValue = "something-else-entirely"
+        gate.debugFieldsChanged()
+        check(!gate.debugPrimaryButton.isEnabled,
+              "UX8: a mismatched confirmation should close the gate again even with the box ticked")
+
+        // The unlock state must not carry any of it: an existing vault's owner
+        // has already been told, and a disabled Unlock button behind a
+        // confirmation they cannot see would lock them out of their own vault.
+        gate.setMode(.unlock(touchIDAvailable: false))
+        check(!gate.debugRecoveryWarningVisible,
+              "UX8: the unlock state should not show the creation warning")
+        check(!gate.debugStrengthBarVisible, "UX8: the unlock state should not show a strength meter")
+        check(gate.debugPrimaryButton.isEnabled,
+              "UX8: Unlock must never be gated by the creation confirmation")
+    }
+
     private static func checkRevealAndCopyAreSeparate(scratch: URL, window: NSWindow, _ check: (Bool, String) -> Void) {
         print("\n-- reveal and copy: two independent one-click actions --")
         let secret = "view-test-secret-value-7f3c"
@@ -215,6 +277,50 @@ enum CredentialVaultViewSelfTest {
               "Copy must not log a `revealed` event - reveal and copy are distinct facts")
         check(controller.debugClipboardPillVisible,
               "a copy with a clear timeout should show the countdown pill")
+
+        // --- UX9: the row's own "last used" must reflect the copy that just
+        // happened, without waiting for something else to re-render.
+        //
+        // The finding: "the row's meta line says 'never used' even after
+        // copying, until the store re-renders". The store stamps `lastUsedAt`
+        // and raises `onChange` (which the page wires to `render()`), so the
+        // whole claim is about whether that chain actually completes in the
+        // frame the captain clicked in - which is a thing only a real render
+        // can answer, not a read of the model.
+        //
+        // The model is asserted first so a failure says which half broke: a
+        // missing timestamp is the store's, a stale string is the page's.
+        check(store.credential(id: id)?.lastUsedAt != nil,
+              "UX9: a copy should stamp the credential's lastUsedAt")
+        let afterCopyMeta = list.debugItem(row)?.content.meta ?? ""
+        check(!afterCopyMeta.contains("never used"),
+              "UX9: the row still reads \"\(afterCopyMeta)\" right after a copy - "
+              + "the meta line is not re-rendering with the use it just recorded")
+        // The wording, not just the refresh. `RelativeDateTimeFormatter`
+        // truncates toward zero, so before the `justNowThreshold` floor this
+        // row read "used in 0 sec" - future tense, for something the captain
+        // had just done. Measured on a real `performClick`, which is why this
+        // asserts the rendered string rather than the model.
+        check(afterCopyMeta.contains("used just now"),
+              "UX9: the row should read \"used just now\" straight after a copy, got \"\(afterCopyMeta)\"")
+        check(!afterCopyMeta.contains(" in "),
+              "UX9: the row put a just-happened use in the future tense: \"\(afterCopyMeta)\"")
+
+        // **A second copy, with the row already selected.** The first click
+        // also selects the row, and selection re-renders the page on its own -
+        // so a check that only ever copies once passes even with the store's
+        // own change notification removed, which is exactly the vacuous shape
+        // AGENTS.md warns about. This is the path that has nothing but
+        // `recordUse`'s `onChange` behind it.
+        let before = store.credential(id: id)?.lastUsedAt
+        list.debugCopyButton(row)?.performClick(nil)
+        let second = store.credential(id: id)?.lastUsedAt
+        check(second != nil && second != before,
+              "UX9: a second copy on an already-selected row did not re-stamp lastUsedAt")
+        let secondMeta = list.debugItem(row)?.content.meta ?? ""
+        check(secondMeta.contains("used just now"),
+              "UX9: copying an already-selected row left the meta line at \"\(secondMeta)\" - "
+              + "nothing re-rendered it")
 
         // --- Reveal: screen yes, clipboard no. ---
         pasteboard.clearContents()

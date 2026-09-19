@@ -80,6 +80,10 @@ final class CommandLibraryController: NSViewController, DaylightDrillActions {
         return parts.joined(separator: " \u{00B7} ")
     }
 
+    /// UX4: the File menu's contextual ⌘N on this page. Forwarded to the page
+    /// view, which owns the editor - this controller is the mounting shell.
+    func newCommandFromMenu() { page.newCommandFromMenu() }
+
     override func loadView() {
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 940, height: 720))
         root.wantsLayer = true

@@ -555,6 +555,99 @@ enum StickyBoardSelfTest {
             check(note?.text == "written before this feature existed", "the legacy text must be preserved")
             check(note?.color == .blue && note?.x == 12 && note?.y == 34 && note?.rotationDegrees == 2.5,
                   "every pre-existing field must survive the upgrade unchanged")
+            // UX10's own new field, under the same rule: a file written before
+            // the archive existed has no `archived_at`, and that has to decode
+            // as "on the board" rather than as a failure.
+            check(note?.archivedAt == nil && note?.isArchived == false,
+                  "UX10: a pre-archive note must load un-archived, not fail to decode")
+            check(store.activeNotes.count == 1 && store.archivedNotes.isEmpty,
+                  "UX10: a pre-archive note belongs on the board")
+        }
+
+        // MARK: 9b. UX10 - the archive, and the promotion to a task.
+        //
+        // Review #3: "no archive/done […] it is beautiful and currently a dead
+        // end after ~12 notes", and "no linking a note to a task ('promote to
+        // task' is the obvious gesture for a scratch-thought tool)".
+        do {
+            let root = scratch.appendingPathComponent("archive-store", isDirectory: true)
+            let store = StickyBoardStore(root: root)
+            let now = Date()
+            let keep = store.addNote(text: "still thinking about this", color: .yellow,
+                                     x: 10, y: 10, rotationDegrees: 0, now: now)
+            let done = store.addNote(text: "dealt with", color: .green,
+                                     x: 20, y: 20, rotationDegrees: 0, now: now.addingTimeInterval(1))
+            check(store.activeNotes.count == 2 && store.archivedNotes.isEmpty,
+                  "UX10: both new notes should start on the board")
+
+            let archived = store.setArchived(id: done.id, archived: true, now: now.addingTimeInterval(10))
+            check(archived?.isArchived == true, "UX10: archiving should mark the note archived")
+            check(store.activeNotes.map(\.id) == [keep.id],
+                  "UX10: the board should be left with only the un-archived note")
+            check(store.archivedNotes.map(\.id) == [done.id],
+                  "UX10: the archived note should be in the archive")
+            // Archiving is NOT deleting - the finding's whole point is
+            // somewhere to put a note, not a bin.
+            check(store.notes.count == 2, "UX10: archiving must not delete the note")
+
+            // Idempotent: a doubled click must not move `archivedAt`, or the
+            // archive's newest-first order reshuffles under the captain.
+            let stamp = store.archivedNotes.first?.archivedAt
+            _ = store.setArchived(id: done.id, archived: true, now: now.addingTimeInterval(99))
+            check(store.archivedNotes.first?.archivedAt == stamp,
+                  "UX10: re-archiving an archived note moved its timestamp")
+
+            // It survives a real disk round trip on a fresh instance.
+            let reread = StickyBoardStore(root: root)
+            check(reread.archivedNotes.map(\.id) == [done.id],
+                  "UX10: the archive did not survive a reload - got \(reread.archivedNotes.map(\.id))")
+            check(reread.activeNotes.map(\.id) == [keep.id],
+                  "UX10: the board did not survive a reload")
+
+            // And it comes back.
+            _ = reread.setArchived(id: done.id, archived: false)
+            check(reread.activeNotes.count == 2 && reread.archivedNotes.isEmpty,
+                  "UX10: un-archiving should put the note back on the board")
+
+            // The promotion mapping the finding spells out: title\u{2192}title,
+            // text\u{2192}description, colour\u{2192}priority.
+            let titled = StickyNote(id: "t", title: "Ship the thing", text: "and tell the crew",
+                                    color: .pink, x: 0, y: 0, width: 200, height: 200,
+                                    rotationDegrees: 0, createdAt: now)
+            let promoted = StickyNotePromotion.task(from: titled)
+            check(promoted.title == "Ship the thing", "UX10: the note's title should become the task's title")
+            check(promoted.description == "and tell the crew",
+                  "UX10: the note's text should become the task's description")
+            check(promoted.priority == .high, "UX10: a pink note should promote as high priority")
+            check(promoted.status == .todo, "UX10: a promoted note should arrive as a to-do")
+
+            // An untitled note - the one a captain jots fastest - borrows its
+            // first line, and must still carry its **whole** text across.
+            // Silently dropping the line that became the title would be the
+            // worst possible failure for a promotion.
+            let untitled = StickyNote(id: "u", title: "", text: "call the bank\nask about the fee",
+                                      color: .blue, x: 0, y: 0, width: 200, height: 200,
+                                      rotationDegrees: 0, createdAt: now)
+            let promotedUntitled = StickyNotePromotion.task(from: untitled)
+            check(promotedUntitled.title == "call the bank",
+                  "UX10: an untitled note should take its first line as the task title, got \"\(promotedUntitled.title)\"")
+            check(promotedUntitled.description == "call the bank\nask about the fee",
+                  "UX10: the promoted task lost part of the note's text")
+            check(promotedUntitled.priority == .low, "UX10: a blue note should promote as low priority")
+
+            // Every colour maps to something - a new colour with no mapping
+            // would silently take whatever the switch's last case was.
+            for color in StickyNoteColor.allCases {
+                let note = StickyNote(id: color.rawValue, title: "t", text: "", color: color,
+                                      x: 0, y: 0, width: 200, height: 200,
+                                      rotationDegrees: 0, createdAt: now)
+                check(ShiftPriority.allCases.contains(StickyNotePromotion.task(from: note).priority),
+                      "UX10: \(color.rawValue) has no priority mapping")
+            }
+            // And the mapping discriminates - if every colour produced the
+            // same priority, every check above would still pass.
+            check(Set(StickyNoteColor.allCases.map(StickyNotePromotion.priority(for:))).count > 1,
+                  "UX10: every note colour maps to the same priority - the mapping asserts nothing")
         }
 
         // MARK: 10. The fonts genuinely resolve.

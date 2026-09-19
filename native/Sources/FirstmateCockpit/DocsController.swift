@@ -26,6 +26,11 @@ import AppKit
 import WebKit
 
 final class DocsController: NSViewController, DaylightDrillActions {
+    /// UX14: the bell entry a failed docs sync leaves, cleared by the next
+    /// sync that works. A stable id is what lets a recurring failure update
+    /// one entry rather than stack a new one every attempt.
+    private static let syncFailureNotificationID = "docs-sync-failed"
+
 
     static let liveSiteURL = URL(string: "https://manjesh-raj.github.io/devops-playbook/")!
 
@@ -260,9 +265,21 @@ final class DocsController: NSViewController, DaylightDrillActions {
                 self.syncSpinner.isHidden = true
                 self.syncSpinner.stopAnimation()
                 if outcome.ok {
+                    // UX14's other half, and the one that is easy to forget:
+                    // a bell that only ever accumulates is a bell nobody
+                    // reads. A sync that succeeds clears the entry a previous
+                    // failure left.
+                    Feedback.clear(id: Self.syncFailureNotificationID)
                     self.loadDocsIfAvailable()
                 } else if let container = self.view.window?.contentView {
-                    Toast.show(in: container, message: "Docs sync failed: \(outcome.detail)")
+                    // UX14: a failed sync is still true after the toast has
+                    // gone - the docs on screen are stale until someone acts.
+                    // GL-30's "Notification Center for anything still true
+                    // after the toast fades", routed through the one place
+                    // that decides that (`Feedback`).
+                    Feedback.report("Docs sync failed", kind: .failure, persistence: .lasting,
+                                    in: container, id: Self.syncFailureNotificationID,
+                                    detail: outcome.detail)
                 }
             }
         }
