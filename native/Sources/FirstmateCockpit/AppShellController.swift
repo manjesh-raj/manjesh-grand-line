@@ -812,16 +812,10 @@ final class AppShellController: NSViewController {
                 ?? "I couldn't reach your host pages from here."
         }
         strawHat.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // M3.3: one message typed into the fleet dashboard's quick-ask card.
-        // `show(_:)` first, so the page is mounted and laid out before its
-        // transcript gets a message - then a *new* conversation, because a
-        // field with no transcript above it cannot show the captain what they
-        // would be appending to (`StrawHatQuickAsk.swift`'s header).
-        overview.onAskCrew = { [weak self] text in
-            guard let self else { return }
-            self.show(.strawHat)
-            self.strawHat.startNewConversation(with: text)
-        }
+        // Review #3 §7: the fleet dashboard's "Ask your crew" header button.
+        // Plain navigation - the composer it replaced is gone, and the crew
+        // page's own composer is the one place a message to them is written.
+        overview.onOpenCrew = { [weak self] in self?.show(.strawHat) }
         // The Overview card's own summary line - see
         // `StrawHatCanvasState`. Pushed rather than polled, the
         // same shape `FleetController.onSnapshotChanged` already uses for the

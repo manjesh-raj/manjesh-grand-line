@@ -72,6 +72,11 @@ final class FleetController: NSViewController {
     /// app now shares one real, theme-aware definition rather than each page
     /// picking its own muted `.quiet` look.
     private let refreshButton = HelmButton(title: "Refresh", variant: .primary, symbol: "arrow.clockwise")
+    /// Review #3 §7's replacement for the dashboard's quick-ask composer -
+    /// see `onOpenCrew`. `.secondary`, so the page still has exactly one
+    /// primary action (Refresh) and this reads as the navigation it is.
+    private let crewButton = HelmButton(title: "Ask your crew", variant: .secondary,
+                                        symbol: StrawHatCrew.speaker.symbol)
 
     /// The answer banner is the app's shared `HelmAccentRow` now, not a
     /// hand-rolled tinted slab with a text glyph in it. The prototype renders
@@ -147,36 +152,24 @@ final class FleetController: NSViewController {
     private let logList = FleetLogListView()
     private var logFilterKind: FleetLogEventKind?
 
-    // MARK: Straw Hat Pirates - "Ask your crew" (M3.3)
-    //
-    // The chat itself is `StrawHatController`'s own destination now
-    // (`fm/polish-straw-hat-overview-card-and-voice-c8d3`). What stays on this
-    // page is M3.3's one-field quick-capture card, which is the half of that
-    // milestone that only makes sense *away* from the chat - see
-    // `StrawHatQuickAsk.swift`'s header. It reports the captain's text and
-    // owns no runner, no store and no session.
+    // MARK: Straw Hat Pirates - reaching the crew from here
 
-    /// M3.3's quick-ask card, on the Overview tab. Held so `applyTheme` can
-    /// reach it (an extension cannot declare stored properties, and this
-    /// page's Straw Hat code used to live in one).
-    var crewQuickAsk: StrawHatQuickAskCard?
-
-    /// One message typed into the quick-ask card.
+    /// Opens the crew's own destination. No argument: this page has nothing
+    /// to send.
     ///
-    /// Forwarded rather than handled: `AppShellController` opens the crew page
-    /// and starts a new conversation there. This page deliberately holds no
-    /// part of the turn cycle any more - there is one of those, on
-    /// `StrawHatController`, reached by both entry points.
-    var onAskCrew: ((String) -> Void)?
-
-    /// The quick-ask card, built lazily so a captain who never types in it
-    /// costs nothing beyond one view.
-    private func buildCrewQuickAskCard() -> StrawHatQuickAskCard {
-        let card = StrawHatQuickAskCard()
-        card.onSubmit = { [weak self] text in self?.onAskCrew?(text) }
-        crewQuickAsk = card
-        return card
-    }
+    /// **Review #3 §7 removed the composer that used to be here.** M3.3 put a
+    /// live "Ask your crew" text field on this dashboard, and
+    /// `fm/polish-straw-hat-overview-card-and-voice-c8d3` kept it when the
+    /// chat moved to its own destination. Review #3's reading is that a
+    /// dashboard is for reading state at a glance, and a second live text
+    /// input for a feature whose real composer is one destination away is a
+    /// duplicate however it is justified - it was the only text input on any
+    /// dashboard page in the app, and it sat on a page that already carries a
+    /// Refresh. So the field is gone and what is left is one quiet action in
+    /// the page header, beside Refresh: the crew is still one click from here,
+    /// and there is exactly one place in the app that composes a message to
+    /// them.
+    var onOpenCrew: (() -> Void)?
 
     /// fm/grandline-sidebar-badges: fires every time `render` recomputes the
     /// banner's "needs your call" set (`needs_decision`/`blocked` tasks) -
@@ -305,13 +298,6 @@ final class FleetController: NSViewController {
         // costs this page nothing.
         buildBriefingCard()
         overviewContainer.addArrangedSubview(briefingCard)
-        // M3.3, directly under the morning briefing: both are "here is the
-        // day, and here is one thing you can do about it right now", and this
-        // is the one card on the dashboard the captain *types* into - burying
-        // it under the stat tiles would leave the friction it exists to
-        // remove (see `StrawHatQuickAsk.swift`'s header).
-        let quickAsk = buildCrewQuickAskCard()
-        overviewContainer.addArrangedSubview(quickAsk)
         overviewContainer.addArrangedSubview(loadingSection)
         overviewContainer.addArrangedSubview(bannerRow)
         // F7: the "Needs your call" list sits directly under the banner that
@@ -351,7 +337,6 @@ final class FleetController: NSViewController {
             overviewContainer.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             logSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             briefingCard.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
-            quickAsk.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
             loadingSection.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
             bannerRow.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
             statsRow.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
@@ -440,6 +425,13 @@ final class FleetController: NSViewController {
         refreshButton.setContentCompressionResistancePriority(.required, for: .horizontal)
         refreshButton.translatesAutoresizingMaskIntoConstraints = false
 
+        crewButton.target = self
+        crewButton.action = #selector(crewTapped)
+        crewButton.toolTip = "Open the Straw Hat Pirates page"
+        crewButton.setContentHuggingPriority(.required, for: .horizontal)
+        crewButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        crewButton.translatesAutoresizingMaskIntoConstraints = false
+
         let textStack = NSStackView(views: [greetingLabel, subtitleLabel])
         textStack.orientation = .vertical
         textStack.alignment = .leading
@@ -457,7 +449,7 @@ final class FleetController: NSViewController {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         spacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
 
-        let row = NSStackView(views: [textStack, spacer, refreshButton])
+        let row = NSStackView(views: [textStack, spacer, crewButton, refreshButton])
         row.orientation = .horizontal
         row.alignment = .lastBaseline
         row.distribution = .fill
@@ -663,6 +655,10 @@ final class FleetController: NSViewController {
     /// The captain's own Refresh click always runs a real sweep - never
     /// answered from `FleetTaskCache`'s coalescing window (3.5).
     @objc private func refreshTapped() { refresh(forceRefresh: true) }
+
+    /// Review #3 §7: navigation, and nothing else - this page holds no
+    /// part of the crew's turn cycle and no longer composes for it.
+    @objc private func crewTapped() { onOpenCrew?() }
 
     /// fm/grandline-sidebar-badges: lets `AppShellController` trigger this
     /// page's own existing refresh at app launch, so the rail's Overview
@@ -1148,7 +1144,6 @@ final class FleetController: NSViewController {
         tabs.applyTheme(theme)
         logFilters.applyTheme(theme)
         logList.applyTheme(theme)
-        crewQuickAsk?.applyTheme(theme)
 
         for tile in statTiles { tile.applyTheme(theme) }
         for empty in emptyStates { empty.applyTheme(theme) }
@@ -1174,9 +1169,18 @@ final class FleetController: NSViewController {
     var debugTabIDs: [String] { OverviewTab.allCases.map { $0.rawValue } }
 
     var debugActiveTabID: String { activeTab.rawValue }
-    /// M3.3's quick-ask card, which stayed on this page when the crew chat
-    /// moved to its own destination - see `StrawHatQuickAsk.swift`'s header.
-    var debugCrewQuickAsk: StrawHatQuickAskCard? { crewQuickAsk }
+    /// Review #3 §7's header action - the dashboard's one way to the crew,
+    /// now that the composer that used to be here is gone.
+    var debugCrewButton: HelmButton { crewButton }
+
+    /// Every tab's user-facing label, so a naming check can assert what this
+    /// page actually calls its own tabs rather than what a comment says.
+    ///
+    /// `static`, because `OverviewTab` is file-private and the labels are a
+    /// property of the type - which lets the naming guard read them without
+    /// building a controller (and therefore without a store or a window),
+    /// keeping that guard in CI's blocking lane.
+    static var debugTabTitles: [String] { OverviewTab.allCases.map { $0.title } }
 
     /// Drive the real `render` with caller-supplied data, bypassing
     /// `refresh()`'s background fetch and its real `gh`/`git` calls.

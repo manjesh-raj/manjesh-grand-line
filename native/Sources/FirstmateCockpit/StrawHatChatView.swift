@@ -642,9 +642,15 @@ final class StrawHatChatView: NSView, NSTextViewDelegate {
     /// setting `string` alone leaves a composer holding real text with a
     /// disabled Send beside it.
     ///
-    /// One caller today - `StrawHatController.startNewConversation(with:)`'s
-    /// turn-already-in-flight branch (the review's L7), which hands the
-    /// captain their own message back rather than dropping it.
+    /// **No production caller since review #3 §7.** Its one caller was
+    /// `StrawHatController.startNewConversation(with:)`, the seam that
+    /// carried a message typed on the fleet dashboard over to this page; that
+    /// composer is gone and so is the seam, which takes the review's L7
+    /// defect (a message silently dropped when a turn was already running)
+    /// with it - there is no longer an off-page message to drop. Kept as this
+    /// view's supported way to seed its own composer, and still exercised by
+    /// `StrawHatViewSelfTest`, because a chat view that cannot be handed text
+    /// is the wrong shape for the next caller that needs it.
     func setComposerText(_ text: String) {
         textView.string = text
         textDidChange(Notification(name: NSText.didChangeNotification, object: textView))

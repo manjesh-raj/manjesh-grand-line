@@ -72,8 +72,7 @@ enum StrawHatViewSelfTest {
         checkUnwiredCardFailsVisibly(&ok)
         checkHandoffRendersAsALink(&ok)
         checkHandoffWritesNothing(&ok)
-        checkQuickAskCard(&ok)
-        checkQuickAskWhileATurnIsRunning(&ok)
+        checkDashboardHasNoSecondComposer(&ok)
         checkContributorCaptionPlural(&ok)
         checkConfirmedProposalSurvivesARebuild(&ok)
         checkThemeSweep(&ok)
@@ -1725,107 +1724,6 @@ enum StrawHatViewSelfTest {
               "a handoff that could not be followed says why, got \(refusing.debugNote)", &ok)
     }
 
-    // MARK: Phase 3 (M3.3) - "Ask your crew" on the dashboard
-
-    /// The quick-ask card stays on the **fleet dashboard**, and one press
-    /// starts a new conversation on the crew's own page with the captain's
-    /// message already sent.
-    ///
-    /// `fm/polish-straw-hat-overview-card-and-voice-c8d3` split this across
-    /// two controllers - the card is `FleetController`'s, the chat is
-    /// `StrawHatController`'s - so this case wires the hop exactly as
-    /// `AppShellController` does (`overview.onAskCrew` -> `show(.strawHat)` +
-    /// `startNewConversation(with:)`) and asserts the real handoff rather
-    /// than a tab switch.
-    ///
-    /// It deliberately survived that task even though the "Crew" tab did not,
-    /// and the distinction is the point: the tab was a second place to *find
-    /// the chat*, which is confusing; this is a compose-and-go field that
-    /// lands on the one chat page, which is exactly the affordance a canvas
-    /// card cannot be. Every assertion is about placement and routing.
-    private static func checkQuickAskCard(_ ok: inout Bool) {
-        let fleet = FleetController(shiftStore: ShiftStore())
-        let fleetWindow = OffScreenProbe.window(width: 1100, height: 800, styleMask: [.titled, .resizable])
-        fleetWindow.contentViewController = fleet
-        fleet.view.layoutSubtreeIfNeeded()
-
-        guard let card = fleet.debugCrewQuickAsk else {
-            check(false, "M3.3's quick-ask card must exist on the fleet dashboard", &ok)
-            return
-        }
-        // The Overview tab is Fleet's default, so the card is on screen with
-        // no navigation at all - which is the point.
-        check(!card.isHidden && card.frame.width > 0,
-              "...and be visible on the dashboard with no navigation, got \(card.frame)", &ok)
-        check(card.isDescendant(of: fleet.view), "the card is part of the fleet page", &ok)
-
-        // Nothing to send yet.
-        check(!card.debugAskEnabled, "Ask starts disabled - there is nothing to ask", &ok)
-        card.debugType("what needs my attention?")
-        check(card.debugAskEnabled, "typing enables Ask", &ok)
-        card.debugType("   ")
-        check(!card.debugAskEnabled, "whitespace alone does not", &ok)
-
-        // The row's own geometry: the field takes the slack, the button keeps
-        // its width. Measured for the same reason the handoff row's is.
-        card.debugType("a real question")
-        fleet.view.layoutSubtreeIfNeeded()
-        check(card.debugField.frame.width > card.debugAskButton.frame.width * 2,
-              "the field takes the row's slack, not the button - \(card.debugFrames)", &ok)
-        check(card.debugAskButton.frame.width > 0,
-              "...and the button still has a real width - \(card.debugFrames)", &ok)
-
-        // ---- the press: navigate, reset, send ----
-        //
-        // A fake `claude` so the turn is real end to end rather than stopping
-        // at "a runner was built".
-        let script = writeFakeClaude(reply: """
-        {"sections":[{"speaker":"luffy","text":"Two things need you."}]}
-        """, argvLog: nil, sessionID: nil)
-        defer { try? FileManager.default.removeItem(at: script) }
-        StrawHatCrew.claudePathOverrideForTests = script.path
-        defer { StrawHatCrew.claudePathOverrideForTests = nil }
-
-        let m = mount()
-        showCrew(m)
-
-        // Seed a conversation on the crew page first, so "starts a NEW
-        // conversation" is a real assertion rather than one about an already
-        // empty thread.
-        m.controller.debugRenderReply("""
-        {"sections":[{"speaker":"nami","text":"an older turn nobody can see from the dashboard"}]}
-        """)
-        check(m.controller.debugChat.debugMessageCount > 0, "the seeded turn is there", &ok)
-
-        // The shell's own wiring, verbatim.
-        var navigated: [RailDestination] = []
-        fleet.onAskCrew = { text in
-            navigated.append(.strawHat)
-            m.controller.startNewConversation(with: text)
-        }
-
-        card.debugType("what needs my attention?")
-        card.debugPressAsk()
-
-        check(navigated == [.strawHat],
-              "pressing Ask navigates to the crew's own page - the reply is not visible on the dashboard, got \(navigated.map(\.rawValue))", &ok)
-        check(card.debugText.isEmpty,
-              "and clears the field, so it does not read as an unsent draft", &ok)
-
-        let deadline = Date().addingTimeInterval(20)
-        while m.controller.debugTurnInFlight && Date() < deadline {
-            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
-        }
-        let texts = m.controller.debugChat.debugMessageTexts()
-        check(texts.contains("what needs my attention?"),
-              "the captain's own message is in the transcript, got \(texts)", &ok)
-        check(texts.contains("Two things need you."),
-              "...and so is the reply, got \(texts)", &ok)
-        // M3.3's "into a NEW conversation": the seeded turn is gone.
-        check(!texts.contains(where: { $0.contains("older turn") }),
-              "a quick ask starts a new conversation - the old thread must be cleared, got \(texts)", &ok)
-    }
-
     /// L9: the crew strip's caption reads differently for one speaker and for
     /// several.
     ///
@@ -1874,62 +1772,55 @@ enum StrawHatViewSelfTest {
               "the caption is roster-ordered, got \(reversed.controller.debugChat.debugCrewStrip.debugCaption)", &ok)
     }
 
-    /// L7: a quick ask that arrives while the crew is already answering.
-    ///
-    /// The whole finding is about what the captain *sees*, so this asserts on
-    /// the transcript and the composer rather than on a return value: before
-    /// the fix `startNewConversation(with:)` returned on its guard, so the
-    /// captain pressed Ask, landed on this page, and found their message gone
-    /// with nothing said - indistinguishable from a dropped keystroke.
-    private static func checkQuickAskWhileATurnIsRunning(_ ok: inout Bool) {
-        // A deliberately slow fake, so the first turn is genuinely still in
-        // flight when the second message arrives.
-        let script = writeFakeClaude(reply: """
-        {"sections":[{"speaker":"luffy","text":"Still working on the first one."}]}
-        """, argvLog: nil, sessionID: nil, delay: 2)
-        defer { try? FileManager.default.removeItem(at: script) }
-        StrawHatCrew.claudePathOverrideForTests = script.path
-        defer { StrawHatCrew.claudePathOverrideForTests = nil }
+    // MARK: Review #3 §7 - the dashboard has no composer of its own
 
+    /// The fleet dashboard reaches the crew with a **button**, not a second
+    /// live text field.
+    ///
+    /// M3.3 put a one-field "Ask your crew" card on this page and
+    /// `fm/polish-straw-hat-overview-card-and-voice-c8d3` kept it when the
+    /// chat moved to its own destination. Review #3 §7 read that as a
+    /// duplicate composer on a page meant for reading state, and removed it.
+    /// So this case asserts the *absence* that replaced it, plus the one
+    /// affordance that is left.
+    ///
+    /// **Discriminating power first** (AGENTS.md: a check that cannot fail is
+    /// worse than no check): the sweep that looks for editable text on the
+    /// dashboard is first pointed at the crew page's own composer and must
+    /// find one there. Without that, "no text input on Fleet" would pass just
+    /// as happily against a broken sweep that can never find anything.
+    private static func checkDashboardHasNoSecondComposer(_ ok: inout Bool) {
         let m = mount()
         showCrew(m)
-        let chat = m.controller.debugChat
+        check(hasEditableText(in: m.controller.view),
+              "the sweep must find the crew page's own composer, or it proves nothing on Fleet", &ok)
 
-        m.controller.send("the first question")
-        check(m.controller.debugTurnInFlight,
-              "the first turn is in flight - the rest of this case is meaningless otherwise", &ok)
+        let fleet = FleetController(shiftStore: ShiftStore())
+        let fleetWindow = OffScreenProbe.window(width: 1100, height: 800, styleMask: [.titled, .resizable])
+        fleetWindow.contentViewController = fleet
+        fleet.view.layoutSubtreeIfNeeded()
 
-        let before = chat.debugMessageCount
-        m.controller.startNewConversation(with: "the second question")
+        check(!hasEditableText(in: fleet.view),
+              "the fleet dashboard must carry no editable text field at all", &ok)
 
-        // Nothing was reset: the running turn's own conversation is intact.
-        check(m.controller.debugTurnInFlight, "the running turn is left alone", &ok)
-        check(chat.debugMessageTexts().contains("the first question"),
-              "...and so is its message, got \(chat.debugMessageTexts())", &ok)
+        // ...and the crew is still one click away, through plain navigation.
+        let button = fleet.debugCrewButton
+        check(button.isDescendant(of: fleet.view) && !button.isHidden && button.frame.width > 0,
+              "the \"Ask your crew\" button is on the page, got \(button.frame)", &ok)
+        var opened = 0
+        fleet.onOpenCrew = { opened += 1 }
+        button.performClick(nil as Any?)
+        check(opened == 1, "pressing it opens the crew's own destination, got \(opened)", &ok)
+    }
 
-        // The two halves of the fix.
-        check(chat.debugMessageCount > before,
-              "the captain is told something happened rather than nothing", &ok)
-        let texts = chat.debugMessageTexts()
-        check(texts.contains(where: { $0.contains("still answering something else") }),
-              "...and it says why the message was not sent, got \(texts)", &ok)
-        check(chat.debugComposerText == "the second question",
-              "the message itself is handed back into the composer rather than dropped, got \"\(chat.debugComposerText)\"", &ok)
-        check(!texts.contains("the second question"),
-              "it is NOT appended as though it had been asked - it has not been", &ok)
-
-        // Let the first turn finish so the fake process is not left running
-        // into the next case.
-        let deadline = Date().addingTimeInterval(20)
-        while m.controller.debugTurnInFlight && Date() < deadline {
-            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
-        }
-        // And once it has: the held message is still there, so Send is all
-        // that is left to do.
-        check(chat.debugComposerText == "the second question",
-              "the held message survives the running turn resolving", &ok)
-        check(chat.debugSendEnabled,
-              "...with Send enabled, so recovery is one press - `setComposerText` has to drive the delegate path for this", &ok)
+    /// Any `NSTextField`/`NSTextView` in this tree the captain can type into.
+    ///
+    /// A label is an `NSTextField` too, so `isEditable` is the discriminator -
+    /// the dashboard is full of labels and must stay so.
+    private static func hasEditableText(in view: NSView) -> Bool {
+        if let field = view as? NSTextField, field.isEditable { return true }
+        if let text = view as? NSTextView, text.isEditable { return true }
+        return view.subviews.contains { hasEditableText(in: $0) }
     }
 
     private static func findLabel(in view: NSView, text: String) -> NSTextField? {
