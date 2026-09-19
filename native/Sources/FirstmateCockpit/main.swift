@@ -1982,6 +1982,10 @@ if ProcessInfo.processInfo.environment["FM_RUN_HOSTS_REDESIGN_TESTS"] == "1" {
 // the findings with no existing suite of their own. Window-backed - most of
 // them are geometry, and geometry with no window is geometry nobody measured -
 // so it sits in `run-all-tests.sh`'s `NEEDS_SESSION` list.
+if ProcessInfo.processInfo.environment["FM_RUN_AUDIT3_UI_FIXES_TESTS"] == "1" {
+    exit(Audit3UIFixesSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_AUDIT3_BUG_FIXES_TESTS"] == "1" {
     exit(Audit3BugFixesSelfTest.run() ? 0 : 1)
 }
