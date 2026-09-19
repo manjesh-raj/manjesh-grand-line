@@ -46,7 +46,8 @@ enum DaylightModuleSelfTest {
         // broken, which is the opposite of what a regression run is for.
         var allOK = true
         for check in [checkSpaceTable, checkSymbolsResolve, checkUniformCardSizing,
-                      checkUniformCardHeight, checkNoCardIsAWindowFloor,
+                      checkUniformCardHeight, checkRowsEqualiseCardHeights,
+                      checkNoCardIsAWindowFloor,
                       checkModuleAnatomy, checkCanvasConstructsNoStores,
                       checkBarAnatomy, checkBarDestinationIcons, checkBarDoesNotCapWindow,
                       checkCanvasAndDrillHeader, checkLiveModuleWiring,
@@ -444,18 +445,36 @@ enum DaylightModuleSelfTest {
         }
     }
 
-    // MARK: 2b - uniform card height
+    // MARK: 2b - card height: a floor, and no clipping
     //
-    // The half PR #259 never addressed. Matching widths alone still left the
-    // rows ragged, because each body kind rendered at its own natural height -
-    // a `.note` is two lines and a `.progress` is a 34pt numeral over a bar
-    // over a note. `HelmModuleCard.standardHeight` is the fix, and this case
-    // is what makes the number defensible rather than a guess: it measures
-    // every body kind's real content against the real body area, at the
-    // narrowest realistic column, in a real window.
+    // The half PR #259 never addressed was that matching widths alone left
+    // rows ragged, because each body kind renders at its own natural height.
+    // `HelmModuleCard.standardHeight` fixed that by making every card exactly
+    // as tall as the tallest body kind could ever need.
     //
-    // It also prints each measurement, so the next agent changing a body kind
-    // can see how much slack is left rather than re-deriving it.
+    // **Full review #3's PF2 changed what is being asserted here**, because
+    // that answer stopped being the right one: most modules now render a
+    // single line, and the review measured seven canvas cards whose bodies
+    // were about 55% empty. The card sizes to its content now, with a floor
+    // (`minimumHeight`) underneath it and per-row equalisation
+    // (`HelmResponsiveGrid`'s `equalHeights`) above it, so uniformity is per
+    // row rather than per canvas.
+    //
+    // So this case asserts the three things that still have to be true, and
+    // no longer asserts the one that deliberately is not:
+    //
+    //   1. **Nothing is clipped.** Every body kind fits the area the card
+    //      gives it. This is the assertion that actually protected anything,
+    //      and it is unchanged.
+    //   2. **The floor holds.** No card resolves below `minimumHeight`, so a
+    //      one-line card is still a card.
+    //   3. **The floor is not secretly the old fixed height.** At least one
+    //      realistic body kind must resolve *above* it and at least one must
+    //      sit *at* it - otherwise the change did nothing and this case would
+    //      pass while the waste it exists for was still there.
+    //
+    // It still prints each measurement, so the next agent changing a body
+    // kind can see the real numbers rather than re-deriving them.
 
     private static func checkUniformCardHeight(_ ok: inout Bool) {
         print("\n-- module card: one height for every body kind --")
@@ -484,6 +503,9 @@ enum DaylightModuleSelfTest {
         let host = NSView(frame: window.contentLayoutRect)
         window.contentView = host
 
+        // PF2's own discriminating half - see this section's note 3.
+        var measuredHeights: [(String, CGFloat)] = []
+
         func measure(_ name: String, _ body: HelmModuleCard.Body, width: CGFloat) {
             let card = HelmModuleCard()
             card.configure(.init(title: "Morning briefing", subtitle: "generated 9:41 AM",
@@ -500,18 +522,20 @@ enum DaylightModuleSelfTest {
             host.layoutSubtreeIfNeeded()
 
             let a = card.anatomyForTests
-            if abs(a.cardHeight - HelmModuleCard.standardHeight) > 0.5 {
-                fail("\(name) at \(width)pt: the card resolved to \(a.cardHeight)pt, not "
-                     + "standardHeight (\(HelmModuleCard.standardHeight)) - the grid row would be ragged", &ok)
+            if a.cardHeight < HelmModuleCard.minimumHeight - 0.5 {
+                fail("\(name) at \(width)pt: the card resolved to \(a.cardHeight)pt, below the floor "
+                     + "minimumHeight (\(HelmModuleCard.minimumHeight)) - a card that short stops "
+                     + "reading as a card", &ok)
             }
             if a.bodyContentHeight > a.bodyAreaHeight + 0.5 {
                 fail("\(name) at \(width)pt: the body needs \(a.bodyContentHeight)pt but the card gives "
                      + "it \(a.bodyAreaHeight)pt - it would be clipped with nothing said about it. "
-                     + "Raise standardHeight or cap this body kind's content.", &ok)
+                     + "Cap this body kind's content.", &ok)
             }
+            measuredHeights.append((name, a.cardHeight))
             let slack = a.bodyAreaHeight - a.bodyContentHeight
-            print(String(format: "     %-10@ body needs %6.1fpt of %6.1fpt (%+.1f slack)",
-                         name as NSString, a.bodyContentHeight, a.bodyAreaHeight, slack))
+            print(String(format: "     %-10@ card %6.1fpt, body needs %6.1fpt of %6.1fpt (%+.1f slack)",
+                         name as NSString, a.cardHeight, a.bodyContentHeight, a.bodyAreaHeight, slack))
             card.removeFromSuperview()
         }
 
@@ -577,9 +601,150 @@ enum DaylightModuleSelfTest {
                  + "got \(narrowCap)", &ok)
         }
 
+        // PF2's discriminating half. Without this the two checks above would
+        // both pass with the fixed height put straight back - every card
+        // would sit at one height, that height would be at or above the
+        // floor, and nothing would be clipped. These assert that the card
+        // genuinely sizes to its content: something is taller than the floor,
+        // and something is sitting on it.
+        let atTheFloor = measuredHeights.filter { abs($0.1 - HelmModuleCard.minimumHeight) < 1.0 }
+        let aboveTheFloor = measuredHeights.filter { $0.1 > HelmModuleCard.minimumHeight + 1.0 }
+        if measuredHeights.count < 5 {
+            fail("only \(measuredHeights.count) card heights were measured - the checks below would be "
+                 + "nearly vacuous", &ok)
+        }
+        if atTheFloor.isEmpty {
+            fail("no body kind resolves to minimumHeight (\(HelmModuleCard.minimumHeight)) - the floor is "
+                 + "below every real card, so it is not doing anything. Measured: "
+                 + "\(measuredHeights.map { "\($0.0)=\($0.1)" }.joined(separator: ", "))", &ok)
+        }
+        if aboveTheFloor.isEmpty {
+            fail("every body kind resolves to the same height - the card is not sizing to its content, "
+                 + "which is exactly the state PF2 removed. Measured: "
+                 + "\(measuredHeights.map { "\($0.0)=\($0.1)" }.joined(separator: ", "))", &ok)
+        }
+
         if ok {
-            print("  OK - every body kind fits one \(HelmModuleCard.baseStandardHeight)pt card "
-                  + "(briefing included, at span-2 width) across \(ChromeTextScale.steps.count) text scales")
+            let shortest = measuredHeights.map(\.1).min() ?? 0
+            let tallest = measuredHeights.map(\.1).max() ?? 0
+            print(String(format: "  OK - nothing clipped, floor %.0fpt held, cards range %.0f-%.0fpt "
+                         + "(the old fixed height was %.0f) across %d text scales",
+                         HelmModuleCard.minimumHeight, shortest, tallest,
+                         HelmModuleCard.standardHeight, ChromeTextScale.steps.count))
+        }
+    }
+
+    /// PF2's other half: the card sizes to its content, so a *row* is what
+    /// has to be uniform now.
+    ///
+    /// **What this asserts, and why not the obvious thing.** The obvious case
+    /// would build the same row twice, with and without `equalHeights`, and
+    /// check the second is uniform where the first is ragged. That comparison
+    /// turned out not to be reproducible: a card's own height preference is
+    /// priority 1 (see `HelmModuleCard`'s `bodyHug`), so an `NSStackView`
+    /// row's geometry can already leave the cards equal without being asked
+    /// to, and the "ragged" half of the comparison is then not ragged. A case
+    /// built on it would pass or fail for reasons that have nothing to do
+    /// with the fix.
+    ///
+    /// So it asserts the three properties that are actually load-bearing, all
+    /// on the equalised row:
+    ///
+    ///   1. **The row is uniform.** Every card the same height.
+    ///   2. **Nothing is clipped by the equalisation.** This is the real
+    ///      hazard, and it is not hypothetical - an earlier version of this
+    ///      fix tied heights with a required `==`, which outranked the peek
+    ///      list's own vertical resistance and rendered it into a 68pt area
+    ///      it needed 86pt for, silently.
+    ///   3. **The row grew to its content, not to the old fixed height.** The
+    ///      row must be taller than `minimumHeight` when a taller body is in
+    ///      it (otherwise the tallest card is being squashed to the floor)
+    ///      and shorter than the old `standardHeight` for this content
+    ///      (otherwise nothing was reclaimed and PF2 did nothing).
+    private static func checkRowsEqualiseCardHeights(_ ok: inout Bool) {
+        print("\n-- module grid: every card in a row is as tall as the tallest, and nothing clips --")
+
+        let window = OffScreenProbe.window(width: 1200, height: 700, styleMask: [.titled, .resizable])
+        let host = NSView(frame: window.contentLayoutRect)
+        window.contentView = host
+
+        // A one-line note beside a full-cap peek list: naturally different
+        // heights, which is what makes any of this meaningful.
+        let bodies: [HelmModuleCard.Body] = [
+            .note("Locked."),
+            .peekRows((1...HelmModuleCard.maxPeekRows).map {
+                HelmModulePeekRow(state: .warn, text: "task-\($0)", value: "needs decision")
+            }),
+            .note("Two crew working, nothing blocked."),
+        ]
+
+        let rows = HelmResponsiveGrid.rows(bodies,
+                                           containerWidth: 1100,
+                                           minItemWidth: HomeCanvasController.minModuleWidth,
+                                           spacing: HomeCanvasController.gridSpacing,
+                                           equalHeights: true) { body, _ in
+            let card = HelmModuleCard()
+            card.configure(.init(title: "Module", subtitle: "updated 9:41 AM",
+                                 symbol: "circle.fill", hue: .teal, chip: nil, body: body))
+            return card
+        }
+        guard let row = rows.first else {
+            fail("the grid produced no rows", &ok)
+            return
+        }
+        row.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            row.topAnchor.constraint(equalTo: host.topAnchor),
+            row.widthAnchor.constraint(equalToConstant: 1100),
+        ])
+        host.layoutSubtreeIfNeeded()
+
+        let cards = row.arrangedSubviews.compactMap { $0 as? HelmModuleCard }
+        guard cards.count == bodies.count else {
+            fail("expected \(bodies.count) cards in the row, got \(cards.count)", &ok)
+            return
+        }
+        // The fixture really did lay out - without this every measurement
+        // below is zero and the case passes vacuously.
+        guard row.frame.height > 0 else {
+            fail("the row never laid out (height 0) - every check below would be vacuous", &ok)
+            return
+        }
+
+        let heights = cards.map { $0.anatomyForTests.cardHeight }
+        if Set(heights.map { Int($0.rounded()) }).count != 1 {
+            fail("the row should be uniform, got \(heights) - a canvas row of content-sized cards "
+                 + "hangs ragged without equalisation (PF2)", &ok)
+        }
+
+        for (i, card) in cards.enumerated() {
+            let a = card.anatomyForTests
+            if a.bodyContentHeight > a.bodyAreaHeight + 0.5 {
+                fail("card \(i) was clipped by the row equalisation: its body needs "
+                     + "\(a.bodyContentHeight)pt and it was given \(a.bodyAreaHeight)pt. A required "
+                     + "equal-height tie outranks a body's own vertical resistance - which is exactly "
+                     + "how the first version of this fix squashed a peek list", &ok)
+            }
+        }
+
+        let rowHeight = heights.first ?? 0
+        if rowHeight <= HelmModuleCard.minimumHeight + 1 {
+            fail("the row settled at \(rowHeight), at or below the floor "
+                 + "(\(HelmModuleCard.minimumHeight)) - the taller card is being squashed to it", &ok)
+        }
+        if rowHeight >= HelmModuleCard.standardHeight - 1 {
+            fail("the row settled at \(rowHeight), no better than the old fixed height "
+                 + "(\(HelmModuleCard.standardHeight)) - nothing was reclaimed", &ok)
+        }
+        host.subviews.forEach { $0.removeFromSuperview() }
+
+        if ok {
+            print(String(format: "  OK - %d cards uniform at %.0fpt, nothing clipped "
+                         + "(floor %.0f, old fixed height %.0f)",
+                         cards.count, rowHeight,
+                         HelmModuleCard.minimumHeight, HelmModuleCard.standardHeight))
         }
     }
 

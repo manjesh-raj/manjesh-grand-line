@@ -40,6 +40,44 @@
 // The prompt still travels as an argv element, never through a shell - which
 // is why none of this needs quoting or escaping, and why a prompt containing
 // backticks or `$(...)` is inert.
+//
+// ## `--tools`: why every run here is fail-closed on the built-in set
+//
+// Full review #3's S1. Before that fix, the runners passed `--allowedTools`
+// and nothing else. `--allowedTools` is *additive to* the captain's own
+// `~/.claude/settings.json` `permissions.allow`, and `--strict-mcp-config`
+// scopes only MCP servers - so the ambient allowlist's `Bash(python3 -)`
+// (arbitrary code on stdin) reached every persona in this app, including the
+// crew whose whole promise is read-only.
+//
+// That is not theoretical. Measured live with a real `claude -p` and the
+// captain's real settings file:
+//
+//  - `--allowedTools mcp__luffy-stores__shift_read` **alone** - today's Straw
+//    Hat shape - ran `echo '...' | python3 -` and **wrote the marker file**,
+//    with `permission_denials: []`. The prompt asking for it was ordinary
+//    conversation text, which is exactly what a runbook body or a task title
+//    is.
+//  - Adding `--tools ""` denied it: the model reported having no Bash tool at
+//    all, and the file was not written.
+//  - `--tools "Task,TodoWrite"` denied it **even with `--permission-mode
+//    bypassPermissions` also passed**, which is the important half: `--tools`
+//    gates which built-in tools exist at all, *below* permission checking, so
+//    it cannot be widened by a settings file, a permission mode or a future
+//    allow rule.
+//  - `--tools ""` does **not** strip MCP tools - the model still attempted an
+//    MCP call under it (denied by `--allowedTools`, which is the layer meant
+//    to decide that).
+//
+// So `--tools` is emitted on **every** run from this file, from a parameter
+// that defaults to the empty list. It is a positive allowlist over the
+// built-in set rather than a denylist, which is deliberate: a denylist
+// (`--disallowedTools Bash,Edit,...`) goes stale the moment the CLI gains a
+// built-in tool nobody here has heard of, and this list is the one place that
+// would silently not cover it. A caller that genuinely needs a built-in tool
+// names it (SRE Lead's `Task`/`TodoWrite`); a caller that says nothing gets
+// none. `ClaudeOneShotToolPolicySelfTest` guards both the argv and the call
+// sites.
 
 import Foundation
 
@@ -74,6 +112,20 @@ enum ClaudeOneShot {
     /// Lead turn could hang indefinitely.
     static let conversationTimeout: TimeInterval = 300
 
+    /// The built-in tools a caller gets when it names none - i.e. none at
+    /// all. Kept as a named constant so the intent reads at every call site
+    /// that takes the default, and so the suite can assert the default rather
+    /// than a bare `[]` literal.
+    static let noBuiltInTools: [String] = []
+
+    /// `--tools`' argument for a given set of built-in tool names. The empty
+    /// list is `""`, which the CLI documents as "disable all tools" (from the
+    /// built-in set) - **not** an omitted flag, which would restore the
+    /// ambient allowlist this exists to shut out.
+    static func builtInToolsArgument(_ tools: [String]) -> String {
+        tools.joined(separator: ",")
+    }
+
     /// Where every caller's `claude` comes from. `SRELead.resolveClaude()`
     /// remains the single resolver (it also honours
     /// `SRELead.claudePathOverrideForTests`), so this is a pointer, not a
@@ -89,12 +141,17 @@ enum ClaudeOneShot {
     ///     resolved here so each caller keeps its own test seam.
     ///   - extraArguments: inserted before `--output-format json`. This is how
     ///     SRE Lead adds its MCP config, persona and tool allowlist.
+    ///   - builtInTools: the built-in tools this run may use, emitted as
+    ///     `--tools`. Defaults to **none**; see this file's header for the
+    ///     measurement behind making that the default rather than the
+    ///     ambient allowlist.
     ///   - cancellation: cancel an in-flight turn (SRE Lead's pane teardown).
     @discardableResult
     static func run(
         executable: String,
         prompt: String,
         extraArguments: [String] = [],
+        builtInTools: [String] = noBuiltInTools,
         resumeSessionID: String? = nil,
         cwd: URL? = nil,
         timeout: TimeInterval = defaultTimeout,
@@ -103,7 +160,8 @@ enum ClaudeOneShot {
         completion: @escaping (Result<ClaudeReply, ClaudeOneShotError>) -> Void
     ) -> SubprocessCancellation {
         let token = cancellation ?? SubprocessCancellation()
-        var arguments = ["-p", prompt] + extraArguments + ["--output-format", "json"]
+        var arguments = ["-p", prompt] + extraArguments
+            + ["--tools", builtInToolsArgument(builtInTools), "--output-format", "json"]
         if let resumeSessionID {
             arguments += ["--resume", resumeSessionID]
         }
@@ -130,13 +188,15 @@ enum ClaudeOneShot {
         executable: String,
         prompt: String,
         extraArguments: [String] = [],
+        builtInTools: [String] = noBuiltInTools,
         cwd: URL? = nil,
         timeout: TimeInterval = defaultTimeout,
         label: String = "claude -p"
     ) -> Result<ClaudeReply, ClaudeOneShotError> {
         let result = Subprocess.run(
             executable: executable,
-            arguments: ["-p", prompt] + extraArguments + ["--output-format", "json"],
+            arguments: ["-p", prompt] + extraArguments
+                + ["--tools", builtInToolsArgument(builtInTools), "--output-format", "json"],
             cwd: cwd,
             timeout: timeout,
             log: AppLog.ai,

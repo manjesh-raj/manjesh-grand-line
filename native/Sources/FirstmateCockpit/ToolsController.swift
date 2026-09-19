@@ -432,7 +432,11 @@ final class ToolsController: NSViewController, DaylightDrillActions, TabShortcut
         let rows = HelmResponsiveGrid.rows(ToolKind.allCases,
                                            containerWidth: gridContainer.frame.width,
                                            minItemWidth: daylight ? Self.minPlateWidth : Self.minCardWidth,
-                                           spacing: daylight ? Self.plateSpacing : HelmResponsiveGrid.spacing) { kind, width in
+                                           spacing: daylight ? Self.plateSpacing : HelmResponsiveGrid.spacing,
+                                           // PF2: `toolCard` builds a
+                                           // `HelmModuleCard`, which is
+                                           // content-sized now.
+                                           equalHeights: true) { kind, width in
             daylight ? self.toolPlate(kind) : self.toolCard(kind, width: width)
         }
         for row in rows {

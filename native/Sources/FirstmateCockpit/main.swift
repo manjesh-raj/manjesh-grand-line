@@ -1594,6 +1594,13 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     if (ProcessInfo.processInfo.environment["FM_DICTATION_DIR"] ?? "").isEmpty {
         setenv("FM_DICTATION_DIR", scratchRoot.appendingPathComponent("dictation", isDirectory: true).path, 1)
     }
+    // Full review #3's S3 moved this out of `UserDefaults` into a real file,
+    // which puts it squarely in the class above: reachable from a bare
+    // `AppSettings.shared.sessionRestoreState` read, and now something a
+    // suite can *write*.
+    if (ProcessInfo.processInfo.environment["FM_SESSION_RESTORE_FILE"] ?? "").isEmpty {
+        setenv("FM_SESSION_RESTORE_FILE", scratchRoot.appendingPathComponent("session-restore.json").path, 1)
+    }
     // The full-app audit's §7.2, and the entry that generalises every one
     // above: `FM_SHIFT_DIR` is the *root* override the whole
     // `GrandLineDocs/` family resolves through.
@@ -1856,6 +1863,22 @@ if ProcessInfo.processInfo.environment["FM_RUN_SUBPROCESS_TESTS"] == "1" {
 // five drifted copies collapsed into - see ClaudeOneShotSelfTest.swift.
 if ProcessInfo.processInfo.environment["FM_RUN_CLAUDE_ONE_SHOT_TESTS"] == "1" {
     exit(ClaudeOneShotSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-audit3-perf-security-fixes` (full review #3, S2): the
+// unlocked vault reconciles with a file a git pull changed underneath it, and
+// reveal/copy no longer rewrite-and-commit the whole file - see
+// CredentialVaultConcurrentWriteSelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_VAULT_CONCURRENT_WRITE_TESTS"] == "1" {
+    exit(CredentialVaultConcurrentWriteSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-audit3-perf-security-fixes` (full review #3, S1): every
+// `claude -p` run is fail-closed on the built-in tool set via `--tools`, so
+// the captain's global `permissions.allow` cannot widen a read-only persona -
+// see ClaudeOneShotToolPolicySelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_CLAUDE_TOOL_POLICY_TESTS"] == "1" {
+    exit(ClaudeOneShotToolPolicySelfTest.run() ? 0 : 1)
 }
 
 // `fm/grandline-review-phase2-harden` (GL-10/GL-11/GL-30): throwing

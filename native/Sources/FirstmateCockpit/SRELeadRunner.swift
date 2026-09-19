@@ -45,13 +45,7 @@ final class SRELeadRunner {
 
     /// Ask one question. `completion` is always called on the main thread.
     func ask(_ question: String, completion: @escaping (Result<String, SRELeadSetupError>) -> Void) {
-        let extraArgs = [
-            "--mcp-config", session.mcpConfigPath.path,
-            "--strict-mcp-config",
-            "--append-system-prompt", SRELead.persona,
-            "--permission-mode", "bypassPermissions",
-            "--allowedTools", SRELead.allowedTools,
-        ]
+        let extraArgs = Self.arguments(session: session)
 
         // GL-26: this was the one of the five `claude -p` callers with *no*
         // timeout at all, so a wedged `claude` left a turn spinning forever with
@@ -63,6 +57,7 @@ final class SRELeadRunner {
             executable: claude,
             prompt: question,
             extraArguments: extraArgs,
+            builtInTools: SRELead.builtInTools,
             resumeSessionID: sessionID,
             cwd: session.workingDir,
             timeout: ClaudeOneShot.conversationTimeout,
@@ -81,6 +76,38 @@ final class SRELeadRunner {
                 completion(.failure(SRELeadSetupError(message: error.message)))
             }
         }
+    }
+
+    /// Every turn's `claude` arguments beyond the prompt and `--tools`.
+    ///
+    /// `static` and taking the session explicitly so
+    /// `ClaudeOneShotToolPolicySelfTest` can assert the exact argv - including
+    /// the negative half, that `--permission-mode` never appears again - the
+    /// same shape `StrawHatRunner.arguments(tools:)` already had.
+    ///
+    /// ## Why `--permission-mode bypassPermissions` is gone
+    ///
+    /// Full review #3's S1. This runner predated `StrawHatRunner` and carried
+    /// the flag from its first version; `StrawHatTools.swift`'s header had
+    /// already measured, with a throwaway MCP server, that `--allowedTools`
+    /// alone both permits a listed tool and denies an unlisted one, so the
+    /// flag was buying nothing even then - and it actively widened the one
+    /// gap S1 is about, since `bypassPermissions` turns off permission
+    /// checking for the whole session.
+    ///
+    /// Re-measured for this fix against a real `claude -p`: with `--tools`
+    /// naming only `Task,TodoWrite`, a Bash request was refused **even with
+    /// `--permission-mode bypassPermissions` still passed** - so `--tools` is
+    /// the layer doing the work, and dropping the flag costs this pane
+    /// nothing. Its kubectl tool is reached through `--allowedTools`, exactly
+    /// as the crew's four tools are.
+    static func arguments(session: SRELeadSession) -> [String] {
+        [
+            "--mcp-config", session.mcpConfigPath.path,
+            "--strict-mcp-config",
+            "--append-system-prompt", SRELead.persona,
+            "--allowedTools", SRELead.allowedTools,
+        ]
     }
 
     /// Best-effort kill of an in-flight turn - called when the pane closes.

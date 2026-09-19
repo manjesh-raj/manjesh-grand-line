@@ -155,6 +155,23 @@ enum SRELead {
     /// `SRELeadRunner` needs it too.
     static let allowedTools = "mcp__sre-kubectl__kubectl_readonly,mcp__sre-kubectl__run_runbook,Task,TodoWrite"
 
+    /// The built-in tools this pane's `--tools` grants (full review #3's S1).
+    ///
+    /// These are exactly the two non-MCP names in `allowedTools` above, and
+    /// they are the *only* built-ins any persona in this app asks for: the
+    /// persona explicitly delegates independent checks to subagents, which
+    /// needs `Task`, and `TodoWrite` is how it tracks a multi-step
+    /// investigation in the pane. Every other built-in - `Bash` first among
+    /// them - is denied by omission rather than by a denylist, so a future
+    /// CLI's new tool is denied here without anyone editing this line.
+    ///
+    /// `ClaudeOneShotToolPolicySelfTest` asserts these stay a subset of
+    /// `allowedTools`, because granting a built-in here that the allowlist
+    /// does not name would be a capability nothing can reach, and granting
+    /// one in `allowedTools` that this omits would be a tool the pane silently
+    /// cannot use.
+    static let builtInTools = ["Task", "TodoWrite"]
+
     /// Prepare a fresh SRE Lead session: writes this spawn's MCP config into
     /// a private scratch directory and creates the bridge directory the MCP
     /// config points the kubectl tool at. Does not spawn `claude` itself -

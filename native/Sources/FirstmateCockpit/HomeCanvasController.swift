@@ -601,14 +601,17 @@ final class HomeCanvasController: NSViewController {
         // anything a card asks for - a span-1 card is exactly one column in
         // every row - and this path carries the same partial-row padding that
         // stops a lone leftover card stretching, expressed in columns rather
-        // than cells. Uniform *height* is the card's own
-        // `HelmModuleCard.standardHeight`.
+        // than cells. Uniform *height* is per row (`equalHeights` below):
+        // full review #3's PF2 turned `HelmModuleCard`'s fixed height into a
+        // floor, so a row of one-line cards is now as short as its content.
         let rows = HelmResponsiveGrid.spanningRows(
             modules,
             spans: { $0.gridSpan },
             containerWidth: width,
             minItemWidth: Self.minModuleWidth,
-            spacing: Self.gridSpacing
+            spacing: Self.gridSpacing,
+            // PF2: a card is content-sized now, so uniformity is per row.
+            equalHeights: true
         ) { [weak self] module, cardWidth in
             guard let self else { return NSView() }
             return self.makeCard(for: module, cardWidth: cardWidth)

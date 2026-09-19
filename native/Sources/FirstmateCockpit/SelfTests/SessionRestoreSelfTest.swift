@@ -62,6 +62,9 @@ enum SessionRestoreSelfTest {
             ("captureReadsWhateverIsActuallyOpen", test_capture),
             ("anEmptyOrAbsentStateChangesNothing", test_emptyState),
             ("aRestoredHostPageKnowsAboutItsActiveIncident", test_incidentReattachment),
+            ("theStateIsWrittenToA0600FileNotUserDefaults", test_stateLandsInA0600File),
+            ("aUserDefaultsCopyIsMigratedAndThenCleared", test_legacyDefaultsMigration),
+            ("nothingIsLeftInUserDefaultsAfterASave", test_noDefaultsWriteThrough),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -76,6 +79,135 @@ enum SessionRestoreSelfTest {
             ? "SessionRestoreSelfTest: all \(cases.count) cases passed"
             : "SessionRestoreSelfTest: \(failures)/\(cases.count) cases FAILED")
         return failures == 0
+    }
+
+    // MARK: Where it is stored (full review #3, S3)
+
+    /// The state used to live in the preferences plist. It holds no secret -
+    /// hosts are recorded as UUIDs - but the console and Tools **tab names**
+    /// are captain-authored strings that in practice name what a tab is
+    /// connected to, which is the same argument `snippets.json` makes for its
+    /// own 0600 mode.
+    private static func test_stateLandsInA0600File() -> String? {
+        guard let scratch = scratchFile("mode") else { return "could not make a scratch directory" }
+        defer { cleanUp(scratch) }
+
+        let state = SessionRestoreState(destination: RailDestination.vault.rawValue,
+                                        consoleTabs: [.init(name: "prod-db tunnel", hasUserChosenName: true)])
+        SessionRestoreStore.save(state)
+
+        let url = SessionRestoreStore.storeURL()
+        guard FileManager.default.fileExists(atPath: url.path) else {
+            return "no file was written at \(url.path)"
+        }
+        guard let mode = (try? FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions]
+                            as? NSNumber)?.intValue else {
+            return "could not read the file's mode"
+        }
+        guard mode == SensitiveFile.fileMode else {
+            return "the session restore file is \(String(mode, radix: 8)), expected 600"
+        }
+
+        // The fixture's own discriminating power: the tab name really is in
+        // those bytes, so the mode assertion above is guarding something
+        // rather than an empty file.
+        guard let bytes = try? String(contentsOf: url, encoding: .utf8),
+              bytes.contains("prod-db tunnel") else {
+            return "the tab name is not in the file - the mode check would be vacuous"
+        }
+        guard SessionRestoreStore.load(defaults: isolatedDefaults()) == state else {
+            return "the state did not read back from the file"
+        }
+        return nil
+    }
+
+    /// A build that already wrote to `UserDefaults` must not lose its saved
+    /// session - and must not leave the cleartext copy behind either, since
+    /// removing it is the entire point of the move.
+    private static func test_legacyDefaultsMigration() -> String? {
+        guard let scratch = scratchFile("migrate") else { return "could not make a scratch directory" }
+        defer { cleanUp(scratch) }
+
+        let defaults = isolatedDefaults()
+        let state = SessionRestoreState(destination: RailDestination.vault.rawValue,
+                                        openHostIDs: ["host-1"],
+                                        toolTabs: [.init(kind: ToolKind.diff.rawValue, name: "Diff")])
+        guard let data = try? JSONEncoder().encode(state) else { return "could not encode the fixture" }
+        defaults.set(data, forKey: SessionRestoreStore.legacyDefaultsKey)
+
+        // Fixture discrimination: there really is a legacy value to migrate,
+        // and no file yet - otherwise this passes by reading the file the
+        // previous case wrote.
+        guard defaults.data(forKey: SessionRestoreStore.legacyDefaultsKey) != nil else {
+            return "the legacy value was not seeded"
+        }
+        guard !FileManager.default.fileExists(atPath: SessionRestoreStore.storeURL().path) else {
+            return "a file already exists - the migration path would not be exercised"
+        }
+
+        guard let loaded = SessionRestoreStore.load(defaults: defaults) else {
+            return "the legacy UserDefaults state was not read back at all"
+        }
+        guard loaded == state else { return "the migrated state differed: \(loaded)" }
+        guard FileManager.default.fileExists(atPath: SessionRestoreStore.storeURL().path) else {
+            return "the migration did not write the file"
+        }
+        guard defaults.data(forKey: SessionRestoreStore.legacyDefaultsKey) == nil else {
+            return "the cleartext UserDefaults copy is still there after migrating - "
+                + "removing it is the point of the move"
+        }
+        return nil
+    }
+
+    /// The accessor callers use must not write through to `UserDefaults` any
+    /// more. A source-free behavioural check: save through `AppSettings` over
+    /// an isolated defaults store and assert the key never appears.
+    private static func test_noDefaultsWriteThrough() -> String? {
+        guard let scratch = scratchFile("nowritethrough") else { return "could not make a scratch directory" }
+        defer { cleanUp(scratch) }
+
+        let defaults = isolatedDefaults()
+        let settings = AppSettings(defaults: defaults)
+        settings.sessionRestoreState = SessionRestoreState(destination: RailDestination.vault.rawValue,
+                                                           consoleTabs: [.init(name: "bastion",
+                                                                               hasUserChosenName: true)])
+        guard defaults.data(forKey: SessionRestoreStore.legacyDefaultsKey) == nil else {
+            return "AppSettings still writes the state into UserDefaults"
+        }
+        guard settings.sessionRestoreState?.consoleTabs.first?.name == "bastion" else {
+            return "the state did not read back through AppSettings"
+        }
+        return nil
+    }
+
+    /// Point `FM_SESSION_RESTORE_FILE` at a fresh scratch path for one case,
+    /// and hand back the directory to remove afterwards. Never the captain's
+    /// own file - `main.swift`'s `#if FM_SELFTESTS` block already redirects
+    /// this variable, and this narrows it further per case so one case cannot
+    /// read what another wrote.
+    private static func scratchFile(_ name: String) -> URL? {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("session-restore-s3-\(name)-\(UUID().uuidString)", isDirectory: true)
+        guard (try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)) != nil else {
+            return nil
+        }
+        setenv("FM_SESSION_RESTORE_FILE", dir.appendingPathComponent("session-restore.json").path, 1)
+        return dir
+    }
+
+    private static func cleanUp(_ dir: URL) {
+        try? FileManager.default.removeItem(at: dir)
+        unsetenv("FM_SESSION_RESTORE_FILE")
+    }
+
+    /// A throwaway `UserDefaults` suite, so no case here touches the real
+    /// `FirstmateCockpit` domain - the non-hermeticity AGENTS.md's own
+    /// "The self-test suite is not hermetic" section is about.
+    private static func isolatedDefaults() -> UserDefaults {
+        let name = "grandline-session-restore-s3-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: name) ?? .standard
+        defaults.removePersistentDomain(forName: name)
+        return defaults
     }
 
     // MARK: Encoding

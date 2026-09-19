@@ -323,7 +323,7 @@ enum DaylightDrillPageSlice6SelfTest {
     // MARK: 4. The plate's four-line note fits its card (§6.1)
 
     private static func checkPlateNoteFits(_ ok: inout Bool) {
-        print("\n-- §6.1: a plate's description fits `standardHeight` at every text scale --")
+        print("\n-- §6.1: a plate's description fits its card at every text scale --")
         let restoreTheme = ThemeManager.shared.theme
         let restoreScale = ChromeTextScale.shared.scale
         defer {
@@ -358,31 +358,50 @@ enum DaylightDrillPageSlice6SelfTest {
                 plate.leadingAnchor.constraint(equalTo: host.leadingAnchor),
                 plate.topAnchor.constraint(equalTo: host.topAnchor),
             ])
+            // **Twice, and that is not belt-and-braces.** `applyNoteWrapWidth`
+            // runs in the card's own `layout()` and assigns
+            // `preferredMaxLayoutWidth`, which invalidates the label's
+            // intrinsic size and schedules another pass. The first pass
+            // therefore settles on a *one-line* label; the card's height is
+            // derived from its content since PF2, so it is the second pass
+            // that produces the real number. The app gets this for free (the
+            // scheduled pass runs); a test that lays out once does not.
+            host.layoutSubtreeIfNeeded()
             host.layoutSubtreeIfNeeded()
 
             let anatomy = plate.anatomyForTests
-            if abs(anatomy.cardHeight - HelmModuleCard.standardHeight) > 0.5 {
-                print("  FAIL \(step.title): plate resolved to \(fmt(anatomy.cardHeight)), not standardHeight "
-                    + "(\(fmt(HelmModuleCard.standardHeight))) - the grid row would be ragged")
+            // PF2 replaced the fixed height with a floor plus per-row
+            // equalisation, so "every plate is exactly `standardHeight`" is
+            // deliberately no longer true. The floor is what is left of that
+            // contract.
+            if anatomy.cardHeight < HelmModuleCard.minimumHeight - 0.5 {
+                print("  FAIL \(step.title): plate resolved to \(fmt(anatomy.cardHeight)), below the floor "
+                    + "minimumHeight (\(fmt(HelmModuleCard.minimumHeight)))")
                 ok = false
             }
-            // The real bound, and the reason this case exists at all.
-            // `fittingSize` reports a wrapping label at its single-line width
-            // when nothing has set `preferredMaxLayoutWidth` (which is exactly
-            // the plate's situation - the row's `.fillEqually` distribution
-            // sets its frame, not its intrinsic size), so measuring the body
-            // alone would pass vacuously however high the cap were raised.
-            // What actually bounds the label is `maximumNumberOfLines`, so the
-            // worst case is that many full lines.
+            // **What replaced the worst-case check, and why it is stronger.**
+            // This used to reserve `maxLines` full lines in every plate,
+            // because with a fixed card height the only way a long
+            // description could be safe was for every card to carry room for
+            // one. A content-sized card does not need that - it grows - so
+            // the honest check is that the description *this fixture actually
+            // renders* fits, using the longest one in the real catalogue and
+            // the count of lines the label really laid out. That is a measured
+            // number rather than an upper bound, and it fails for the same
+            // reason the old one did: a body clipped at the width the grid
+            // really builds plates at.
             let lineHeight = NSLayoutManager().defaultLineHeight(for: HelmType.caption())
-            let worstCase = lineHeight * CGFloat(maxLines)
-            if worstCase > anatomy.bodyAreaHeight + 0.5 {
-                print("  FAIL \(step.title) (x\(step.scale)) at \(fmt(narrowest))pt: \(maxLines) lines need "
-                    + "\(fmt(worstCase)) of \(fmt(anatomy.bodyAreaHeight)) - a long description would be clipped")
+            let renderedLines = anatomy.noteRenderedLineCounts.first ?? 0
+            let needed = lineHeight * CGFloat(renderedLines)
+            if needed > anatomy.bodyAreaHeight + 0.5 {
+                print("  FAIL \(step.title) (x\(step.scale)) at \(fmt(narrowest))pt: \(renderedLines) "
+                    + "rendered line(s) need \(fmt(needed)) of \(fmt(anatomy.bodyAreaHeight)) "
+                    + "- the description is clipped")
                 ok = false
             } else {
-                print("  ok   \(step.title): \(maxLines) lines need \(fmt(worstCase)) "
-                    + "of \(fmt(anatomy.bodyAreaHeight)) at \(fmt(narrowest))pt")
+                print("  ok   \(step.title): \(renderedLines) of \(maxLines) line(s) need \(fmt(needed)) "
+                    + "of \(fmt(anatomy.bodyAreaHeight)) at \(fmt(narrowest))pt "
+                    + "(card \(fmt(anatomy.cardHeight)))")
             }
 
             // Review #3, B7, and the half the bound above cannot see: a note

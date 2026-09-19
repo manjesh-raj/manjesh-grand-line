@@ -4077,10 +4077,75 @@ enum HelmResponsiveGrid {
     /// `makeItem` is handed each item and the width its card should be built
     /// for (some cards need it up front - a wrapping label's
     /// `preferredMaxLayoutWidth`, for instance).
+    /// `equalHeights` makes every card in a row as tall as the tallest one in
+    /// *that row* (full review #3's PF2). Opt-in rather than the default
+    /// because it is only correct for a grid whose items are content-sized:
+    /// `HelmModuleCard` became so when PF2 turned its fixed height into a
+    /// floor, and uniformity had to move from "the whole canvas" to "each
+    /// row" to keep the grid reading as a grid. A grid of already-uniform
+    /// items gains nothing from it and should not pay for the extra
+    /// constraints.
+
+    /// Tie every item in one grid row to the same height - the tallest, since
+    /// each card's own hug is only `.defaultLow` and a required `==` between
+    /// them therefore settles at whichever needs the most room.
+    ///
+    /// **Not `NSStackView.alignment = .height`**, which is the obvious
+    /// reading and was the first thing tried: measured, it left a row of
+    /// content-sized `HelmModuleCard`s at `[124, 143, 124]` rather than
+    /// equalising them. Explicit constraints are what actually holds.
+    ///
+    /// Padding spacers are deliberately excluded - they are empty `NSView`s
+    /// that exist to reserve a column's width, and tying their height to a
+    /// card's would give a short row an invisible view as tall as its
+    /// content for no reason.
+    /// Must be called **after** the views are in their row stack: activating
+    /// a constraint between two views with no common ancestor raises, and a
+    /// raise here aborts the whole process rather than failing one layout.
+    ///
+    /// ## Why it is a required `>=` plus a high `==`, and not just `==`
+    ///
+    /// The obvious spelling - tie every card to the row, or to each other,
+    /// with a required `==` - was tried first and is wrong in a way that only
+    /// shows up with real content. A required tie outranks every clipping
+    /// resistance and compression resistance inside a card (750 at best), so
+    /// the solver is free to satisfy it by **squashing the tallest card's
+    /// body** down to a shorter neighbour's height. Measured: a three-row
+    /// peek list settled at 124pt beside a one-line note rather than pulling
+    /// the note up to its own 143pt, and the peek rows were clipped.
+    /// Hardening each body's priorities against that is a losing game - it
+    /// has to be won again by every label, in every body kind, forever.
+    ///
+    /// So the pair below makes the *only* available resolution the right one:
+    ///
+    ///  - `row.height >= card.height`, **required**. Always satisfiable by
+    ///    growing the row, never by shrinking a card, so the row ends up at
+    ///    least as tall as the tallest card's own content wants.
+    ///  - `card.height == row.height`, at **`HelmDaylightPriority.contentTie`
+    ///    (499)**. Stretches the shorter cards up - their own hug is 250, so
+    ///    they yield - while every clipping and compression resistance inside
+    ///    a card (750) outranks it, so it can never be the reason something
+    ///    is squashed. `.defaultHigh` was tried and is exactly wrong here: it
+    ///    *ties* with those resistances, and the solver resolved the tie by
+    ///    clipping the peek list.
+    ///
+    /// 499 is also the band AGENTS.md gotcha (13) reserves for "must beat the
+    /// stack defaults, must never touch the window".
+    private static func tieHeights(_ views: [NSView], to row: NSStackView) {
+        guard views.count > 1 else { return }
+        for view in views {
+            row.heightAnchor.constraint(greaterThanOrEqualTo: view.heightAnchor).isActive = true
+            let match = view.heightAnchor.constraint(equalTo: row.heightAnchor)
+            match.priority = HelmDaylightPriority.contentTie
+            match.isActive = true
+        }
+    }
+
     static func rows<Item>(_ items: [Item],
                            containerWidth: CGFloat,
                            minItemWidth: CGFloat,
                            spacing: CGFloat = spacing,
+                           equalHeights: Bool = false,
                            makeItem: (Item, CGFloat) -> NSView) -> [NSStackView] {
         let columnsPerRow = columns(containerWidth: containerWidth,
                                     minItemWidth: minItemWidth,
@@ -4089,7 +4154,8 @@ enum HelmResponsiveGrid {
                               columns: columnsPerRow,
                               spacing: spacing)
         return items.chunked(into: columnsPerRow).map { chunk in
-            var views: [NSView] = chunk.map { makeItem($0, width) }
+            let itemViews: [NSView] = chunk.map { makeItem($0, width) }
+            var views: [NSView] = itemViews
             // The partial-last-row fix: pad to a fixed column count so
             // `.fillEqually` always divides by the same number.
             while views.count < columnsPerRow {
@@ -4101,7 +4167,9 @@ enum HelmResponsiveGrid {
             row.orientation = .horizontal
             row.spacing = spacing
             row.distribution = .fillEqually
+            row.alignment = .top
             row.translatesAutoresizingMaskIntoConstraints = false
+            if equalHeights { tieHeights(itemViews, to: row) }
             return row
         }
     }
@@ -4175,11 +4243,20 @@ enum HelmResponsiveGrid {
     /// (13)). At 499 the cards still resolve to exactly the computed width in
     /// every normal case and simply compress instead of pushing the window
     /// wider in the pathological one.
+    /// `equalHeights` makes every card in a row as tall as the tallest one in
+    /// *that row* (full review #3's PF2). Opt-in rather than the default
+    /// because it is only correct for a grid whose items are content-sized:
+    /// `HelmModuleCard` became so when PF2 turned its fixed height into a
+    /// floor, and uniformity had to move from "the whole canvas" to "each
+    /// row" to keep the grid reading as a grid. A grid of already-uniform
+    /// items gains nothing from it and should not pay for the extra
+    /// constraints.
     static func spanningRows<Item>(_ items: [Item],
                                    spans: (Item) -> Int,
                                    containerWidth: CGFloat,
                                    minItemWidth: CGFloat,
                                    spacing: CGFloat = spacing,
+                                   equalHeights: Bool = false,
                                    makeItem: (Item, CGFloat) -> NSView) -> [NSStackView] {
         let columnCount = columns(containerWidth: containerWidth,
                                   minItemWidth: minItemWidth,
@@ -4191,6 +4268,7 @@ enum HelmResponsiveGrid {
 
         return placements.map { row in
             var views: [NSView] = []
+            var itemViews: [NSView] = []
             var used = 0
             for placement in row {
                 let width = unit * CGFloat(placement.span) + spacing * CGFloat(placement.span - 1)
@@ -4201,6 +4279,7 @@ enum HelmResponsiveGrid {
                 widthConstraint.isActive = true
                 view.setContentHuggingPriority(.required, for: .horizontal)
                 views.append(view)
+                itemViews.append(view)
                 used += placement.span
             }
             // Pad the leftover columns so a short row's cards keep the same
@@ -4230,6 +4309,7 @@ enum HelmResponsiveGrid {
             // carefully the widths inside it were priced at 499.
             stack.setClippingResistancePriority(.defaultLow, for: .horizontal)
             stack.setHuggingPriority(.defaultLow, for: .horizontal)
+            if equalHeights { tieHeights(itemViews, to: stack) }
             return stack
         }
     }
