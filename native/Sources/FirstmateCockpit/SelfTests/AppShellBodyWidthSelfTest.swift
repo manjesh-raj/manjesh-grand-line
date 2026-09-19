@@ -200,6 +200,8 @@ enum AppShellBodyWidthSelfTest {
             ("moduleCardCountDoesNotAccumulateOverALongSession", test_moduleCardCountDoesNotAccumulateOverALongSession),
             ("initialCanvasRenderIsOrphanedOnce", test_initialCanvasRenderIsOrphanedOnce),
             ("plainStackViewArrangedSubviewRemovalDoesNotLeak", test_stackViewArrangedSubviewRemovalLeaksOneGeneration),
+            ("onlyTheShowingDestinationIsInTheWindowsConstraintGraph", test_hiddenDestinationsLeaveTheConstraintGraph),
+            ("aRevisitedDestinationIsPutBackIntoTheGraph", test_revisitingReattachesTheDestination),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -325,6 +327,88 @@ enum AppShellBodyWidthSelfTest {
     /// window, whatever the correct width happens to be.
     private static func expectedBodyWidth(for window: NSWindow) -> CGFloat {
         window.contentView?.bounds.width ?? 0
+    }
+
+    // MARK: Cases - PF1, the idle constraint-solve cost
+
+    /// Full review #3's **PF1**. A hidden `NSView` still participates fully
+    /// in Auto Layout (AGENTS.md gotcha (11) says so in the other
+    /// direction), so GL-37's ~27 permanently-mounted destinations were one
+    /// required-constraint chain inside the window - and AppKit re-walks that
+    /// whole chain every time anything invalidates the window's
+    /// `minFullScreenContentSize`, which a single live-updating label is
+    /// enough to do.
+    ///
+    /// Measured on the captain's own running instance: 1095 of 4072
+    /// main-thread samples (26.9%) inside CoreAutoLayout under
+    /// `_doUpdateTilingConstraintsImmediately`. A standalone stock-AppKit
+    /// probe put the cost at near-linear in the mounted count and at
+    /// **zero** for a settled graph of any size - so this is the re-solve,
+    /// not stock idle work.
+    ///
+    /// This asserts the property the fix turns on, which no frame
+    /// measurement can see: a page that is not showing has no active pins to
+    /// `bodyContainer`.
+    private static func test_hiddenDestinationsLeaveTheConstraintGraph() -> String? {
+        withScratchEnv {
+            let (window, shell) = makeMountedShell()
+            _ = window
+            // Visit several destinations so more than one is mounted - the
+            // whole finding is about what mounting *accumulates*.
+            for dest in [RailDestination.overview, .console, .hosts, .settings] {
+                shell.show(dest)
+            }
+            shell.view.layoutSubtreeIfNeeded()
+
+            let state = shell.destinationLayoutAttachmentForTests
+            // Fixture discrimination first: if only one page ever got
+            // embedded, "hidden pages are detached" is vacuously true.
+            guard state.embedded >= 4 else {
+                return "expected at least 4 embedded destinations after visiting 4, got \(state.embedded)"
+            }
+            guard state.showing == 1 else {
+                return "expected exactly 1 showing destination, got \(state.showing) of \(state.embedded)"
+            }
+            guard state.attached == 1 else {
+                return "expected only the showing destination to hold active constraints to bodyContainer, "
+                    + "got \(state.attached) attached of \(state.embedded) embedded - "
+                    + "every hidden page is back in the window's constraint graph (PF1)"
+            }
+            return nil
+        }
+    }
+
+    /// The other direction, which matters more than the saving: coming back
+    /// to a page must put it back in the graph and lay it out at the body's
+    /// real width. A detach that never reattaches is a blank page, which is
+    /// a far worse bug than the cost it was removing.
+    private static func test_revisitingReattachesTheDestination() -> String? {
+        withScratchEnv {
+            let (window, shell) = makeMountedShell()
+            shell.show(.hosts)
+            shell.show(.settings)
+            shell.view.layoutSubtreeIfNeeded()
+            // Back to the one that is now detached.
+            shell.show(.hosts)
+            shell.view.layoutSubtreeIfNeeded()
+
+            let state = shell.destinationLayoutAttachmentForTests
+            guard state.attached == 1, state.showing == 1 else {
+                return "after revisiting, expected 1 showing and 1 attached, "
+                    + "got showing=\(state.showing) attached=\(state.attached)"
+            }
+            // And it is actually laid out, not merely re-pinned: a reattached
+            // page has to reach the body's real width.
+            let expected = expectedBodyWidth(for: window)
+            guard expected > 0 else { return "the window never laid out - the width check would be vacuous" }
+            guard let showingWidth = shell.showingDestinationWidthForTests else {
+                return "no destination is showing after revisiting it"
+            }
+            guard abs(showingWidth - expected) < 0.5 else {
+                return "a revisited destination laid out at \(showingWidth), expected the body's \(expected)"
+            }
+            return nil
+        }
     }
 
     // MARK: Cases

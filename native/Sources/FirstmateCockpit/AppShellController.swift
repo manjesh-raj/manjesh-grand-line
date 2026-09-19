@@ -214,10 +214,15 @@ final class AppShellController: NSViewController {
     /// which are reached through `self`, so `self` is alive by construction,
     /// and the mounter is owned by `self` so there is no retain cycle to
     /// break beyond that.
-    private lazy var mounter = DestinationMounter { [unowned self] controller in
-        self.addChild(controller)
-        self.embed(controller.view)
-    }
+    private lazy var mounter = DestinationMounter(
+        mount: { [unowned self] controller in
+            self.addChild(controller)
+            self.embed(controller.view)
+        },
+        setVisible: { [unowned self] controller, visible in
+            self.setDestinationVisible(controller.view, visible)
+        }
+    )
 
     /// `fm/grandline-live-gap-rootcause-scout`: named (rather than anonymous,
     /// like every other constraint activated in `loadView`) so
@@ -1244,14 +1249,90 @@ final class AppShellController: NSViewController {
     private func embed(_ destinationView: NSView) {
         destinationView.translatesAutoresizingMaskIntoConstraints = false
         bodyContainer.addSubview(destinationView)
-        NSLayoutConstraint.activate([
+        let pins = [
             destinationView.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
             destinationView.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
             // A2: the drill header no longer sits between the bar and the
             // page, so a destination starts at the body container's own top.
             destinationView.topAnchor.constraint(equalTo: bodyContainer.topAnchor),
             destinationView.bottomAnchor.constraint(equalTo: bodyContainer.bottomAnchor),
-        ])
+        ]
+        NSLayoutConstraint.activate(pins)
+        destinationPins[ObjectIdentifier(destinationView)] = pins
+    }
+
+    /// The four pins `embed` put on each destination view, so
+    /// `setDestinationVisible` can take a hidden page out of the window's
+    /// constraint graph without taking it out of the view hierarchy.
+    private var destinationPins: [ObjectIdentifier: [NSLayoutConstraint]] = [:]
+
+    /// Show or hide one destination, and attach or detach it from the
+    /// window's constraint graph to match (full review #3's PF1).
+    ///
+    /// ## Why this is not just `isHidden`
+    ///
+    /// **A hidden `NSView` still participates fully in Auto Layout** -
+    /// AGENTS.md gotcha (11) says so in the other direction, and it is what
+    /// makes GL-37's "mounted, only ever hidden" expensive rather than free.
+    /// Every mounted destination is pinned to `bodyContainer`, so all ~27 of
+    /// them are one required-constraint chain inside the window, and AppKit
+    /// walks that entire chain every time it has to re-derive
+    /// `minFullScreenContentSize` for a full-screen-capable window.
+    ///
+    /// Measured with a standalone stock-AppKit probe (5s `sample` at 1ms,
+    /// main-thread samples in
+    /// `_doUpdateTilingConstraintsImmediately -> minFullScreenContentSize ->
+    /// NSISEngine`), one mounted-destination count per row, with a label's
+    /// text changing 20x/second as the invalidation source:
+    ///
+    ///     1 mounted     16 samples    0.4% of the main thread
+    ///     3 mounted    134            3.1%
+    ///     7 mounted    357            8.3%
+    ///    14 mounted    973           22.7%
+    ///    27 mounted   1877           43.4%
+    ///
+    /// Near-linear in the number of mounted destinations, and the captain's
+    /// own running instance measured 1090 samples (26.8% of its main thread,
+    /// 76% of everything it was doing other than blocking) - squarely on that
+    /// curve. A settled graph of any size costs **zero**: this is not stock
+    /// AppKit idle work, it is the re-solve that any invalidation triggers.
+    ///
+    /// Deactivating a hidden page's four pins leaves its subtree with no
+    /// required path to the window, so the derivation skips it. Same probe,
+    /// 27 mounted, same 20Hz invalidation: **1777 samples -> 34**, i.e.
+    /// 41.2% of the main thread -> 0.8%.
+    ///
+    /// ## What this deliberately does not do
+    ///
+    /// Nothing is torn down. GL-37's "a mounted slot is only ever hidden,
+    /// never torn down" holds exactly as before - the controller, its view
+    /// hierarchy, its scroll position, its in-flight fetches and any live ssh
+    /// session are all untouched. This changes only whether a *hidden* page's
+    /// geometry is something Auto Layout still has to solve for, which by
+    /// definition nothing can observe while it is hidden. Unmounting cold
+    /// destinations - GL-37's other half, and what the review reached for -
+    /// would buy the same thing and cost a great deal more.
+    private func setDestinationVisible(_ destinationView: NSView, _ visible: Bool) {
+        guard let pins = destinationPins[ObjectIdentifier(destinationView)] else {
+            // A view this controller did not embed. Honour the visibility
+            // change rather than silently ignoring it - the detach is an
+            // optimisation, and it must never be the reason a page fails to
+            // appear.
+            destinationView.isHidden = !visible
+            return
+        }
+        if visible {
+            // Re-pin *before* unhiding, so the page is never on screen for a
+            // pass with no constraints tying it to the container - which is
+            // the one way this could read as a layout bug rather than as a
+            // saving.
+            for pin in pins where !pin.isActive { pin.isActive = true }
+            destinationView.isHidden = false
+            destinationView.needsLayout = true
+        } else {
+            destinationView.isHidden = true
+            for pin in pins where pin.isActive { pin.isActive = false }
+        }
     }
 
     /// `fm/grandline-live-gap-rootcause-scout`: re-derives `bodyContainer`'s
@@ -1552,6 +1633,25 @@ final class AppShellController: NSViewController {
     /// view, never measure the container itself.
     var bodyContainerFrameForTests: NSRect { bodyContainer.frame }
 
+    /// Full review #3's PF1. How many of `bodyContainer`'s embedded
+    /// destination views are currently attached to it by active constraints,
+    /// and how many of those are actually showing.
+    ///
+    /// Exposed as counts rather than the constraints themselves so the suite
+    /// asserts the *property* - "a hidden page is out of the window's
+    /// constraint graph, a showing one is in it" - rather than this
+    /// controller's private storage shape.
+    var destinationLayoutAttachmentForTests: (attached: Int, showing: Int, embedded: Int) {
+        var attached = 0
+        var showing = 0
+        for (key, pins) in destinationPins {
+            guard let view = bodyContainer.subviews.first(where: { ObjectIdentifier($0) == key }) else { continue }
+            if pins.contains(where: { $0.isActive }) { attached += 1 }
+            if !view.isHidden { showing += 1 }
+        }
+        return (attached, showing, destinationPins.count)
+    }
+
     // MARK: Session-switcher probe surface (`fm/grandline-session-switcher`)
 
     /// The real strip, so a suite can read its real pills rather than a
@@ -1615,7 +1715,7 @@ final class AppShellController: NSViewController {
         hostConsoles[hostID] = controller
         addChild(controller)
         embed(controller.view)
-        controller.view.isHidden = true
+        setDestinationVisible(controller.view, false)
     }
 
     /// The set the Home canvas's own "N live sessions" reads, resolved through
@@ -2154,7 +2254,7 @@ final class AppShellController: NSViewController {
             hostConsoles[host.id] = controller
             addChild(controller)
             embed(controller.view)
-            controller.view.isHidden = true
+            setDestinationVisible(controller.view, false)
             // The cross-bridge collision guard's third direction (full-app
             // audit, finding 4.1), and the console this one actually matters
             // for: the `.kubernetes` destination scopes to a *saved host*, so
@@ -2214,7 +2314,7 @@ final class AppShellController: NSViewController {
             NotificationSources.setSRELeadReply(tabID: tab.id, tabName: tab.name, hostLabel: hostLabel) { [weak self, weak controller] in
                 guard let self, let controller else { return }
                 self.hideAllDestinations()
-                controller.view.isHidden = false
+                self.setDestinationVisible(controller.view, true)
                 // `fm/grandline-recents-navigation`: this bypasses `revealHost
                 // Console` (it also needs to focus one specific tab), but it
                 // is a real navigation like any other - and skipping this
@@ -2477,7 +2577,7 @@ final class AppShellController: NSViewController {
     private func revealHostConsole(_ controller: ConsoleController, hostID: UUID, label: String) {
         let wasAlreadyShowing = currentDestinationKind == .host(id: hostID, label: label)
         hideAllDestinations()
-        controller.view.isHidden = false
+        setDestinationVisible(controller.view, true)
         // B2: a host page is not a `RailDestination` at all, so no quick-access
         // shortcut corresponds to it - clear whichever was lit rather than
         // leaving the last visited destination's icon asserting it is current.
@@ -2730,7 +2830,7 @@ final class AppShellController: NSViewController {
         // `RailDestination` cases) and were always lazily built.
         mounter.hideAll()
         for controller in hostConsoles.values where controller.isViewLoaded {
-            controller.view.isHidden = true
+            setDestinationVisible(controller.view, false)
         }
         activeHostID = nil
         // `fm/grandline-session-switcher`: no session's page is on screen any

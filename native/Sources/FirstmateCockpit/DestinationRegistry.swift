@@ -284,8 +284,21 @@ final class DestinationMounter {
     /// shell's own view hierarchy.
     private let mount: (NSViewController) -> Void
 
-    init(mount: @escaping (NSViewController) -> Void) {
+    /// Shows or hides one mounted slot. Injected for the same reason `mount`
+    /// is: since full review #3's PF1 this is more than `view.isHidden` - the
+    /// shell also attaches/detaches the page's pins to `bodyContainer`, which
+    /// is its own business and not this type's. See
+    /// `AppShellController.setDestinationVisible` for the measurement.
+    ///
+    /// Defaulted so the existing `DestinationMountingSelfTest` stub
+    /// construction keeps working unchanged, and so a caller that genuinely
+    /// only wants the laziness gets the obvious behaviour.
+    private let setVisible: (NSViewController, Bool) -> Void
+
+    init(mount: @escaping (NSViewController) -> Void,
+         setVisible: @escaping (NSViewController, Bool) -> Void = { $0.view.isHidden = !$1 }) {
         self.mount = mount
+        self.setVisible = setVisible
     }
 
     /// Registers one slot. Registering the same id twice is a programmer
@@ -310,7 +323,7 @@ final class DestinationMounter {
     func mountEagerSlots() {
         for slot in registeredSlots where slot.mountsEagerly {
             mountIfNeeded(slot)
-            slot.controller.view.isHidden = true
+            setVisible(slot.controller, false)
         }
     }
 
@@ -325,7 +338,7 @@ final class DestinationMounter {
             return nil
         }
         mountIfNeeded(slot)
-        slot.controller.view.isHidden = false
+        setVisible(slot.controller, true)
         return slot
     }
 
@@ -334,7 +347,7 @@ final class DestinationMounter {
     /// building it.
     func hideAll() {
         for slot in mountedSlots {
-            slot.controller.view.isHidden = true
+            setVisible(slot.controller, false)
         }
     }
 
