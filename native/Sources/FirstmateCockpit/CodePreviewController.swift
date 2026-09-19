@@ -823,6 +823,10 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         _ = addTab(name: snippet.id, content: snippet.content, persisted: true, select: true)
     }
 
+    /// UX4: the File menu's contextual ⌘N on this page, and `⌘K`'s "New Code
+    /// Snippet" verb - the page's own toolbar action, not a second copy.
+    func newSnippetFromMenu() { newSnippetTapped() }
+
     @objc private func newSnippetTapped() {
         addTab(name: nextUntitledName(), content: "", persisted: false, select: true)
         onDrillSubtitleChanged?()

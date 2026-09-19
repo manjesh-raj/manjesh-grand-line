@@ -467,6 +467,11 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
 
     // MARK: Actions
 
+    /// UX4: the File menu's contextual ⌘N on this page, and `⌘K`'s "New
+    /// Sticky Note" verb. Dispatches the board's own toolbar action rather
+    /// than duplicating it, so one fix covers every entry point.
+    func addNoteFromMenu() { newNoteTapped() }
+
     @objc private func newNoteTapped() {
         let position = nextPosition()
         let note = store.addNote(

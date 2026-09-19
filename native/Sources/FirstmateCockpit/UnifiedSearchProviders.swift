@@ -747,6 +747,26 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
                    run: { [weak shell] in shell?.activateConsoleFind() }),
             Action(title: "Settings", meta: "App", keywords: ["preferences", "config"],
                    run: { [weak shell] in shell?.selectSettings() }),
+            // Review #3's UX1: "the 14 ⌘K verbs have no 'New sticky note',
+            // 'New code snippet', 'Ask the crew' or 'Lock Poneglyph'". Each
+            // dispatches the same `AppShellController` method its File-menu
+            // sibling does, per this provider's own rule - nothing here is new
+            // behaviour.
+            Action(title: "New Sticky Note", meta: "Sticky Board", keywords: ["add", "create", "note", "sticky"],
+                   run: { [weak shell] in shell?.newStickyNoteFromMenu() }),
+            Action(title: "New Code Snippet", meta: "Code Preview", keywords: ["add", "create", "code", "paste"],
+                   run: { [weak shell] in shell?.newCodeSnippetFromMenu() }),
+            Action(title: "New Credential\u{2026}", meta: "Poneglyph", keywords: ["add", "create", "password", "secret", "vault"],
+                   run: { [weak shell] in shell?.newCredentialFromMenu() }),
+            Action(title: "New Schedule\u{2026}", meta: "Schedules", keywords: ["add", "create", "cron", "recurring"],
+                   run: { [weak shell] in shell?.newScheduleFromMenu() }),
+            Action(title: "Ask the Crew", meta: "Straw Hat Pirates", keywords: ["ai", "chat", "luffy", "crew", "ask"],
+                   icon: .destination(.strawHat),
+                   run: { [weak shell] in shell?.show(.strawHat) }),
+            Action(title: "Lock Poneglyph", meta: "Poneglyph", keywords: ["vault", "secure", "lock", "credential"],
+                   run: { [weak shell] in shell?.lockPoneglyph() }),
+            Action(title: "All Destinations\u{2026}", meta: "App", keywords: ["map", "pages", "everything", "navigate"],
+                   run: { [weak shell] in shell?.onShowAllDestinations?() }),
         ])
         return UnifiedSearchActionProvider(actions: actions)
     }

@@ -11,7 +11,7 @@
 import AppKit
 import SwiftTerm
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var window: NSWindow!
     // Phase 1: saved SSH hosts + the panel that lists and connects them. The
     // panel hands a `ssh` argv to the console, which opens it as a new tab.
@@ -60,6 +60,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // their own independent copies of one underlying check (see AGENTS.md).
     let docsRunbookStore = DocsRunbookStore()
     lazy var unifiedSearch = UnifiedSearchController(index: buildUnifiedSearchIndex())
+
+    /// UX1's all-destinations map. Lazy, like the search palette beside it -
+    /// a captain who never presses ⌘⇧D never builds twenty-six tiles.
+    lazy var allDestinations: AllDestinationsOverlayController = {
+        let overlay = AllDestinationsOverlayController()
+        overlay.onSelect = { [weak self] destination in self?.appShell.show(destination) }
+        overlay.onTogglePin = { [weak self] destination in
+            self?.appShell.toggleQuickAccessPin(destination)
+        }
+        overlay.isPinned = { [weak self] destination in
+            self?.appShell.isQuickAccessPinned(destination) ?? false
+        }
+        return overlay
+    }()
+
+    /// The File menu's one item, held so `menuNeedsUpdate` can re-title it -
+    /// UX4. See its construction in `buildMenu` for why the title is part of
+    /// the contract rather than decoration.
+    var contextualNewItem: NSMenuItem?
     lazy var shiftQuickCapture = ShiftQuickCaptureController(store: shiftStore)
     lazy var shiftNotifications = ShiftNotificationScheduler(store: shiftStore)
     lazy var shiftHotkey = ShiftGlobalHotkey { [weak self] in self?.shiftQuickCapture.present() }
@@ -987,6 +1006,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // MARK: Command palette (phase 4 "Knowledge and speed"; expanded by F5)
 
+    /// The Go menu's "All Destinations…" (⌘⇧D) and the quick-access overflow
+    /// menu's own row into it - UX1.
+    @objc func showAllDestinations() {
+        allDestinations.toggle()
+    }
+
+    /// Help → "Keyboard Shortcuts…" (⌘⇧/) - UX3.
+    ///
+    /// Built fresh on every open, deliberately: the sheet is a snapshot of
+    /// `NSApp.mainMenu` plus two configurable stores, and both can change
+    /// while the app runs (the Settings recorder rewrites the terminal
+    /// chords). A cached sheet would print yesterday's bindings.
+    @objc func showKeyboardShortcuts() {
+        let sections = KeyboardShortcutCatalog.all(mainMenu: NSApp.mainMenu, settings: .shared)
+        appShell.presentAsSheet(KeyboardShortcutsSheetController(sections: sections))
+    }
+
+    /// Help → "Manual Checks" - UX3's second Help item.
+    ///
+    /// `native/MANUAL-CHECKS.md` is the repo's own list of what cannot be
+    /// asserted by a suite and has to be looked at by a human (P3 of this same
+    /// review is about it going stale). Opening it in the captain's editor is
+    /// the honest implementation - the file lives in the checkout, this app
+    /// does not vendor a copy of it, and a copy is exactly what would rot.
+    @objc func showManualChecks() {
+        // `#filePath` is this file's own compile-time path
+        // (`…/native/Sources/FirstmateCockpit/main.swift`), which resolves the
+        // checkout the running binary was built from - true for a `swift
+        // build` binary and for the packaged `.app`, both of which this repo
+        // builds from the captain's own working tree. The same trick
+        // `SelfTestSources.appSourceDirectory()` uses, and it is checked
+        // against the file actually being there rather than assumed.
+        let manualChecks = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()    // …/Sources/FirstmateCockpit
+            .deletingLastPathComponent()    // …/Sources
+            .deletingLastPathComponent()    // …/native
+            .appendingPathComponent("MANUAL-CHECKS.md")
+        guard FileManager.default.fileExists(atPath: manualChecks.path) else {
+            // GL-30: a transient "that is not here" is a toast, not an alert.
+            Toast.show(in: appShell.view,
+                       message: "MANUAL-CHECKS.md is not in this build\u{2019}s checkout.")
+            return
+        }
+        NSWorkspace.shared.open(manualChecks)
+    }
+
     @objc func showUnifiedSearch() {
         unifiedSearch.present()
     }
@@ -1106,8 +1171,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// works. ⌘T / ⌘D / ⇧⌘R / ⌘W / ⌘R / ⌘1…⌘9 / zoom / theme no longer have
     /// any keyboard shortcut; every one of their underlying actions is still
     /// reachable from the tab strip, the console toolbar, or Settings.
-    func buildMenu() {
+    // MARK: - NSMenuDelegate
+
+    /// Re-title the File menu's one item every time that menu opens - UX4.
+    ///
+    /// `menuNeedsUpdate` rather than `validateMenuItem`: the latter is asked
+    /// whether an item is *enabled*, and this item is always enabled; what
+    /// changes is what it says. AppKit calls this immediately before the menu
+    /// is drawn, and also before resolving a key equivalent against it, so the
+    /// title a captain reads and the action ⌘N performs are derived from the
+    /// same read of `contextualNewAction`.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        guard menu.title == "File", let contextualNewItem else { return }
+        contextualNewItem.title = appShell.contextualNewAction.menuTitle
+    }
+
+    /// Build the app's menu bar, and (by default) install it.
+    ///
+    /// `installing: false` builds the identical tree and installs nothing -
+    /// it touches neither `NSApp` nor `appShell`. That exists for
+    /// `NavigationCoherenceSelfTest`, which asserts UX3/UX4's menu shape: a
+    /// headless process has no `NSApp` (it is an implicitly-unwrapped
+    /// `NSApplication!` and is nil until something calls
+    /// `NSApplication.shared`), so a suite that reads `NSApp.mainMenu` back
+    /// crashes rather than failing. Building the real tree and handing it over
+    /// is what lets that suite stay **pure logic** - in CI's *blocking* lane -
+    /// while still asserting the menu bar this method actually produces, not a
+    /// reconstruction of it.
+    ///
+    /// Every menu item's `target` is the only thing that differs, and only
+    /// because a target is an object rather than a shape: with `installing:
+    /// false` there is no shell to point at, and every assertion that suite
+    /// makes is about titles, chords and structure.
+    @discardableResult
+    func buildMenu(installing: Bool = true) -> NSMenu {
         let mainMenu = NSMenu()
+        // `appShell` is lazy and builds the app's real controllers, so a
+        // non-installing build must not touch it.
+        let menuTarget: AnyObject? = installing ? appShell : nil
 
         // App menu
         let appMenuItem = NSMenuItem()
@@ -1120,7 +1221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Nav-redesign task, item 5: Settings is a rail destination in the
         // main window now, not a separate window.
         appMenu.addItem(withTitle: "Settings…", symbol: "gearshape", action: #selector(AppShellController.selectSettings), keyEquivalent: ",")
-            .target = appShell
+            .target = menuTarget
         appMenu.addItem(NSMenuItem.separator())
         // GL-17: Services, plus the standard Hide Others / Show All trio a Mac
         // user expects to find here. `NSApp.servicesMenu` is what makes the
@@ -1128,7 +1229,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let servicesItem = appMenu.addItem(withTitle: "Services", action: nil, keyEquivalent: "")
         let servicesMenu = NSMenu(title: "Services")
         servicesItem.submenu = servicesMenu
-        NSApp.servicesMenu = servicesMenu
+        if installing { NSApp.servicesMenu = servicesMenu }
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Hide \(appName)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         let hideOthers = appMenu.addItem(withTitle: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
@@ -1136,6 +1237,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
         appMenu.addItem(NSMenuItem.separator())
         appMenu.addItem(withTitle: "Quit \(appName)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+
+        // File menu - one item, and the reason it exists: UX4's contextual ⌘N.
+        //
+        // ⌘N used to create a *task* from all twenty-six destinations, even on
+        // Hosts (where a new host was ⌘⌃N) and on the six pages that own a
+        // creatable thing of their own and had no shortcut for it at all. This
+        // item routes to whatever the showing page owns
+        // (`ContextualNewAction`), and `menuNeedsUpdate` re-titles it on every
+        // open so it *says* "New Sticky Note…" on the Sticky Board rather than
+        // doing one thing while reading another.
+        //
+        // **Exactly one item in this menu bar may carry ⌘N**, which is this
+        // one. The Tasks menu's own "New Task…" keeps its title and its place
+        // and loses its key equivalent - H3's comment in the Hosts menu below
+        // records what happens otherwise: AppKit resolves a chord to the first
+        // *enabled* match in menu order, this app implements no
+        // `validateMenuItem`, so a second ⌘N simply makes one of the two dead.
+        // Creating a task is still ⌘N from every page that owns nothing
+        // creatable, which is the fallback `ContextualNewAction` documents.
+        let fileMenuItem = NSMenuItem()
+        mainMenu.addItem(fileMenuItem)
+        let fileMenu = NSMenu(title: "File")
+        fileMenuItem.submenu = fileMenu
+        fileMenu.delegate = self
+        contextualNewItem = NSMenuItem(title: ContextualNewAction.task.menuTitle,
+                                       action: #selector(AppShellController.newContextualItem),
+                                       keyEquivalent: "n").withSymbol("plus.circle")
+        contextualNewItem?.target = menuTarget
+        if let contextualNewItem { fileMenu.addItem(contextualNewItem) }
 
         // Edit menu - Cut/Copy/Paste/Select All + Find.
         let editMenuItem = NSMenuItem()
@@ -1157,7 +1287,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // independently of any menu shortcut, and ⌘F ("Find…" above) covers
         // the common case too.
         let findInTerminalItem = NSMenuItem(title: "Find in Terminal", action: #selector(AppShellController.activateConsoleFind), keyEquivalent: "").withSymbol("text.magnifyingglass")
-        findInTerminalItem.target = appShell
+        findInTerminalItem.target = menuTarget
         editMenu.addItem(findInTerminalItem)
         // ⌘K opens the app's one command palette, matching the topbar Search
         // pill's own ⌘K badge. F5 expanded what it searches from Runbooks +
@@ -1191,18 +1321,51 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // matching this menu's own "Show Hosts" (⌘⌃S).
         let newHostItem = NSMenuItem(title: "New Host…", action: #selector(AppShellController.newHostFromMenu), keyEquivalent: "n").withSymbol("plus.circle")
         newHostItem.keyEquivalentModifierMask = [.command, .control]
-        newHostItem.target = appShell
+        newHostItem.target = menuTarget
         hostsMenu.addItem(newHostItem)
         // No keyboard shortcut (⌘K now belongs to Find in Terminal above) -
         // reachable via this menu item or by clicking the Hosts rail icon.
         let quickConnectItem = NSMenuItem(title: "Quick Connect", action: #selector(AppShellController.revealHostsQuickConnect), keyEquivalent: "").withSymbol("bolt.horizontal.circle")
-        quickConnectItem.target = appShell
+        quickConnectItem.target = menuTarget
         hostsMenu.addItem(quickConnectItem)
         hostsMenu.addItem(NSMenuItem.separator())
         let showHostsItem = NSMenuItem(title: "Show Hosts", action: #selector(AppShellController.selectHosts), keyEquivalent: "s").withSymbol("server.rack")
         showHostsItem.keyEquivalentModifierMask = [.command, .control]
-        showHostsItem.target = appShell
+        showHostsItem.target = menuTarget
         hostsMenu.addItem(showHostsItem)
+
+        // UX3: SSH Keys and Snippets used to be two *top-level* menus of two
+        // items each, for two tabs of this same Hosts destination - while
+        // Straw Hat, Poneglyph, Sticky Board, Code Preview, Whiteboard,
+        // Schedules, Kubernetes and Review had no menu at all. That is the
+        // finding's "two-item top-level menus for tabs of the Hosts page (the
+        // notch-budget finding)" exactly, and folding them here is what buys
+        // the notch room the Window/Go/Help menus below need.
+        //
+        // **Every shortcut is unchanged** (⌘⇧N, ⌘⇧K, ⌘⌥N, ⌘⌥P), and so is
+        // every title and every action - AppKit resolves a key equivalent
+        // against the whole `mainMenu` tree regardless of which submenu an
+        // item sits in, so moving an item cannot break its chord. What changes
+        // is only where a captain *reads* them, and reading "New SSH Key…"
+        // under Hosts is where it belonged: the Keys tab is a tab of the
+        // Hosts page.
+        hostsMenu.addItem(NSMenuItem.separator())
+        let newKeyItem = NSMenuItem(title: "New SSH Key\u{2026}", action: #selector(AppShellController.newKeyFromMenu), keyEquivalent: "n").withSymbol("key")
+        newKeyItem.keyEquivalentModifierMask = [.command, .shift]
+        newKeyItem.target = menuTarget
+        hostsMenu.addItem(newKeyItem)
+        let manageKeysItem = NSMenuItem(title: "Manage SSH Keys\u{2026}", action: #selector(AppShellController.selectKeys), keyEquivalent: "k").withSymbol("key.horizontal")
+        manageKeysItem.keyEquivalentModifierMask = [.command, .shift]
+        manageKeysItem.target = menuTarget
+        hostsMenu.addItem(manageKeysItem)
+        let newSnippetItem = NSMenuItem(title: "New Snippet\u{2026}", action: #selector(AppShellController.newSnippetFromMenu), keyEquivalent: "n").withSymbol("plus.rectangle.on.rectangle")
+        newSnippetItem.keyEquivalentModifierMask = [.command, .option]
+        newSnippetItem.target = menuTarget
+        hostsMenu.addItem(newSnippetItem)
+        let manageSnippetsItem = NSMenuItem(title: "Manage Snippets\u{2026}", action: #selector(AppShellController.selectSnippets), keyEquivalent: "p").withSymbol("rectangle.stack")
+        manageSnippetsItem.keyEquivalentModifierMask = [.command, .option]
+        manageSnippetsItem.target = menuTarget
+        hostsMenu.addItem(manageSnippetsItem)
 
         // Session switching (`fm/grandline-session-switcher`, item 3). These
         // live in the Hosts menu rather than a new top-level one: a session
@@ -1230,13 +1393,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                         action: #selector(AppShellController.nextSession),
                                         keyEquivalent: "]")
         nextSessionItem.withSymbol("chevron.forward.circle")
-        nextSessionItem.target = appShell
+        nextSessionItem.target = menuTarget
         hostsMenu.addItem(nextSessionItem)
         let previousSessionItem = NSMenuItem(title: "Previous Session",
                                             action: #selector(AppShellController.previousSession),
                                             keyEquivalent: "[")
         previousSessionItem.withSymbol("chevron.backward.circle")
-        previousSessionItem.target = appShell
+        previousSessionItem.target = menuTarget
         hostsMenu.addItem(previousSessionItem)
         for n in 1...9 {
             let item = NSMenuItem(title: "Session \(n)",
@@ -1244,7 +1407,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                                   keyEquivalent: "\(n)")
             item.keyEquivalentModifierMask = [.command, .control]
             item.tag = n
-            item.target = appShell
+            item.target = menuTarget
             hostsMenu.addItem(item)
         }
 
@@ -1257,19 +1420,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mainMenu.addItem(shiftMenuItem)
         let shiftMenu = NSMenu(title: "Tasks")
         shiftMenuItem.submenu = shiftMenu
-        let newTaskItem = NSMenuItem(title: "New Task…", action: #selector(AppShellController.newShiftTaskFromMenu), keyEquivalent: "n").withSymbol("plus.circle")
-        newTaskItem.target = appShell
+        // UX4: no key equivalent any more - the File menu's contextual item is
+        // the app's one ⌘N, and it still creates a task from every page that
+        // owns nothing else creatable (which is most of them). See that item's
+        // own comment for why a second ⌘N here would make one of the two dead
+        // rather than giving the captain a choice. The item itself stays: it
+        // is how "New Task…" is *discovered*, which is the whole point of a
+        // menu bar, and it works from anywhere regardless of the showing page.
+        let newTaskItem = NSMenuItem(title: "New Task…", action: #selector(AppShellController.newShiftTaskFromMenu), keyEquivalent: "").withSymbol("plus.circle")
+        newTaskItem.target = menuTarget
         shiftMenu.addItem(newTaskItem)
         let newFollowUpItem = NSMenuItem(title: "New Follow-up…", action: #selector(AppShellController.newShiftFollowUpFromMenu), keyEquivalent: "f").withSymbol("bell.badge")
         newFollowUpItem.keyEquivalentModifierMask = [.command, .shift]
-        newFollowUpItem.target = appShell
+        newFollowUpItem.target = menuTarget
         shiftMenu.addItem(newFollowUpItem)
         // cockpit-fix-shift-new-project: no keyEquivalent - this menu follows
         // "Weekly Review"'s own no-shortcut precedent rather than force a
         // collision. (It could take ⌘⇧P now that F5 freed it, but a shortcut
         // the captain never had is not this task's to invent.)
         let newProjectItem = NSMenuItem(title: "New Project…", action: #selector(AppShellController.newShiftProjectFromMenu), keyEquivalent: "").withSymbol("folder.badge.plus")
-        newProjectItem.target = appShell
+        newProjectItem.target = menuTarget
         shiftMenu.addItem(newProjectItem)
         shiftMenu.addItem(NSMenuItem.separator())
         // F5 (`fm/grandline-feature-f5-command-palette-expansion`) removed
@@ -1280,7 +1450,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // still fully searchable - from the Edit menu's "Search… ⌘K" or the
         // topbar Search pill. ⌘⇧P is now unbound.
         let weeklyReviewItem = NSMenuItem(title: "Weekly Review", action: #selector(AppShellController.showShiftWeeklyReview), keyEquivalent: "").withSymbol("calendar")
-        weeklyReviewItem.target = appShell
+        weeklyReviewItem.target = menuTarget
         shiftMenu.addItem(weeklyReviewItem)
         // In-app fallback for quick capture's global ⌥Space hotkey (see
         // `ShiftGlobalHotkey`'s header) - works with no Accessibility
@@ -1351,38 +1521,114 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         createRCAItem.keyEquivalentModifierMask = [.command, .shift]
         logAnalyzerMenu.addItem(createRCAItem)
 
-        for item in logAnalyzerMenu.items { item.target = appShell }
+        for item in logAnalyzerMenu.items { item.target = menuTarget }
 
-        // Keys menu - the Phase 2 Keychain screen. Both items target the app
-        // shell (so they work regardless of focus, like the Hosts menu's New
-        // Host / Quick Connect above). Phase 5 of the full-app UI audit folded
-        // this screen into the Hosts destination as a segmented tab, so
-        // "Manage Keys…" now selects that tab instead of opening a window -
-        // the shortcuts and titles are unchanged.
-        let keysMenuItem = NSMenuItem()
-        mainMenu.addItem(keysMenuItem)
-        let keysMenu = NSMenu(title: "Keys")
-        keysMenuItem.submenu = keysMenu
-        keysMenu.addItem(withTitle: "New Key…", symbol: "key", action: #selector(AppShellController.newKeyFromMenu), keyEquivalent: "n")
-            .keyEquivalentModifierMask = [.command, .shift]
-        keysMenu.addItem(withTitle: "Manage Keys…", symbol: "key.horizontal", action: #selector(AppShellController.selectKeys), keyEquivalent: "k")
-            .keyEquivalentModifierMask = [.command, .shift]
-        for item in keysMenu.items { item.target = appShell }
+        // Go menu - UX3's "a 'Go' menu listing every destination with its
+        // shortcut", and UX4's "give ⌘1-⌘5 to the spaces (the original
+        // Daylight spec)".
+        //
+        // ⌘1-⌘9 have been genuinely free since the Tab menu's removal (see
+        // the Hosts menu's own session-switcher comment, which records that
+        // and why the session switcher stayed on ⌘⌃1-9 regardless). The five
+        // spaces take ⌘1-⌘5, which is what `DaylightSpace.shortcutIndex` has
+        // described all along with nothing reading it.
+        //
+        // The destination list below is generated from
+        // `AllDestinationsOverlayController.groups()` - the same grouping the
+        // ⌘⇧D map draws - rather than a hand-written second list, so a new
+        // `RailDestination` appears in both surfaces with no edit here.
+        let goMenuItem = NSMenuItem()
+        mainMenu.addItem(goMenuItem)
+        let goMenu = NSMenu(title: "Go")
+        goMenuItem.submenu = goMenu
+        let homeItem = NSMenuItem(title: "Home", action: #selector(AppShellController.showHomeCanvas), keyEquivalent: "0").withSymbol("sailboat.fill")
+        homeItem.target = menuTarget
+        goMenu.addItem(homeItem)
+        goMenu.addItem(NSMenuItem.separator())
+        for space in DaylightSpace.allCases {
+            let item = NSMenuItem(title: space.title,
+                                  action: #selector(AppShellController.selectSpaceByShortcut(_:)),
+                                  keyEquivalent: "\(space.shortcutIndex)")
+            item.withSymbol(space.heroSymbol)
+            item.tag = space.shortcutIndex
+            item.target = menuTarget
+            goMenu.addItem(item)
+        }
+        goMenu.addItem(NSMenuItem.separator())
+        let allDestinationsItem = NSMenuItem(title: "All Destinations\u{2026}",
+                                             action: #selector(AppDelegate.showAllDestinations),
+                                             keyEquivalent: "d").withSymbol("square.grid.3x3")
+        // ⌘⇧D, not the finding's suggested ⌘⇧A: ⌘⇧A is already "Create RCA"
+        // in the Log Analyzer menu below, and that menu's own comment is
+        // explicit that it took ⌘⇧A *because* ⇧⌘R was occupied at the time,
+        // and equally explicit that an already-shipped shortcut is not a later
+        // task's to change. ⌘⇧D was verified unbound anywhere in this method.
+        allDestinationsItem.keyEquivalentModifierMask = [.command, .shift]
+        allDestinationsItem.target = self
+        goMenu.addItem(allDestinationsItem)
+        for group in AllDestinationsOverlayController.groups() {
+            goMenu.addItem(NSMenuItem.separator())
+            // A disabled header row, the standard Mac way to caption a run of
+            // items inside one menu - the alternative (a submenu per space)
+            // would put every destination two levels deep, which is the
+            // opposite of what a "show me everything" menu is for.
+            let header = NSMenuItem(title: group.title, action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            goMenu.addItem(header)
+            for destination in group.destinations {
+                let item = NSMenuItem(title: destination.title,
+                                      action: #selector(AppShellController.selectDestinationFromMenu(_:)),
+                                      keyEquivalent: "")
+                item.withSymbol(destination.symbol)
+                item.representedObject = destination.rawValue
+                item.target = menuTarget
+                item.indentationLevel = 1
+                goMenu.addItem(item)
+            }
+        }
 
-        // Snippets menu - the Phase 3 saved-command library (B2/B5). Same
-        // shape as the Keys menu above, and folded into the same destination
-        // by the same phase.
-        let snippetsMenuItem = NSMenuItem()
-        mainMenu.addItem(snippetsMenuItem)
-        let snippetsMenu = NSMenu(title: "Snippets")
-        snippetsMenuItem.submenu = snippetsMenu
-        snippetsMenu.addItem(withTitle: "New Snippet…", symbol: "plus.rectangle.on.rectangle", action: #selector(AppShellController.newSnippetFromMenu), keyEquivalent: "n")
-            .keyEquivalentModifierMask = [.command, .option]
-        snippetsMenu.addItem(withTitle: "Manage Snippets…", symbol: "rectangle.stack", action: #selector(AppShellController.selectSnippets), keyEquivalent: "p")
-            .keyEquivalentModifierMask = [.command, .option]
-        for item in snippetsMenu.items { item.target = appShell }
+        // Window menu - UX3's "⌘M minimise is dead, no Zoom/Bring All to
+        // Front".
+        //
+        // Assigning `NSApp.windowsMenu` is what makes AppKit keep the window
+        // list at the bottom of it up to date and what gives the standard
+        // items their system behaviour; the three items themselves are the
+        // stock selectors, so none of this is behaviour this app implements.
+        let windowMenuItem = NSMenuItem()
+        mainMenu.addItem(windowMenuItem)
+        let windowMenu = NSMenu(title: "Window")
+        windowMenuItem.submenu = windowMenu
+        windowMenu.addItem(withTitle: "Minimize", symbol: "minus", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        windowMenu.addItem(withTitle: "Zoom", symbol: "arrow.up.left.and.arrow.down.right", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: "")
+        windowMenu.addItem(NSMenuItem.separator())
+        windowMenu.addItem(withTitle: "Bring All to Front", symbol: "square.stack", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: "")
+        if installing { NSApp.windowsMenu = windowMenu }
 
-        // No Tab, View, Window, or Help top-level menu.
+        // Help menu - UX3's "add Help -> 'Keyboard Shortcuts…' (generated from
+        // the same tables the Settings recorder reads) and 'Manual checks'".
+        //
+        // The sheet is generated by walking this very menu tree (plus the two
+        // configurable families Settings owns) - see
+        // `KeyboardShortcutCatalog`'s header for why a walk rather than a
+        // second table.
+        let helpMenuItem = NSMenuItem()
+        mainMenu.addItem(helpMenuItem)
+        let helpMenu = NSMenu(title: "Help")
+        helpMenuItem.submenu = helpMenu
+        let shortcutsItem = NSMenuItem(title: "Keyboard Shortcuts\u{2026}",
+                                       action: #selector(AppDelegate.showKeyboardShortcuts),
+                                       keyEquivalent: "/").withSymbol("keyboard")
+        shortcutsItem.keyEquivalentModifierMask = [.command, .shift]
+        shortcutsItem.target = self
+        helpMenu.addItem(shortcutsItem)
+        let manualChecksItem = NSMenuItem(title: "Manual Checks",
+                                          action: #selector(AppDelegate.showManualChecks),
+                                          keyEquivalent: "").withSymbol("checklist")
+        manualChecksItem.target = self
+        helpMenu.addItem(manualChecksItem)
+        if installing { NSApp.helpMenu = helpMenu }
+
+        // No Tab or View top-level menu.
         //
         // View/Window/Help were standard-system-provided menus that never
         // fit this app: the View menu's `⌘1`-`⌘5` space shortcuts and
@@ -1431,7 +1677,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // double-click/right-click are completely unaffected, since neither
         // ever routed through this menu to begin with.
 
-        NSApp.mainMenu = mainMenu
+        if installing { NSApp.mainMenu = mainMenu }
+        return mainMenu
     }
 }
 
@@ -1783,6 +2030,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_COMMAND_LIBRARY_TESTS"] == "1" {
 // cockpit-shift-create-edit: same convention, for `ShiftDateParser`'s
 // natural-language date/time detection - see `ShiftDateParserSelfTest.swift`'s
 // header.
+// Review #3's UX1-UX4: the all-destinations map's completeness, the
+// quick-access row's cap/order/persistence, the menu bar's shape (Go, Window
+// and Help present; Keys and Snippets folded under Hosts) and the contextual
+// ⌘N routing table - see `NavigationCoherenceSelfTest.swift`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_NAVIGATION_COHERENCE_TESTS"] == "1" {
+    exit(NavigationCoherenceSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_DATE_PARSER_TESTS"] == "1" {
     exit(ShiftDateParserSelfTest.run() ? 0 : 1)
 }

@@ -62,6 +62,16 @@ enum AppLockedSurface {
     /// happily with the palette's own gate deleted. Its own case is what makes
     /// each surface's coverage independently assertable.
     case unifiedSearch
+    /// ⌘⇧D's "All destinations" overlay (review #3's UX1).
+    ///
+    /// Its own case rather than sharing `.unifiedSearch`'s, per this file's
+    /// own header rule and for the concrete reason §5.2 records: a suite
+    /// asserting the palette is gated would pass just as happily with this
+    /// overlay's gate deleted. It discloses no captain data - the grid is a
+    /// fixed list of page names - but it is a live navigation surface on a
+    /// `.floating` panel that renders above the lock overlay, which is the
+    /// same shape as every other entry here.
+    case allDestinations
     /// Recording, transcribing, pasting and logging a dictation.
     case dictation
     /// F4: a tapped `UNNotification` action button (Merge / Open task /

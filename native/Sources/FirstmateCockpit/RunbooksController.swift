@@ -166,6 +166,9 @@ final class RunbooksController: NSViewController, DaylightDrillActions {
         newRunbookButton.translatesAutoresizingMaskIntoConstraints = false
     }
 
+    /// UX4: the File menu's contextual ⌘N on this page.
+    func newRunbookFromMenu() { beginNewRunbook() }
+
     @objc private func newRunbookTapped() { beginNewRunbook() }
 
     private func notifyDrillChanged() {

@@ -1025,6 +1025,10 @@ final class CommandLibraryPageView: NSObject {
         render()
     }
 
+    /// UX4: the File menu's contextual ⌘N on this page - the page's own
+    /// "+ Add Command" action, not a second copy.
+    func newCommandFromMenu() { addCommandClicked() }
+
     @objc private func addCommandClicked() {
         let editor = CommandEditorController(editingID: nil, prefill: nil, config: store.config)
         editor.onSave = { [weak self] name, description, category, subcategory, template, parameters, tags, risk in
