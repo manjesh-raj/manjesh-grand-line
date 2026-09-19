@@ -93,9 +93,26 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
             self?.applyTheme()
         }
 
-        let toolbarRow = buildToolbarRow()
-
-        let syncAllCard = card(icon: "arrow.2.squarepath", title: "Sync All", content: buildSyncAllSection())
+        // Review #3's UI5. Two separate findings on this page, and one
+        // rearrangement answers both:
+        //
+        //  - A whole card titled "Sync All" whose entire content was a button
+        //    titled "Sync All". A card is a container for a *section*; when the
+        //    section is one control, the card is the control's label written
+        //    twice with a border round it.
+        //  - "Checking\u{2026} (0/8)" floating alone in an otherwise empty
+        //    40pt row. That row is this page's toolbar, and `beginCheckingAll`
+        //    hides the Refresh pill while a sweep runs - so for the length of
+        //    the sweep the row holds one small string and nothing else.
+        //
+        // Both actions belong to the repo list: Sync All syncs the rows below
+        // it, and Refresh re-checks those same rows. So they move into the
+        // Repos card's own header, which is where this app puts a section's
+        // actions everywhere else (Vault's "+ Add Secret", Poneglyph's list
+        // header). The page then has one card, the actions are attached to
+        // what they act on, and there is no row left for anything to float in.
+        buildToolbarControls()
+        let syncAllSummary = buildSyncAllSummary()
 
         var rowViews: [NSView] = []
         for (index, row) in rows.enumerated() {
@@ -111,9 +128,24 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         rowsStack.translatesAutoresizingMaskIntoConstraints = false
         for v in rowViews { v.widthAnchor.constraint(equalTo: rowsStack.widthAnchor).isActive = true }
 
-        let reposCard = card(icon: "point.3.connected.trianglepath.dotted", title: "Repos (\(rows.count))", content: rowsStack)
+        // The summary line Sync All writes sits at the top of the list it
+        // describes, where the "Sync All" card used to carry it.
+        let reposBody = NSStackView(views: [syncAllSummary, rowsStack])
+        reposBody.orientation = .vertical
+        reposBody.alignment = .leading
+        reposBody.spacing = 10
+        reposBody.translatesAutoresizingMaskIntoConstraints = false
+        rowsStack.widthAnchor.constraint(equalTo: reposBody.widthAnchor).isActive = true
+        syncAllSummary.widthAnchor.constraint(equalTo: reposBody.widthAnchor).isActive = true
 
-        let stack = NSStackView(views: [toolbarRow, syncAllCard, reposCard])
+        let reposCard = HelmCard()
+        _ = reposCard.setHeader(symbol: "point.3.connected.trianglepath.dotted",
+                                title: "Repos (\(rows.count))",
+                                actions: [refreshProgressLabel, refreshPill, syncAllButton])
+        reposCard.setBody(reposBody, insets: HelmCard.contentInsets)
+        cards.append(reposCard)
+
+        let stack = NSStackView(views: [reposCard])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
@@ -127,8 +159,6 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
             stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
             stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
             stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
-            toolbarRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            syncAllCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             reposCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
 
@@ -215,13 +245,16 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     private let refreshProgressLabel = NSTextField(labelWithString: "")
     private var isCheckingAll = false
 
-    /// Laid out with explicit constraints rather than an `NSStackView`:
-    /// AGENTS.md gotcha (10)/(12) - a horizontal stack left at its default
-    /// `.gravityAreas` distribution has no defined rule for who absorbs the
-    /// slack, and a bare `NSView()` spacer has no intrinsic content size, so
-    /// a hugging priority on one would be a no-op. Pinning the pill to the
-    /// trailing edge says what this row means with nothing left to tie-break.
-    private func buildToolbarRow() -> NSView {
+    /// UI5: the page's two actions, configured for the Repos card header's own
+    /// trailing action cluster rather than for a toolbar row of their own.
+    ///
+    /// `HelmCard.setHeader(actions:)` owns the placement now, which is what
+    /// removes the row this page used to hand-lay-out for gotcha (10)/(12)'s
+    /// reasons (a `.gravityAreas` stack has no rule for who absorbs the slack,
+    /// and a bare `NSView()` spacer has no intrinsic size to hug with). The
+    /// progress readout still yields and truncates rather than becoming a
+    /// window-width floor - see its compression resistance below.
+    private func buildToolbarControls() {
         refreshPill.setAction(target: self, action: #selector(refreshTapped))
 
         refreshProgressLabel.font = .systemFont(ofSize: 11, weight: .medium)
@@ -233,23 +266,6 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         // resistance, is a hard floor on the whole window's width - above
         // `NSLayoutPriorityWindowSizeStayPut` (500). It yields and truncates.
         refreshProgressLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-
-        let row = NSView()
-        row.translatesAutoresizingMaskIntoConstraints = false
-        row.addSubview(refreshProgressLabel)
-        row.addSubview(refreshPill)
-        NSLayoutConstraint.activate([
-            refreshPill.trailingAnchor.constraint(equalTo: row.trailingAnchor),
-            refreshPill.topAnchor.constraint(equalTo: row.topAnchor),
-            refreshPill.bottomAnchor.constraint(equalTo: row.bottomAnchor),
-            refreshProgressLabel.trailingAnchor.constraint(
-                equalTo: refreshPill.leadingAnchor, constant: -10),
-            refreshProgressLabel.centerYAnchor.constraint(equalTo: refreshPill.centerYAnchor),
-            // `>=`, never `==`: an inequality here cannot cap the window.
-            refreshProgressLabel.leadingAnchor.constraint(
-                greaterThanOrEqualTo: row.leadingAnchor),
-        ])
-        return row
     }
 
     @objc private func refreshTapped() { checkAll() }
@@ -259,7 +275,13 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     private let syncAllButton = HelmButton(title: "", variant: .primary)
     private let syncAllSummaryLabel = NSTextField(wrappingLabelWithString: "")
 
-    private func buildSyncAllSection() -> NSView {
+    /// UI5: what the Sync All button leaves behind - the run's own summary
+    /// sentence, now at the top of the list it is about. The button itself
+    /// moved into that list's card header; see `loadView`.
+    ///
+    /// Hidden until a run has actually written something, so an untouched page
+    /// does not carry an empty line where a sentence will one day be.
+    private func buildSyncAllSummary() -> NSView {
         syncAllButton.title = "Sync All"
         syncAllButton.target = self
         syncAllButton.action = #selector(syncAllTapped)
@@ -267,13 +289,17 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
 
         syncAllSummaryLabel.font = .systemFont(ofSize: 11.5)
         syncAllSummaryLabel.preferredMaxLayoutWidth = 500
+        syncAllSummaryLabel.isHidden = syncAllSummaryLabel.stringValue.isEmpty
+        syncAllSummaryLabel.translatesAutoresizingMaskIntoConstraints = false
+        return syncAllSummaryLabel
+    }
 
-        let section = NSStackView(views: [syncAllButton, syncAllSummaryLabel])
-        section.orientation = .vertical
-        section.alignment = .leading
-        section.spacing = 8
-        syncAllSummaryLabel.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
-        return section
+    /// UI5: the summary line lives in the repo list's body now, so it has to
+    /// appear with its first sentence rather than reserving an empty line for
+    /// one. Every write goes through here so that stays true.
+    private func setSyncAllSummary(_ text: String) {
+        syncAllSummaryLabel.stringValue = text
+        syncAllSummaryLabel.isHidden = text.isEmpty
     }
 
     @objc private func syncAllTapped() { syncAll() }
@@ -291,7 +317,7 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         guard !targets.isEmpty else {
             isSyncingAll = false
             syncAllButton.isEnabled = true
-            syncAllSummaryLabel.stringValue = "Nothing behind upstream right now."
+            setSyncAllSummary("Nothing behind upstream right now.")
             return
         }
         var synced = 0
@@ -307,14 +333,14 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
                 if alreadyInSync > 0 { parts.append("\(alreadyInSync) already in sync") }
                 if !refused.isEmpty { parts.append("\(refused.count) diverged (left untouched)") }
                 if !failed.isEmpty { parts.append("\(failed.count) failed") }
-                syncAllSummaryLabel.stringValue = parts.isEmpty ? "Nothing to sync." : parts.joined(separator: ", ")
+                setSyncAllSummary(parts.isEmpty ? "Nothing to sync." : parts.joined(separator: ", "))
                 if let container = view.window?.contentView {
                     Toast.show(in: container, message: "GitHub Sync: \(syncAllSummaryLabel.stringValue)")
                 }
                 return
             }
             let row = targets[index]
-            syncAllSummaryLabel.stringValue = "Syncing \(row.repo.fullName)\u{2026} (\(index + 1)/\(targets.count))"
+            setSyncAllSummary("Syncing \(row.repo.fullName)\u{2026} (\(index + 1)/\(targets.count))")
             sync(row) { ok in
                 if ok {
                     if row.status == .inSync { alreadyInSync += 1 } else { synced += 1 }

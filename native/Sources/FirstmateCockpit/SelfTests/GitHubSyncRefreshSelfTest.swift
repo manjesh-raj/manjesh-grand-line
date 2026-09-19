@@ -126,10 +126,31 @@ enum GitHubSyncRefreshSelfTest {
         check("it is activatable (a11y press, focus ring, Return/Space)", pill.isActivatable)
         check("it announces as a button", pill.accessibilityRole() == .button)
 
-        let frame = pill.convert(pill.bounds, to: vc.view)
-        check("it sits at the page's trailing edge",
-              frame.maxX > vc.view.bounds.width - 80,
-              "maxX \(frame.maxX) of \(vc.view.bounds.width)")
+        // Review #3's UI5 moved this pill off a toolbar row of its own and
+        // into the Repos card header's trailing action cluster - because a
+        // pill alone in a 40pt row is what that finding measured. So the
+        // question is no longer "is it at the page's trailing edge" (it is
+        // not, and must not be: it is inset by the card) but "is it still at
+        // the trailing end of the header it now lives in".
+        //
+        // Asserted against the card's own bounds rather than the page's, and
+        // the card is found from the pill rather than assumed, so this still
+        // fails if the pill is dropped somewhere arbitrary.
+        var host: NSView? = pill.superview
+        while let current = host, !(current is HelmCard) { host = current.superview }
+        guard let card = host else {
+            check("the Refresh pill lives inside a HelmCard", false); return
+        }
+        check("the Refresh pill lives inside a HelmCard", true)
+        // The *cluster* is trailing-anchored, and Sync All is its last member
+        // (see `checkRefreshIsDistinctFromSyncAll`), so the pill's own maxX is
+        // one button short of the card's edge. Measure the thing that is
+        // actually meant to be true: the pill is in the trailing half of its
+        // header, not parked at the leading edge beside the title.
+        let frame = pill.convert(pill.bounds, to: card)
+        check("it sits in its card header's trailing action cluster",
+              frame.minX > card.bounds.width / 2,
+              "minX \(frame.minX) of \(card.bounds.width)")
     }
 
     // MARK: 3 - Refresh is not a second Sync All
@@ -156,8 +177,19 @@ enum GitHubSyncRefreshSelfTest {
         let syncFrame = syncAll.convert(syncAll.bounds, to: vc.view)
         check("they do not overlap", !pillFrame.intersects(syncFrame),
               "refresh \(pillFrame) vs syncAll \(syncFrame)")
-        check("Refresh sits above the Sync All card", pillFrame.minY > syncFrame.maxY,
-              "refresh minY \(pillFrame.minY), syncAll maxY \(syncFrame.maxY)")
+        // UI5: the two now sit side by side in one header action cluster
+        // rather than in a row and a card below it, so "above" is no longer
+        // the relationship to pin. What still has to hold - and is what the
+        // captain's own concern was about - is that the read-only pill is
+        // never mistaken for the mutating button: they are separate controls,
+        // they do not overlap (asserted above), Sync All is the trailing one
+        // (the position a primary action holds everywhere in this app), and
+        // they are two different classes with two different looks.
+        check("Sync All is the trailing action of the pair", syncFrame.minX > pillFrame.minX,
+              "refresh minX \(pillFrame.minX), syncAll minX \(syncFrame.minX)")
+        check("they share one row rather than one being buried elsewhere",
+              abs(pillFrame.midY - syncFrame.midY) < 6,
+              "refresh midY \(pillFrame.midY), syncAll midY \(syncFrame.midY)")
     }
 
     // MARK: 4 - source guard: Refresh can never reach a sync
