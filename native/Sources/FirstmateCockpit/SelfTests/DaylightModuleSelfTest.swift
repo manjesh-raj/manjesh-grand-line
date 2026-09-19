@@ -227,7 +227,10 @@ enum DaylightModuleSelfTest {
         }
 
         // §5.4's copy, and the shortcut indices `⌘1`…`⌘5` carry.
-        let expectedTitles = ["Overview", "Command", "Operations", "Stores", "Engineering"]
+        // Review #3 §7 renamed the first pill "Overview" -> "Home"; the
+        // literal list is restated here rather than derived, exactly as
+        // `checkSpaceTable`'s own header requires.
+        let expectedTitles = ["Home", "Command", "Operations", "Stores", "Engineering"]
         let actualTitles = DaylightSpace.allCases.map(\.title)
         if actualTitles != expectedTitles {
             fail("space pill order/copy should be \(expectedTitles), got \(actualTitles)", &ok)
@@ -556,7 +559,7 @@ enum DaylightModuleSelfTest {
                  + "\(HelmModuleCard.maxBriefingClauses) - measure the cap, not a number beside it", &ok)
         }
         var capped = clauses
-        capped.append(BriefingClause(text: "+3 more on Overview.", target: .none))
+        capped.append(BriefingClause(text: "+3 more on Fleet.", target: .none))
         let spanTwo = narrow * 2 + HomeCanvasController.gridSpacing
 
         // Swept across GL-32's chrome text scale, because that is what makes
@@ -580,7 +583,7 @@ enum DaylightModuleSelfTest {
             // one column, which takes the narrower cap.
             measure("paragraph-1col",
                     .paragraph(Array(capped.prefix(HelmModuleCard.maxNarrowBriefingClauses))
-                               + [BriefingClause(text: "+3 more on Overview.", target: .none)]),
+                               + [BriefingClause(text: "+3 more on Fleet.", target: .none)]),
                     width: narrow)
             // And the fallback the briefing renders before the day's first one
             // is generated, which is a plain note on the same wide card.

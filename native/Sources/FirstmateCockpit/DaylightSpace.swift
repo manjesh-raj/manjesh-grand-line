@@ -34,11 +34,24 @@ enum DaylightSpace: String, CaseIterable {
     case engineering
 
     /// The pill's label, and the canvas hero title for every space except
-    /// Overview (which shows a time-of-day greeting instead - see
+    /// the first one (which shows a time-of-day greeting instead - see
     /// `HomeCanvasController.renderGreeting`).
+    ///
+    /// **`.overview`'s label is "Home", not "Overview"** (review #3 §7). The
+    /// app had three user-facing names - "Home", "Overview" and "Fleet" - for
+    /// two things: the canvas hub, and the fleet dashboard drill page. "Home"
+    /// already won the canvas everywhere that matters (`RailDestination
+    /// .homeCanvas.title`, the File menu's Cmd-0 item, `HomeCanvasController`
+    /// itself), and "Fleet" already won the drill page (`RailDestination
+    /// .overview.title`, `DaylightModule.fleet.title`). This pill was the last
+    /// surface still calling the canvas's default state "Overview", which read
+    /// as a third thing. The **case name** deliberately stays `.overview`: it
+    /// is the persisted raw value behind the space selection, and this file's
+    /// own header is explicit that a space is presentation state that can be
+    /// renamed without touching data code.
     var title: String {
         switch self {
-        case .overview: return "Overview"
+        case .overview: return "Home"
         case .command: return "Command"
         case .operations: return "Operations"
         case .stores: return "Stores"

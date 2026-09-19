@@ -445,39 +445,6 @@ final class StrawHatController: NSViewController, DaylightDrillActions {
         #endif
     }
 
-    /// M3.3's entry point: one message from somewhere else in the app, into a
-    /// **new** conversation.
-    ///
-    /// Used by Overview's "Ask your crew" card. A message appended to a thread
-    /// the captain cannot see would be answered in a context they are not
-    /// looking at, which is why this resets first - exactly as the page's own
-    /// "New conversation" button does.
-    ///
-    /// A turn already in flight belongs to a conversation the captain may be
-    /// about to look at; resetting it out from under them would drop a reply
-    /// mid-flight, so that case does not reset anything.
-    ///
-    /// **It does not silently do nothing either** - the review's L7. It used
-    /// to `return` on that guard, so the captain typed into Overview's
-    /// quick-ask card, pressed Ask, landed on this page, and found their
-    /// message simply gone with nothing said about it - the worst of the three
-    /// possible outcomes, because it looks exactly like a dropped keystroke.
-    /// Now the transcript says what happened and the message is handed back
-    /// into the composer, so recovery is one press of Send once the running
-    /// turn resolves. `send(_:)`'s own in-flight branch already reported this
-    /// through its `completion` for the menu-bar popover; this is the same
-    /// courtesy for the one caller that has no completion to report to.
-    func startNewConversation(with text: String) {
-        guard !turnInFlight else {
-            chat.append(.status("The crew is still answering something else, so this wasn\u{2019}t sent yet \u{2014} it\u{2019}s waiting in the box below."))
-            chat.setComposerText(text)
-            _ = chat.focusComposer()
-            return
-        }
-        newConversationTapped()
-        send(text)
-    }
-
     /// One turn: the captain's message, a status line while `claude` runs,
     /// then the reply's sections in its place.
     ///

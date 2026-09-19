@@ -320,6 +320,28 @@ final class AppShellController: NSViewController {
     /// or a force-quit rather than only a clean ⌘Q.
     var onSessionStateChanged: (() -> Void)?
 
+    /// Review #3 §7: the window title used to be the static app name, so
+    /// Mission Control, the Window menu and the window's proxy menu all
+    /// showed twenty-seven identical entries. Fires with
+    /// `currentContextTitle` on every navigation - the app delegate composes
+    /// the real title from it (`AppDelegate.windowTitle(context:)`).
+    ///
+    /// Wired from the same funnel `onSessionStateChanged` uses
+    /// (`updateRecentDestinations`), for the same reason: `show(_:)`,
+    /// `revealHostConsole` and the SRE Lead reply-jump bypass all pass
+    /// through it, so there is one place that can know where the captain is
+    /// and no second notion of it to drift.
+    var onCurrentDestinationChanged: ((String?) -> Void)?
+
+    /// The human-readable name of whatever is on screen - a destination's own
+    /// title, or a host page's label. `nil` before the first navigation.
+    ///
+    /// Read off `currentDestinationKind` through `RecentDestinationKind
+    /// .title`, which is already the one place that answers "what is this
+    /// page called" for the Recents dropdown. A second switch here would be a
+    /// second answer.
+    var currentContextTitle: String? { currentDestinationKind?.title }
+
     /// Whatever `updateRecentDestinations(arriving:)` last recorded as
     /// current - the one piece of state that lets it know what was "on
     /// screen" a moment ago, so the *next* navigation can record the right
@@ -812,16 +834,10 @@ final class AppShellController: NSViewController {
                 ?? "I couldn't reach your host pages from here."
         }
         strawHat.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
-        // M3.3: one message typed into the fleet dashboard's quick-ask card.
-        // `show(_:)` first, so the page is mounted and laid out before its
-        // transcript gets a message - then a *new* conversation, because a
-        // field with no transcript above it cannot show the captain what they
-        // would be appending to (`StrawHatQuickAsk.swift`'s header).
-        overview.onAskCrew = { [weak self] text in
-            guard let self else { return }
-            self.show(.strawHat)
-            self.strawHat.startNewConversation(with: text)
-        }
+        // Review #3 §7: the fleet dashboard's "Ask your crew" header button.
+        // Plain navigation - the composer it replaced is gone, and the crew
+        // page's own composer is the one place a message to them is written.
+        overview.onOpenCrew = { [weak self] in self?.show(.strawHat) }
         // The Overview card's own summary line - see
         // `StrawHatCanvasState`. Pushed rather than polled, the
         // same shape `FleetController.onSnapshotChanged` already uses for the
@@ -2910,6 +2926,9 @@ final class AppShellController: NSViewController {
     private func updateRecentDestinations(arriving kind: RecentDestinationKind) {
         recentDestinations.recordNavigation(leaving: currentDestinationKind, arriving: kind)
         currentDestinationKind = kind
+        // Review #3 §7: the window title carries the current destination, so
+        // Mission Control and the Window menu name a page rather than the app.
+        onCurrentDestinationChanged?(kind.title)
         // F2: every navigation path funnels through here, so this is the one
         // hook that keeps the saved session current without a timer. The app
         // delegate's own handler writes only when the state actually changed.

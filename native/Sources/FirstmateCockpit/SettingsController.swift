@@ -1122,8 +1122,8 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     private func buildMorningBriefingSection() -> NSView {
         morningBriefingSwitch.onToggle = { [weak self] in self?.morningBriefingToggled() }
         let toggleRow = descRow(
-            title: "Show a morning briefing on Overview",
-            desc: "On the first visit to Overview each day, generate one short paragraph from the fleet snapshot, PR queue, due tasks, drift and quota - each clause linking to the page it came from.",
+            title: "Show a morning briefing on Fleet",
+            desc: "On the first visit to Fleet each day, generate one short paragraph from the fleet snapshot, PR queue, due tasks, drift and quota - each clause linking to the page it came from.",
             trailing: morningBriefingSwitch)
 
         // Stated plainly rather than left to be discovered: this is the one

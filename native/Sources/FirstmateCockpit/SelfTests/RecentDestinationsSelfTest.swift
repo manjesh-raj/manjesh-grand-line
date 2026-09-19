@@ -230,9 +230,10 @@ enum RecentDestinationsSelfTest {
         }
         let updates = RecentDestinationKind.rail(.updates)
         guard updates.kicker == "Engineering" else { return "updates kicker expected Engineering, got \(updates.kicker)" }
-        // The two destinations no module opens fall back to "Overview".
+        // The two destinations no module opens fall back to the canvas's own
+        // space title, which review #3 §7 renamed to "Home".
         let home = RecentDestinationKind.rail(.homeCanvas)
-        guard home.kicker == "Overview" else { return "home canvas kicker expected Overview, got \(home.kicker)" }
+        guard home.kicker == "Home" else { return "home canvas kicker expected Home, got \(home.kicker)" }
 
         let id = UUID()
         let host = RecentDestinationKind.host(id: id, label: "DEV Bastion")

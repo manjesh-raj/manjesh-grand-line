@@ -659,6 +659,22 @@ and a `HelmTheme`-derived `layer.backgroundColor`, exactly like
 real `NSVisualEffectView` sidebar material for an actual split-view pane with
 narrower, non-full-window geometry.
 
+**The one legitimate `.behindWindow` case in this app is the exact inverse:
+a borderless, clear-backgrounded panel that floats over *other apps*.**
+`DictationHUD`'s pill is `NSVisualEffectView` with `.hudWindow` /
+`.behindWindow` / `.active`, pinned to `.vibrantDark`, because the desktop and
+whatever app is over it genuinely *are* what is behind it - which is what
+makes a macOS system HUD read as the system rather than as a floating card,
+and what no flat fill can imitate. Two things that are not obvious:
+`.followsWindowActiveState` leaves the material permanently inactive on a
+`.nonactivatingPanel` (it never becomes key), and the material needs
+`masksToBounds` or it draws square corners behind a rounded border. Measured
+(review #3 §7): the flat `calibratedWhite: 0.08` fill it replaced sat at a
+contrast ratio of **1.003** against Dusk's own page background - the app's
+default theme - so the overlay was the same value as the app under it; the
+material's own rendered base measures 3.52 against the same surface, before
+any live translucency.
+
 ### (9) A plain `NSView` document view is not flipped
 
 A plain `NSView()` used as an `NSScrollView`'s document view is **not flipped**

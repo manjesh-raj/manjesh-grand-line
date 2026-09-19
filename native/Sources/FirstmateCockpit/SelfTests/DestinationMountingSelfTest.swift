@@ -67,6 +67,7 @@ enum DestinationMountingSelfTest {
             ("mounterIsLazyAndBuildsEachSlotOnce", test_mounterUnitBehaviour),
             ("everyDestinationRendersRealContentOnFirstLoad", test_everyDestinationRendersRealContentOnFirstLoad),
             ("everyDestinationForcesItsOwnAppearance", test_everyDestinationForcesItsOwnAppearance),
+            ("windowTitleFollowsTheShowingDestination", test_windowTitleFollowsTheShowingDestination),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -81,6 +82,64 @@ enum DestinationMountingSelfTest {
             ? "DestinationMountingSelfTest: all \(cases.count) cases passed"
             : "DestinationMountingSelfTest: \(failures)/\(cases.count) cases FAILED")
         return failures == 0
+    }
+
+
+    // MARK: Review #3 §7 - the window title follows navigation
+
+    /// Every navigation renames the window.
+    ///
+    /// The title used to be `CFBundleDisplayName` and nothing else, so Mission
+    /// Control, the Window menu and the proxy menu named the app rather than
+    /// the page - for twenty-seven destinations plus a page per saved host.
+    /// `AppShellController.onCurrentDestinationChanged` fires from
+    /// `updateRecentDestinations`, the one funnel every navigation path passes
+    /// through, and `main.swift` composes the real title from it.
+    ///
+    /// This is the live half. `NavigationCoherenceSelfTest
+    /// .checkWindowTitleComposition` asserts the composition itself, which
+    /// needs no window at all.
+    ///
+    /// **Confirmed to catch a regression, not merely to pass**: removing the
+    /// `onCurrentDestinationChanged?(kind.title)` line from
+    /// `updateRecentDestinations` leaves `seen` empty and fails the first
+    /// check below by name.
+    private static func test_windowTitleFollowsTheShowingDestination() -> String? {
+        withScratchEnv {
+            let (window, shell) = makeMountedShell()
+            // Wired exactly as `main.swift` does it.
+            var seen: [String] = []
+            shell.onCurrentDestinationChanged = { context in
+                window.title = AppDelegate.windowTitle(context: context)
+                seen.append(window.title)
+            }
+            shell.view.layoutSubtreeIfNeeded()
+
+            // Three real navigations, chosen so no two share a title.
+            let visited: [RailDestination] = [.hosts, .console, .settings]
+            for dest in visited {
+                shell.show(dest)
+                shell.view.layoutSubtreeIfNeeded()
+            }
+
+            guard seen.count >= visited.count else {
+                return "expected a title per navigation, got \(seen)"
+            }
+            let bare = AppDelegate.windowTitle()
+            for dest in visited where !seen.contains("\(bare) - \(dest.title)") {
+                return "no title named \(dest.title) - got \(seen)"
+            }
+            // The window really is left holding the last one, not just told.
+            guard window.title == "\(bare) - \(RailDestination.settings.title)" else {
+                return "the window should still be titled for the page it is showing, got \(window.title)"
+            }
+            // And `currentContextTitle` is the same answer, since the two must
+            // not be able to disagree.
+            guard shell.currentContextTitle == RailDestination.settings.title else {
+                return "currentContextTitle disagrees with the title bar: \(shell.currentContextTitle ?? "nil")"
+            }
+            return nil
+        }
     }
 
     // MARK: Table (pure logic, no view hierarchy)
