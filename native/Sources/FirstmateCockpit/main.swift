@@ -2038,6 +2038,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_NAVIGATION_COHERENCE_TESTS"] == "
     exit(NavigationCoherenceSelfTest.run() ? 0 : 1)
 }
 
+// Review #3's UX7: the "Push to → Tomorrow / Next week" date arithmetic -
+// see `ShiftDuePushSelfTest.swift`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_DUE_PUSH_TESTS"] == "1" {
+    exit(ShiftDuePushSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_DATE_PARSER_TESTS"] == "1" {
     exit(ShiftDateParserSelfTest.run() ? 0 : 1)
 }

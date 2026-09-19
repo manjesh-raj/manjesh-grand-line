@@ -88,6 +88,21 @@ final class ShiftTaskListView: NSObject {
         let menu = NSMenu()
         menu.addItem(NSMenuItem(title: "Open\u{2026}", action: #selector(openClicked), keyEquivalent: "").withSymbol("arrow.up.forward.square"))
         menu.addItem(.separator())
+        // UX7's reschedule gesture. A submenu rather than two flat items so
+        // the two dates read as one choice, which is what they are - and so a
+        // third horizon (F5's own "next Monday") can join without the menu
+        // growing a third top-level row.
+        let push = NSMenuItem(title: "Push to", action: nil, keyEquivalent: "").withSymbol("calendar.badge.clock")
+        let pushMenu = NSMenu()
+        for option in ShiftDuePush.allCases {
+            let item = NSMenuItem(title: option.menuTitle, action: #selector(pushClicked(_:)), keyEquivalent: "")
+            item.representedObject = option.rawValue
+            item.target = self
+            pushMenu.addItem(item)
+        }
+        push.submenu = pushMenu
+        menu.addItem(push)
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Delete Task\u{2026}", action: #selector(deleteClicked), keyEquivalent: "").withSymbol("trash"))
         for item in menu.items { item.target = self }
         menu.delegate = self
@@ -98,6 +113,17 @@ final class ShiftTaskListView: NSObject {
         let row = tableView.clickedRow
         guard row >= 0, row < tasks.count else { return nil }
         return tasks[row]
+    }
+
+    /// UX7. Forwarded, never applied here: this view has no store, exactly as
+    /// it has no idea what deleting a task means (`onDelete`).
+    var onPushDue: ((ShiftTask, ShiftDuePush) -> Void)?
+
+    @objc private func pushClicked(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let option = ShiftDuePush(rawValue: raw),
+              let task = clickedTask else { return }
+        onPushDue?(task, option)
     }
 
     @objc private func openClicked() { if let task = clickedTask { onOpen?(task) } }

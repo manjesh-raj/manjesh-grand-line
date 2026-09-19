@@ -377,6 +377,19 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
             menu.addItem(item)
         }
         menu.addItem(.separator())
+        // UX7's reschedule gesture, the same submenu the flat list's own row
+        // menu carries - one gesture, offered wherever a task card is.
+        let push = NSMenuItem(title: "Push to", action: nil, keyEquivalent: "").withSymbol("calendar.badge.clock")
+        let pushMenu = NSMenu()
+        for option in ShiftDuePush.allCases {
+            let item = NSMenuItem(title: option.menuTitle, action: #selector(menuPush(_:)), keyEquivalent: "")
+            item.representedObject = option.rawValue
+            item.target = self
+            pushMenu.addItem(item)
+        }
+        push.submenu = pushMenu
+        menu.addItem(push)
+        menu.addItem(.separator())
         let delete = NSMenuItem(title: "Delete Task\u{2026}", action: #selector(menuDelete), keyEquivalent: "").withSymbol("trash")
         delete.target = self
         menu.addItem(delete)
@@ -390,6 +403,15 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
                 return true
             }
         }
+    }
+
+    /// UX7, forwarded like every other card verb here.
+    var onPushDue: ((ShiftDuePush) -> Void)?
+
+    @objc private func menuPush(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let option = ShiftDuePush(rawValue: raw) else { return }
+        onPushDue?(option)
     }
 
     @objc private func menuOpen() { onOpen?() }
@@ -628,6 +650,9 @@ final class ShiftBoardColumnView: NSView {
     var onOpenTask: ((String) -> Void)?
     var onMoveTask: ((String, ShiftBoardColumn) -> Void)?
     var onDeleteTask: ((String) -> Void)?
+    /// UX7's reschedule gesture, forwarded up with the task's id like every
+    /// other card verb here.
+    var onPushTaskDue: ((String, ShiftDuePush) -> Void)?
     var onAddTask: ((ShiftBoardColumn) -> Void)?
     /// Returns whether the drop changed anything - forwarded straight to
     /// `performDragOperation`'s own return value.
@@ -788,6 +813,7 @@ final class ShiftBoardColumnView: NSView {
             cardView.onOpen = { [weak self] in self?.onOpenTask?(task.id) }
             cardView.onMove = { [weak self] target in self?.onMoveTask?(task.id, target) }
             cardView.onDelete = { [weak self] in self?.onDeleteTask?(task.id) }
+            cardView.onPushDue = { [weak self] option in self?.onPushTaskDue?(task.id, option) }
             cardsStack.addArrangedSubview(cardView)
             cardView.widthAnchor.constraint(equalTo: cardsStack.widthAnchor).isActive = true
             cardViews.append(cardView)
@@ -895,6 +921,9 @@ final class ShiftBoardView: NSView {
     var onOpenTask: ((String) -> Void)?
     var onMoveTask: ((String, ShiftBoardColumn) -> Void)?
     var onDeleteTask: ((String) -> Void)?
+    /// UX7's reschedule gesture, forwarded up with the task's id like every
+    /// other card verb here.
+    var onPushTaskDue: ((String, ShiftDuePush) -> Void)?
     var onAddTask: ((ShiftBoardColumn) -> Void)?
     var onDropTask: ((String, ShiftBoardColumn) -> Bool)?
 
@@ -908,6 +937,7 @@ final class ShiftBoardView: NSView {
             column.onOpenTask = { [weak self] id in self?.onOpenTask?(id) }
             column.onMoveTask = { [weak self] id, target in self?.onMoveTask?(id, target) }
             column.onDeleteTask = { [weak self] id in self?.onDeleteTask?(id) }
+            column.onPushTaskDue = { [weak self] id, option in self?.onPushTaskDue?(id, option) }
             column.onAddTask = { [weak self] target in self?.onAddTask?(target) }
             column.onDropTask = { [weak self] id, target in self?.onDropTask?(id, target) ?? false }
             // Each column goes into the row inside a vertical stack of its

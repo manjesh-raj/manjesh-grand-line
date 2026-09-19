@@ -501,6 +501,9 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         taskListView.onDelete = { [weak self] task in
             self?.confirmDeleteTask(id: task.id)
         }
+        taskListView.onPushDue = { [weak self] task, option in
+            self?.pushDueDate(task, by: option)
+        }
 
         followUpListView.onEdit = { [weak self] item in
             self?.presentFollowUpEditor(for: item)
@@ -913,6 +916,10 @@ final class ShiftController: NSViewController, DaylightDrillActions {
 
         boardView.onOpenTask = { [weak self] id in self?.openBoardTask(id: id) }
         boardView.onMoveTask = { [weak self] id, column in self?.moveTask(id: id, to: column) }
+        boardView.onPushTaskDue = { [weak self] id, option in
+            guard let self, let task = self.store.activeTasks.first(where: { $0.id == id }) else { return }
+            self.pushDueDate(task, by: option)
+        }
         boardView.onDeleteTask = { [weak self] id in self?.confirmDeleteTask(id: id) }
         boardView.onAddTask = { [weak self] column in self?.addTask(in: column) }
         boardView.onDropTask = { [weak self] id, column in self?.moveTask(id: id, to: column) ?? false }
@@ -1205,6 +1212,41 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// still holds, which a task's completed-month file and attachment do not
     /// survive cleanly). `DestructiveConfirm` is GL-06's shared prompt, with
     /// Cancel as the default so a reflexive Return cannot complete it.
+    /// UX7's "Push to → Tomorrow / Next week", from either the board card's
+    /// context menu or the flat list's row menu.
+    ///
+    /// Both entry points land here so there is exactly one definition of what
+    /// pushing a task does - the same rule `moveTask` states for the three
+    /// ways a card can change column.
+    ///
+    /// GL-33: a real Undo, because this one can genuinely be undone - the
+    /// caller still holds the previous due date, which is the invariant that
+    /// rule is actually about. (Contrast `confirmDeleteTask` immediately
+    /// below, which deliberately offers none: a deleted task's
+    /// completed-month file and attachment do not survive cleanly, and a
+    /// pretend Undo is worse than no Undo.)
+    func pushDueDate(_ task: ShiftTask, by option: ShiftDuePush) {
+        guard let newDue = option.newDueDate(currentDueDate: task.dueDate) else { return }
+        let previousDue = task.dueDate
+        var updated = task
+        updated.dueDate = newDue
+        store.updateTask(updated)
+        render()
+
+        let phrase = ShiftDateFormatting.friendly(newDue)
+        Toast.showUndo(in: view, message: "Due \(phrase)") { [weak self] in
+            guard let self,
+                  var current = self.store.activeTasks.first(where: { $0.id == task.id }) else { return }
+            // Restores the value the caller had in hand (GL-33), and re-reads
+            // the task first rather than writing back the stale copy - the
+            // captain may have edited something else about it while the toast
+            // was up, and an Undo of the *due date* must not revert that.
+            current.dueDate = previousDue
+            self.store.updateTask(current)
+            self.render()
+        }
+    }
+
     func confirmDeleteTask(id: String) {
         let task = store.activeTasks.first(where: { $0.id == id })
             ?? store.allCompletedTasks().first(where: { $0.id == id })
