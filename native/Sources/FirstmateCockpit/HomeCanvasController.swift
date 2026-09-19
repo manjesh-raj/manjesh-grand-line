@@ -1600,7 +1600,10 @@ final class HomeCanvasController: NSViewController {
         // (`notes` is sorted oldest-first, because that is the board's
         // stacking order) - a peek of three answers "what was I just
         // thinking", not "what did I think first".
-        let newest = sources.stickyBoardStore.notes.sorted { $0.createdAt > $1.createdAt }
+        // `activeNotes`, not every note: UX10 gave the board an archive, and a
+        // hub peek that counted archived notes would report a board fuller
+        // than the one the captain sees.
+        let newest = sources.stickyBoardStore.activeNotes.sorted { $0.createdAt > $1.createdAt }
         guard !newest.isEmpty else {
             content.body = .note("Jot down a thought on a colored sticky note, anywhere on the board.")
             return

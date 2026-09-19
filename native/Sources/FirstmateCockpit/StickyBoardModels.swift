@@ -196,6 +196,64 @@ struct StickyNote: Identifiable, Equatable {
     var height: Double
     var rotationDegrees: Double
     var createdAt: Date
+    /// When this note was archived, or `nil` while it is on the board -
+    /// review #3's UX10 ("no archive/done […] it is beautiful and currently a
+    /// dead end after ~12 notes").
+    ///
+    /// A date rather than a `Bool`, for the same reason
+    /// `VaultCredential.lastUsedAt` is: "archived" and "archived on Tuesday"
+    /// cost the same to store, and the second one can be sorted and read back.
+    /// The archive drawer lists newest-first off this.
+    ///
+    /// Defaulted so every existing call site that builds a `StickyNote`
+    /// compiles unchanged; the *decoder* has its own fallback, which is the
+    /// half GL-01 is actually about - see `StickyBoardStore.note(from:)`.
+    var archivedAt: Date?
+
+    var isArchived: Bool { archivedAt != nil }
 
     var size: CGSize { CGSize(width: width, height: height) }
+}
+
+// MARK: - Promotion to a task (review #3's UX10)
+
+/// Turning a sticky note into a real task.
+///
+/// The finding names the mapping exactly - "title→title, text→description,
+/// colour→priority mapping" - and this is that mapping, kept as pure logic so
+/// `StickyBoardSelfTest` can assert it without a store, a board or a window.
+///
+/// **The colour mapping is a convention this app is inventing**, so it is
+/// written down rather than left implicit: red-family notes (pink, orange) are
+/// the ones a captain reaches for when something is urgent, so they become
+/// `.high`; blue and green read as calm on a corkboard and become `.low`; the
+/// default yellow and purple are `.normal`. It is a guess at intent, and it is
+/// a *starting* value the task editor can change, which is why the promotion
+/// opens the editor rather than silently filing a task.
+enum StickyNotePromotion {
+    static func priority(for color: StickyNoteColor) -> ShiftPriority {
+        switch color {
+        case .pink, .orange: return .high
+        case .blue, .green: return .low
+        case .yellow, .purple: return .normal
+        }
+    }
+
+    /// The task a note becomes, before the captain edits it.
+    ///
+    /// A note's title is optional by design (the board renders a placeholder),
+    /// so an untitled note falls back to its first non-empty line - the same
+    /// `displayTitle` rule ⌘K's sticky rows and the hub's peek already use, so
+    /// one note is named the same way wherever this app names it. The body
+    /// then becomes the description *minus* nothing: the whole text is carried
+    /// across even when its first line was borrowed for the title, because
+    /// silently dropping a line from the captain's own note would be the worst
+    /// possible failure mode for a promotion.
+    static func task(from note: StickyNote, now: Date = Date()) -> ShiftTask {
+        var task = ShiftTask.fresh(now: now)
+        task.title = UnifiedSearchStickyNoteProvider.displayTitle(for: note)
+        task.description = note.text
+        task.priority = priority(for: note.color)
+        return task
+    }
 }

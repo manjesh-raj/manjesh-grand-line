@@ -2049,12 +2049,30 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// (a task's status is something the board moves, not something a form
     /// sets), so the column applies it to whatever comes back. Ignored when
     /// editing an existing task, whose status is already whatever it is.
+    /// Review #3's UX10: open the New Task sheet already filled in from a
+    /// sticky note.
+    ///
+    /// The sheet rather than a silent `addTask`, deliberately. The note's
+    /// colour is a *guess* at priority (see `StickyNotePromotion`), and the
+    /// title may have been borrowed from the note's first line - both are
+    /// things the captain should see and be able to correct before a task
+    /// exists, and neither is worth a second "undo that" toast.
+    func presentTaskEditor(prefilledFrom note: StickyNote) {
+        presentTaskEditor(for: nil, prefill: StickyNotePromotion.task(from: note))
+    }
+
+    /// `prefill` seeds a **new** task's fields; `task` edits an existing one.
+    /// They are separate parameters rather than one, because which of the two
+    /// it is decides whether saving calls `addTask` or `updateTask` - passing a
+    /// prefilled task as `task` would silently make the promotion overwrite a
+    /// task that does not exist yet.
     private func presentTaskEditor(for task: ShiftTask?,
+                                   prefill: ShiftTask? = nil,
                                    defaultProjectID: String? = nil,
                                    defaultStatus: ShiftTaskStatus? = nil) {
         let existingAttachmentData = (task?.hasAttachment ?? false) ? store.attachmentData(forTaskID: task!.id) : nil
         let editor = ShiftTaskEditorController(
-            task: task, projects: store.projects, defaultProjectID: defaultProjectID,
+            task: task ?? prefill, projects: store.projects, defaultProjectID: defaultProjectID,
             existingAttachmentData: existingAttachmentData
         )
         editor.onSave = { [weak self] saved, attachmentChange in

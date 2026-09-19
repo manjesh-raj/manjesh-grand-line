@@ -620,6 +620,9 @@ final class AppShellController: NSViewController {
         mounter.register(DestinationSlot(id: .kubernetes, title: RailDestination.kubernetes.title, mountsEagerly: false, controller: kubernetes))
         mounter.register(DestinationSlot(id: .tools, title: RailDestination.tools.title, mountsEagerly: false, controller: tools))
         mounter.register(DestinationSlot(id: .whiteboard, title: RailDestination.whiteboard.title, mountsEagerly: false, controller: whiteboard))
+        // UX10: the board raises a note to promote; this controller is the
+        // one place that holds both destinations.
+        stickyBoard.onMakeTaskFromNote = { [weak self] note in self?.makeTaskFromStickyNote(note) }
         mounter.register(DestinationSlot(id: .stickyBoard, title: RailDestination.stickyBoard.title, mountsEagerly: false, controller: stickyBoard))
         mounter.register(DestinationSlot(id: .codePreview, title: RailDestination.codePreview.title, mountsEagerly: false, controller: codePreview))
         mounter.register(DestinationSlot(id: .commandLibrary, title: RailDestination.commandLibrary.title, mountsEagerly: false, controller: commandLibrary))
@@ -2379,6 +2382,17 @@ final class AppShellController: NSViewController {
     @objc func newStickyNoteFromMenu() {
         show(.stickyBoard)
         stickyBoard.addNoteFromMenu()
+    }
+
+    /// UX10's "Make a task" promotion. The board raises a note; this navigates
+    /// to Tasks and opens the editor already filled in.
+    ///
+    /// Wired here rather than on the board because this controller is the one
+    /// place that holds both destinations - the same forward-don't-own shape
+    /// every other cross-destination action in this app uses.
+    private func makeTaskFromStickyNote(_ note: StickyNote) {
+        show(.shift)
+        shift.presentTaskEditor(prefilledFrom: note)
     }
 
     @objc func newCodeSnippetFromMenu() {

@@ -127,6 +127,9 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     private let statusLabel = NSTextField(labelWithString: "")
 
     private var overlay: HelmEmptyState?
+    /// Which of the two empty states `overlay` currently holds - see
+    /// `updateOverlay`.
+    private var overlayIsArchiveCopy = false
     private let overlayContainer = NSView()
 
     private var noteViews: [String: StickyNoteView] = [:]
@@ -136,19 +139,52 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         tooltip: "Add a new sticky note to the board",
         target: self, action: #selector(newNoteTapped))
 
+    /// Review #3's UX10: "no archive/done […] it is beautiful and currently a
+    /// dead end after ~12 notes."
+    ///
+    /// The archive is the *same board*, showing the other set - not a second
+    /// view, a drawer or a list. Notes keep their colour, their size and their
+    /// own position, so putting one back is putting it back where it was, and
+    /// this page gains no second rendering of a sticky note.
+    private lazy var archiveButton = HelmPageToolbar.labeledButton(
+        symbol: "archivebox", title: "Archive",
+        tooltip: "Show archived notes",
+        target: self, action: #selector(archiveToggleTapped))
+
+    /// Which set the board is drawing.
+    private var showingArchive = false
+
+    /// The notes the board should currently draw.
+    private var visibleNotes: [StickyNote] {
+        showingArchive ? store.archivedNotes : store.activeNotes
+    }
+
+    /// Raised with a note the captain asked to promote - UX10's "Make a task".
+    ///
+    /// Forwarded to `AppShellController`, which owns the task store: this page
+    /// has never known what a `ShiftStore` is, and the promotion is not a
+    /// reason to teach it (the same forward-don't-own rule every other
+    /// cross-destination action in this app follows).
+    var onMakeTaskFromNote: ((StickyNote) -> Void)?
+
     // MARK: Drill header (Daylight §6.4)
 
     var onDrillSubtitleChanged: (() -> Void)?
 
-    var drillHeaderActions: [NSView] { [newNoteButton] }
+    var drillHeaderActions: [NSView] { [archiveButton, newNoteButton] }
 
     var drillHeaderSubtitle: String? {
-        let count = store.notes.count
+        // UX10: the count follows the set on screen, or the subtitle would
+        // claim "12 notes" over an archive holding two.
+        let count = visibleNotes.count
         let noun = count == 1 ? "1 note" : "\(count) notes"
         if store.isInFailedLoadState {
             return "\(noun) \u{00B7} the saved file couldn't be read - see the backed-up copy"
         }
-        return "\(noun) \u{00B7} synced to manjesh-config"
+        if showingArchive { return "\(noun) archived \u{00B7} synced to manjesh-config" }
+        let archived = store.archivedNotes.count
+        let archiveNote = archived == 0 ? "" : " \u{00B7} \(archived) archived"
+        return "\(noun)\(archiveNote) \u{00B7} synced to manjesh-config"
     }
 
     // MARK: Lifecycle
@@ -369,27 +405,56 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     /// unreadable file and an empty one must never render the same).
     private var statusText: String {
         if store.isInFailedLoadState { return "UNREADABLE" }
-        return store.notes.isEmpty ? "EMPTY" : "ACTIVE"
+        if showingArchive { return "ARCHIVE" }
+        return visibleNotes.isEmpty ? "EMPTY" : "ACTIVE"
     }
 
     private var statusTint: HelmTint {
         if store.isInFailedLoadState { return .critical }
-        return store.notes.isEmpty ? .neutral : .good
+        if showingArchive { return .neutral }
+        return visibleNotes.isEmpty ? .neutral : .good
     }
 
     // MARK: Notes
 
     private func rebuildNoteViews() {
-        let current = Set(store.notes.map(\.id))
+        // UX10: the board draws one set or the other, so a note leaving the
+        // visible set has its view torn down exactly as a deleted one does.
+        let visible = visibleNotes
+        let current = Set(visible.map(\.id))
         for (id, noteView) in noteViews where !current.contains(id) {
             noteView.removeFromSuperview()
             noteViews.removeValue(forKey: id)
         }
-        for note in store.notes where noteViews[note.id] == nil {
+        for note in visible where noteViews[note.id] == nil {
             addNoteView(for: note)
         }
+        for note in visible { noteViews[note.id]?.isArchived = note.isArchived }
         updateFooter()
         updateOverlay()
+    }
+
+    @objc private func archiveToggleTapped() {
+        showingArchive.toggle()
+        archiveButton.toolTip = showingArchive
+            ? "Back to the board"
+            : "Show archived notes"
+        rebuildNoteViews()
+        onDrillSubtitleChanged?()
+    }
+
+    /// UX10's archive verb, with GL-33's Undo - the caller still holds the
+    /// note, so the restore is real rather than a pretend one.
+    private func archiveNote(id: String, archived: Bool) {
+        guard store.setArchived(id: id, archived: archived) != nil else { return }
+        rebuildNoteViews()
+        onDrillSubtitleChanged?()
+        Toast.showUndo(in: view, message: archived ? "Archived" : "Back on the board") { [weak self] in
+            guard let self else { return }
+            self.store.setArchived(id: id, archived: !archived)
+            self.rebuildNoteViews()
+            self.onDrillSubtitleChanged?()
+        }
     }
 
     private func addNoteView(for note: StickyNote) {
@@ -409,6 +474,17 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         }
         noteView.onDeleteRequested = { [weak self, id = note.id] in
             self?.deleteNote(id: id)
+        }
+        noteView.isArchived = note.isArchived
+        noteView.onArchiveRequested = { [weak self, id = note.id] in
+            self?.archiveNote(id: id, archived: true)
+        }
+        noteView.onUnarchiveRequested = { [weak self, id = note.id] in
+            self?.archiveNote(id: id, archived: false)
+        }
+        noteView.onMakeTaskRequested = { [weak self, id = note.id] in
+            guard let self, let current = self.store.notes.first(where: { $0.id == id }) else { return }
+            self.onMakeTaskFromNote?(current)
         }
         canvas.addSubview(noteView)
         noteViews[note.id] = noteView
@@ -435,20 +511,33 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     }
 
     private func updateFooter() {
-        let count = store.notes.count
+        let count = visibleNotes.count
         footer.stringValue = count == 1 ? "1 note" : "\(count) notes"
         applyBoardHeaderTheme()
     }
 
     private func updateOverlay() {
-        let isEmpty = store.notes.isEmpty
+        let isEmpty = visibleNotes.isEmpty
         overlayContainer.isHidden = !isEmpty
         guard isEmpty else { return }
+        // UX10: an empty *archive* is a different state from an empty board -
+        // "click New Note" is wrong advice on a screen where New Note would
+        // put the note somewhere the captain is not looking. The empty state
+        // is rebuilt when the set changes, since `HelmEmptyState`'s copy is
+        // fixed at construction.
+        let wantsArchiveCopy = showingArchive
+        if overlay != nil && wantsArchiveCopy != overlayIsArchiveCopy {
+            overlay?.removeFromSuperview()
+            overlay = nil
+        }
+        overlayIsArchiveCopy = wantsArchiveCopy
         if overlay == nil {
             let state = HelmEmptyState(
-                symbol: "note.text",
-                title: "Your board is empty",
-                body: "Click \u{201C}New Note\u{201D} above to add your first sticky note.",
+                symbol: wantsArchiveCopy ? "archivebox" : "note.text",
+                title: wantsArchiveCopy ? "Nothing archived yet" : "Your board is empty",
+                body: wantsArchiveCopy
+                    ? "Archive a note from its \u{22EF} menu and it waits here instead of crowding the board."
+                    : "Click \u{201C}New Note\u{201D} above to add your first sticky note.",
                 size: .standard, boxed: false,
                 hue: RailDestination.stickyBoard.domainHue,
                 artwork: RailDestination.stickyBoard.drillHeaderArtwork)
@@ -516,7 +605,9 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     /// mounted - one definition, so a crew-proposed note lands exactly where
     /// this button would have put it.
     private func nextPosition() -> CGPoint {
-        StickyBoardMetrics.cascadeOrigin(index: store.notes.count)
+        // UX10: the *active* count. An archived note is not on the board, so
+        // counting it would cascade a new note past a gap that is not there.
+        StickyBoardMetrics.cascadeOrigin(index: store.activeNotes.count)
     }
 
     // MARK: Theme
