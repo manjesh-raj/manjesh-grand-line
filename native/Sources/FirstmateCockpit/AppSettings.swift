@@ -35,7 +35,6 @@ final class AppSettings {
         static let morningBriefingEnabled = "fm.morningBriefingEnabled"
         static let morningBriefingRecord = "fm.morningBriefingRecord"
         static let didSeedDailyGitHubSyncSchedule = "fm.didSeedDailyGitHubSyncSchedule"
-        static let sessionRestoreState = "fm.sessionRestoreState"
         static let terminalShortcuts = "fm.terminalShortcuts"
     }
 
@@ -257,21 +256,13 @@ final class AppSettings {
     ///
     /// See `SessionRestore.swift` for exactly what is and is not restored,
     /// and why a host page comes back without connecting until it is opened.
+    /// Full review #3's S3: the bytes live in a 0600 file now, not in the
+    /// preferences plist. This stays the accessor every caller uses -
+    /// `SessionRestoreStore` owns where it is written, and reads migrate an
+    /// older build's `UserDefaults` copy across on first use. See that file's
+    /// header for what the move is and is not worth.
     var sessionRestoreState: SessionRestoreState? {
-        get {
-            guard let data = defaults.data(forKey: Keys.sessionRestoreState),
-                  let decoded = try? JSONDecoder().decode(SessionRestoreState.self, from: data) else {
-                return nil
-            }
-            return decoded
-        }
-        set {
-            guard let newValue else {
-                defaults.removeObject(forKey: Keys.sessionRestoreState)
-                return
-            }
-            guard let data = try? JSONEncoder().encode(newValue) else { return }
-            defaults.set(data, forKey: Keys.sessionRestoreState)
-        }
+        get { SessionRestoreStore.load(defaults: defaults) }
+        set { SessionRestoreStore.save(newValue) }
     }
 }

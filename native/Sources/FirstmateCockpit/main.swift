@@ -1594,6 +1594,13 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     if (ProcessInfo.processInfo.environment["FM_DICTATION_DIR"] ?? "").isEmpty {
         setenv("FM_DICTATION_DIR", scratchRoot.appendingPathComponent("dictation", isDirectory: true).path, 1)
     }
+    // Full review #3's S3 moved this out of `UserDefaults` into a real file,
+    // which puts it squarely in the class above: reachable from a bare
+    // `AppSettings.shared.sessionRestoreState` read, and now something a
+    // suite can *write*.
+    if (ProcessInfo.processInfo.environment["FM_SESSION_RESTORE_FILE"] ?? "").isEmpty {
+        setenv("FM_SESSION_RESTORE_FILE", scratchRoot.appendingPathComponent("session-restore.json").path, 1)
+    }
     // The full-app audit's §7.2, and the entry that generalises every one
     // above: `FM_SHIFT_DIR` is the *root* override the whole
     // `GrandLineDocs/` family resolves through.

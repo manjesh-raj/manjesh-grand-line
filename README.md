@@ -136,6 +136,7 @@ grep -rhoE '"FM_[A-Z0-9_]+"' native/Sources/FirstmateCockpit/*.swift | tr -d '"'
 | `FM_HOSTS_FILE` | `hosts.json` (saved SSH hosts) |
 | `FM_KEYS_FILE` | `keys.json` (SSH key *metadata*; key material is Keychain-only) |
 | `FM_SNIPPETS_FILE` | `snippets.json` |
+| `FM_SESSION_RESTORE_FILE` | `session-restore.json` (which destination, host pages and tabs were open at quit) |
 | `FM_SCHEDULES_FILE` | `schedules.json` (the Automation page's scheduled automations) |
 | `FM_SCHEDULE_HISTORY_DIR` | The Schedules page's 7-day run history (`schedule-history/runs.jsonl`) |
 | `FM_SHIFT_DIR` | Shift's data root. Setting it bypasses git sync entirely, and is also the fallback root for the command library and incident records |
