@@ -266,3 +266,82 @@
   - **`Expression N unable to find variable … in engine 0x0` means you forced layout on a view with no window.** `ConsoleController.setSRELeadPaneOpen` ran `NSAnimationContext.runAnimationGroup { view.layoutSubtreeIfNeeded() }` unconditionally, and it is reached from `applyTheme` via `ThemeManager.observe`'s **synchronous fire at registration** - i.e. inside `loadView`, before the view is in a window. It crashed a whole suite (SIGABRT) on a slower host and never reproduced locally. **Guard a forced layout pass on `view.window != nil`**: with no window the constraint constant alone reaches the same geometry, and an animation nobody can see is not worth a crash. This generalises to every `layoutSubtreeIfNeeded` reachable from a theme observer.
   - **A frame already scheduled when visibility flips still runs.** The Whiteboard's display-gating check demanded exactly 0 frames while hidden; that feature's own notes record 1 as correct. `<= 1` keeps the assertion real (an ungated page ticks ~30fps).
 - **`grep -c` exits 1 when the count is zero**, which short-circuits a `cmd | grep -c error: && run-the-test` harness and reports an injected regression as "did not reproduce". Use `grep -q error: ||`. One R8 injection was written off as slack before this was spotted; the check was actually pinning the value to the point.
+
+---
+
+## UX15 - the two theme families: measured, and deliberately not closed
+
+Full review #3's UX15: "Segmented tabs, module cards, icon rows and hover
+states differ between the Daylight family and the 12 legacy palettes (UI13,
+B7). A captain who switches between `catppuccin-latte` and `dusk` gets two
+apps. Either finish extending the Daylight recipes to the legacy palettes (the
+§3K option not taken) or retire the legacy palettes to a 'classic' setting."
+
+The `fm/grandline-audit3-ux-fixes` batch (UX1-UX15) **measured this and did not
+attempt it**, on the brief's own instruction not to leave the app in a third,
+inconsistent state. This section is the measurement, so the follow-up does not
+have to re-derive it.
+
+### The size of the gap
+
+`theme.isDaylight` is the branch. Every occurrence is a place where the two
+Daylight palettes get one recipe and the twelve legacy palettes get another.
+
+**143 branches across 36 files.** By file:
+
+| Branches | File |
+|---|---|
+| 25 | `HelmDesignSystem.swift` |
+| 15 | `HelmForm.swift` |
+| 11 | `UnifiedSearch.swift` |
+| 10 | `DaylightBarController.swift` |
+| 8 | `HelmDaylight.swift` |
+| 7 | `SettingsController.swift` |
+| 7 | `LogAnalyzerViews.swift` |
+| 4 | `ShiftImageAttachmentWell.swift`, `HelmUIComponents.swift`, `HelmModuleCard.swift` |
+| 3 | `ToolsController.swift`, `SRELeadChatView.swift`, `KubernetesViews.swift`, `HelmInput.swift`, `HelmDrillHeader.swift`, `HelmConfirm.swift` |
+| 2 | ten files |
+| 1 | nine files |
+
+### The two options, priced
+
+**Extending the Daylight recipes to the legacy palettes** is not 143 edits. It
+is 143 *design decisions*, each of which then has to hold across twelve
+palettes in both light and dark registers, and each of which
+`FM_RUN_CONTRAST_TESTS` will sweep. The Daylight recipes are built on
+`DaylightTokens` - a token layer the twelve palettes do not have - so most of
+these are not "apply the same colour", they are "decide what this token means
+for a palette that was never designed around it".
+
+It is, however, **strongly front-loaded**, which is the useful finding here:
+the top five files are 69 of the 143 branches (48%), and four of those five are
+shared components rather than pages. Closing `HelmDesignSystem`, `HelmForm`,
+`UnifiedSearch` and `HelmDaylight` would close roughly half the gap and would
+do it in the components every page already renders through - which is where a
+captain would *notice* it. That is a plausible first slice for a dedicated
+task, and it is a much better shape than working down the list by page.
+
+**Retiring the twelve to a "classic" setting** is cheaper in code and is not
+this task's call to make. It removes twelve themes the captain may be using,
+and the selection is persisted per-captain (`fm.themeID`) - so it is a product
+decision about what the app offers, not a refactor. It also interacts with
+`FM_RUN_CONTRAST_TESTS`, which currently sweeps every theme × every tint and is
+one of this repo's better guards; shrinking the theme set shrinks what that
+sweep proves.
+
+### The recommendation
+
+**A dedicated task, taking the extend option, in component-first slices** -
+starting with the five files above rather than with any page. The retire option
+should not be taken without the captain saying so, because it is a decision
+about the product rather than about the code.
+
+Two things that are *not* blockers and are worth knowing:
+
+- Nothing here is broken. Both families render, both clear the contrast floor,
+  and `FM_RUN_CONTRAST_TESTS` sweeps both. The finding is about coherence, not
+  correctness - which is exactly why it is safe to defer and wrong to rush.
+- The branch count is a fair proxy for the gap but not a perfect one. Some of
+  the 143 are a single colour; a few (`DaylightBarController`'s, `HelmForm`'s)
+  are whole alternate layouts. A slice should be scoped by reading the
+  branches, not by counting them.
