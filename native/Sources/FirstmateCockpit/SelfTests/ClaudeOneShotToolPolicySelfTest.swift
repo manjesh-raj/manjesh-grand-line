@@ -193,13 +193,13 @@ enum ClaudeOneShotToolPolicySelfTest {
         print("- each persona's built-in grants are a subset of its own --allowedTools")
 
         let sreAllowed = Set(SRELead.allowedTools.split(separator: ",").map(String.init))
-        for tool in SRELead.builtInTools {
-            // A built-in granted by `--tools` but absent from `--allowedTools`
-            // is a capability the pane can never actually reach; the reverse
-            // is a tool the persona asks for and silently cannot use.
-            check(sreAllowed.contains(tool),
-                  "SRE Lead: --tools grants '\(tool)' but --allowedTools does not name it")
-        }
+        // A built-in granted by `--tools` but absent from `--allowedTools` is a
+        // capability the pane can never actually reach; the reverse is a tool
+        // the persona asks for and silently cannot use.
+        let unreachable = SRELead.builtInTools.filter { !sreAllowed.contains($0) }
+        check(unreachable.isEmpty,
+              "SRE Lead: every built-in --tools grants is also named in --allowedTools"
+              + named(unreachable.sorted()))
         let sreNonMCP = sreAllowed.filter { !$0.hasPrefix("mcp__") }
         check(sreNonMCP == Set(SRELead.builtInTools),
               "SRE Lead: the non-MCP half of --allowedTools is exactly builtInTools "
@@ -220,11 +220,11 @@ enum ClaudeOneShotToolPolicySelfTest {
         print("- no runner passes --permission-mode bypassPermissions")
 
         guard let files = productionSources() else { return }
-        for (name, code) in files {
-            check(!code.contains("bypassPermissions"),
-                  "\(name) mentions bypassPermissions - `--tools` is the gate now, and "
-                  + "bypassPermissions turns off permission checking for the whole session")
-        }
+        let offenders = files.filter { $0.code.contains("bypassPermissions") }.map(\.name)
+        check(offenders.isEmpty,
+              "no runner passes --permission-mode bypassPermissions (`--tools` is the gate now, and "
+              + "bypassPermissions turns off permission checking for the whole session)"
+              + named(offenders))
     }
 
     private static func noCallSiteOmitsTheToolPolicy() {
@@ -243,10 +243,13 @@ enum ClaudeOneShotToolPolicySelfTest {
         // *before* the one this file appends, and `claude` takes the last
         // occurrence - which is precisely how a widening would slip in while
         // every behavioural case above still passed.
-        for (name, code) in files where name != "ClaudeOneShot.swift" {
-            check(!code.contains("\"--tools\""),
-                  "\(name) writes --tools into its own arguments - it belongs only in ClaudeOneShot")
-        }
+        let handRolled = files
+            .filter { $0.name != "ClaudeOneShot.swift" && $0.code.contains("\"--tools\"") }
+            .map(\.name)
+        check(handRolled.isEmpty,
+              "--tools is written in ClaudeOneShot only (`claude` takes the last occurrence, so a "
+              + "caller's own copy would sort before it and silently widen the run)"
+              + named(handRolled))
     }
 
     private static func noProductionFileBuildsItsOwnClaudeArgv() {
@@ -264,12 +267,14 @@ enum ClaudeOneShotToolPolicySelfTest {
         // GL-26 says there is one runner, and S1 is why that matters for
         // security rather than only for tidiness, since a second one would
         // carry its own flags and none of this policy.
-        for (name, code) in files where name != "ClaudeOneShot.swift" {
-            let buildsAPrintArgv = code.contains("\"-p\"") && code.contains("\"--output-format\"")
-            check(!buildsAPrintArgv,
-                  "\(name) assembles its own `claude -p --output-format` argv - "
-                  + "every run goes through ClaudeOneShot, which is where the --tools policy lives")
-        }
+        let secondRunners = files
+            .filter { $0.name != "ClaudeOneShot.swift"
+                      && $0.code.contains("\"-p\"") && $0.code.contains("\"--output-format\"") }
+            .map(\.name)
+        check(secondRunners.isEmpty,
+              "nothing assembles a second `claude -p --output-format` argv - every run goes through "
+              + "ClaudeOneShot, which is where the --tools policy lives"
+              + named(secondRunners))
 
         // And the fixture's own discriminating power: that pair really is
         // present in the one file allowed to have it, so the sweep above is
@@ -277,6 +282,14 @@ enum ClaudeOneShotToolPolicySelfTest {
         let oneShot = files.first { $0.name == "ClaudeOneShot.swift" }
         check(oneShot?.code.contains("\"--output-format\"") == true,
               "fixture: ClaudeOneShot.swift still builds the --output-format argv the sweep looks for")
+    }
+
+    /// Append the offending names to a label, or nothing at all when there
+    /// are none - the shared assertion helper narrates a label on a **pass**
+    /// as well as a failure, so a label phrased as an accusation reads as
+    /// nonsense on the ~25 files that are fine.
+    private static func named(_ offenders: [String]) -> String {
+        offenders.isEmpty ? "" : " - found in: " + offenders.joined(separator: ", ")
     }
 
     /// Every one of this app's own sources that mentions `claude`, with
