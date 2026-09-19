@@ -852,8 +852,19 @@ enum CanvasListsControlsSelfTest {
         // own `#if FM_SELFTESTS` block redirects every `FM_*` store override
         // for the whole process, so a bare store here reaches none of the
         // captain's real data.
+        // **Not a first-run app.** Review #3's UX13 gave the hub its own hero
+        // for a captain with nothing saved locally, and these cases run over
+        // empty scratch stores - which is exactly that state. Every case here
+        // is about how a *used* app's hub renders (the verdict band, the
+        // module grid, the lists), so one seeded task is what puts them in the
+        // state they are written for. `NavigationCoherenceSelfTest` asserts
+        // the first-run hero itself, in both directions.
+        let shiftStore = ShiftStore()
+        var seeded = ShiftTask.fresh()
+        seeded.title = "a task, so the hub is not in its first-run state"
+        shiftStore.addTask(seeded)
         let canvas = HomeCanvasController(sources: .init(
-            shiftStore: ShiftStore(),
+            shiftStore: shiftStore,
             hostStore: HostStore(),
             scheduleStore: ScheduleStore(),
             logAnalyzerStore: LogAnalyzerStore(),

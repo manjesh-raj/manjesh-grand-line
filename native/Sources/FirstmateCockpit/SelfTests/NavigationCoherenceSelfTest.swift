@@ -335,6 +335,30 @@ enum NavigationCoherenceSelfTest {
         check(HomeCanvasController.firstRunHeroCopy(hosts: 0, tasks: 0, notes: 1) == nil,
               "UX13: the first-run hero survived a saved note", &ok)
 
+        // **The invitation must never hide a verdict that needs the captain.**
+        // The three stores it counts are *local*; `FleetGreeting` reports on
+        // the crew. A crewmate can be parked on a decision while this machine
+        // has nothing saved on it at all - a new Mac, a second user, a fresh
+        // clone - and "Welcome aboard" over a blocked task would be strictly
+        // worse than the all-clear this whole finding objects to.
+        //
+        // This was a real flaw in the first cut of UX13, caught by
+        // `CanvasListsControlsSelfTest`'s C1 case rather than by reading the
+        // code. The rule lives here now, on the property the canvas actually
+        // branches on.
+        let needsYou = FleetGreeting.answer(
+            tasks: [FleetTask(id: "t1", repo: "grand-line", kind: "feature", pr: nil,
+                              status: "needs_decision")],
+            readyCount: 0, prFetchFailure: nil, homeOk: true)
+        check(!needsYou.metaRestatesCards,
+              "UX13: a needs-you answer must not be classed as a card restatement - "
+              + "that is the flag the hub reads to decide the first-run hero may show", &ok)
+        let allClear = FleetGreeting.answer(tasks: [], readyCount: 0,
+                                            prFetchFailure: nil, homeOk: true)
+        check(allClear.metaRestatesCards,
+              "UX13/UX5: an all-clear answer should be classed as a restatement, or the "
+              + "first-run hero can never appear at all", &ok)
+
         // The sheet's step machine. A window is not needed - the steps are
         // state, and `loadView` builds views with no window server.
         let sheet = WelcomeSheetController()

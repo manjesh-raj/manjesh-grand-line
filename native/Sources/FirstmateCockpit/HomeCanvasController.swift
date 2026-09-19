@@ -543,10 +543,30 @@ final class HomeCanvasController: NSViewController {
         // unhelpful - the same class of thing GL-14 is about, one step up:
         // reporting an all-clear over an app with no data in it.
         //
-        // Checked before the fleet snapshot, so it holds during the first
-        // launch's fetch too - which is precisely when a new captain is
-        // looking at this page.
-        if let firstRun = Self.firstRunHeroCopy(hosts: sources.hostStore.hosts.count,
+        // **It must never hide a verdict that needs the captain**, which is
+        // why this is not simply "no local data -> show the invitation". The
+        // three stores it counts are *local* - saved hosts, tasks, sticky
+        // notes - and none of them is what `FleetGreeting` reports on: a
+        // crewmate can be parked on a decision while this machine has nothing
+        // saved on it at all (a new Mac, a second user, a fresh clone), and a
+        // cheerful "Welcome aboard" over a task that is blocked waiting for an
+        // answer would be strictly worse than the all-clear this finding
+        // already objects to.
+        //
+        // So a needs-you answer wins, and the invitation is shown only where
+        // the hero would otherwise be reporting nothing worth reading: before
+        // the first fetch lands, or over a genuine all-clear. Caught by
+        // `CanvasListsControlsSelfTest`'s C1 case, which mounts exactly that
+        // combination - a parked fleet task over empty local stores.
+        let answerIfAny = fleetSnapshot.map {
+            FleetGreeting.answer(tasks: $0.tasks,
+                                 readyCount: mergedPRs.map(FleetDataSource.readyToMergeCount) ?? 0,
+                                 prFetchFailure: prFetchFailure,
+                                 homeOk: $0.homeOk)
+        }
+        let heroHasNothingUrgent = answerIfAny.map { $0.metaRestatesCards } ?? true
+        if heroHasNothingUrgent,
+           let firstRun = Self.firstRunHeroCopy(hosts: sources.hostStore.hosts.count,
                                                 tasks: sources.shiftStore.activeTasks.count,
                                                 notes: sources.stickyBoardStore.activeNotes.count) {
             setHero(tint: nil,
