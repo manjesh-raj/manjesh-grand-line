@@ -347,7 +347,6 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
 
     private var setupSteps: [SetupStepState] = SetupStepKind.allCases.filter { $0.isPartOfFullSetupSequence }.map { SetupStepState(kind: $0) }
     private var isRunningFullSetup = false
-    private let setupStack = NSStackView()
     private let runFullSetupButton = HelmButton(title: "", variant: .primary)
     private let fullSetupSubtitleLabel = NSTextField(wrappingLabelWithString: "")
     private let progressTrack = NSView()
@@ -392,11 +391,21 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             self?.rebuildAfterThemeChangeIfVisible { self?.rebuildDynamicSections() }
         }
 
-        let header = buildHeader()
-
-        setupStack.orientation = .vertical
-        setupStack.alignment = .leading
-        setupStack.spacing = 8
+        // Review #3's UI5, both halves of it on this page:
+        //
+        //  - The Refresh pill sat alone in a 40pt row above every card, with a
+        //    flexible spacer to its left and nothing else in the row at all.
+        //  - The "Run full setup" card's body listed the same four steps as
+        //    the "Setup steps" stepper directly beneath it, with the same
+        //    names and the same status pills - a summary of the thing it is
+        //    sitting on top of.
+        //
+        // The pill moves into the "Setup steps" card's own header, which is
+        // exactly what it re-checks ("Re-check every setup step"), and the
+        // summary list goes: the stepper below is strictly richer, and the
+        // full-setup card keeps what only it has - the progress track, the
+        // live subtitle and the run button.
+        buildRefreshControls()
         let fullSetupCard = buildFullSetupCard()
 
         homeSectionContent = buildHomeSection()
@@ -439,7 +448,12 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             stepperStack.addArrangedSubview(row)
             row.widthAnchor.constraint(equalTo: stepperStack.widthAnchor).isActive = true
         }
-        let stepperCard = card(icon: "list.number", title: "Setup steps", content: stepperStack)
+        let stepperCard = HelmCard()
+        _ = stepperCard.setHeader(symbol: "list.number",
+                                  title: "Setup steps",
+                                  actions: [refreshBusyLabel, refreshPill])
+        stepperCard.setBody(stepperStack, insets: HelmCard.contentInsets)
+        cards.append(stepperCard)
 
         driftStack.orientation = .vertical
         driftStack.alignment = .leading
@@ -451,12 +465,11 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         notSyncedStack.spacing = 10
         let notSyncedCard = card(icon: "lock.slash", title: "Not synced here, by design", content: notSyncedStack)
 
-        let stack = NSStackView(views: [header, fullSetupCard, stepperCard, driftCard, notSyncedCard])
+        let stack = NSStackView(views: [fullSetupCard, stepperCard, driftCard, notSyncedCard])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
-        stack.setCustomSpacing(16, after: header)
 
         let content = FlippedView()
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -466,7 +479,6 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
             stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
             stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
             stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
-            header.widthAnchor.constraint(equalTo: stack.widthAnchor),
             fullSetupCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             stepperCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
             driftCard.widthAnchor.constraint(equalTo: stack.widthAnchor),
@@ -586,7 +598,15 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
     /// names this destination and states the live "N of 5 steps done" line
     /// (`drillHeaderSubtitle`), so the sentence restated the page's own name
     /// and said nothing the header did not.
-    private func buildHeader() -> NSView {
+    /// UI5: the Refresh pill and its busy label, configured for the "Setup
+    /// steps" card header's trailing action cluster.
+    ///
+    /// This used to be `buildHeader()`, which wrapped the same two views in a
+    /// row of their own with a flexible spacer - a 40pt band across the page
+    /// holding one small pill. `HelmCard.setHeader(actions:)` owns the
+    /// placement now, so the spacer and the row are both gone; nothing else
+    /// about the pill changed.
+    private func buildRefreshControls() {
         refreshIcon.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)?
             .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
         refreshIcon.translatesAutoresizingMaskIntoConstraints = false
@@ -625,16 +645,6 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         refreshBusyLabel.setContentHuggingPriority(.required, for: .horizontal)
         refreshBusyLabel.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        let spacer = NSView()
-        spacer.translatesAutoresizingMaskIntoConstraints = false
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-
-        let row = NSStackView(views: [spacer, refreshBusyLabel, refreshPill])
-        row.orientation = .horizontal
-        row.alignment = .centerY
-        row.spacing = 10
-        row.translatesAutoresizingMaskIntoConstraints = false
-        return row
     }
 
     /// Re-runs exactly the checks that populate this page's step statuses, and
@@ -866,7 +876,10 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
                        titleLabel: NSTextField(labelWithString: "Run full setup"),
                        subtitleLabel: fullSetupSubtitleLabel,
                        actions: [progressTrack, runFullSetupButton])
-        card.setBody(setupStack, insets: HelmCard.contentInsets)
+        // UI5: no body. Everything this card used to render below its header
+        // was a second, thinner drawing of the "Setup steps" stepper right
+        // underneath it. `HelmCard` collapses to its header when none is set,
+        // which is what a card with one action and one live line should be.
         cards.append(card)
         return card
     }
@@ -922,12 +935,6 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         // this is the one place the header's line is re-read from.
         defer { onDrillSubtitleChanged?() }
         syncSetupStepsWithLiveState()
-        clearStack(setupStack)
-        for step in setupSteps {
-            let row = setupStepRow(step)
-            setupStack.addArrangedSubview(row)
-            row.widthAnchor.constraint(equalTo: setupStack.widthAnchor).isActive = true
-        }
         runFullSetupButton.title = isRunningFullSetup ? "Running\u{2026}" : "Run full setup"
         runFullSetupButton.isEnabled = !isRunningFullSetup
         fullSetupSubtitleLabel.stringValue = fullSetupSubtitle
@@ -944,66 +951,8 @@ final class BootstrapController: NSViewController, DaylightDrillActions {
         progressFill.layer?.backgroundColor = HelmTheme.nsColor(theme.accentHex).cgColor
     }
 
-    /// Same shared `ToolRowLayout` as Software checklist/Managed items/Global
-    /// agent instructions (cockpit-bootstrap-row-width-parity) - no chevron/
-    /// log here either, since a setup step has nothing to expand. The detail
-    /// line reuses `stepDetail(for:)`, the same text the main stepper's own
-    /// per-step detail label already shows, rather than inventing new copy.
-    private func setupStepRow(_ step: SetupStepState) -> NSView {
-        let views = ToolRowLayout.Views(
-            iconTile: IconTileView(), nameLabel: NSTextField(labelWithString: ""),
-            detailLabel: NSTextField(labelWithString: ""), pill: NSView(),
-            pillLabel: NSTextField(labelWithString: ""), trailingStack: NSStackView(),
-            detailsButton: NSButton(), logField: NSTextField(wrappingLabelWithString: ""),
-            logContainer: NSView(), rowContainer: HoverHighlightView()
-        )
-        track(views.nameLabel, views.detailLabel)
-
-        let (pillText, pillColor) = setupStatusVisuals(step.status)
-        ToolRowLayout.pill(text: pillText, colorHex: pillColor, into: views.pill, label: views.pillLabel)
-
-        let row = ToolRowLayout.build(
-            views,
-            iconSymbol: step.kind.symbol,
-            tint: .neutral,
-            name: step.kind.title,
-            identifier: step.kind.title,
-            showDetails: false
-        )
-        views.detailLabel.stringValue = stepDetail(for: step.kind)
-        ToolRowLayout.applyTheme(views, theme: theme, detailFailed: false)
-
-        if case .failed(let reason) = step.status {
-            let reasonLabel = NSTextField(wrappingLabelWithString: reason)
-            reasonLabel.font = .systemFont(ofSize: 10.5)
-            reasonLabel.textColor = HelmTheme.nsColor(theme.ansiHex[1])
-            reasonLabel.preferredMaxLayoutWidth = 500
-            track(reasonLabel)
-            let column = NSStackView(views: [row, reasonLabel])
-            column.orientation = .vertical
-            column.alignment = .leading
-            column.spacing = 2
-            row.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
-            reasonLabel.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
-            return column
-        }
-        return row
-    }
-
-    private func setupStatusVisuals(_ status: SetupStepStatus) -> (String, String) {
-        switch status {
-        case .pending: return ("Pending", theme.chromeInkHex)
-        case .checking: return ("Checking\u{2026}", theme.chromeInkHex)
-        case .running: return ("Running\u{2026}", theme.chromeInkHex)
-        case .done: return ("Done", theme.ansiHex[2])
-        case .skipped: return ("Skipped", theme.chromeInkHex)
-        case .failed: return ("Failed", theme.ansiHex[1])
-        }
-    }
-
-    /// Keeps the summary bar's per-step status honest with the live state the
-    /// cards below it (and the main stepper's own dots, via `stepIsDone`)
-    /// already reflect - without this, a step defaults to `.pending` forever
+    /// Keeps each step's status honest with the live state the cards below it
+    /// (and the main stepper's own dots, via `stepIsDone`) already reflect - without this, a step defaults to `.pending` forever
     /// until an actual "Run full setup" pass sets it, even when the
     /// underlying thing is already done. Only touches steps that aren't
     /// currently showing a real run outcome (`.running`/`.failed`), so an

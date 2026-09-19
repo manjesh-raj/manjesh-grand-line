@@ -245,6 +245,43 @@ final class AppShellController: NSViewController {
     /// (Daylight §5.1) this is the only copy.
     private var activeHostID: UUID?
 
+    // MARK: The Console canvas card's peek rows (review #3's UI9)
+
+    /// How one console tab reads on the Console canvas card.
+    ///
+    /// **Review #3's UI9.** Every non-running tab used to read "exited",
+    /// which is the word a crash gets - and a shell the captain closed on
+    /// purpose is the overwhelmingly common case, so the card reported an
+    /// alarming state for the most ordinary event a terminal has. It was
+    /// honest (the process really had exited) and that is exactly why it
+    /// could not simply be softened: GL-14 forbids painting an unknown or a
+    /// failure as a clean result.
+    ///
+    /// `TabModel.ExitOutcome` is recorded where the termination actually
+    /// happens, which is what lets this tell the four cases apart rather than
+    /// collapsing them:
+    ///
+    /// - running -> `live`
+    /// - exit 0 -> `closed`, and `.idle` - the ordinary end of a shell
+    /// - exit N -> `exit N`, and `.warn` - the case that really is a fault
+    /// - ended with no status -> `ended`, and `.warn` - not a clean exit
+    /// - never started -> `idle`
+    ///
+    /// A static taking the three values rather than a `TabModel`, so the
+    /// mapping can be asserted without a live terminal and a real child
+    /// process (`Audit3UIFixesSelfTest`).
+    static func consolePeekRow(name: String,
+                               running: Bool,
+                               lastExit: TabModel.ExitOutcome) -> HelmModulePeekRow {
+        guard !running else { return HelmModulePeekRow(state: .ok, text: name, value: "live") }
+        switch lastExit {
+        case .clean: return HelmModulePeekRow(state: .idle, text: name, value: "closed")
+        case .failed(let status): return HelmModulePeekRow(state: .warn, text: name, value: "exit \(status)")
+        case .unknown: return HelmModulePeekRow(state: .warn, text: name, value: "ended")
+        case .none: return HelmModulePeekRow(state: .idle, text: name, value: "idle")
+        }
+    }
+
     // MARK: Live SSH sessions (`fm/grandline-session-switcher`)
 
     /// The app's one answer to "which hosts are live right now". Written only
@@ -915,6 +952,8 @@ final class AppShellController: NSViewController {
             self?.applySessionRegistry(registry)
         }
         health.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        // UI12: both pages' empty states now offer a way out of themselves.
+        health.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
         console.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // The four Engineering setup pages, each wired exactly like every
         // other conforming destination since
@@ -954,6 +993,7 @@ final class AppShellController: NSViewController {
         runbooks.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         runbooks.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
         postmortems.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        postmortems.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
         dictation.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Tools' subtitle counts open tool tabs, which the captain can change
         // without leaving the page. Like every line above it, this is safe
@@ -984,10 +1024,10 @@ final class AppShellController: NSViewController {
         // a console or learns what a tab is.
         homeCanvas.consoleTabsProvider = { [weak self] in
             guard let self else { return [] }
-            return self.console.tabs.map { tab in
-                HelmModulePeekRow(state: tab.terminal.process.running ? .ok : .idle,
-                                  text: tab.name,
-                                  value: tab.terminal.process.running ? "live" : "exited")
+            return self.console.tabs.map {
+                Self.consolePeekRow(name: $0.name,
+                                    running: $0.terminal.process.running,
+                                    lastExit: $0.lastExit)
             }
         }
         homeCanvas.connectedHostIDs = { [weak self] in

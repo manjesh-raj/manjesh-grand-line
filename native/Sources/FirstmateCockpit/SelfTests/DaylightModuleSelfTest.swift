@@ -1525,16 +1525,35 @@ enum DaylightModuleSelfTest {
                     fail("no \(module.rawValue) card rendered", &ok)
                     continue
                 }
-                // An honest loading state: it says it is checking, and it does
-                // NOT claim a number or an "all current" verdict.
-                if a.chipText != "Checking\u{2026}" {
+                // An honest loading state: it says it is still looking, and it
+                // does NOT claim a number or an "all current" verdict.
+                //
+                // **Review #3's UI10 moved where it says so, and this case
+                // moved with it** rather than being left beside a new one.
+                // Five of these cards render side by side on Engineering, and
+                // a `Checking\u{2026}` chip over a sentence beginning
+                // "Checking" - on all five, for the ~10s the first pass takes
+                // - read as one wall of identical cards rather than as five
+                // loading ones. The chip and the sentence are gone from the
+                // body; D3's skeleton says "not yet" by shape, and the
+                // sentence moved to the card's hover text.
+                //
+                // The property this case has always guarded is unchanged: the
+                // card must not look finished before it has an answer. It is
+                // asserted against what actually carries that now.
+                if a.chipText != nil {
                     fail("\(module.rawValue) shows chip \(a.chipText ?? "nil") before the first pass - "
-                         + "expected a Checking\u{2026} chip", &ok)
+                         + "five identical chips are what UI10 removed", &ok)
+                }
+                if !a.showsSkeleton {
+                    fail("\(module.rawValue) shows no D3 skeleton before the first pass - "
+                         + "nothing on the card says it is still looking", &ok)
+                }
+                if !(a.toolTip ?? "").lowercased().contains("checking") {
+                    fail("\(module.rawValue)'s hover text is '\(a.toolTip ?? "nil")' - "
+                         + "it no longer says what is being checked", &ok)
                 }
                 let body = (a.noteTexts + a.metricTexts).joined(separator: " ")
-                if !body.lowercased().contains("checking") {
-                    fail("\(module.rawValue)'s pre-pass body is '\(body)' - it does not say it is checking", &ok)
-                }
                 if !a.metricTexts.isEmpty {
                     fail("\(module.rawValue) rendered metric text \(a.metricTexts) before any pass - "
                          + "a fabricated number is exactly GL-14's failure", &ok)
@@ -1636,9 +1655,18 @@ enum DaylightModuleSelfTest {
             canvas.debugRenderNow()
 
             if let a = card(.vault) {
-                if a.chipText != "Checking\u{2026}" {
+                // UI10, as above: the loading state is D3's skeleton plus the
+                // hover text, not a chip and a sentence.
+                if a.chipText != nil {
                     fail("Vault shows chip \(a.chipText ?? "nil") before the first pass - "
-                         + "expected a Checking\u{2026} chip", &ok)
+                         + "five identical chips are what UI10 removed", &ok)
+                }
+                if !a.showsSkeleton {
+                    fail("Vault shows no D3 skeleton before the first pass", &ok)
+                }
+                if !(a.toolTip ?? "").lowercased().contains("checking") {
+                    fail("Vault's hover text is '\(a.toolTip ?? "nil")' - it no longer says "
+                         + "what is being checked", &ok)
                 }
                 if !a.metricTexts.isEmpty {
                     fail("Vault rendered metric text \(a.metricTexts) before any pass - "

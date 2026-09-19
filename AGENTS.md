@@ -30,7 +30,7 @@ as they are rather than rewritten across 180 files.
 - [Build, run, test](#build-run-test) - the two CI lanes, and the vendored patches a sync must re-apply
 - [Verification conventions](#verification-conventions) - how a change is proved here
 - [Writing a self-test](#writing-a-self-test)
-- [The AppKit gotcha catalogue](#the-appkit-gotcha-catalogue) - 15 measured traps
+- [The AppKit gotcha catalogue](#the-appkit-gotcha-catalogue) - 16 measured traps
 - [GL invariants](#gl-invariants) - GL-01 .. GL-38, one line each
 - [The component index](#the-component-index) - one button, one card, one row
 - [Stores, subprocesses and secrets](#stores-subprocesses-and-secrets)
@@ -461,7 +461,7 @@ fails unless its entry carries a trailing marker.
 
 ## The AppKit gotcha catalogue
 
-Fifteen traps, every one measured on this app rather than read about. Each was
+Sixteen traps, every one measured on this app rather than read about. Each was
 found by instrumenting a real layout or event pass; several took a full task to
 root-cause, and at least four have recurred in a new file after being fixed in
 an old one. **Read the ones that match what you are about to touch** - a tab
@@ -878,6 +878,37 @@ thread). Any future container that keeps many pages mounted needs the same
 treatment, and any "idle CPU" investigation should `sample` for CoreAutoLayout
 before suspecting a timer.
 
+### (16) A container whose height nothing ties is free to let its own content escape it
+
+**A view pinned at the top and only *capped* at the bottom has no height of its
+own, and Auto Layout resolves that by picking - including by breaking the
+required constraint that was supposed to hold its content inside it.**
+
+`HostsSideStack` is the measured case (`fm/grandline-audit3-ui-fixes`). It wraps
+one `NSScrollView`, pinned `scroll.top == top` with `scroll.bottom <= bottom`,
+and gives that scroll view a *preferred* height at `contentTie` (499) so the
+column ends above the page's gutter rather than stretching a card. Every one of
+those is individually correct. Together they leave the container's own height
+determined by nothing: the page pins its top and caps its bottom, and the only
+opinion in the system is a 499-priority preference.
+
+What that cost: rendered at 1512x950 with a host selected (which grows the
+detail panel, and so the document), the column's frame was
+`(1168, 244, 320, 606)` while the scroll view **inside it** sat at
+`(1168, 314, 320, 756)` - 220pt taller than its container and 120pt above the
+window's top edge, so the Workspace panel drew over the app's top bar. No
+"unable to simultaneously satisfy" was logged, because nothing was
+unsatisfiable: AppLayout simply broke the required `top ==` in favour of a
+system it could solve.
+
+It was latent for as long as the overflow happened to fall off the *bottom*, and
+became visible the moment UI1 moved the column's top up ~44pt. **The direction
+generalises**: a `top ==` / `bottom <=` pair plus a low-priority content-height
+preference is not a height, and the fix is to make the child exactly fill its
+container (`scroll.bottom == bottom`) and let the *page* decide how tall the
+container gets. Any wrapper of this shape - `HelmPageSidebar` uses the same
+mechanism - wants the same check.
+
 ---
 
 ## GL invariants
@@ -950,6 +981,7 @@ noted.
 | `HelmFormSheet` | a hand-built editor sheet |
 | `HelmConfirm` | an `NSAlert`, **except** where a command or binary is about to execute outside this app's control (the risk gates, the herdr restart, `beginSheetModal`) |
 | `HelmPageSidebar`, `HelmPageToolbar`, `HelmResponsiveGrid`, `HelmDrillHeader`, `HelmRefreshPill`, `HelmBarPanel`, `HelmSkeletonRow` | a per-page reimplementation of each |
+| `HelmCountBadge` | a bare number in a card header's action slot |
 | `HelmType` roles | a literal `systemFont(ofSize:)`; `HelmMetrics` for spacing and radii |
 | `HelmMotion` | a direct `accessibilityDisplayShouldReduceMotion` read - source-guarded |
 | `OffScreenProbe.window(...)` | `NSWindow(contentRect:)` in a suite - source-guarded |

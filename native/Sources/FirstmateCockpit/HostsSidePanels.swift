@@ -140,9 +140,14 @@ final class HostsWorkspacePanel: NSView {
         snippetsTile.value = "\(snippets)"
         liveTile.value = "\(live)"
         statusOK = touchIDAvailable
-        statusLabel.stringValue = touchIDAvailable
-            ? "Keychain available \u{00B7} Touch ID ready"
-            : "Keychain available \u{00B7} no biometry on this Mac"
+        // UI1: one wording, defined once - see `HostsKeychainCard.biometryPhrase`.
+        // The "Keychain available" half went with it: nothing here probes
+        // whether the Keychain is reachable, so it was an unconditional claim
+        // sitting beside the sidebar footer's own honest "Keychain / Empty"
+        // verdict, which is about a different thing (how many keys this app
+        // holds) and read as a contradiction.
+        statusLabel.stringValue = HostsKeychainCard.biometryPhrase(touchIDAvailable,
+                                                                   capitalized: true)
         applyTheme(theme)
     }
 
@@ -762,10 +767,36 @@ final class HostsSideStack: NSView {
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
             scroll.topAnchor.constraint(equalTo: topAnchor),
-            // `<=`, not `==`: the three cards size to their own content and the
-            // column simply ends above the page's bottom gutter rather than
-            // stretching one of them to fill it.
-            scroll.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor),
+            // **`==`, and review #3's UI1 is what made that necessary.**
+            //
+            // This was `<=`, on the reasoning that the three cards size to
+            // their own content and the column should end above the page's
+            // bottom gutter rather than stretch one of them to fill it. That
+            // reasoning is right and is unchanged - it is just not this
+            // constraint's job. With `<=` here and only `top ==` above,
+            // nothing tied this view's *own* height to the scroll view inside
+            // it, so the column's height was under-determined: the page pins
+            // its top and caps its bottom, and the only thing with an opinion
+            // about how tall it should be was the 499-priority content-height
+            // preference below.
+            //
+            // Auto Layout resolves an under-determined system by picking, and
+            // what it picked once the column got taller was to break the
+            // required `top ==` and let the scroll view escape upward.
+            // Measured at 1512x950 with a host selected (which grows the
+            // detail panel, and therefore the document): the column's frame
+            // was `(1168, 244, 320, 606)` while the scroll view inside it sat
+            // at `(1168, 314, 320, 756)` - 220pt taller than its own
+            // container and 120pt above the window's top edge, so the
+            // Workspace panel rendered over the app's top bar. UI1 removing
+            // the tab strip above this column moved its top up ~44pt, which is
+            // what turned a latent overflow into a visible one.
+            //
+            // `==` determines it: the scroll view is exactly this view, this
+            // view's height comes from the page (top pinned, bottom capped),
+            // and "as tall as its cards, but never a floor" stays exactly
+            // where it belongs - on the 499-priority `contentHeight` below.
+            scroll.bottomAnchor.constraint(equalTo: bottomAnchor),
 
             document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
             stack.leadingAnchor.constraint(equalTo: document.leadingAnchor),

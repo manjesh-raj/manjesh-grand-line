@@ -42,3 +42,89 @@
   - **`NSStackView.alignment = .height` is not a reliable way to equalise a row.** Measured, it left content-sized `HelmModuleCard`s at `[124, 143, 124]`. Explicit constraints are what holds - and they must be activated **after** the views are in their stack, or activating a constraint between views with no common ancestor raises and aborts the process.
   - **Two of PF2's injections did not reproduce a failure, and that is recorded rather than papered over.** With the hug at priority 1, removing the row tie and raising it back to required both leave the fixtures uniform anyway, because a row already equalises cards that express no strong height preference. The tie is kept as an explicit guarantee rather than as the mechanism, on the strength of a real render showing the property does *not* hold once a card has a stronger preference.
   - **The one behavioural contract that genuinely changed**: `DaylightDrillPageSlice6SelfTest` used to assert every plate reserves room for `maximumNumberOfLines` full lines, which was the only way a long description could be safe while the height was fixed. It now measures the lines the longest real description actually renders against the area it actually gets. It also has to lay out **twice** - `applyNoteWrapWidth` assigns `preferredMaxLayoutWidth` from the card's own `layout()`, which invalidates the label's intrinsic size and schedules another pass, so the first pass settles on a one-line label. The app gets the second pass for free; before PF2 it did not matter, because the height was fixed either way.
+
+---
+
+**`fm/grandline-audit3-ui-fixes` closed §5's UI findings (UI1-UI13).** Twelve
+changes and one deliberate non-change, each grounded in an off-screen render of
+the real page before and after rather than in a source-level guess - the same
+`Review3RenderProbe` the review itself used, re-pointed at the twelve pages §5
+names, in both theme families and at 1512 and 1100. The standing rules this
+produced are in the root `AGENTS.md` (gotcha (16), and `HelmCountBadge` in the
+component index); what follows is the branch's own account.
+
+- **UI1 settled the "sidebar *and* tab strip" question the other way, and that
+  reverses a recorded captain decision.** `HostsSidebar.swift`'s header said the
+  tab strip stays because the captain's own target screenshot showed both, with
+  the two wired as one mechanism so they could never disagree. UI1's finding is
+  that being one mechanism does not stop them being the same three words twice,
+  one row apart - so the strip is gone and the column is the page's whole
+  navigation. The column is the half that survived because it is strictly
+  richer (a glyph per scope, a TOOLS section, the keychain footer). The header
+  comment was rewritten rather than left to be discovered as stale.
+  - **The count went from four statements to one**, and picking which one
+    survives was the real decision: the Workspace panel, because its own
+    subtitle is "At-a-glance inventory", it is visible at the same time as all
+    three of the others, and it is the only one that also reports live
+    sessions. The sidebar badges, the card header's `Hosts (3)` and the drill
+    subtitle's counts all went. The drill subtitle keeps its *empty* case ("No
+    saved hosts yet"), which is a state to act on rather than a count.
+  - **Removing the strip exposed a latent layout bug 44pt away** - see gotcha
+    (16). `HostsSideStack`'s scroll view was escaping its own container by
+    220pt; it had been falling off the bottom, and moving the column's top up
+    put it over the app's top bar instead. Caught in the after-render, not in
+    review, and root-caused by printing the container's and the scroll view's
+    frames at capture time rather than at build time (they differ - `savePNG`
+    forces a layout pass of its own).
+- **UI2 fixed the disabled state for every palette, not for latte.** The
+  finding names latte's washed lavender pill, but the mechanism is
+  palette-independent: `restyleBody` resolved the *enabled* palette for a
+  disabled control and dropped `alphaValue` to 0.42, so a `.primary` rendered
+  as a pale wash of its own accent - which reads as a fault, not as "switched
+  off". macOS itself greys a disabled push button rather than fading a blue
+  one. `disabledPalette` is now a separate recipe (neutral surface, muted
+  label, no gradient, no whole-control dim), and `.quiet` keeps its own shape
+  because a filled grey pill on a switched-off toolbar glyph would be *more*
+  chrome than when it works.
+- **UI8's root cause was measured before anything was chosen, and the first
+  fix was not enough.** Outline against the card it sits on:
+  `catppuccin-latte` 2.30, `helm-dark` 1.55, `dusk` 1.37, `daylight` 1.33 - so
+  the same component reads as a button on Settings in latte and as a label on a
+  Schedules row in dusk. The fill was never going to carry it (`HelmField.fill`
+  measures 1.01-1.14 against a card by design). A first pass floored the
+  outline at 1.8, re-rendered, and the button still read as a dark capsule
+  beside the filled status pill next to it; 2.3 - latte's own measured number -
+  is what makes it read as a control, and leaves latte untouched to the
+  hundredth.
+- **UI9 needed new state, not new words.** `LocalProcess` exposes only
+  `running` after the fact, so "exited" was the only honest thing the Console
+  canvas card could say - and GL-14 forbids softening it into a claim the app
+  has not earned. `TabModel.ExitOutcome` is recorded in `processTerminated`
+  (and reset in `restartTabBookkeeping`, the one place every restart path goes
+  through), which is what lets the card distinguish `closed` from `exit 130`
+  from `ended` from `idle`.
+- **UI10 and UI4 are the same fix in two places**: D3's skeleton is this app's
+  loading language, and both pages predate it. The five Engineering cards' own
+  `checking:` sentences did differ - they truncate to the same first word at a
+  canvas column's width, which is what made them read as one wall - so they
+  moved to the card's tooltip rather than being deleted. The *stale* state
+  (a pass finished and produced nothing) deliberately stays a sentence: a
+  shimmer there would promise an answer that is not coming.
+- **UI13 is the one finding with no code change.**
+  `HelmSegmentedTabs.applyDaylightTheme` already carries the rationale in its
+  own doc comment (§7's resolution, so a drill page's tab strip and the
+  floating bar's space strip read as the same control one level apart), and
+  `HelmContrastSelfTest.checkSegmentedTabsRecipe` already asserts both recipes.
+  `Audit3UIFixesSelfTest` guards the *rationale* instead, so a future reader
+  who meets the divergence cannot delete the reason without failing a named
+  check.
+- **Two of the fifteen injections initially produced no failure, and both were
+  the same mistake.** `checkSecondaryButtonOutlineClearsTheFloor` read
+  `HelmButton.secondaryBorderMinRatio` as its expectation, so dropping the real
+  constant to 1.0 moved the check with it; and
+  `checkWarmingCanvasCardShowsASkeletonNotASentence` built its own
+  `.skeleton()` content rather than calling the canvas's own function, so
+  putting the old chip and sentence back in `fillPendingSetupSignal` was
+  invisible to it. The floor is a literal in the test now, and the canvas's
+  warming/stale branch was lifted into a static the suite actually drives. Both
+  re-injected and confirmed failing afterwards.

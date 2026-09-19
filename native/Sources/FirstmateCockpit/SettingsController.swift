@@ -104,7 +104,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     private let shellCwdField = HelmTextField(placeholder: "~ (Home)")
 
     // Appearance
-    private let appearanceContainer = NSStackView()
+    private let appearanceContainer = LayoutReportingStack()
 
     // Terminal
     private var fontPresetButtons: [Int: HelmButton] = [:]
@@ -277,10 +277,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         // same signal the theme grid's column count already did.
         rebuildCardLayout()
         layoutDidChangeWidths()
-        let width = appearanceContainer.frame.width
-        guard width > 0, abs(width - lastAppearanceGridWidth) > 0.5 else { return }
-        lastAppearanceGridWidth = width
-        rebuildAppearanceGrid()
+        appearanceGridWidthMayHaveChanged()
     }
 
     // MARK: Card layout (Daylight §7's "two-column cards")
@@ -466,6 +463,38 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         super.viewDidLayout()
         rebuildCardLayout()
         layoutDidChangeWidths()
+    }
+
+    /// Rebuild the theme grid if - and only if - the width it was laid out
+    /// against has actually moved.
+    ///
+    /// **Review #3's UI11.** The grid's column count is derived from
+    /// `appearanceContainer`'s real width, but the only thing that ever
+    /// re-derived it was `NSWindow.didResizeNotification` - and that handler
+    /// is (correctly) gated on this page being visible. So a captain who
+    /// launched the app at 1100 and then opened Settings got the grid built
+    /// during `loadView`, when the container's frame is still zero and
+    /// `HelmResponsiveGrid` falls back to its 860pt guess: five columns of
+    /// ~84pt in a ~482pt container, and "Solarized Light" rendered as
+    /// "Solarized\u{2026}".
+    ///
+    /// The container's **own** `layout()` is what drives this now (see
+    /// `LayoutReportingStack`), not this controller's `viewDidLayout` - which
+    /// is the same conclusion `containerWidthMayHaveChanged` records for the
+    /// resize case: a child view controller is not reliably told when its
+    /// subtree is laid out, and only the window's own content view controller
+    /// is. The view being measured always knows.
+    ///
+    /// The staleness check is the one the resize handler already did, so an
+    /// ordinary layout pass that changed nothing costs a float compare -
+    /// GL-20's "cheap check first, then pay". It also stops the rebuild
+    /// (which changes the subtree, and so schedules another layout pass) from
+    /// looping.
+    private func appearanceGridWidthMayHaveChanged() {
+        let width = appearanceContainer.frame.width
+        guard width > 0, abs(width - lastAppearanceGridWidth) > 0.5 else { return }
+        lastAppearanceGridWidth = width
+        rebuildAppearanceGrid()
     }
 
     /// Re-wrap every wrapping description on this page against the width it
@@ -762,6 +791,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         mutedLabel(desc)
         wrapping(desc)
 
+        appearanceContainer.onLayout = { [weak self] in self?.appearanceGridWidthMayHaveChanged() }
         appearanceContainer.orientation = .vertical
         appearanceContainer.alignment = .leading
         appearanceContainer.spacing = 8
@@ -787,7 +817,17 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// plus the checkmark and the card's insets actually need.
     private static let themeCardMinWidth: CGFloat = 150
 
+    #if FM_SELFTESTS
+    /// UI11's probe surface - see `debugThemeNameLabels`. Rebuilt with the
+    /// grid, so it never holds a label from a previous layout. GL-27: a
+    /// debug-only accessor's storage is debug-only too.
+    private var themeNameLabels: [NSTextField] = []
+    #endif
+
     private func rebuildAppearanceGrid() {
+        #if FM_SELFTESTS
+        themeNameLabels.removeAll()
+        #endif
         for v in appearanceContainer.arrangedSubviews {
             appearanceContainer.removeArrangedSubview(v)
             v.removeFromSuperview()
@@ -853,6 +893,9 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         // the right trade - the swatch identifies the theme too.
         nameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         nameLabel.translatesAutoresizingMaskIntoConstraints = false
+        #if FM_SELFTESTS
+        themeNameLabels.append(nameLabel)
+        #endif
 
         let check = NSImageView()
         check.image = NSImage(systemSymbolName: "checkmark.circle.fill", accessibilityDescription: nil)?
@@ -1420,6 +1463,12 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     var debugAppearanceGridColumnCounts: [Int] {
         appearanceContainer.arrangedSubviews.compactMap { ($0 as? NSStackView)?.arrangedSubviews.count }
     }
+
+    /// UI11: every theme card's own name label, so a suite can ask the one
+    /// question the column count cannot answer - whether the name actually
+    /// *fits* the card it was laid into. A column count that looks sensible
+    /// still truncates if the container was narrower than the grid believed.
+    var debugThemeNameLabels: [NSTextField] { themeNameLabels.filter { $0.window != nil || $0.superview != nil } }
     #endif
 
     private func applyTheme() {
@@ -1480,5 +1529,28 @@ extension Array {
     /// the Appearance grid to wrap theme cards into bounded-width rows.
     func chunked(into size: Int) -> [[Element]] {
         stride(from: 0, to: count, by: size).map { Array(self[$0..<Swift.min($0 + size, count)]) }
+    }
+}
+
+/// An `NSStackView` that tells its owner when it has been laid out.
+///
+/// Review #3's UI11. A view whose *content* depends on its own width has to
+/// hear about its own layout pass; a view controller's `viewDidLayout` is not
+/// that signal for a child controller (see
+/// `SettingsController.containerWidthMayHaveChanged`'s own note, and
+/// `ToolsController`'s before it), and the window resize notification only
+/// fires on a resize - never on a first visit at whatever size the window was
+/// already at.
+///
+/// Deliberately a closure rather than a delegate protocol: there is one
+/// listener, it is the view's own controller, and a protocol for one call
+/// would be more ceremony than the thing it describes.
+final class LayoutReportingStack: NSStackView {
+
+    var onLayout: (() -> Void)?
+
+    override func layout() {
+        super.layout()
+        onLayout?()
     }
 }

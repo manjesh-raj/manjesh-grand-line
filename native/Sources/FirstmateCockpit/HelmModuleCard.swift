@@ -131,6 +131,24 @@ final class HelmModuleCard: NSView {
         /// navigation target; a clause with `.none` renders as plain text
         /// rather than as a link that goes nowhere.
         case paragraph([BriefingClause])
+        /// D3's layout-shaped placeholder, for a card whose real answer has
+        /// not arrived yet.
+        ///
+        /// **Review #3's UI10.** The four Setup modules and Vault all render
+        /// while `BackgroundSignalsPoller`'s first pass is in flight, and each
+        /// filled its body with a sentence beginning "Checking" under an
+        /// identical `Checking\u{2026}` chip. Side by side on the Engineering
+        /// space that is a wall of five near-identical cards for the ~10s the
+        /// first pass takes, and at a canvas column's width the distinct
+        /// halves of those sentences truncate away, so what is left really is
+        /// the same words five times.
+        ///
+        /// A skeleton is the loading language this app already speaks -
+        /// Review, Overview, Updates and GitHub Sync all got one in D3 - and
+        /// it says "not yet" by shape rather than by repeating a word. The
+        /// cards stay distinguishable by the things that actually differ:
+        /// title, subtitle and artwork.
+        case skeleton(rows: Int = 2)
     }
 
     /// §6.1's "2-3 rows". A module that hands over more is showing a table on
@@ -202,6 +220,13 @@ final class HelmModuleCard: NSView {
         /// `symbol` stays required either way: it is the fallback if the asset
         /// fails to decode.
         var artwork: NSImage? = nil
+        /// Hover text for the whole card.
+        ///
+        /// UI10: a `.skeleton` body says "not yet" without saying what is
+        /// being waited on, and the per-card sentence that used to be the
+        /// body is worth keeping somewhere. `nil` everywhere else, which is
+        /// exactly what the card had before.
+        var toolTip: String? = nil
     }
 
     // Geometry (§2.7, §2.6).
@@ -338,6 +363,9 @@ final class HelmModuleCard: NSView {
     private var peekTextLabels: [NSTextField] = []
     private var peekValueLabels: [NSTextField] = []
     private var noteLabels: [NSTextField] = []
+    /// UI10: the `.skeleton` body's list, so `applyTheme` can re-tint its bars
+    /// the way every other body kind's views are re-tinted.
+    private var skeletonList: HelmSkeletonList?
     private var metricLabels: [NSTextField] = []
     private var unitLabels: [NSTextField] = []
 
@@ -499,6 +527,10 @@ final class HelmModuleCard: NSView {
         }
         titleLabel.stringValue = content.title
         subtitleLabel.stringValue = content.subtitle
+        // On the card view itself, not only on the inner surface: the whole
+        // module is the hover target a captain aims at.
+        toolTip = content.toolTip
+        card.toolTip = content.toolTip
 
         if let chip = content.chip {
             chipView.isHidden = false
@@ -525,6 +557,7 @@ final class HelmModuleCard: NSView {
         for view in bodyViews { view.removeFromSuperview() }
         bodyViews.removeAll()
         paragraphView = nil
+        skeletonList = nil
         ringGauge = nil
         progressBar = nil
         peekDots.removeAll()
@@ -549,6 +582,8 @@ final class HelmModuleCard: NSView {
             content = buildNote(text, maxLines: maxLines)
         case let .paragraph(clauses):
             content = buildParagraph(clauses)
+        case let .skeleton(rows):
+            content = buildSkeleton(rows: rows)
         }
 
         content.translatesAutoresizingMaskIntoConstraints = false
@@ -776,6 +811,15 @@ final class HelmModuleCard: NSView {
 
     private func buildNote(_ text: String, maxLines: Int = 2) -> NSView {
         verticalStack([noteLabel(text, maxLines: maxLines)], spacing: 0)
+    }
+
+    /// UI10's placeholder body. `HelmSkeletonList` owns the bars, the shimmer
+    /// and the Reduce-Motion gating, so this is only the placement.
+    private func buildSkeleton(rows: Int) -> NSView {
+        let list = HelmSkeletonList(rows: rows)
+        list.applyTheme(ThemeManager.shared.theme)
+        skeletonList = list
+        return verticalStack([list], spacing: 0)
     }
 
     private func buildParagraph(_ clauses: [BriefingClause]) -> NSView {
@@ -1060,6 +1104,7 @@ final class HelmModuleCard: NSView {
         for label in metricLabels { label.textColor = ink }
         for label in unitLabels { label.textColor = muted }
         for label in noteLabels { label.textColor = muted }
+        skeletonList?.applyTheme(theme)
         for label in peekTextLabels { label.textColor = ink }
         for label in peekValueLabels { label.textColor = muted }
         for separator in peekSeparators {
@@ -1122,6 +1167,15 @@ final class HelmModuleCard: NSView {
         /// What the body actually needs. Greater than `bodyAreaHeight` means
         /// this body kind has outgrown `standardHeight` and would be clipped.
         let bodyContentHeight: CGFloat
+        /// Whether the body is D3's loading placeholder.
+        ///
+        /// Review #3's UI10: the warming state stopped being a chip plus a
+        /// sentence, so `chipText`/`noteTexts` can no longer tell a loading
+        /// card from a finished one. This can.
+        let showsSkeleton: Bool
+        /// The card's hover text - where UI10 moved the "what is being
+        /// checked" sentence the body used to carry.
+        let toolTip: String?
     }
 
     /// C2/C3: the inner `HoverHighlightView` (which owns the transform) and
@@ -1189,7 +1243,9 @@ final class HelmModuleCard: NSView {
                 metricTexts: metricLabels.map(\.stringValue),
                 cardHeight: frame.height,
                 bodyAreaHeight: bodyContainer.frame.height,
-                bodyContentHeight: bodyViews.first?.fittingSize.height ?? 0)
+                bodyContentHeight: bodyViews.first?.fittingSize.height ?? 0,
+                showsSkeleton: skeletonList != nil,
+                toolTip: toolTip)
     }
 
     /// Fires the card's real click path, exactly as a mouse click or a

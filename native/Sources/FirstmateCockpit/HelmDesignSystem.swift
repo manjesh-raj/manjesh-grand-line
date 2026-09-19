@@ -1261,7 +1261,12 @@ final class HelmButton: NSButton {
             return Palette(fill: fill,
                            hoverFill: fill.hoverShifted(by: 0.07, forMode: theme.mode),
                            pressedFill: fill.hoverShifted(by: 0.12, forMode: theme.mode),
-                           border: line.withAlphaComponent(0.70),
+                           // UI8: floored against the card this control sits
+                           // on. A no-op on every palette that already clears
+                           // it, which is most of the twelve.
+                           border: Self.strengthenedBorder(line.withAlphaComponent(0.70),
+                                                           over: HelmTheme.nsColor(theme.chromeBackgroundHex),
+                                                           theme: theme),
                            // `chromeInkHex` is guaranteed against the theme's
                            // *card* surface, and this fill sits 8% off it -
                            // enough to drop solarized-dark's ink to 4.20:1
@@ -1358,7 +1363,14 @@ final class HelmButton: NSButton {
                            // `hair`, the design's own outline token, which is
                            // faint enough that a filled soft button still
                            // reads as soft.
-                           border: hair,
+                           //
+                           // UI8: floored against the card. `hair` on a
+                           // Daylight card measured 1.33-1.37:1, which is
+                           // where Schedules' "Review" stopped reading as a
+                           // control at all - see `secondaryBorderMinRatio`.
+                           border: Self.strengthenedBorder(hair,
+                                                           over: HelmTheme.nsColor(theme.chromeBackgroundHex),
+                                                           theme: theme),
                            label: Self.label(tint: tint, over: inset, theme: theme)
                                ?? HelmContrast.legible(ink, over: inset))
 
@@ -1386,6 +1398,121 @@ final class HelmButton: NSButton {
                            label: label)
         }
     }
+
+    /// The least separation a `.secondary` button's outline may have from the
+    /// surface it sits on.
+    ///
+    /// **Review #3's UI8, and the measurement behind it.** Schedules' row-level
+    /// "Review" action rendered as bare text on a card: no fill anyone could
+    /// see, and an outline nobody could. Measured, per theme, outline against
+    /// `chromeBackgroundHex`:
+    ///
+    /// | theme | fill vs card | outline vs card |
+    /// |---|---|---|
+    /// | `catppuccin-latte` | 1.11 | **2.30** |
+    /// | `helm-dark` | 1.35 | **1.55** |
+    /// | `dusk` | 1.06 | **1.37** |
+    /// | `daylight` | 1.14 | **1.33** |
+    ///
+    /// The fill was never going to carry the control - it is the app's one
+    /// *sunken* surface and is meant to be a whisper (`HelmField.fill`'s own
+    /// doc records it measuring 1.01-1.14 against a card on several palettes).
+    /// The outline is what says "this is a control", and on the Daylight family
+    /// it was arriving at little over half the separation the twelve palettes
+    /// give it - which is why the same component reads as a button on the
+    /// Settings page in latte and as a label on a Schedules row in dusk.
+    ///
+    /// **2.3 is the best of the four, not a number picked by eye**: it is
+    /// `catppuccin-latte`'s own measured 2.302, the one palette in the table
+    /// where this control reads correctly today. So latte is untouched to the
+    /// hundredth and the three that were short are brought up to it, rather
+    /// than every button in the app being re-drawn to a new look. A first pass
+    /// at 1.8 was tried and re-rendered: it lifted dusk's outline to 1.90 and
+    /// the button still read as a dark capsule beside the filled status pill
+    /// next to it - visibly better, not yet a control.
+    ///
+    /// A ratio rather than a fixed alpha because the whole point is the
+    /// *relationship* to the surface, which is exactly what differs between
+    /// these palettes.
+    static let secondaryBorderMinRatio: Double = 2.3
+
+    /// Step `border` toward the theme's ink until it clears
+    /// `secondaryBorderMinRatio` against `surface`.
+    ///
+    /// Toward **ink**, which is the direction that works in both registers
+    /// without a light/dark branch: on a dark palette ink is light and the
+    /// outline brightens, on a light palette ink is dark and it deepens.
+    /// Capped, so a palette that cannot reach the floor ends at the ink itself
+    /// rather than looping.
+    static func strengthenedBorder(_ border: NSColor, over surface: NSColor,
+                                   theme: HelmTheme) -> NSColor {
+        guard HelmContrast.ratio(border, surface) < Self.secondaryBorderMinRatio else { return border }
+        let ink = HelmTheme.nsColor(theme.chromeInkHex)
+        var candidate = border
+        // 5% steps: fine enough that a palette stops as soon as it clears the
+        // floor rather than overshooting into a hard outline.
+        for step in stride(from: 0.05, through: 1.0, by: 0.05) {
+            guard let mixed = border.blended(withFraction: CGFloat(step), of: ink) else { break }
+            // The blend drops the source's alpha, and a `.secondary` outline is
+            // deliberately translucent on the twelve palettes - so it is put
+            // back rather than silently turning every border opaque.
+            candidate = mixed.withAlphaComponent(border.alphaComponent)
+            if HelmContrast.ratio(candidate, surface) >= Self.secondaryBorderMinRatio { break }
+        }
+        return candidate
+    }
+
+    /// What a **disabled** button paints, in every palette.
+    ///
+    /// **Review #3's UI2, and why it is one recipe rather than a latte patch.**
+    /// Until this, `restyleBody` painted a disabled button with its *enabled*
+    /// palette and dropped `alphaValue` to 0.42. On a `.secondary` that is
+    /// harmless - a grey control at 42% still reads grey. On a `.primary` it
+    /// takes the theme's accent, an opaque saturated fill, and renders it as a
+    /// pale wash of that same hue with a pale label on top: in
+    /// `catppuccin-latte` the Fleet drill's disabled Refresh came out a washed
+    /// lavender pill that reads as a control that has gone wrong, not one that
+    /// is switched off. macOS itself does the opposite - a disabled push
+    /// button is *neutral*, never a faded blue - and that is what this is.
+    ///
+    /// So a disabled button leaves its variant's hue behind entirely and takes
+    /// the theme's own sunken-control surface with a muted label. The hue is
+    /// what carried "this is the action", and a disabled control is precisely
+    /// the one that is not offering it.
+    ///
+    /// `.quiet` is the one variant that keeps its own shape: it is a bare
+    /// toolbar glyph sitting directly on a page, and giving it a filled grey
+    /// pill when it is switched off would be *more* chrome than when it works.
+    /// It dims its label instead.
+    ///
+    /// Not routed through `HelmContrast`: a disabled control is deliberately
+    /// below the text floor (WCAG exempts inactive controls, and a disabled
+    /// label that meets 4.5:1 reads as enabled). `FM_RUN_CONTRAST_TESTS`
+    /// sweeps `palette(...)` above, which is unchanged.
+    static func disabledPalette(variant: Variant, theme: HelmTheme) -> Palette {
+        let muted = HelmTheme.mutedInk(theme)
+        let line = HelmTheme.nsColor(theme.chromeLineHex)
+        let label = muted.withAlphaComponent(Self.disabledLabelAlpha)
+        guard variant != .quiet else {
+            return Palette(fill: .clear, hoverFill: .clear, pressedFill: .clear,
+                           border: .clear, label: label)
+        }
+        let fill = theme.isDaylight
+            ? HelmTheme.nsColor(theme.daylightTokens.inset)
+            : HelmField.fill(theme)
+        // Hover and press resolve to the resting fill on purpose: a disabled
+        // control that still lights up under the pointer is the other half of
+        // "reads as broken".
+        return Palette(fill: fill, hoverFill: fill, pressedFill: fill,
+                       border: line.withAlphaComponent(Self.disabledBorderAlpha),
+                       label: label)
+    }
+
+    /// How far the disabled label is faded against the theme's muted ink.
+    /// Enough to read as inactive beside an enabled sibling, not so far that
+    /// the button's words become unreadable.
+    static let disabledLabelAlpha: CGFloat = 0.6
+    static let disabledBorderAlpha: CGFloat = 0.45
 
     /// A tinted label, contrast-corrected against the surface it lands on -
     /// `nil` when no tint was asked for, so the caller falls back to ink.
@@ -1454,7 +1581,11 @@ final class HelmButton: NSButton {
 
     private func restyleBody() {
         let theme = ThemeManager.shared.theme
-        let p = Self.palette(variant: variant, tint: tint, theme: theme, domainHue: domainHue)
+        // UI2: a disabled button is a different recipe, not the same one at a
+        // lower alpha. See `disabledPalette`.
+        let p = isEnabled
+            ? Self.palette(variant: variant, tint: tint, theme: theme, domainHue: domainHue)
+            : Self.disabledPalette(variant: variant, theme: theme)
 
         let fill: NSColor
         if !isEnabled { fill = p.fill }
@@ -1463,7 +1594,10 @@ final class HelmButton: NSButton {
         else { fill = p.fill }
 
         layer?.cornerRadius = Self.cornerRadius(for: theme, height: bounds.height)
-        let showsGradient = gradientFill && variant == .primary && theme.isDaylight
+        // A disabled `.primary` takes the neutral surface above, so the
+        // domain-hue ramp underneath it has to come off with the fill - it
+        // draws in its own layer and would otherwise show straight through.
+        let showsGradient = gradientFill && variant == .primary && theme.isDaylight && isEnabled
         if showsGradient {
             if !fillGradientInstalled, let layer {
                 fillGradient.startPoint = HelmDomainHue.ribbonStart
@@ -1500,8 +1634,11 @@ final class HelmButton: NSButton {
         // on, since a capsule on warm paper needs a touch more edge than a
         // squared control on a tonal one.
         layer?.borderWidth = p.border.alphaComponent > 0 ? (theme.isDaylight ? 1.5 : 1) : 0
-        // Dim the whole control, not just chrome the cell no longer draws.
-        alphaValue = isEnabled ? 1 : 0.42
+        // UI2: the "switched off" signal now lives in the colours above, so
+        // the whole-control dim is gone. It was what turned an accent fill
+        // into a washed version of the same hue; a neutral control at 42%
+        // would additionally fade its own border away to nothing.
+        alphaValue = 1
 
         let variantLabel = (variant == .quiet && isHovering && isEnabled)
             ? HelmTheme.nsColor(theme.chromeInkHex)
@@ -4313,4 +4450,95 @@ enum HelmResponsiveGrid {
             return stack
         }
     }
+}
+
+// MARK: - HelmCountBadge
+
+/// A small pill carrying one number, for a card header's trailing action slot.
+///
+/// **Review #3's UI4.** The Vault page put its Secrets and Verified Launchers
+/// counts in their card headers as a bare monospaced `0` with no surface at
+/// all - beside a filled "+ Add Secret" button on one card and alone on the
+/// other, which left a lone digit floating in a header that is otherwise made
+/// of objects. Every other count in this app that sits beside something has a
+/// pill under it (`HelmPageSidebar`'s `.badge` rows, `HelmAccentRow`'s chip),
+/// and this is that treatment extracted so a third header does not hand-roll a
+/// fourth copy - the component index's own rule.
+///
+/// The recipe is `HelmPageSidebar`'s resting badge, deliberately: a badge
+/// carrying a *number* takes the theme's own line tone rather than a semantic
+/// hue, because the number is not a state. A caller that wants a state chip
+/// wants `HelmAccentRow`'s, not this.
+final class HelmCountBadge: NSView {
+
+    /// Matches `HelmPageSidebar.Metrics.badgeHeight`/`badgeInset`. Not shared
+    /// through that type because they are private to it and a sidebar row's
+    /// metrics changing for sidebar reasons should not silently move a card
+    /// header's badge.
+    static let height: CGFloat = 18
+    static let inset: CGFloat = HelmMetrics.s2 - 2
+    /// How strongly the line tone reads as a surface under the digits.
+    static let fillAlpha: CGFloat = 0.55
+
+    private let label = NSTextField(labelWithString: "")
+
+    /// The text shown. A string rather than an `Int` because the callers that
+    /// need this also need GL-14's "not a number yet" state, which they spell
+    /// `?`.
+    var text: String {
+        get { label.stringValue }
+        set {
+            label.stringValue = newValue
+            // A hidden badge rather than an empty pill: a pill with nothing in
+            // it reads as a count of zero, which is exactly the claim GL-14
+            // forbids making when there is no count.
+            isHidden = newValue.isEmpty
+        }
+    }
+
+    init(text: String = "") {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        // Monospaced digits so a count that changes does not reflow the header
+        // around it - `HelmType.metric`'s own reason.
+        label.font = HelmType.metric(11, weight: .medium)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.alignment = .center
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.inset),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.inset),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            heightAnchor.constraint(equalToConstant: Self.height),
+            // A single digit still reads as a pill rather than as a sliver.
+            widthAnchor.constraint(greaterThanOrEqualToConstant: Self.height + 2),
+        ])
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+        // The badge is the number plus its surface; VoiceOver should hear the
+        // number once, from the label it is already reading.
+        setAccessibilityElement(false)
+        self.text = text
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    override func layout() {
+        super.layout()
+        layer?.cornerRadius = bounds.height / 2
+    }
+
+    func applyTheme(_ theme: HelmTheme) {
+        layer?.cornerRadius = Self.height / 2
+        layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex)
+            .withAlphaComponent(Self.fillAlpha).cgColor
+        label.textColor = HelmTheme.mutedInk(theme)
+    }
+
+    #if FM_SELFTESTS
+    var debugFill: NSColor? { layer?.backgroundColor.map { NSColor(cgColor: $0) ?? .clear } }
+    var debugCornerRadius: CGFloat { layer?.cornerRadius ?? 0 }
+    var debugTextColor: NSColor? { label.textColor }
+    #endif
 }

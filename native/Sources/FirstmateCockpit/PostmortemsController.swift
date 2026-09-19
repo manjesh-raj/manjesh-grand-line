@@ -34,10 +34,41 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
     private let postmortemListStack = NSStackView()
     private let postmortemDetailScroll = NSScrollView()
     private let postmortemDetailTextView = NSTextView()
-    private let postmortemEmptyState = HelmEmptyState(
+    /// Review #3's UI12: the empty state was a single sentence with nothing to
+    /// press - it named the two places a postmortem comes from and then left
+    /// the captain to find them. It carries the app's established
+    /// call-to-action shape now (`HelmEmptyState`'s `accessory` slot, the same
+    /// one Docs' "Sync Now" and Kubernetes' "Open Hosts" use), and
+    /// `.standard` rather than the default `.compact` because a state with an
+    /// action is a wall the page is showing on purpose, not a note in a cell.
+    ///
+    /// The Log Analyzer is the button rather than SRE Lead because it is a
+    /// real `RailDestination` this page can navigate to in one call, and its
+    /// "Create RCA" mode writes into the same `DocsRunbookStore` this list
+    /// reads. SRE Lead lives inside a Console tab and has no destination of
+    /// its own, so it stays named in the copy where it is accurate.
+    private lazy var postmortemEmptyState = HelmEmptyState(
         symbol: "doc.text.magnifyingglass",
-        body: "No postmortems yet. Generate one from an SRE Lead investigation and it will appear here.",
-        hue: RailDestination.postmortems.domainHue)
+        title: "No postmortems yet",
+        body: "Postmortems are written for you from an SRE Lead investigation, or from the Log Analyzer's own \u{201C}Create RCA\u{201D} mode. Whichever writes one, it appears here.",
+        size: .standard,
+        accessory: {
+            let button = HelmButton(title: "Open Log Analyzer", variant: .secondary)
+            button.target = self
+            button.action = #selector(openLogAnalyzerTapped)
+            button.toolTip = "Analyze captured output and turn it into an RCA."
+            return button
+        }(),
+        hue: RailDestination.postmortems.domainHue,
+        // D4: this is the whole content area of a full-width page - the "big
+        // pages open onto beige silence" case that watermark exists for.
+        artwork: RailDestination.postmortems.drillHeaderArtwork)
+
+    /// Where this page hands a destination change up, exactly the shape
+    /// `FleetController` and `SchedulesController` already use.
+    var onNavigateToDestination: ((RailDestination) -> Void)?
+
+    @objc private func openLogAnalyzerTapped() { onNavigateToDestination?(.logAnalyzer) }
     private var selectedPostmortemID: String?
     private var postmortemGridItems: [DocGridItem] = []
 
@@ -138,7 +169,12 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
         // document-view width constraint.
         listContent.widthAnchor.constraint(equalTo: postmortemListScroll.contentView.widthAnchor).isActive = true
 
-        postmortemEmptyState.heightAnchor.constraint(equalToConstant: 110).isActive = true
+        // UI12: `.standard` with an action button is taller than the 110pt the
+        // one-line `.compact` state fitted in. A floor rather than a fixed
+        // height, so the copy and the button decide the rest - a fixed height
+        // is what clips a wrapped body at a narrower window.
+        postmortemEmptyState.heightAnchor.constraint(greaterThanOrEqualToConstant: 110).isActive = true
+
 
         postmortemDetailTextView.isEditable = false
         postmortemDetailTextView.isRichText = false
@@ -164,6 +200,13 @@ final class PostmortemsController: NSViewController, DaylightDrillActions {
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -18),
             stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 16),
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -16),
+            // The state is centred copy, so it needs the page's width to
+            // centre *in*; in a `.leading`-aligned stack it would otherwise
+            // sit at its natural width hard against the gutter. A width tie
+            // rather than a hugging priority, because `HelmEmptyState` has no
+            // intrinsic content size and a content-priority API is a no-op on
+            // a view that does not (AGENTS.md gotcha (12)).
+            postmortemEmptyState.widthAnchor.constraint(equalTo: stack.widthAnchor),
             postmortemListScroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             postmortemListScroll.heightAnchor.constraint(equalToConstant: 220),
             postmortemDetailScroll.widthAnchor.constraint(equalTo: stack.widthAnchor),

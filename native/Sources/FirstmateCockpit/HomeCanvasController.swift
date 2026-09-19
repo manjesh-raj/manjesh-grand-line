@@ -1153,8 +1153,40 @@ final class HomeCanvasController: NSViewController {
     private func fillPendingSetupSignal(_ content: inout HelmModuleCard.Content,
                                         checking: String,
                                         stale: String) {
-        content.chip = Self.pollerIsStillWarmingUp ? .mute("Checking\u{2026}") : nil
-        content.body = .note(Self.pollerIsStillWarmingUp ? checking : stale)
+        Self.applyPendingSetupSignal(&content,
+                                     warmingUp: Self.pollerIsStillWarmingUp,
+                                     checking: checking,
+                                     stale: stale)
+    }
+
+    /// The two honest "no number yet" states, as a pure function of which one
+    /// it is.
+    ///
+    /// **Review #3's UI10.** The warming half used to be a
+    /// `Checking\u{2026}` chip over a sentence, on all five cards at once -
+    /// see `HelmModuleCard.Body`'s `.skeleton` case for why that read as a
+    /// wall rather than as five loading cards. The chip and the sentence are
+    /// both gone from the body; the sentence survives as the card's tooltip,
+    /// so the detail is still a hover away.
+    ///
+    /// A static taking `warmingUp` rather than reading the poller, so the two
+    /// states can be asserted without waiting fifteen minutes for a real pass
+    /// (`Audit3UIFixesSelfTest`).
+    static func applyPendingSetupSignal(_ content: inout HelmModuleCard.Content,
+                                        warmingUp: Bool,
+                                        checking: String,
+                                        stale: String) {
+        guard warmingUp else {
+            // A pass finished and produced nothing. That is a real fault, not
+            // ordinary startup, and it says so in words - a skeleton here
+            // would promise an answer that is not coming.
+            content.chip = nil
+            content.body = .note(stale)
+            return
+        }
+        content.chip = nil
+        content.body = .skeleton()
+        content.toolTip = checking
     }
 
     /// Updates: how many catalog tools have a newer version available. The

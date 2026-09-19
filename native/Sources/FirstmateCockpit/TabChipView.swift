@@ -250,6 +250,13 @@ final class TabChipView: NSView, NSTextFieldDelegate {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
+    /// UI3: how far the unselected chip's hairline is faded against the
+    /// selected chip's full-strength one. The two borders are the same colour
+    /// at different strengths on purpose - a chip that changed *hue* on
+    /// selection would be a second signal competing with the fill, the accent
+    /// dot and the label weight that already carry it.
+    static let unselectedBorderAlpha: CGFloat = 0.45
+
     // MARK: Accessibility and keyboard (GL-16)
 
     private var isSelectedChip = false
@@ -348,9 +355,33 @@ final class TabChipView: NSView, NSTextFieldDelegate {
         // and nothing to get wrong.
         let cardFill = HelmTheme.nsColor(theme.chromeBackgroundHex)
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
-        layer?.backgroundColor = (selected ? cardFill : .clear).cgColor
-        layer?.borderWidth = selected ? 1 : 0
-        layer?.borderColor = HelmTheme.nsColor(theme.chromeLineHex).cgColor
+        let line = HelmTheme.nsColor(theme.chromeLineHex)
+        // Review #3's UI3, and the correction to E4's recipe above. "Selected
+        // = elevated, unselected = flat" was implemented as "unselected =
+        // *nothing*": a clear fill and no border at all, so the first tab of a
+        // two-tab console rendered as the bare word "Shell" floating beside a
+        // bordered chip. It reads as a caption for the chip next to it rather
+        // than as the other tab, which is also why it is not obvious it can be
+        // clicked.
+        //
+        // The elevation E4 asks for survives, because it was never carried by
+        // the unselected state being empty: the selected chip still takes the
+        // **card** fill and a full-strength hairline, and still owns the accent
+        // dot and the semibold label. An unselected chip takes the app's one
+        // sunken-control fill (`HelmField.fill`, the same surface a
+        // `.secondary` button and a text field sit on) and a faded hairline -
+        // so it reads as recessed *below* the bar rather than raised above it,
+        // which is the direction a real tab strip uses and the opposite of the
+        // selected chip's.
+        //
+        // Deliberately derived, not a literal: `chromeBackgroundHex` is the
+        // toolbar's own fill (`HelmPageToolbar.applyTheme`), so an unselected
+        // chip painted with the card colour would be invisible for exactly the
+        // reason the old clear fill was.
+        layer?.backgroundColor = (selected ? cardFill : HelmField.fill(theme)).cgColor
+        layer?.borderWidth = 1
+        layer?.borderColor = (selected ? line
+                                       : line.withAlphaComponent(Self.unselectedBorderAlpha)).cgColor
         // The accent has not gone - it moved from the whole fill to a leading
         // dot, which is what still carries a *host's own* `accentHex` when a
         // dedicated host page's chip has one.
@@ -376,6 +407,11 @@ final class TabChipView: NSView, NSTextFieldDelegate {
     var debugLabelColor: NSColor? { label.textColor }
     var debugAccentDotVisible: Bool { !accentDot.isHidden && accentDotWidth.constant > 0 }
     var debugCloseButtonHidden: Bool { closeButton.isHidden }
+    /// UI3: the chip's own painted surface and outline, so a suite can assert
+    /// that an *unselected* chip draws something rather than nothing.
+    var debugChipFill: NSColor? { layer?.backgroundColor.map { NSColor(cgColor: $0) ?? .clear } }
+    var debugChipBorder: NSColor? { layer?.borderColor.map { NSColor(cgColor: $0) ?? .clear } }
+    var debugChipBorderWidth: CGFloat { layer?.borderWidth ?? 0 }
     func debugSetHovering(_ hovering: Bool) {
         isHovering = hovering
         refreshCloseButton()
