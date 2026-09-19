@@ -1858,6 +1858,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_CLAUDE_ONE_SHOT_TESTS"] == "1" {
     exit(ClaudeOneShotSelfTest.run() ? 0 : 1)
 }
 
+// `fm/grandline-audit3-perf-security-fixes` (full review #3, S1): every
+// `claude -p` run is fail-closed on the built-in tool set via `--tools`, so
+// the captain's global `permissions.allow` cannot widen a read-only persona -
+// see ClaudeOneShotToolPolicySelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_CLAUDE_TOOL_POLICY_TESTS"] == "1" {
+    exit(ClaudeOneShotToolPolicySelfTest.run() ? 0 : 1)
+}
+
 // `fm/grandline-review-phase2-harden` (GL-10/GL-11/GL-30): throwing
 // persistence writes funnelled through PersistenceFailureReporter, and the
 // ServiceHealth registry behind the Health card - see Phase2HardeningSelfTest.swift.
