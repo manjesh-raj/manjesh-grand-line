@@ -381,9 +381,29 @@ enum HostsRedesignSelfTest {
 
         // The Keychain line is a real `LAContext` probe, so it says one of two
         // things - never the reference's unconditional "Touch ID enabled".
+        //
+        // **Case-insensitive, and UI1 is why.** The panel's line is a sentence
+        // of its own and the sidebar footer's is the tail of one, so the two
+        // differ in exactly one letter; comparing case-sensitively here failed
+        // on CI (a runner has no biometry, so it takes the branch this Mac
+        // never does) while passing on every developer machine with Touch ID.
+        // The property is which *fact* is stated, not how it is capitalised.
         let status = controller.debugSideStack.workspace.debugStatusText
-        if !(status.contains("Touch ID ready") || status.contains("no biometry")) {
+        if !(status.localizedCaseInsensitiveContains("Touch ID ready")
+             || status.localizedCaseInsensitiveContains("no biometry")) {
             fail("keychain status reads \"\(status)\"", &ok)
+        }
+        // UI1: the page states this fact twice - here and in the sidebar's
+        // footer card - and it used to state it in two vocabularies ("Touch ID
+        // enabled" against "Touch ID ready"). One function owns the wording
+        // now, so the two must agree, and this is what fails if a future edit
+        // gives one of them its own words back.
+        let footer = controller.debugKeychainCard.debugDetail
+        let phrase = HostsKeychainCard.biometryPhrase(CredentialVaultKeyStore.biometryAvailable)
+        if !footer.localizedCaseInsensitiveContains(phrase)
+            || !status.localizedCaseInsensitiveContains(phrase) {
+            fail("the two keychain lines disagree: panel \"\(status)\" vs footer "
+                 + "\"\(footer)\" (both should carry \"\(phrase)\")", &ok)
         }
         if ok { print("  OK - 2/1/1/1 from the real stores, tiles follow a write, status is a real probe") }
     }

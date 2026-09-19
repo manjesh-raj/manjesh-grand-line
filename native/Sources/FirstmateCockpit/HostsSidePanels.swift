@@ -146,8 +146,8 @@ final class HostsWorkspacePanel: NSView {
         // sitting beside the sidebar footer's own honest "Keychain / Empty"
         // verdict, which is about a different thing (how many keys this app
         // holds) and read as a contradiction.
-        statusLabel.stringValue = HostsKeychainCard.biometryPhrase(touchIDAvailable)
-            .prefix(1).uppercased() + HostsKeychainCard.biometryPhrase(touchIDAvailable).dropFirst()
+        statusLabel.stringValue = HostsKeychainCard.biometryPhrase(touchIDAvailable,
+                                                                   capitalized: true)
         applyTheme(theme)
     }
 

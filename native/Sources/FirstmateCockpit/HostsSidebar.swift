@@ -148,8 +148,13 @@ final class HostsKeychainCard: NSView {
     /// "ready" rather than "enabled": what the probe actually answers is
     /// `LAContext.canEvaluatePolicy` - whether a biometric prompt would work
     /// right now - not whether a setting is switched on somewhere.
-    static func biometryPhrase(_ available: Bool) -> String {
-        available ? "Touch ID ready" : "no biometry on this Mac"
+    /// - Parameter capitalized: the Workspace panel's line is a sentence of
+    ///   its own; this card's is the tail of one ("0 keys \u{00B7} \u{2026}").
+    ///   Same words either way, which is the whole point.
+    static func biometryPhrase(_ available: Bool, capitalized: Bool = false) -> String {
+        let phrase = available ? "Touch ID ready" : "no biometry on this Mac"
+        guard capitalized else { return phrase }
+        return phrase.prefix(1).uppercased() + phrase.dropFirst()
     }
 
     func applyTheme(_ theme: HelmTheme) {
