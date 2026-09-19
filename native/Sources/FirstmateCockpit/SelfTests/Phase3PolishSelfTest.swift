@@ -29,6 +29,7 @@ enum Phase3PolishSelfTest {
         checkGrowthCaps(&ok)
         checkUndoToastShape(&ok)
         checkSuitesRestoreTheTheme(&ok)
+        checkSignalInterruptedRunIsRecovered(&ok)
         print(ok ? "Phase3PolishSelfTest: all checks passed" : "Phase3PolishSelfTest: FAILED")
         return ok
     }
@@ -85,6 +86,13 @@ enum Phase3PolishSelfTest {
                 .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
                 .joined(separator: "\n")
             guard code.contains("ThemeManager.shared.setTheme") else { continue }
+            // `SelfTestDefaultsGuard` is the one file whose *job* is to call
+            // `setTheme` with a value it read from somewhere other than the
+            // live one - a sidecar an interrupted run left behind. Requiring
+            // it to save-and-restore would be requiring it not to restore.
+            // Named rather than pattern-matched, so a second such file has to
+            // come here and argue for itself.
+            guard file.lastPathComponent != "SelfTestDefaultsGuard.swift" else { continue }
             checked += 1
             if !code.contains("= ThemeManager.shared.theme") {
                 offenders.append(file.lastPathComponent)
@@ -285,6 +293,101 @@ enum Phase3PolishSelfTest {
     }
 
     private static func undoButtonCount(in view: NSView) -> Int { undoButtons(in: view).count }
+
+    // MARK: Suite hygiene - an interrupted run must not poison the next one
+
+    /// The half `checkSuitesRestoreTheTheme` above structurally cannot cover.
+    ///
+    /// That guard asserts every suite *saves* the theme before changing it,
+    /// which is a necessary condition for putting it back - and a `defer`
+    /// restore only runs on a normal exit. P4 of full review #3 measured the
+    /// other case: a SIGSEGV in a probe left `fm.themeID` on
+    /// `catppuccin-latte` with no `defer` ever firing, and the next unrelated
+    /// run failed `FM_RUN_CONTRAST_TESTS` and
+    /// `FM_RUN_DAYLIGHT_DRILL_SLICE2_TESTS` on a clean tree. The runner's own
+    /// SIGKILL at `FM_SUITE_TIMEOUT` does the same thing.
+    ///
+    /// `SelfTestDefaultsGuard`'s recovery is what closes it, and this drives
+    /// that recovery path directly rather than by killing a process: plant the
+    /// sidecar an interrupted run would have left, move the live value away
+    /// from it, and require the recovery to put it back.
+    ///
+    /// Restores this process's own real starting value afterwards, because
+    /// this suite is subject to the very rule it is checking.
+    private static func checkSignalInterruptedRunIsRecovered(_ ok: inout Bool) {
+        print("\n-- suite hygiene: an interrupted run is recovered from --")
+
+        let realTheme = ThemeManager.shared.theme
+        let realFontSize = AppSettings.shared.fontSize
+        defer {
+            ThemeManager.shared.setTheme(realTheme)
+            AppSettings.shared.fontSize = realFontSize
+            SelfTestDefaultsGuard.debugClearSidecar()
+        }
+
+        // Two distinct themes, or the check cannot tell a recovery from a
+        // no-op. `allThemes` has fourteen, so this cannot go vacuous.
+        guard let other = HelmTheme.allThemes.first(where: { $0.id != realTheme.id }) else {
+            fail("only one theme is registered - this check would assert nothing", &ok)
+            return
+        }
+
+        // What an interrupted run leaves behind: a sidecar naming the values it
+        // found, and a live domain holding whatever it had got to.
+        SelfTestDefaultsGuard.debugPlantSidecar([
+            "fm.themeID": realTheme.id,
+            "fm.fontSize": "\(Int(realFontSize))",
+        ])
+        ThemeManager.shared.setTheme(other)
+        AppSettings.shared.fontSize = realFontSize + 3
+
+        guard ThemeManager.shared.theme.id == other.id else {
+            fail("could not move the theme away from \(realTheme.id) - the rest of this check would be vacuous", &ok)
+            return
+        }
+
+        SelfTestDefaultsGuard.debugRecoverNow()
+
+        if ThemeManager.shared.theme.id != realTheme.id {
+            fail("recovery left the theme on \(ThemeManager.shared.theme.id), want \(realTheme.id) - "
+                 + "an interrupted run's leak survives into the next run", &ok)
+        } else {
+            print("  OK   theme recovered to \(realTheme.id)")
+        }
+        if AppSettings.shared.fontSize != realFontSize {
+            fail("recovery left fontSize at \(AppSettings.shared.fontSize), want \(realFontSize)", &ok)
+        } else {
+            print("  OK   fontSize recovered to \(Int(realFontSize))")
+        }
+
+        // A clean recovery must also clear the marker, or every later run
+        // reports a stale interruption it did not have.
+        if FileManager.default.fileExists(atPath: SelfTestDefaultsGuard.debugSidecarPath()) {
+            fail("the sidecar survived recovery - every later run would report a stale interruption", &ok)
+        } else {
+            print("  OK   the interrupted-run marker was cleared")
+        }
+
+        // And `main.swift` has to actually arm it. Recovery that works and is
+        // never called is indistinguishable from the bug.
+        let mainSwift = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("main.swift")
+        guard let source = try? String(contentsOf: mainSwift, encoding: .utf8) else {
+            fail("could not read main.swift - this half would silently pass", &ok)
+            return
+        }
+        let armed = source
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .contains { !$0.hasPrefix("//") && $0.contains("SelfTestDefaultsGuard.arm()") }
+        if armed {
+            print("  OK   main.swift arms the guard for every FM_RUN_* process")
+        } else {
+            fail("main.swift never calls SelfTestDefaultsGuard.arm() - the recovery above can never run", &ok)
+        }
+    }
 }
 
 #endif
