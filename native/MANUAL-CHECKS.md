@@ -260,7 +260,30 @@ These need a real bastion and cannot be faked meaningfully.
 - [ ] Run a Setup → Updates check against real `brew`/`npm` and confirm the
       statuses match reality.
 
-## 15. Packaging
+## 15. Scheduled: the vendored SwiftTerm pin
+
+**Every 183 days** (six months), or sooner on an upstream security fix. Last
+done 2026-09-19, against upstream `v1.20.0`: stay pinned. The recipe, the
+decision rule and the running record are in
+[`Vendor/SwiftTerm/README.md`](Vendor/SwiftTerm/README.md)'s "Updating this
+vendored copy, and the scheduled check".
+
+Here because it is a network fetch plus a judgement call: the question is not
+"is there a newer tag" (there always is) but "has any of the five local patches'
+root cause been fixed upstream, or gained a `public`/`open` hook" - which needs
+reading upstream's current source and deciding, not a comparison a suite can
+make.
+
+- [ ] Run the four commands in that README section.
+- [ ] Record the date and a per-patch verdict **even when the answer is
+      "stay pinned"** - a check that leaves no record is one nobody can tell was
+      skipped.
+
+`FM_RUN_VENDORED_PATCHES_TESTS` covers the automated half (all five patches are
+still present in the tree, so a sync that drops one fails by name) and prints a
+NOTE - never a failure - once the recorded date is older than the interval.
+
+## 16. Packaging
 
 - [ ] `./build_native_app.sh`, then launch from `/Applications`.
 - [ ] Confirm saved SSH keys still unlock (a changed signing identity breaks
