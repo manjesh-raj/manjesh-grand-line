@@ -30,7 +30,7 @@ as they are rather than rewritten across 180 files.
 - [Build, run, test](#build-run-test) - the two CI lanes, and the vendored patches a sync must re-apply
 - [Verification conventions](#verification-conventions) - how a change is proved here
 - [Writing a self-test](#writing-a-self-test)
-- [The AppKit gotcha catalogue](#the-appkit-gotcha-catalogue) - 14 measured traps
+- [The AppKit gotcha catalogue](#the-appkit-gotcha-catalogue) - 15 measured traps
 - [GL invariants](#gl-invariants) - GL-01 .. GL-38, one line each
 - [The component index](#the-component-index) - one button, one card, one row
 - [Stores, subprocesses and secrets](#stores-subprocesses-and-secrets)
@@ -461,7 +461,7 @@ fails unless its entry carries a trailing marker.
 
 ## The AppKit gotcha catalogue
 
-Fourteen traps, every one measured on this app rather than read about. Each was
+Fifteen traps, every one measured on this app rather than read about. Each was
 found by instrumenting a real layout or event pass; several took a full task to
 root-cause, and at least four have recurred in a new file after being fixed in
 an old one. **Read the ones that match what you are about to touch** - a tab
@@ -843,6 +843,41 @@ deterministic trigger) - the self-test instead proves the *mechanism* (a
 required tie needs a live re-assert, not just a one-time declaration) rather
 than the exact captain-witnessed sequence of events.
 
+### (15) A hidden view is still in the window's constraint graph, and a full-screen-capable window re-solves all of it
+
+**A hidden `NSView` participates in Auto Layout exactly as much as a visible
+one** - gotcha (11) says so in the other direction, and this is what makes
+GL-37's "mounted, only ever hidden" cost real CPU rather than only memory.
+Every full-screen-capable window runs a `CFRunLoopObserver` that re-derives
+`minFullScreenContentSize` whenever anything invalidates it, and that
+derivation walks the **entire** required-constraint chain in the window - all
+~27 mounted destinations, not just the one on screen.
+
+Measured (full review #3's PF1; 5s `sample` at 1ms, main-thread samples inside
+CoreAutoLayout) on the captain's own running instance: **1095 of 4072, 26.9%**,
+under `_doUpdateTilingConstraintsImmediately -> minFullScreenContentSize ->
+NSISEngine`. A standalone stock-AppKit probe pinned down what it is and is not:
+
+- **Not stock idle work.** A settled graph costs **zero**, at 1 destination and
+  at 27. The cost is the re-solve, not the observer.
+- **Not layout forcing.** Forcing a real layout pass 20x/second measured 0%,
+  and so did marking views `needsLayout`. The per-navigation `layout()` forces
+  are exonerated.
+- **It is invalidation of the window's derived minimum size**, and *a single
+  label's text changing is enough to cause it* - a clock, a counter, a status
+  string. Cost is near-linear in what is in the graph: 1/3/7/14/27 mounted
+  destinations measured 0.4%/3.1%/8.3%/22.7%/43.4% of the main thread.
+- An explicit `contentMinSize`/`minSize` does **not** short-circuit it.
+
+**The fix, and the shape to reach for:** deactivate a hidden page's pins to its
+container so its subtree has no required path to the window, and reactivate
+them before unhiding (`AppShellController.setDestinationVisible`). Nothing is
+torn down, so GL-37 is untouched. Same probe, 27 mounted, same invalidation:
+1823 samples -> 55. In the real app, 637 -> 360 (17.3% -> 9.5% of the main
+thread). Any future container that keeps many pages mounted needs the same
+treatment, and any "idle CPU" investigation should `sample` for CoreAutoLayout
+before suspecting a timer.
+
 ---
 
 ## GL invariants
@@ -971,6 +1006,25 @@ noted.
 - **One subprocess runner and one AI runner**: `Subprocess` (GL-02/03/04/15) and
   `ClaudeOneShot` (GL-26). Do not add a third invocation shape. Interactive and
   PTY work is the terminal's, not theirs.
+- **Every `claude -p` run is fail-closed on the built-in tool set.**
+  `--allowedTools` is *additive to* `~/.claude/settings.json`'s
+  `permissions.allow`, and `--strict-mcp-config` scopes only MCP servers - so
+  without `--tools`, the captain's ambient allow rules (which have included
+  `Bash(python3 -)`) reach every persona, including the read-only crew, through
+  ordinary store text a runbook or task title carries. `ClaudeOneShot` emits
+  `--tools` on every run from a parameter defaulting to **none**; a caller that
+  needs a built-in names it. Measured: `--tools` gates below permission
+  checking and holds even under `--permission-mode bypassPermissions`, which is
+  why no runner passes that flag any more.
+  `ClaudeOneShotToolPolicySelfTest` guards the argv and the call sites.
+- **A store whose file is git-synced must reconcile before it writes.** A pull
+  can change the file underneath an in-memory copy, and a whole-file rewrite
+  from that copy silently discards whatever arrived. `CredentialVaultStore`
+  keeps a decrypted `baseline` - what it believes is also on disk - and
+  three-way merges against it in `persist()`, refusing outright when the file
+  was re-keyed elsewhere. Audit-only events (a reveal, a copy, a lock) are
+  batched and never `markDirty()`: publishing them produces a commit log of
+  when each secret was looked at.
 - **An AI-authored command is never executed on its stored risk level.**
   `CommandRiskConfirmation.confirmAIAuthored` is unconditional, and a model
   rewriting a template re-derives the level through `heuristicRisk` with
