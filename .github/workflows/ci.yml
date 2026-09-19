@@ -29,13 +29,13 @@
 # app's most painstakingly-built regression guards (the layout gotchas, the
 # contrast floors, the AppKit-cell quirks) were, in practice, opt-in.
 #
-# It is deliberately NON-BLOCKING (`continue-on-error: true`) to start.
-# These suites need a window server, and a GitHub-hosted macOS runner has one
-# only for the primary user - an environment property, not a property of this
-# app. Going red on that would train everyone to ignore a red X, which is
-# worse than the gap it closes. The intent is to flip it to blocking once it
-# has a track record of being green; until then it is real, readable signal on
-# every PR rather than nothing at all.
+# `test-windowed` shipped NON-BLOCKING, because these suites need a window
+# server and a GitHub-hosted macOS runner has one only for the primary user -
+# an environment property, not a property of this app, and a red X nobody can
+# act on trains everyone to ignore red. It is BLOCKING now (P8 of full review
+# #3): the track record its own comment asked for arrived, and every failure
+# in it has been a real defect rather than an environmental one. See that
+# job's own comment for the measurement.
 #
 # The app itself is never launched. Every `FM_RUN_*` flag is handled before
 # `NSApplication.shared` is touched, so the binary runs headless and exits -
@@ -196,12 +196,29 @@ jobs:
     # runner script now bounds each suite individually (`FM_SUITE_TIMEOUT`), so
     # this is only the backstop for the whole job.
     timeout-minutes: 60
-    # Non-blocking on purpose - see this file's header for the full reasoning.
-    # In short: these suites need a window server, which is a property of the
-    # runner rather than of this app, and a red X nobody can act on is worse
-    # than the coverage gap it replaces. Flip this to `false` once the job has
-    # a track record of being green.
-    continue-on-error: true
+    # BLOCKING as of P8 (full review #3). This job shipped
+    # `continue-on-error: true` with its own instruction to "flip this once the
+    # job has a track record of being green", and it has one - measured over the
+    # last 40 CI runs rather than asserted:
+    #
+    #   * `main`: 10 of 10 green. The job has never once failed on the default
+    #     branch.
+    #   * feature branches: 7 failures, every one a real defect in that
+    #     branch's own code, every one fixed before merge. Two are written up
+    #     in AGENTS.md - a nested `layoutSubtreeIfNeeded` that only *traps* on
+    #     a runner, and a real `NSDraggingSession` that only wedges in a window
+    #     the window server ignores. Both were latent bugs this job found.
+    #   * 4 cancelled by the `concurrency` group, which is not a signal.
+    #
+    # That is the exact condition the original comment set: the red X has been
+    # actionable every single time, and never environmental. Leaving it
+    # non-blocking now means a PR can merge past a real, reproducible failure
+    # this job already caught.
+    #
+    # If it ever does go red for a genuinely environmental reason, the fix is a
+    # measured entry in `CI_UNSUPPORTED` in `Scripts/run-all-tests.sh` - where
+    # every entry already carries the measurement that put it there - and not
+    # reverting this line.
     steps:
       - uses: actions/checkout@v4
         with:
