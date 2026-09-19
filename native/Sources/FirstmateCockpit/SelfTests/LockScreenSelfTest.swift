@@ -101,8 +101,7 @@ enum LockScreenSelfTest {
     private static func fmt(_ v: Double) -> String { String(format: "%.2f", v) }
 
     private static func fail(_ ok: inout Bool, _ message: String) {
-        print("  FAIL: \(message)")
-        ok = false
+        SelfTestAssertions.recordFailure(message, &ok)
     }
 
     // MARK: 1 - symbols

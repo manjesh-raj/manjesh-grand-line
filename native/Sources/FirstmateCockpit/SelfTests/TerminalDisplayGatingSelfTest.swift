@@ -43,8 +43,7 @@ enum TerminalDisplayGatingSelfTest {
     }
 
     private static func fail(_ ok: inout Bool, _ message: String) {
-        print("  FAIL: \(message)")
-        ok = false
+        SelfTestAssertions.recordFailure(message, &ok)
     }
 
     /// A real window, ordered front so it is genuinely `.visible` to the

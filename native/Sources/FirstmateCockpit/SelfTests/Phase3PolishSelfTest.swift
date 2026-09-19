@@ -108,10 +108,6 @@ enum Phase3PolishSelfTest {
         }
     }
 
-    private static func fail(_ message: String, _ ok: inout Bool) {
-        print("  FAIL \(message)")
-        ok = false
-    }
 
     // MARK: GL-27
 

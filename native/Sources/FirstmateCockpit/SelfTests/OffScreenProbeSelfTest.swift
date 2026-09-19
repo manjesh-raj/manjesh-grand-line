@@ -49,10 +49,6 @@ enum OffScreenProbeSelfTest {
         return ok
     }
 
-    private static func fail(_ message: String, _ ok: inout Bool) {
-        print("  FAIL: \(message)")
-        ok = false
-    }
 
     private static func describe(_ window: NSWindow) -> String {
         "\(window.frame) vs screens \(NSScreen.screens.map { $0.frame })"

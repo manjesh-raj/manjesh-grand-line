@@ -54,13 +54,11 @@ enum GitHubSyncRefreshSelfTest {
     private static var failures: [String] = []
 
     private static func check(_ label: String, _ condition: Bool, _ detail: String = "") {
+        // `detail` carries the measured number, which is the whole point of
+        // the line - so it goes into the recorded message rather than being
+        // dropped on the way to the shared reporter.
         let suffix = detail.isEmpty ? "" : "  [\(detail)]"
-        if condition {
-            print("  ok   \(label)\(suffix)")
-        } else {
-            print("  FAIL \(label)\(suffix)")
-            failures.append(label)
-        }
+        SelfTestAssertions.recordNarrated(condition, "\(label)\(suffix)", into: &failures)
     }
 
     private static func descendants(of view: NSView) -> [NSView] {

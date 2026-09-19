@@ -43,12 +43,7 @@ enum Phase2HardeningSelfTest {
     private static var failures: [String] = []
 
     private static func check(_ condition: Bool, _ label: String) {
-        if condition {
-            print("  ✓ \(label)")
-        } else {
-            print("  ✗ \(label)")
-            failures.append(label)
-        }
+        SelfTestAssertions.recordNarrated(condition, label, into: &failures)
     }
 
     static func run() -> Bool {

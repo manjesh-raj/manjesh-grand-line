@@ -37,7 +37,7 @@ enum AuditSecurityLockSelfTest {
     static func run() -> Bool {
         var failures: [String] = []
         func check(_ condition: Bool, _ message: String) {
-            if !condition { failures.append(message) }
+            SelfTestAssertions.record(condition, message, into: &failures)
         }
 
         // `.shared`, never `NSApp`: `NSApp` is an implicitly-unwrapped

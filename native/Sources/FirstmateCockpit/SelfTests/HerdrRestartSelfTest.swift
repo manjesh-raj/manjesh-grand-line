@@ -413,12 +413,6 @@ enum HerdrRestartSelfTest {
         return ok
     }
 
-    private static func check(_ condition: Bool, _ message: String, _ ok: inout Bool) {
-        if !condition {
-            print("FAIL: \(message)")
-            ok = false
-        }
-    }
 
     /// A disposable, executable fake `herdr` - never the real installed
     /// binary. Dispatches on its own first two arguments so one script can

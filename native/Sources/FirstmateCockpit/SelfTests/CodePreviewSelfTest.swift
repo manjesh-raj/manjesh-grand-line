@@ -29,10 +29,7 @@ enum CodePreviewSelfTest {
     static func run() -> Bool {
         var ok = true
         func check(_ condition: Bool, _ message: String) {
-            if !condition {
-                print("FAIL: \(message)")
-                ok = false
-            }
+            SelfTestAssertions.record(condition, message, &ok)
         }
 
         checkAssets(check)

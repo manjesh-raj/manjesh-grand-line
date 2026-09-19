@@ -41,7 +41,7 @@ enum CredentialVaultSelfTest {
     static func run() -> Bool {
         var failures: [String] = []
         func check(_ condition: Bool, _ message: String) {
-            if !condition { failures.append(message) }
+            SelfTestAssertions.record(condition, message, into: &failures)
         }
 
         let fm = FileManager.default

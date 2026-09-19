@@ -47,12 +47,7 @@ enum SubprocessSelfTest {
     private static var failures: [String] = []
 
     private static func check(_ condition: Bool, _ label: String) {
-        if condition {
-            print("  ✓ \(label)")
-        } else {
-            print("  ✗ \(label)")
-            failures.append(label)
-        }
+        SelfTestAssertions.recordNarrated(condition, label, into: &failures)
     }
 
     // ~440KB: `yes ABCDEFGHIJ` emits 11 bytes per line, so 40,000 lines is

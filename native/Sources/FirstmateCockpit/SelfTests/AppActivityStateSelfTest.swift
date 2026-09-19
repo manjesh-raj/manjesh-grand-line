@@ -34,8 +34,7 @@ enum AppActivityStateSelfTest {
     }
 
     private static func fail(_ ok: inout Bool, _ message: String) {
-        print("  FAIL: \(message)")
-        ok = false
+        SelfTestAssertions.recordFailure(message, &ok)
     }
 
     /// Runs `ticks` ticks through a gate and reports how many did real work.

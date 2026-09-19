@@ -48,13 +48,9 @@ enum Audit3BugFixesSelfTest {
         return allOK
     }
 
-    private static func fail(_ message: String, _ ok: inout Bool) {
-        print("  FAIL \(message)")
-        ok = false
-    }
 
     private static func check(_ condition: Bool, _ label: String, _ ok: inout Bool) {
-        if condition { print("  ok   \(label)") } else { fail(label, &ok) }
+        SelfTestAssertions.recordNarrated(condition, label, &ok)
     }
 
     /// Every `FM_*` store this suite can reach, pointed at scratch.

@@ -269,7 +269,7 @@ enum ConfirmMigrationSelfTest {
     /// measured), because only the long one reproduced the shipped defect.
     private static func checkThePanelIsSizedForItsRealWrapWidth(_ ok: inout Bool) {
         func check(_ condition: Bool, _ message: String) {
-            if !condition { ok = false; print("FAIL: \(message)") }
+            SelfTestAssertions.record(condition, message, &ok)
         }
 
         // **A source guard as well as the behaviour, because they catch

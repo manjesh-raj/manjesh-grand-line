@@ -42,7 +42,7 @@ enum VaultDataSelfTest {
     static func run() -> Bool {
         var failures: [String] = []
         func check(_ name: String, _ condition: Bool) {
-            if !condition { failures.append(name) }
+            SelfTestAssertions.record(condition, name, into: &failures)
         }
 
         // MARK: isSafeToken

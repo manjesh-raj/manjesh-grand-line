@@ -59,10 +59,6 @@ enum HostsRedesignSelfTest {
 
     // MARK: Harness
 
-    private static func fail(_ message: String, _ ok: inout Bool) {
-        print("  FAIL \(message)")
-        ok = false
-    }
 
     private static func fmt(_ v: CGFloat) -> String { String(format: "%.1f", Double(v)) }
 

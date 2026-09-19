@@ -60,10 +60,6 @@ enum DaylightModuleSelfTest {
         return allOK
     }
 
-    private static func fail(_ message: String, _ ok: inout Bool) {
-        print("  FAIL \(message)")
-        ok = false
-    }
 
     // MARK: 3 - the locked space table
 

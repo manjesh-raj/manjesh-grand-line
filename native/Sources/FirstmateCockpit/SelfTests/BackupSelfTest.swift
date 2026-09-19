@@ -52,12 +52,7 @@ enum BackupSelfTest {
     static func run() -> Bool {
         var ok = true
         func check(_ condition: Bool, _ label: String) {
-            if condition {
-                print("[backup-test] PASS: \(label)")
-            } else {
-                print("[backup-test] FAIL: \(label)")
-                ok = false
-            }
+            SelfTestAssertions.record(condition, label, &ok)
         }
 
         let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("glbackup-test-\(ProcessInfo.processInfo.globallyUniqueString)")

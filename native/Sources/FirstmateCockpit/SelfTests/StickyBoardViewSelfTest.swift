@@ -40,10 +40,7 @@ enum StickyBoardViewSelfTest {
     static func run() -> Bool {
         var ok = true
         func check(_ condition: Bool, _ message: String) {
-            if !condition {
-                print("FAIL: \(message)")
-                ok = false
-            }
+            SelfTestAssertions.record(condition, message, &ok)
         }
 
         let window = OffScreenProbe.window(width: 900, height: 620, styleMask: [.titled, .resizable])

@@ -139,8 +139,7 @@ enum TerminalSelectionRenderSelfTest {
     private static func fmt(_ v: Double) -> String { String(format: "%.2f", v) }
 
     private static func fail(_ ok: inout Bool, _ message: String) {
-        print("  FAIL: \(message)")
-        ok = false
+        SelfTestAssertions.recordFailure(message, &ok)
     }
 
     private static func hex(_ c: NSColor) -> String {

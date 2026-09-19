@@ -2427,14 +2427,18 @@ enum HelmContrastSelfTest {
         guard let daylight = HelmTheme.theme(id: "daylight") else { return }
         let resting = HelmCard.elevation(for: daylight, level: .resting)
         let raised = HelmCard.elevation(for: daylight, level: .raised)
+        // Not a generic condition check - it owns the shadow comparison, and
+        // its tolerances *are* the assertion. Only the reporting delegates.
         func check(_ label: String, _ shadow: NSShadow, alpha: CGFloat, blur: CGFloat, dy: CGFloat) {
             let a = shadow.shadowColor?.alphaComponent ?? 0
-            if abs(a - alpha) > 0.005 || abs(shadow.shadowBlurRadius - blur) > 0.01
-                || abs(shadow.shadowOffset.height - dy) > 0.01 {
-                print("  FAIL \(label): alpha \(fmt(Double(a))) blur \(shadow.shadowBlurRadius) dy \(shadow.shadowOffset.height), want \(alpha)/\(blur)/\(dy)")
-                ok = false
+            let matches = abs(a - alpha) <= 0.005
+                && abs(shadow.shadowBlurRadius - blur) <= 0.01
+                && abs(shadow.shadowOffset.height - dy) <= 0.01
+            if matches {
+                SelfTestAssertions.reportPass("\(pad(label, 30)) alpha \(fmt(Double(a)))  blur \(blur)  dy \(dy)")
             } else {
-                print("  OK   \(pad(label, 30)) alpha \(fmt(Double(a)))  blur \(blur)  dy \(dy)")
+                SelfTestAssertions.reportFailure("\(label): alpha \(fmt(Double(a))) blur \(shadow.shadowBlurRadius) dy \(shadow.shadowOffset.height), want \(alpha)/\(blur)/\(dy)")
+                ok = false
             }
         }
         check("daylight resting", resting, alpha: 0.10, blur: 15, dy: -6)

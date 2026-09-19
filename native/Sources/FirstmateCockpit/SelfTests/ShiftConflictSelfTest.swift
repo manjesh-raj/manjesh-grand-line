@@ -34,7 +34,7 @@ enum ShiftConflictSelfTest {
     static func run() -> Bool {
         var failures: [String] = []
         func check(_ condition: Bool, _ message: String) {
-            if !condition { failures.append(message) }
+            SelfTestAssertions.record(condition, message, into: &failures)
         }
         func finish() -> Bool {
             if !failures.isEmpty {

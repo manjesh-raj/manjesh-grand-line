@@ -28,9 +28,7 @@ enum IconsTypographySelfTest {
         print("== icons + typography (audit I1/I2, J1/J2) ==")
         var ok = true
         func check(_ condition: Bool, _ message: String) {
-            if condition { return }
-            print("  FAIL \(message)")
-            ok = false
+            SelfTestAssertions.record(condition, message, &ok)
         }
 
         checkHierarchicalTiles(check)
