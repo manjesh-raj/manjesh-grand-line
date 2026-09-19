@@ -39,6 +39,10 @@ final class HealthController: NSViewController, DaylightDrillActions {
     /// shell's; this page only says when its numbers moved.
     var onDrillSubtitleChanged: (() -> Void)?
 
+    /// Where this page hands a destination change up - the same shape
+    /// `FleetController.onNavigateToDestination` already uses. UI12.
+    var onNavigateToDestination: ((RailDestination) -> Void)?
+
     // MARK: Drill header (Daylight §6.4)
 
     /// §7's "drill header with a live subtitle". Counted from the same
@@ -118,6 +122,10 @@ final class HealthController: NSViewController, DaylightDrillActions {
         // The card rebuilds itself on every `ServiceHealthRegistry` report;
         // the header's own subtitle has to follow the same signal.
         healthCard.onStateChanged = { [weak self] in self?.onDrillSubtitleChanged?() }
+        // UI12: the empty state's "Open Schedules" call-to-action. Forwarded
+        // rather than handled - this page knows no more about navigation than
+        // Fleet's or Schedules' own `onNavigateToDestination` does.
+        healthCard.onOpenDestination = { [weak self] dest in self?.onNavigateToDestination?(dest) }
     }
 
     override func viewWillAppear() {

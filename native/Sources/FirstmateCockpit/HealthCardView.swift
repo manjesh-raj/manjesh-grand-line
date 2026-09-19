@@ -43,6 +43,13 @@ final class HealthCardView: NSObject {
     /// line can follow the same signal the rows do rather than polling.
     var onStateChanged: (() -> Void)?
 
+    /// UI12: where the empty state's "Open Schedules" goes. The same shape
+    /// `SchedulesCardView.onOpenDestination` already uses - this view knows
+    /// nothing about the shell, it just names a destination.
+    var onOpenDestination: ((RailDestination) -> Void)?
+
+    @objc private func openSchedulesTapped() { onOpenDestination?(.schedules) }
+
     private let healthStack = NSStackView()
     /// §7's "KPI chips in the header band region" - one per non-zero verdict
     /// bucket, in the card header's trailing action slot. Rebuilt in place
@@ -291,15 +298,35 @@ final class HealthCardView: NSObject {
         var rows: [NSView] = []
 
         if services.isEmpty {
-            // Honest rather than reassuring: nothing has reported yet, which at
-            // launch is simply true.
-            let label = NSTextField(wrappingLabelWithString:
-                "No background service has reported yet. Rows appear as each one runs.")
-            label.font = HelmType.caption()
-            label.textColor = HelmTheme.mutedInk(theme)
-            label.preferredMaxLayoutWidth = descriptionWidth()
-            descriptionLabels.append(label)
-            rows.append(label)
+            // Review #3's UI12. Honest rather than reassuring - nothing has
+            // reported yet, which at launch is simply true - but until this it
+            // was one muted sentence and a dead end: it said rows appear as
+            // each service runs without saying where a run comes from.
+            //
+            // It is the app's shared `HelmEmptyState` now, with the
+            // call-to-action in the `accessory` slot every other actionable
+            // empty state in this app uses (Docs' "Sync Now", Kubernetes'
+            // "Open Hosts"). Schedules is the button because a schedule is the
+            // one thing in this app that *makes* a background service run on
+            // its own, and its own card says so ("Runs log to Health").
+            //
+            // `.compact` and unboxed: this sits inside a `HelmCard`'s body,
+            // which already draws the surface and the border.
+            let empty = HelmEmptyState(
+                symbol: "waveform.path.ecg",
+                title: "Nothing has reported yet",
+                body: "Background services report here as they run. A schedule is the usual way one runs without you.",
+                size: .compact,
+                accessory: {
+                    let button = HelmButton(title: "Open Schedules", variant: .secondary, size: .small)
+                    button.target = self
+                    button.action = #selector(openSchedulesTapped)
+                    button.toolTip = "Unattended runs log their verdict here."
+                    return button
+                }(),
+                hue: RailDestination.health.domainHue)
+            empty.applyTheme(theme)
+            rows.append(empty)
         } else {
             for (index, service) in services.enumerated() {
                 if index > 0 { rows.append(separator()) }

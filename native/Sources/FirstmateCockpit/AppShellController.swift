@@ -952,6 +952,8 @@ final class AppShellController: NSViewController {
             self?.applySessionRegistry(registry)
         }
         health.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        // UI12: both pages' empty states now offer a way out of themselves.
+        health.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
         console.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // The four Engineering setup pages, each wired exactly like every
         // other conforming destination since
@@ -991,6 +993,7 @@ final class AppShellController: NSViewController {
         runbooks.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         runbooks.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
         postmortems.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        postmortems.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
         dictation.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Tools' subtitle counts open tool tabs, which the captain can change
         // without leaving the page. Like every line above it, this is safe
