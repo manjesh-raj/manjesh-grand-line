@@ -2048,6 +2048,12 @@ if ProcessInfo.processInfo.environment["FM_RUN_NAVIGATION_COHERENCE_TESTS"] == "
     exit(NavigationCoherenceSelfTest.run() ? 0 : 1)
 }
 
+// Review #3's UX14: GL-30's routing rule, and that `Feedback.report`'s real
+// side effects agree with it - see `FeedbackRoutingSelfTest.swift`.
+if ProcessInfo.processInfo.environment["FM_RUN_FEEDBACK_ROUTING_TESTS"] == "1" {
+    exit(FeedbackRoutingSelfTest.run() ? 0 : 1)
+}
+
 // Review #3's UX12: the crew's conversations surviving a quit, and nothing
 // reaching that file unredacted - see `StrawHatTranscriptSelfTest.swift`.
 if ProcessInfo.processInfo.environment["FM_RUN_STRAW_HAT_TRANSCRIPT_TESTS"] == "1" {
