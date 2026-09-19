@@ -90,7 +90,7 @@ an off-screen window, and `hasAppeared` gates `startSplitPane`, so **no pane in
 a suite ever forks a shell**. Two real shells side by side is therefore entirely
 outside its reach, and so is a real keystroke from a real keyboard layout.
 
-- [ ] Split a Console tab (default `⌘⌥→`). Both panes are live shells - run a
+- [ ] Split a Console tab (default `⌃⌘→`). Both panes are live shells - run a
       command in each, switch focus between them, confirm neither loses its
       scrollback.
 - [ ] Drag the divider. Both terminals reflow to their new column count and
