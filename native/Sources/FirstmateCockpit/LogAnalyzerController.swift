@@ -473,7 +473,16 @@ final class LogAnalyzerController: NSViewController, DaylightDrillActions {
         sourcePopup.target = self
         sourcePopup.action = #selector(sourceChanged)
 
-        for analysisMode in LogAnalysisMode.allCases { modePopup.addItem(withTitle: analysisMode.displayName) }
+        // Review #3's UI6: this popup's first item is `.analyze`, so the
+        // control rendered the bare word "Analyze" - the same word as the
+        // primary button two controls to its right, which made a mode picker
+        // and the action it configures look like the same thing. Every item
+        // carries the `Mode: ` prefix now, exactly the way `sourcePopup`
+        // above already prefixes its own. The prefix is presentation only:
+        // `modeChanged` resolves the selection by index, not by title.
+        for analysisMode in LogAnalysisMode.allCases {
+            modePopup.addItem(withTitle: "Mode: \(analysisMode.displayName)")
+        }
         modePopup.target = self
         modePopup.action = #selector(modeChanged)
         modePopup.toolTip = "Analysis mode — changes what the analysis emphasises (spec §22)"
