@@ -533,6 +533,29 @@ final class HomeCanvasController: NSViewController {
                     detail: space.subtitle)
             return
         }
+        // Review #3's UX13: "a guided 'your first host / your first task'
+        // empty state on the canvas" for a genuinely first-run state.
+        //
+        // The **hero** rather than a new card, because the hero is where a
+        // first-time reader's eye already goes and because "nothing needs you
+        // right now" is exactly the wrong first sentence for someone who has
+        // not put anything in yet. It is technically true and completely
+        // unhelpful - the same class of thing GL-14 is about, one step up:
+        // reporting an all-clear over an app with no data in it.
+        //
+        // Checked before the fleet snapshot, so it holds during the first
+        // launch's fetch too - which is precisely when a new captain is
+        // looking at this page.
+        if let firstRun = Self.firstRunHeroCopy(hosts: sources.hostStore.hosts.count,
+                                                tasks: sources.shiftStore.activeTasks.count,
+                                                notes: sources.stickyBoardStore.activeNotes.count) {
+            setHero(tint: nil,
+                    symbol: "sailboat.fill",
+                    kicker: "",
+                    title: firstRun.title,
+                    detail: firstRun.detail)
+            return
+        }
         guard let snapshot = fleetSnapshot else {
             // GL-14: nothing has been measured yet, so the hero says so
             // rather than rendering an all-clear it cannot stand behind.
@@ -590,6 +613,33 @@ final class HomeCanvasController: NSViewController {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
         return "at \(formatter.string(from: date))"
+    }
+
+    /// What the hub says to a captain who has not put anything in yet -
+    /// review #3's UX13. `nil` once they have, which is the overwhelmingly
+    /// common case and the reason this is a guard rather than a mode.
+    ///
+    /// **Three stores, all empty**, deliberately - not one. A captain with
+    /// tasks but no hosts is not new, they just do not use hosts; showing
+    /// them "add your first host" would be the app misreading its own user.
+    /// The condition is "this app has never been used", and the honest test
+    /// for that is that nothing at all has been put into it.
+    ///
+    /// Pure and `static` so `DaylightModuleSelfTest` can assert both
+    /// directions without a canvas - and the second direction is the one that
+    /// matters, since a first-run banner that outstayed its welcome would be
+    /// a permanent fixture on a working captain's hub.
+    ///
+    /// A `nil` tint at the call site is load-bearing: this is an invitation,
+    /// not a verdict, and `setHero` drops the surface and the kicker for a
+    /// `nil` tint precisely so a hero that has measured nothing cannot look
+    /// like one reporting good news.
+    static func firstRunHeroCopy(hosts: Int, tasks: Int, notes: Int) -> (title: String, detail: String)? {
+        guard hosts == 0, tasks == 0, notes == 0 else { return nil }
+        return (title: "Welcome aboard",
+                detail: "Nothing is saved here yet. Add your first host (\u{2318}\u{2303}N) to keep a "
+                    + "connection, or your first task (\u{2318}N) to keep a to-do. "
+                    + "\u{2318}\u{21E7}D shows every page this app has.")
     }
 
     /// The hero's four strings and its badge, from one place.

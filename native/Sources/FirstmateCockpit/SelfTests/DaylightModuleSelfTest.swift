@@ -1272,13 +1272,25 @@ enum DaylightModuleSelfTest {
             let hostStore = HostStore()
             let keyStore = SSHKeyStore()
             let snippetStore = SnippetStore()
+            // **Not a first-run app.** Review #3's UX13 gave the hub a
+            // first-run hero for a captain with nothing saved, and
+            // `withScratchEnv` gives this case exactly that - empty stores -
+            // so without a seeded task the hero below is legitimately the
+            // welcome banner and this case's all-clear assertions would be
+            // checking the wrong state. One task is the cheapest way to say
+            // "this app has been used", and UX13's own case asserts the
+            // first-run half.
+            let shiftStore = ShiftStore()
+            var seeded = ShiftTask.fresh()
+            seeded.title = "a task, so the hub is not in its first-run state"
+            shiftStore.addTask(seeded)
             let shell = AppShellController(
                 hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
                 console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
                 settings: SettingsController(hostStore: hostStore, keyStore: keyStore,
                                              snippetStore: snippetStore, dictationStore: DictationStore()),
                 hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore,
-                shiftStore: ShiftStore(), dictationStore: DictationStore(),
+                shiftStore: shiftStore, dictationStore: DictationStore(),
                 commandLibraryStore: CommandLibraryStore(), scheduleStore: ScheduleStore(),
                 makeHostConsole: { ConsoleController(keyStore: keyStore, snippetStore: snippetStore,
                                                      isFirstmateConsole: false) }

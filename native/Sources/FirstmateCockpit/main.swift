@@ -612,6 +612,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // own first-run landing decision) and behind the lock screen, so
         // nothing restored is visible before the captain has unlocked.
         restoreSessionIfNeeded(savedSession)
+        presentWelcomeIfNeeded()
+    }
+
+    /// Review #3's UX13: the first-run welcome sheet.
+    ///
+    /// **Registered behind the lock, not shown over it.** `appLock.lock` runs
+    /// a few lines above, and a sheet presented now would sit on top of the
+    /// lock screen - so a second user would meet a cheerful three-step tour
+    /// layered over the password prompt the finding is complaining about.
+    /// Instead this waits for the first unlock, which is the first moment the
+    /// captain is actually in the app.
+    ///
+    /// `AppLockGate.observe` fires immediately at registration with the
+    /// current state (the same convention `ThemeManager.observe` follows), so
+    /// an app that is somehow already unlocked is handled by the same path
+    /// rather than by a second one.
+    private func presentWelcomeIfNeeded() {
+        guard !AppSettings.shared.hasSeenWelcome else { return }
+        var presented = false
+        AppLockGate.shared.observe { [weak self] locked in
+            guard let self, !locked, !presented,
+                  !AppSettings.shared.hasSeenWelcome else { return }
+            presented = true
+            let welcome = WelcomeSheetController()
+            self.appShell.presentAsSheet(welcome)
+        }
     }
 
     // MARK: F2 - session restoration

@@ -39,6 +39,7 @@ enum NavigationCoherenceSelfTest {
         ok = checkContextualNewRouting() && ok
         ok = checkMenuBarShape() && ok
         ok = checkShortcutCatalog() && ok
+        ok = checkFirstRunOnboarding() && ok
         return ok
     }
 
@@ -297,6 +298,68 @@ enum NavigationCoherenceSelfTest {
         // reference, and a blank pill beside a title reads as a bug.
         check(sections.allSatisfy { $0.entries.allSatisfy { !$0.keys.isEmpty } },
               "UX3: the sheet lists an item with an empty chord", &ok)
+        return ok
+    }
+
+    // MARK: UX13
+
+    /// Review #3's UX13: "onboarding is a lock screen."
+    ///
+    /// Two halves: the welcome sheet's own step machine, and the hub's
+    /// first-run hero copy. Both are asserted in **both** directions - a
+    /// first-run banner that outstayed its welcome would be a permanent
+    /// fixture on a working captain's hub, which is a worse bug than not
+    /// having one.
+    private static func checkFirstRunOnboarding() -> Bool {
+        var ok = true
+
+        // The hero copy. Nothing at all saved -> an invitation.
+        guard let welcome = HomeCanvasController.firstRunHeroCopy(hosts: 0, tasks: 0, notes: 0) else {
+            fail("UX13: an app with nothing in it showed no first-run copy at all", &ok)
+            return ok
+        }
+        check(!welcome.title.isEmpty && !welcome.detail.isEmpty,
+              "UX13: the first-run hero copy is blank", &ok)
+        // It has to say what to do, not merely be friendly - that is the
+        // "guided" in "a guided empty state".
+        check(welcome.detail.lowercased().contains("host") && welcome.detail.lowercased().contains("task"),
+              "UX13: the first-run copy does not name the first host or the first task: \"\(welcome.detail)\"", &ok)
+
+        // Anything saved at all -> it is gone. Each store on its own, because
+        // a captain with tasks but no hosts is not new, and being told to
+        // "add your first host" would be the app misreading its own user.
+        check(HomeCanvasController.firstRunHeroCopy(hosts: 1, tasks: 0, notes: 0) == nil,
+              "UX13: the first-run hero survived a saved host", &ok)
+        check(HomeCanvasController.firstRunHeroCopy(hosts: 0, tasks: 1, notes: 0) == nil,
+              "UX13: the first-run hero survived a saved task", &ok)
+        check(HomeCanvasController.firstRunHeroCopy(hosts: 0, tasks: 0, notes: 1) == nil,
+              "UX13: the first-run hero survived a saved note", &ok)
+
+        // The sheet's step machine. A window is not needed - the steps are
+        // state, and `loadView` builds views with no window server.
+        let sheet = WelcomeSheetController()
+        sheet.loadView()
+        check(WelcomeSheetController.debugStepCount == 3,
+              "UX13: the finding asks for a three-step sheet, got \(WelcomeSheetController.debugStepCount)", &ok)
+        check(sheet.debugStepIndex == 0, "UX13: the sheet should open on its first step", &ok)
+        check(sheet.debugBackIsHidden, "UX13: there is nothing to go back to on the first step", &ok)
+        check(!sheet.debugThemeGridIsHidden, "UX13: step one should show the theme picker", &ok)
+        check(sheet.debugCommandWellIsHidden, "UX13: the lock command belongs on the last step only", &ok)
+
+        sheet.debugNext()
+        check(sheet.debugStepIndex == 1, "UX13: Next did not advance the sheet", &ok)
+        check(!sheet.debugBackIsHidden, "UX13: Back should be available past the first step", &ok)
+        check(sheet.debugThemeGridIsHidden, "UX13: the theme picker belongs on step one only", &ok)
+
+        sheet.debugNext()
+        check(sheet.debugStepIndex == 2, "UX13: Next did not reach the last step", &ok)
+        check(!sheet.debugCommandWellIsHidden,
+              "UX13: the last step should show the lock-setup command", &ok)
+        check(sheet.debugNextButtonTitle != "Next",
+              "UX13: the last step's primary button should not still say Next", &ok)
+
+        sheet.debugBack()
+        check(sheet.debugStepIndex == 1, "UX13: Back did not go back", &ok)
         return ok
     }
 
