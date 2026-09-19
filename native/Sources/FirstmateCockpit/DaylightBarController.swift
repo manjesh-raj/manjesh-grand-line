@@ -1304,6 +1304,10 @@ final class DaylightBarController: NSViewController {
     func debugDrillTitleWidth() -> CGFloat { drillNav.debugTitleWidth }
     func debugQuickAccessOverflowButton() -> DaylightBarIconButton { quickAccessOverflowButton }
     func debugQuickAccessOverflowMenu() -> NSMenu { quickAccessMenu() }
+    /// The row itself, so a suite can measure the width UX2's collapse
+    /// reclaims - the buttons are arranged subviews now, so their own frames
+    /// are not where that shows up.
+    func debugQuickAccessRow() -> NSView { quickAccessRow }
     #endif
 
     /// Re-themes this instance directly, bypassing `ThemeManager.setTheme` -

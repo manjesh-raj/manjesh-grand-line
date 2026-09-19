@@ -650,8 +650,18 @@ enum RecentDestinationsSelfTest {
         guard button.frame.minX >= search.frame.maxX - 0.5 else {
             return "the Recents button (minX=\(button.frame.minX)) starts before the search pill ends (maxX=\(search.frame.maxX))"
         }
-        guard button.frame.maxX <= stickyBoard.frame.minX + 0.5 else {
-            return "the Recents button (maxX=\(button.frame.maxX)) overlaps the Sticky Board icon (minX=\(stickyBoard.frame.minX))"
+        // **Converted into the bar's own coordinate space.** Review #3's UX2
+        // moved the quick-access buttons inside an `NSStackView`, so a
+        // button's own `frame` is in that row's space and its `minX` is 0 for
+        // the leading one - comparing it against the Recents button's
+        // bar-space frame would fail for a reason that is not the one this
+        // check names (it did, on the first full run after UX2 landed).
+        let stickyBoardInBar = stickyBoard.convert(stickyBoard.bounds, to: bar.view)
+        guard stickyBoardInBar.width > 1 else {
+            return "the Sticky Board icon resolved a zero-size frame - this check would be vacuous"
+        }
+        guard button.frame.maxX <= stickyBoardInBar.minX + 0.5 else {
+            return "the Recents button (maxX=\(button.frame.maxX)) overlaps the Sticky Board icon (minX=\(stickyBoardInBar.minX))"
         }
         // The explicit first captain correction still holds: not next to the
         // logo, i.e. not at the bar's own leading inset.

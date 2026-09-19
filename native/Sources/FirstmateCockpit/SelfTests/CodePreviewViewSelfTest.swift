@@ -281,21 +281,40 @@ enum CodePreviewViewSelfTest {
     ) {
         // The Swift paste from the highlighting check above should already be
         // on disk under its detected name.
+        //
+        // **Review #3's UX11 also names the stem now**, from the snippet's own
+        // first line - so `snippet-1.txt` becomes `struct-host.swift` rather
+        // than `snippet-1.swift`, and the YAML paste becomes
+        // `apiversion-v1.yaml`. The expectations below are literals rather
+        // than a call into `CodePreviewAutoTitle`, which would be re-deriving
+        // them from the thing under test; this case's own subject - that the
+        // *extension* follows the detected language, and that the file holds
+        // exactly what was typed - is unchanged and still what it asserts.
         let onDisk = store.names()
-        check(onDisk == ["snippet-1.swift"],
+        check(onDisk == ["struct-host.swift"],
               "the pasted snippet should be on disk under its detected name, got \(onDisk)")
 
         controller.debugNewSnippet()
-        controller.debugSimulateEdit(name: "snippet-2.txt", content: "apiVersion: v1\nkind: Service\nmetadata:\n  name: api\n")
+        // `snippet-1.txt`, not `snippet-2.txt`: UX11's auto-title renamed the
+        // first tab to `struct-host.swift`, which **frees the `snippet-1`
+        // stem** - `CodePreviewStore.nextUntitledName` walks up from 1 and
+        // takes the lowest unused index. That recycling is correct (a
+        // placeholder index nothing holds is available again) and is worth
+        // pinning here, because it is the non-obvious consequence of naming a
+        // snippet after its content.
+        controller.debugSimulateEdit(name: "snippet-1.txt", content: "apiVersion: v1\nkind: Service\nmetadata:\n  name: api\n")
         _ = waitFor(timeout: 5, until: { store.names().count == 2 })
 
         let both = store.names()
-        check(both == ["snippet-1.swift", "snippet-2.yaml"],
+        // Sorted, because `store.names()` is - and UX11's stems changed which
+        // name sorts first, where the old `snippet-1`/`snippet-2` pair
+        // happened to sort in creation order.
+        check(both == ["apiversion-v1.yaml", "struct-host.swift"],
               "both snippets should be on disk with detected extensions, got \(both)")
 
         // The content is the file, byte for byte - the reason this store does
         // not wrap a snippet in YAML.
-        let yaml = try? String(contentsOf: root.appendingPathComponent("snippet-2.yaml"), encoding: .utf8)
+        let yaml = try? String(contentsOf: root.appendingPathComponent("apiversion-v1.yaml"), encoding: .utf8)
         check(yaml?.hasPrefix("apiVersion: v1") == true,
               "the file should hold exactly what was typed, got \(yaml ?? "nothing")")
 
@@ -310,7 +329,7 @@ enum CodePreviewViewSelfTest {
             return
         }
         _ = waitFor(timeout: 5, until: { second.debugTabNames.count == 2 })
-        check(second.debugTabNames == ["snippet-1.swift", "snippet-2.yaml"],
+        check(second.debugTabNames == ["struct-host.swift", "apiversion-v1.yaml"],
               "a fresh controller should reopen both snippets, got \(second.debugTabNames)")
         check(second.debugCurrentLanguage == "swift",
               "…with the first one's language recovered from its filename")
@@ -322,19 +341,19 @@ enum CodePreviewViewSelfTest {
     private static func checkLanguagePickerRenamesTheFile(
         _ controller: CodePreviewController, _ store: CodePreviewStore, _ check: (Bool, String) -> Void
     ) {
-        controller.debugSelect(name: "snippet-2.yaml")
+        controller.debugSelect(name: "apiversion-v1.yaml")
         controller.debugPickLanguage("python")
-        _ = waitFor(timeout: 5, until: { controller.debugCurrentName == "snippet-2.py" })
+        _ = waitFor(timeout: 5, until: { controller.debugCurrentName == "apiversion-v1.py" })
 
-        check(controller.debugCurrentName == "snippet-2.py",
+        check(controller.debugCurrentName == "apiversion-v1.py",
               "picking a language should rename the file - that is where the language lives, got \(controller.debugCurrentName ?? "nil")")
         check(controller.debugCurrentLanguage == "python", "…and the language should follow")
-        check(store.names().contains("snippet-2.py"), "the rename should reach disk")
-        check(!store.names().contains("snippet-2.yaml"), "…and the old filename should be gone")
+        check(store.names().contains("apiversion-v1.py"), "the rename should reach disk")
+        check(!store.names().contains("apiversion-v1.yaml"), "…and the old filename should be gone")
 
         // A deliberate choice must survive further pasting - detection never
         // overrides the captain.
-        controller.debugSimulateEdit(name: "snippet-2.py", content: "SELECT id FROM hosts WHERE region = 'x' ORDER BY id;")
+        controller.debugSimulateEdit(name: "apiversion-v1.py", content: "SELECT id FROM hosts WHERE region = 'x' ORDER BY id;")
         _ = waitFor(timeout: 3, until: { false })  // let any debounce settle
         check(controller.debugCurrentLanguage == "python",
               "a hand-picked language must not be overridden by later detection, got \(controller.debugCurrentLanguage ?? "nil")")
