@@ -48,8 +48,8 @@ enum HostsRedesignSelfTest {
         checkQuickActionsAreRealAndWired(&ok)
         checkToolbarShortcutSitsBesideConsole(&ok)
         checkSidebarIsComposedFromTheReference(&ok)
-        checkSidebarAndTabsAreOneMechanism(&ok)
-        checkSidebarCountsComeFromTheStores(&ok)
+        checkSidebarIsTheOnlyScopeControl(&ok)
+        checkWorkspacePanelCountsComeFromTheStores(&ok)
         checkKeychainCardReadsRealState(&ok)
         checkToolsRowsAreWiredToRealDestinations(&ok)
         checkUserRowIsRealAndWired(&ok)
@@ -258,6 +258,12 @@ enum HostsRedesignSelfTest {
     /// The real page's own nav column, found by walking the tree rather than
     /// asked for through an accessor - so a column that exists but was never
     /// added to the view hierarchy fails here rather than passing.
+    /// Every view under `view`, including `view` itself - for a check whose
+    /// subject is the *absence* of something (UI1's deleted tab strip).
+    static func everyView(in view: NSView) -> [NSView] {
+        [view] + view.subviews.flatMap { everyView(in: $0) }
+    }
+
     static func findSidebar(in view: NSView) -> HelmPageSidebar? {
         if let nav = view as? HelmPageSidebar { return nav }
         for child in view.subviews {
@@ -655,7 +661,20 @@ enum HostsRedesignSelfTest {
             fail("row kinds are \(nav.debugRowKinds) - a TOOLS row must not latch", &ok)
         }
         if !nav.debugSurfaceIsPanel { fail("the column is not a panel surface", &ok) }
-        if !nav.debugHasCountBadges { fail("the WORKSPACE counts are not badges", &ok) }
+        // Review #3's UI1 inverted this one. It used to assert the WORKSPACE
+        // rows *were* badged; the badge was the fourth statement of the same
+        // number on one screen (this row, the card header, the drill subtitle
+        // and the Workspace panel's inventory tile), and the finding's remedy
+        // is one authoritative statement per concern. The count lives on the
+        // panel now - `checkWorkspacePanelCountsComeFromTheStores` below - and
+        // these rows are navigation.
+        if nav.debugCounts.values.contains(where: { !$0.isEmpty }) {
+            fail("the WORKSPACE rows still carry counts: \(nav.debugCounts)", &ok)
+        }
+        if nav.debugHasCountBadges {
+            fail("the column still builds count badges - with no counts to show they are "
+                 + "empty pills", &ok)
+        }
         if !nav.debugHasFooter { fail("the column has no footer (keychain card + user row)", &ok) }
         // The footer is bottom-anchored, which is the whole reason this page
         // pins the column's bottom with a required `==` rather than the `<=`
@@ -679,15 +698,19 @@ enum HostsRedesignSelfTest {
         if bottomGap < -0.5 || bottomGap > HelmPageSidebar.Metrics.panelInset + 0.5 {
             fail("the footer sits \(fmt(bottomGap))pt off the column's bottom - it is not anchored there", &ok)
         }
-        if ok { print("  OK - WORKSPACE(3) over TOOLS(2), panelled, badged, with a bottom-anchored footer") }
+        if ok { print("  OK - WORKSPACE(3) over TOOLS(2), panelled, uncounted, with a bottom-anchored footer") }
     }
 
-    /// The tab strip stays (the captain's own target screenshot shows both), so
-    /// the two controls have to be **one mechanism** - which is the thing
-    /// `fm/grand-line-hosts-page-redesign` was right to worry about when it
-    /// scoped a column out, and the thing that makes keeping both safe.
-    private static func checkSidebarAndTabsAreOneMechanism(_ ok: inout Bool) {
-        print("\n-- the nav column and the tab strip are one mechanism --")
+    /// **Review #3's UI1 settled this the other way.** The page used to carry
+    /// both a `HelmSegmentedTabs` strip and this column, wired as one
+    /// mechanism so they could not disagree; UI1's finding is that being one
+    /// mechanism does not stop them being the same three words twice, one row
+    /// apart. The strip is gone, so this asserts both halves of that: nothing
+    /// on the page is a segmented tab control any more, and the column alone
+    /// drives every scope switch (including one made from elsewhere, which is
+    /// the direction a deleted `sidebar.select` would break).
+    private static func checkSidebarIsTheOnlyScopeControl(_ ok: inout Bool) {
+        print("\n-- the nav column is the page's one scope control --")
         let (controller, window, _) = page(hosts: [devHost()])
         defer { _ = window }
         guard let nav = findSidebar(in: controller.view) else {
@@ -716,29 +739,49 @@ enum HostsRedesignSelfTest {
         if nav.selection != HostsTab.snippets.rawValue {
             fail("the Activity row moved the selection to \(nav.selection ?? "nil")", &ok)
         }
-        if ok { print("  OK - either control moves both, and a TOOLS row moves neither") }
+        // The strip's absence, from the real rendered tree rather than from a
+        // property: a re-added one would render and pass every check above.
+        let strips = everyView(in: controller.view).compactMap { $0 as? HelmSegmentedTabs }
+        if !strips.isEmpty {
+            fail("the page has \(strips.count) segmented tab strip(s) again - UI1 removed it "
+                 + "because it duplicated the WORKSPACE rows", &ok)
+        }
+        if ok { print("  OK - no tab strip, the column drives every switch, and a TOOLS row moves neither") }
     }
 
-    private static func checkSidebarCountsComeFromTheStores(_ ok: inout Bool) {
-        print("\n-- the nav counts are the stores' own, and follow a write --")
+    /// UI1 moved this page's counts to one place. This is that place.
+    ///
+    /// Same shape as the sidebar-badge check it replaces, and for the same
+    /// reason: read off the *rendered* tiles, then drive a real store write -
+    /// a check that re-derived the number from the store would agree with
+    /// itself forever.
+    private static func checkWorkspacePanelCountsComeFromTheStores(_ ok: inout Bool) {
+        print("\n-- the Workspace panel's counts are the stores' own, and follow a write --")
         let (controller, window, hostStore) = page(hosts: [devHost()],
                                                    keys: [navKey("work"), navKey("legacy")],
                                                    snippets: [navSnippet("tail")])
         defer { _ = window }
-        guard let nav = findSidebar(in: controller.view) else { fail("no nav column", &ok); return }
-        let want = [HostsTab.hosts.rawValue: "1", HostsTab.keys.rawValue: "2",
-                    HostsTab.snippets.rawValue: "1"]
-        for (id, value) in want where nav.debugCounts[id] != value {
-            fail("\(id) reads \(nav.debugCounts[id] ?? "nil"), want \(value)", &ok)
+        let tiles = controller.debugSideStack.workspace.debugMetrics
+        guard tiles.count >= 3 else {
+            fail("the Workspace panel renders \(tiles.count) tiles, want at least 3", &ok); return
         }
-        // Read off the rendered labels and then driven by a real store write -
-        // a check that re-derived the number would agree with itself forever.
+        let want = ["1", "2", "1"]
+        for (index, value) in want.enumerated() where tiles[index].value != value {
+            fail("the \(tiles[index].caption) tile reads \(tiles[index].value), want \(value)", &ok)
+        }
         hostStore.add(prodHost())
-        if nav.debugCounts[HostsTab.hosts.rawValue] != "2" {
-            fail("after adding a host the count reads "
-                 + "\(nav.debugCounts[HostsTab.hosts.rawValue] ?? "nil"), want 2", &ok)
+        let after = controller.debugSideStack.workspace.debugMetrics
+        if after.first?.value != "2" {
+            fail("after adding a host the Hosts tile reads \(after.first?.value ?? "nil"), want 2", &ok)
         }
-        if ok { print("  OK - 1/2/1 from the real stores, and the host count follows a write") }
+        // The other three places that used to state this number must stay
+        // quiet, or the finding is only half fixed. The card header is the one
+        // of them this suite can read directly.
+        if controller.debugHostsTitle.contains("(") {
+            fail("the Hosts card header is \(controller.debugHostsTitle) - UI1 took the count off it", &ok)
+        }
+        if ok { print("  OK - 1/2/1 from the real stores, the Hosts tile follows a write, "
+                      + "and the card header states no count") }
     }
 
     /// The reference's bar is a hardcoded 68%. This one is a real fraction of

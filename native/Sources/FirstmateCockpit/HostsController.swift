@@ -1,7 +1,9 @@
 // Manjesh Grand Line - native macOS app.
 //
 // The Hosts destination: saved SSH hosts, SSH keys and command snippets, as
-// three tabs of one full-width page.
+// three scopes of one full-width page, switched by the page's own left nav
+// column. (They were a `HelmSegmentedTabs` strip *and* that column until
+// review #3's UI1 - see `HostsSidebar.swift`'s header.)
 //
 // **Why this file replaces three.** The full-app UI audit
 // (`data/grandline-full-ui-audit/report.md`, §4.4/§4.5, §6.4 and §7's Phase 5)
@@ -18,15 +20,14 @@
 //
 // The captain approved the structural change (registered decision
 // `grandline-full-ui-audit-decision-hosts-keys-snippets-merge`): the two
-// windows are gone, and their content is a `HelmSegmentedTabs` tab inside this
-// destination. Everything they did still happens here - add/edit/delete a
+// windows are gone, and their content is one scope of this destination. Everything they did still happens here - add/edit/delete a
 // host, key or snippet; connect; quick-connect; key generation and import;
 // snippet run; the pinned "Firstmate" entry's connect - only the presentation
 // changed.
 //
 // **What it is built out of.** Nothing new: the page is Phase 1-4's shared
-// components (`HelmDesignSystem.swift`) assembled - `HelmSegmentedTabs` for
-// the tab row, one `HelmCard` per tab, `HelmAccentRow` cards for every list
+// components (`HelmDesignSystem.swift`) assembled - `HelmPageSidebar` for the
+// nav column, one `HelmCard` per scope, `HelmAccentRow` cards for every list
 // row, `HelmEmptyState` for every "nothing here yet", `HelmButton` for every
 // action. The three per-list bodies are one `HostsListSection`, fed a
 // `[HostsListSection.Item]` array, which is what actually deletes the
@@ -45,9 +46,12 @@
 
 import AppKit
 
-/// Which of the destination's three tabs is showing. Raw values are the ids
-/// `HelmSegmentedTabs` deals in (the component switches nothing itself - it
-/// hands an id back and this controller's own switch does the work).
+/// Which of the destination's three scopes is showing. Raw values are the ids
+/// `HelmPageSidebar` deals in (the component switches nothing itself - it hands
+/// an id back and this controller's own switch does the work). The name is
+/// kept: it is the vocabulary ~30 call sites across the menu bar, the search
+/// palette and `AppShellController` already speak, and review #3's UI1 removed
+/// a duplicate control, not the three scopes.
 enum HostsTab: String, CaseIterable {
     case hosts, keys, snippets
 
@@ -116,7 +120,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
 
     // MARK: Views
 
-    private var tabs: HelmSegmentedTabs!
+
     private var activeTab: HostsTab = .hosts
 
     private let hostsTabView = NSView()
@@ -141,8 +145,9 @@ final class HostsController: NSViewController, DaylightDrillActions {
 
     /// The reference mockup's right-hand column: Workspace, Selected, Quick
     /// actions (`HostsSidePanels.swift`). One instance shared by all three
-    /// tabs rather than one per tab - the Workspace counts are page-wide, and
-    /// the detail panel simply re-fills from whichever list is showing.
+    /// scopes rather than one per scope - the Workspace counts are page-wide
+    /// (and, since UI1, the page's one statement of them), and the detail
+    /// panel simply re-fills from whichever list is showing.
     private let sideStack = HostsSideStack()
 
     /// The reference mockup's **left** navigation column.
@@ -153,9 +158,9 @@ final class HostsController: NSViewController, DaylightDrillActions {
     /// that shipped, put it beside his own reference, and asked for the column
     /// back - the same correction Schedules already took in
     /// `fm/grand-line-schedules-sidebar-fullwidth-fix`. See
-    /// `HostsSidebar.swift`'s header for the full note, including why the tab
-    /// strip stays and how the two are kept as one mechanism.
-    private let sidebar = HelmPageSidebar(surface: .panel, countStyle: .badge)
+    /// `HostsSidebar.swift`'s header for the full note, including why review
+    /// #3's UI1 then removed the tab strip this column used to sit beside.
+    private let sidebar = HelmPageSidebar(surface: .panel)
     private let keychainCard = HostsKeychainCard()
     private let userRow = HostsUserRow()
 
@@ -265,13 +270,24 @@ final class HostsController: NSViewController, DaylightDrillActions {
         root.wantsLayer = true
         view = root
 
-        tabs = HelmSegmentedTabs(items: HostsTab.allCases.map { .init(id: $0.rawValue, title: $0.title) },
-                                 selected: activeTab.rawValue)
-        tabs.onSelect = { [weak self] id in
-            guard let tab = HostsTab(rawValue: id) else { return }
-            self?.select(tab: tab, moveTabControl: false)
-        }
-        root.addSubview(tabs)
+        // Review #3's UI1: **there is no tab strip any more.**
+        //
+        // This page carried two controls that did the same thing, one row
+        // apart: a `HelmSegmentedTabs` strip reading Hosts / SSH Keys /
+        // Snippets over the content column, and a `HelmPageSidebar` WORKSPACE
+        // section reading Hosts / SSH Keys / Snippets immediately to its left.
+        // They were wired as one mechanism, so they could never *disagree* -
+        // which was the risk `HostsSidebar.swift`'s header was written about -
+        // but they were still the same three words twice on one screen.
+        //
+        // The sidebar is the one that stays, because it is strictly the richer
+        // of the two: it carries each scope's glyph, it continues into a TOOLS
+        // section and the keychain footer, and it is this page's navigation in
+        // the same place every other sidebar-bearing destination puts it. That
+        // reverses the "the tab strip stays, the captain's own target
+        // screenshot shows both" note this file's sibling records - see this
+        // task's PR for the captain instruction that supersedes it.
+        //
         // Added before the constraint block below, which references its
         // anchors: activating a constraint between two views with no common
         // ancestor throws (`fm/grandline-docs-no-window-fix`'s own finding).
@@ -330,14 +346,6 @@ final class HostsController: NSViewController, DaylightDrillActions {
             // bottom if the column does - see `HelmPageSidebar.setFooter`.
             sidebar.bottomAnchor.constraint(equalTo: column.bottomAnchor),
 
-            tabs.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor,
-                                          constant: HelmMetrics.s4),
-            // The tab row sits over the content column only. Letting it span
-            // the side stack too would imply the panels beside it switch with
-            // the tab, which is exactly what they do not do.
-            tabs.trailingAnchor.constraint(lessThanOrEqualTo: sideStack.leadingAnchor,
-                                           constant: -HelmMetrics.s4),
-            tabs.topAnchor.constraint(equalTo: column.topAnchor),
         ])
 
         // The page is two columns: the tab's own content, and the permanent
@@ -367,7 +375,9 @@ final class HostsController: NSViewController, DaylightDrillActions {
                                                  constant: HelmMetrics.s4),
                 tabView.trailingAnchor.constraint(equalTo: sideStack.leadingAnchor,
                                                   constant: -HelmMetrics.s4),
-                tabView.topAnchor.constraint(equalTo: tabs.bottomAnchor, constant: HelmMetrics.s4),
+                // UI1: the content column starts at the top of the page now
+                // that the duplicate tab strip above it is gone.
+                tabView.topAnchor.constraint(equalTo: column.topAnchor),
                 tabView.bottomAnchor.constraint(equalTo: column.bottomAnchor),
             ])
         }
@@ -416,7 +426,14 @@ final class HostsController: NSViewController, DaylightDrillActions {
     private func buildSidebar() {
         sidebar.appendHeader("Workspace")
         for tab in HostsTab.allCases {
-            sidebar.appendRow(id: tab.rawValue, symbol: Self.sidebarSymbol(for: tab), title: tab.title)
+            // UI1: `showsCount: false`. These rows used to carry a count badge
+            // each, which - with the Workspace panel's inventory tiles two
+            // columns over, the card header's own "Hosts (3)" and the drill
+            // subtitle - made three the fourth statement of one number on one
+            // screen. The count is stated once, by the panel whose subtitle is
+            // literally "At-a-glance inventory"; these rows are navigation.
+            sidebar.appendRow(id: tab.rawValue, symbol: Self.sidebarSymbol(for: tab),
+                              title: tab.title, showsCount: false)
         }
         sidebar.appendSpacer()
         sidebar.appendHeader("Tools")
@@ -464,17 +481,13 @@ final class HostsController: NSViewController, DaylightDrillActions {
         }
     }
 
-    /// The nav counts and the keychain card, from the same three stores the
-    /// lists render and the same biometry probe the Workspace panel reads - so
-    /// the two columns either side of the page can never disagree within a
-    /// frame.
+    /// The keychain card, from the same stores the lists render and the same
+    /// biometry probe the Workspace panel reads - so the two columns either
+    /// side of the page can never disagree within a frame.
+    ///
+    /// UI1: no `setCounts` any more. See `buildSidebar`.
     private func refreshSidebar() {
         let hosts = hostStore.hosts
-        sidebar.setCounts([
-            HostsTab.hosts.rawValue: hosts.count,
-            HostsTab.keys.rawValue: keyStore.keys.count,
-            HostsTab.snippets.rawValue: snippetStore.snippets.count,
-        ])
         keychainCard.setState(keys: keyStore.keys.count,
                               hostsOnManagedKeys: hosts.filter { $0.keyID != nil }.count,
                               hosts: hosts.count,
@@ -771,14 +784,16 @@ final class HostsController: NSViewController, DaylightDrillActions {
 
     // MARK: Tabs
 
-    /// Switch tabs. `moveTabControl` is false when the switch came *from* the
-    /// tab control itself (it has already moved its own pill).
+    /// Switch scopes.
+    ///
+    /// `moveTabControl` is kept as a parameter and deliberately ignored: UI1
+    /// removed the tab strip it used to move, and several callers (the menu
+    /// bar, the search palette, `AppShellController`) pass it explicitly.
+    /// `HelmPageSidebar.select(_:)` moves the row without firing `onSelect`,
+    /// so a switch from anywhere lands here exactly once.
     func select(tab: HostsTab, moveTabControl: Bool = true) {
+        _ = moveTabControl
         activeTab = tab
-        if moveTabControl { tabs?.select(tab.rawValue) }
-        // One mechanism, two controls: `select(_:)` moves the row without
-        // firing `onSelect`, so a switch from either side lands in exactly one
-        // place and the two can never show different tabs.
         sidebar.select(tab.rawValue)
         hostsTabView.isHidden = tab != .hosts
         keysTabView.isHidden = tab != .keys
@@ -805,29 +820,35 @@ final class HostsController: NSViewController, DaylightDrillActions {
         }
     }
 
-    /// §6.4's live subtitle: the counts this page already renders in its own
-    /// card headers, read from the same stores. Nothing new is collected, and
-    /// the header cannot disagree with the list below it.
+    /// §6.4's live subtitle - what the showing scope *is*, not how much of it
+    /// there is.
+    ///
+    /// **Review #3's UI1.** This used to read "3 saved hosts \u{00B7} 0 keys",
+    /// which made the number 3 the fourth statement of the same fact on one
+    /// screen: this line, the sidebar's own badge, the card header "Hosts (3)"
+    /// and the Workspace panel's "3 Hosts" tile. The finding's own remedy is
+    /// one authoritative statement per concern, and the Workspace panel is
+    /// where it lives - its whole subtitle is "At-a-glance inventory", it is
+    /// visible at the same time as all three of the others, and it is the only
+    /// one of the four that also reports live sessions.
+    ///
+    /// The empty case is kept and is not a count: "no saved hosts yet" is a
+    /// *state* the captain acts on, and it is the one thing this line can say
+    /// that the inventory tile's `0` does not.
     var drillHeaderSubtitle: String? {
-        let hosts = hostStore.hosts.count
-        let keys = keyStore.keys.count
-        let snippets = snippetStore.snippets.count
-        func plural(_ n: Int, _ one: String, _ many: String) -> String {
-            "\(n) \(n == 1 ? one : many)"
-        }
         switch activeTab {
         case .hosts:
-            return hosts == 0
+            return hostStore.hosts.isEmpty
                 ? "No saved hosts yet"
-                : "\(plural(hosts, "saved host", "saved hosts")) \u{00B7} \(plural(keys, "key", "keys"))"
+                : "Saved SSH connections"
         case .keys:
-            return keys == 0
+            return keyStore.keys.isEmpty
                 ? "No saved keys yet"
-                : "\(plural(keys, "key", "keys")) in the Keychain"
+                : "Private key material, in the macOS Keychain"
         case .snippets:
-            return snippets == 0
+            return snippetStore.snippets.isEmpty
                 ? "No snippets yet"
-                : plural(snippets, "saved snippet", "saved snippets")
+                : "Commands you run often"
         }
     }
 
@@ -839,7 +860,6 @@ final class HostsController: NSViewController, DaylightDrillActions {
         // this page (the quick-connect `NSSearchField`, which Phase 6's
         // `HelmField` owns) - see `ThemeManager.swift`'s checklist rule 2.
         view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
-        tabs?.applyTheme(theme)
         hostsList.applyTheme(theme)
         keysList.applyTheme(theme)
         snippetsList.applyTheme(theme)
@@ -935,9 +955,9 @@ final class HostsController: NSViewController, DaylightDrillActions {
                     : "Add a host to save its connection details, or type ssh user@host in the field above to connect right now."))
         }
 
-        hostsTitleLabel.stringValue = hostStore.hosts.isEmpty
-            ? HostsTab.hosts.title
-            : "\(HostsTab.hosts.title) (\(hostStore.hosts.count))"
+        // Review #3's UI1: the count came off this header. It is stated once
+        // on the page, by the Workspace panel - see `refreshWorkspacePanel`.
+        hostsTitleLabel.stringValue = HostsTab.hosts.title
         #if FM_SELFTESTS
         lastHostItems = items
         #endif
@@ -1100,9 +1120,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
                             title: "No saved keys yet",
                             body: "Generate a key, or import an existing PEM or OpenSSH one. Private key material stays in the macOS Keychain.")]
         }
-        keysTitleLabel.stringValue = keyStore.keys.isEmpty
-            ? HostsTab.keys.title
-            : "\(HostsTab.keys.title) (\(keyStore.keys.count))"
+        keysTitleLabel.stringValue = HostsTab.keys.title
         keysList.setItems(items)
         refreshWorkspacePanel()
         refreshDetailPanel()
@@ -1138,9 +1156,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
                             title: "No snippets yet",
                             body: "Save a command you run often, then send it to any terminal tab in one click.")]
         }
-        snippetsTitleLabel.stringValue = snippetStore.snippets.isEmpty
-            ? HostsTab.snippets.title
-            : "\(HostsTab.snippets.title) (\(snippetStore.snippets.count))"
+        snippetsTitleLabel.stringValue = HostsTab.snippets.title
         snippetsList.setItems(items)
         refreshWorkspacePanel()
         refreshDetailPanel()
@@ -1382,6 +1398,9 @@ final class HostsController: NSViewController, DaylightDrillActions {
 
     #if FM_SELFTESTS
     var debugSideStack: HostsSideStack { sideStack }
+    /// UI1: the Hosts card header as rendered, so a suite can assert the count
+    /// really came off it rather than trusting the format string.
+    var debugHostsTitle: String { hostsTitleLabel.stringValue }
     /// Whether the tag strip has left the filter row's layout.
     ///
     /// The vacuity guard for `checkTwoColumnLayoutSurvivesUntaggedHosts`: that

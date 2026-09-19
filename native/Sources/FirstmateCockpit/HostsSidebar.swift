@@ -6,17 +6,26 @@
 // `HostsController.buildSidebar()`; only these two shapes are Hosts-specific,
 // which is why they live here and not in that component.
 //
-// **Why this page has a column at all, given it deliberately did not.**
+// **Why this page has a column at all, given it deliberately did not - and
+// why it is now the only one.**
 // `fm/grand-line-hosts-page-redesign` scoped one out by name: "this page's nav
 // is its three tabs, and a `HelmPageSidebar` duplicating them would be the
 // same control twice, a row apart." The captain used what that shipped, put it
 // beside his own reference, and asked for the column back - the same
 // correction, one page over, that `fm/grand-line-schedules-sidebar-fullwidth-fix`
 // already made after Schedules scoped its own column out for the same reason.
-// The tab strip stays (the captain's own target screenshot shows both), and
-// the two are wired as **one mechanism** - `HostsController.select(tab:)` moves
-// the sidebar's selection and a sidebar row moves the tab - so the duplication
-// the original decision worried about cannot become a disagreement.
+// Both controls then shipped together, wired as **one mechanism** so they
+// could never disagree about which scope was showing.
+//
+// Review #3's UI1 came back to that and found the original worry had been
+// half-answered: one mechanism stops them disagreeing, it does not stop them
+// being the same three words twice, one row apart. **The tab strip is gone**
+// and this column is the page's whole navigation. The column is the half that
+// survived because it is strictly richer - a glyph per scope, a TOOLS section
+// and the footer below - and because a sidebar is where every other
+// sidebar-bearing destination in this app puts its navigation.
+// `HostsRedesignSelfTest.checkSidebarIsTheOnlyScopeControl` asserts the strip's
+// absence from the real rendered tree, not from a property.
 //
 // **Nothing here is fabricated, which is the whole risk in a mockup-led pass.**
 // The reference draws a progress bar at a hardcoded 68% and a flat "Touch ID
@@ -119,12 +128,28 @@ final class HostsKeychainCard: NSView {
         bar.configure(fraction: hosts == 0 ? 0 : Double(hostsOnManagedKeys) / Double(hosts))
 
         let keyWord = keys == 1 ? "1 key" : "\(keys) keys"
-        let biometry = touchIDAvailable ? "Touch ID enabled" : "no biometry"
-        detailLabel.stringValue = "\(keyWord) \u{00B7} \(biometry)"
+        detailLabel.stringValue = "\(keyWord) \u{00B7} \(Self.biometryPhrase(touchIDAvailable))"
         detailLabel.toolTip = hosts == 0
             ? "No saved hosts yet."
             : "\(hostsOnManagedKeys) of \(hosts) saved hosts use a key from this app's Keychain; the rest rely on the ssh agent."
         applyTheme(theme)
+    }
+
+    /// The one wording for "can this Mac use Touch ID", read by both places on
+    /// this page that state it.
+    ///
+    /// **Review #3's UI1.** The page said it twice, in two vocabularies: this
+    /// card's footer read "Touch ID enabled" while the Workspace panel on the
+    /// opposite side read "Touch ID ready", from the same
+    /// `CredentialVaultKeyStore.biometryAvailable` probe. Two phrasings of one
+    /// fact invite the reading that they are two different facts. One
+    /// function, so a future change to the words cannot move only one of them.
+    ///
+    /// "ready" rather than "enabled": what the probe actually answers is
+    /// `LAContext.canEvaluatePolicy` - whether a biometric prompt would work
+    /// right now - not whether a setting is switched on somewhere.
+    static func biometryPhrase(_ available: Bool) -> String {
+        available ? "Touch ID ready" : "no biometry on this Mac"
     }
 
     func applyTheme(_ theme: HelmTheme) {
