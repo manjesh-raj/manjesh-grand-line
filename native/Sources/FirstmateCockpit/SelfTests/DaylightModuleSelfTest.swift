@@ -1070,7 +1070,7 @@ enum DaylightModuleSelfTest {
     // icon the captain has muscle memory for.
 
     private static func checkBarDestinationIcons(_ ok: inout Bool) {
-        print("\n-- bar quick-access icons: Sticky Board, Code Preview, Tasks, Straw Hat Pirates, Poneglyph, Console --")
+        print("\n-- bar quick-access: six icons drawn, the seventh in the overflow menu (UX2) --")
         let bar = DaylightBarController()
         bar.loadView()
         // 1512, the captain's own screen width, deliberately above
@@ -1094,14 +1094,37 @@ enum DaylightModuleSelfTest {
         // fail loudly - a missing constraint collapses the row, a missing
         // `addSubview` traps on "no common ancestor". The other five render a
         // pixel-identical bar, and each was confirmed to fail here by name.
-        let expected: [RailDestination] = [.stickyBoard, .codePreview, .shift, .strawHat, .poneglyph, .console, .hosts]
+        // **Review #3's UX2 capped the drawn row at six**, so the expectation
+        // is now in two halves: the captain's whole *pinned* list (which is
+        // still the seven that shipped, in their shipped order - that default
+        // is the migration, not a redesign) and the *drawn* prefix of it.
+        //
+        // Both are typed out as literals rather than read back from
+        // `debugDestinationButtons()` / `QuickAccessConfiguration`, for the
+        // reason this case has always given: a check that derives its
+        // expectation from the thing it is checking passes for any set of
+        // icons in any order, including an accidental duplicate or a
+        // reordering that moves an icon the captain has muscle memory for.
+        // Adding a shortcut stays a deliberate two-place edit.
+        let pinned: [RailDestination] = [.stickyBoard, .codePreview, .shift, .strawHat, .poneglyph, .console, .hosts]
+        if bar.quickAccessConfiguration.pinned != pinned {
+            fail("the default pinned row is \(bar.quickAccessConfiguration.pinned.map(\.title)), expected \(pinned.map(\.title))", &ok)
+        }
+        let expected = Array(pinned.prefix(QuickAccessConfiguration.visibleLimit))
         let buttons = bar.debugDestinationButtons()
         guard buttons.count == expected.count else {
-            fail("expected \(expected.count) quick-access icons, found \(buttons.count)", &ok)
+            fail("expected \(expected.count) quick-access icons (UX2's cap), found \(buttons.count)", &ok)
             return
         }
         if buttons.map(\.destination) != expected {
             fail("quick-access icons are \(buttons.map { $0.destination.title }), expected \(expected.map(\.title))", &ok)
+        }
+        // The seventh is reachable rather than dropped - that is the whole
+        // difference between a cap and a deletion.
+        let overflowed = pinned.dropFirst(QuickAccessConfiguration.visibleLimit).map(\.title)
+        let menuTitles = bar.debugQuickAccessOverflowMenu().items.map(\.title)
+        for title in overflowed where !menuTitles.contains(title) {
+            fail("\(title) is past UX2's cap and is not in the overflow menu either - it is unreachable from the bar", &ok)
         }
 
         // The glyph is each destination's OWN symbol, so the bar icon and the
@@ -1139,11 +1162,25 @@ enum DaylightModuleSelfTest {
         let searchMaxX = bar.debugSearchPill().frame.maxX
         let toggleMinX = bar.debugThemeToggleButton().frame.minX
         let bellMinX = bar.notificationCenter.bell.frame.minX
-        for button in buttons where button.frame.width > 0 {
-            if button.frame.minX < searchMaxX {
+        // UX2 moved these buttons inside an `NSStackView`, so their own
+        // `frame` is in that row's coordinate space rather than the bar's -
+        // comparing it against the search pill's bar-space frame directly
+        // would be comparing two different origins, which is a check that
+        // fails for a reason that is not the one it names. Converted into the
+        // bar's space, which is the space every other number here is in.
+        //
+        // Asserted rather than assumed: the row must actually be somewhere,
+        // or every comparison below is against a zero rect and vacuous.
+        let barView = bar.view
+        func barFrame(_ view: NSView) -> NSRect { view.convert(view.bounds, to: barView) }
+        if buttons.contains(where: { barFrame($0).width <= 0 }) {
+            fail("a quick-access button has no laid-out width - the order checks below would be vacuous", &ok)
+        }
+        for button in buttons where barFrame(button).width > 0 {
+            if barFrame(button).minX < searchMaxX {
                 fail("\(button.destination.title) sits before the search pill", &ok)
             }
-            if button.frame.maxX > toggleMinX {
+            if barFrame(button).maxX > toggleMinX {
                 fail("\(button.destination.title) sits after the theme toggle - it must come immediately before it", &ok)
             }
         }
@@ -1151,7 +1188,7 @@ enum DaylightModuleSelfTest {
         // icon landing out of order fails by name instead of only the first
         // two being checked.
         for (left, right) in zip(buttons, buttons.dropFirst()) {
-            if left.frame.minX >= right.frame.minX {
+            if barFrame(left).minX >= barFrame(right).minX {
                 fail("\(left.destination.title) should sit left of \(right.destination.title)", &ok)
             }
         }
@@ -1414,9 +1451,25 @@ enum DaylightModuleSelfTest {
                 fail("Overview hero headline is '\(greeting.title)', expected the answer banner's own "
                      + "'\(expected.title)'", &ok)
             }
-            if greeting.subtitle != expected.meta {
-                fail("Overview hero detail is '\(greeting.subtitle)', expected the answer banner's own "
-                     + "'\(expected.meta)'", &ok)
+            // **Review #3's UX5 deliberately split the detail line here.**
+            // The all-clear `meta` enumerates the two cards drawn directly
+            // under this hero ("N crew working" is the Fleet card, the PR
+            // clause is the Merge queue card), which is the finding's "the
+            // same fact appears three times". On the hub - and only there -
+            // it is replaced with how fresh the reading is, which is the one
+            // thing no card below can say.
+            //
+            // So the assertion inverts rather than being deleted (this case's
+            // own rule, two comments up): the hub must NOT restate the cards,
+            // and must say when it read.
+            if !expected.metaRestatesCards {
+                fail("the all-clear answer no longer declares its meta a restatement - UX5's substitution is dead code", &ok)
+            }
+            if greeting.subtitle == expected.meta {
+                fail("the hub hero is still restating the Fleet and Merge queue cards below it: '\(greeting.subtitle)'", &ok)
+            }
+            if !greeting.subtitle.hasPrefix("Fleet read ") {
+                fail("Overview hero detail is '\(greeting.subtitle)', expected the freshness line UX5 put there", &ok)
             }
             if greeting.kicker != expected.kicker.uppercased() {
                 fail("Overview hero kicker is '\(greeting.kicker)', expected '\(expected.kicker.uppercased())'", &ok)
@@ -1425,6 +1478,16 @@ enum DaylightModuleSelfTest {
             canvas.applyFleet(snapshot: snapshot, mergedPRs: nil, prFetchFailure: "no network")
             if canvas.greetingForTests.subtitle.contains("0 PRs ready") {
                 fail("a failed PR scan rendered as '0 PRs ready' - GL-14's exact rule", &ok)
+            }
+            // GL-14 again, and the half UX5's substitution could have broken:
+            // the hub's hero must still say the reading is partial. That lives
+            // in the *kicker* and the headline ("Partly unknown" / "Nothing
+            // **known** needs you"), which the freshness line does not touch -
+            // asserted here rather than assumed, because a substitution that
+            // swallowed the failure state would look exactly like this one.
+            if canvas.greetingForTests.kicker != "PARTLY UNKNOWN" {
+                fail("a failed PR scan left the hub kicker at '\(canvas.greetingForTests.kicker)' - "
+                     + "UX5's freshness line must not hide a partial reading", &ok)
             }
 
             if ok {

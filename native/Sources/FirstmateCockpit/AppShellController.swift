@@ -477,7 +477,8 @@ final class AppShellController: NSViewController {
             logAnalyzerStore: LogAnalyzerStore(),
             docsRunbookStore: DocsRunbookStore(),
             codePreviewStore: codePreviewStore,
-            commandLibraryStore: commandLibraryStore))
+            commandLibraryStore: commandLibraryStore,
+            stickyBoardStore: stickyBoard.store))
         super.init(nibName: nil, bundle: nil)
     }
 

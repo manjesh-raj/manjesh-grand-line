@@ -201,6 +201,50 @@ final class HostsController: NSViewController, DaylightDrillActions {
     }()
     private var onlineOnly = false
 
+    /// Review #3's UX6: "the Hosts sidebar should carry *filters* (Online, by
+    /// tag, by group)".
+    ///
+    /// Two of those three already existed when this was written - the Online
+    /// toggle immediately above and the tag chips beside it - and they live in
+    /// this filter row rather than in the sidebar deliberately: they are
+    /// list-scoped, they compose with the search field they sit under, and the
+    /// sidebar is this page's *navigation* (UI1 removed the tab strip
+    /// precisely so the column could be that one thing). Moving two working
+    /// controls into the column would be churn, and re-drawing them there
+    /// while leaving them here is the "same control twice, a row apart" UI1
+    /// had just finished removing.
+    ///
+    /// **Group was the one genuinely missing filter**, and it is the one the
+    /// captain's own data wants: `filterRow`'s own comment below records that
+    /// "his hosts record an environment in `group`, not in `tags`" - so the
+    /// tag chips are empty for him and the list has no way to narrow to one
+    /// environment at all.
+    ///
+    /// A popup rather than chips, because the two filters differ in kind: a
+    /// host carries many tags (so tags are a multi-select chip row) and
+    /// exactly one group (so group is a single-select list). Drawing a
+    /// single-select choice as a row of toggles would invite a captain to pick
+    /// two and get nothing.
+    private lazy var groupPicker: HelmPopUpButton = {
+        let picker = HelmPopUpButton()
+        picker.target = self
+        picker.action = #selector(groupPicked)
+        picker.toolTip = "Show only hosts in one group"
+        return picker
+    }()
+
+    /// `nil` is "every group", which is the resting state and the first item
+    /// in the popup. A group that stops existing (its last host was edited or
+    /// deleted) clears this rather than leaving the list filtered to nothing -
+    /// see `rebuildGroupPicker`.
+    private var selectedGroup: String?
+
+    /// The popup's "no filter" row. A literal rather than an empty string so
+    /// it can never collide with a real group of that name - a host group is
+    /// trimmed non-empty text, and this is a marker held in
+    /// `representedObject`, not a title match.
+    private static let allGroupsMarker = "\u{0000}all"
+
     /// Open the ⌘K command palette. Forwarded rather than reached for - this
     /// page has never known what an `AppDelegate` is, and the quick-actions
     /// panel must not be the first thing to teach it.
@@ -711,7 +755,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
         spacerCollapsed.priority = .defaultLow
         spacerCollapsed.isActive = true
 
-        let filterRow = NSStackView(views: [onlineChip, tagsScroll, filterSpacer])
+        let filterRow = NSStackView(views: [onlineChip, groupPicker, tagsScroll, filterSpacer])
         filterRow.orientation = .horizontal
         filterRow.alignment = .centerY
         filterRow.spacing = HelmMetrics.s2
@@ -721,6 +765,12 @@ final class HostsController: NSViewController, DaylightDrillActions {
         filterRow.distribution = .fill
         onlineChip.setContentHuggingPriority(.required, for: .horizontal)
         onlineChip.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // Same treatment as the chip beside it, and for the same reason: this
+        // is fixed-size chrome, so `tagsScroll` (and then `filterSpacer`) must
+        // be what absorbs the row's slack - gotcha (5).
+        groupPicker.translatesAutoresizingMaskIntoConstraints = false
+        groupPicker.setContentHuggingPriority(.required, for: .horizontal)
+        groupPicker.setContentCompressionResistancePriority(.required, for: .horizontal)
         filterRow.translatesAutoresizingMaskIntoConstraints = false
 
         // A vertical `NSStackView`, not manual constraints, specifically so
@@ -874,6 +924,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
     private func reloadHosts() {
         refreshSidebar()
         rebuildTagChips()
+        rebuildGroupPicker()
         applyHostFilter(searchField.stringValue)
     }
 
@@ -904,6 +955,65 @@ final class HostsController: NSViewController, DaylightDrillActions {
         // Only the tag strip collapses when there are no tags - the "Online"
         // chip beside it is always meaningful.
         tagsScroll.isHidden = allTags.isEmpty
+    }
+
+    /// One row per distinct group across all hosts, plus "All groups" and -
+    /// when some host has none - "Ungrouped", which are the same two buckets
+    /// `applyHostFilter` already draws as list headers. Rebuilt on every
+    /// reload, exactly like `rebuildTagChips`, so it stays in sync with host
+    /// edits with no change tracking.
+    ///
+    /// **The picker hides entirely when every host shares one group** (or none
+    /// has one), matching the list's own rule two methods down: "group headers
+    /// are skipped entirely when every visible host shares one group". A
+    /// filter that can only ever produce the list you are already looking at
+    /// is noise.
+    private func rebuildGroupPicker() {
+        let groups = Set(hostStore.hosts.compactMap { normalizedGroup($0) }).sorted()
+        let hasUngrouped = hostStore.hosts.contains { normalizedGroup($0) == nil }
+        // Hidden is a real removal from layout here - `filterRow` is an
+        // `NSStackView` and this is an arranged subview (the stack exemption
+        // to gotcha (11)), which is the same mechanism `tagsScroll` relies on.
+        groupPicker.isHidden = groups.count < 2 && !(groups.count == 1 && hasUngrouped)
+        if groupPicker.isHidden {
+            selectedGroup = nil
+            return
+        }
+        // A group the captain had selected that no longer exists clears the
+        // filter rather than leaving the list narrowed to nothing with a
+        // control that no longer names it.
+        if let selected = selectedGroup, selected != Self.ungroupedMarker, !groups.contains(selected) {
+            selectedGroup = nil
+        }
+
+        groupPicker.removeAllItems()
+        let all = NSMenuItem(title: "All groups", action: nil, keyEquivalent: "")
+        all.representedObject = Self.allGroupsMarker
+        groupPicker.menu?.addItem(all)
+        for group in groups {
+            let item = NSMenuItem(title: group, action: nil, keyEquivalent: "")
+            item.representedObject = group
+            groupPicker.menu?.addItem(item)
+        }
+        if hasUngrouped {
+            let item = NSMenuItem(title: "Ungrouped", action: nil, keyEquivalent: "")
+            item.representedObject = Self.ungroupedMarker
+            groupPicker.menu?.addItem(item)
+        }
+        let wanted = selectedGroup ?? Self.allGroupsMarker
+        let index = groupPicker.menu?.items.firstIndex { $0.representedObject as? String == wanted } ?? 0
+        groupPicker.selectItem(at: index)
+    }
+
+    /// The "has no group at all" bucket, matching the list's own "Ungrouped"
+    /// header. A marker rather than `nil`, because `selectedGroup == nil`
+    /// already means "do not filter".
+    private static let ungroupedMarker = "\u{0000}ungrouped"
+
+    @objc private func groupPicked() {
+        let marker = groupPicker.selectedItem?.representedObject as? String
+        selectedGroup = (marker == Self.allGroupsMarker) ? nil : marker
+        applyHostFilter(searchField.stringValue)
     }
 
     @objc private func onlineChipClicked(_ sender: NSButton) {
@@ -946,7 +1056,7 @@ final class HostsController: NSViewController, DaylightDrillActions {
 
         if hosts.isEmpty {
             let filtering = !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                || !selectedTags.isEmpty || onlineOnly
+                || !selectedTags.isEmpty || onlineOnly || selectedGroup != nil
             items.append(.empty(
                 symbol: filtering ? "line.3.horizontal.decrease.circle" : "server.rack",
                 title: filtering ? "No matching hosts" : "No saved hosts yet",
@@ -983,6 +1093,14 @@ final class HostsController: NSViewController, DaylightDrillActions {
         }
         if onlineOnly {
             hosts = hosts.filter { liveSession?($0.id) != nil }
+        }
+        // UX6's group filter. `normalizedGroup` is the same trim-and-nil the
+        // list's own group headers use, so "Ungrouped" here selects exactly
+        // the rows that header collects.
+        if let selectedGroup {
+            hosts = selectedGroup == Self.ungroupedMarker
+                ? hosts.filter { normalizedGroup($0) == nil }
+                : hosts.filter { normalizedGroup($0) == selectedGroup }
         }
         return hosts
     }

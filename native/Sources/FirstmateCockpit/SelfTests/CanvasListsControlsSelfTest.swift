@@ -859,7 +859,8 @@ enum CanvasListsControlsSelfTest {
             logAnalyzerStore: LogAnalyzerStore(),
             docsRunbookStore: DocsRunbookStore(),
             codePreviewStore: CodePreviewStore(),
-            commandLibraryStore: CommandLibraryStore()))
+            commandLibraryStore: CommandLibraryStore(),
+            stickyBoardStore: StickyBoardStore()))
         _ = canvas.view
         return canvas
     }

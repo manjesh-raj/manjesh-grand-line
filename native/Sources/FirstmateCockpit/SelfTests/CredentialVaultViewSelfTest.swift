@@ -216,6 +216,50 @@ enum CredentialVaultViewSelfTest {
         check(controller.debugClipboardPillVisible,
               "a copy with a clear timeout should show the countdown pill")
 
+        // --- UX9: the row's own "last used" must reflect the copy that just
+        // happened, without waiting for something else to re-render.
+        //
+        // The finding: "the row's meta line says 'never used' even after
+        // copying, until the store re-renders". The store stamps `lastUsedAt`
+        // and raises `onChange` (which the page wires to `render()`), so the
+        // whole claim is about whether that chain actually completes in the
+        // frame the captain clicked in - which is a thing only a real render
+        // can answer, not a read of the model.
+        //
+        // The model is asserted first so a failure says which half broke: a
+        // missing timestamp is the store's, a stale string is the page's.
+        check(store.credential(id: id)?.lastUsedAt != nil,
+              "UX9: a copy should stamp the credential's lastUsedAt")
+        let afterCopyMeta = list.debugItem(row)?.content.meta ?? ""
+        check(!afterCopyMeta.contains("never used"),
+              "UX9: the row still reads \"\(afterCopyMeta)\" right after a copy - "
+              + "the meta line is not re-rendering with the use it just recorded")
+        // The wording, not just the refresh. `RelativeDateTimeFormatter`
+        // truncates toward zero, so before the `justNowThreshold` floor this
+        // row read "used in 0 sec" - future tense, for something the captain
+        // had just done. Measured on a real `performClick`, which is why this
+        // asserts the rendered string rather than the model.
+        check(afterCopyMeta.contains("used just now"),
+              "UX9: the row should read \"used just now\" straight after a copy, got \"\(afterCopyMeta)\"")
+        check(!afterCopyMeta.contains(" in "),
+              "UX9: the row put a just-happened use in the future tense: \"\(afterCopyMeta)\"")
+
+        // **A second copy, with the row already selected.** The first click
+        // also selects the row, and selection re-renders the page on its own -
+        // so a check that only ever copies once passes even with the store's
+        // own change notification removed, which is exactly the vacuous shape
+        // AGENTS.md warns about. This is the path that has nothing but
+        // `recordUse`'s `onChange` behind it.
+        let before = store.credential(id: id)?.lastUsedAt
+        list.debugCopyButton(row)?.performClick(nil)
+        let second = store.credential(id: id)?.lastUsedAt
+        check(second != nil && second != before,
+              "UX9: a second copy on an already-selected row did not re-stamp lastUsedAt")
+        let secondMeta = list.debugItem(row)?.content.meta ?? ""
+        check(secondMeta.contains("used just now"),
+              "UX9: copying an already-selected row left the meta line at \"\(secondMeta)\" - "
+              + "nothing re-rendered it")
+
         // --- Reveal: screen yes, clipboard no. ---
         pasteboard.clearContents()
         pasteboard.setString("untouched-by-reveal", forType: .string)

@@ -66,7 +66,40 @@ enum CredentialVaultFormat {
     }()
 
     static func absolute(_ date: Date) -> String { absoluteFormatter.string(from: date) }
-    static func relative(_ date: Date) -> String { relativeFormatter.localizedString(for: date, relativeTo: Date()) }
+
+    /// How long ago something happened, in words.
+    ///
+    /// **Review #3's UX9, second half.** The finding is that the row's meta
+    /// line misreports a use that just happened; the "never used" half of it
+    /// was closed by #422's S2 work (`recordUse` raises `onChange`), and this
+    /// is what was left underneath. `RelativeDateTimeFormatter` truncates
+    /// toward zero, so a copy that happened 300ms ago formats as **"in 0
+    /// sec"** - future tense, for a thing the captain did a moment earlier,
+    /// on the row they just clicked. Measured, not reasoned: the vault view
+    /// suite printed `used in 0 sec` straight after a real `performClick` on a
+    /// row's Copy button.
+    ///
+    /// A floor rather than a different formatter: everything above the floor
+    /// is exactly what it always was, so no other row's wording moves.
+    ///
+    /// 45 seconds, matching the point at which the formatter itself starts
+    /// saying "1 min ago" - below that it was only ever going to produce "in 0
+    /// sec" or "0 sec ago", neither of which is something a person says.
+    ///
+    /// `now` is injectable so a suite can assert the boundary without sleeping
+    /// (and without depending on how fast the machine ran the test, which is
+    /// the flakiness this repo's own conventions warn about).
+    static func relative(_ date: Date, now: Date = Date()) -> String {
+        let elapsed = now.timeIntervalSince(date)
+        // Also catches a genuinely future timestamp - a clock change, or a
+        // file written on another machine - which has no business rendering as
+        // "in 3 minutes" on a "last used" line.
+        if elapsed < justNowThreshold { return "just now" }
+        return relativeFormatter.localizedString(for: date, relativeTo: now)
+    }
+
+    /// Below this many seconds ago, a use is "just now".
+    static let justNowThreshold: TimeInterval = 45
 }
 
 final class CredentialVaultInspectorView: NSView {
