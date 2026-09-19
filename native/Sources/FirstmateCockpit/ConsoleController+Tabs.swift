@@ -285,6 +285,10 @@ extension ConsoleController {
     /// bookkeeping can't be added to only one of the two paths again, since
     /// there is only one path to add it to.
     func restartTabBookkeeping(_ tab: TabModel) {
+        // UI9: a restarted tab is not still carrying its previous run's
+        // outcome. One place, so every restart path resets it - which is the
+        // whole reason this function exists.
+        tab.lastExit = .none
         tab.blockTracker?.reset()
         tab.blockContainer?.clear()
         installShellIntegrationIfSupported(tab)
@@ -925,6 +929,14 @@ extension ConsoleController {
         guard let tab = tabs.first(where: { $0.terminal === source }) else { return }
         if tab.isClosing { return }
         cleanupSSHKeyTempFile(tab)
+        // UI9: record *how* it ended, not just that it did - the Console
+        // canvas card has no other way to tell an ordinary `exit` from a
+        // session that died. See `TabModel.ExitOutcome`.
+        switch exitCode {
+        case .some(0): tab.lastExit = .clean
+        case .some(let status): tab.lastExit = .failed(status)
+        case .none: tab.lastExit = .unknown
+        }
         let code = exitCode.map { " (exit \($0))" } ?? ""
 
         if tab.isOneShotCommand {

@@ -93,6 +93,36 @@ final class TabModel {
     /// every cycle).
     var isOneShotCommand = false
 
+    /// How this tab's child process last ended, for a reader that has to
+    /// describe a *not running* tab in words.
+    ///
+    /// Review #3's UI9: the Console canvas card described every non-running
+    /// tab as "exited", which is honest but reads as a fault for the most
+    /// ordinary event a shell has - the captain typing `exit`. `running` is
+    /// the only thing `LocalProcess` exposes afterwards, so the distinction
+    /// has to be recorded when the termination actually happens.
+    ///
+    /// Four states rather than two, for GL-14's reason: "never ran" and
+    /// "ended, but the reason never reached us" are both genuinely unknown
+    /// and must not be painted as a clean exit.
+    enum ExitOutcome: Equatable {
+        /// The process has not terminated in this tab's lifetime - either it
+        /// is still running, or it was never started.
+        case none
+        /// Exit status 0. The ordinary way a shell ends.
+        case clean
+        /// A non-zero exit status.
+        case failed(Int32)
+        /// The process ended but no status came with it (an IO error during
+        /// read/write - see `LocalProcessDelegate.processTerminated`).
+        case unknown
+    }
+
+    /// Set by `ConsoleController.processTerminated` (and its split-pane
+    /// sibling) and never cleared on restart - `startTab` resets it, so a
+    /// reconnected tab does not keep describing a previous run.
+    var lastExit: ExitOutcome = .none
+
     /// Fires once, with the child's exit code, when a one-shot command tab
     /// (`isOneShotCommand`) terminates - lets a caller (Bootstrap's "Run full
     /// setup" sequencer) know a provisioning step actually finished instead of
