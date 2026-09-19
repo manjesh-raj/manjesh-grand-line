@@ -108,12 +108,7 @@ enum DictationDataSelfTest {
     /// pulling in AppKit where `Foundation` alone suffices).
     private static let NSEventModifierFlagsCommandShift: UInt = (1 << 20) | (1 << 17)
 
-    private static func check(_ condition: Bool, _ message: String, _ ok: inout Bool) {
-        if !condition {
-            print("FAIL: \(message)")
-            ok = false
-        }
-    }
+
 }
 
 #endif

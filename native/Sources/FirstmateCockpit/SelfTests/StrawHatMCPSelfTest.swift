@@ -77,12 +77,6 @@ enum StrawHatMCPSelfTest {
         return ok
     }
 
-    private static func check(_ condition: Bool, _ message: String, _ ok: inout Bool) {
-        if !condition {
-            print("  FAIL: \(message)")
-            ok = false
-        }
-    }
 
     // MARK: M2.5c - the pinned allowlist
 

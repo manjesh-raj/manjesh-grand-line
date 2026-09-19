@@ -29,13 +29,13 @@
 # app's most painstakingly-built regression guards (the layout gotchas, the
 # contrast floors, the AppKit-cell quirks) were, in practice, opt-in.
 #
-# It is deliberately NON-BLOCKING (`continue-on-error: true`) to start.
-# These suites need a window server, and a GitHub-hosted macOS runner has one
-# only for the primary user - an environment property, not a property of this
-# app. Going red on that would train everyone to ignore a red X, which is
-# worse than the gap it closes. The intent is to flip it to blocking once it
-# has a track record of being green; until then it is real, readable signal on
-# every PR rather than nothing at all.
+# `test-windowed` shipped NON-BLOCKING, because these suites need a window
+# server and a GitHub-hosted macOS runner has one only for the primary user -
+# an environment property, not a property of this app, and a red X nobody can
+# act on trains everyone to ignore red. It is BLOCKING now (P8 of full review
+# #3): the track record its own comment asked for arrived, and every failure
+# in it has been a real defect rather than an environmental one. See that
+# job's own comment for the measurement.
 #
 # The app itself is never launched. Every `FM_RUN_*` flag is handled before
 # `NSApplication.shared` is touched, so the binary runs headless and exits -
@@ -50,6 +50,33 @@ on:
   pull_request:
   workflow_dispatch:
 
+# P5 (full review #3): CI ran Swift **5.10** on `macos-14` while local
+# development is on Swift **6.x**, and the two disagree about diagnostics in
+# both directions while the `build` job below fails on *any* warning in this
+# app's own sources. So a warning-clean local build said nothing about CI, and
+# vice versa - measured twice in this project's own history (AGENTS.md records
+# a 6.x-only `#ImplicitStrongCapture` set and a 5.10-only redundant-downcast
+# warning, each breaking the other environment's build).
+#
+# The label is pinned rather than `macos-latest` on purpose: a drift guard
+# whose own toolchain moves under it is not a guard. What is asserted is the
+# *major* version, which is the part that has to match local - the exact Xcode
+# inside an image is GitHub's to bump and not worth pinning.
+#
+# It is repeated literally in all four jobs rather than factored into an `env`
+# value, because `runs-on` does not accept the `env` context (only
+# github/needs/strategy/matrix/vars/inputs) and an unresolvable expression
+# there fails the job before a single step runs. Change all four together.
+env:
+  # Local development is on Swift 6.x (`swift --version` on the captain's
+  # machine reports 6.3.3), and `Show toolchain` in every Swift job asserts
+  # this major so a silent image regression to 5.x fails loudly instead of
+  # producing a diagnostics set nobody can reproduce locally. Bump this, the
+  # four `runs-on` labels and native/README.md's Requirements section together,
+  # and only after a real run has proved the new toolchain builds this app
+  # warning-clean.
+  EXPECTED_SWIFT_MAJOR: "6"
+
 concurrency:
   # A new push supersedes an in-flight run for the same ref - a macOS runner
   # minute is expensive enough to care.
@@ -63,7 +90,7 @@ defaults:
 jobs:
   build:
     name: swift build
-    runs-on: macos-14
+    runs-on: macos-15   # keep all four in sync - see the runner-image note above
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
@@ -74,7 +101,13 @@ jobs:
           fetch-depth: 0
 
       - name: Show toolchain
-        run: swift --version
+        run: |
+          swift --version
+          if ! swift --version 2>&1 | grep -qE "Apple Swift version ${EXPECTED_SWIFT_MAJOR}\."; then
+            echo "::error::expected a Swift ${EXPECTED_SWIFT_MAJOR}.x toolchain; this runner has something else."
+            echo "::error::see this workflow's runner-image note and native/README.md's Requirements."
+            exit 1
+          fi
 
       - name: Build
         # No `-warnings-as-errors`: this repo vendors SwiftTerm, YamlSwift and
@@ -112,12 +145,21 @@ jobs:
 
   test:
     name: self-test suites
-    runs-on: macos-14
+    runs-on: macos-15   # keep all four in sync - see the runner-image note above
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          if ! swift --version 2>&1 | grep -qE "Apple Swift version ${EXPECTED_SWIFT_MAJOR}\."; then
+            echo "::error::expected a Swift ${EXPECTED_SWIFT_MAJOR}.x toolchain; this runner has something else."
+            echo "::error::see this workflow's runner-image note and native/README.md's Requirements."
+            exit 1
+          fi
 
       - name: Build
         run: swift build
@@ -148,22 +190,48 @@ jobs:
 
   test-windowed:
     name: self-test suites (window-backed)
-    runs-on: macos-14
+    runs-on: macos-15   # keep all four in sync - see the runner-image note above
     # A bound, because this job has already needed one: its first run hung and
     # was killed by GitHub's own 6-hour cap, producing no usable log. The
     # runner script now bounds each suite individually (`FM_SUITE_TIMEOUT`), so
     # this is only the backstop for the whole job.
     timeout-minutes: 60
-    # Non-blocking on purpose - see this file's header for the full reasoning.
-    # In short: these suites need a window server, which is a property of the
-    # runner rather than of this app, and a red X nobody can act on is worse
-    # than the coverage gap it replaces. Flip this to `false` once the job has
-    # a track record of being green.
-    continue-on-error: true
+    # BLOCKING as of P8 (full review #3). This job shipped
+    # `continue-on-error: true` with its own instruction to "flip this once the
+    # job has a track record of being green", and it has one - measured over the
+    # last 40 CI runs rather than asserted:
+    #
+    #   * `main`: 10 of 10 green. The job has never once failed on the default
+    #     branch.
+    #   * feature branches: 7 failures, every one a real defect in that
+    #     branch's own code, every one fixed before merge. Two are written up
+    #     in AGENTS.md - a nested `layoutSubtreeIfNeeded` that only *traps* on
+    #     a runner, and a real `NSDraggingSession` that only wedges in a window
+    #     the window server ignores. Both were latent bugs this job found.
+    #   * 4 cancelled by the `concurrency` group, which is not a signal.
+    #
+    # That is the exact condition the original comment set: the red X has been
+    # actionable every single time, and never environmental. Leaving it
+    # non-blocking now means a PR can merge past a real, reproducible failure
+    # this job already caught.
+    #
+    # If it ever does go red for a genuinely environmental reason, the fix is a
+    # measured entry in `CI_UNSUPPORTED` in `Scripts/run-all-tests.sh` - where
+    # every entry already carries the measurement that put it there - and not
+    # reverting this line.
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Show toolchain
+        run: |
+          swift --version
+          if ! swift --version 2>&1 | grep -qE "Apple Swift version ${EXPECTED_SWIFT_MAJOR}\."; then
+            echo "::error::expected a Swift ${EXPECTED_SWIFT_MAJOR}.x toolchain; this runner has something else."
+            echo "::error::see this workflow's runner-image note and native/README.md's Requirements."
+            exit 1
+          fi
 
       - name: Build
         run: swift build
@@ -201,7 +269,7 @@ jobs:
 
   generated:
     name: generated files match their inputs
-    runs-on: macos-14
+    runs-on: macos-15   # keep all four in sync - see the runner-image note above
     # Minutes, not tens of minutes: no Swift build, no app, three scripts.
     timeout-minutes: 10
     steps:

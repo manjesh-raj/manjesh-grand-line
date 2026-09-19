@@ -60,10 +60,6 @@ enum SummaryFreshnessSelfTest {
         return allOK
     }
 
-    private static func fail(_ message: String, _ ok: inout Bool) {
-        print("  FAIL \(message)")
-        ok = false
-    }
 
     // MARK: 1 - the captain's own scenario, per signal
 

@@ -32,12 +32,7 @@ enum HostStoreSelfTest {
     static func run() -> Bool {
         var ok = true
         func check(_ condition: Bool, _ label: String) {
-            if condition {
-                print("[host-store-test] PASS: \(label)")
-            } else {
-                print("[host-store-test] FAIL: \(label)")
-                ok = false
-            }
+            SelfTestAssertions.record(condition, label, &ok)
         }
 
         let tmp = FileManager.default.temporaryDirectory

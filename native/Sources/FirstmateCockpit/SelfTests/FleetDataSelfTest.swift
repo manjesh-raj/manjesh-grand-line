@@ -54,10 +54,6 @@ enum FleetDataSelfTest {
         return ok
     }
 
-    private static func fail(_ message: String, _ ok: inout Bool) {
-        print("  FAIL \(message)")
-        ok = false
-    }
 
     // MARK: mergedPRs
 

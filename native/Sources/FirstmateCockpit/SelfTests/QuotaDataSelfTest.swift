@@ -35,7 +35,7 @@ enum QuotaDataSelfTest {
     static func run() -> Bool {
         var failures: [String] = []
         func check(_ name: String, _ condition: Bool) {
-            if !condition { failures.append(name) }
+            SelfTestAssertions.record(condition, name, into: &failures)
         }
 
         // MARK: real-shaped payload (both windows this popover cares about,

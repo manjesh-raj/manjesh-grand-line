@@ -751,12 +751,6 @@ enum HerdrThemeSyncSelfTest {
         return ok
     }
 
-    private static func check(_ condition: Bool, _ message: String, _ ok: inout Bool) {
-        if !condition {
-            print("FAIL: \(message)")
-            ok = false
-        }
-    }
 
     /// A disposable, executable fake `herdr` for the reload-trigger cases
     /// above - never the real installed binary. Records its own argv (one

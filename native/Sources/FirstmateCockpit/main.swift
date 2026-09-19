@@ -1480,6 +1480,20 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     let scratchRoot = FileManager.default.temporaryDirectory
         .appendingPathComponent("selftest-process-\(ProcessInfo.processInfo.processIdentifier)",
                                 isDirectory: true)
+    // P4 (full review #3): the sibling of every redirect below, for the one
+    // piece of shared state that is NOT a file path.
+    //
+    // ~44 suites change `fm.themeID`/`fm.fontSize` in this process's shared
+    // `UserDefaults` domain and restore them in a `defer` - which covers every
+    // normal exit and none of the abnormal ones. A SIGSEGV in a probe left the
+    // domain on `catppuccin-latte` and the next unrelated run failed the
+    // documented pair of suites on a clean tree. A signal handler cannot fix
+    // that (`UserDefaults` is not async-signal-safe, and SIGKILL is not
+    // catchable at all), so this records the starting values to a sidecar
+    // before the first suite runs and recovers from one left by an interrupted
+    // run. See `SelfTestDefaultsGuard`'s own header.
+    SelfTestDefaultsGuard.arm()
+
     if (ProcessInfo.processInfo.environment["FM_FLEET_LOG_DIR"] ?? "").isEmpty {
         setenv("FM_FLEET_LOG_DIR", scratchRoot.appendingPathComponent("fleet-log", isDirectory: true).path, 1)
     }
@@ -1709,6 +1723,10 @@ if ProcessInfo.processInfo.environment["FM_RUN_RESOURCE_UNITS_TESTS"] == "1" {
 }
 if ProcessInfo.processInfo.environment["FM_RUN_TERMINAL_WRAP_REDRAW_TESTS"] == "1" {
     exit(TerminalWrapRedrawSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_VENDORED_PATCHES_TESTS"] == "1" {
+    exit(VendoredPatchesSelfTest.run() ? 0 : 1)
 }
 if ProcessInfo.processInfo.environment["FM_RUN_CERT_INSPECTOR_TESTS"] == "1" {
     exit(CertInspectorSelfTest.run() ? 0 : 1)

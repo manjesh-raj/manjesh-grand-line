@@ -49,10 +49,7 @@ enum CodePreviewViewSelfTest {
     static func run() -> Bool {
         var ok = true
         func check(_ condition: Bool, _ message: String) {
-            if !condition {
-                print("FAIL: \(message)")
-                ok = false
-            }
+            SelfTestAssertions.record(condition, message, &ok)
         }
 
         // The bridge's failure paths need no page at all, so they run first

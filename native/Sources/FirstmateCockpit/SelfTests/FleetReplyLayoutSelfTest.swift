@@ -41,13 +41,9 @@ enum FleetReplyLayoutSelfTest {
         return ok
     }
 
-    private static func fail(_ message: String, _ ok: inout Bool) {
-        print("  FAIL \(message)")
-        ok = false
-    }
 
     private static func check(_ condition: Bool, _ message: String, _ ok: inout Bool) {
-        if !condition { fail(message, &ok) }
+        SelfTestAssertions.record(condition, message, &ok)
     }
 
     /// `NSImage(systemSymbolName:)` returns nil silently, and this app has

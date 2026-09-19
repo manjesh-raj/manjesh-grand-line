@@ -133,18 +133,6 @@ convention for the general constraint). If the captain can still reproduce the
 duplicated character after this fix ships, the next step should be a live, on-device
 repro with real window resizes and real captured frames, not another headless attempt.
 
-## Updating this vendored copy
-
-If SwiftTerm's own `dimmedColor` is ever fixed upstream (or a future version adds a
-public/open hook for it), prefer reverting to a plain remote SPM dependency in
-`native/Package.swift` and deleting this directory over carrying the patch forward.
-Otherwise, to pick up a newer upstream release: replace `Sources/SwiftTerm` with the
-new version's tree, then re-apply all three patches - `dimmedColor` and
-`legibleColor` (`Mac/MacExtensions.swift`, `iOS/iOSExtensions.swift`, `Dimming.swift`,
-and the `getAttributes` call site in `Apple/AppleTerminalView.swift`) and the
-`invalidationRegion` wrap-redraw-boundary fix in `updateDisplay`
-(`Apple/AppleTerminalView.swift`).
-
 ## Fourth patch: display gating (`displaySuspended` / `displayIntervalNanos`)
 
 `Mac/MacTerminalView.swift` declares two new public properties on
@@ -230,3 +218,110 @@ column computations in `max(minimumColumns, …)`. `KubeBridgeSelfTest`'s
 `parse_wideLineSurvivesAtTheFeedTabColumnFloor` pair proves the width matters;
 `KubernetesDestinationSelfTest.test_feedTabIsWidenedForMachineReadableOutput`
 proves the feed tab actually asks for it.
+
+## Updating this vendored copy, and the scheduled check
+
+**Pinned:** upstream `1.15.0` (`dd2fb8ac5b861e7bf617c872895e338f38165648`).
+**Last checked:** 2026-09-19, against upstream `v1.20.0`.
+**Re-check:** every 183 days (six months), or sooner if upstream publishes a
+security fix.
+
+The five patches below are the price of this pin, and the review that filed
+this section (P9 of full review #3) is right that the cost of a sync is
+re-applying all five. So the standing decision is **stay pinned and re-check on
+a schedule**, not "bump when a newer tag exists" - and the check exists to
+notice the one thing that would change that decision.
+
+### What would change the decision
+
+In priority order. Any one of these is a reason to act now rather than wait for
+the next scheduled check:
+
+1. **A security fix upstream.** Acts immediately, whatever the diff costs.
+2. **A patch's root cause is fixed upstream**, or upstream adds a `public`/`open`
+   hook for it. That patch is then deleted rather than re-applied, and if it is
+   the last one, `Sources/SwiftTerm` goes back to being a plain remote SPM
+   dependency in `native/Package.swift` and this directory is deleted.
+3. **A bug this app is actually hitting** is fixed upstream.
+
+A newer tag on its own is **not** a reason. Nothing in this app is waiting on
+an upstream feature, and every release since the pin has to be re-diffed against
+all five patch sites by hand.
+
+### The check itself
+
+Four commands, no clone needed - it is a network + judgement check, which is
+why it is in `native/MANUAL-CHECKS.md` rather than a suite:
+
+```bash
+# 1. What is the newest tag?
+curl -sS "https://api.github.com/repos/migueldeicaza/SwiftTerm/tags?per_page=5" \
+  | python3 -c "import json,sys; [print(t['name']) for t in json.load(sys.stdin)]"
+
+# 2. How big is the gap, and did it touch our five patch sites?
+curl -sS "https://api.github.com/repos/migueldeicaza/SwiftTerm/compare/v1.15.0...v<new>" \
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['total_commits'], 'commits,', len(d['files']), 'files'); [print('%+6d/-%-5d %s' % (f['additions'], f['deletions'], f['filename'])) for f in d['files'] if any(w in f['filename'] for w in ('MacExtensions','iOSExtensions','AppleTerminalView','MacTerminalView'))]"
+
+# 3. For each of the five patches, read the upstream function and answer one
+#    question: is the root cause fixed, or is there a hook now?
+curl -sS "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/v<new>/Sources/SwiftTerm/Mac/MacExtensions.swift"
+
+# 4. Record the result below - the date and the per-patch verdict - whether or
+#    not anything changed. A check that leaves no record is a check nobody can
+#    tell was skipped.
+```
+
+`VendoredPatchesSelfTest` is the automated half, and it deliberately covers the
+*other* hazard: it asserts all five patches are still present in this tree, so a
+sync that silently drops one fails by name rather than being found in
+production. It also reads the `Last checked` date above and prints a NOTE (never
+a failure - a date cannot break somebody else's build) once it is older than the
+re-check interval.
+
+### 2026-09-19, against v1.20.0: stay pinned
+
+Upstream is **three releases ahead** of the review that filed this (which said
+1.19.0). The gap is **81 commits across 123 files**, and it is feature work
+rather than fixes this app is missing: a whole BiDi engine
+(`Apple/TerminalBidi.swift`, `Bidi.swift`, `ArabicShapingData.swift`,
+`BidiMirroringData.swift`, +974 lines in one new file), Metal renderer recovery,
+semantic prompts, terminfo work, and Kitty keyboard extensions. Both files
+carrying four of the five patches are among the most-churned in that range:
+`Apple/AppleTerminalView.swift` +813/-157 and `Mac/MacTerminalView.swift`
++647/-54.
+
+All five patch sites were read at `v1.20.0`. **Every one is still needed, and
+none has gained a hook:**
+
+| Patch | Upstream at 1.20.0 | Verdict |
+|---|---|---|
+| 1. `dimmedColor` contrast floor | Still a flat 50% sRGB blend toward the background; still `internal` | Still needed |
+| 2. Truecolor `legibleColor` | `getAttributes`' `.trueColor` branch is a colour *cache* only, no contrast correction | Still needed |
+| 3. `invalidationRegion` upward extension | Upstream still extends **down** only (`rowEnd` mid-screen). The symmetric `rowStart > 0` case is absent | Still needed |
+| 4. `displaySuspended` / `displayIntervalNanos` | `queuePendingDisplay` still hardcodes `fps60`. Upstream's `suspendDisplayUpdates()` looks like a hook and is not - it is `internal`, empty, and commented "Not used on Mac" | Still needed |
+| 5. `minimumColumns` floor | `processSizeChange` and `resetFont` still derive the column count straight from the pixel width, unclamped | Still needed |
+
+Bumping would therefore mean re-applying all five into two heavily-rewritten
+files, and inheriting a BiDi engine and a Metal recovery path this app has never
+exercised, in exchange for nothing it is waiting on. Not worth it now; the next
+scheduled check is the place to ask again.
+
+### Re-applying the patches, if a sync does happen
+
+Replace `Sources/SwiftTerm` with the new tree, then re-apply all five. Each
+patch's own section above ends with the specific hunks; in summary:
+
+| # | Files |
+|---|---|
+| 1 | `Dimming.swift` (new file, keep it), `Mac/MacExtensions.swift`, `iOS/iOSExtensions.swift` |
+| 2 | `Mac/MacExtensions.swift`, `iOS/iOSExtensions.swift`, the `getAttributes` call site in `Apple/AppleTerminalView.swift` |
+| 3 | `Apple/AppleTerminalView.swift` (`invalidationRegion` + its `updateDisplay` call site) |
+| 4 | `Mac/MacTerminalView.swift` (the property block), `Apple/AppleTerminalView.swift` (`queuePendingDisplay`) |
+| 5 | `Mac/MacTerminalView.swift`, `iOS/iOSTerminalView.swift` (the `minimumColumns` property), `Apple/AppleTerminalView.swift` (two `max(minimumColumns, …)` clamps) |
+
+Then run `FM_RUN_VENDORED_PATCHES_TESTS=1` first - it names any patch that did
+not come back - followed by the terminal suites that prove each one behaves:
+`FM_RUN_CONTRAST_TESTS` (patches 1-2, via `checkVendoredTerminalPairsSelection`),
+`FM_RUN_TERMINAL_WRAP_REDRAW_TESTS` (3),
+`FM_RUN_TERMINAL_DISPLAY_GATING_TESTS` (4), and
+`FM_RUN_KUBE_BRIDGE_TESTS` plus `FM_RUN_KUBERNETES_DESTINATION_TESTS` (5).

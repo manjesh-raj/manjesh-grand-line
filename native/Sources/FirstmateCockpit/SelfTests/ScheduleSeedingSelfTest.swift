@@ -31,10 +31,6 @@ enum ScheduleSeedingSelfTest {
         return ok
     }
 
-    private static func fail(_ message: String, _ ok: inout Bool) {
-        print("  FAIL \(message)")
-        ok = false
-    }
 
     // MARK: Scratch helpers - same convention as `ScheduleRunnerSelfTest`
 

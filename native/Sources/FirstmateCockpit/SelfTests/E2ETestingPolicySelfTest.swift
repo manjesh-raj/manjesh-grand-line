@@ -48,6 +48,7 @@ enum E2ETestingPolicySelfTest {
         checkWindowBackedSuitesAreDeclared(&ok)
         checkSessionOnlySuitesReallyNeedASession(&ok)
         checkSuitesUseTheOffScreenProbeFactory(&ok)
+        checkSuitesUseTheSharedAssertions(&ok)
         checkTheScriptStillOffersBothModes(&ok)
         checkThisProcessCannotReachTheCaptainsRealData(&ok)
         checkEveryGrandLineDocsStoreHonoursShiftDir(&ok)
@@ -57,10 +58,6 @@ enum E2ETestingPolicySelfTest {
         return ok
     }
 
-    private static func fail(_ message: String, _ ok: inout Bool) {
-        print("  FAIL: \(message)")
-        ok = false
-    }
 
     // MARK: Locating the two files
 
@@ -253,6 +250,115 @@ enum E2ETestingPolicySelfTest {
                  + "      A hand-rolled window is not off-screen, whatever origin it is given - see "
                  + "OffScreenProbeWindow.swift's header for the measurements.", &ok)
         }
+    }
+
+    // MARK: P7 - one assertion helper, not 93
+
+    /// Every `check`/`fail` helper in `SelfTests/` must delegate to
+    /// `SelfTestAssertions` rather than reimplement it.
+    ///
+    /// Measured before that file existed: **93 hand-rolled helpers across 84
+    /// of these files**, in 13 signatures and 16 bodies. This project
+    /// source-guards `HelmButton`, `ToolRowLayout` and
+    /// `OffScreenProbe.window(` for exactly this reason and had never once
+    /// applied it to its own harness.
+    ///
+    /// Two of those signatures took their arguments in the **opposite order**
+    /// from the rest, so `check(a, b)` meant different things in different
+    /// files - which reads fine in review and produces a backwards check
+    /// nobody notices.
+    ///
+    /// It bans a **copy**, not a thin adapter, and that distinction is
+    /// deliberate rather than lenient. A helper nested inside a case function
+    /// captures that function's own `ok`/`failures`, and a free function has
+    /// nothing to capture - so an adapter whose body is one delegating call is
+    /// the only way to serve that shape, and is what puts the format in one
+    /// place. A helper that genuinely owns a comparison (a shadow tolerance, a
+    /// numeric expectation) is fine too, as long as its *reporting* goes
+    /// through the shared prefixes.
+    private static func checkSuitesUseTheSharedAssertions(_ ok: inout Bool) {
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: selfTestsDirectory, includingPropertiesForKeys: nil) else {
+            fail("could not list \(selfTestsDirectory.path)", &ok)
+            return
+        }
+        let suites = files.filter { $0.pathExtension == "swift" }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+        guard suites.count >= 90 else {
+            fail("found only \(suites.count) files in SelfTests/ - has the directory moved?", &ok)
+            return
+        }
+
+        var offenders: [String] = []
+        var delegating = 0
+        for file in suites {
+            let name = file.lastPathComponent
+            // The helper's own file, and this one, are the two allowed to name
+            // these symbols freely.
+            guard name != "SelfTestAssertions.swift", name != "E2ETestingPolicySelfTest.swift" else { continue }
+            guard let source = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            for (line, body) in helperBodies(in: source) {
+                if body.contains("SelfTestAssertions") {
+                    delegating += 1
+                } else {
+                    offenders.append("\(name):\(line)")
+                }
+            }
+        }
+
+        // A scan that matches nothing must fail loudly rather than pass
+        // vacuously - the helpers could all have been renamed.
+        guard delegating >= 30 else {
+            fail("only \(delegating) helper(s) delegate to SelfTestAssertions - the helper's name must "
+                 + "have changed, so this guard is no longer checking anything", &ok)
+            return
+        }
+        if offenders.isEmpty {
+            print("  OK: \(delegating) check/fail helper(s), every one delegating to SelfTestAssertions")
+        } else {
+            fail("\(offenders.count) check/fail helper(s) in SelfTests/ reimplement the shared "
+                 + "assertion instead of delegating to SelfTestAssertions: "
+                 + "\(offenders.joined(separator: ", "))\n"
+                 + "      Either delete it (the free `check(_:_:_:)`/`fail(_:_:)` have the same "
+                 + "signatures, so no call site changes) or make its body one "
+                 + "`SelfTestAssertions.record...` call. See that file's header.", &ok)
+        }
+    }
+
+    /// Every `func check(...)`/`func fail(...)` in `source`, as
+    /// (1-based line, body). Brace-matched rather than line-based, because
+    /// these are two-to-eight-line bodies and several are nested inside a case
+    /// function.
+    private static func helperBodies(in source: String) -> [(Int, String)] {
+        let chars = Array(source)
+        var out: [(Int, String)] = []
+        var index = source.startIndex
+        while let found = source.range(of: "func check(", range: index..<source.endIndex)
+                       ?? source.range(of: "func fail(", range: index..<source.endIndex) {
+            index = found.upperBound
+            // Skip a mention inside a comment line.
+            let lineStart = source.range(of: "\n", options: .backwards,
+                                         range: source.startIndex..<found.lowerBound)?.upperBound
+                            ?? source.startIndex
+            let prefix = source[lineStart..<found.lowerBound].trimmingCharacters(in: .whitespaces)
+            if prefix.hasPrefix("//") { continue }
+
+            guard let open = source.range(of: "{", range: found.upperBound..<source.endIndex) else { break }
+            var depth = 1
+            var i = source.distance(from: source.startIndex, to: open.upperBound)
+            let bodyStart = i
+            while i < chars.count, depth > 0 {
+                if chars[i] == "{" { depth += 1 }
+                else if chars[i] == "}" { depth -= 1 }
+                i += 1
+            }
+            let body = String(chars[bodyStart..<max(bodyStart, i - 1)])
+            let line = source[source.startIndex..<found.lowerBound]
+                .reduce(into: 1) { acc, c in if c == "\n" { acc += 1 } }
+            out.append((line, body))
+            index = source.index(source.startIndex, offsetBy: i)
+        }
+        return out
     }
 
     // MARK: Checks

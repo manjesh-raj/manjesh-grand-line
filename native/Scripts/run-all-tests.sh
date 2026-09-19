@@ -103,6 +103,40 @@ MAIN="Sources/FirstmateCockpit/main.swift"
 # subprocesses and real page loads.
 SUITE_TIMEOUT="${FM_SUITE_TIMEOUT:-300}"
 
+# Per-suite wall clock (P6 of full review #3).
+#
+# A 10-minute run of ~157 suites used to print PASS/FAIL and nothing else, so a
+# suite that doubled its runtime was invisible until the whole run started
+# feeling slow. Every suite is timed now, and the slowest few are listed again
+# at the end - which is the part that actually catches a regression, since
+# nobody diffs 157 individual numbers.
+#
+# Resolution: tenths of a second via system perl's Time::HiRes, which ships
+# with macOS and with GitHub's macOS runner images. `date +%s` is whole-second
+# on BSD (no `%3N`), and bash 3.2 - what macOS and the runner ship - has no
+# `$EPOCHREALTIME`, so there is no builtin to use. If perl is somehow absent
+# the fallback is whole seconds rather than no timing at all; the cost of being
+# wrong here is a less precise number, never a failed run.
+if [ -x /usr/bin/perl ] && /usr/bin/perl -MTime::HiRes=time -e '1' >/dev/null 2>&1; then
+  HAVE_HIRES=1
+else
+  HAVE_HIRES=0
+fi
+
+now_ms() {
+  if [ "$HAVE_HIRES" -eq 1 ]; then
+    /usr/bin/perl -MTime::HiRes=time -e 'printf "%.0f\n", time()*1000'
+  else
+    echo $(( $(date +%s) * 1000 ))
+  fi
+}
+
+# Milliseconds -> "1.3s", without bc or awk.
+fmt_ms() {
+  local ms="$1"
+  printf '%d.%ds' "$((ms / 1000))" "$(((ms % 1000) / 100))"
+}
+
 # Suites that need something this script cannot provide, with the reason. They
 # are reported as SKIP rather than silently dropped - a skipped suite is a real
 # coverage gap and should be visible in the output.
@@ -507,9 +541,18 @@ run_suite() {
   local outfile="$2"
   env "$flag=1" "$BIN" >"$outfile" 2>&1 &
   local pid=$!
-  local waited=0
+  # Tenths, not whole seconds. The poll interval is also the floor on every
+  # duration this script reports (P6): at `sleep 1` the fastest suite in the
+  # app measured 1.0s and so did the second fastest, which is no measurement
+  # at all. `sleep 0.1` costs one extra fork per tenth of a suite's life and
+  # buys a number that can actually move.
+  #
+  # The bound drifts *longer* than SUITE_TIMEOUT by however much fork overhead
+  # each tick adds, which is the safe direction for a backstop.
+  local ticks=0
+  local tick_limit=$((SUITE_TIMEOUT * 10))
   while kill -0 "$pid" 2>/dev/null; do
-    if [ "$waited" -ge "$SUITE_TIMEOUT" ]; then
+    if [ "$ticks" -ge "$tick_limit" ]; then
       # TERM first so a suite with a cleanup path can take it, then KILL.
       kill -TERM "$pid" 2>/dev/null
       sleep 2
@@ -517,8 +560,8 @@ run_suite() {
       wait "$pid" 2>/dev/null
       return 124
     fi
-    sleep 1
-    waited=$((waited + 1))
+    sleep 0.1
+    ticks=$((ticks + 1))
   done
   wait "$pid"
   return $?
@@ -528,6 +571,11 @@ PASSED=()
 FAILED=()
 SKIPPED=()
 TIMEDOUT=()
+# "<ms> <flag>" per suite, for the slowest-first tail below. A suite that
+# doubles its runtime shows up there; it does not show up in 157 PASS lines.
+DURATIONS=()
+TOTAL_SUITE_MS=0
+RUN_STARTED_MS=$(now_ms)
 
 for flag in "${FLAGS[@]}"; do
   skip=0
@@ -544,19 +592,23 @@ for flag in "${FLAGS[@]}"; do
   # run of 43 suites is thousands of lines otherwise, and the point of this
   # script is a single verdict you will actually read.
   suite_out=$(mktemp)
+  started=$(now_ms)
   run_suite "$flag" "$suite_out"
   status=$?
+  elapsed=$(( $(now_ms) - started ))
+  DURATIONS+=("$elapsed $flag")
+  TOTAL_SUITE_MS=$((TOTAL_SUITE_MS + elapsed))
   output=$(cat "$suite_out")
   rm -f "$suite_out"
   if [ "$status" -eq 0 ]; then
-    printf 'PASS  %s\n' "$flag"
+    printf 'PASS  %-52s %8s\n' "$flag" "$(fmt_ms "$elapsed")"
     PASSED+=("$flag")
   elif [ "$status" -eq 124 ]; then
     printf 'TIMEOUT  %s (killed after %ss)\n' "$flag" "$SUITE_TIMEOUT"
     TIMEDOUT+=("$flag")
     echo "$output" | tail -20 | sed 's/^/      | /'
   else
-    printf 'FAIL  %s (exit %s)\n' "$flag" "$status"
+    printf 'FAIL  %-52s %8s (exit %s)\n' "$flag" "$(fmt_ms "$elapsed")" "$status"
     FAILED+=("$flag")
     echo "$output" | sed 's/^/      | /'
   fi
@@ -586,11 +638,20 @@ if [ ${#REQUESTED[@]} -eq 0 ] && [ "$SESSION_ONLY" -eq 0 ]; then
     else
       for suite in "${PY_SUITES[@]}"; do
         py_out=$(mktemp)
+        started=$(now_ms)
         if (cd Scripts && python3 -m unittest "$suite" -q) >"$py_out" 2>&1; then
-          printf 'PASS  %s (python)\n' "$suite"
+          py_status=0
+        else
+          py_status=1
+        fi
+        elapsed=$(( $(now_ms) - started ))
+        DURATIONS+=("$elapsed $suite (python)")
+        TOTAL_SUITE_MS=$((TOTAL_SUITE_MS + elapsed))
+        if [ "$py_status" -eq 0 ]; then
+          printf 'PASS  %-52s %8s\n' "$suite (python)" "$(fmt_ms "$elapsed")"
           PY_PASSED+=("$suite")
         else
-          printf 'FAIL  %s (python)\n' "$suite"
+          printf 'FAIL  %-52s %8s\n' "$suite (python)" "$(fmt_ms "$elapsed")"
           PY_FAILED+=("$suite")
           sed 's/^/      | /' "$py_out"
         fi
@@ -602,6 +663,19 @@ fi
 
 echo ""
 echo "======================================================"
+# Slowest first, so a runtime regression is one line to read rather than a
+# diff of 157. `sort -rn` on "<ms> <name>" is enough - no need for anything
+# the runner would have to install.
+if [ ${#DURATIONS[@]} -gt 0 ]; then
+  printf 'suite wall clock: %s across %d suite(s); whole run %s\n' \
+    "$(fmt_ms "$TOTAL_SUITE_MS")" "${#DURATIONS[@]}" \
+    "$(fmt_ms $(( $(now_ms) - RUN_STARTED_MS )))"
+  echo "slowest:"
+  printf '%s\n' "${DURATIONS[@]}" | sort -rn | head -10 | while read -r ms name; do
+    printf '  %8s  %s\n' "$(fmt_ms "$ms")" "$name"
+  done
+  echo ""
+fi
 printf '%d passed, %d failed, %d timed out, %d skipped (of %d)\n' \
   "${#PASSED[@]}" "${#FAILED[@]}" "${#TIMEDOUT[@]}" "${#SKIPPED[@]}" "${#FLAGS[@]}"
 if [ ${#SKIPPED[@]} -gt 0 ]; then

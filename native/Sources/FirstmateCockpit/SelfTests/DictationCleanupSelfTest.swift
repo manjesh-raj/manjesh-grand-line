@@ -307,12 +307,7 @@ enum DictationCleanupSelfTest {
         }
     }
 
-    private static func check(_ condition: Bool, _ message: String, _ ok: inout Bool) {
-        if !condition {
-            print("FAIL: \(message)")
-            ok = false
-        }
-    }
+
 }
 
 #endif

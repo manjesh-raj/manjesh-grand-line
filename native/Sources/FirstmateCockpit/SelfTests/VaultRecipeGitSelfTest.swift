@@ -32,7 +32,7 @@ enum VaultRecipeGitSelfTest {
     static func run() -> Bool {
         var failures: [String] = []
         func check(_ name: String, _ condition: Bool) {
-            if !condition { failures.append(name) }
+            SelfTestAssertions.record(condition, name, into: &failures)
         }
 
         let fm = FileManager.default
