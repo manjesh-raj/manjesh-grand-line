@@ -318,6 +318,12 @@ enough to explain itself.
 - **Assert what is painted, not what was computed.** A model-level assertion is
   blind to a signal that never reaches the view; re-deriving an expected value
   from the function under test asserts nothing at all.
+- **No key equivalent may be declared twice in `NSApp.mainMenu`.** AppKit
+  resolves a chord to the first *enabled* match in menu order and this app
+  implements no `validateMenuItem`, so a duplicate silently makes one of the
+  two items permanently dead - it shipped once as H3 (two ⌘N items) and was
+  found by a captain. `NavigationCoherenceSelfTest` now fails the run on any
+  duplicate, so a new menu item with a taken chord fails by name.
 - **A behavioural check and a source guard catch different things**, and several
   fixes here need both: the behaviour can be right while the call site that
   reaches it is deleted, and a source guard can pass while the mechanism is
@@ -446,6 +452,14 @@ fails unless its entry carries a trailing marker.
 - A suite that greps the app's own sources must resolve its root through
   `SelfTestSources.appSourceDirectory()`, and must skip loudly when it cannot
   find its sentinel - every such guard silently passes otherwise.
+- **`NSApp` is nil in a headless suite**, and it is an implicitly-unwrapped
+  `NSApplication!` - so reading `NSApp.mainMenu` (or anything else on it)
+  *crashes* rather than failing, which reads as a broken suite rather than a
+  broken assertion. Nothing calls `NSApplication.shared` in a `FM_RUN_*` block.
+  Where a suite needs something the app normally installs on `NSApp`, give the
+  producer a "build it but do not install it" seam and assert the product -
+  `AppDelegate.buildMenu(installing:)` is the worked example, and it is what
+  lets the menu bar's own shape be asserted from CI's *blocking* lane.
 - **`autoreleasepool` is mandatory** around any repeated AppKit
   construct/teardown loop in a headless suite: nothing turns the run loop, so
   removed views are never drained and a perfectly healthy view reads as a leak.
@@ -980,6 +994,7 @@ noted.
 | `HelmField` / `HelmTextField` / `HelmTextView` / `HelmSearchField` / `HelmChipInput` / `HelmDateField` / `HelmToggle` | a raw `NSTextField()`, `NSSearchField()`, `NSDatePicker` or `NSSwitch` - source-guarded |
 | `HelmFormSheet` | a hand-built editor sheet |
 | `HelmConfirm` | an `NSAlert`, **except** where a command or binary is about to execute outside this app's control (the risk gates, the herdr restart, `beginSheetModal`) |
+| `Feedback.report(_:kind:persistence:in:)` | deciding at the call site whether something is a toast or a bell entry. State whether it is **still true after a toast would have faded** (GL-30's own dividing line) and let it route; pair a `.lasting` report with `Feedback.clear(id:)` on the path that resolves it. A blocked *decision* is still `HelmConfirm`/`DestructiveConfirm` - it needs an answer, so it needs a return path |
 | `HelmPageSidebar`, `HelmPageToolbar`, `HelmResponsiveGrid`, `HelmDrillHeader`, `HelmRefreshPill`, `HelmBarPanel`, `HelmSkeletonRow` | a per-page reimplementation of each |
 | `HelmCountBadge` | a bare number in a card header's action slot |
 | `HelmType` roles | a literal `systemFont(ofSize:)`; `HelmMetrics` for spacing and radii |
