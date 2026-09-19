@@ -275,6 +275,35 @@ final class HelmModuleCard: NSView {
     /// number. Kept separate so the self-test can name what it measured.
     static let baseStandardHeight: CGFloat = 176
 
+    /// **The floor a card never goes below** (full review #3's PF2).
+    ///
+    /// `standardHeight` used to be a required `==`, which made every card
+    /// exactly as tall as the tallest body kind could ever need. That was the
+    /// right call when the modules carried `.progress` numerals and
+    /// three-row peeks; most of them now render one line, and the review
+    /// measured the result - seven cards on the Overview canvas whose bodies
+    /// were about 55% empty.
+    ///
+    /// So the card sizes to its content, with two things keeping the grid
+    /// from going ragged:
+    ///
+    ///  - this floor, so a one-line card is still a *card* rather than a
+    ///    strip - header, body and insets with room to breathe, and enough
+    ///    that the gradient tile and the ribbon still read as artwork; and
+    ///  - `HelmResponsiveGrid`'s `equalHeights`, which makes every card in a
+    ///    row match the tallest in that row. Uniformity moves from "the whole
+    ///    canvas" to "each row", which is what a grid actually needs to look
+    ///    like a grid.
+    ///
+    /// The number is the chrome (ribbon + header inset + tile row + body
+    /// inset) plus a two-line body, which is the tallest of the *short*
+    /// bodies - so a `.note`, the most common kind now, sits exactly at this
+    /// floor and every taller kind grows past it on its own.
+    static var minimumHeight: CGFloat { HelmType.scaled(baseMinimumHeight) }
+
+    /// `minimumHeight` before the chrome text scale - see `baseStandardHeight`.
+    static let baseMinimumHeight: CGFloat = 124
+
     /// Fired on click (and on a VoiceOver/keyboard press, via
     /// `HoverHighlightView`'s own press replay).
     var onOpen: (() -> Void)?
@@ -433,10 +462,14 @@ final class HelmModuleCard: NSView {
             card.topAnchor.constraint(equalTo: topAnchor),
             card.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            // The one thing that makes the grid uniform vertically. See
-            // `standardHeight` for the number, and why a required *height*
-            // is safe here where a required width would not be.
-            heightAnchor.constraint(equalToConstant: Self.standardHeight),
+            // PF2: a **floor**, not a fixed height. See `minimumHeight` and
+            // `standardHeight` for the reasoning, and
+            // `HelmResponsiveGrid`'s `equalHeights` for the other half - the
+            // one that keeps a row uniform now that a card can be shorter
+            // than its neighbour. A required *height* is safe here where a
+            // required width would not be (AGENTS.md gotcha (13)): this card
+            // lives inside a scroll view whose document height is free.
+            heightAnchor.constraint(greaterThanOrEqualToConstant: Self.minimumHeight),
 
             chipLabel.leadingAnchor.constraint(equalTo: chipView.leadingAnchor, constant: 10),
             chipLabel.trailingAnchor.constraint(equalTo: chipView.trailingAnchor, constant: -10),
@@ -521,9 +554,55 @@ final class HelmModuleCard: NSView {
         content.translatesAutoresizingMaskIntoConstraints = false
         bodyContainer.addSubview(content)
         bodyViews.append(content)
+        // Still `<=`, and PF2 made it **required** where it used to be
+        // `.defaultHigh`.
+        //
+        // `<=` is what lets one card height work across six body kinds of
+        // different natural sizes: the body keeps its own height, sits at the
+        // top of the area, and a short one leaves the slack below it rather
+        // than being stretched to fill it (`.fill` on a vertical stack would
+        // otherwise pull a two-line note apart). That is unchanged, and it is
+        // also what lets a row stretch a short card to match its tallest
+        // neighbour for free - the slack simply grows.
+        //
+        // It is required now because the reason it was not is gone. It used
+        // to be the constraint AppKit should break if a body outgrew a card
+        // whose height was *fixed*; there is no fixed height any more, so a
+        // body that needs more room gets it by making its own card taller.
+        // Required therefore turns "should not clip" into "cannot clip",
+        // which is the one guarantee this card owes its content.
         let bodyBottom = content.bottomAnchor.constraint(lessThanOrEqualTo: bodyContainer.bottomAnchor)
-        bodyBottom.priority = .defaultHigh
+
+        // PF2's second half, and the pair above is deliberate: `<=` required
+        // says the body **cannot** be clipped, and this `==` at 250 says the
+        // area should nonetheless hug it. Together they mean "as tall as the
+        // content, and never shorter".
+        //
+        // It is expressed here, on the body, rather than as a preferred
+        // height on the card, because a card-level height constant has to
+        // out-argue every stack inside the card about how compressible it is
+        // - which it loses, and the measured result was a peek list squashed
+        // into a 49pt area it needed 86pt for. This constraint has nothing to
+        // argue with: it only asks the area to stop where its content does.
+        //
+        // **Priority 1**, and that is not a rounding of "low" - it has to lose
+        // to literally everything, and 250 (`.defaultLow`) was measured doing
+        // real damage.
+        //
+        // The bodies are built from stacks and labels whose *vertical*
+        // clipping and compression resistances are not uniformly high, so a
+        // 250 hug already outranked some of them: a three-row peek list
+        // rendered into a 68pt area it needed 86pt for, clipped, with no
+        // "unable to simultaneously satisfy" logged - because nothing was
+        // unsatisfiable, the hug simply won. At priority 1 the hug can only
+        // ever be the tie-breaker it is meant to be: it decides the card's
+        // height when nothing else has an opinion, and yields the moment
+        // anything does.
+        let bodyHug = content.bottomAnchor.constraint(equalTo: bodyContainer.bottomAnchor)
+        bodyHug.priority = NSLayoutConstraint.Priority(1)
+
         NSLayoutConstraint.activate([
+            bodyHug,
             content.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
             content.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
             content.topAnchor.constraint(equalTo: bodyContainer.topAnchor),
@@ -725,9 +804,22 @@ final class HelmModuleCard: NSView {
     /// Note this is the *stack*-level API: `setContentCompressionResistance-
     /// Priority` is a no-op on a view with no intrinsic content size, which an
     /// `NSStackView` does not have (gotcha (12)).
+    /// Horizontally compressible (gotcha (13)'s rule - a body that will not
+    /// yield sideways is a window-width floor) and **vertically
+    /// incompressible** (PF2).
+    ///
+    /// The vertical half is not symmetry for its own sake. A card is
+    /// content-sized now, and a grid row ties its cards to the row's height
+    /// so they all match the tallest - a required tie, which will happily win
+    /// against a 750 clipping resistance and squash a taller card's body to
+    /// match a shorter neighbour. Measured: a three-row peek list settled at
+    /// 124pt beside a one-line note instead of pulling the note up to its own
+    /// 143pt. Required here means the tie can only ever resolve upward, which
+    /// is the only direction that shows everyone's content.
     private func compressibleStack(_ stack: NSStackView) -> NSStackView {
         stack.setClippingResistancePriority(.defaultLow, for: .horizontal)
         stack.setHuggingPriority(.defaultLow, for: .horizontal)
+        stack.setClippingResistancePriority(.required, for: .vertical)
         return stack
     }
 
@@ -740,6 +832,22 @@ final class HelmModuleCard: NSView {
         stack.translatesAutoresizingMaskIntoConstraints = false
         stack.setHuggingPriority(.defaultLow, for: .horizontal)
         stack.setClippingResistancePriority(.defaultLow, for: .horizontal)
+        // PF2: **vertically** incompressible, which horizontally it
+        // deliberately is not.
+        //
+        // The horizontal `.defaultLow` above is gotcha (13)'s rule - a stack
+        // resists clipping at 750, above `NSLayoutPriorityWindowSizeStayPut`,
+        // so a body that would not yield horizontally is a window-width
+        // floor. None of that applies to height: this card lives in a scroll
+        // view whose document height is free.
+        //
+        // Measured, and the reason this line exists: with the default here, a
+        // grid row's equal-height tie settled on the *shortest* card and
+        // squashed the taller one's body to fit, rather than stretching the
+        // short ones up. A body that cannot be squashed is what makes the tie
+        // resolve to the tallest card, which is the only answer that shows
+        // all of everyone's content.
+        stack.setClippingResistancePriority(.required, for: .vertical)
         for view in views {
             view.leadingAnchor.constraint(equalTo: stack.leadingAnchor).isActive = true
             let trailing = view.trailingAnchor.constraint(equalTo: stack.trailingAnchor)
