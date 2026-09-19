@@ -520,6 +520,52 @@ final class CommandLibraryPageView: NSObject {
         return label
     }
 
+    /// A section header with a leading SF Symbol.
+    ///
+    /// Review #3's UI7. This panel used to head two of its five sections with
+    /// a literal glyph pasted into the string - `\u{2605}` for Favorites and
+    /// the `\u{1F551}` *emoji* clock for Recently Used - and close the panel
+    /// with a `\u{1F4D6}` emoji book on the Workflows row. Three drawing
+    /// languages on one column: an emoji renders in the system's colour
+    /// emoji font at its own weight and baseline, so it neither takes the
+    /// header's accent colour nor lines up with the mono caps beside it, and
+    /// the rest of this page is SF Symbols throughout. `HelmSymbol.image`
+    /// builds the glyph the same way every other icon in the app is built,
+    /// which also means it takes the theme's accent like the label does.
+    private func symbolHeaderLabel(_ text: String, symbol: String) -> NSView {
+        let label = mutedHeaderLabel(text)
+        label.translatesAutoresizingMaskIntoConstraints = false
+
+        let glyph = NSImageView()
+        glyph.translatesAutoresizingMaskIntoConstraints = false
+        // `weight(for:)` rather than a hand-picked weight: the label beside it
+        // is semibold, so the glyph pairs at semibold (AGENTS.md's component
+        // index - `HelmSymbol` is the app's one place for this question).
+        glyph.image = HelmSymbol.image(symbol,
+                                       pointSize: 9.5,
+                                       weight: HelmSymbol.weight(for: .semibold),
+                                       accessibilityDescription: nil)
+        glyph.contentTintColor = HelmTheme.nsColor(theme.accentHex)
+        glyph.setContentHuggingPriority(.required, for: .horizontal)
+        glyph.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let row = NSStackView(views: [glyph, label])
+        row.orientation = .horizontal
+        // `.centerY`, not `.firstBaseline`: an `NSImageView` has no baseline,
+        // so a baseline alignment leaves the glyph sitting wherever the stack
+        // last put it.
+        row.alignment = .centerY
+        row.distribution = .fill
+        row.spacing = 5
+        row.translatesAutoresizingMaskIntoConstraints = false
+        // A header is decoration around the rows that follow it; the glyph and
+        // the words are one announcement, not two.
+        row.setAccessibilityElement(true)
+        row.setAccessibilityRole(.staticText)
+        row.setAccessibilityLabel(text)
+        return row
+    }
+
     private func leftPanelRow(text: String, trailing: String? = nil, isSelected: Bool = false, isMuted: Bool = false, action: Selector) -> NSView {
         let container = HoverHighlightView()
         container.cornerRadius = 6
@@ -629,7 +675,7 @@ final class CommandLibraryPageView: NSObject {
     private func renderBrowseList() {
         let favorites = store.favoriteCommands()
         if !favorites.isEmpty {
-            appendToLeftPanel(mutedHeaderLabel("\u{2605} FAVORITES"))
+            appendToLeftPanel(symbolHeaderLabel("FAVORITES", symbol: "star.fill"))
             for command in favorites {
                 let row = leftPanelRow(text: command.name, isSelected: command.id == selectedCommandID, action: #selector(favoriteRowClicked(_:)))
                 rowCommandIDs[ObjectIdentifier(row)] = command.id
@@ -640,7 +686,7 @@ final class CommandLibraryPageView: NSObject {
 
         let recent = store.recentlyUsedCommands(limit: 5)
         if !recent.isEmpty {
-            appendToLeftPanel(mutedHeaderLabel("\u{1F551} RECENTLY USED"))
+            appendToLeftPanel(symbolHeaderLabel("RECENTLY USED", symbol: "clock"))
             for command in recent {
                 let row = leftPanelRow(text: command.name, isSelected: command.id == selectedCommandID, action: #selector(recentRowClicked(_:)))
                 rowCommandIDs[ObjectIdentifier(row)] = command.id
@@ -667,10 +713,36 @@ final class CommandLibraryPageView: NSObject {
         }
 
         appendDividerToLeftPanel()
-        let workflowsRow = NSTextField(labelWithString: "\u{1F4D6} Workflows (Docs \u{2192} Runbooks)")
-        workflowsRow.font = .systemFont(ofSize: 11.5)
-        workflowsRow.textColor = HelmTheme.mutedInk(theme)
+        // UI7: was a bare label headed by the `\u{1F4D6}` emoji. The words and
+        // the tooltip are unchanged; only the glyph is, and it is now built
+        // the same way every other icon on this page is.
+        let workflowsLabel = NSTextField(labelWithString: "Workflows (Docs \u{2192} Runbooks)")
+        workflowsLabel.font = .systemFont(ofSize: 11.5)
+        workflowsLabel.textColor = HelmTheme.mutedInk(theme)
+        workflowsLabel.lineBreakMode = .byTruncatingTail
+        workflowsLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        workflowsLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        let workflowsGlyph = NSImageView()
+        workflowsGlyph.translatesAutoresizingMaskIntoConstraints = false
+        workflowsGlyph.image = HelmSymbol.image("book.closed",
+                                                pointSize: 11.5,
+                                                weight: HelmSymbol.weight(for: .regular),
+                                                accessibilityDescription: nil)
+        workflowsGlyph.contentTintColor = HelmTheme.mutedInk(theme)
+        workflowsGlyph.setContentHuggingPriority(.required, for: .horizontal)
+        workflowsGlyph.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let workflowsRow = NSStackView(views: [workflowsGlyph, workflowsLabel])
+        workflowsRow.orientation = .horizontal
+        workflowsRow.alignment = .centerY
+        workflowsRow.distribution = .fill
+        workflowsRow.spacing = 5
+        workflowsRow.translatesAutoresizingMaskIntoConstraints = false
         workflowsRow.toolTip = "Multi-step command workflows live in Docs \u{2192} Runbooks - use a command's own \u{201C}+ Workflow\u{201D} button to add it as a step."
+        workflowsRow.setAccessibilityElement(true)
+        workflowsRow.setAccessibilityRole(.staticText)
+        workflowsRow.setAccessibilityLabel(workflowsLabel.stringValue)
         appendToLeftPanel(workflowsRow)
     }
 
