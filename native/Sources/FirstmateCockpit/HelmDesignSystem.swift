@@ -4451,3 +4451,94 @@ enum HelmResponsiveGrid {
         }
     }
 }
+
+// MARK: - HelmCountBadge
+
+/// A small pill carrying one number, for a card header's trailing action slot.
+///
+/// **Review #3's UI4.** The Vault page put its Secrets and Verified Launchers
+/// counts in their card headers as a bare monospaced `0` with no surface at
+/// all - beside a filled "+ Add Secret" button on one card and alone on the
+/// other, which left a lone digit floating in a header that is otherwise made
+/// of objects. Every other count in this app that sits beside something has a
+/// pill under it (`HelmPageSidebar`'s `.badge` rows, `HelmAccentRow`'s chip),
+/// and this is that treatment extracted so a third header does not hand-roll a
+/// fourth copy - the component index's own rule.
+///
+/// The recipe is `HelmPageSidebar`'s resting badge, deliberately: a badge
+/// carrying a *number* takes the theme's own line tone rather than a semantic
+/// hue, because the number is not a state. A caller that wants a state chip
+/// wants `HelmAccentRow`'s, not this.
+final class HelmCountBadge: NSView {
+
+    /// Matches `HelmPageSidebar.Metrics.badgeHeight`/`badgeInset`. Not shared
+    /// through that type because they are private to it and a sidebar row's
+    /// metrics changing for sidebar reasons should not silently move a card
+    /// header's badge.
+    static let height: CGFloat = 18
+    static let inset: CGFloat = HelmMetrics.s2 - 2
+    /// How strongly the line tone reads as a surface under the digits.
+    static let fillAlpha: CGFloat = 0.55
+
+    private let label = NSTextField(labelWithString: "")
+
+    /// The text shown. A string rather than an `Int` because the callers that
+    /// need this also need GL-14's "not a number yet" state, which they spell
+    /// `?`.
+    var text: String {
+        get { label.stringValue }
+        set {
+            label.stringValue = newValue
+            // A hidden badge rather than an empty pill: a pill with nothing in
+            // it reads as a count of zero, which is exactly the claim GL-14
+            // forbids making when there is no count.
+            isHidden = newValue.isEmpty
+        }
+    }
+
+    init(text: String = "") {
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+        wantsLayer = true
+        // Monospaced digits so a count that changes does not reflow the header
+        // around it - `HelmType.metric`'s own reason.
+        label.font = HelmType.metric(11, weight: .medium)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.alignment = .center
+        addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: Self.inset),
+            label.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -Self.inset),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            heightAnchor.constraint(equalToConstant: Self.height),
+            // A single digit still reads as a pill rather than as a sliver.
+            widthAnchor.constraint(greaterThanOrEqualToConstant: Self.height + 2),
+        ])
+        setContentHuggingPriority(.required, for: .horizontal)
+        setContentCompressionResistancePriority(.required, for: .horizontal)
+        // The badge is the number plus its surface; VoiceOver should hear the
+        // number once, from the label it is already reading.
+        setAccessibilityElement(false)
+        self.text = text
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    override func layout() {
+        super.layout()
+        layer?.cornerRadius = bounds.height / 2
+    }
+
+    func applyTheme(_ theme: HelmTheme) {
+        layer?.cornerRadius = Self.height / 2
+        layer?.backgroundColor = HelmTheme.nsColor(theme.chromeLineHex)
+            .withAlphaComponent(Self.fillAlpha).cgColor
+        label.textColor = HelmTheme.mutedInk(theme)
+    }
+
+    #if FM_SELFTESTS
+    var debugFill: NSColor? { layer?.backgroundColor.map { NSColor(cgColor: $0) ?? .clear } }
+    var debugCornerRadius: CGFloat { layer?.cornerRadius ?? 0 }
+    var debugTextColor: NSColor? { label.textColor }
+    #endif
+}

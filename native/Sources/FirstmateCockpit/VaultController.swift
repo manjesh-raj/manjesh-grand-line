@@ -82,12 +82,15 @@ final class VaultController: NSViewController, DaylightDrillActions {
 
     private let secretsPanel = HelmCard()
     private let secretsStack = NSStackView()
-    private let secretsCountBadge = NSTextField(labelWithString: "0")
+    /// UI4: a real pill, not a bare monospaced digit floating in the header.
+    /// Starts at `?` rather than `0` for GL-14's reason - the page has not
+    /// looked yet, and "no secrets" is a different claim from "not asked".
+    private let secretsCountBadge = HelmCountBadge(text: "?")
     private let addSecretButton = HelmButton(title: "", variant: .primary)
 
     private let toolsPanel = HelmCard()
     private let toolsStack = NSStackView()
-    private let toolsCountBadge = NSTextField(labelWithString: "0")
+    private let toolsCountBadge = HelmCountBadge(text: "?")
 
     // "Backup the recipe, not the values" (fm/grandline-vault-recipe-backup) -
     // see VaultRecipe.swift/VaultRecipeGit.swift for what's recorded and why.
@@ -309,8 +312,6 @@ final class VaultController: NSViewController, DaylightDrillActions {
         addSecretButton.target = self
         addSecretButton.action = #selector(addSecretTapped)
 
-        secretsCountBadge.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
-        secretsCountBadge.translatesAutoresizingMaskIntoConstraints = false
 
         // The structured `HelmCard` header - icon tile, title, subtitle,
         // trailing actions - replacing a hand-rolled title-only row so this
@@ -330,12 +331,13 @@ final class VaultController: NSViewController, DaylightDrillActions {
         secretsStack.translatesAutoresizingMaskIntoConstraints = false
 
         secretsPanel.setBody(secretsStack)
+        // UI4: the card is loading from the moment it exists, not from the
+        // moment `renderAll()` first runs.
+        addLoadingSkeleton(to: secretsStack)
         return secretsPanel
     }
 
     private func buildToolsSection() -> NSView {
-        toolsCountBadge.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
-        toolsCountBadge.translatesAutoresizingMaskIntoConstraints = false
 
         toolsPanel.setHeader(
             symbol: "checkmark.shield.fill",
@@ -350,6 +352,7 @@ final class VaultController: NSViewController, DaylightDrillActions {
         toolsStack.translatesAutoresizingMaskIntoConstraints = false
 
         toolsPanel.setBody(toolsStack)
+        addLoadingSkeleton(to: toolsStack)
         return toolsPanel
     }
 
@@ -471,10 +474,10 @@ final class VaultController: NSViewController, DaylightDrillActions {
         }
 
         // B1: "?" rather than "0" for a count this page does not have.
-        secretsCountBadge.stringValue = secrets.map { "\($0.count)" } ?? "?"
+        secretsCountBadge.text = secrets.map { "\($0.count)" } ?? "?"
         rebuildSecretsStack()
 
-        toolsCountBadge.stringValue = tools.map { "\($0.count)" } ?? "?"
+        toolsCountBadge.text = tools.map { "\($0.count)" } ?? "?"
         rebuildToolsStack()
 
         applyTheme()
@@ -560,10 +563,41 @@ final class VaultController: NSViewController, DaylightDrillActions {
     /// approval helper, which is the thing the captain actually has to go
     /// restart (and the same failure the lock screen already handles by name).
     private func addUnknownState(to stack: NSStackView, symbol: String, noun: String) {
-        let text = hasLoadedOnce
-            ? "Couldn\u{2019}t read \(noun) from Automic Vault. Its approval helper may not be running - check the \u{201c}Automic Vault\u{201d} menu bar app, then Refresh."
-            : "Checking Automic Vault for \(noun)\u{2026}"
-        addEmptyState(to: stack, symbol: hasLoadedOnce ? "exclamationmark.triangle" : symbol, text: text)
+        guard hasLoadedOnce else {
+            // Review #3's UI4: while the first read is in flight this is a
+            // *loading* state, and this app's loading language is D3's
+            // skeleton (Review, Overview, Updates and GitHub Sync all took it;
+            // this page was written before that pass and kept a sentence).
+            // The card no longer sits empty either - see
+            // `addLoadingSkeleton`'s note for why the empty card was the more
+            // visible half of the finding.
+            addLoadingSkeleton(to: stack)
+            return
+        }
+        // A read that *failed* is not a loading state and must not shimmer as
+        // though an answer were still coming. It names the approval helper,
+        // which is the thing the captain actually has to go restart.
+        addEmptyState(to: stack,
+                      symbol: "exclamationmark.triangle",
+                      text: "Couldn\u{2019}t read \(noun) from Automic Vault. Its approval helper may not be running - check the \u{201c}Automic Vault\u{201d} menu bar app, then Refresh.")
+    }
+
+    /// D3's placeholder for a card whose list has not arrived.
+    ///
+    /// UI4's other half. Both cards are built in `loadView` with empty stacks
+    /// and only filled by the first `renderAll()`, so between opening the page
+    /// and the `av` subprocess answering, Secrets and Verified Launchers
+    /// rendered as bare 57pt headers with nothing under them - a card that
+    /// looks finished and empty rather than one that is still loading, while
+    /// the drill subtitle overhead said "Checking Automic Vault\u{2026}".
+    /// Seeding the skeleton at build time is what closes that window; the
+    /// `addUnknownState` path above keeps it up for as long as the read is
+    /// genuinely outstanding.
+    private func addLoadingSkeleton(to stack: NSStackView) {
+        let skeleton = HelmSkeletonList(rows: 2)
+        skeleton.applyTheme(theme)
+        stack.addArrangedSubview(skeleton)
+        skeleton.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
     }
 
     private func addEmptyState(to stack: NSStackView, symbol: String, text: String) {
@@ -862,7 +896,6 @@ final class VaultController: NSViewController, DaylightDrillActions {
     private func applyTheme() {
         view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
-        let muted = HelmTheme.mutedInk(theme)
         let warn = HelmTheme.nsColor(theme.ansiHex[3])
 
         // §2.6 allows no radius outside its own scale, so this banner takes
@@ -881,8 +914,16 @@ final class VaultController: NSViewController, DaylightDrillActions {
         // Theme-derived, never the system `labelColor` default these two
         // fell back to before this pass - the same rule `HelmCard`'s own
         // header title/subtitle already follow.
-        secretsCountBadge.textColor = muted
-        toolsCountBadge.textColor = muted
+        secretsCountBadge.applyTheme(theme)
+        toolsCountBadge.applyTheme(theme)
+        // UI4: the two cards' rows are rebuilt with the current theme baked
+        // in, but a build-time skeleton predates the first `renderAll()` and
+        // would otherwise keep a stale palette across a theme switch.
+        for stack in [secretsStack, toolsStack] {
+            for case let skeleton as HelmSkeletonList in stack.arrangedSubviews {
+                skeleton.applyTheme(theme)
+            }
+        }
 
         secretsPanel.applyTheme(theme)
         toolsPanel.applyTheme(theme)
@@ -919,8 +960,15 @@ final class VaultController: NSViewController, DaylightDrillActions {
     }
 
     /// B1: what the two count badges are showing right now.
-    var debugSecretsBadge: String { secretsCountBadge.stringValue }
-    var debugToolsBadge: String { toolsCountBadge.stringValue }
+    var debugSecretsBadge: String { secretsCountBadge.text }
+    var debugToolsBadge: String { toolsCountBadge.text }
+    /// UI4's probe surface: the badges themselves, so a suite can assert the
+    /// pill is painted rather than only that the digits are right.
+    var debugCountBadges: [HelmCountBadge] { [secretsCountBadge, toolsCountBadge] }
+    /// UI4: how many D3 skeleton lists the two cards are showing right now.
+    var debugSkeletonCount: Int {
+        [secretsStack, toolsStack].reduce(0) { $0 + $1.arrangedSubviews.filter { $0 is HelmSkeletonList }.count }
+    }
 
     /// B1: the body copy of whatever empty/unknown state each card is
     /// showing, so a test can tell the three states apart by what the captain
