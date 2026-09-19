@@ -568,7 +568,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Still set, and still worth setting, even though `titleVisibility`
         // hides it: the Window menu, Mission Control and the window's own
         // proxy menu all read it.
-        window.title = Self.windowTitle()
+        window.title = Self.windowTitle(context: appShell.currentContextTitle)
         WindowChromeFusion.apply(to: window)
         // **`contentViewController` first, then the frame.** Assigning a
         // content view controller makes AppKit re-derive the window's frame
@@ -577,6 +577,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // *before* this line is silently undone. Measured with a real window:
         // set to 1512x950 and then given a content view controller, it came
         // back 960x652, i.e. exactly `contentMinSize` plus the title bar.
+        // Review #3 §7: every navigation renames the window, so Mission
+        // Control and the Window menu say which page this is. Registered
+        // before `contentViewController`, which is what first lays the shell
+        // out - a `show(_:)` during that pass then already finds a handler.
+        appShell.onCurrentDestinationChanged = { [weak window] context in
+            window?.title = Self.windowTitle(context: context)
+        }
         window.contentViewController = appShell
         window.contentMinSize = Self.minContentSize
         window.setFrame(Self.defaultWindowFrame(), display: false)
@@ -734,6 +741,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         return "Manjesh Grand Line"
+    }
+
+    /// The app name plus whatever page is on screen.
+    ///
+    /// **Review #3 §7.** The title was the bundle name alone, so Mission
+    /// Control, the Window menu and the proxy menu showed one indistinguishable
+    /// entry whatever the captain was looking at - which is the one place a
+    /// Mac app is expected to say where it is. Every other native Mac app puts
+    /// the document or the context there, and this app has twenty-seven of
+    /// them plus a page per saved host.
+    ///
+    /// The separator is a plain hyphen rather than an em dash, matching the
+    /// rest of this app's copy.
+    ///
+    /// A `nil` or blank context answers the bare app name, which is what the
+    /// window is titled for the instant between being created and the shell's
+    /// first navigation - never "Manjesh Grand Line - ".
+    static func windowTitle(context: String?) -> String {
+        let name = windowTitle()
+        guard let context = context?.trimmingCharacters(in: .whitespaces), !context.isEmpty else {
+            return name
+        }
+        return "\(name) - \(context)"
     }
 
     /// The screen's usable area - menu bar and Dock excluded. This is the

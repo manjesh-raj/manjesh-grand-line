@@ -17,6 +17,14 @@
 //   * **UX3** - the menu bar carries Go, Window and Help, and no longer
 //     carries top-level Keys or Snippets menus, while every shortcut those two
 //     menus owned is still bound somewhere in the tree.
+//   * **§7** - the naming and window-title halves of review #3's "other
+//     issues". "Home" names the canvas, "Fleet" names the fleet dashboard,
+//     and nothing user-facing says "Overview" any more; and
+//     `AppDelegate.windowTitle(context:)` puts the current page in the window
+//     title, which is what Mission Control and the Window menu read. The
+//     *live* half - navigating actually renames the window - lives in
+//     `DestinationMountingSelfTest`, which already mounts a real shell in a
+//     real window.
 //   * **UX4** - `ContextualNewAction` routes ⌘N per destination, and exactly
 //     one item in the whole menu tree carries ⌘N (the H3 trap: a duplicate
 //     chord makes one of the two items permanently dead, silently).
@@ -40,6 +48,144 @@ enum NavigationCoherenceSelfTest {
         ok = checkMenuBarShape() && ok
         ok = checkShortcutCatalog() && ok
         ok = checkFirstRunOnboarding() && ok
+        ok = checkDestinationNamingIsCanonical() && ok
+        ok = checkNoSurfaceStillSaysOverview() && ok
+        ok = checkWindowTitleComposition() && ok
+        return ok
+    }
+
+    // MARK: Review #3 §7 - one name per thing
+
+    /// The canvas is "Home" and the fleet dashboard is "Fleet", on every
+    /// surface that names either.
+    ///
+    /// Review #3 §7 found three user-facing names - "Home", "Overview" and
+    /// "Fleet" - for two things, spread across the rail title, the canvas
+    /// space pill, the module card and the drill page's own tab strip. The
+    /// two things are genuinely distinct (a hub of module cards, and a
+    /// dashboard drill page), so the fix settles one name each rather than
+    /// merging them.
+    ///
+    /// **Discriminating power first**: the two canonical names are asserted
+    /// to actually differ, so a future change that collapses them into one
+    /// string cannot make every check below pass vacuously.
+    private static func checkDestinationNamingIsCanonical() -> Bool {
+        print("\n-- §7: one canonical name per destination --")
+        var ok = true
+        let canvas = RailDestination.homeCanvas.title
+        let fleet = RailDestination.overview.title
+        guard canvas != fleet else {
+            fail("the canvas and the fleet page must be two different names, both are \(canvas)", &ok)
+            return false
+        }
+        check(canvas == "Home", "the canvas is called Home, got \(canvas)", &ok)
+        check(fleet == "Fleet", "the fleet dashboard is called Fleet, got \(fleet)", &ok)
+
+        // The canvas's own default space pill, and the Recents kicker that
+        // falls back to it, both say what the canvas is called.
+        check(DaylightSpace.overview.title == canvas,
+              "the canvas's first space pill says \(canvas), got \(DaylightSpace.overview.title)", &ok)
+        check(RecentDestinationKind.rail(.homeCanvas).kicker == canvas,
+              "a Recents row for the canvas is kickered \(canvas), got \(RecentDestinationKind.rail(.homeCanvas).kicker)", &ok)
+
+        // The card that opens the fleet page and the page itself agree.
+        check(DaylightModule.fleet.title == fleet,
+              "the Fleet card and the Fleet page agree, got \(DaylightModule.fleet.title)", &ok)
+        check(DaylightModule.fleet.opens == .overview,
+              "...and that card really is the one that opens it", &ok)
+
+        // A tab strip inside the page must not repeat the page's own name,
+        // and must not borrow the canvas's.
+        let tabs = FleetController.debugTabTitles
+        check(!tabs.isEmpty, "the fleet page has tabs to check - this is vacuous otherwise", &ok)
+        check(!tabs.contains(fleet), "a tab must not repeat the page's own name, got \(tabs)", &ok)
+        check(!tabs.contains(canvas), "...nor borrow the canvas's, got \(tabs)", &ok)
+        return ok
+    }
+
+    /// No user-facing string in the app says "Overview" any more.
+    ///
+    /// A behavioural check and a source guard catch different things here.
+    /// The check above can only see the four accessors it names; this one
+    /// sees a fifth surface someone adds later, which is exactly how the app
+    /// accumulated three names in the first place.
+    ///
+    /// Comments are stripped before the search, so this file's own prose (and
+    /// the several doc comments that explain the rename) do not fail the run.
+    /// The stripping cuts at `//`, which also truncates a line carrying a URL
+    /// - that only ever makes the guard more permissive, never a false alarm.
+    private static func checkNoSurfaceStillSaysOverview() -> Bool {
+        print("\n-- §7: no user-facing string still says \"Overview\" --")
+        var ok = true
+        guard let dir = SelfTestSources.appSourceDirectory() else {
+            fail("could not resolve the app's own source directory - this guard silently passes otherwise", &ok)
+            return false
+        }
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil))?
+            .filter { $0.pathExtension == "swift" } ?? []
+        guard files.count > 50 else {
+            fail("expected the app's whole source directory, found \(files.count) files", &ok)
+            return false
+        }
+        // The guard has to be able to fire: a literal it must find, and one
+        // it must not.
+        let canary = "\"Overview\""
+        check(stripComments("let x = \(canary)").contains(canary),
+              "the stripper must leave a real string literal alone", &ok)
+        check(!stripComments("// a comment mentioning \(canary)").contains(canary),
+              "...and must remove one inside a comment", &ok)
+
+        var offenders: [String] = []
+        for file in files {
+            guard let raw = try? String(contentsOf: file, encoding: .utf8) else { continue }
+            if stripComments(raw).contains(canary) { offenders.append(file.lastPathComponent) }
+        }
+        check(offenders.isEmpty,
+              "\"Overview\" is not a name in this app any more - the canvas is Home, the dashboard is Fleet. Still in: \(offenders)", &ok)
+        return ok
+    }
+
+    private static func stripComments(_ source: String) -> String {
+        source.split(separator: "\n", omittingEmptySubsequences: false).map { line -> Substring in
+            guard let slashes = line.range(of: "//") else { return line }
+            return line[line.startIndex..<slashes.lowerBound]
+        }.joined(separator: "\n")
+    }
+
+    // MARK: Review #3 §7 - the window title carries the destination
+
+    /// `AppDelegate.windowTitle(context:)` composes app name plus page.
+    ///
+    /// The window title was the bundle name alone, so Mission Control and the
+    /// Window menu showed one indistinguishable entry for twenty-seven pages.
+    /// This is the pure half; `DestinationMountingSelfTest` asserts that a
+    /// real navigation actually reaches it.
+    private static func checkWindowTitleComposition() -> Bool {
+        print("\n-- §7: the window title names the current page --")
+        var ok = true
+        let bare = AppDelegate.windowTitle()
+        check(!bare.isEmpty, "the app name is not empty - everything below is relative to it", &ok)
+
+        let hosts = AppDelegate.windowTitle(context: RailDestination.hosts.title)
+        check(hosts == "\(bare) - Hosts", "expected \"\(bare) - Hosts\", got \"\(hosts)\"", &ok)
+        check(hosts != bare, "...and it genuinely differs from the bare app name", &ok)
+
+        // Two destinations must not produce the same title, or the whole
+        // point (telling windows apart in Mission Control) is lost.
+        let console = AppDelegate.windowTitle(context: RailDestination.console.title)
+        check(console != hosts, "two destinations give two titles, both were \(hosts)", &ok)
+
+        // A host page's own label, not the Hosts page's name.
+        check(AppDelegate.windowTitle(context: "DEV Bastion") == "\(bare) - DEV Bastion",
+              "a host page is titled by its own label", &ok)
+
+        // Nothing dangling before the first navigation.
+        check(AppDelegate.windowTitle(context: nil) == bare, "no context gives the bare app name", &ok)
+        check(AppDelegate.windowTitle(context: "   ") == bare, "...and neither does a blank one", &ok)
+
+        // The separator is a plain hyphen, matching the rest of this app's
+        // copy - an em dash here would be the only one in the product.
+        check(!hosts.contains("\u{2014}"), "the separator is a hyphen, not an em dash: \(hosts)", &ok)
         return ok
     }
 
