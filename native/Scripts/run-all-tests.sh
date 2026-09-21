@@ -389,6 +389,12 @@ NEEDS_SESSION=(
   # (FM_RUN_FOCUS_TIMER_TESTS) is deliberately not here - that one runs in
   # CI's blocking lane.
   "FM_RUN_FOCUS_TIMER_VIEW_TESTS"
+  # F12's render half: the real Hosts page on its Snippets tab in a real
+  # window, the Accessibility card's own laid-out height, and the editor
+  # sheet. Its pure-logic sibling (FM_RUN_SNIPPET_EXPANSION_TESTS - the
+  # trigger grammar and the policy) is deliberately not here and runs in
+  # CI's blocking lane.
+  "FM_RUN_SNIPPET_EXPANDER_VIEW_TESTS"
   "FM_RUN_SHIFT_TASKS_PAGE_TESTS"
   # ---------------------------------------------------------------------
   # The full-app audit's §7.1 finding: these eight all create real

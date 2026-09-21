@@ -381,6 +381,25 @@ final class AppShellController: NSViewController {
     /// where the captain is, never move them.
     private var currentDestinationKindForMenus: RecentDestinationKind? { currentDestinationKind }
 
+    /// F12's `.consoleOnly` question: is a terminal what the captain is
+    /// typing into right now? True on the Console destination and on a host
+    /// page, which is a console with a saved host behind it.
+    ///
+    /// Read off the same `currentDestinationKind` the Recents dropdown and the
+    /// menu actions use, for that property's own reason - a second notion of
+    /// "which page is showing" is a second thing to keep in step. The app's
+    /// *frontmost-ness* is deliberately not folded in here:
+    /// `SnippetExpander.currentContext` asks the workspace about that, and
+    /// keeping the two readings separate is what lets the policy state them as
+    /// two conditions rather than one opaque Bool.
+    var isTerminalDestinationShowing: Bool {
+        switch currentDestinationKind {
+        case .rail(let destination): return destination == .console
+        case .host: return true
+        case nil: return false
+        }
+    }
+
     /// Add/Edit Host, requested from the Hosts panel - forwarded to whoever
     /// owns the host store (the app delegate), since this controller only
     /// arranges views and knows nothing about persistence.

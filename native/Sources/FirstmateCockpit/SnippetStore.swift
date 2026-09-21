@@ -17,6 +17,18 @@ final class SnippetStore {
     /// Fired after any mutation so the snippets list can reload.
     var onChange: (() -> Void)?
 
+    /// F12: a second reader. `onChange` is a single closure the Hosts page
+    /// owns, and the expander needs the same signal to rebuild its trigger
+    /// table - so rather than turning one page's property into a list nobody
+    /// else uses, this is the additive registration `HostStore.observe`
+    /// already established for exactly this situation. No unregister, same as
+    /// there: the registrants live as long as the app does.
+    private var observers: [() -> Void] = []
+
+    func observe(_ handler: @escaping () -> Void) {
+        observers.append(handler)
+    }
+
     private let fileURL: URL
 
     init() {
@@ -92,5 +104,6 @@ final class SnippetStore {
             PersistenceFailureReporter.report(what: "snippets", path: fileURL.path, error: error)
         }
         onChange?()
+        for observer in observers { observer() }
     }
 }

@@ -207,13 +207,28 @@ enum HostsRedesignSelfTest {
         // `NSLayoutPriorityWindowSizeStayPut` (500), or the page becomes a
         // floor on how narrow the whole window may get - and every destination
         // shares one `bodyContainer`, so it takes the other twenty-six with it.
+        let columnWidths = [HostsSideStack.width,
+                            HelmPageSidebar.width,
+                            HostsController.contentMinimumWidth]
         let floors = widthConstraintsAtOrAbove(NSLayoutConstraint.Priority(500),
                                                in: controller.view,
-                                               matching: [HostsSideStack.width,
-                                                          HelmPageSidebar.width,
-                                                          HostsController.contentMinimumWidth])
+                                               matching: columnWidths)
         if !floors.isEmpty {
             fail("\(floors.count) column constraint(s) at or above windowSizeStayPut: \(floors)", &ok)
+        }
+        // **The sweep's own discriminating power**, and it is not decoration:
+        // with AppKit's synthesized constraints filtered out (see
+        // `widthConstraintsAtOrAbove`), a filter that was one step too greedy
+        // would find *nothing* and this whole check would pass vacuously
+        // forever. So the same sweep is run one point lower, where the three
+        // real column constraints live, and it has to find all three.
+        let declared = widthConstraintsAtOrAbove(HelmDaylightPriority.contentTie,
+                                                 in: controller.view,
+                                                 matching: columnWidths)
+        if declared.count != 3 {
+            fail("the sweep found \(declared.count) declared column constraint(s) at "
+                 + "\(HelmDaylightPriority.contentTie.rawValue), want the nav column, the side "
+                 + "column and the content minimum: \(declared)", &ok)
         }
 
         // **The page must genuinely hold a narrow window**, and the way that
@@ -329,12 +344,34 @@ enum HostsRedesignSelfTest {
         }
     }
 
+    /// Every **hand-declared** width constraint in the page at or above
+    /// `priority` whose constant is one of the column widths.
+    ///
+    /// `type(of:) == NSLayoutConstraint.self` is doing real work and must not
+    /// be dropped: AppKit puts two kinds of *required* width constraint on
+    /// ordinary views that nobody in this app wrote, and both are ordinary
+    /// layout, not a window floor.
+    ///
+    ///   - `NSContentSizeLayoutConstraint` - a label's own intrinsic content
+    ///     width, i.e. how wide that string happens to render;
+    ///   - `NSAutoresizingMaskLayoutConstraint` - on AppKit's private
+    ///     `NSTextFieldSimpleLabel` subview inside every `NSTextField`.
+    ///
+    /// Without the filter this check matched a *label whose text measured
+    /// 208pt*, and it did exactly that: it passed on a developer machine with
+    /// the nearest such label at 211.5pt and failed on a CI runner - whose
+    /// font metrics differ by a couple of points - reporting
+    /// `208.0pt @ 1000.0` for a `HelmToggleRow` subtitle. Three more labels
+    /// measure within 4pt of `contentMinimumWidth`, so this was a coin flip on
+    /// any page text change, not a property of the layout. The page itself was
+    /// correct in both runs; only the sweep was wrong.
     private static func widthConstraintsAtOrAbove(_ priority: NSLayoutConstraint.Priority,
                                                   in view: NSView,
                                                   matching constants: [CGFloat]) -> [String] {
         var found: [String] = []
         for constraint in view.constraints
         where constraint.priority >= priority
+            && type(of: constraint) == NSLayoutConstraint.self
             && constraint.firstAttribute == .width
             && constants.contains(where: { abs($0 - constraint.constant) < 0.5 }) {
             found.append("\(fmt(constraint.constant))pt @ \(constraint.priority.rawValue)")

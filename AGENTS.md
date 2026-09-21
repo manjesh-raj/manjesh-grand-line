@@ -1255,10 +1255,11 @@ noted.
   `...TransientType`, `com.apple.is-sensitive`) are written by
   `writeConcealed`; **any one of them alone is enough to refuse**, because the
   nspasteboard.org convention exists to be honoured for other apps' writes too
-  and those carry one marker rather than this app's three. Three readers exist
-  today - the clipboard history's capture loop, ⌥Space's pasteboard chip, and
+  and those carry one marker rather than this app's three. Four readers exist
+  today - the clipboard history's capture loop, ⌥Space's pasteboard chip,
   the Reading List's paste/drop route (`ReadingListController.pasteTapped`,
-  `ReadingListDropRootView.acceptableURL`) - and a second hard-coded copy of
+  `ReadingListDropRootView.acceptableURL`) and F12's `{{clipboard}}` placeholder
+  (`SnippetExpander.clipboardText`) - and a second hard-coded copy of
   the marker strings is the one way this rule
   could silently stop matching, with no test failing. Check it **before**
   reading the string, so "a vault secret never reaches this store" is a
@@ -1324,6 +1325,7 @@ can correct an earlier one - and several do.
 | [`35-reading-list.md`](docs/history/35-reading-list.md) | The Reading List (F4): the link inbox, `LinkPresentation` metadata, tags, read state and the opt-in AI summary |
 | [`36-focus-timer.md`](docs/history/36-focus-timer.md) | The focus timer (F7): the task-bound Pomodoro, the bar chip and its ring popover, and Weekly Review's "time on tasks" tile |
 | [`37-scratchpad-calculator.md`](docs/history/37-scratchpad-calculator.md) | The Scratchpad calculator (F9): the Tools tab, the expression engine, the unit/currency tables and the date words |
+| [`38-snippet-expander.md`](docs/history/38-snippet-expander.md) | The snippet expander (F12): the `;abbrev` trigger grammar, the generalised Snippets store, and system-wide expansion over Dictation's own paste path |
 
 ## Maintaining this file
 

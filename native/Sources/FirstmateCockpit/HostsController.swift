@@ -118,6 +118,24 @@ final class HostsController: NSViewController, DaylightDrillActions {
     /// `ConsoleController.runSnippetInActiveTab`.
     var onRunSnippet: ((Snippet) -> Void)?
 
+    // MARK: F12 - the expander
+
+    /// The live expansion state, read fresh on every visit and every store
+    /// change rather than cached: the master toggle, whether this process is
+    /// really a trusted Accessibility client, and how many saved snippets have
+    /// a usable trigger. Wired in `main.swift` to the one `SnippetExpander`.
+    /// Absent (the page mounted standalone in a suite), the panel reads off.
+    var snippetExpansionState: (() -> (enabled: Bool, trusted: Bool, triggerCount: Int))?
+
+    /// The master switch was flipped. The delegate persists it and starts or
+    /// stops the live monitors - a settings write alone would leave them
+    /// installed, the same trap `DictationHotkey.updateShortcut` records.
+    var onSnippetExpansionToggled: ((Bool) -> Void)?
+
+    /// "Grant access…" - the one Accessibility prompt Dictation and ⌥Space
+    /// already use, never a second one.
+    var onRequestAccessibilityTrust: (() -> Void)?
+
     // MARK: Views
 
 
@@ -303,6 +321,12 @@ final class HostsController: NSViewController, DaylightDrillActions {
     override func viewWillAppear() {
         super.viewWillAppear()
         refreshLiveSessionState()
+        // F12: `AXIsProcessTrusted` can change while this app is running (the
+        // captain granting it in System Settings is the whole point), so the
+        // card re-reads it on every visit rather than caching what it found at
+        // launch - the same "read the real permission fresh" rule
+        // `DictationController` follows.
+        refreshExpansionPanel()
     }
 
     override func loadView() {
@@ -559,6 +583,26 @@ final class HostsController: NSViewController, DaylightDrillActions {
             .init(shortcut: "\u{2318}\u{21E7}N", title: "New key") { [weak self] in self?.newKey() },
             .init(shortcut: "\u{2318}\u{2325}N", title: "New snippet") { [weak self] in self?.newSnippet() },
         ])
+
+        sideStack.expansion.onToggle = { [weak self] isOn in
+            self?.onSnippetExpansionToggled?(isOn)
+            self?.refreshExpansionPanel()
+        }
+        sideStack.expansion.onRequestPermission = { [weak self] in
+            self?.onRequestAccessibilityTrust?()
+            self?.refreshExpansionPanel()
+        }
+    }
+
+    /// F12's card, and the one panel here that belongs to a single tab.
+    /// Hidden as an *arranged* subview, so it takes no height on the other two
+    /// (gotcha (11)).
+    private func refreshExpansionPanel() {
+        sideStack.expansion.isHidden = activeTab != .snippets
+        let state = snippetExpansionState?() ?? (enabled: false, trusted: false, triggerCount: 0)
+        sideStack.expansion.setState(enabled: state.enabled,
+                                     trusted: state.trusted,
+                                     triggerCount: state.triggerCount)
     }
 
     /// The Workspace card's four numbers, read from the same three stores the
@@ -674,15 +718,29 @@ final class HostsController: NSViewController, DaylightDrillActions {
 
     private func detail(for snippet: Snippet) -> HostsDetailContent {
         let lines = snippet.command.split(separator: "\n", omittingEmptySubsequences: false).count
+        var fields: [HostsDetailContent.Field] = [
+            .init("Command", snippet.subtitle, isCode: true),
+            .init("Lines", "\(lines)"),
+        ]
+        // F12. Stated as three separate readings rather than one sentence,
+        // because they fail independently: a snippet can have a trigger and
+        // be Console-only, or be system-wide with an exclusion that is why it
+        // did not fire in the app the captain was just in.
+        fields.append(.init("Trigger", snippet.triggerDisplay ?? "None", isCode: snippet.triggerDisplay != nil))
+        if snippet.triggerDisplay != nil {
+            fields.append(.init("Where", snippet.scope.title))
+            if !snippet.excludedApps.isEmpty {
+                fields.append(.init("Never in", snippet.excludedApps.joined(separator: ", ")))
+            }
+        }
         return HostsDetailContent(symbol: "chevron.left.forwardslash.chevron.right",
                                   tint: .info,
-                                  kicker: "Snippet",
+                                  kicker: snippet.triggerDisplay ?? "Snippet",
                                   title: snippet.label,
-                                  subtitle: "Sent to the active terminal tab, then Enter.",
-                                  fields: [
-                                    .init("Command", snippet.subtitle, isCode: true),
-                                    .init("Lines", "\(lines)"),
-                                  ],
+                                  subtitle: snippet.expandsSystemWide
+                                      ? "Expands wherever you type it, and runs in a terminal tab."
+                                      : "Sent to the active terminal tab, then Enter.",
+                                  fields: fields,
                                   actions: [
                                     .init(title: "Run", symbol: "play.fill") { [weak self] in
                                         self?.onRunSnippet?(snippet)
@@ -850,7 +908,10 @@ final class HostsController: NSViewController, DaylightDrillActions {
         snippetsTabView.isHidden = tab != .snippets
         // The panel follows the showing tab, so a selection left behind on a
         // hidden list is never what it displays.
-        if isViewLoaded { refreshDetailPanel() }
+        if isViewLoaded {
+            refreshDetailPanel()
+            refreshExpansionPanel()
+        }
         // §6.4: both halves of the header describe the tab that is showing.
         onDrillActionsChanged?()
         onDrillSubtitleChanged?()
@@ -896,9 +957,16 @@ final class HostsController: NSViewController, DaylightDrillActions {
                 ? "No saved keys yet"
                 : "Private key material, in the macOS Keychain"
         case .snippets:
-            return snippetStore.snippets.isEmpty
-                ? "No snippets yet"
-                : "Commands you run often"
+            // F12: the one count that is not stated anywhere else on this
+            // page, and the only one a captain cannot see by looking - a
+            // snippet that expands system-wide behaves differently from one
+            // that does not, and the list's own chips say which per row but
+            // never how many.
+            let expanding = snippetStore.snippets.filter { $0.expandsSystemWide }.count
+            if snippetStore.snippets.isEmpty { return "No snippets yet" }
+            return expanding == 0
+                ? "Commands you run often"
+                : "Commands you run often \u{00b7} \(expanding) expand system-wide"
         }
     }
 
@@ -1277,17 +1345,29 @@ final class HostsController: NSViewController, DaylightDrillActions {
         snippetsTitleLabel.stringValue = HostsTab.snippets.title
         snippetsList.setItems(items)
         refreshWorkspacePanel()
+        refreshExpansionPanel()
         refreshDetailPanel()
         onDrillSubtitleChanged?()
     }
 
     private func snippetItem(_ snippet: Snippet) -> HostsListSection.Item {
+        // F12: the trigger is this row's identity when it has one - it is what
+        // the captain types and therefore what they look for. The chip carries
+        // the scope, which is the one thing about a snippet that changes what
+        // typing it does, and it is `.good` only when the snippet really will
+        // fire elsewhere (GL-14: a Console-only snippet must not read like an
+        // armed one).
+        let trigger = snippet.triggerDisplay
         var content = HelmAccentRow.Content(tint: .info,
-                                            kicker: "Snippet",
+                                            kicker: trigger ?? "Snippet",
                                             title: snippet.label,
                                             meta: snippet.subtitle,
                                             badgeSymbol: "chevron.left.forwardslash.chevron.right")
         content.metaIsCode = true
+        if trigger != nil {
+            content.chipText = snippet.scope.chipText
+            content.chipTint = snippet.expandsSystemWide ? .good : .neutral
+        }
         var item = HostsListSection.Item(content: content)
         item.recordKey = snippet.id.uuidString
         item.primary = .init(title: "Run", symbol: "play.fill") { [weak self] in self?.onRunSnippet?(snippet) }
@@ -1442,7 +1522,8 @@ final class HostsController: NSViewController, DaylightDrillActions {
     }
 
     private func presentSnippetEditor(for snippet: Snippet?) {
-        let editor = SnippetEditorController(snippet: snippet)
+        let editor = SnippetEditorController(snippet: snippet,
+                                             existingSnippets: snippetStore.snippets)
         editor.onSave = { [weak self] saved in
             guard let self else { return }
             if self.snippetStore.snippet(id: saved.id) != nil {
