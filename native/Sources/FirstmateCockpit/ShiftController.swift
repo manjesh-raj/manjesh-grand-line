@@ -272,6 +272,22 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     private let reviewPushedBackHeader = NSTextField(labelWithString: "Pushed back repeatedly")
     private let reviewPushedBackStack = NSStackView()
 
+    // MARK: F7's "time on tasks" tile
+
+    /// Weekly Review's focus-time panel: today's total as a headline, and
+    /// the last seven days as a bar chart.
+    ///
+    /// A `HelmCard` with a chart rather than a fourth `HelmStatTile`,
+    /// because the three tiles above it are single counts and this is a
+    /// duration with a shape - "2h 05m today" is the number, and "against a
+    /// week that looks like this" is the thing the tile is actually for. The
+    /// headline keeps the tiles' own typography so the two read as one page.
+    private let reviewFocusPanel = HelmCard()
+    private let reviewFocusHeader = NSTextField(labelWithString: "Time on tasks")
+    private let reviewFocusHeadline = NSTextField(labelWithString: "")
+    private let reviewFocusCaption = NSTextField(labelWithString: "")
+    private let reviewFocusChart = FocusWeekBarView()
+
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var expandedTaskIDs: Set<String> = []
     private var syncStatus: ShiftGitSync.Status = .synced
@@ -319,10 +335,19 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     static var debugTaskFollowUpPanelBodyHeight: CGFloat { taskFollowUpPanelBodyHeight }
     #endif
 
-    init(store: ShiftStore) {
+    /// F7's timer. Optional so every existing construction site (and every
+    /// self-test that mounts this page to ask about something else) keeps
+    /// working unchanged - a page with no timer simply renders no focus
+    /// affordance, rather than needing a stub one.
+    private let focusTimer: FocusTimerController?
+    private var focusTimerToken: UUID?
+
+    init(store: ShiftStore, focusTimer: FocusTimerController? = nil) {
         self.store = store
+        self.focusTimer = focusTimer
         super.init(nibName: nil, bundle: nil)
     }
+
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
@@ -519,6 +544,21 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         taskListView.onPushDue = { [weak self] task, option in
             self?.pushDueDate(task, by: option)
         }
+        taskListView.onStartFocus = { [weak self] task, minutes in
+            self?.startFocus(on: task, minutes: minutes)
+        }
+        taskListView.onStopFocus = { [weak self] _ in
+            self?.stopFocus()
+        }
+
+        // F7. The list's focus highlight and Weekly Review's tile both move
+        // when the timer does, and `setFocusedTask` is a no-op unless the
+        // *task* changed - so this fires once a second and reloads nothing
+        // until there is something to reload.
+        if let focusTimer {
+            focusTimerToken = focusTimer.observe { [weak self] in self?.focusStateChanged() }
+            taskListView.setFocusedTask(id: focusTimer.session?.taskID)
+        }
 
         followUpListView.onEdit = { [weak self] item in
             self?.presentFollowUpEditor(for: item)
@@ -550,7 +590,13 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         }
     }
 
-    deinit { NotificationCenter.default.removeObserver(self) }
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+        // F7: this page observes the timer for its row highlight and its
+        // Weekly Review tile; an observation is unregistered where it was
+        // made, this app's convention everywhere else.
+        if let focusTimerToken { focusTimer?.unobserve(focusTimerToken) }
+    }
 
     /// Mirrors `ToolsController`'s own resize-gating fix (fm/cockpit-tools-
     /// yaml-quotes-diff-perf's sibling perf fix): only re-flow the grid while
@@ -934,6 +980,10 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         boardView.onPushTaskDue = { [weak self] id, option in
             guard let self, let task = self.store.activeTasks.first(where: { $0.id == id }) else { return }
             self.pushDueDate(task, by: option)
+        }
+        boardView.onStartFocusTask = { [weak self] id, minutes in
+            guard let self, let task = self.store.activeTasks.first(where: { $0.id == id }) else { return }
+            self.startFocus(on: task, minutes: minutes)
         }
         boardView.onDeleteTask = { [weak self] id in self?.confirmDeleteTask(id: id) }
         boardView.onAddTask = { [weak self] column in self?.addTask(in: column) }
@@ -1322,6 +1372,46 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         render()
     }
 
+    // MARK: F7 - the focus timer
+
+    /// Start a session on `task`, and say so.
+    ///
+    /// The store is not touched here: a *running* session is not data, it is
+    /// runtime state, and only the finished session is written (by
+    /// `FocusTimerController`, into the task's own activity log). That is
+    /// also why nothing here re-renders the page - the timer's own observer
+    /// does, through `focusStateChanged`.
+    private func startFocus(on task: ShiftTask, minutes: Int) {
+        guard let focusTimer else { return }
+        focusTimer.start(task: task, minutes: minutes)
+        Feedback.report("Focusing \(minutes) min on \(task.title)",
+                        kind: .done, persistence: .transient, in: view)
+    }
+
+    private func stopFocus() {
+        guard let focusTimer, focusTimer.isRunning else { return }
+        let logged = focusTimer.stop()
+        Feedback.report(logged.map { "Logged \(FocusTimerFormat.total($0)) to the task" }
+                            ?? "Focus stopped \u{00B7} too short to log",
+                        kind: logged == nil ? .warning : .done,
+                        persistence: .transient, in: view)
+    }
+
+    /// The timer moved. Repaint only what depends on it.
+    ///
+    /// Called once a second while a session runs, so it must stay cheap:
+    /// `setFocusedTask` returns immediately unless the focused *task*
+    /// changed, and Weekly Review's own tile is only re-rendered while that
+    /// is the view actually on screen (AGENTS.md's "an observer must not
+    /// rebuild a page that is not visible", for the same reason).
+    private func focusStateChanged() {
+        guard isViewLoaded else { return }
+        taskListView.setFocusedTask(id: focusTimer?.session?.taskID)
+        if topLevelView == .weeklyReview, !view.isHiddenOrHasHiddenAncestor {
+            renderFocusTile()
+        }
+    }
+
     // MARK: Weekly Review
 
     /// The page's top toolbar, laid out the way the captain's reference draws
@@ -1422,11 +1512,76 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         weeklyReviewContainer.isHidden = true
         weeklyReviewContainer.addArrangedSubview(textStack)
         weeklyReviewContainer.addArrangedSubview(reviewStatsRow)
+        weeklyReviewContainer.addArrangedSubview(buildFocusPanel())
         weeklyReviewContainer.addArrangedSubview(reviewPushedBackPanel)
         textStack.widthAnchor.constraint(equalTo: weeklyReviewContainer.widthAnchor).isActive = true
         reviewStatsRow.widthAnchor.constraint(equalTo: weeklyReviewContainer.widthAnchor).isActive = true
+        reviewFocusPanel.widthAnchor.constraint(equalTo: weeklyReviewContainer.widthAnchor).isActive = true
         reviewPushedBackPanel.widthAnchor.constraint(equalTo: weeklyReviewContainer.widthAnchor).isActive = true
         return weeklyReviewContainer
+    }
+
+    /// F7's panel. Built once; `renderFocusTile` only ever rewrites its two
+    /// labels and re-points the chart, so a once-a-second tick costs no
+    /// view construction at all.
+    private func buildFocusPanel() -> NSView {
+        reviewFocusHeadline.font = HelmType.rounded(HelmType.scaled(19), .heavy)
+        reviewFocusCaption.font = HelmType.captionSmall()
+
+        let textStack = NSStackView(views: [reviewFocusHeadline, reviewFocusCaption])
+        textStack.orientation = .vertical
+        textStack.alignment = .leading
+        textStack.spacing = 2
+        textStack.translatesAutoresizingMaskIntoConstraints = false
+        // AGENTS.md gotcha (12): `setContentHuggingPriority` is a **no-op**
+        // on an `NSStackView` - it constrains a view against its intrinsic
+        // content size and a stack has none. The stack-level pair is what
+        // actually holds this column at its natural width beside the chart.
+        textStack.setHuggingPriority(.required, for: .horizontal)
+        textStack.setClippingResistancePriority(.required, for: .horizontal)
+
+        let body = NSStackView(views: [textStack, reviewFocusChart])
+        body.orientation = .horizontal
+        body.alignment = .centerY
+        body.spacing = HelmMetrics.s5
+        // AGENTS.md gotcha (10): without `.fill` the chart never absorbs
+        // the row's slack.
+        body.distribution = .fill
+        body.translatesAutoresizingMaskIntoConstraints = false
+
+        reviewFocusPanel.setHeader(symbol: "timer", tint: .accent, titleLabel: reviewFocusHeader)
+        reviewFocusPanel.setBody(body, insets: HelmCard.contentInsets)
+        reviewFocusPanel.translatesAutoresizingMaskIntoConstraints = false
+        return reviewFocusPanel
+    }
+
+    /// Repaint the focus panel from the activity log.
+    ///
+    /// GL-14: a day with no sessions is a measured zero and is drawn as a
+    /// hairline bar, never omitted - see `FocusWeekBarView`. The headline
+    /// says "None yet today" rather than "0m" for the same reason: `0m` on
+    /// its own reads as a broken counter.
+    private func renderFocusTile() {
+        let days = store.focusSecondsByDay(days: 7)
+        let todaySeconds = days.last?.seconds ?? 0
+        let taskCount = store.focusTaskCountToday()
+
+        reviewFocusHeadline.stringValue = todaySeconds > 0
+            ? FocusTimerFormat.total(todaySeconds) : "None yet today"
+        reviewFocusCaption.stringValue = todaySeconds > 0
+            ? "today \u{00B7} \(taskCount) task\(taskCount == 1 ? "" : "s")"
+            : "start a focus session from any task"
+
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let letters = calendar.veryShortStandaloneWeekdaySymbols
+        reviewFocusChart.configure(days.map { entry in
+            let weekday = calendar.component(.weekday, from: entry.day)
+            return FocusWeekBarView.Bar(
+                label: letters.indices.contains(weekday - 1) ? letters[weekday - 1] : "",
+                seconds: entry.seconds,
+                isToday: entry.day == today)
+        })
     }
 
     private func renderWeeklyReview() {
@@ -1441,6 +1596,8 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         reviewStatsRow.addArrangedSubview(reviewStatTile(icon: "checkmark.circle", value: "\(summary.completedCount)", label: "completed this week"))
         reviewStatsRow.addArrangedSubview(reviewStatTile(icon: "arrow.uturn.backward", value: "\(summary.pushedBack.count)", label: "pushed back 2+ times", tint: .warn))
         reviewStatsRow.addArrangedSubview(reviewStatTile(icon: "calendar", value: "\(summary.upcomingCount)", label: "coming up next week"))
+
+        renderFocusTile()
 
         for v in reviewPushedBackStack.arrangedSubviews {
             reviewPushedBackStack.removeArrangedSubview(v)
@@ -2309,6 +2466,13 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     /// behind its back.
     func debugRender() { render() }
 
+    // MARK: F7's probe surface
+
+    var debugFocusPanelIsVisible: Bool { !reviewFocusPanel.isHidden }
+    var debugFocusChart: FocusWeekBarView { reviewFocusChart }
+    var debugFocusHeadline: String { reviewFocusHeadline.stringValue }
+    var debugFocusCaption: String { reviewFocusCaption.stringValue }
+
     /// Opens a project's detail through the same path a card click takes, on a
     /// project seeded for the test - or a fresh one when the scratch store is
     /// empty, since the detail state is what is under test, not the data.
@@ -2380,5 +2544,10 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         reviewPushedBackHeader.textColor = ink
         for tile in reviewStatTiles { tile.applyTheme(theme) }
         reviewPushedBackPanel.applyTheme(theme)
+        reviewFocusPanel.applyTheme(theme)
+        reviewFocusHeader.textColor = ink
+        reviewFocusHeadline.textColor = ink
+        reviewFocusCaption.textColor = muted
+        reviewFocusChart.applyTheme(theme)
     }
 }

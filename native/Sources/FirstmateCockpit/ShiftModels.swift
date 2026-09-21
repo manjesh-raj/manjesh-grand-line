@@ -205,6 +205,20 @@ struct ShiftActivityEntry {
     var kind: String   // e.g. "task_completed", "task_created"
     var summary: String
     var targetID: String?
+
+    /// How long the thing this entry records actually took, in seconds, for
+    /// the kinds where that is a real measurement (F7's
+    /// `task_focus_logged`). `nil` everywhere else, and `nil` on an entry
+    /// written before this field existed - `ShiftYaml.activity(from:)`
+    /// defaults a missing `duration_seconds` key rather than failing to
+    /// decode, the same treatment `target_id` got when it was added.
+    ///
+    /// Deliberately *not* parsed back out of `summary`: Weekly Review's
+    /// "time on tasks" tile sums this field, and a tile whose number comes
+    /// from scraping a human-readable sentence breaks the first time the
+    /// wording is improved. Defaulted so the synthesised memberwise
+    /// initialiser stays source-compatible with every existing call site.
+    var durationSeconds: Int? = nil
 }
 
 /// Weekly Review's computed summary (phase 5) - `ShiftStore.weeklySummary`

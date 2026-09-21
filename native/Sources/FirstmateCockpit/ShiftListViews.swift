@@ -58,6 +58,32 @@ final class ShiftTaskListView: NSObject {
     /// menu, and both end up at `ShiftController.confirmDeleteTask`.
     var onDelete: ((ShiftTask) -> Void)?
 
+    // MARK: F7 - the focus timer
+
+    /// Start a focus session on this task, for `minutes`. Forwarded, never
+    /// applied here: this view has no timer, exactly as it has no store.
+    var onStartFocus: ((ShiftTask, Int) -> Void)?
+    /// Finish the session running on this task.
+    var onStopFocus: ((ShiftTask) -> Void)?
+    /// Which task is being focused right now, or `nil`.
+    ///
+    /// Held rather than asked for per row because a row view is reused by
+    /// the table and re-`configure`d constantly - a closure back into the
+    /// timer would be called once per visible row on every tick.
+    private var focusedTaskID: String?
+
+    /// Point the list at the running session (or at nothing) and repaint.
+    ///
+    /// A no-op when the id has not changed, because this is called from a
+    /// once-a-second timer tick: a `reloadData` per second would fight the
+    /// captain's own scrolling and re-run every row's layout for a chip
+    /// that is not on this page.
+    func setFocusedTask(id: String?) {
+        guard id != focusedTaskID else { return }
+        focusedTaskID = id
+        tableView.reloadData()
+    }
+
     private static let columnID = NSUserInterfaceItemIdentifier("shiftTaskCol")
     private static let rowViewID = NSUserInterfaceItemIdentifier("shiftTaskRow")
     private static let emptyViewID = NSUserInterfaceItemIdentifier("shiftTaskEmpty")
@@ -103,6 +129,21 @@ final class ShiftTaskListView: NSObject {
         push.submenu = pushMenu
         menu.addItem(push)
         menu.addItem(.separator())
+        // F7. A submenu for the same reason "Push to" is one: the durations
+        // are one choice, and the row's own button already carries the
+        // default so this is the "not 25 minutes" path.
+        let focus = NSMenuItem(title: "Focus for", action: nil, keyEquivalent: "").withSymbol("timer")
+        let focusMenu = NSMenu()
+        for minutes in FocusTimerEngine.durationChoices {
+            let item = NSMenuItem(title: "\(minutes) minutes", action: #selector(focusClicked(_:)), keyEquivalent: "")
+            item.representedObject = minutes
+            item.target = self
+            focusMenu.addItem(item)
+        }
+        focus.submenu = focusMenu
+        menu.addItem(focus)
+        menu.addItem(NSMenuItem(title: "Stop Focus", action: #selector(stopFocusClicked), keyEquivalent: "").withSymbol("stop.circle"))
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Delete Task\u{2026}", action: #selector(deleteClicked), keyEquivalent: "").withSymbol("trash"))
         for item in menu.items { item.target = self }
         menu.delegate = self
@@ -125,6 +166,13 @@ final class ShiftTaskListView: NSObject {
               let task = clickedTask else { return }
         onPushDue?(task, option)
     }
+
+    @objc private func focusClicked(_ sender: NSMenuItem) {
+        guard let minutes = sender.representedObject as? Int, let task = clickedTask else { return }
+        onStartFocus?(task, minutes)
+    }
+
+    @objc private func stopFocusClicked() { if let task = clickedTask { onStopFocus?(task) } }
 
     @objc private func openClicked() { if let task = clickedTask { onOpen?(task) } }
     @objc private func deleteClicked() { if let task = clickedTask { onDelete?(task) } }
@@ -173,6 +221,12 @@ extension ShiftTaskListView: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         let hasTask = clickedTask != nil
         for item in menu.items where !item.isSeparatorItem { item.isEnabled = hasTask }
+        // F7: "Stop Focus" is only ever true of the one row that is being
+        // focused, and an enabled item that silently does nothing is worse
+        // than a disabled one.
+        if let stop = menu.items.first(where: { $0.title == "Stop Focus" }) {
+            stop.isEnabled = hasTask && clickedTask?.id == focusedTaskID
+        }
     }
 }
 
@@ -193,9 +247,21 @@ extension ShiftTaskListView: NSTableViewDataSource, NSTableViewDelegate {
         let rowView = (tableView.makeView(withIdentifier: Self.rowViewID, owner: nil) as? ShiftTaskRowView)
             ?? { let v = ShiftTaskRowView(); v.identifier = Self.rowViewID; return v }()
         let task = tasks[row]
-        rowView.configure(task: task, project: task.projectID.flatMap { projectsByID[$0] }, theme: theme) { [weak self] in
-            self?.onToggleCompleted?(task)
-        }
+        rowView.configure(task: task, project: task.projectID.flatMap { projectsByID[$0] }, theme: theme,
+                          isFocused: task.id == focusedTaskID,
+                          onToggle: { [weak self] in self?.onToggleCompleted?(task) },
+                          onFocus: { [weak self] in
+                              guard let self else { return }
+                              if task.id == self.focusedTaskID {
+                                  self.onStopFocus?(task)
+                              } else {
+                                  self.onStartFocus?(task, FocusTimerEngine.defaultMinutes)
+                              }
+                          })
+        // D1: a short list keeps its actions visible, because a captain who
+        // has never hovered a row cannot tell it has any. The same floor
+        // `HelmAccentRow` states for itself.
+        rowView.setActionReveal(tasks.count <= HelmAccentRow.alwaysRevealRowCount ? .always : .onAim)
         return rowView
     }
 }
@@ -266,15 +332,26 @@ final class ShiftTaskCheckBadge: NSButton {
 /// untouched.
 private final class ShiftTaskRowView: NSView {
     private let checkBadge = ShiftTaskCheckBadge()
+    /// F7's "Start 25 min" / "Stop", in the row's own trailing accessory
+    /// slot - the slot `HelmAccentRow` already owns for exactly this, and
+    /// which D1 fades in on hover so fifty rows are not fifty visible
+    /// buttons.
+    private let focusButton = HelmButton(title: "Start 25 min", variant: .quiet, size: .small,
+                                         symbol: "timer")
     private let row: HelmAccentRow
     private var onToggle: (() -> Void)?
+    private var onFocus: (() -> Void)?
 
     init() {
-        row = HelmAccentRow(leadingControl: checkBadge)
+        focusButton.setContentHuggingPriority(.required, for: .horizontal)
+        focusButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        row = HelmAccentRow(leadingControl: checkBadge, trailingAccessory: focusButton)
         super.init(frame: .zero)
         translatesAutoresizingMaskIntoConstraints = false
         checkBadge.target = self
         checkBadge.action = #selector(checkboxClicked)
+        focusButton.target = self
+        focusButton.action = #selector(focusClicked)
         addSubview(row)
         NSLayoutConstraint.activate([
             row.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
@@ -286,8 +363,14 @@ private final class ShiftTaskRowView: NSView {
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    func configure(task: ShiftTask, project: ShiftProject?, theme: HelmTheme, onToggle: @escaping () -> Void) {
+    func setActionReveal(_ reveal: HelmAccentRow.ActionReveal) { row.actionReveal = reveal }
+
+    func configure(task: ShiftTask, project: ShiftProject?, theme: HelmTheme,
+                   isFocused: Bool,
+                   onToggle: @escaping () -> Void,
+                   onFocus: @escaping () -> Void) {
         self.onToggle = onToggle
+        self.onFocus = onFocus
 
         let isOverdue: Bool = {
             guard let due = task.dueDate.flatMap(ShiftDateFormatting.date(from:)) else { return false }
@@ -327,9 +410,24 @@ private final class ShiftTaskRowView: NSView {
 
         checkBadge.setChecked(task.status == .completed,
                               tint: HelmTheme.nsColor(tint.hex(in: theme)))
+
+        // F7. The button is the one control on this row that changes its
+        // *meaning* rather than its state, so it says which it is - the
+        // mockup draws the focused row's action as "Stop" and every other
+        // row's as "Start 25 min".
+        focusButton.title = isFocused ? "Stop" : "Start \(FocusTimerEngine.defaultMinutes) min"
+        focusButton.tint = isFocused ? .accent : nil
+        focusButton.toolTip = isFocused
+            ? "Finish the focus session on this task"
+            : "Start a \(FocusTimerEngine.defaultMinutes) minute focus session on this task"
+        // A completed task has nothing left to focus on, and a timer bound
+        // to one would log time against work that is already done.
+        focusButton.isHidden = task.status == .completed
     }
 
     @objc private func checkboxClicked() { onToggle?() }
+
+    @objc private func focusClicked() { onFocus?() }
 }
 
 // MARK: - Follow-up list

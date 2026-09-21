@@ -207,6 +207,10 @@ enum ShiftYaml {
         m[str("kind")] = str(a.kind)
         m[str("summary")] = str(a.summary)
         m[str("target_id")] = strOpt(a.targetID)
+        // F7. Written as `.null` rather than omitted when absent, matching
+        // every other optional key this file emits - the beautifier drops a
+        // null on dump either way, and a reader defaults the missing key.
+        m[str("duration_seconds")] = a.durationSeconds.map { Yaml.int($0) } ?? .null
         return .dictionary(m)
     }
 
@@ -219,7 +223,10 @@ enum ShiftYaml {
             timestamp: reqString(dict[str("timestamp")] ?? .null),
             kind: reqString(dict[str("kind")] ?? .null),
             summary: reqString(dict[str("summary")] ?? .null),
-            targetID: optString(dict[str("target_id")] ?? .null)
+            targetID: optString(dict[str("target_id")] ?? .null),
+            // Missing on every entry written before F7 - `.int` on a `.null`
+            // is `nil`, which is exactly the default this field wants.
+            durationSeconds: dict[str("duration_seconds")]?.int
         )
     }
 

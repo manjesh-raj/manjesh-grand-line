@@ -777,11 +777,89 @@ final class ShiftStore {
         writeListGuarded(path: path, key: "tasks", items: tasks.map(ShiftYaml.toYaml))
     }
 
-    private func logActivity(kind: String, summary: String, targetID: String? = nil, now: Date) {
+    private func logActivity(kind: String, summary: String, targetID: String? = nil,
+                             durationSeconds: Int? = nil, now: Date) {
         let path = activityPath(forMonth: ShiftStore.monthKey(for: now))
         var entries = readListGuarded(path: path, key: "activity").compactMap(ShiftYaml.activity(from:))
-        entries.append(ShiftActivityEntry(id: UUID().uuidString, timestamp: ShiftStore.iso8601(now), kind: kind, summary: summary, targetID: targetID))
+        entries.append(ShiftActivityEntry(id: UUID().uuidString, timestamp: ShiftStore.iso8601(now), kind: kind, summary: summary, targetID: targetID, durationSeconds: durationSeconds))
         writeListGuarded(path: path, key: "activity", items: entries.map(ShiftYaml.toYaml))
+    }
+
+    // MARK: Focus sessions (F7)
+
+    /// Records a finished focus session against the task it was bound to.
+    ///
+    /// Deliberately the *existing* activity log rather than a store of its
+    /// own: a focus session is a thing that happened to a task, which is
+    /// exactly what `activity/<YYYY-MM>.yaml` already is, and Overview's
+    /// captain's log picks it up for free. The duration rides
+    /// `ShiftActivityEntry.durationSeconds`, never the summary string - see
+    /// that field for why.
+    ///
+    /// Takes the title rather than looking it up so a session survives its
+    /// task being completed or deleted mid-run: the log records what the
+    /// captain was working on, which stays true either way.
+    func logFocusSession(taskID: String, taskTitle: String, seconds: Int, now: Date = Date()) {
+        logActivity(kind: FocusActivityLog.kind,
+                    summary: FocusActivityLog.summary(seconds: seconds, taskTitle: taskTitle),
+                    targetID: taskID,
+                    durationSeconds: seconds,
+                    now: now)
+        notify()
+    }
+
+    /// Focused seconds per day, for the `days` days ending on `reference`'s
+    /// own day - oldest first, one entry per day including the empty ones.
+    ///
+    /// The empty days matter: they are what makes the Weekly Review chart a
+    /// week rather than a list of the days that happened to have sessions,
+    /// and a gap drawn as an absent bar is GL-14's distinction between "no
+    /// focus time" and "no data" collapsing in the wrong direction.
+    ///
+    /// Day boundaries are `Calendar.current`'s, matching every other date
+    /// computation on this store.
+    func focusSecondsByDay(days: Int = 7, reference: Date = Date()) -> [(day: Date, seconds: Int)] {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: reference)
+        guard days > 0 else { return [] }
+
+        // A week never spans more than two month files, but the lookback is
+        // asked for in months and `days` is a parameter - so derive it
+        // rather than assuming.
+        let monthsBack = max(1, days / 28 + 1)
+        var totals: [Date: Int] = [:]
+        for entry in recentActivityEntries(monthsBack: monthsBack, reference: reference)
+        where entry.kind == FocusActivityLog.kind {
+            guard let seconds = entry.durationSeconds, seconds > 0,
+                  let at = ShiftStore.iso8601Date(entry.timestamp) else { continue }
+            totals[cal.startOfDay(for: at), default: 0] += seconds
+        }
+
+        return (0..<days).reversed().compactMap { offset in
+            guard let day = cal.date(byAdding: .day, value: -offset, to: today) else { return nil }
+            return (day: day, seconds: totals[day] ?? 0)
+        }
+    }
+
+    /// Focused seconds logged on `reference`'s own day.
+    func focusSecondsToday(reference: Date = Date()) -> Int {
+        focusSecondsByDay(days: 1, reference: reference).first?.seconds ?? 0
+    }
+
+    /// How many distinct tasks were focused on `reference`'s own day - the
+    /// "on 3 tasks" half of the Weekly Review tile's caption.
+    func focusTaskCountToday(reference: Date = Date()) -> Int {
+        let cal = Calendar.current
+        let today = cal.startOfDay(for: reference)
+        var ids: Set<String> = []
+        for entry in recentActivityEntries(monthsBack: 1, reference: reference)
+        where entry.kind == FocusActivityLog.kind {
+            guard let targetID = entry.targetID,
+                  let at = ShiftStore.iso8601Date(entry.timestamp),
+                  cal.startOfDay(for: at) == today else { continue }
+            ids.insert(targetID)
+        }
+        return ids.count
     }
 
     private func persistActiveTasks() {

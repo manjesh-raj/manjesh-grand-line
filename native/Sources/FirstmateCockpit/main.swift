@@ -2169,6 +2169,20 @@ if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_CALENDAR_VIEW_TESTS"] == "1
     exit(ShiftCalendarViewSelfTest.run() ? 0 : 1)
 }
 
+// F7 (full review #3 §8): the focus timer's state machine, its two duration
+// formats, the activity-log write and the per-day aggregation Weekly
+// Review's tile reads. Pure logic, so it runs in CI's blocking lane; the
+// chip, the ring and the chart are its window-backed sibling below.
+if ProcessInfo.processInfo.environment["FM_RUN_FOCUS_TIMER_TESTS"] == "1" {
+    exit(FocusTimerSelfTest.run() ? 0 : 1)
+}
+
+// The same feature's render: the real bar with the real chip on it, the
+// popover's ring, and Weekly Review's seven-day chart.
+if ProcessInfo.processInfo.environment["FM_RUN_FOCUS_TIMER_VIEW_TESTS"] == "1" {
+    exit(FocusTimerViewSelfTest.run() ? 0 : 1)
+}
+
 // fm/grand-line-tasks-page-redesign: the Tasks page's own nav column, the
 // slice it filters by, its stat tiles, its one page-level primary action, and
 // a board column sized so a card is never sliced.
