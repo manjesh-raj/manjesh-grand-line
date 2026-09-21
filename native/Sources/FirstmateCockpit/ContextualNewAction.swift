@@ -37,6 +37,7 @@ enum ContextualNewAction: String, CaseIterable {
     case command
     case runbook
     case notebookPage
+    case savedLink
 
     /// The File menu's own wording for this action, and the Shortcuts sheet's.
     ///
@@ -61,6 +62,14 @@ enum ContextualNewAction: String, CaseIterable {
         // its name from the first heading typed into it. Nothing is filled in
         // first.
         case .notebookPage: return "New Page"
+        // "New " like every other verb here - `NavigationCoherenceSelfTest`'s
+        // UX4 asserts the prefix, because the menu item is what tells the
+        // captain which thing \u{2318}N means on the page they are on, and
+        // "Save Link\u{2026}" would read as an action on something already
+        // selected. No ellipsis, for this property's own stated reason: the
+        // link on the clipboard is saved immediately and its title fetched
+        // afterwards, so nothing is filled in first.
+        case .savedLink: return "New Saved Link"
         }
     }
 
@@ -77,6 +86,7 @@ enum ContextualNewAction: String, CaseIterable {
         case .command: return .commandLibrary
         case .runbook: return .runbooks
         case .notebookPage: return .notebook
+        case .savedLink: return .readingList
         }
     }
 
@@ -110,6 +120,7 @@ enum ContextualNewAction: String, CaseIterable {
         case .commandLibrary: return .command
         case .runbooks: return .runbook
         case .notebook: return .notebookPage
+        case .readingList: return .savedLink
         case .homeCanvas, .overview, .strawHat, .console, .review, .logAnalyzer,
              .kubernetes, .tools, .whiteboard, .vault, .dictation, .health,
              .docs, .postmortems, .updates, .bootstrap, .automation,

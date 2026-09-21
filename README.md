@@ -144,6 +144,7 @@ grep -rhoE '"FM_[A-Z0-9_]+"' native/Sources/FirstmateCockpit/*.swift | tr -d '"'
 | `FM_STICKY_BOARD_DIR` | The Sticky Board's `notes.yaml`. Falls back to `FM_SHIFT_DIR`, then the synced clone |
 | `FM_CODE_PREVIEW_DIR` | The Code Preview panel's snippet files. Falls back to `FM_SHIFT_DIR`, then the synced clone |
 | `FM_NOTEBOOK_DIR` | The Notebook's page tree (`GrandLineDocs/notebook/`). Falls back to `FM_SHIFT_DIR`, then the synced clone |
+| `FM_READING_LIST_DIR` | The Reading List's `links.yaml` and its per-host favicon cache (`GrandLineDocs/reading-list/`). Falls back to `FM_SHIFT_DIR`, then the synced clone |
 | `FM_CLIPBOARD_HISTORY_FILE` | The encrypted clipboard history (`clipboard-history.sealed`) |
 | `FM_CLIPBOARD_HISTORY_EPHEMERAL` | `1` seals the clipboard history with a per-process random key instead of the Keychain item - what the self-test process sets, so a suite never creates or reads a real Keychain entry |
 | `FM_STRAW_HAT_DIR` | The Straw Hat crew's saved conversations (redacted). Falls back to `FM_SHIFT_DIR`, then the synced clone |

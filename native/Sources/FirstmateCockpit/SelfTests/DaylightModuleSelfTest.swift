@@ -104,7 +104,7 @@ enum DaylightModuleSelfTest {
         // destination's *slot* is independent of which controller populates
         // it. `fm/move-poneglyph-to-stores-space-282a` is the captain's own
         // later ask to move it here, beside the other Stores utilities.
-        .stores: [.vault, .docs, .notebook, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview, .poneglyph],
+        .stores: [.vault, .docs, .notebook, .readingList, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview, .poneglyph],
         .engineering: [.updates, .bootstrap, .automation, .githubSync, .settings],
     ]
 
@@ -203,8 +203,12 @@ enum DaylightModuleSelfTest {
         // captain's own locked decision, and a notebook is a surface you open
         // when you have something to write down rather than one you check in
         // on each morning.
-        if trimmed.count != 21 {
-            fail("expected exactly 21 modules trimmed from Overview, got \(trimmed.count): "
+        // `fm/grandline-feature-f4-reading-list` made it 22, adding the Reading
+        // List (F4 of the same section) on the same reasoning: a link inbox is
+        // a Stores surface you open when you have something to file or
+        // something to read, not one you check in on each morning.
+        if trimmed.count != 22 {
+            fail("expected exactly 22 modules trimmed from Overview, got \(trimmed.count): "
                  + "\(trimmed.map(\.rawValue).sorted())", &ok)
         }
         for module in trimmed {

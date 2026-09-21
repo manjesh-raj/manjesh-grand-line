@@ -1105,6 +1105,13 @@ noted.
 - `HelmDomainHue.identityHex` is for identity (it resolves to `.neutral` off the
   Daylight family); `fallbackTint` resolves a *semantic* slot and will paint an
   alert bar on a benign row.
+- **An identity colour derived from text must not come from
+  `String.hashValue`.** Swift seeds it per *process*, so the same host, tag or
+  project gets a different colour on every launch - and the defect is invisible
+  within a single session, which is where it would be looked for. Use an
+  explicit stable hash over the UTF-8 bytes; `ReadingListHostHue.hue(for:)` and
+  `ReadingListTags.stableIndex(of:)` are the worked examples, and both are
+  asserted for stability rather than only for range.
 - A Daylight-family restyle branches on `theme.isDaylight` and leaves the other
   twelve palettes byte-identical. Branch **colour and geometry recipes** that
   way - never *structure*: a page whose column count depends on the theme is a
@@ -1166,9 +1173,11 @@ noted.
   `...TransientType`, `com.apple.is-sensitive`) are written by
   `writeConcealed`; **any one of them alone is enough to refuse**, because the
   nspasteboard.org convention exists to be honoured for other apps' writes too
-  and those carry one marker rather than this app's three. Two readers exist
-  today - the clipboard history's capture loop and ⌥Space's pasteboard chip -
-  and a second hard-coded copy of the marker strings is the one way this rule
+  and those carry one marker rather than this app's three. Three readers exist
+  today - the clipboard history's capture loop, ⌥Space's pasteboard chip, and
+  the Reading List's paste/drop route (`ReadingListController.pasteTapped`,
+  `ReadingListDropRootView.acceptableURL`) - and a second hard-coded copy of
+  the marker strings is the one way this rule
   could silently stop matching, with no test failing. Check it **before**
   reading the string, so "a vault secret never reaches this store" is a
   property of the control flow rather than of a filter somebody could reorder.
@@ -1230,6 +1239,7 @@ can correct an earlier one - and several do.
 | [`32-notebook.md`](docs/history/32-notebook.md) | The Notebook: the page tree, the reused Monaco editor, the markdown preview, wiki-links and backlinks |
 | [`33-capture-and-clipboard.md`](docs/history/33-capture-and-clipboard.md) | Universal capture (the ⌥Space router) and the encrypted clipboard history behind ⌘⇧V |
 | [`34-recurrence-and-calendar.md`](docs/history/34-recurrence-and-calendar.md) | Recurring tasks (`ShiftRecurrence`), the per-task reminder offset, and the Tasks page's calendar view |
+| [`35-reading-list.md`](docs/history/35-reading-list.md) | The Reading List (F4): the link inbox, `LinkPresentation` metadata, tags, read state and the opt-in AI summary |
 
 ## Maintaining this file
 

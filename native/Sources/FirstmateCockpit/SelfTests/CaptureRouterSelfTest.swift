@@ -80,12 +80,15 @@ enum CaptureRouterSelfTest {
         // The fixture's discriminating power: the map really does refuse
         // everything else, so a clamp or an off-by-one would fail here rather
         // than pass silently.
-        for digit in [-1, 0, 6, 9] {
+        // `fm/grandline-feature-f4-reading-list` appended `.link` as \u{2318}6,
+        // so 6 moved out of this list and 7 took its place - appended rather
+        // than inserted precisely so the five above kept their digits.
+        for digit in [-1, 0, 7, 9] {
             check(CaptureDestination.forChordDigit(digit) == nil,
                   "\u{2318}\(digit) is not a destination, got \(String(describing: CaptureDestination.forChordDigit(digit)))")
         }
-        check(CaptureDestination.allCases.count == 5,
-              "five destinations, found \(CaptureDestination.allCases.count)")
+        check(CaptureDestination.allCases.count == 6,
+              "six destinations, found \(CaptureDestination.allCases.count)")
     }
 
     // MARK: The draft

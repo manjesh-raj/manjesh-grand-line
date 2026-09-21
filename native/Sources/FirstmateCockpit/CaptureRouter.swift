@@ -39,6 +39,11 @@ enum CaptureDestination: String, CaseIterable {
     case note
     case credential
     case codeSnippet
+    /// F4 (`fm/grandline-feature-f4-reading-list`). Appended rather than
+    /// inserted: `chordDigit` is derived from this order, so putting it
+    /// anywhere else would silently renumber four chords the captain has
+    /// already learned.
+    case link
 
     /// `1`...`5`, derived from the case order - see the type's own note.
     var chordDigit: Int {
@@ -54,6 +59,7 @@ enum CaptureDestination: String, CaseIterable {
         case .note: return "Note"
         case .credential: return "Credential"
         case .codeSnippet: return "Snippet"
+        case .link: return "Link"
         }
     }
 
@@ -67,6 +73,7 @@ enum CaptureDestination: String, CaseIterable {
         case .note: return "book.closed"
         case .credential: return "key.fill"
         case .codeSnippet: return "chevron.left.forwardslash.chevron.right"
+        case .link: return "bookmark.fill"
         }
     }
 
@@ -83,6 +90,9 @@ enum CaptureDestination: String, CaseIterable {
         case .note: return .blue
         case .credential: return .rose
         case .codeSnippet: return .teal
+        // The Reading List's own hue, so the tile reads as a shortcut to a
+        // page the captain knows rather than as new iconography.
+        case .link: return .green
         }
     }
 
@@ -95,6 +105,7 @@ enum CaptureDestination: String, CaseIterable {
         case .note: return .notebook
         case .credential: return .poneglyph
         case .codeSnippet: return .codePreview
+        case .link: return .readingList
         }
     }
 
@@ -108,13 +119,15 @@ enum CaptureDestination: String, CaseIterable {
         case .note: return "Captured \u{2014} filed as a Notebook page."
         case .credential: return "Opening Poneglyph with it filled in\u{2026}"
         case .codeSnippet: return "Captured \u{2014} saved as a code snippet."
+        case .link: return "Saved \u{2014} it is on the reading list."
         }
     }
 
     /// The digit-to-destination map, as one function.
     ///
-    /// Returns nil for anything outside 1...5 rather than clamping: a ⌘6 that
-    /// silently filed a task would be worse than a ⌘6 that does nothing.
+    /// Returns nil for anything outside the enumerated chords rather than
+    /// clamping: a ⌘7 that silently filed a task would be worse than a ⌘7 that
+    /// does nothing.
     static func forChordDigit(_ digit: Int) -> CaptureDestination? {
         allCases.first { $0.chordDigit == digit }
     }
@@ -252,6 +265,27 @@ enum CaptureRouter {
         return formatter.string(from: now)
     }
 
+    // MARK: The default destination
+
+    /// Which tile Return files to, and which one is drawn as the default.
+    ///
+    /// **This is what makes the report's "paste a URL anywhere" literally
+    /// true.** Before F4 the panel's Return was hard-coded to `.task`, so a
+    /// pasted URL became a task titled with the URL - which is precisely the
+    /// thing the reading list exists to stop being the only option. A capture
+    /// that is nothing *but* a URL has one obvious home, and the panel says so
+    /// by moving its default tile rather than by guessing silently: the tile
+    /// is visibly selected before Return is pressed, and ⌘1 still files a task
+    /// in one keystroke for anyone who meant to.
+    ///
+    /// Everything else still defaults to `.task`, deliberately. A line of
+    /// prose that merely *contains* a link is a note or a task about that
+    /// link, not a reading item - `ReadingListURL.detect` refuses anything
+    /// with whitespace in it for the same reason.
+    static func defaultDestination(for draft: CaptureDraft) -> CaptureDestination {
+        ReadingListURL.detect(draft.text) != nil ? .link : .task
+    }
+
     // MARK: "Ask the crew to file it"
 
     /// The prompt handed to `claude -p` when the captain presses the crew
@@ -265,7 +299,7 @@ enum CaptureRouter {
     /// labels for anyone who has not used this app.
     static func classificationPrompt(for text: String) -> String {
         """
-        Classify the following captured text into exactly one of five \
+        Classify the following captured text into exactly one of six \
         destinations in a personal DevOps cockpit app, and answer with \
         nothing but the destination's identifier.
 
@@ -279,9 +313,10 @@ enum CaptureRouter {
         connection string with a password in it.
         - codeSnippet: source code, a shell command, a configuration \
         fragment, a query.
+        - link: a web URL on its own, saved to read later.
 
         Answer with exactly one of: task, sticky, note, credential, \
-        codeSnippet. No punctuation, no explanation, no code fences.
+        codeSnippet, link. No punctuation, no explanation, no code fences.
 
         The captured text:
         \(text)

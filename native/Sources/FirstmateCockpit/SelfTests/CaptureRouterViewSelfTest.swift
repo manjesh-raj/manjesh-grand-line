@@ -96,9 +96,11 @@ enum CaptureRouterViewSelfTest {
     private static func checkTilesMatchTheReport(_ check: (Bool, String) -> Void) {
         withPanel { capture, _ in
             let tiles = capture.debugTiles
-            check(tiles.count == 5, "five tiles are built, found \(tiles.count)")
-            guard tiles.count == 5 else { return }
-            let order: [CaptureDestination] = [.task, .sticky, .note, .credential, .codeSnippet]
+            // Six since `fm/grandline-feature-f4-reading-list` appended
+            // `.link` (F4), which is ⌘6.
+            check(tiles.count == 6, "six tiles are built, found \(tiles.count)")
+            guard tiles.count == 6 else { return }
+            let order: [CaptureDestination] = [.task, .sticky, .note, .credential, .codeSnippet, .link]
             for (index, expected) in order.enumerated() {
                 check(tiles[index].destination == expected,
                       "tile \(index + 1) is \(expected.rawValue), got \(tiles[index].destination.rawValue)")
@@ -138,6 +140,11 @@ enum CaptureRouterViewSelfTest {
 
             let expected: [(Int, CaptureDestination)] = [
                 (1, .task), (2, .sticky), (3, .note), (4, .credential), (5, .codeSnippet),
+                // `fm/grandline-feature-f4-reading-list` (F4) appended `.link`
+                // as ⌘6. A URL is the one capture that needs no parse to know
+                // where it belongs, and before F4 it became a task titled with
+                // a URL.
+                (6, .link),
             ]
             for (digit, destination) in expected {
                 recorder.filed.removeAll()
@@ -156,11 +163,12 @@ enum CaptureRouterViewSelfTest {
             }
 
             // The discriminating half: a digit the router does not own must
-            // fall through, or the panel would swallow ⌘6 (and, worse, ⌘W).
+            // fall through, or the panel would swallow it (and, worse, ⌘W).
+            // ⌘7 since F4 took ⌘6.
             recorder.filed.removeAll()
-            if let six = commandDigit(6) {
-                check(!root.performKeyEquivalent(with: six), "\u{2318}6 is not swallowed")
-                check(recorder.filed.isEmpty, "\u{2318}6 files nothing")
+            if let seven = commandDigit(7) {
+                check(!root.performKeyEquivalent(with: seven), "\u{2318}7 is not swallowed")
+                check(recorder.filed.isEmpty, "\u{2318}7 files nothing")
             }
         }
     }

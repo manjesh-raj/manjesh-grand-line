@@ -326,6 +326,14 @@ NEEDS_SESSION=(
   # parser, the wiki-link scanner, the backlink index, the store) is
   # deliberately not here and does run in CI.
   "FM_RUN_NOTEBOOK_VIEW_TESTS"
+  # `fm/grandline-feature-f4-reading-list` (F4): mounts the real Reading List
+  # destination in a real window, lays its card grid out at real widths, reads
+  # painted colours back out of an off-screen render, and resizes the window to
+  # prove no constraint on the page is a window-width floor (gotcha (13)). Its
+  # pure-logic half (FM_RUN_READING_LIST_TESTS - URL detection and
+  # normalisation, tag folding, the filter rules, the store, the AI prompt and
+  # parse) is deliberately not here and does run in CI.
+  "FM_RUN_READING_LIST_VIEW_TESTS"
   # `fm/grandline-feature-f2-f3-capture-clipboard` (F2): builds the real
   # ⌥Space capture panel and drives real ⌘1-⌘5 key equivalents, real tile
   # presses and one real off-screen render of it. Its pure-logic half

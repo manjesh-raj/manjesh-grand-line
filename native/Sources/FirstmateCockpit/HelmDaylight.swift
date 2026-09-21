@@ -666,6 +666,12 @@ extension RailDestination {
         // the page's icon tile and primary button in, so the shipped page and
         // the mockup the captain approved agree.
         case .notebook: return .blue
+        // `fm/grandline-feature-f4-reading-list`: green, which is the hue the
+        // reviewed F4 mockup draws the page's icon tile, its primary button
+        // and its summarised card's accent rule in - so the shipped page and
+        // the mockup the captain approved agree. It is also the one hue in
+        // §2.2's set not already spoken for on the Stores shelf.
+        case .readingList: return .green
         // `fm/grandline-docs-split-runbooks-postmortems`: the same two hues
         // the runbook/postmortem plate cards already used before the split
         // (`HelmDomainHue(tint:)` maps `.info` -> `.blue`, `.warn` -> `.amber`
