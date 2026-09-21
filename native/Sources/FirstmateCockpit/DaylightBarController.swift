@@ -205,6 +205,27 @@ final class DaylightBarController: NSViewController {
     private var leadingInsetConstraint: NSLayoutConstraint!
     private let searchPill = DaylightSearchPill()
 
+    // MARK: F7 - the focus timer chip
+
+    /// F7's running-timer chip, between the drill actions and the search
+    /// pill. Wrapped in a stack for exactly the reason `drillActions` is:
+    /// hiding an *arranged* subview takes its width out of layout, while
+    /// hiding an ordinary `NSView` leaves every constraint it had behind
+    /// (AGENTS.md gotcha (11)) - so a bar with no timer running has to be
+    /// byte-for-byte the bar that existed before F7.
+    private let focusChipHost = NSStackView()
+    private let focusChip = FocusTimerChip()
+    /// `focusChipHost.trailing == searchPill.leading + <this>`: zero while
+    /// nothing is running, so the search pill sits exactly where it always
+    /// did - the same shape `drillActionsGap` already uses.
+    private var focusChipGap: NSLayoutConstraint!
+    /// Set by `attachFocusTimer`. `nil` until the shell hands the bar the
+    /// app's one `FocusTimerController`, which is also why the chip starts
+    /// hidden and the bar needs no timer to lay itself out.
+    private weak var focusTimer: FocusTimerController?
+    private var focusTimerToken: UUID?
+    private var focusPopover: NSPopover?
+
     /// B6: the seven quick-access shortcuts collapse into this one menu below
     /// `quickAccessCollapseWidth`. Built always, shown only when collapsed.
     private let quickAccessOverflowButton = DaylightBarIconButton(
@@ -457,11 +478,28 @@ final class DaylightBarController: NSViewController {
         quickAccessRow.setHuggingPriority(.required, for: .horizontal)
         quickAccessRow.setClippingResistancePriority(.required, for: .horizontal)
 
+        focusChipHost.orientation = .horizontal
+        focusChipHost.alignment = .centerY
+        focusChipHost.spacing = 0
+        focusChipHost.translatesAutoresizingMaskIntoConstraints = false
+        focusChipHost.setHuggingPriority(.required, for: .horizontal)
+        focusChipHost.setClippingResistancePriority(.required, for: .horizontal)
+        focusChipHost.addArrangedSubview(focusChip)
+        focusChip.isHidden = true
+        // `HoverHighlightView` reads its primary action off a real click
+        // recognizer (`performPrimaryAction`, which is also what makes the
+        // chip keyboard-activatable under GL-16), so the click is wired
+        // that way rather than as a button target.
+        focusChip.addGestureRecognizer(
+            NSClickGestureRecognizer(target: self, action: #selector(focusChipClicked)))
+        registerFocusPopoverWithLockGate()
+
         buildAvatar()
 
         bar.addSubview(leadingGroup)
         bar.addSubview(pillRow)
         bar.addSubview(drillActions)
+        bar.addSubview(focusChipHost)
         bar.addSubview(searchPill)
         bar.addSubview(recentDestinations.button)
         bar.addSubview(clipboardHistory.button)
@@ -498,7 +536,12 @@ final class DaylightBarController: NSViewController {
         let pillsToSearch = drillActions.leadingAnchor.constraint(
             greaterThanOrEqualTo: pillRow.trailingAnchor, constant: HelmMetrics.s3)
         pillsToSearch.priority = HelmDaylightPriority.contentTie
+        // F7 slots its chip between the two. With nothing running the host
+        // stack has zero width and `focusChipGap` is 0, so `drillActions`
+        // still ends exactly at the search pill's leading edge.
         drillActionsGap = drillActions.trailingAnchor.constraint(
+            equalTo: focusChipHost.leadingAnchor, constant: 0)
+        focusChipGap = focusChipHost.trailingAnchor.constraint(
             equalTo: searchPill.leadingAnchor, constant: 0)
         // Starts at the reserved value, not the plain one: `viewDidLayout`
         // is what adjusts it, and the first pass can run before the view is
@@ -524,6 +567,8 @@ final class DaylightBarController: NSViewController {
             pillsToSearch,
             drillActionsGap,
             drillActions.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+            focusChipGap,
+            focusChipHost.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             searchPill.trailingAnchor.constraint(equalTo: recentDestinations.button.leadingAnchor, constant: -HelmMetrics.s2),
             searchPill.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
 
@@ -586,7 +631,92 @@ final class DaylightBarController: NSViewController {
 
     deinit {
         if let themeToken { ThemeManager.shared.unobserve(themeToken) }
+        if let focusTimerToken { focusTimer?.unobserve(focusTimerToken) }
     }
+
+    // MARK: F7 - the focus timer chip
+
+    /// Hand the bar the app's one `FocusTimerController`.
+    ///
+    /// Called by `AppShellController` after both exist. The bar forwards and
+    /// never owns (this file's own convention): it observes the timer to
+    /// know when to repaint, and every button in the popover acts on the
+    /// controller directly.
+    /// GL-09 / §5.1(b): a popover left open when the app lock fires stays
+    /// readable and interactive *above* the overlay, so every popover in
+    /// this app registers itself to be closed on the way in. This one names
+    /// the captain's current task, which is exactly the kind of thing the
+    /// lock exists to hide.
+    private func registerFocusPopoverWithLockGate() {
+        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.focusPopover }
+    }
+
+    func attachFocusTimer(_ timer: FocusTimerController) {
+        if let focusTimerToken, let previous = focusTimer { previous.unobserve(focusTimerToken) }
+        focusTimer = timer
+        focusTimerToken = timer.observe { [weak self] in self?.renderFocusChip() }
+        renderFocusChip()
+    }
+
+    /// Repaint the chip from the live session, and take it off the bar
+    /// entirely when nothing is running.
+    private func renderFocusChip() {
+        guard let session = focusTimer?.session else {
+            focusChip.isHidden = true
+            focusChipGap.constant = 0
+            // The popover is about a session that no longer exists.
+            focusPopover?.performClose(nil)
+            focusPopover = nil
+            return
+        }
+        focusChip.isHidden = false
+        focusChipGap.constant = -HelmMetrics.s3
+        // Read through the controller, never off a `Date()` of this view's
+        // own - see `FocusTimerController.fraction` for why.
+        focusChip.configure(fraction: focusTimer?.fraction ?? 0,
+                            countdown: focusTimer?.countdownText ?? "0:00",
+                            title: session.taskTitle,
+                            paused: focusTimer?.isPaused ?? false)
+        focusChip.applyTheme(ThemeManager.shared.theme)
+    }
+
+    @objc private func focusChipClicked() {
+        guard let focusTimer, focusTimer.isRunning else { return }
+        if let focusPopover, focusPopover.isShown {
+            focusPopover.performClose(nil)
+            self.focusPopover = nil
+            return
+        }
+        let popover = NSPopover()
+        popover.behavior = .transient
+        // The popover's own chrome resolves system semantic colours, so it
+        // needs the theme's light/dark mode forced on it the same way every
+        // other themed surface in this app does (ThemeManager's checklist
+        // item 2) - otherwise a Dusk app pops a white panel under System
+        // Light.
+        popover.appearance = NSAppearance(
+            named: ThemeManager.shared.theme.mode == .dark ? .darkAqua : .aqua)
+        popover.contentViewController = FocusTimerPanelController(timer: focusTimer)
+        popover.show(relativeTo: focusChip.bounds, of: focusChip, preferredEdge: .maxY)
+        focusPopover = popover
+    }
+
+    #if FM_SELFTESTS
+    /// F7's probe surface: the chip itself, so a windowed suite can read its
+    /// rendered text and its real `isHidden`/frame rather than re-deriving
+    /// them from the timer it is supposed to be showing.
+    var debugFocusChip: FocusTimerChip { focusChip }
+    var debugFocusChipIsVisible: Bool { !focusChip.isHidden }
+    /// The chip's *host stack*, which is what actually gives (and gives
+    /// back) width on the bar - a hidden arranged subview keeps its own
+    /// stale frame, so the chip's own width proves nothing.
+    var debugFocusChipHostWidth: CGFloat { focusChipHost.frame.width }
+    func debugClickFocusChip() { focusChipClicked() }
+    var debugFocusPopoverIsShown: Bool { focusPopover?.isShown ?? false }
+    var debugFocusPanel: FocusTimerPanelController? {
+        focusPopover?.contentViewController as? FocusTimerPanelController
+    }
+    #endif
 
     // MARK: A2 - the drill navigation
 
@@ -1163,6 +1293,8 @@ final class DaylightBarController: NSViewController {
         // this bar's material renders light.
         view.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
 
+        focusChip.applyTheme(theme)
+
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let muted = HelmTheme.mutedInk(theme)
         let line = HelmTheme.nsColor(theme.chromeLineHex)
@@ -1368,7 +1500,20 @@ final class DaylightBarController: NSViewController {
             // compression resistance, so the cluster is content-sized and
             // yields before the window does. Re-litigating its private
             // layout here would be the same mistake.
-            if v is NSButton || v is HelmGradientTile || v is HelmDrillHeader { return }
+            //
+            // F7's chip is the same case again, and qualifies on the same
+            // test the drill header states: its own width constraints are a
+            // 14pt countdown ring and a `<= 190` cap on the task title (a
+            // cap is a maximum and can never be a floor), and the one
+            // flexible thing in it - that title - carries `contentTie` (499)
+            // compression resistance, so the chip is content-sized and
+            // yields before the window does. `FocusTimerViewSelfTest`
+            // asserts that behaviourally, on a real window actually shrunk
+            // with the chip on the bar, so this exemption is not a blind
+            // spot: a source skip and a behavioural check catch different
+            // things, and this trap needs both.
+            if v is NSButton || v is HelmGradientTile || v is HelmDrillHeader
+                || v is FocusTimerChip { return }
             for c in v.constraints where c.firstAttribute == .width || c.secondAttribute == .width {
                 out.append((String(describing: c), c.priority.rawValue))
             }

@@ -390,6 +390,22 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
         push.submenu = pushMenu
         menu.addItem(push)
         menu.addItem(.separator())
+        // F7, and for the same reason "Push to" is here: the board is this
+        // page's *default* view, so an action offered only on the flat list
+        // is an action most captains never see. The list's rows carry the
+        // 25-minute default on a visible button; a card's whole surface is
+        // the drag handle, so here the menu is the gesture.
+        let focus = NSMenuItem(title: "Focus for", action: nil, keyEquivalent: "").withSymbol("timer")
+        let focusMenu = NSMenu()
+        for minutes in FocusTimerEngine.durationChoices {
+            let item = NSMenuItem(title: "\(minutes) minutes", action: #selector(menuFocus(_:)), keyEquivalent: "")
+            item.representedObject = minutes
+            item.target = self
+            focusMenu.addItem(item)
+        }
+        focus.submenu = focusMenu
+        menu.addItem(focus)
+        menu.addItem(.separator())
         let delete = NSMenuItem(title: "Delete Task\u{2026}", action: #selector(menuDelete), keyEquivalent: "").withSymbol("trash")
         delete.target = self
         menu.addItem(delete)
@@ -407,6 +423,13 @@ final class ShiftBoardCardView: NSView, NSDraggingSource {
 
     /// UX7, forwarded like every other card verb here.
     var onPushDue: ((ShiftDuePush) -> Void)?
+    /// F7. Forwarded, never applied here - the same shape as `onPushDue`.
+    var onStartFocus: ((Int) -> Void)?
+
+    @objc private func menuFocus(_ sender: NSMenuItem) {
+        guard let minutes = sender.representedObject as? Int else { return }
+        onStartFocus?(minutes)
+    }
 
     @objc private func menuPush(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String,
@@ -653,6 +676,8 @@ final class ShiftBoardColumnView: NSView {
     /// UX7's reschedule gesture, forwarded up with the task's id like every
     /// other card verb here.
     var onPushTaskDue: ((String, ShiftDuePush) -> Void)?
+    /// F7, forwarded up to `ShiftController` exactly as `onPushTaskDue` is.
+    var onStartFocusTask: ((String, Int) -> Void)?
     var onAddTask: ((ShiftBoardColumn) -> Void)?
     /// Returns whether the drop changed anything - forwarded straight to
     /// `performDragOperation`'s own return value.
@@ -814,6 +839,7 @@ final class ShiftBoardColumnView: NSView {
             cardView.onMove = { [weak self] target in self?.onMoveTask?(task.id, target) }
             cardView.onDelete = { [weak self] in self?.onDeleteTask?(task.id) }
             cardView.onPushDue = { [weak self] option in self?.onPushTaskDue?(task.id, option) }
+            cardView.onStartFocus = { [weak self] minutes in self?.onStartFocusTask?(task.id, minutes) }
             cardsStack.addArrangedSubview(cardView)
             cardView.widthAnchor.constraint(equalTo: cardsStack.widthAnchor).isActive = true
             cardViews.append(cardView)
@@ -924,6 +950,8 @@ final class ShiftBoardView: NSView {
     /// UX7's reschedule gesture, forwarded up with the task's id like every
     /// other card verb here.
     var onPushTaskDue: ((String, ShiftDuePush) -> Void)?
+    /// F7, forwarded up to `ShiftController` exactly as `onPushTaskDue` is.
+    var onStartFocusTask: ((String, Int) -> Void)?
     var onAddTask: ((ShiftBoardColumn) -> Void)?
     var onDropTask: ((String, ShiftBoardColumn) -> Bool)?
 
@@ -938,6 +966,7 @@ final class ShiftBoardView: NSView {
             column.onMoveTask = { [weak self] id, target in self?.onMoveTask?(id, target) }
             column.onDeleteTask = { [weak self] id in self?.onDeleteTask?(id) }
             column.onPushTaskDue = { [weak self] id, option in self?.onPushTaskDue?(id, option) }
+            column.onStartFocusTask = { [weak self] id, minutes in self?.onStartFocusTask?(id, minutes) }
             column.onAddTask = { [weak self] target in self?.onAddTask?(target) }
             column.onDropTask = { [weak self] id, target in self?.onDropTask?(id, target) ?? false }
             // Each column goes into the row inside a vertical stack of its

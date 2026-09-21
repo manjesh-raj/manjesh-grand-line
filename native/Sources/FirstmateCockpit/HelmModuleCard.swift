@@ -1317,6 +1317,43 @@ final class HelmRingGauge: NSView {
         needsLayout = true
     }
 
+    /// F7's variant: the caller already knows both the arc and the words.
+    ///
+    /// A countdown is not an `N/M` count - the arc is "how much of the
+    /// session has been served" while the label reads "how much is left", so
+    /// the two genuinely come from different numbers and `configure(value:
+    /// total:)` cannot express it. The label is also mono here, because a
+    /// proportional `17:24` shifts sideways on every tick.
+    func configure(fraction: Double, text: String, monospaced: Bool = false) {
+        self.fraction = min(1, max(0, fraction))
+        label.stringValue = text
+        self.monospacedLabel = monospaced
+        applyLabelFont()
+        needsLayout = true
+    }
+
+    /// Set by `configure(fraction:text:monospaced:)`; re-read by
+    /// `applyTheme`, which otherwise resets the font on every repaint.
+    private var monospacedLabel = false
+
+    /// The one place the centre label's font is chosen, so a theme change
+    /// cannot silently drop back to the proportional face.
+    private func applyLabelFont() {
+        label.font = monospacedLabel
+            ? .monospacedDigitSystemFont(ofSize: HelmType.scaled(15), weight: .heavy)
+            : HelmType.rounded(HelmType.scaled(15), .heavy)
+    }
+
+    /// F7: the arc's own hue, overriding the `hue` `applyTheme` is handed.
+    ///
+    /// The ring is drawn inside a panel that already carries the focus
+    /// feature's tint, and a `HelmDomainHue` cannot express a `HelmTint`.
+    /// `nil` (the default) leaves every existing call site painting exactly
+    /// what it always did.
+    var valueColorOverride: NSColor? {
+        didSet { if valueColorOverride != oldValue { value.strokeColor = valueColorOverride?.cgColor ?? value.strokeColor } }
+    }
+
     override func layout() {
         super.layout()
         let inset = Self.lineWidth / 2
@@ -1347,8 +1384,8 @@ final class HelmRingGauge: NSView {
             ? HelmTheme.nsColor(theme.daylightTokens.inset)
             : HelmTheme.nsColor(theme.chromeLineHex).withAlphaComponent(0.6)
         track.strokeColor = trackColor.cgColor
-        value.strokeColor = hue.baseColor(in: theme).cgColor
-        label.font = HelmType.rounded(HelmType.scaled(15), .heavy)
+        value.strokeColor = (valueColorOverride ?? hue.baseColor(in: theme)).cgColor
+        applyLabelFont()
         label.textColor = HelmTheme.nsColor(theme.chromeInkHex)
     }
 

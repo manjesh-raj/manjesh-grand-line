@@ -167,6 +167,8 @@ final class AppShellController: NSViewController {
     /// F2's capture filer can write a task without a second instance. Every
     /// other reader on this controller already shares it via `ShiftController`.
     let shiftStore: ShiftStore
+    /// F7's one timer. See the note at its construction in `init`.
+    let focusTimer: FocusTimerController
     /// `fm/swap-vault-poneglyph-naming-in-grand-lin-1f`: the `.vault`
     /// destination is Automic Vault's hardening panel again (`vault`,
     /// `VaultController`), and the captain's own personal credential vault is
@@ -486,7 +488,13 @@ final class AppShellController: NSViewController {
         // write the same tasks/follow-ups this page shows, not a second
         // independent store instance.
         self.shiftStore = shiftStore
-        self.shift = ShiftController(store: shiftStore)
+        // F7: the app's one focus timer, built from the one shared store
+        // and handed to both surfaces that render it - the Tasks page's row
+        // actions and the bar's chip. Never a second instance: two timers
+        // would each believe they were the only one running.
+        let focusTimer = FocusTimerController(store: shiftStore)
+        self.focusTimer = focusTimer
+        self.shift = ShiftController(store: shiftStore, focusTimer: focusTimer)
         // GL-23 again: the same shared instance the Log Analyzer, the crew's
         // `command_search` tool and the ⌘K palette already read.
         self.commandLibrary = CommandLibraryController(store: commandLibraryStore)
@@ -656,6 +664,9 @@ final class AppShellController: NSViewController {
         // it's still reachable via the console toolbar's own magnifying-glass
         // icon (`ConsoleController.showFind`) and the Edit menu's `⌘F`.
         bar.onSearchTapped = { [weak self] in self?.onSearchTapped?() }
+        // F7: the chip is the feature's "it follows you off the Tasks page"
+        // half, so the bar gets the timer as soon as both exist.
+        bar.attachFocusTimer(focusTimer)
         // UX1: the overflow menu's "All Destinations…" row, forwarded to
         // whoever owns the overlay (the app delegate), exactly like the search
         // pill forwards ⌘K rather than owning the palette.

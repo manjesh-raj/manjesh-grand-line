@@ -474,6 +474,15 @@ fails unless its entry carries a trailing marker.
   construct/teardown loop in a headless suite: nothing turns the run loop, so
   removed views are never drained and a perfectly healthy view reads as a leak.
   A one-shot baseline capture needs it too.
+- **A live-updating view reads its numbers from one injectable clock on its
+  controller, never `Date()` of its own.** Two surfaces rendering the same
+  countdown from two `Date()` calls are reading two clocks, and a suite that
+  drives a fabricated instant then measures the *real* elapsed time instead -
+  which reads as a broken feature rather than as a broken test. Measured on
+  F7: the chip and the ring popover each called `Date()`, and the windowed
+  suite reported `0:00` on a session that had just started, failing eleven
+  checks. `FocusTimerController.clock` plus derived `fraction` /
+  `countdownText` accessors is the shape; the views ask the controller.
 - **`HelmContrast.ratio(a, b) < 1.01` is not a colour-equality check** - it
   compares relative *luminance*, so two different hues of similar brightness
   pass it. Compare `HelmContrast.components` element-wise.
@@ -1062,6 +1071,7 @@ noted.
 | `HelmAccentRow` | a hand-rolled alert/record row (accent bar, badge, kicker, body, chip) |
 | `ToolRowLayout` | a hand-rolled dense checklist row (fixed columns, actions, chevron, expandable log) |
 | `HelmStatTile`, `HelmEmptyState`, `HelmSegmentedTabs`, `HelmPlateCard`, `HelmModuleCard` | four, two, three and two prior copies respectively |
+| `HelmRingGauge` (`configure(value:total:)` for a count, `configure(fraction:text:)` for anything else) | a hand-rolled arc. It is a fixed 66pt with a centre label, so a *chip-sized* ring is legitimately its own small view - F7's is - but a card-sized one is this |
 | `HelmField` / `HelmTextField` / `HelmTextView` / `HelmSearchField` / `HelmChipInput` / `HelmDateField` / `HelmToggle` | a raw `NSTextField()`, `NSSearchField()`, `NSDatePicker` or `NSSwitch` - source-guarded |
 | `HelmFormSheet` | a hand-built editor sheet |
 | `HelmConfirm` | an `NSAlert`, **except** where a command or binary is about to execute outside this app's control (the risk gates, the herdr restart, `beginSheetModal`) |
@@ -1240,6 +1250,7 @@ can correct an earlier one - and several do.
 | [`33-capture-and-clipboard.md`](docs/history/33-capture-and-clipboard.md) | Universal capture (the ⌥Space router) and the encrypted clipboard history behind ⌘⇧V |
 | [`34-recurrence-and-calendar.md`](docs/history/34-recurrence-and-calendar.md) | Recurring tasks (`ShiftRecurrence`), the per-task reminder offset, and the Tasks page's calendar view |
 | [`35-reading-list.md`](docs/history/35-reading-list.md) | The Reading List (F4): the link inbox, `LinkPresentation` metadata, tags, read state and the opt-in AI summary |
+| [`36-focus-timer.md`](docs/history/36-focus-timer.md) | The focus timer (F7): the task-bound Pomodoro, the bar chip and its ring popover, and Weekly Review's "time on tasks" tile |
 
 ## Maintaining this file
 

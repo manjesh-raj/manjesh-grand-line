@@ -367,6 +367,11 @@ NEEDS_SESSION=(
   # Calendar pill and reads the month grid's own laid-out cell frames. Its
   # pure-logic half (FM_RUN_SHIFT_RECURRENCE_TESTS) is deliberately not here.
   "FM_RUN_SHIFT_CALENDAR_VIEW_TESTS"
+  # F7's render half: a real bar with the chip actually laid out on it, the
+  # popover's ring gauge, and Weekly Review's chart. Its pure-logic sibling
+  # (FM_RUN_FOCUS_TIMER_TESTS) is deliberately not here - that one runs in
+  # CI's blocking lane.
+  "FM_RUN_FOCUS_TIMER_VIEW_TESTS"
   "FM_RUN_SHIFT_TASKS_PAGE_TESTS"
   # ---------------------------------------------------------------------
   # The full-app audit's §7.1 finding: these eight all create real
