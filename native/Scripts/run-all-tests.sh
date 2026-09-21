@@ -333,6 +333,13 @@ NEEDS_SESSION=(
   # crew classifier's prompt/reply, the concealed-pasteboard refusal) is
   # deliberately not here and does run in CI.
   "FM_RUN_CAPTURE_ROUTER_VIEW_TESTS"  # session-not-window: ShiftQuickCaptureController builds a real NSPanel
+  # `fm/grandline-feature-f2-f3-capture-clipboard` (F3): builds the real ⌘⇧V
+  # clipboard-history panel, drives its real ⌘1-⌘9/⌘P key equivalents and
+  # renders it off-screen in both registers. Its pure-logic half
+  # (FM_RUN_CLIPBOARD_HISTORY_TESTS - the capture rule, the Poneglyph
+  # exclusion, the rolling eviction, the sealed round trip) is deliberately not
+  # here and does run in CI.
+  "FM_RUN_CLIPBOARD_HISTORY_VIEW_TESTS"  # session-not-window: HelmBarPanel builds a real NSPanel
   "FM_RUN_CONTRAST_TESTS"
   # Mounts real ScheduleHistoryController/ScheduleRunLogController instances
   # and touches the real pasteboard - window-backed for the same reason as

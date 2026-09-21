@@ -362,6 +362,16 @@ enough to explain itself.
   conversion and then mislead the moment someone renders the same view inside a
   window, so use the rep's own space unconditionally.
 
+**A second rule for the same call, and it is the one that bites first:
+`bitmapImageRepForCachingDisplay` hands back a rep measured in *pixels*, not
+points.** On a retina machine that is a factor of two, so sampling a view's own
+point coordinates lands in the top-left quadrant of whatever you rendered.
+Measured (`fm/grandline-feature-f2-f3-capture-clipboard`): a check comparing two
+tiles of a 600pt panel failed with `delta 0.0000` - two identical *background*
+pixels - which reads exactly like a real colour bug. Scale by
+`rep.pixelsWide / bounds.width` (and the same for height) before indexing, and
+mirror the row for an unflipped view.
+
 **Two probe rules that cost real time here.**
 
 - `cacheDisplay` / `bitmapImageRepForCachingDisplay` is this repo's screenshot
@@ -1125,6 +1135,19 @@ noted.
   checking and holds even under `--permission-mode bypassPermissions`, which is
   why no runner passes that flag any more.
   `ClaudeOneShotToolPolicySelfTest` guards the argv and the call sites.
+- **`CredentialVaultClipboard.isConcealed(_:)` is the app's one definition of
+  "a secret is on the pasteboard", and anything that reads `NSPasteboard`
+  content must ask it.** The markers (`org.nspasteboard.ConcealedType`,
+  `...TransientType`, `com.apple.is-sensitive`) are written by
+  `writeConcealed`; **any one of them alone is enough to refuse**, because the
+  nspasteboard.org convention exists to be honoured for other apps' writes too
+  and those carry one marker rather than this app's three. Two readers exist
+  today - the clipboard history's capture loop and ⌥Space's pasteboard chip -
+  and a second hard-coded copy of the marker strings is the one way this rule
+  could silently stop matching, with no test failing. Check it **before**
+  reading the string, so "a vault secret never reaches this store" is a
+  property of the control flow rather than of a filter somebody could reorder.
+
 - **A store whose file is git-synced must reconcile before it writes.** A pull
   can change the file underneath an in-memory copy, and a whole-file rewrite
   from that copy silently discards whatever arrived. `CredentialVaultStore`
@@ -1180,6 +1203,7 @@ can correct an earlier one - and several do.
 | [`30-full-review-3.md`](docs/history/30-full-review-3.md) | Full review #3 - the eighteen defect findings |
 | [`31-testing-policy.md`](docs/history/31-testing-policy.md) | Where the window-backed / pure-logic rule came from, and the audit behind it |
 | [`32-notebook.md`](docs/history/32-notebook.md) | The Notebook: the page tree, the reused Monaco editor, the markdown preview, wiki-links and backlinks |
+| [`33-capture-and-clipboard.md`](docs/history/33-capture-and-clipboard.md) | Universal capture (the ⌥Space router) and the encrypted clipboard history behind ⌘⇧V |
 
 ## Maintaining this file
 

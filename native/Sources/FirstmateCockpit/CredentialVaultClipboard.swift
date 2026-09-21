@@ -174,6 +174,104 @@ final class CredentialVaultClipboard {
         return pasteboard.changeCount
     }
 
+    // MARK: The shared change-count watch (F3)
+
+    /// Called on the main thread whenever `NSPasteboard.general.changeCount`
+    /// moves, with the new count.
+    ///
+    /// **This exists so there is exactly one thing in this app watching the
+    /// pasteboard.** F3's clipboard history needs a capture loop, and the
+    /// obvious way to build one is a second `Timer` reading the same counter -
+    /// two tickers, two cadences, and two places to get the "did anything
+    /// actually change" comparison wrong. This class already owned that
+    /// comparison for its auto-clear guard, so the watch lives here and F3
+    /// subscribes.
+    ///
+    /// The observers are held by token, not by owner: `ClipboardHistoryStore`
+    /// outlives no window and there is nothing to weakly reference.
+    private var changeObservers: [UUID: (Int) -> Void] = [:]
+    private var watchTimer: Timer?
+    private var lastSeenChangeCount = NSPasteboard.general.changeCount
+
+    /// How often the shared watch reads `changeCount`.
+    ///
+    /// A pasteboard change carries no notification of any kind on macOS -
+    /// polling is the only mechanism there is, which is why every clipboard
+    /// manager on this platform does it. 0.75s is under the threshold at which
+    /// "copy something, press ⌘⇧V" would feel like it missed the copy, and the
+    /// tick itself is one integer read.
+    static let watchInterval: TimeInterval = 0.75
+
+    /// The slower cadence once the app has been inactive for
+    /// `AppActivityState.backgroundThreshold` (GL-13).
+    ///
+    /// Gated rather than stopped, deliberately: a clipboard history whose
+    /// whole value is catching what you copied *in another app* cannot stop
+    /// when this app is not frontmost - that is precisely when the interesting
+    /// copies happen. The slow lane still catches every change, a few seconds
+    /// later, and `changeCount` is monotonic so nothing is missed by a longer
+    /// gap, only delayed.
+    static let backgroundedWatchInterval: TimeInterval = 3.0
+
+    @discardableResult
+    func observeChanges(_ handler: @escaping (Int) -> Void) -> UUID {
+        let token = UUID()
+        changeObservers[token] = handler
+        startWatchIfNeeded()
+        return token
+    }
+
+    func unobserveChanges(_ token: UUID) {
+        changeObservers.removeValue(forKey: token)
+        if changeObservers.isEmpty {
+            watchTimer?.invalidate()
+            watchTimer = nil
+        }
+    }
+
+    private func startWatchIfNeeded() {
+        guard watchTimer == nil else { return }
+        scheduleWatch(interval: Self.watchInterval)
+    }
+
+    private func scheduleWatch(interval: TimeInterval) {
+        watchTimer?.invalidate()
+        // `.common` modes so a copy made while a menu is tracking is still
+        // seen, and a tolerance because a poll has no reason to be a hard
+        // wake-up (the rule every `Timer` in this app follows).
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+            self?.pollChangeCount()
+        }
+        timer.tolerance = interval / 4
+        RunLoop.main.add(timer, forMode: .common)
+        watchTimer = timer
+        watchInterval = interval
+    }
+
+    private var watchInterval: TimeInterval = CredentialVaultClipboard.watchInterval
+
+    private func pollChangeCount() {
+        // GL-13: re-arm at the slow cadence once the app is parked, and back
+        // again when it is not. Checked on the tick rather than through an
+        // observer, so it cannot get stuck in the paused state a cancelled
+        // timer could (`ShiftGitSync`'s own reasoning).
+        let wanted = AppActivityState.shared.isBackgrounded
+            ? Self.backgroundedWatchInterval : Self.watchInterval
+        if wanted != watchInterval { scheduleWatch(interval: wanted) }
+
+        let current = NSPasteboard.general.changeCount
+        guard current != lastSeenChangeCount else { return }
+        lastSeenChangeCount = current
+        for handler in changeObservers.values { handler(current) }
+    }
+
+    #if FM_SELFTESTS
+    /// Drive one tick synchronously, so a suite can assert the fan-out without
+    /// waiting on a real run loop.
+    func pollChangeCountForTests() { pollChangeCount() }
+    var changeObserverCountForTests: Int { changeObservers.count }
+    #endif
+
     /// Seconds left before the pending clear, or nil when nothing is pending.
     var secondsRemaining: Int? {
         guard let expiresAt else { return nil }

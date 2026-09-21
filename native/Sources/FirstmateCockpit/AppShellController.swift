@@ -2446,6 +2446,24 @@ final class AppShellController: NSViewController {
         shift.presentTaskEditor(prefilledFrom: note)
     }
 
+    // MARK: Clipboard history (F3)
+
+    /// ⌘⇧V. The panel and its store live on the bar (see
+    /// `DaylightBarController.clipboardHistory`); this is the menu's way in,
+    /// and the one place the "paste it back" toast is worded.
+    @objc func toggleClipboardHistory() {
+        bar.clipboardHistory.toggle()
+    }
+
+    /// Arm the capture loop. Called once, from `main.swift` - never at init;
+    /// see `ClipboardHistoryController.startCapturing()` for why.
+    func startClipboardHistoryCapture() {
+        bar.clipboardHistory.startCapturing()
+        bar.clipboardHistory.onPasted = { [weak self] _ in
+            self?.showToast("Copied \u{2014} \u{2318}V to paste it")
+        }
+    }
+
     // MARK: Universal capture (F2)
 
     /// The five writes ⌥Space's router reaches, bound to the stores this
