@@ -26,6 +26,7 @@ import { createRoot } from "react-dom/client";
 import {
   Excalidraw,
   convertToExcalidrawElements,
+  exportToCanvas,
 } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
 
@@ -345,6 +346,43 @@ const bridge = {
     }
   },
 
+  /// F15's "Copy image": flatten the whole board - the captured screenshot
+  /// and every annotation drawn over it - into one PNG.
+  ///
+  /// `exportToCanvas` is Excalidraw's own exporter, which is the entire point
+  /// of the choice: it renders through the same code path the canvas itself
+  /// uses, so a freehand stroke, a bound arrow label and a blurred rectangle
+  /// all come out looking the way the captain drew them. The native side has
+  /// no renderer of its own and should never grow one - a second renderer is
+  /// a second thing to keep in step with a vendored library.
+  ///
+  /// Two deliberate choices about what gets flattened:
+  ///
+  ///   - **The background is included.** A transparent PNG pasted into a chat
+  ///     window or a ticket renders against whatever that app's surface is,
+  ///     which for a dark-canvas board means dark strokes on white. The board
+  ///     the captain is looking at is what they mean to send.
+  ///   - **Only live elements.** `liveElements()` already drops deleted ones;
+  ///     exporting the raw scene would bake in shapes the captain erased.
+  ///
+  /// The PNG comes back as a data URL in the reply. That is a large string for
+  /// a large board, which is why `maxWidthOrHeight` is bounded from the native
+  /// side rather than left open.
+  ///
+  /// **Not declared `async`.** The native bridge evaluates
+  /// `window.GrandLineWhiteboard.<name>(id, payload);` as an expression
+  /// statement, and `WKWebView.evaluateJavaScript` fails an expression whose
+  /// value is a `Promise` with "returned a result of an unsupported type" -
+  /// which reaches the caller as a bridge failure *before* the real reply
+  /// arrives, so the export looked broken while it was in fact working.
+  /// Measured, not guessed: the first version of this command was `async` and
+  /// `WhiteboardCaptureViewSelfTest` failed on exactly that message. The work
+  /// is async, so it is started and deliberately not returned; the reply comes
+  /// through `reply(...)` like every other command's.
+  exportImage(callID, payload) {
+    exportImageAsync(callID, payload);
+  },
+
   stats(callID) {
     reply(callID, { ok: true, count: liveElements().length, suspended });
   },
@@ -503,6 +541,39 @@ function stopGatingProbe() {
   if (probeHandle !== null) {
     window.cancelAnimationFrame(probeHandle);
     probeHandle = null;
+  }
+}
+
+// The body of the `exportImage` bridge command. Kept out of the `bridge`
+// object because an entry point there must not return a value the native side
+// cannot marshal - see that command's own note.
+async function exportImageAsync(callID, payload) {
+  try {
+    if (!api) throw new Error("the canvas is still starting up");
+    const elements = liveElements();
+    if (!elements.length) throw new Error("the board is empty - there is nothing to copy");
+    const appState = api.getAppState();
+    const canvas = await exportToCanvas({
+      elements,
+      appState: {
+        ...appState,
+        exportBackground: true,
+        exportWithDarkMode: appState.theme === "dark",
+      },
+      files: api.getFiles(),
+      exportPadding: (payload && payload.padding) || 16,
+      maxWidthOrHeight: (payload && payload.maxWidthOrHeight) || 4096,
+    });
+    const dataURL = canvas.toDataURL("image/png");
+    reply(callID, {
+      ok: true,
+      dataURL,
+      width: canvas.width,
+      height: canvas.height,
+      count: elements.length,
+    });
+  } catch (err) {
+    reply(callID, { ok: false, message: String((err && err.message) || err) });
   }
 }
 

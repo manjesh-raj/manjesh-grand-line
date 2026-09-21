@@ -30,7 +30,7 @@ as they are rather than rewritten across 180 files.
 - [Build, run, test](#build-run-test) - the two CI lanes, and the vendored patches a sync must re-apply
 - [Verification conventions](#verification-conventions) - how a change is proved here
 - [Writing a self-test](#writing-a-self-test)
-- [The AppKit gotcha catalogue](#the-appkit-gotcha-catalogue) - 17 measured traps
+- [The AppKit gotcha catalogue](#the-appkit-gotcha-catalogue) - 18 measured traps
 - [GL invariants](#gl-invariants) - GL-01 .. GL-38, one line each
 - [The component index](#the-component-index) - one button, one card, one row
 - [Stores, subprocesses and secrets](#stores-subprocesses-and-secrets)
@@ -494,7 +494,7 @@ fails unless its entry carries a trailing marker.
 
 ## The AppKit gotcha catalogue
 
-Seventeen traps, every one measured on this app rather than read about. Each was
+Eighteen traps, every one measured on this app rather than read about. Each was
 found by instrumenting a real layout or event pass; several took a full task to
 root-cause, and at least four have recurred in a new file after being fixed in
 an old one. **Read the ones that match what you are about to touch** - a tab
@@ -1017,6 +1017,33 @@ editor card, exactly one active, swapped in `renderPane`. Nothing then derives
 from a hidden pane's height at all, and the hidden state reproduces the page's
 geometry from before the pane existed - which is the thing to assert.
 
+### (18) A `WKWebView` bridge entry point must never return a `Promise`
+
+**An `async` function is the natural way to write a bridge command that does
+async work, and it silently breaks the call.** Every web-hosted page in this app
+(the Whiteboard's Excalidraw, Code Preview's and the Notebook's Monaco) is driven
+the same way: Swift builds `window.<Global>.<name>(callID, payload);` and hands it
+to `evaluateJavaScript`, and the page answers later through a
+`WKScriptMessageHandler`. That script is an **expression statement**, so its value
+is the function's return value - and `evaluateJavaScript` cannot marshal a
+`Promise`. It fails the call with *"JavaScript execution returned a result of an
+unsupported type"*.
+
+What makes it expensive is where the failure lands. The bridge's own error path
+treats an `evaluateJavaScript` error as the call failing, so the caller is handed
+a failure **before** the page's real reply arrives - a command that is working
+perfectly reports an error that names neither the command nor a promise.
+Measured on F15's `exportImage`, which was written `async` first and failed on
+exactly that message while the export itself was fine.
+
+The fix is one line of shape: keep the entry point a plain method that *starts*
+the async worker and returns nothing, and put the real body in a sibling
+`async function` that replies through the same `reply(callID, …)` every other
+command uses.
+
+    exportImage(callID, payload) { exportImageAsync(callID, payload); },
+
+
 ---
 
 ## GL invariants
@@ -1177,6 +1204,17 @@ noted.
   credential material on a pasteboard goes through
   `CredentialVaultClipboard.writeConcealed`; files that carry connection or
   credential material are written through `AtomicWrite(... sensitive:)`.
+- **One screen-capture path: `ScreenRegionCapture`, and it is `screencapture -i`
+  rather than ScreenCaptureKit.** SCK has no region-drag input and needs a
+  standing Screen Recording grant; the interactive tool needs neither, because
+  the system's own agent does the capture on the captain's drag. An app carrying
+  a credential vault should not acquire a "read every pixel" capability it can
+  avoid, so a second capture path is a security decision and not a convenience -
+  reach for this one. The capture goes to the **pasteboard** (`-c`), never a
+  file, and is read back through `ShiftImageAttachmentWell.image(fromPasteboard:)`,
+  which is this app's one "get an image off a pasteboard" function. Both halves
+  consult `AppLockGate`: the system crosshair draws *over* this app's lock
+  overlay.
 - **One subprocess runner and one AI runner**: `Subprocess` (GL-02/03/04/15) and
   `ClaudeOneShot` (GL-26). Do not add a third invocation shape. Interactive and
   PTY work is the terminal's, not theirs.
@@ -1268,7 +1306,7 @@ can correct an earlier one - and several do.
 | [`17-kubernetes.md`](docs/history/17-kubernetes.md) | The context badge, the cluster browser, multi-pod Log Tail |
 | [`18-log-analyzer.md`](docs/history/18-log-analyzer.md) | The Log Analyzer |
 | [`19-incident-mode.md`](docs/history/19-incident-mode.md) | Incident mode (F8) |
-| [`20-whiteboard.md`](docs/history/20-whiteboard.md) | The embedded Excalidraw whiteboard and its DSL |
+| [`20-whiteboard.md`](docs/history/20-whiteboard.md) | The embedded Excalidraw whiteboard, its DSL, and F15's screenshot capture / annotate / copy |
 | [`21-sticky-board.md`](docs/history/21-sticky-board.md) | The Sticky Board |
 | [`22-code-preview.md`](docs/history/22-code-preview.md) | The embedded Monaco code preview, and its sandboxed Run / Format |
 | [`23-straw-hat-pirates.md`](docs/history/23-straw-hat-pirates.md) | The AI crew: the roster, the reply envelope, proposals, MCP tools |

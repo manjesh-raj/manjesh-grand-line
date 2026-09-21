@@ -69,6 +69,19 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
         symbol: "point.topleft.down.to.point.bottomright.curvepath", title: "Draw from text",
         tooltip: "Type a flowchart or sequence diagram and draw it instantly - no model, no waiting",
         target: self, action: #selector(dslTapped))
+    /// F15's capture verb. Labeled rather than an icon because it is the one
+    /// action on this page that reaches *outside* the app, and a camera glyph
+    /// alone does not say that it is a region drag rather than a photo picker.
+    private lazy var captureButton = HelmPageToolbar.labeledButton(
+        symbol: "camera.viewfinder", title: "Capture region",
+        tooltip: "Drag a region of the screen onto this board (\u{2318}\u{21E7}S)",
+        target: self, action: #selector(captureTapped))
+    /// The other end of F15: flatten the board - the capture plus every
+    /// annotation over it - and put it on the clipboard.
+    private lazy var copyButton = HelmPageToolbar.labeledButton(
+        symbol: "doc.on.doc", title: "Copy image",
+        tooltip: "Copy the whole board to the clipboard as a PNG",
+        target: self, action: #selector(copyImageTapped))
     private lazy var fitButton = HelmPageToolbar.iconButton(
         symbol: "arrow.up.left.and.arrow.down.right",
         tooltip: "Fit the board to the window",
@@ -89,7 +102,13 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
     /// `dslButton` leads, ahead of its AI sibling: it is the faster path and
     /// the one that works offline, so it is the one to reach for first when
     /// the captain already knows what connects to what.
-    var drillHeaderActions: [NSView] { [dslButton, generateButton, fitButton, clearButton] }
+    /// `captureButton` sits between the two authoring buttons and the two icon
+    /// ones: it is a labeled verb like them, and a capture is where an F15
+    /// board starts, so the cluster reads capture -> copy alongside the
+    /// canvas's own tools rather than burying either in an icon.
+    var drillHeaderActions: [NSView] {
+        [dslButton, generateButton, captureButton, copyButton, fitButton, clearButton]
+    }
 
     var drillHeaderSubtitle: String? {
         if let lastError { return lastError }
@@ -97,8 +116,27 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
         guard webView.isReady else { return "Starting the canvas…" }
         if elementCount == 0 { return "An empty board \u{00B7} everything stays on this machine" }
         let noun = elementCount == 1 ? "1 element" : "\(elementCount) elements"
+        // F15: once something has been captured onto this board, the thing
+        // worth saying is what was captured - the size the captain dragged,
+        // and whether it carries Retina detail - beside the count they can
+        // already see. The standing "stays on this machine" clause sharpens
+        // into the promise that actually matters for a screenshot, which is
+        // the one the captain's own reviewed mockup prints.
+        if let lastCapture {
+            return "\(lastCapture) \u{00B7} \(noun) \u{00B7} the original is never written to disk"
+        }
         return "\(noun) \u{00B7} everything stays on this machine"
     }
+
+    /// `WhiteboardCaptureScene.summary` for the most recent capture on this
+    /// board, or `nil` when nothing has been captured this session. Cleared by
+    /// Clear, because the subtitle would otherwise go on describing an image
+    /// that is no longer on the board.
+    private var lastCapture: String?
+    /// Guards a second `screencapture` from being launched while the first is
+    /// still waiting for a drag. Two system region pickers at once is a state
+    /// macOS handles badly and the captain cannot reason about.
+    private var captureInFlight = false
 
     // MARK: Lifecycle
 
@@ -330,6 +368,136 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
         return true
     }
 
+    // MARK: F15 - capture and copy
+
+    /// The seam every self-test replaces: how a region actually gets captured.
+    /// Production leaves it `nil` and the real `ScreenRegionCapture` runs; a
+    /// suite installs a closure and drives the whole pipeline with bytes it
+    /// made itself, so nothing about the flow needs a screen to be exercised.
+    var captureProvider: ((@escaping (ScreenRegionCapture.Result) -> Void) -> Void)?
+
+    /// Where a copied image is written. Injectable for the same reason - a
+    /// suite must never clobber the captain's real clipboard.
+    var copyPasteboard: NSPasteboard = .general
+
+    @objc func captureTapped() {
+        // GL-09. `screencapture -i` draws its crosshair over the whole display,
+        // including this app's own lock overlay - see `AppLockedSurface.
+        // screenCapture`.
+        guard AppLockGate.shared.allows(.screenCapture) else { return }
+        guard !captureInFlight else { return }
+        guard webView.isReady else {
+            Feedback.report("The canvas is still starting up - try that again in a moment.",
+                            kind: .warning, persistence: .transient, in: view)
+            return
+        }
+        captureInFlight = true
+        captureButton.isEnabled = false
+
+        let provider = captureProvider ?? { done in ScreenRegionCapture.capture(completion: done) }
+        provider { [weak self] result in
+            guard let self else { return }
+            self.captureInFlight = false
+            self.captureButton.isEnabled = true
+            switch result.outcome {
+            case .cancelled:
+                // Deliberately silent. Escaping out of a region drag is a
+                // decision, not an error, and a toast for it would fire every
+                // time the captain changed their mind.
+                break
+            case .failed(let message):
+                // `.lasting`: a capture that could not run is still true after
+                // a toast fades, and the captain will want to know why the
+                // board stayed empty (GL-30's own dividing line).
+                Feedback.report(message, kind: .failure, persistence: .lasting,
+                                in: self.view, id: "whiteboard.capture.failed")
+                AppLog.ui.error("whiteboard capture failed: \(message, privacy: .public)")
+            case .captured:
+                guard let image = result.image else { return }
+                self.place(capture: image)
+            }
+        }
+    }
+
+    /// Encode, find the bottom of what is already on the board, and insert.
+    ///
+    /// The board is read back first rather than assumed empty: a capture
+    /// appends *below* whatever is there, so a captain who already drew
+    /// something does not have it overwritten by a screenshot dropped at the
+    /// origin. A snapshot that fails is not fatal - the capture still lands, at
+    /// the origin, which is what an empty board would have done anyway.
+    private func place(capture image: NSImage) {
+        guard let encoded = WhiteboardCaptureScene.pngCapture(from: image) else {
+            Feedback.report("That capture could not be read as an image.",
+                            kind: .failure, persistence: .lasting,
+                            in: view, id: "whiteboard.capture.failed")
+            return
+        }
+        snapshotBoard { [weak self] result in
+            guard let self else { return }
+            let bottom: Double?
+            switch result {
+            case .success(let elements): bottom = WhiteboardCaptureScene.boardBottom(of: elements)
+            case .failure: bottom = nil
+            }
+            let fileID = WhiteboardCaptureScene.fileID()
+            let payload = WhiteboardCaptureScene.payload(for: encoded, fileID: fileID, boardBottom: bottom)
+            self.load(elements: payload.elements, files: payload.files, append: true) { error in
+                if let error {
+                    Feedback.report("The capture could not be placed on the board - \(error)",
+                                    kind: .failure, persistence: .lasting,
+                                    in: self.view, id: "whiteboard.capture.failed")
+                    return
+                }
+                Feedback.clear(id: "whiteboard.capture.failed")
+                self.lastCapture = WhiteboardCaptureScene.summary(for: encoded)
+                self.onDrillSubtitleChanged?()
+                Feedback.report("Captured - annotate it, then Copy image.",
+                                kind: .done, persistence: .transient, in: self.view)
+            }
+        }
+    }
+
+    @objc func copyImageTapped() {
+        // GL-09: the board behind the lock overlay is still the captain's, and
+        // this writes it to a clipboard anything can read.
+        guard AppLockGate.shared.allows(.whiteboardCopy) else { return }
+        guard webView.isReady else {
+            Feedback.report("The canvas is still starting up - try that again in a moment.",
+                            kind: .warning, persistence: .transient, in: view)
+            return
+        }
+        // `maxWidthOrHeight` is bounded from here rather than left to the page:
+        // the PNG comes back base64-encoded inside one bridge reply, so an
+        // unbounded export is an unbounded string (GL-35).
+        webView.call("exportImage", payload: ["maxWidthOrHeight": 4096, "padding": 16]) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .failure(let error):
+                Feedback.report("The board could not be copied - \(error.message)",
+                                kind: .failure, persistence: .transient, in: self.view)
+            case .success(let body):
+                guard let url = body["dataURL"] as? String,
+                      let png = WhiteboardCaptureScene.png(fromDataURL: url) else {
+                    Feedback.report("The board exported something that was not a PNG.",
+                                    kind: .failure, persistence: .transient, in: self.view)
+                    return
+                }
+                let written = WhiteboardCaptureScene.writeToPasteboard(png: png, pasteboard: self.copyPasteboard)
+                guard written > 0 else {
+                    Feedback.report("The image could not be written to the clipboard.",
+                                    kind: .failure, persistence: .transient, in: self.view)
+                    return
+                }
+                let width = (body["width"] as? Int) ?? 0
+                let height = (body["height"] as? Int) ?? 0
+                let size = (width > 0 && height > 0) ? " (\(width) \u{00D7} \(height))" : ""
+                Feedback.report("Board copied as a PNG\(size).",
+                                kind: .done, persistence: .transient, in: self.view)
+            }
+        }
+    }
+
     @objc private func fitTapped() {
         webView.call("fitToContent")
     }
@@ -354,6 +522,10 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
             guard let self else { return }
             if case .success = result {
                 self.elementCount = 0
+                // The capture is gone with everything else, so the subtitle
+                // must stop describing it (GL-14: a stale reading is worse
+                // than none).
+                self.lastCapture = nil
                 self.onDrillSubtitleChanged?()
                 // A cleared board has nothing left to refine, so the diagram
                 // conversation ends with it - otherwise the next visit to the
@@ -492,6 +664,10 @@ final class WhiteboardController: NSViewController, DaylightDrillActions {
     var debugCanvasCard: NSView { canvasCard }
     var debugOverlayVisible: Bool { !overlay.isHidden }
     var debugComposer: WhiteboardComposerController { composer }
+    /// F15: what the drill subtitle is saying about the last capture, which is
+    /// also the signal `WhiteboardCaptureViewSelfTest` waits on to know a
+    /// capture finished landing.
+    var debugLastCaptureSummary: String? { lastCapture }
     func debugLoad(elements: [[String: Any]], append: Bool, completion: @escaping (String?) -> Void) {
         load(elements: elements, append: append, completion: completion)
     }

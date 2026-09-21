@@ -318,6 +318,11 @@ NEEDS_SESSION=(
   # live web content process. FM_RUN_WHITEBOARD_TESTS covers the logic half and
   # does run in CI.
   "FM_RUN_WHITEBOARD_VIEW_TESTS"
+  # F15: the same split one step on - drives a real Excalidraw canvas, injects
+  # a capture through the controller's own path and pixel-samples the
+  # flattened PNG that comes back out. FM_RUN_SCREEN_CAPTURE_ANNOTATE_TESTS
+  # covers the logic half and does run in CI.
+  "FM_RUN_WHITEBOARD_CAPTURE_VIEW_TESTS"
   # Mounts a real WKWebView loading the vendored Monaco bundle, reads Monaco's
   # own tokenizer output back and measures the hidden-view gating - needs a
   # window server and a live web content process. FM_RUN_CODE_PREVIEW_TESTS
