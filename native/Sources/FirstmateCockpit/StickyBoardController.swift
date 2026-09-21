@@ -580,6 +580,32 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         }
     }
 
+    /// F2: file a captured line as a note, without opening the board first.
+    ///
+    /// Everything `newNoteTapped` does except the focus - ⌥Space's panel is
+    /// what has focus, and stealing it into a board the captain may not even
+    /// be looking at would be wrong. The view/footer/overlay refresh is kept,
+    /// because a board that is already mounted must not be left showing a
+    /// stale count (GL-14's shape: a note that exists and is not drawn reads
+    /// as a note that was not captured).
+    @discardableResult
+    func addCapturedNote(title: String, text: String) -> StickyNote {
+        let position = nextPosition()
+        let note = store.addNote(
+            title: title,
+            text: text,
+            color: StickyNoteColor.allCases.randomElement() ?? .yellow,
+            x: Double(position.x), y: Double(position.y),
+            rotationDegrees: Double.random(in: -4...4))
+        if isViewLoaded {
+            addNoteView(for: note)
+            updateFooter()
+            updateOverlay()
+        }
+        onDrillSubtitleChanged?()
+        return note
+    }
+
     /// Reveal one note by id - ⌘K's landing action (audit §6.5b).
     ///
     /// Scrolls it into view and gives it focus. The board is a freeform

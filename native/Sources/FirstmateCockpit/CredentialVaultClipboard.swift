@@ -119,11 +119,36 @@ final class CredentialVaultClipboard {
     /// the captain pressed Copy - claiming otherwise would be a false statement
     /// to whatever reads it, for no benefit the markers above do not already
     /// give.
-    private static let concealedMarkerTypes: [NSPasteboard.PasteboardType] = [
+    ///
+    /// **`internal`, not `private`, since F3.** The clipboard history
+    /// (`ClipboardHistoryStore`) has to recognise exactly these to refuse to
+    /// record them, and a second hard-coded copy of the three strings is the
+    /// one way that rule could silently stop matching - a marker renamed here
+    /// and not there would mean vault secrets landing in a plaintext-shaped
+    /// history with no test failing. One list, read by `isConcealed(_:)`.
+    static let concealedMarkerTypes: [NSPasteboard.PasteboardType] = [
         NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType"),
         NSPasteboard.PasteboardType("org.nspasteboard.TransientType"),
         NSPasteboard.PasteboardType("com.apple.is-sensitive"),
     ]
+
+    /// Whether whatever is on `pasteboard` right now was marked as a secret.
+    ///
+    /// **This is the app's one definition of "do not record this".** F3's
+    /// clipboard history and F2's capture panel both ask it, and neither
+    /// reads a marker string of its own - see `concealedMarkerTypes`.
+    ///
+    /// **Any one marker is enough**, not all three. They are written together
+    /// by `writeConcealed`, but the point of honouring the nspasteboard.org
+    /// convention is to honour it for *other* apps' writes too: a password
+    /// manager that writes only `org.nspasteboard.ConcealedType` is saying the
+    /// same thing, and a history that demanded all three would record its
+    /// secrets. `types` is used rather than `canReadItem`, because these are
+    /// presence flags carrying empty `Data` - there is nothing to read.
+    static func isConcealed(_ pasteboard: NSPasteboard = .general) -> Bool {
+        let present = Set(pasteboard.types ?? [])
+        return concealedMarkerTypes.contains { present.contains($0) }
+    }
 
     /// Write `value` to `pasteboard` as a concealed item, and return the
     /// `changeCount` the write produced.

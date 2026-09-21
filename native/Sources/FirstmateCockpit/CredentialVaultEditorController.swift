@@ -60,9 +60,21 @@ final class CredentialVaultEditorController: NSViewController {
     private var selectedCategory: CredentialCategory
     private var secretIsVisible = false
 
-    /// `nil` for Add, an existing record for Edit.
-    init(editing credential: VaultCredential?) {
+    /// F2: a secret handed in by ⌥Space's router, to seed the secret field of
+    /// an **Add** sheet.
+    ///
+    /// Deliberately separate from `existing` rather than "just pass a draft
+    /// `VaultCredential` as `editing`": `existing != nil` is what makes this
+    /// sheet say "Edit credential", offer Delete, and route its save through
+    /// `store.update`. A captured secret is a new record, so it must not
+    /// touch any of that - only the one field it actually fills.
+    private let capturedSecret: String?
+
+    /// `nil` for Add, an existing record for Edit. `capturedSecret` seeds an
+    /// Add sheet's secret field (F2) and is ignored when editing.
+    init(editing credential: VaultCredential?, capturedSecret: String? = nil) {
         self.existing = credential
+        self.capturedSecret = credential == nil ? capturedSecret : nil
         self.selectedCategory = credential?.category ?? .other
         super.init(nibName: nil, bundle: nil)
     }
@@ -129,6 +141,14 @@ final class CredentialVaultEditorController: NSViewController {
             tagsInput.setTokens(existing.tags)
             notesView.string = existing.notes
             touchIDRow.isOn = existing.requiresTouchIDToReveal
+        } else if let capturedSecret {
+            // F2's hand-off: the captured line *is* the secret, so it fills
+            // the secret field and nothing else. The title is left empty on
+            // purpose - `save` already refuses an untitled credential and
+            // focuses the title field, which is exactly the one thing the
+            // captain still has to supply.
+            secretField.stringValue = capturedSecret
+            plainSecretField.stringValue = capturedSecret
         }
 
         form.setFooter(target: self,

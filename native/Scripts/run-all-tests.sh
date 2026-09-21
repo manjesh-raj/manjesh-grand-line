@@ -326,6 +326,13 @@ NEEDS_SESSION=(
   # parser, the wiki-link scanner, the backlink index, the store) is
   # deliberately not here and does run in CI.
   "FM_RUN_NOTEBOOK_VIEW_TESTS"
+  # `fm/grandline-feature-f2-f3-capture-clipboard` (F2): builds the real
+  # ⌥Space capture panel and drives real ⌘1-⌘5 key equivalents, real tile
+  # presses and one real off-screen render of it. Its pure-logic half
+  # (FM_RUN_CAPTURE_ROUTER_TESTS - the chord map, the shared draft parse, the
+  # crew classifier's prompt/reply, the concealed-pasteboard refusal) is
+  # deliberately not here and does run in CI.
+  "FM_RUN_CAPTURE_ROUTER_VIEW_TESTS"  # session-not-window: ShiftQuickCaptureController builds a real NSPanel
   "FM_RUN_CONTRAST_TESTS"
   # Mounts real ScheduleHistoryController/ScheduleRunLogController instances
   # and touches the real pasteboard - window-backed for the same reason as

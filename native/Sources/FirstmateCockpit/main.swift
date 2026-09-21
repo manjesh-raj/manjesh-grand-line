@@ -79,7 +79,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// UX4. See its construction in `buildMenu` for why the title is part of
     /// the contract rather than decoration.
     var contextualNewItem: NSMenuItem?
-    lazy var shiftQuickCapture = ShiftQuickCaptureController(store: shiftStore)
+    /// F2: the ⌥Space router. Built with the shell's own filer, which is
+    /// where every one of the five writes lives (see
+    /// `AppShellController.makeCaptureFiler`) - this panel owns no store.
+    lazy var shiftQuickCapture: ShiftQuickCaptureController = {
+        let capture = ShiftQuickCaptureController(filer: appShell.makeCaptureFiler())
+        return capture
+    }()
     lazy var shiftNotifications = ShiftNotificationScheduler(store: shiftStore)
     lazy var shiftHotkey = ShiftGlobalHotkey { [weak self] in self?.shiftQuickCapture.present() }
     /// Audit §2 item 7: ⌘T/⌘D/⌘W/⌘R/⇧⌘R/⌘1-9 for Console and Tools tabs,
@@ -418,8 +424,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // below) wires that control to call back through this property, and
         // would silently clobber a direct assignment made before that point.
         appShell.onSearchTapped = { [weak self] in self?.unifiedSearch.present() }
-        shiftQuickCapture.onCaptured = { [weak self] in
-            self?.appShell.showToast("Task captured")
+        // F2: the toast names where it went, because the router has five
+        // answers now and "Task captured" would be wrong for four of them.
+        shiftQuickCapture.onCaptured = { [weak self] destination in
+            self?.appShell.showToast("Captured to \(destination.railDestination.title)")
         }
         // The global hotkey's system-wide (other-app-frontmost) case needs
         // Accessibility permission - see `ShiftGlobalHotkey`'s header for
@@ -1520,7 +1528,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // permission at all as long as this app is frontmost, so it's a
         // meaningful discoverability aid even before that permission is
         // granted.
-        let quickCaptureItem = NSMenuItem(title: "Quick Capture", action: #selector(AppDelegate.showShiftQuickCapture), keyEquivalent: " ").withSymbol("square.and.pencil")
+        let quickCaptureItem = NSMenuItem(title: "Capture\u{2026}", action: #selector(AppDelegate.showShiftQuickCapture), keyEquivalent: " ").withSymbol("square.and.pencil")
         quickCaptureItem.keyEquivalentModifierMask = [.option]
         quickCaptureItem.target = self
         shiftMenu.addItem(quickCaptureItem)
@@ -2756,6 +2764,21 @@ if ProcessInfo.processInfo.environment["FM_RUN_CODE_PREVIEW_VIEW_TESTS"] == "1" 
 // a real window (and the real vendored Monaco bundle), so it is window-backed
 // and lives in `run-all-tests.sh`'s NEEDS_SESSION list. The split is AGENTS.md's
 // own rule: the test is what the suite asserts, never what it imports.
+// `fm/grandline-feature-f2-f3-capture-clipboard` (F2 of full review #3 §8).
+// `CaptureRouterSelfTest` is pure logic - the chord map, the shared draft
+// parse, the derived store names, the crew classifier's prompt and reply
+// parsing, and the concealed-pasteboard refusal - and runs in CI's blocking
+// lane. `CaptureRouterViewSelfTest` mounts the real ⌥Space panel and drives
+// real key equivalents and real tile clicks, so it is window-backed and lives
+// in `run-all-tests.sh`'s NEEDS_SESSION list. The split is AGENTS.md's own
+// rule: the test is what the suite asserts, never what it imports.
+if ProcessInfo.processInfo.environment["FM_RUN_CAPTURE_ROUTER_TESTS"] == "1" {
+    exit(CaptureRouterSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_CAPTURE_ROUTER_VIEW_TESTS"] == "1" {
+    exit(CaptureRouterViewSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_NOTEBOOK_TESTS"] == "1" {
     exit(NotebookSelfTest.run() ? 0 : 1)
 }
