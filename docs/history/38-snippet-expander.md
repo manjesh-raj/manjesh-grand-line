@@ -196,7 +196,45 @@ Two specific things the captain's own use is the only check for:
    it, that delay is the dial.
 2. **The clipboard restore's own 80ms** has the same status.
 
-Recommended manual check: turn the toggle on, grant access when prompted, save
+### A CI failure this branch caused, and what it turned out to be
+
+The windowed job failed `FM_RUN_HOSTS_REDESIGN_TESTS` - *"1 column constraint(s)
+at or above windowSizeStayPut: 208.0pt @ 1000.0"* - on a page this branch only
+added a card to. It was **not** a layout floor, and it was not a flake either.
+
+`HostsRedesignSelfTest.widthConstraintsAtOrAbove` swept the page for any
+required `.width` constraint whose constant equalled one of the three column
+widths (208 / 320 / 360). AppKit puts two kinds of *required* width constraint
+on ordinary views that nobody here wrote - `NSContentSizeLayoutConstraint` (a
+label's intrinsic width, i.e. how wide that string happens to render) and
+`NSAutoresizingMaskLayoutConstraint` on the private `NSTextFieldSimpleLabel`
+inside every `NSTextField` - so the sweep was matching **a label whose text
+measured 208pt**.
+
+Measured with a temporary probe dumping every required width constraint in the
+page with its owning view and constraint class: locally the nearest such label
+sits at **211.5pt**, and three more are within 4pt of `contentMinimumWidth`
+(363.5, 367.5, 334.0). A CI runner's font metrics differ by a couple of points,
+which is all it took. The page was correct in both runs; only the sweep was
+wrong, and it had been a coin flip on any page-text change for as long as it
+has existed.
+
+The fix is one clause - `type(of: constraint) == NSLayoutConstraint.self`,
+which keeps every hand-declared constraint and drops both AppKit-synthesized
+kinds - plus a non-vacuity assertion beside it, because a filter one step too
+greedy would make the whole check pass forever finding nothing: the same sweep
+is run at `contentTie` (499), where the three real column constraints live, and
+has to find all three.
+
+Both directions confirmed, each injection reverted from a copy taken first:
+
+| Injection | Result |
+| --- | --- |
+| `HelmPageSidebar`'s `columnWidth.priority` raised to `.required` | fails with `["208.0pt @ 1000.0"]` - the fixed check still catches a real floor, and reports CI's exact message |
+| the sweep pointed at `211.5` (a real label's measured width), filter **on** | passes - the label is correctly ignored |
+| the same, filter **off** (the code CI ran) | fails with `["211.5pt @ 1000.0"]` - the CI failure reproduced locally from a plain label |
+
+**Recommended manual check:** turn the toggle on, grant access when prompted, save
 a `;sig` snippet scoped to Every app, and type `;sig ` in Mail and in a
 terminal. Then check the two boundary cases by hand - `foo;sig ` must do
 nothing, and `;;sig ` must leave the text alone.
