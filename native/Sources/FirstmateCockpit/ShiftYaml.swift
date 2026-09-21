@@ -72,6 +72,12 @@ enum ShiftYaml {
         m[str("notes")] = strOpt(t.notes)
         m[str("subtasks")] = .array(t.subtasks.map(toYaml))
         m[str("has_attachment")] = .bool(t.hasAttachment)
+        // F5. Both keys are written unconditionally (as `null` when unset),
+        // matching how every other optional field on this type is written -
+        // a key that appears only sometimes reads, in a hand-edited file, as
+        // a key the format does not have.
+        m[str("recurrence")] = strOpt(t.recurrence?.ruleText)
+        m[str("reminder_minutes_before")] = t.reminderMinutesBefore.map { Yaml.int($0) } ?? .null
         return .dictionary(m)
     }
 
@@ -95,7 +101,15 @@ enum ShiftYaml {
             completedAt: optString(dict[str("completed_at")] ?? .null),
             notes: optString(dict[str("notes")] ?? .null),
             subtasks: subtasksYaml.compactMap(subtask(from:)),
-            hasAttachment: dict[str("has_attachment")]?.bool ?? false
+            hasAttachment: dict[str("has_attachment")]?.bool ?? false,
+            // F5. Absent on every task file written before this field
+            // existed, and `ShiftRecurrence.parse` returns `nil` for a rule
+            // it cannot read rather than guessing at a frequency - so an
+            // unreadable rule costs the repeat, never the task (GL-01's own
+            // "a new field needs a default on read" lesson, which this type
+            // takes by hand because it is not `Codable`).
+            recurrence: optString(dict[str("recurrence")] ?? .null).flatMap(ShiftRecurrence.parse),
+            reminderMinutesBefore: dict[str("reminder_minutes_before")]?.int
         )
     }
 

@@ -581,6 +581,16 @@ enum ShiftDateFormatting {
         return "\(dayPart) at \(friendlyTime.string(from: t))"
     }
 
+    /// Just the clock part of an `"HH:MM"` string, in the captain's own
+    /// locale ("3:00 PM" / "15:00") - what a calendar chip prefixes a task
+    /// title with. Shares `friendly(_:time:)`'s own formatter rather than
+    /// building a second one (GL-P3: `DateFormatter` construction is
+    /// measurably expensive, and a grid builds one chip per task per day).
+    static func clock(_ hhmmStr: String) -> String {
+        guard let t = hhmm.date(from: hhmmStr) else { return hhmmStr }
+        return friendlyTime.string(from: t)
+    }
+
     /// Combines a `"YYYY-MM-DD"` date string with an optional `"HH:MM"` time
     /// string into one `Date` - the shared "read the two persisted scalar
     /// fields back into a real moment in time" used by both sorting (task due

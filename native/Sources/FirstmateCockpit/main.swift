@@ -2131,6 +2131,21 @@ if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_BOARD_VIEW_TESTS"] == "1" {
     exit(ShiftBoardViewSelfTest.run() ? 0 : 1)
 }
 
+// F5 (full review #3 §8): the RRULE-lite recurrence rule - parsing, the
+// occurrence generator, the "completing an instance writes the next one"
+// advance, and the per-task reminder offset's own comparison. Pure logic, so
+// it runs in CI's blocking lane; the calendar's render is its window-backed
+// sibling below.
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_RECURRENCE_TESTS"] == "1" {
+    exit(ShiftRecurrenceSelfTest.run() ? 0 : 1)
+}
+
+// The same feature's view half: the real Tasks page in a real window, the
+// Calendar pill genuinely clicked, and the month grid's own laid-out cells.
+if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_CALENDAR_VIEW_TESTS"] == "1" {
+    exit(ShiftCalendarViewSelfTest.run() ? 0 : 1)
+}
+
 // fm/grand-line-tasks-page-redesign: the Tasks page's own nav column, the
 // slice it filters by, its stat tiles, its one page-level primary action, and
 // a board column sized so a card is never sliced.

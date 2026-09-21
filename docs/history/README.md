@@ -65,3 +65,4 @@ so `git log` is the tiebreaker.
 | [`31-testing-policy.md`](31-testing-policy.md) | The self-test classification rule | 3KB |
 | [`32-notebook.md`](32-notebook.md) | Notebook (F1): the page tree, wiki-links and backlinks | 13KB |
 | [`33-capture-and-clipboard.md`](33-capture-and-clipboard.md) | Universal capture (⌥Space) and the encrypted clipboard history | 13KB |
+| [`34-recurrence-and-calendar.md`](34-recurrence-and-calendar.md) | Recurring tasks, reminders and the Tasks calendar view (F5) | 10KB |

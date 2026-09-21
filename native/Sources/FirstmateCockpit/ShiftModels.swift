@@ -63,6 +63,26 @@ struct ShiftTask: Equatable {
     /// read, not just a Swift-side one" lesson still applies here.
     var hasAttachment: Bool
 
+    /// The RRULE-lite repeat rule, or `nil` for a task that happens once
+    /// (F5). Held as a parsed value rather than the raw string so nothing
+    /// outside `ShiftYaml` re-parses it, and defaulted here so the
+    /// synthesised memberwise initialiser stays source-compatible with the
+    /// call sites that predate it - the same treatment
+    /// `reminderMinutesBefore` gets below.
+    ///
+    /// A rule is a **pattern, not a series**: the anchor it expands from is
+    /// this task's own `dueDate`/`dueTime`, so pushing a due date moves the
+    /// whole future series without rewriting the rule. A task with a rule
+    /// and no due date never recurs, which is why the editor's Repeat card
+    /// disables itself until a due date is set.
+    var recurrence: ShiftRecurrence? = nil
+
+    /// Minutes before the due time to fire the reminder, or `nil` for this
+    /// app's own default lookahead (see `ShiftNotificationScheduler`). `0`
+    /// is a real value meaning "at the due time" and is deliberately not
+    /// the same as `nil`.
+    var reminderMinutesBefore: Int? = nil
+
     /// A blank task ready for `ShiftStore.addTask` - the New Task editor
     /// (phase 2) fills fields into this rather than hand-assembling every
     /// property inline.
@@ -71,7 +91,8 @@ struct ShiftTask: Equatable {
         return ShiftTask(
             id: UUID().uuidString, title: "", description: "", status: .todo, priority: .normal,
             dueDate: nil, dueTime: nil, projectID: nil, tags: [], createdAt: iso, updatedAt: iso,
-            completedAt: nil, notes: nil, subtasks: [], hasAttachment: false
+            completedAt: nil, notes: nil, subtasks: [], hasAttachment: false,
+            recurrence: nil, reminderMinutesBefore: nil
         )
     }
 }

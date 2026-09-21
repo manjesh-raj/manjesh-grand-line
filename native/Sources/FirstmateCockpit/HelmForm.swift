@@ -1351,7 +1351,26 @@ final class HelmFieldCard: NSView {
         value = optionTitles[index]
     }
 
+    /// Whether this card can be opened at all.
+    ///
+    /// Added for F5's Repeat/Remind cards, which are meaningless until the
+    /// task has a due date - a card that still popped its menu there would
+    /// let a captain pick a rule the sheet then silently drops on Save. The
+    /// dimming matches `HelmToggle`'s own disabled treatment
+    /// (`alphaValue = 0.5`) rather than inventing a second one, and the
+    /// hover highlight goes with it so a dead card does not light up under
+    /// the pointer.
+    var isEnabled: Bool = true {
+        didSet {
+            guard isEnabled != oldValue else { return }
+            alphaValue = isEnabled ? 1 : 0.5
+            clickButton.isEnabled = isEnabled
+            applyTheme(ThemeManager.shared.theme)
+        }
+    }
+
     @objc private func clicked() {
+        guard isEnabled else { return }
         guard !optionTitles.isEmpty else {
             onClick?()
             return
@@ -1393,7 +1412,9 @@ final class HelmFieldCard: NSView {
     func applyTheme(_ theme: HelmTheme) {
         let fill = HelmField.fill(theme)
         card.normalColor = fill
-        card.hoverColor = fill.hoverShifted(by: 0.10, forMode: theme.mode)
+        // A disabled card takes no hover shift: it is not clickable, and a
+        // well that lights up under the pointer says otherwise.
+        card.hoverColor = isEnabled ? fill.hoverShifted(by: 0.10, forMode: theme.mode) : fill
         card.layer?.borderWidth = 1
         card.layer?.borderColor = HelmField.border(theme).cgColor
         // §6.9's choice well: the same well as a single-line field, so the

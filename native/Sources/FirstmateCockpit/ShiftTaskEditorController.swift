@@ -122,6 +122,27 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
 
     private let descriptionView = HelmTextView(height: 110)
 
+    // MARK: Repeat and reminder (F5)
+
+    /// The Repeat card, its weekday chips and the Remind me card.
+    ///
+    /// All three live under the due-date row and **disable together when the
+    /// task has no due date**, because a rule with no anchor recurs zero
+    /// times and a reminder with no due time has nothing to be early for
+    /// (`ShiftTask.recurrence`'s own doc comment). Disabling states that
+    /// where a silently-ignored setting would not.
+    private let repeatCard = HelmFieldCard(label: "Repeat")
+    private let reminderCard = HelmFieldCard(label: "Remind me")
+    private let weekdayRow = NSStackView()
+    private var weekdayChips: [HelmButton] = []
+    private let recurrencePreview = NSTextField(labelWithString: "")
+
+    /// The rule being edited, `nil` for a task that happens once. Held rather
+    /// than read back off the cards so the weekday chips and the preview line
+    /// have one source of truth between them.
+    private var recurrence: ShiftRecurrence?
+    private var reminderMinutes: Int?
+
     /// Once the person edits the due-date controls directly (switch or
     /// picker), further title edits stop overwriting their choice - only a
     /// brand-new detected phrase should ever clobber a still-untouched Due
@@ -139,6 +160,8 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         self.prefillDescription = prefillDescription
         self.prefillDueDate = prefillDueDate
         self.prefillDueTime = prefillDueTime
+        self.recurrence = task?.recurrence
+        self.reminderMinutes = task?.reminderMinutesBefore
         self.selectedPriority = task?.priority ?? .normal
         let candidateProjectID = task?.projectID ?? defaultProjectID
         self.selectedProjectID = projects.contains { $0.id == candidateProjectID } ? candidateProjectID : nil
@@ -205,6 +228,15 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         dueDatePicker.isHidden = !dueRow.isOn
         dueRow.onToggle = { [weak self] in self?.hasDueToggled() }
         form.addRow(dueRow)
+
+        // MARK: Repeat and reminder (F5)
+
+        form.addSection("Repeat")
+        buildRepeatControls()
+        form.addColumns([repeatCard, reminderCard])
+        form.addRow(weekdayRow)
+        form.addRow(recurrencePreview)
+        syncRepeatControls()
 
         // MARK: Tags
 
@@ -280,6 +312,10 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         detectedIcon.contentTintColor = HelmTheme.nsColor(theme.accentHex)
         detectedLabel.textColor = muted
         updatePriorityDotColor(theme: theme)
+        // The weekday chips theme themselves (`HelmButton` observes
+        // `ThemeManager` directly); only their *selected* variant is this
+        // sheet's to decide, and `syncRepeatControls` owns that.
+        recurrencePreview.textColor = muted
         tagsInput.applyTheme(theme)
         attachmentWell.applyTheme(theme)
     }
@@ -407,7 +443,165 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         dueDatePicker.isEnabled = on
         dueDatePicker.isHidden = !on
         detectedRow.isHidden = true
+        // F5: the repeat and reminder controls have no meaning without an
+        // anchor, so they follow this switch rather than sitting enabled
+        // over a task that can never recur.
+        syncRepeatControls()
         form.sizeToFitContent()
+    }
+
+    // MARK: Repeat and reminder (F5)
+
+    private func buildRepeatControls() {
+        repeatCard.configureChoices(ShiftRecurrence.presets.map(\.title),
+                                    selectedIndex: Self.presetIndex(for: recurrence)) { [weak self] index in
+            guard let self else { return }
+            var picked = ShiftRecurrence.presets[index].rule
+            // A preset switch keeps the weekday selection the captain has
+            // already made, as long as the new rule is still weekly - which
+            // is what makes "Every week" plus three chips reachable without
+            // re-picking the days after every preset change.
+            if picked?.frequency == .weekly, let existing = self.recurrence, existing.frequency == .weekly,
+               ShiftRecurrence.presets[index].title != "Every weekday" {
+                picked?.weekdays = existing.weekdays
+            }
+            self.recurrence = picked
+            self.syncRepeatControls()
+            self.form?.sizeToFitContent()
+        }
+
+        let reminderTitles = ["No reminder"] + ShiftReminderOffset.choices.map(ShiftReminderOffset.label(for:))
+        reminderCard.configureChoices(reminderTitles,
+                                      selectedIndex: Self.reminderIndex(for: reminderMinutes)) { [weak self] index in
+            guard let self else { return }
+            self.reminderMinutes = index == 0 ? nil : ShiftReminderOffset.choices[index - 1]
+            self.syncRepeatControls()
+        }
+
+        weekdayRow.orientation = .horizontal
+        weekdayRow.alignment = .centerY
+        weekdayRow.spacing = HelmMetrics.s2 - 2
+        // AGENTS.md gotcha (10): a horizontal stack left at `.gravityAreas`
+        // honours no hugging priority, so the seven chips would be spread by
+        // Auto Layout's own tie-breaking rather than sitting together.
+        weekdayRow.distribution = .fill
+        weekdayRow.translatesAutoresizingMaskIntoConstraints = false
+        for weekday in Self.weekdayOrder() {
+            // The chip's own letter, not an abbreviation - "M T W T F S S" is
+            // the row the captain reviewed in the mockup. The full weekday
+            // name is the accessibility label, because two of the seven
+            // letters are ambiguous on their own.
+            let name = ShiftRecurrence.shortWeekdayName(weekday)
+            let chip = HelmButton(title: String(name.prefix(1)), variant: .secondary, size: .small,
+                                  target: self, action: #selector(weekdayChipClicked(_:)))
+            chip.tag = weekday
+            chip.setAccessibilityLabel(name)
+            chip.widthAnchor.constraint(equalToConstant: 30).isActive = true
+            weekdayChips.append(chip)
+            weekdayRow.addArrangedSubview(chip)
+        }
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        weekdayRow.addArrangedSubview(spacer)
+
+        recurrencePreview.font = HelmType.caption()
+        recurrencePreview.lineBreakMode = .byTruncatingTail
+    }
+
+    @objc private func weekdayChipClicked(_ sender: HelmButton) {
+        guard var rule = recurrence, rule.frequency == .weekly else { return }
+        if rule.weekdays.contains(sender.tag) {
+            rule.weekdays.remove(sender.tag)
+        } else {
+            rule.weekdays.insert(sender.tag)
+        }
+        recurrence = rule
+        syncRepeatControls()
+    }
+
+    /// Re-derives every repeat control from `recurrence`/`reminderMinutes`.
+    ///
+    /// One function rather than per-control updates, because the three
+    /// controls constrain each other: the chips only apply to a weekly rule,
+    /// the preview names whatever the chips now say, and all of it is dead
+    /// without a due date.
+    private func syncRepeatControls() {
+        let hasDue = dueRow.isOn
+        repeatCard.isEnabled = hasDue
+        reminderCard.isEnabled = hasDue
+        repeatCard.select(Self.presetIndex(for: recurrence))
+        reminderCard.select(Self.reminderIndex(for: reminderMinutes))
+
+        let weekly = hasDue && recurrence?.frequency == .weekly
+        weekdayRow.isHidden = !weekly
+        let selected = recurrence?.weekdays ?? []
+        for chip in weekdayChips {
+            // `.primary` for a selected day is the same on/off pair the
+            // app's other multi-select chip rows use, and it carries the
+            // accent fill the mockup shows.
+            chip.variant = selected.contains(chip.tag) ? .primary : .secondary
+        }
+
+        recurrencePreview.isHidden = !hasDue
+        recurrencePreview.stringValue = previewText()
+    }
+
+    /// The line under the controls: what this rule means, and when the next
+    /// few occurrences actually land.
+    ///
+    /// Real dates rather than a restatement of the rule - the mockup's
+    /// "next 9 occurrences shown" exists so a captain can verify by eye that
+    /// "every weekday" is the pattern they meant, which a second English
+    /// sentence cannot do.
+    private func previewText() -> String {
+        guard dueRow.isOn else { return "" }
+        guard let rule = recurrence else {
+            guard let minutes = reminderMinutes else { return "Happens once." }
+            return "Happens once. Reminder \(ShiftReminderOffset.label(for: minutes).lowercased())."
+        }
+        let anchor = dueDatePicker.dateValue
+        let upcoming = rule.occurrences(anchor: anchor, from: anchor, through: nil, limit: 4)
+            .dropFirst()
+            .map { ShiftDateFormatting.friendly(ShiftDateFormatting.components(from: $0).0) }
+        var text = rule.displayName + "."
+        if upcoming.isEmpty {
+            text += " No further occurrences."
+        } else {
+            text += " Next: " + upcoming.joined(separator: ", ") + "."
+        }
+        if let minutes = reminderMinutes {
+            text += " Reminder \(ShiftReminderOffset.label(for: minutes).lowercased())."
+        }
+        return text
+    }
+
+    /// Which preset a rule is, or the "Does not repeat" row for a rule this
+    /// sheet's own list cannot name (a hand-edited `INTERVAL=3`, say). The
+    /// rule itself is *not* discarded by this - only Save writes, and Save
+    /// writes `recurrence`, which an unrecognised rule still occupies.
+    private static func presetIndex(for rule: ShiftRecurrence?) -> Int {
+        guard let rule else { return 0 }
+        let normalized = rule.normalized
+        for (index, preset) in ShiftRecurrence.presets.enumerated() {
+            guard let candidate = preset.rule?.normalized else { continue }
+            if candidate.frequency == normalized.frequency && candidate.interval == normalized.interval
+                && (candidate.weekdays == normalized.weekdays || candidate.weekdays.isEmpty) {
+                return index
+            }
+        }
+        return 0
+    }
+
+    private static func reminderIndex(for minutes: Int?) -> Int {
+        guard let minutes, let index = ShiftReminderOffset.choices.firstIndex(of: minutes) else { return 0 }
+        return index + 1
+    }
+
+    /// The seven weekdays starting at the captain's own locale's first day,
+    /// so the chip row reads in the same order as the calendar view's columns.
+    private static func weekdayOrder() -> [Int] {
+        let first = Calendar.current.firstWeekday
+        return (0..<7).map { ((first - 1 + $0) % 7) + 1 }
     }
 
     @objc private func dueDatePickerChanged() {
@@ -459,6 +653,12 @@ final class ShiftTaskEditorController: NSViewController, NSTextFieldDelegate {
         }
         task.projectID = selectedProjectID
         task.tags = tagChips
+        // A rule or a reminder with no due date to anchor on is dropped
+        // rather than saved: the controls are already disabled in that
+        // state, so this only catches a task whose due date was switched
+        // off *after* a rule was picked.
+        task.recurrence = dueRow.isOn ? recurrence : nil
+        task.reminderMinutesBefore = dueRow.isOn ? reminderMinutes : nil
         onSave?(task, attachmentChange ?? .unchanged)
         dismiss(self)
     }
