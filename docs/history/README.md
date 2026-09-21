@@ -68,3 +68,4 @@ so `git log` is the tiebreaker.
 | [`34-recurrence-and-calendar.md`](34-recurrence-and-calendar.md) | Recurring tasks, reminders and the Tasks calendar view (F5) | 10KB |
 | [`35-reading-list.md`](35-reading-list.md) | Reading list (F4): the link inbox, its metadata, tags and AI summary | 10KB |
 | [`36-focus-timer.md`](36-focus-timer.md) | Focus timer (F7): the task-bound Pomodoro, the bar chip and Weekly Review's "time on tasks" tile | 9KB |
+| [`37-scratchpad-calculator.md`](37-scratchpad-calculator.md) | Scratchpad calculator (F9): the Tools tab, its expression engine and unit/currency tables | 12KB |

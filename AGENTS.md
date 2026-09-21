@@ -1285,6 +1285,7 @@ can correct an earlier one - and several do.
 | [`34-recurrence-and-calendar.md`](docs/history/34-recurrence-and-calendar.md) | Recurring tasks (`ShiftRecurrence`), the per-task reminder offset, and the Tasks page's calendar view |
 | [`35-reading-list.md`](docs/history/35-reading-list.md) | The Reading List (F4): the link inbox, `LinkPresentation` metadata, tags, read state and the opt-in AI summary |
 | [`36-focus-timer.md`](docs/history/36-focus-timer.md) | The focus timer (F7): the task-bound Pomodoro, the bar chip and its ring popover, and Weekly Review's "time on tasks" tile |
+| [`37-scratchpad-calculator.md`](docs/history/37-scratchpad-calculator.md) | The Scratchpad calculator (F9): the Tools tab, the expression engine, the unit/currency tables and the date words |
 
 ## Maintaining this file
 

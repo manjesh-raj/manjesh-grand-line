@@ -35,6 +35,7 @@ import Yaml
 /// reads this from the source tab and applies it to the freshly created one
 /// before that new tab is shown.
 enum ToolContentSnapshot {
+    case scratchpad(text: String)
     case yaml(input: String)
     case json(input: String)
     case base64(input: String)
@@ -105,6 +106,16 @@ final class ToolInstance: NSObject {
     private var diffResultView: DiffResultView!
     private var diffShowOnlyDifferences: NSButton!
 
+    /// F9's pad and its store. The store is per-instance and caches nothing
+    /// another instance also caches beyond its own file read at construction -
+    /// two open pads write two different keys (GL-23's "a store that caches
+    /// gets one shared instance" is about two caching copies of one *record*,
+    /// which this is not), and each save re-reads nothing and rewrites the
+    /// whole map from what it holds.
+    private var scratchpad: ScratchpadPadView!
+    private var scratchpadStore: ScratchpadStore?
+    private var scratchpadSaveWork: DispatchWorkItem?
+
     private var certInput: NSTextView!
     private var certOutput: NSTextView!
 
@@ -143,6 +154,7 @@ final class ToolInstance: NSObject {
         self.view = NSView()
         super.init()
         switch kind {
+        case .scratchpad: view = buildScratchpadPanel()
         case .yaml: view = buildYamlPanel()
         case .json: view = buildJsonPanel()
         case .base64: view = buildBase64Panel()
@@ -161,6 +173,7 @@ final class ToolInstance: NSObject {
 
     func snapshotContent() -> ToolContentSnapshot {
         switch kind {
+        case .scratchpad: return .scratchpad(text: scratchpad.text)
         case .yaml: return .yaml(input: yamlInput.string)
         case .json: return .json(input: jsonInput.string)
         case .base64: return .base64(input: base64Input.string)
@@ -180,6 +193,9 @@ final class ToolInstance: NSObject {
     /// silently opens blank is far less surprising than a crash.
     func restoreContent(_ snapshot: ToolContentSnapshot) {
         switch (kind, snapshot) {
+        case (.scratchpad, .scratchpad(let text)):
+            scratchpad.text = text
+            scheduleScratchpadSave()
         case (.yaml, .yaml(let input)):
             yamlInput.string = input
         case (.json, .json(let input)):
@@ -294,6 +310,132 @@ final class ToolInstance: NSObject {
             Toast.show(in: host, message: "Copied to clipboard")
         }
     }
+
+    // MARK: Scratchpad (F9)
+
+    /// The Soulver-style pad. Everything about *how* it is laid out and how a
+    /// result finds its line is in `ScratchpadPadView`; everything about what
+    /// a line means is in `ScratchpadEngine`. This method is the tab: the
+    /// card, the Copy all results action, the persistence, and the footer that
+    /// states how old the currency table is.
+    private func buildScratchpadPanel() -> NSView {
+        let store = ScratchpadStore()
+        scratchpadStore = store
+
+        let pad = ScratchpadPadView(theme: theme, fontSize: FontSizeManager.shared.size)
+        pad.text = store.text(for: name)
+        pad.onTextChanged = { [weak self] _ in self?.scheduleScratchpadSave() }
+        pad.onCopied = { [weak self] _ in
+            guard let host = self?.toastHost else { return }
+            Toast.show(in: host, message: "Copied to clipboard")
+        }
+        scratchpad = pad
+        pad.translatesAutoresizingMaskIntoConstraints = false
+        // AGENTS.md gotcha (13): any content constraint above 500 can resize
+        // the whole window, and a required *minimum* is the shape that does it
+        // - it becomes a floor under the window's own height through every
+        // page. The pad wants to be tall and wants not to collapse; neither
+        // wish is worth a window it cannot shrink, so both sit in the 251-499
+        // band, above the stack defaults and below
+        // `NSLayoutPriorityWindowSizeStayPut`.
+        let floor = pad.heightAnchor.constraint(greaterThanOrEqualToConstant: 320)
+        floor.priority = NSLayoutConstraint.Priority(rawValue: 480)
+        floor.isActive = true
+        let tall = pad.heightAnchor.constraint(equalToConstant: 460)
+        tall.priority = NSLayoutConstraint.Priority(rawValue: 450)
+        tall.isActive = true
+
+        let copyAll = HelmButton(title: "Copy all results", variant: .secondary,
+                                 target: self, action: #selector(scratchpadCopyAllClicked))
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        let headerRow = NSStackView(views: [sectionLabel("One line, one answer"), spacer, copyAll])
+        headerRow.orientation = .horizontal
+        headerRow.spacing = 8
+        headerRow.distribution = .fill
+        // AGENTS.md gotcha (12): a bare `NSView` spacer has no intrinsic size,
+        // so a hugging priority on it is a no-op - it needs a real, low
+        // priority `width == 0` to stay collapsed and let the row's ends sit
+        // where they belong.
+        let collapsed = spacer.widthAnchor.constraint(equalToConstant: 0)
+        collapsed.priority = .defaultLow
+        collapsed.isActive = true
+        copyAll.setContentHuggingPriority(.required, for: .horizontal)
+        copyAll.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        // GL-14: the currency table is static, and the pad says how old it is
+        // rather than letting a year-old rate look like a live one.
+        let footer = NSTextField(wrappingLabelWithString: ScratchpadRates.footerLine)
+        footer.font = .systemFont(ofSize: 10.5)
+        mutedLabels.append(footer)
+
+        let hint = NSTextField(wrappingLabelWithString:
+            "\u{2318}\u{21A9} copies the line your caret is on \u{00B7} \"that\" is the previous result \u{00B7} "
+            + "Understands " + ScratchpadEngine.examples.joined(separator: " \u{00B7} "))
+        hint.font = .systemFont(ofSize: 10.5)
+        mutedLabels.append(hint)
+
+        let content = NSStackView(views: [headerRow, pad, footer, hint])
+        content.orientation = .vertical
+        content.alignment = .leading
+        content.spacing = 8
+        for v in [headerRow, pad, footer, hint] {
+            v.widthAnchor.constraint(equalTo: content.widthAnchor).isActive = true
+        }
+
+        return panelCard(
+            icon: ToolKind.scratchpad.symbol, tint: ToolKind.scratchpad.tint, title: ToolKind.scratchpad.title,
+            subtitle: ToolKind.scratchpad.description, content: content
+        )
+    }
+
+    @objc private func scratchpadCopyAllClicked() {
+        guard scratchpad?.copyAllResults() == false, let host = toastHost else { return }
+        Toast.show(in: host, message: "Nothing to copy yet")
+    }
+
+    /// Debounced, because this runs on every keystroke and the write is a
+    /// whole-file atomic rewrite. Half a second is long enough that ordinary
+    /// typing writes once per pause and short enough that a captain who closes
+    /// the window straight after typing keeps what they typed - and
+    /// `flushScratchpad` closes the remaining gap.
+    private func scheduleScratchpadSave() {
+        scratchpadSaveWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.flushScratchpad() }
+        scratchpadSaveWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
+    /// Write the pad now. Called by the debounce, by a rename, and by
+    /// `ToolsController` when a tab closes or the app terminates.
+    func flushScratchpad() {
+        guard kind == .scratchpad, let scratchpad, let store = scratchpadStore else { return }
+        scratchpadSaveWork?.cancel()
+        scratchpadSaveWork = nil
+        store.save(scratchpad.text, for: name)
+    }
+
+    /// The tab was renamed. A pad is stored under its tab's name, so the text
+    /// moves with the label rather than being orphaned under the old one.
+    func tabWasRenamed(from old: String, to new: String) {
+        guard kind == .scratchpad, let store = scratchpadStore else { return }
+        flushScratchpadUnderName(old)
+        store.rename(from: old, to: new)
+    }
+
+    private func flushScratchpadUnderName(_ name: String) {
+        guard let scratchpad, let store = scratchpadStore else { return }
+        scratchpadSaveWork?.cancel()
+        scratchpadSaveWork = nil
+        store.save(scratchpad.text, for: name)
+    }
+
+    #if FM_SELFTESTS
+    /// Probe surface for `ScratchpadPadViewSelfTest`: the real pad this tab
+    /// built, and the real store it saves through.
+    var debugScratchpad: ScratchpadPadView? { scratchpad }
+    var debugScratchpadStore: ScratchpadStore? { scratchpadStore }
+    #endif
 
     // MARK: YAML
 
@@ -1170,6 +1312,7 @@ final class ToolInstance: NSObject {
         }
         recolorStatus()
         diffResultView?.applyTheme(theme)
+        scratchpad?.applyTheme(theme)
     }
 
     #if FM_SELFTESTS
@@ -1199,5 +1342,6 @@ final class ToolInstance: NSObject {
         cpuCoresOutput?.font = resultFont
         cpuMillicoresOutput?.font = resultFont
         diffResultView?.setFontSize(size)
+        scratchpad?.applyFontSize(size)
     }
 }

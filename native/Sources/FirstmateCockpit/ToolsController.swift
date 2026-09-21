@@ -39,10 +39,14 @@
 import AppKit
 
 enum ToolKind: String, CaseIterable {
-    case yaml, json, base64, jwt, timestamp, diff, cert, cron, resource
+    // Scratchpad leads the grid deliberately: it is the one tool here a
+    // captain opens without a document in hand (F9 of full review #3 §8), and
+    // the reviewed mockup shows it first in the strip.
+    case scratchpad, yaml, json, base64, jwt, timestamp, diff, cert, cron, resource
 
     var title: String {
         switch self {
+        case .scratchpad: return "Scratchpad Calculator"
         case .yaml: return "YAML Validate & Beautify"
         case .json: return "JSON Validate & Beautify"
         case .base64: return "Base64 Encode/Decode"
@@ -60,6 +64,7 @@ enum ToolKind: String, CaseIterable {
     /// (`ToolsController.defaultName(for:)`).
     var shortName: String {
         switch self {
+        case .scratchpad: return "Scratchpad"
         case .yaml: return "YAML"
         case .json: return "JSON"
         case .base64: return "Base64"
@@ -74,6 +79,7 @@ enum ToolKind: String, CaseIterable {
 
     var description: String {
         switch self {
+        case .scratchpad: return "A live pad: type a line, see its answer. Maths, units, currencies, dates, hex, and variables."
         case .yaml: return "Check a YAML document (or multi-resource manifest) for errors, or reformat it."
         case .json: return "Check a JSON document for errors, or reformat it with consistent indentation."
         case .base64: return "Encode plain text to Base64, or decode a Base64 string back to text."
@@ -88,6 +94,7 @@ enum ToolKind: String, CaseIterable {
 
     var symbol: String {
         switch self {
+        case .scratchpad: return "function"
         case .yaml: return "doc.text"
         case .json: return "curlybraces"
         case .base64: return "textformat.abc"
@@ -102,6 +109,7 @@ enum ToolKind: String, CaseIterable {
 
     var tint: HelmTint {
         switch self {
+        case .scratchpad: return .accent
         case .yaml: return .info
         case .json: return .warn
         case .base64: return .good
@@ -669,6 +677,14 @@ final class ToolsController: NSViewController, DaylightDrillActions, TabShortcut
         }
     }
 
+    /// Write every open Scratchpad tab's text now (F9). Called when a tab
+    /// closes and from the app delegate on quit - the pad's own save is
+    /// debounced, and those are the two moments the debounce cannot be
+    /// allowed to outlive.
+    func flushScratchpads() {
+        for tab in tabs { tab.flushScratchpad() }
+    }
+
     /// ⌘D: duplicate the current tab - same kind, same input content, a new
     /// independent tab. Never copies the source tab's output; the new tab
     /// recomputes that itself once the captain acts on it.
@@ -694,6 +710,10 @@ final class ToolsController: NSViewController, DaylightDrillActions, TabShortcut
     private func closeTab(id: UUID) {
         guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
         let tab = tabs[idx]
+        // A closing pad writes before its view goes away (F9) - the save is
+        // debounced, and closing the tab is one of the two moments that
+        // debounce must not outlive.
+        tab.flushScratchpad()
         pageStack.removeArrangedSubview(tab.view)
         tab.view.removeFromSuperview()
         tabs.remove(at: idx)
@@ -722,7 +742,11 @@ final class ToolsController: NSViewController, DaylightDrillActions, TabShortcut
     private func renameTab(id: UUID, to newName: String) {
         guard let tab = tabs.first(where: { $0.id == id }) else { return }
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let previous = tab.name
         tab.name = trimmed.isEmpty ? defaultName(for: tab.kind) : trimmed
+        // A pad is saved under its tab's name, so a rename has to carry the
+        // text with it - see `ScratchpadStore`'s header.
+        tab.tabWasRenamed(from: previous, to: tab.name)
         tab.chip.setName(tab.name)
         styleChips()
     }

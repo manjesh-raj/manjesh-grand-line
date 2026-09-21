@@ -210,6 +210,11 @@ NEEDS_SESSION=(
   # The Updates page's action-column visibility guard: mounts the real page
   # in a real window and reads each row's rendered action alpha back.
   "FM_RUN_UPDATES_ACTION_VISIBILITY_TESTS"
+  # F9's scratchpad pad: measures real result rows against the input's own
+  # laid-out text (including a line long enough to wrap) and reads a real
+  # render back. Its engine half (FM_RUN_SCRATCHPAD_TESTS) is pure logic and
+  # deliberately not here - that one guards the blocking lane.
+  "FM_RUN_SCRATCHPAD_VIEW_TESTS"
   # `fm/grandline-k8s-cluster-tail`: mounts the real `.kubernetes` destination
   # in a real window. Its pure-logic half (FM_RUN_KUBE_BRIDGE_TESTS) is
   # deliberately not here - that one runs in CI.
