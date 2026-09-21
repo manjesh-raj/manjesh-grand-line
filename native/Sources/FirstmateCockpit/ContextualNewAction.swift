@@ -62,10 +62,14 @@ enum ContextualNewAction: String, CaseIterable {
         // its name from the first heading typed into it. Nothing is filled in
         // first.
         case .notebookPage: return "New Page"
-        // No ellipsis, same reason: the link on the clipboard is saved
-        // immediately and its title fetched afterwards. Nothing is filled in
-        // first.
-        case .savedLink: return "Save Link from Clipboard"
+        // "New " like every other verb here - `NavigationCoherenceSelfTest`'s
+        // UX4 asserts the prefix, because the menu item is what tells the
+        // captain which thing \u{2318}N means on the page they are on, and
+        // "Save Link\u{2026}" would read as an action on something already
+        // selected. No ellipsis, for this property's own stated reason: the
+        // link on the clipboard is saved immediately and its title fetched
+        // afterwards, so nothing is filled in first.
+        case .savedLink: return "New Saved Link"
         }
     }
 

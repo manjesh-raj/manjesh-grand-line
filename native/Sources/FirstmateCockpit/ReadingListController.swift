@@ -192,6 +192,15 @@ final class ReadingListController: NSViewController, DaylightDrillActions {
             self.applyTheme()
         }
 
+        // GL-09 / audit #2 §5.1(b): a popover left open when the app lock
+        // fires stays readable and interactive *above* the lock overlay, so
+        // every popover in this app registers to be dismissed on the way in.
+        // The tag editor carries the captain's own data, which is exactly
+        // what the lock exists to hide.
+        // `LockGateCoverageSelfTest` is the source guard that caught this
+        // missing.
+        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.tagPopover }
+
         store.gitSync?.observeStatus { [weak self] status in
             guard let self else { return }
             self.syncStatus = status

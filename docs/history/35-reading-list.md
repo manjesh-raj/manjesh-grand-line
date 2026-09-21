@@ -205,6 +205,29 @@ is measured in **pixels** (scaled by `rep.pixelsWide / bounds.width`), and the
 expected colour is converted into **`rep.colorSpace`** rather than the sample
 into sRGB.
 
+### What the full run found
+
+The first full pass was 167/5 - and every one of the five was this change:
+
+- **`FM_RUN_LOCK_GATE_COVERAGE_TESTS` was a real defect**, not a fixture. The
+  tag-editor popover never registered with
+  `AppLockGate.registerLockDismissiblePopover`, so a popover left open when
+  the app lock fired would have stayed readable and interactive *above* the
+  overlay - carrying the captain's own data, which is what the lock exists to
+  hide (audit #2 §5.1(b), GL-09). Registered in `loadView`, beside the theme
+  observation.
+- **`FM_RUN_NAVIGATION_COHERENCE_TESTS`' UX4** asserts every
+  `ContextualNewAction.menuTitle` begins with "New ", because the menu item is
+  what tells the captain which thing ⌘N means on the page they are on. "Save
+  Link from Clipboard" became **New Saved Link**.
+- **`FM_RUN_DAYLIGHT_MODULE_TESTS`** pinned the Stores shelf's membership and
+  the Overview trim count (21 → 22). Both fixtures updated with the reason.
+- **`FM_RUN_CAPTURE_ROUTER_TESTS` / `..._VIEW_TESTS`** pinned ⌥Space at five
+  destinations and used ⌘6 as their "a digit the router does not own must fall
+  through" control. Six destinations now, and ⌘7 is the control.
+
+Second full pass: **172 passed, 0 failed, 1 skipped (of 173)**, python 2/0.
+
 **Not verified:** the live `LPMetadataProvider` path against a real site, and
 the live `claude -p` summary. Both are behind seams the suites drive with
 canned answers, deliberately - a suite that fetched a real page would be
