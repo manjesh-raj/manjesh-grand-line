@@ -659,6 +659,13 @@ extension RailDestination {
         case .vault: return .violet
         case .schedules: return .violet
         case .docs: return .blue
+        // `fm/grandline-feature-f1-notebook`: blue is §2.2's "reading
+        // material" hue - Docs, Runbooks, the Fleet overview - and the
+        // notebook is the general form of the two markdown destinations that
+        // already carry it. It is also the hue the reviewed F1 mockup draws
+        // the page's icon tile and primary button in, so the shipped page and
+        // the mockup the captain approved agree.
+        case .notebook: return .blue
         // `fm/grandline-docs-split-runbooks-postmortems`: the same two hues
         // the runbook/postmortem plate cards already used before the split
         // (`HelmDomainHue(tint:)` maps `.info` -> `.blue`, `.warn` -> `.amber`

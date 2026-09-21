@@ -61,6 +61,10 @@ final class HomeCanvasController: NSViewController {
         let logAnalyzerStore: LogAnalyzerStore
         let docsRunbookStore: DocsRunbookStore
         let codePreviewStore: CodePreviewStore
+        /// F1's notebook - the shell's own shared instance, injected like
+        /// every other store here (`checkCanvasConstructsNoStores` forbids
+        /// the canvas building one).
+        let notebookStore: NotebookStore
         /// `fm/grandline-tasks-kanban-devops-split`: the shell's own shared
         /// instance, injected like every other store here - the canvas never
         /// *constructs* one (`checkCanvasConstructsNoStores` forbids exactly
@@ -991,6 +995,7 @@ final class HomeCanvasController: NSViewController {
         case .vault: fillVault(&content)
         case .poneglyph: fillPoneglyph(&content)
         case .docs: fillDocs(&content)
+        case .notebook: fillNotebook(&content)
         case .runbooks: fillRunbooks(&content)
         case .postmortems: fillPostmortems(&content)
         case .dictation: fillDictation(&content)
@@ -1569,6 +1574,31 @@ final class HomeCanvasController: NSViewController {
             content.chip = .warn("Not synced")
             content.body = .note("Sync it once from the Docs page to browse it here, fully offline afterward.")
         }
+    }
+
+    /// F1's notebook card: the two most recently touched pages, and how many
+    /// there are.
+    ///
+    /// GL-14: an empty notebook says so in its own words rather than showing
+    /// "0 pages", and the card never claims a sync state it has not read.
+    private func fillNotebook(_ content: inout HelmModuleCard.Content) {
+        let pages = sources.notebookStore.listPages()
+        content.subtitle = "linked markdown pages"
+        guard !pages.isEmpty else {
+            content.body = .note("No pages yet. Start with today's note - everything you write "
+                                 + "lands in your own config repo as markdown.")
+            return
+        }
+        content.chip = .ok(pages.count == 1 ? "1 page" : "\(pages.count) pages")
+        let rows = pages
+            .sorted { $0.modifiedAt > $1.modifiedAt }
+            .prefix(2)
+            .map { page in
+                HelmModulePeekRow(state: .idle,
+                                  text: page.title,
+                                  value: page.isDailyNote ? "daily note" : page.folder)
+            }
+        content.body = .peekRows(Array(rows))
     }
 
     /// The runbook peek rows this card used to show under `.docs` before the

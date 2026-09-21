@@ -104,7 +104,7 @@ enum DaylightModuleSelfTest {
         // destination's *slot* is independent of which controller populates
         // it. `fm/move-poneglyph-to-stores-space-282a` is the captain's own
         // later ask to move it here, beside the other Stores utilities.
-        .stores: [.vault, .docs, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview, .poneglyph],
+        .stores: [.vault, .docs, .notebook, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview, .poneglyph],
         .engineering: [.updates, .bootstrap, .automation, .githubSync, .settings],
     ]
 
@@ -195,8 +195,16 @@ enum DaylightModuleSelfTest {
         // from Overview like every other Setup card - and this check is what
         // caught it defaulting to *visible* there, which would have put a
         // seventh card on Overview against the captain's own locked decision.
-        if trimmed.count != 20 {
-            fail("expected exactly 20 modules trimmed from Overview, got \(trimmed.count): "
+        //
+        // 20 -> 21: `fm/grandline-feature-f1-notebook` added `.notebook`
+        // (F1 of full review #3 §8). It is a Stores utility like Docs,
+        // Runbooks and Postmortems beside it, so it is trimmed from Overview
+        // for the same reason they are - the canvas's seven cards are the
+        // captain's own locked decision, and a notebook is a surface you open
+        // when you have something to write down rather than one you check in
+        // on each morning.
+        if trimmed.count != 21 {
+            fail("expected exactly 21 modules trimmed from Overview, got \(trimmed.count): "
                  + "\(trimmed.map(\.rawValue).sorted())", &ok)
         }
         for module in trimmed {

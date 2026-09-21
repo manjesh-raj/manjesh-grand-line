@@ -36,6 +36,7 @@ enum ContextualNewAction: String, CaseIterable {
     case schedule
     case command
     case runbook
+    case notebookPage
 
     /// The File menu's own wording for this action, and the Shortcuts sheet's.
     ///
@@ -55,6 +56,11 @@ enum ContextualNewAction: String, CaseIterable {
         case .schedule: return "New Schedule\u{2026}"
         case .command: return "New Command\u{2026}"
         case .runbook: return "New Runbook\u{2026}"
+        // No ellipsis, for the reason this property's own doc comment gives:
+        // a new notebook page is created immediately and focused, and takes
+        // its name from the first heading typed into it. Nothing is filled in
+        // first.
+        case .notebookPage: return "New Page"
         }
     }
 
@@ -70,6 +76,7 @@ enum ContextualNewAction: String, CaseIterable {
         case .schedule: return .schedules
         case .command: return .commandLibrary
         case .runbook: return .runbooks
+        case .notebookPage: return .notebook
         }
     }
 
@@ -102,6 +109,7 @@ enum ContextualNewAction: String, CaseIterable {
         case .schedules: return .schedule
         case .commandLibrary: return .command
         case .runbooks: return .runbook
+        case .notebook: return .notebookPage
         case .homeCanvas, .overview, .strawHat, .console, .review, .logAnalyzer,
              .kubernetes, .tools, .whiteboard, .vault, .dictation, .health,
              .docs, .postmortems, .updates, .bootstrap, .automation,

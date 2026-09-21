@@ -73,7 +73,7 @@ is vendored under `Vendor/`, so the build needs no network.
 | `SwiftTerm` | Pinned to upstream 1.15.0 with **five local patches** - read `Vendor/SwiftTerm/README.md` before touching or re-syncing it |
 | `whisper.cpp` | Local Whisper for dictation, CPU + Metal. The shader is a generated file; see `Scripts/build-whisper-metal-shader.py` |
 | `YamlSwift` | Patched for insertion order and quote preservation |
-| `Excalidraw`, `Monaco` | Committed, self-contained web bundles for the Whiteboard and Code Preview. Loaded from disk with no CDN and no runtime download; `swift build` never touches them |
+| `Excalidraw`, `Monaco` | Committed, self-contained web bundles for the Whiteboard and Code Preview (the Notebook's source pane loads the same Monaco bundle - one integration, not two). Loaded from disk with no CDN and no runtime download; `swift build` never touches them |
 
 A change to a vendored web bundle's source needs its `Scripts/build-*-web.sh`
 re-run - **the app loads the committed artifact, so a source edit alone is
@@ -195,7 +195,7 @@ bar, or a Recents entry.
 | Overview (no space of their own) | **Fleet**, **Straw Hat Pirates**, the morning briefing, the merge queue |
 | Command | **Console**, **Tasks**, **DevOps Commands**, the merge queue card |
 | Operations | **Hosts**, **Log Analyzer**, **Kubernetes**, **Health**, **Schedules** |
-| Stores | **Vault**, **Poneglyph**, **Docs**, **Runbooks**, **Postmortems**, **Tools**, **Dictation**, **Whiteboard**, **Sticky Board**, **Code Preview** |
+| Stores | **Vault**, **Poneglyph**, **Docs**, **Notebook**, **Runbooks**, **Postmortems**, **Tools**, **Dictation**, **Whiteboard**, **Sticky Board**, **Code Preview** |
 | Engineering | **Updates**, **Bootstrap**, **Automation**, **GitHub Sync**, **Settings** |
 
 `Vault` is Automic Vault's hardening panel; **`Poneglyph`** is this app's own

@@ -30,7 +30,7 @@ as they are rather than rewritten across 180 files.
 - [Build, run, test](#build-run-test) - the two CI lanes, and the vendored patches a sync must re-apply
 - [Verification conventions](#verification-conventions) - how a change is proved here
 - [Writing a self-test](#writing-a-self-test)
-- [The AppKit gotcha catalogue](#the-appkit-gotcha-catalogue) - 16 measured traps
+- [The AppKit gotcha catalogue](#the-appkit-gotcha-catalogue) - 17 measured traps
 - [GL invariants](#gl-invariants) - GL-01 .. GL-38, one line each
 - [The component index](#the-component-index) - one button, one card, one row
 - [Stores, subprocesses and secrets](#stores-subprocesses-and-secrets)
@@ -475,7 +475,7 @@ fails unless its entry carries a trailing marker.
 
 ## The AppKit gotcha catalogue
 
-Sixteen traps, every one measured on this app rather than read about. Each was
+Seventeen traps, every one measured on this app rather than read about. Each was
 found by instrumenting a real layout or event pass; several took a full task to
 root-cause, and at least four have recurred in a new file after being fixed in
 an old one. **Read the ones that match what you are about to touch** - a tab
@@ -939,6 +939,51 @@ container (`scroll.bottom == bottom`) and let the *page* decide how tall the
 container gets. Any wrapper of this shape - `HelmPageSidebar` uses the same
 mechanism - wants the same check.
 
+### (17) An `NSTextView` is not a label, and it repaints your colours
+
+**Two separate traps that arrive together the moment a page needs *inline*
+clickable text**, which an `NSTextField` cannot give (its `.link` attribute is
+handled by AppKit itself and goes straight to `NSWorkspace`, with no seam to
+route a click back into the app). Both were measured building the Notebook's
+preview pane (`fm/grandline-feature-f1-notebook`); `NotebookProseView` is the
+worked example.
+
+- **A hand-built text system must retain its `NSTextStorage`.**
+  `NSTextView(frame:)` funnels into `init(frame:textContainer:)`, which a
+  subclass has to override or AppKit traps with "Use of unimplemented
+  initializer" on construction - so the storage/layout-manager/container trio
+  gets built by hand. `NSTextStorage.addLayoutManager` makes the **storage**
+  retain the manager, and the manager's back-reference to its storage is
+  `unowned(unsafe)`: a storage that is only a local variable leaves the layout
+  manager pointing at freed memory the moment the initialiser returns.
+  Measured as `EXC_BAD_ACCESS` inside `objc_autoreleasePoolPop`, with a stack
+  naming the pool rather than the text view. Hold it in a property.
+- **`NSTextView` paints its own `linkTextAttributes` over every `.link`
+  range**, and the default is the system blue plus an underline. So a view
+  that computes a per-run colour - a resolved link in the accent, an
+  unresolved one in the warn hue - installs a correct attributed string and
+  then renders both in one colour. Caught only in a real off-screen render;
+  every assertion against the attributed string passed throughout. Hand it a
+  dictionary carrying neither `.foregroundColor` nor `.underlineStyle`
+  (`[.cursor: NSCursor.pointingHand]` is the useful minimum), and assert that
+  override directly - "the attributed string is right" is a different claim
+  from "the text is painted right".
+
+One more thing worth knowing before reaching for one: **an `NSTextView` has no
+useful intrinsic size**, because it is built to live in a scroll view that
+gives it one. In an `NSStackView` it resolves to zero and the pane renders
+blank. Derive the height from the layout manager, and call
+`ensureLayout(for:)` before `usedRect(for:)` - the rect is not valid until
+layout for that container has actually run.
+
+**A footnote to gotcha (13), from the same task:** a required `width == 0` is
+safe where a required fixed width is not. (13) is about a *minimum* reaching
+the window through a page; zero is a maximum and can never be a floor. That
+matters because a fixed column collapsed only at `contentTie` (499) does not
+actually collapse - the cards inside it outrank it, and a hidden 200pt rail
+measured 154.5pt. Keep the visible width at 499 and give the collapsed state
+its own required zero.
+
 ---
 
 ## GL invariants
@@ -1134,6 +1179,7 @@ can correct an earlier one - and several do.
 | [`29-end-to-end-review-1.md`](docs/history/29-end-to-end-review-1.md) | End-to-end review #1 (HIGH / MEDIUM / LOW) |
 | [`30-full-review-3.md`](docs/history/30-full-review-3.md) | Full review #3 - the eighteen defect findings |
 | [`31-testing-policy.md`](docs/history/31-testing-policy.md) | Where the window-backed / pure-logic rule came from, and the audit behind it |
+| [`32-notebook.md`](docs/history/32-notebook.md) | The Notebook: the page tree, the reused Monaco editor, the markdown preview, wiki-links and backlinks |
 
 ## Maintaining this file
 
