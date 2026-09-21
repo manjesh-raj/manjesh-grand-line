@@ -481,21 +481,50 @@ enum CanvasListsControlsSelfTest {
         let window = makeWindow(view, size: NSSize(width: 200, height: 40))
         defer { window.orderOut(nil); HelmMotion.reducedOverrideForTests = nil }
 
+        // **The cap is asserted against the rule, not against two clock
+        // readings.** `beginTime` is an absolute `CACurrentMediaTime()`
+        // value, so the old `late.beginTime - first.beginTime` measured the
+        // stagger *plus* whatever wall-clock time this test spent between the
+        // two `play` calls - against a 1ms tolerance. It passed locally for
+        // months and failed on a loaded CI runner at 0.24116s against the
+        // 0.24s cap, i.e. by the 1.16ms of building the second view. The
+        // quantity the finding is about is a pure function of the row index
+        // (`HelmRowEntrance.staggerDelay(forRow:)`), and it has no clock in
+        // it at all.
+        let cap = Double(HelmRowEntrance.maxStaggeredRows) * HelmRowEntrance.perRowDelay
+        if HelmRowEntrance.staggerDelay(forRow: 400) != cap {
+            return "row 400 waits \(HelmRowEntrance.staggerDelay(forRow: 400))s; the stagger must cap at "
+                 + "\(cap)s or a long list spends seconds introducing itself"
+        }
+        // The fixture's own discriminating power: the cap has to be doing
+        // something, or comparing a capped value against the cap is vacuous.
+        // An uncapped row 400 would wait 12s.
+        if HelmRowEntrance.staggerDelay(forRow: 400) >= Double(400) * HelmRowEntrance.perRowDelay {
+            return "fixture check: the uncapped delay must be larger than the capped one"
+        }
+        if HelmRowEntrance.staggerDelay(forRow: 0) != 0 {
+            return "the first row must not wait at all"
+        }
+        if HelmRowEntrance.staggerDelay(forRow: 3) != 3 * HelmRowEntrance.perRowDelay {
+            return "a row below the cap must still stagger by its own index"
+        }
+
+        // The behavioural half, with no timing in it: an entrance is really
+        // added, and it holds its "before" state during the delay (without
+        // `.backwards` every row would be fully visible until its own
+        // animation started and the stagger would be invisible).
         HelmRowEntrance.play(view, row: 0)
         guard let first = view.layer?.animation(forKey: "entrance.fade") as? CABasicAnimation else {
             return "the first row got no entrance"
         }
+        if first.fillMode != .backwards {
+            return "the entrance must hold its before state during the delay"
+        }
         let deep = NSView(frame: view.frame)
         window.contentView?.addSubview(deep)
         HelmRowEntrance.play(deep, row: 400)
-        guard let late = deep.layer?.animation(forKey: "entrance.fade") as? CABasicAnimation else {
+        guard deep.layer?.animation(forKey: "entrance.fade") is CABasicAnimation else {
             return "a later row got no entrance"
-        }
-        let spread = late.beginTime - first.beginTime
-        let cap = Double(HelmRowEntrance.maxStaggeredRows) * HelmRowEntrance.perRowDelay
-        if spread > cap + 0.001 {
-            return "row 400 starts \(spread)s after row 0; the stagger must cap at \(cap)s or a long list "
-                 + "spends seconds introducing itself"
         }
 
         HelmMotion.reducedOverrideForTests = true

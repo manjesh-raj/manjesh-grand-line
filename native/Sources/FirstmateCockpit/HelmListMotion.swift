@@ -113,6 +113,21 @@ enum HelmRowEntrance {
     static let duration: TimeInterval = 0.22
     static let rise: CGFloat = 6
 
+    /// How long row `row` waits before its entrance starts.
+    ///
+    /// **Named rather than inlined so the cap can be asserted without a clock
+    /// in the assertion.** `play` turns this into a `beginTime`, which is an
+    /// *absolute* `CACurrentMediaTime()` value - so a test that compared two
+    /// rows' `beginTime`s was really measuring this delay *plus* however long
+    /// the test itself took between the two calls, against a 1ms tolerance.
+    /// That passed locally and failed on a loaded CI runner at 0.2412s
+    /// against a 0.24s cap, which is the 1.16ms the test spent building its
+    /// second view and nothing to do with the stagger. The rule is a pure
+    /// function of the row index; this is it.
+    static func staggerDelay(forRow row: Int) -> TimeInterval {
+        Double(min(max(row, 0), maxStaggeredRows)) * perRowDelay
+    }
+
     /// Plays the entrance for one row, if this list is still in its first
     /// load. Safe to call for every row from `tableView(_:viewFor:row:)`.
     static func play(_ view: NSView, row: Int) {
@@ -122,8 +137,7 @@ enum HelmRowEntrance {
         view.wantsLayer = true
         guard let layer = view.layer else { return }
 
-        let delay = Double(min(row, maxStaggeredRows)) * perRowDelay
-        let begin = CACurrentMediaTime() + delay
+        let begin = CACurrentMediaTime() + staggerDelay(forRow: row)
 
         let fade = CABasicAnimation(keyPath: "opacity")
         fade.fromValue = 0
