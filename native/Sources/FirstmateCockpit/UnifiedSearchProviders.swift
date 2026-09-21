@@ -75,6 +75,10 @@ enum UnifiedSearchKind {
     /// (a folder and a backlink count, not a step count) and dispatches to a
     /// different destination.
     case notebookPage
+    /// F4's saved link. Its own kind for the same reasons `.notebookPage` is:
+    /// it groups separately, its meta line is a host plus a read state, and it
+    /// dispatches into the reading list's own reader.
+    case savedLink
     case stickyNote
     case snippet
     case action
@@ -88,6 +92,7 @@ enum UnifiedSearchKind {
         case .runbook: return "Runbooks"
         case .postmortem: return "Postmortems"
         case .notebookPage: return "Notebook"
+        case .savedLink: return "Reading list"
         case .stickyNote: return "Sticky notes"
         case .snippet: return "Snippets"
         case .action: return "Actions"
@@ -102,7 +107,8 @@ enum UnifiedSearchKind {
     /// landing on a host's *detail* page when the captain meant its live shell
     /// is exactly the confusion the session switcher exists to remove.
     static let groupOrder = ["Active sessions", "Hosts", "Commands", "Tasks & follow-ups",
-                             "Runbooks", "Postmortems", "Notebook", "Sticky notes", "Snippets", "Actions"]
+                             "Runbooks", "Postmortems", "Notebook", "Reading list", "Sticky notes",
+                             "Snippets", "Actions"]
 
     var symbol: String {
         switch self {
@@ -115,6 +121,7 @@ enum UnifiedSearchKind {
         case .runbook: return "doc.text"
         case .postmortem: return "doc.badge.clock"
         case .notebookPage: return "book.and.wrench"
+        case .savedLink: return "bookmark.fill"
         case .stickyNote: return "note.text"
         case .snippet: return "chevron.left.forwardslash.chevron.right"
         case .action: return "bolt.fill"
@@ -137,6 +144,9 @@ enum UnifiedSearchKind {
         // Notebook destination itself - `.info` is that hue's semantic name
         // here, so all twelve palettes resolve their own.
         case .notebookPage: return .info
+        // F4's own hue: `.good` is what `HelmDomainHue.green` maps to, and
+        // green is the hue the reviewed mockup draws the reading list in.
+        case .savedLink: return .good
         // Both are scratch surfaces the captain writes into, not signals -
         // `.neutral` says exactly that, and is the same call Dictation's
         // history rows make for the same reason.
@@ -879,5 +889,49 @@ struct UnifiedSearchNotebookProvider: UnifiedSearchProvider {
         if start != content.startIndex { text = "\u{2026}" + text }
         if end != content.endIndex { text += "\u{2026}" }
         return text
+    }
+}
+
+// MARK: - Reading list (F4)
+
+/// ⌘K over the saved links.
+///
+/// Reads the **live** `ReadingListStore` instance the page and the canvas card
+/// share (GL-23) - this store caches its decoded array and writes back to it,
+/// so a second reader would serve stale rows and become a second source of
+/// truth. The short-lived corpus cache below is `UnifiedSearchNotebookProvider`'s
+/// shape and for its reason: a palette keystroke must not re-read and re-parse
+/// a YAML file.
+struct UnifiedSearchReadingListProvider: UnifiedSearchProvider {
+    let store: ReadingListStore
+    let onOpen: (String) -> Void
+
+    func items(query: String) -> [UnifiedSearchItem] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return [] }
+        return store.links.compactMap { link -> UnifiedSearchItem? in
+            // Every field the card shows is searchable, and the *URL* is in
+            // there deliberately: half of finding a saved link again is
+            // remembering the site rather than the headline.
+            let haystacks = [link.displayTitle, link.url, link.summary, link.aiSummary]
+                + link.tags
+            guard haystacks.contains(where: { $0.range(of: q, options: .caseInsensitive) != nil }) else {
+                return nil
+            }
+            // GL-14 in a search row: an unread link and one whose title has not
+            // been fetched yet read differently, rather than both showing a
+            // bare host.
+            var meta = link.host.isEmpty ? "saved link" : link.host
+            meta += link.isRead ? " \u{00B7} read" : " \u{00B7} unread"
+            if link.metadataState == .pending { meta += " \u{00B7} title still loading" }
+            if !link.tags.isEmpty { meta += " \u{00B7} " + link.tags.joined(separator: ", ") }
+            return UnifiedSearchItem(
+                kind: .savedLink,
+                id: link.id,
+                title: link.displayTitle,
+                meta: meta,
+                actionHint: "Read \u{21B5}",
+                activate: { onOpen(link.id) })
+        }
     }
 }

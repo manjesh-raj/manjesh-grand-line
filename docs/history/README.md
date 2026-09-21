@@ -27,7 +27,7 @@ so `git log` is the tiebreaker.
 
 ## The files
 
-33 files.
+35 files.
 
 
 | File | Covers | Size |
@@ -66,3 +66,4 @@ so `git log` is the tiebreaker.
 | [`32-notebook.md`](32-notebook.md) | Notebook (F1): the page tree, wiki-links and backlinks | 13KB |
 | [`33-capture-and-clipboard.md`](33-capture-and-clipboard.md) | Universal capture (⌥Space) and the encrypted clipboard history | 13KB |
 | [`34-recurrence-and-calendar.md`](34-recurrence-and-calendar.md) | Recurring tasks, reminders and the Tasks calendar view (F5) | 10KB |
+| [`35-reading-list.md`](35-reading-list.md) | Reading list (F4): the link inbox, its metadata, tags and AI summary | 10KB |

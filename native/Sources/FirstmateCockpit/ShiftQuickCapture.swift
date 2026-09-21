@@ -436,6 +436,10 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
         tileRow.translatesAutoresizingMaskIntoConstraints = false
         for destination in CaptureDestination.allCases {
             let tile = CaptureDestinationTile(destination: destination)
+            // F4: which tile is the default is now a function of what has been
+            // typed (`CaptureRouter.defaultDestination`), re-evaluated on every
+            // keystroke by `refreshChips`. `.task` is what an empty panel
+            // shows, which is what it always showed.
             tile.isDefault = destination == .task
             tile.onClick = { [weak self] in self?.file(to: destination) }
             tiles.append(tile)
@@ -569,6 +573,11 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
             clipboardChip.isHidden = true
         }
         chipRow.isHidden = dateChip.isHidden && clipboardChip.isHidden
+
+        // F4: the default tile moves with the text, so the captain can see
+        // where Return will file before pressing it.
+        let preferred = CaptureRouter.defaultDestination(for: draft)
+        for tile in tiles { tile.isDefault = tile.destination == preferred }
     }
 
     /// What the pasteboard is offering, as one line - or nil when there is
@@ -602,8 +611,12 @@ final class ShiftQuickCaptureController: NSWindowController, NSTextFieldDelegate
     func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
         switch commandSelector {
         case #selector(NSResponder.insertNewline(_:)):
-            // Return is ⌘1, not a fourth code path - see this file's header.
-            file(to: .task)
+            // Return is whichever chord the default tile is showing, not a
+            // fourth code path - see this file's header. Before F4 that was
+            // always ⌘1; it is now `CaptureRouter.defaultDestination`, so a
+            // capture that is nothing but a URL lands on the reading list
+            // rather than becoming a task titled with a URL.
+            file(to: CaptureRouter.defaultDestination(for: CaptureRouter.draft(from: inputField.stringValue)))
             return true
         case #selector(NSResponder.cancelOperation(_:)):
             window?.orderOut(nil)

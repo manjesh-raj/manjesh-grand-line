@@ -265,7 +265,8 @@ enum ReadyToMergeCountSelfTest {
                 shiftStore: shiftStore, hostStore: HostStore(), scheduleStore: ScheduleStore(),
                 logAnalyzerStore: LogAnalyzerStore(), docsRunbookStore: DocsRunbookStore(),
                 codePreviewStore: CodePreviewStore(),
-            notebookStore: NotebookStore(), commandLibraryStore: CommandLibraryStore(),
+                notebookStore: NotebookStore(), readingListStore: ReadingListStore(),
+                commandLibraryStore: CommandLibraryStore(),
                 stickyBoardStore: StickyBoardStore()))
             let canvasWindow = OffScreenProbe.window(width: 1400, height: 900, styleMask: [.titled, .resizable])
             canvasWindow.contentViewController = canvas

@@ -147,6 +147,12 @@ final class AppShellController: NSViewController {
     /// (audit §6.6b).
     let codePreviewStore: CodePreviewStore
 
+    /// The same `ReadingListStore` instance the page and the canvas card use,
+    /// exposed for ⌘K's own provider - same reason as `notebookStore` below:
+    /// the palette must search what the page shows, not a second reader of the
+    /// same folder (GL-23).
+    let readingListStore: ReadingListStore
+
     /// The same `NotebookStore` instance the page and the canvas card use,
     /// exposed for ⌘K's own provider - same reason as `codePreviewStore`
     /// above: the palette must search what the page shows, not a second
@@ -198,6 +204,10 @@ final class AppShellController: NSViewController {
     /// store is built here rather than inside the page, like every other
     /// store the canvas also reads (`HomeCanvasController`'s rule 1).
     private let notebook: NotebookController
+    /// F4 of full review #3 §8 - see `ReadingListController.swift`'s header.
+    /// Its store is built in `init` beside every other store the canvas also
+    /// reads (`HomeCanvasController`'s rule 1).
+    private let readingList: ReadingListController
     private let postmortems = PostmortemsController()
     private let updates = UpdatesController()
     private let bootstrap: BootstrapController
@@ -515,6 +525,13 @@ final class AppShellController: NSViewController {
         let notebookStore = NotebookStore()
         self.notebookStore = notebookStore
         self.notebook = NotebookController(store: notebookStore)
+        // GL-23 again: **one** `ReadingListStore`, shared by the page, the
+        // canvas card, ⌘K's provider and ⌥Space's filer. This one caches its
+        // decoded array, so a second instance would genuinely be a second
+        // source of truth racing the first's writes.
+        let readingListStore = ReadingListStore()
+        self.readingListStore = readingListStore
+        self.readingList = ReadingListController(store: readingListStore)
         self.homeCanvas = HomeCanvasController(sources: .init(
             shiftStore: shiftStore,
             hostStore: hostStore,
@@ -523,6 +540,7 @@ final class AppShellController: NSViewController {
             docsRunbookStore: DocsRunbookStore(),
             codePreviewStore: codePreviewStore,
             notebookStore: notebookStore,
+            readingListStore: readingListStore,
             commandLibraryStore: commandLibraryStore,
             stickyBoardStore: stickyBoard.store))
         super.init(nibName: nil, bundle: nil)
@@ -678,6 +696,7 @@ final class AppShellController: NSViewController {
         mounter.register(DestinationSlot(id: .health, title: RailDestination.health.title, mountsEagerly: false, controller: health))
         mounter.register(DestinationSlot(id: .docs, title: RailDestination.docs.title, mountsEagerly: false, controller: docs))
         mounter.register(DestinationSlot(id: .notebook, title: RailDestination.notebook.title, mountsEagerly: false, controller: notebook))
+        mounter.register(DestinationSlot(id: .readingList, title: RailDestination.readingList.title, mountsEagerly: false, controller: readingList))
         mounter.register(DestinationSlot(id: .runbooks, title: RailDestination.runbooks.title, mountsEagerly: false, controller: runbooks))
         mounter.register(DestinationSlot(id: .postmortems, title: RailDestination.postmortems.title, mountsEagerly: false, controller: postmortems))
         // `fm/grandline-separate-setup-destinations`: four ordinary lines,
@@ -1041,6 +1060,8 @@ final class AppShellController: NSViewController {
         // action, so its cluster empties while the editor is open.
         runbooks.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         runbooks.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
+        readingList.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        readingList.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
         notebook.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         notebook.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
         postmortems.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
@@ -2416,6 +2437,7 @@ final class AppShellController: NSViewController {
         case .command: newCommandFromMenu()
         case .runbook: newRunbookFromMenu()
         case .notebookPage: newNotebookPageFromMenu()
+        case .savedLink: newSavedLinkFromMenu()
         }
     }
 
@@ -2425,6 +2447,13 @@ final class AppShellController: NSViewController {
     /// work from wherever the captain happened to be.
     /// F1's own creation verb, following the established shape: select the
     /// destination first so the page exists, then act on it.
+    /// F4's own creation verb, the same shape as every other one here: select
+    /// the destination first so the page exists, then act on it.
+    @objc func newSavedLinkFromMenu() {
+        show(.readingList)
+        readingList.newLinkFromMenu()
+    }
+
     @objc func newNotebookPageFromMenu() {
         show(.notebook)
         notebook.newPageFromMenu()
@@ -2513,6 +2542,25 @@ final class AppShellController: NSViewController {
                 _ = self.codePreviewStore.create(name: CaptureRouter.snippetName(for: draft),
                                                  content: draft.text)
                 return .filed(.codeSnippet)
+
+            case .link:
+                // The one destination whose store decides whether the capture
+                // is even a link, so the panel is told what actually happened
+                // rather than being told "filed" unconditionally. A duplicate
+                // and a non-URL are both `.refused`, and the panel keeps the
+                // captain in the loop - the same posture ⌘4 takes below for a
+                // different reason.
+                switch self.readingListStore.add(draft.text) {
+                case .added:
+                    // The page may never have been mounted, so the card it
+                    // will show is built on first visit from the store this
+                    // just wrote - nothing here has to reach into a view.
+                    return .filed(.link)
+                case .duplicate(let existing):
+                    return .refused("\(existing.host) is already on the reading list.")
+                case .rejected(let why):
+                    return .refused(why)
+                }
 
             case .credential:
                 self.show(.poneglyph)
@@ -2806,6 +2854,18 @@ final class AppShellController: NSViewController {
 
     func shutdownStickyBoard() {
         stickyBoard.shutdown()
+    }
+
+    /// Flush the reading list's debounced git commit on the way to quitting
+    /// (F4, `fm/grandline-feature-f4-reading-list`).
+    ///
+    /// The shell's forward for the same reason the three below are:
+    /// `readingList` is `private` and the app delegate is where
+    /// `applicationWillTerminate` lives. Safe on a destination that was never
+    /// mounted - the controller and its store are built eagerly at init, and a
+    /// store with nothing queued flushes nothing.
+    func shutdownReadingList() {
+        readingList.shutdown()
     }
 
     /// Flush and commit anything Code Preview still has in flight, on the way
@@ -3364,6 +3424,13 @@ final class AppShellController: NSViewController {
     func openRunbook(id: String) {
         show(.runbooks)
         runbooks.openRunbook(id: id)
+    }
+
+    /// ⌘K's own deep link into a saved link - it opens the page's own reader,
+    /// not the system browser, because the palette is inside this app.
+    func openReadingListLink(id: String) {
+        show(.readingList)
+        readingList.openReader(id: id)
     }
 
     /// ⌘K's own deep link into a notebook page.

@@ -178,6 +178,10 @@ enum DaylightModule: String, CaseIterable {
     // Runbooks, Postmortems. `canvasOrder` is `allCases`, so declaration order
     // is the only thing that places a card.
     case notebook
+    // `fm/grandline-feature-f4-reading-list`: appended beside the markdown
+    // destinations it sits with on the Stores shelf. `canvasOrder` is
+    // `allCases`, so declaration order is the only thing that places a card.
+    case readingList
     case runbooks
     case postmortems
     case dictation
@@ -250,7 +254,7 @@ enum DaylightModule: String, CaseIterable {
         // asked for Poneglyph to move out of Engineering into Stores
         // (`fm/move-poneglyph-to-stores-space-282a`), so it sits here now
         // rather than beside the other four Setup pages.
-        case .vault, .poneglyph, .docs, .notebook, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview: return .stores
+        case .vault, .poneglyph, .docs, .notebook, .readingList, .runbooks, .postmortems, .tools, .dictation, .whiteboard, .stickyBoard, .codePreview: return .stores
         case .updates, .bootstrap, .automation, .githubSync, .settings: return .engineering
         }
     }
@@ -287,7 +291,7 @@ enum DaylightModule: String, CaseIterable {
     var appearsOnOverview: Bool {
         switch self {
         case .tasks, .hosts, .updates, .bootstrap, .automation, .githubSync,
-             .logAnalyzer, .kubernetes, .vault, .docs, .notebook, .runbooks, .postmortems, .dictation, .tools, .whiteboard, .stickyBoard, .codePreview,
+             .logAnalyzer, .kubernetes, .vault, .docs, .notebook, .readingList, .runbooks, .postmortems, .dictation, .tools, .whiteboard, .stickyBoard, .codePreview,
              // `fm/implement-grand-line-secrets-vault-poneg-ad`: a *new* module
              // has to be listed here explicitly, because the `default` below
              // returns `true` - and `true` would put a seventh card on Overview,
@@ -358,6 +362,7 @@ enum DaylightModule: String, CaseIterable {
         case .vault: return .vault
         case .docs: return .docs
         case .notebook: return .notebook
+        case .readingList: return .readingList
         case .runbooks: return .runbooks
         case .postmortems: return .postmortems
         case .dictation: return .dictation
@@ -414,6 +419,10 @@ enum DaylightModule: String, CaseIterable {
         // `.strawHat` and `.commandLibrary` below - a card and the page it
         // opens should not disagree even in their fallback.
         case .notebook: return "book.and.wrench"
+        // Kept in sync with `RailDestination.readingList.symbol` by hand, like
+        // `.notebook` above - a card and the page it opens should not disagree
+        // even in their fallback.
+        case .readingList: return "bookmark.fill"
         case .runbooks: return "list.bullet.rectangle"
         case .postmortems: return "doc.text.magnifyingglass"
         case .dictation: return "mic.fill"
@@ -468,6 +477,7 @@ enum DaylightModule: String, CaseIterable {
         case .vault: return "Vault"
         case .docs: return "Docs"
         case .notebook: return "Notebook"
+        case .readingList: return "Reading List"
         case .runbooks: return "Runbooks"
         case .postmortems: return "Postmortems"
         case .dictation: return "Dictation"

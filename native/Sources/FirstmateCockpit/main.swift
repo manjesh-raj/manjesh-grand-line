@@ -826,6 +826,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // pushed - i.e. absent from the next machine, which is the one property
         // this feature exists to guarantee.
         appShell.shutdownCredentialVault()
+        // F4: the reading list's commit+push is debounced at 3s like the
+        // Sticky Board's, so ⌘Q within that window would leave a link saved
+        // locally but never pushed - i.e. absent from the next machine, which
+        // is the whole reason the list is git-synced.
+        appShell.shutdownReadingList()
         // Straw Hat Pirates phase 1: nothing to flush (no on-disk history yet
         // by explicit scope) - this stops an in-flight `claude -p` child from
         // outliving the app by up to its 300s bound.
@@ -1204,6 +1209,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // F1's notebook. Reads the **live** store instance the page and the
         // canvas card share (GL-23), for the same reason the two below do.
+        // F4's reading list. Reads the **live** store instance the page, the
+        // canvas card and ⌥Space's filer share (GL-23).
+        index.register(UnifiedSearchReadingListProvider(
+            store: appShell.readingListStore,
+            onOpen: { [weak self] id in self?.appShell.openReadingListLink(id: id) }
+        ))
+
         index.register(UnifiedSearchNotebookProvider(
             store: appShell.notebookStore,
             onOpen: { [weak self] id in self?.appShell.openNotebookPage(id: id) }
@@ -1965,6 +1977,17 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     // too (see its `init`), so this is the belt to that brace.
     if (ProcessInfo.processInfo.environment["FM_NOTEBOOK_DIR"] ?? "").isEmpty {
         setenv("FM_NOTEBOOK_DIR", scratchRoot.appendingPathComponent("notebook", isDirectory: true).path, 1)
+    }
+    // F4's reading list (`fm/grandline-feature-f4-reading-list`), for exactly
+    // the reason the entry above spells out: `ReadingListStore()` is reachable
+    // from a bare, no-argument production constructor, and with no override it
+    // resolves to `ReadingListGitSync.shared` - which shares
+    // `ShiftGitSync.shared`'s real working tree, a live clone of the captain's
+    // actual private `manjesh-config`. Any suite that mounts an
+    // `AppShellController` constructs one. The store honours `FM_SHIFT_DIR`
+    // too (see its `init`), so this is the belt to that brace.
+    if (ProcessInfo.processInfo.environment["FM_READING_LIST_DIR"] ?? "").isEmpty {
+        setenv("FM_READING_LIST_DIR", scratchRoot.appendingPathComponent("reading-list", isDirectory: true).path, 1)
     }
     // The full-app audit's §7.2, and the entry that generalises every one
     // above: `FM_SHIFT_DIR` is the *root* override the whole
@@ -2832,6 +2855,22 @@ if ProcessInfo.processInfo.environment["FM_RUN_CAPTURE_ROUTER_TESTS"] == "1" {
 }
 if ProcessInfo.processInfo.environment["FM_RUN_CAPTURE_ROUTER_VIEW_TESTS"] == "1" {
     exit(CaptureRouterViewSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-feature-f4-reading-list` (F4 of full review #3 §8).
+// `ReadingListSelfTest` is pure logic - URL detection and normalisation, tag
+// folding, the read-state and filter rules, the AI prompt and reply parse, the
+// store's disk round trip, its GL-01 refusal and its forward-compatible decode
+// - and runs in CI's blocking lane. `ReadingListViewSelfTest` mounts the real
+// destination in a real window and reads painted colours back out of a render,
+// so it is window-backed and lives in `run-all-tests.sh`'s NEEDS_SESSION list.
+// The split is AGENTS.md's own rule: the test is what the suite asserts, never
+// what it imports.
+if ProcessInfo.processInfo.environment["FM_RUN_READING_LIST_TESTS"] == "1" {
+    exit(ReadingListSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_READING_LIST_VIEW_TESTS"] == "1" {
+    exit(ReadingListViewSelfTest.run() ? 0 : 1)
 }
 
 if ProcessInfo.processInfo.environment["FM_RUN_NOTEBOOK_TESTS"] == "1" {

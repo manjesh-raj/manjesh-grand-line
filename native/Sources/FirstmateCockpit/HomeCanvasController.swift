@@ -65,6 +65,10 @@ final class HomeCanvasController: NSViewController {
         /// every other store here (`checkCanvasConstructsNoStores` forbids
         /// the canvas building one).
         let notebookStore: NotebookStore
+        /// F4's reading list - the shell's own shared instance, injected like
+        /// every other store here (`checkCanvasConstructsNoStores` forbids the
+        /// canvas building one).
+        let readingListStore: ReadingListStore
         /// `fm/grandline-tasks-kanban-devops-split`: the shell's own shared
         /// instance, injected like every other store here - the canvas never
         /// *constructs* one (`checkCanvasConstructsNoStores` forbids exactly
@@ -996,6 +1000,7 @@ final class HomeCanvasController: NSViewController {
         case .poneglyph: fillPoneglyph(&content)
         case .docs: fillDocs(&content)
         case .notebook: fillNotebook(&content)
+        case .readingList: fillReadingList(&content)
         case .runbooks: fillRunbooks(&content)
         case .postmortems: fillPostmortems(&content)
         case .dictation: fillDictation(&content)
@@ -1597,6 +1602,37 @@ final class HomeCanvasController: NSViewController {
                 HelmModulePeekRow(state: .idle,
                                   text: page.title,
                                   value: page.isDailyNote ? "daily note" : page.folder)
+            }
+        content.body = .peekRows(Array(rows))
+    }
+
+    /// F4's reading list card: what is still waiting, and the two most
+    /// recently saved.
+    ///
+    /// GL-14 twice over: an empty list says so in its own words rather than
+    /// showing "0 unread", and a link whose title has not been fetched yet
+    /// shows its host rather than a blank row pretending to be a headline.
+    private func fillReadingList(_ content: inout HelmModuleCard.Content) {
+        let links = sources.readingListStore.links
+        content.subtitle = "links saved to read"
+        guard !links.isEmpty else {
+            content.body = .note("Nothing saved yet. Paste a URL here, or press \u{2318}6 in the "
+                                 + "\u{2325}Space capture panel, and it lands here as a card.")
+            return
+        }
+        let unread = links.filter { !$0.isRead }
+        content.chip = unread.isEmpty
+            ? .ok("all read")
+            : .warn(unread.count == 1 ? "1 unread" : "\(unread.count) unread")
+        // Unread first, newest first - the grid's own order, so the card and
+        // the page agree about what is at the top of the pile.
+        let rows = links
+            .sorted(by: ReadingListQuery.order)
+            .prefix(2)
+            .map { link in
+                HelmModulePeekRow(state: link.isRead ? .idle : .warn,
+                                  text: link.displayTitle,
+                                  value: link.host)
             }
         content.body = .peekRows(Array(rows))
     }
