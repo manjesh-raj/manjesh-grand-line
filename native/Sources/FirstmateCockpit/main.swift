@@ -1191,6 +1191,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             onOpenPostmortem: { [weak self] id in self?.appShell.openPostmortem(id: id) }
         ))
 
+        // F1's notebook. Reads the **live** store instance the page and the
+        // canvas card share (GL-23), for the same reason the two below do.
+        index.register(UnifiedSearchNotebookProvider(
+            store: appShell.notebookStore,
+            onOpen: { [weak self] id in self?.appShell.openNotebookPage(id: id) }
+        ))
+
         // The two newest stores (audit §6.5b / §6.6b). Both read the *live*
         // instance the page itself uses - `StickyBoardStore` caches and
         // writes, so a second one would serve stale rows and become a second
@@ -1913,6 +1920,17 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     // suite can *write*.
     if (ProcessInfo.processInfo.environment["FM_SESSION_RESTORE_FILE"] ?? "").isEmpty {
         setenv("FM_SESSION_RESTORE_FILE", scratchRoot.appendingPathComponent("session-restore.json").path, 1)
+    }
+    // F1's notebook (`fm/grandline-feature-f1-notebook`), for exactly the
+    // reason the Docs-runbooks entry above spells out: `NotebookStore()` is
+    // reachable from a bare, no-argument production constructor, and with no
+    // override it resolves to `NotebookGitSync.shared` - which shares
+    // `ShiftGitSync.shared`'s real working tree, a live clone of the captain's
+    // actual private `manjesh-config`. Any suite that mounts an
+    // `AppShellController` constructs one. The store honours `FM_SHIFT_DIR`
+    // too (see its `init`), so this is the belt to that brace.
+    if (ProcessInfo.processInfo.environment["FM_NOTEBOOK_DIR"] ?? "").isEmpty {
+        setenv("FM_NOTEBOOK_DIR", scratchRoot.appendingPathComponent("notebook", isDirectory: true).path, 1)
     }
     // The full-app audit's §7.2, and the entry that generalises every one
     // above: `FM_SHIFT_DIR` is the *root* override the whole
@@ -2728,6 +2746,21 @@ if ProcessInfo.processInfo.environment["FM_RUN_CODE_PREVIEW_TESTS"] == "1" {
 }
 if ProcessInfo.processInfo.environment["FM_RUN_CODE_PREVIEW_VIEW_TESTS"] == "1" {
     exit(CodePreviewViewSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-feature-f1-notebook` (F1 of full review #3 §8).
+// `NotebookSelfTest` is pure logic - the markdown parser, the wiki-link
+// scanner, the resolver's tie-break order, the backlink index, the daily-note
+// naming, the store's disk round trip and its path-escape refusal - and runs
+// in CI's blocking lane. `NotebookViewSelfTest` mounts the real destination in
+// a real window (and the real vendored Monaco bundle), so it is window-backed
+// and lives in `run-all-tests.sh`'s NEEDS_SESSION list. The split is AGENTS.md's
+// own rule: the test is what the suite asserts, never what it imports.
+if ProcessInfo.processInfo.environment["FM_RUN_NOTEBOOK_TESTS"] == "1" {
+    exit(NotebookSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_NOTEBOOK_VIEW_TESTS"] == "1" {
+    exit(NotebookViewSelfTest.run() ? 0 : 1)
 }
 
 if ProcessInfo.processInfo.environment["FM_RUN_QUOTA_DATA_TESTS"] == "1" {

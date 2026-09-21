@@ -165,6 +165,18 @@ import AppKit
 /// (`isDailyUse == false`), which is a property of how often it is opened
 /// rather than of which space it sits in.
 ///
+/// `.notebook` (`fm/grandline-feature-f1-notebook`) is F1 of full review
+/// #3 §8 - the captain's own first pick out of that section's twenty-four
+/// recommendations. Markdown pages in a tree, a Monaco source editor, a live
+/// preview, `[[wiki-links]]` and backlinks, all in `GrandLineDocs/notebook/`
+/// on the same git sync Runbooks and Postmortems already use. It sits in the
+/// Stores space beside Docs, Runbooks, Postmortems, Tools, the Whiteboard and
+/// the Sticky Board, because a notebook is the general form of the two
+/// markdown destinations already on that shelf - the report's own "fit" note
+/// says exactly that. It is a utility (`isDailyUse == false`) on the same
+/// criterion as those siblings: a surface a captain opens when they have
+/// something to write down, not one they check in on.
+///
 /// `isDailyUse` (fm/grandline-sidebar-labeled-nav) marks the 6
 /// `navStack` members (Overview, Console, Hosts, Shift, Review, Log
 /// Analyzer - the last added by `fm/grandline-log-analyzer-build`) as the set
@@ -208,7 +220,7 @@ enum RailDestination: String, CaseIterable {
     /// reachable through `show(_:)`), so nothing about routing needed a
     /// second concept.
     case homeCanvas
-    case overview, strawHat, console, hosts, shift, review, logAnalyzer, kubernetes, tools, whiteboard, codePreview, stickyBoard, commandLibrary, vault, dictation, schedules, health, docs, runbooks, postmortems, updates, bootstrap, automation, githubSync, poneglyph, settings
+    case overview, strawHat, console, hosts, shift, review, logAnalyzer, kubernetes, tools, whiteboard, codePreview, stickyBoard, commandLibrary, vault, dictation, schedules, health, docs, notebook, runbooks, postmortems, updates, bootstrap, automation, githubSync, poneglyph, settings
 
     var symbol: String {
         switch self {
@@ -279,6 +291,14 @@ enum RailDestination: String, CaseIterable {
         // header icon, so the rail row and the card it opens onto agree.
         case .health: return "waveform.path.ecg"
         case .docs: return "book.closed"
+        // `fm/grandline-feature-f1-notebook`: an open book with a pen over it
+        // - the one glyph in this family that reads as "somewhere you write"
+        // rather than as reference material you read (`.docs`' closed book),
+        // a procedure (`.runbooks`' list) or a loose thought
+        // (`.stickyBoard`'s note). Verified to resolve -
+        // `NSImage(systemSymbolName:)` returns nil silently, and this app has
+        // shipped an invisible icon that way.
+        case .notebook: return "book.and.wrench"
         // `fm/grandline-docs-split-runbooks-postmortems`: reused verbatim
         // from the icons this exact file's own Runbooks/Postmortems empty
         // states already carried before the split, so the destination and
@@ -368,7 +388,7 @@ enum RailDestination: String, CaseIterable {
         case .automation: return AutomationIcon.image
         case .githubSync: return GithubSyncIcon.image
         case .settings: return SettingsAppIcon.image
-        case .homeCanvas, .overview, .review, .vault, .dictation, .bootstrap, .commandLibrary:
+        case .homeCanvas, .overview, .review, .vault, .dictation, .bootstrap, .commandLibrary, .notebook:
             return nil
         }
     }
@@ -394,6 +414,7 @@ enum RailDestination: String, CaseIterable {
         case .schedules: return "Schedules"
         case .health: return "Health"
         case .docs: return "Docs"
+        case .notebook: return "Notebook"
         case .runbooks: return "Runbooks"
         case .postmortems: return "Postmortems"
         case .updates: return "Updates"
@@ -449,7 +470,7 @@ enum RailDestination: String, CaseIterable {
         // group and is the one remaining tint that collides with none of them.
         case .poneglyph: return .good
         case .homeCanvas, .overview, .strawHat, .console, .hosts, .shift, .review, .logAnalyzer, .kubernetes,
-             .tools, .whiteboard, .stickyBoard, .codePreview, .commandLibrary, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems, .settings: return .accent
+             .tools, .whiteboard, .stickyBoard, .codePreview, .commandLibrary, .vault, .dictation, .schedules, .health, .docs, .notebook, .runbooks, .postmortems, .settings: return .accent
         }
     }
 
@@ -466,7 +487,7 @@ enum RailDestination: String, CaseIterable {
              // on the same criterion as its Stores-space siblings. Inert
              // since Phase 2 removed the rail - see this enum's own note.
              .strawHat,
-             .tools, .whiteboard, .codePreview, .stickyBoard, .commandLibrary, .vault, .dictation, .schedules, .health, .docs, .runbooks, .postmortems,
+             .tools, .whiteboard, .codePreview, .stickyBoard, .commandLibrary, .vault, .dictation, .schedules, .health, .docs, .notebook, .runbooks, .postmortems,
              .updates, .bootstrap, .automation, .githubSync, .poneglyph, .settings: return false
         }
     }

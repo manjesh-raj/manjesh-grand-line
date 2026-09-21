@@ -318,6 +318,14 @@ NEEDS_SESSION=(
   # window server and a live web content process. FM_RUN_CODE_PREVIEW_TESTS
   # covers the logic half and does run in CI.
   "FM_RUN_CODE_PREVIEW_VIEW_TESTS"
+  # `fm/grandline-feature-f1-notebook` (F1): mounts the real Notebook
+  # destination in a real window, measures its three view modes' rendered
+  # geometry, reads painted colours back out of the preview's own attributed
+  # strings, and loads the vendored Monaco bundle to read its tokenizer output
+  # over the bridge. Its pure-logic half (FM_RUN_NOTEBOOK_TESTS - the markdown
+  # parser, the wiki-link scanner, the backlink index, the store) is
+  # deliberately not here and does run in CI.
+  "FM_RUN_NOTEBOOK_VIEW_TESTS"
   "FM_RUN_CONTRAST_TESTS"
   # Mounts real ScheduleHistoryController/ScheduleRunLogController instances
   # and touches the real pasteboard - window-backed for the same reason as

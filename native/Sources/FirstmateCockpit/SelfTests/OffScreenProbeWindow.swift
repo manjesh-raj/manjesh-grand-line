@@ -158,6 +158,16 @@ enum OffScreenProbe {
             backing: .buffered,
             defer: false)
         window.probeOrigin = "\(file):\(line)"
+        // **A `.titled` window still defaults to releasing itself on close**,
+        // so `window.close()` over-releases the reference the factory just
+        // handed back. Suites have got away with it because assigning
+        // `contentViewController` flips this flag off as a side effect - a
+        // suite that builds its view hierarchy some other way and closes
+        // inside an `autoreleasepool` dies with `EXC_BAD_ACCESS` inside
+        // `objc_autoreleasePoolPop`, with a stack that names the pool rather
+        // than the window (measured, `fm/grandline-feature-f1-notebook`).
+        // Setting it here means no suite has to know.
+        window.isReleasedWhenClosed = false
         window.needsWindowServerMouse = needsWindowServerMouse
         if needsWindowServerMouse {
             // Invisible by alpha rather than by position. Deliberately *not*

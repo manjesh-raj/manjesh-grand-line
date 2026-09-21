@@ -147,6 +147,12 @@ final class AppShellController: NSViewController {
     /// (audit §6.6b).
     let codePreviewStore: CodePreviewStore
 
+    /// The same `NotebookStore` instance the page and the canvas card use,
+    /// exposed for ⌘K's own provider - same reason as `codePreviewStore`
+    /// above: the palette must search what the page shows, not a second
+    /// reader of the same folder.
+    let notebookStore: NotebookStore
+
     /// The Sticky Board's own store - one instance, for the reason its own
     /// declaration gives.
     var stickyBoardStore: StickyBoardStore { stickyBoard.store }
@@ -183,6 +189,10 @@ final class AppShellController: NSViewController {
     /// Postmortems are their own top-level destinations now, split out of
     /// `DocsController`'s former tabs - see that file's own header.
     private let runbooks = RunbooksController()
+    /// F1 of full review #3 §8 - see `NotebookController.swift`'s header. Its
+    /// store is built here rather than inside the page, like every other
+    /// store the canvas also reads (`HomeCanvasController`'s rule 1).
+    private let notebook: NotebookController
     private let postmortems = PostmortemsController()
     private let updates = UpdatesController()
     private let bootstrap: BootstrapController
@@ -492,6 +502,13 @@ final class AppShellController: NSViewController {
         let codePreviewStore = CodePreviewStore()
         self.codePreviewStore = codePreviewStore
         self.codePreview = CodePreviewController(store: codePreviewStore)
+        // GL-23's lesson again: **one** `NotebookStore`, shared by the page
+        // and the canvas card. It re-reads its own git-synced folder per call
+        // rather than caching, so two would not diverge - one is still the
+        // cheaper and more obviously-correct answer.
+        let notebookStore = NotebookStore()
+        self.notebookStore = notebookStore
+        self.notebook = NotebookController(store: notebookStore)
         self.homeCanvas = HomeCanvasController(sources: .init(
             shiftStore: shiftStore,
             hostStore: hostStore,
@@ -499,6 +516,7 @@ final class AppShellController: NSViewController {
             logAnalyzerStore: LogAnalyzerStore(),
             docsRunbookStore: DocsRunbookStore(),
             codePreviewStore: codePreviewStore,
+            notebookStore: notebookStore,
             commandLibraryStore: commandLibraryStore,
             stickyBoardStore: stickyBoard.store))
         super.init(nibName: nil, bundle: nil)
@@ -653,6 +671,7 @@ final class AppShellController: NSViewController {
         mounter.register(DestinationSlot(id: .schedules, title: RailDestination.schedules.title, mountsEagerly: false, controller: schedules))
         mounter.register(DestinationSlot(id: .health, title: RailDestination.health.title, mountsEagerly: false, controller: health))
         mounter.register(DestinationSlot(id: .docs, title: RailDestination.docs.title, mountsEagerly: false, controller: docs))
+        mounter.register(DestinationSlot(id: .notebook, title: RailDestination.notebook.title, mountsEagerly: false, controller: notebook))
         mounter.register(DestinationSlot(id: .runbooks, title: RailDestination.runbooks.title, mountsEagerly: false, controller: runbooks))
         mounter.register(DestinationSlot(id: .postmortems, title: RailDestination.postmortems.title, mountsEagerly: false, controller: postmortems))
         // `fm/grandline-separate-setup-destinations`: four ordinary lines,
@@ -1016,6 +1035,8 @@ final class AppShellController: NSViewController {
         // action, so its cluster empties while the editor is open.
         runbooks.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         runbooks.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
+        notebook.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        notebook.onDrillActionsChanged = { [weak self] in self?.refreshDrillHeaderActions() }
         postmortems.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         postmortems.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
         dictation.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
@@ -2388,6 +2409,7 @@ final class AppShellController: NSViewController {
         case .schedule: newScheduleFromMenu()
         case .command: newCommandFromMenu()
         case .runbook: newRunbookFromMenu()
+        case .notebookPage: newNotebookPageFromMenu()
         }
     }
 
@@ -2395,6 +2417,13 @@ final class AppShellController: NSViewController {
     /// all. Each follows the established shape - select the destination first
     /// so the sheet has something to present over, then act on it - so they
     /// work from wherever the captain happened to be.
+    /// F1's own creation verb, following the established shape: select the
+    /// destination first so the page exists, then act on it.
+    @objc func newNotebookPageFromMenu() {
+        show(.notebook)
+        notebook.newPageFromMenu()
+    }
+
     @objc func newStickyNoteFromMenu() {
         show(.stickyBoard)
         stickyBoard.addNoteFromMenu()
@@ -3253,6 +3282,12 @@ final class AppShellController: NSViewController {
     func openRunbook(id: String) {
         show(.runbooks)
         runbooks.openRunbook(id: id)
+    }
+
+    /// ⌘K's own deep link into a notebook page.
+    func openNotebookPage(id: String) {
+        show(.notebook)
+        notebook.openPage(id: id)
     }
 
     func openPostmortem(id: String) {

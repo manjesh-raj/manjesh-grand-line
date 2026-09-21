@@ -114,7 +114,7 @@ enum DestinationSlotID: String, CaseIterable {
     /// launch landing and the target of every drill page's back button.
     case homeCanvas
     case overview, strawHat, console, hosts, shift, review, logAnalyzer, kubernetes
-    case tools, whiteboard, codePreview, stickyBoard, commandLibrary, vault, dictation, schedules, health, docs, runbooks, postmortems, poneglyph, settings
+    case tools, whiteboard, codePreview, stickyBoard, commandLibrary, vault, dictation, schedules, health, docs, notebook, runbooks, postmortems, poneglyph, settings
     /// The four Engineering setup pages. One slot each since
     /// `fm/grandline-separate-setup-destinations`; they shared a single
     /// `setup` slot before that.
@@ -144,6 +144,7 @@ extension RailDestination {
         case .schedules: return .schedules
         case .health: return .health
         case .docs: return .docs
+        case .notebook: return .notebook
         case .runbooks: return .runbooks
         case .postmortems: return .postmortems
         // `fm/grandline-separate-setup-destinations`: these four shared one
@@ -212,6 +213,10 @@ extension RailDestination {
         // just the Playbook, since Runbooks and Postmortems are their own
         // destinations now.
         case .docs: return "The DevOps Playbook, browsable offline"
+        // In practice a fallback only: `NotebookController` conforms to
+        // `DaylightDrillActions` and always supplies its own live line (page
+        // count and sync state).
+        case .notebook: return "Linked markdown pages, in your own config repo"
         case .runbooks: return "Step-by-step operational procedures"
         case .postmortems: return "Incident write-ups and root causes"
         // `fm/grandline-separate-setup-destinations` split the one line these

@@ -198,6 +198,7 @@ enum StrawHatViewSelfTest {
             logAnalyzerStore: LogAnalyzerStore(),
             docsRunbookStore: DocsRunbookStore(),
             codePreviewStore: CodePreviewStore(),
+            notebookStore: NotebookStore(),
             commandLibraryStore: CommandLibraryStore(),
             stickyBoardStore: StickyBoardStore()))
         let canvasWindow = OffScreenProbe.window(width: 1400, height: 900, styleMask: [.titled, .resizable])
@@ -376,6 +377,7 @@ enum StrawHatViewSelfTest {
             logAnalyzerStore: LogAnalyzerStore(),
             docsRunbookStore: DocsRunbookStore(),
             codePreviewStore: CodePreviewStore(),
+            notebookStore: NotebookStore(),
             commandLibraryStore: CommandLibraryStore(),
             stickyBoardStore: StickyBoardStore()))
         let window = OffScreenProbe.window(width: 1400, height: 900, styleMask: [.titled, .resizable])

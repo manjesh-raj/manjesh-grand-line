@@ -27,7 +27,7 @@ so `git log` is the tiebreaker.
 
 ## The files
 
-31 files, 1636KB total.
+32 files, 1649KB total.
 
 
 | File | Covers | Size |
@@ -63,3 +63,4 @@ so `git log` is the tiebreaker.
 | [`29-end-to-end-review-1.md`](29-end-to-end-review-1.md) | End-to-end review #1 | 29KB |
 | [`30-full-review-3.md`](30-full-review-3.md) | Full review #3 | 7KB |
 | [`31-testing-policy.md`](31-testing-policy.md) | The self-test classification rule | 3KB |
+| [`32-notebook.md`](32-notebook.md) | Notebook (F1): the page tree, wiki-links and backlinks | 13KB |

@@ -70,6 +70,11 @@ enum UnifiedSearchKind {
     case project
     case runbook
     case postmortem
+    /// F1's notebook page. Its own kind rather than a third `runbook`-family
+    /// member because it groups separately, carries a different meta line
+    /// (a folder and a backlink count, not a step count) and dispatches to a
+    /// different destination.
+    case notebookPage
     case stickyNote
     case snippet
     case action
@@ -82,6 +87,7 @@ enum UnifiedSearchKind {
         case .task, .followUp, .project: return "Tasks & follow-ups"
         case .runbook: return "Runbooks"
         case .postmortem: return "Postmortems"
+        case .notebookPage: return "Notebook"
         case .stickyNote: return "Sticky notes"
         case .snippet: return "Snippets"
         case .action: return "Actions"
@@ -96,7 +102,7 @@ enum UnifiedSearchKind {
     /// landing on a host's *detail* page when the captain meant its live shell
     /// is exactly the confusion the session switcher exists to remove.
     static let groupOrder = ["Active sessions", "Hosts", "Commands", "Tasks & follow-ups",
-                             "Runbooks", "Postmortems", "Sticky notes", "Snippets", "Actions"]
+                             "Runbooks", "Postmortems", "Notebook", "Sticky notes", "Snippets", "Actions"]
 
     var symbol: String {
         switch self {
@@ -108,6 +114,7 @@ enum UnifiedSearchKind {
         case .project: return "folder"
         case .runbook: return "doc.text"
         case .postmortem: return "doc.badge.clock"
+        case .notebookPage: return "book.and.wrench"
         case .stickyNote: return "note.text"
         case .snippet: return "chevron.left.forwardslash.chevron.right"
         case .action: return "bolt.fill"
@@ -126,6 +133,10 @@ enum UnifiedSearchKind {
         case .command: return .violet
         case .task, .followUp, .project: return .warn
         case .runbook, .postmortem: return .good
+        // The "reading material" blue this app gives Docs, Runbooks and the
+        // Notebook destination itself - `.info` is that hue's semantic name
+        // here, so all twelve palettes resolve their own.
+        case .notebookPage: return .info
         // Both are scratch surfaces the captain writes into, not signals -
         // `.neutral` says exactly that, and is the same call Dictation's
         // history rows make for the same reason.
@@ -792,5 +803,81 @@ struct UnifiedSearchActionProvider: UnifiedSearchProvider {
                 activate: action.run
             )
         }
+    }
+}
+
+// MARK: - Notebook pages
+
+/// F1's notebook, in ⌘K.
+///
+/// The report's own F1 entry names this as one of the things the feature
+/// inherits "for free" by living in `GrandLineDocs/` - and it very nearly is:
+/// this provider is `UnifiedSearchDocsProvider` with one store and one
+/// destination changed, including its short-TTL corpus cache, which is there
+/// for the same measured reason (the palette re-reads on every keystroke
+/// otherwise, synchronously, on main).
+///
+/// The meta line is deliberately *not* a snippet of the match. A notebook page
+/// is found by name far more often than by content, and where it is found by
+/// content the excerpt is what the row shows; where it is found by title, the
+/// folder is the more useful second line, because two pages called "Notes" in
+/// two folders is a thing a notebook grows.
+struct UnifiedSearchNotebookProvider: UnifiedSearchProvider {
+    let store: NotebookStore
+    let onOpen: (String) -> Void
+
+    private final class Corpus {
+        static let ttl: TimeInterval = 2
+        var loadedAt = Date.distantPast
+        var pages: [NotebookPage] = []
+    }
+
+    private static let corpus = Corpus()
+
+    private func loadedPages() -> [NotebookPage] {
+        let corpus = Self.corpus
+        if Date().timeIntervalSince(corpus.loadedAt) >= Corpus.ttl {
+            corpus.pages = store.listPages()
+            corpus.loadedAt = Date()
+        }
+        return corpus.pages
+    }
+
+    /// How much of a content match the row quotes.
+    static let snippetContext = 60
+
+    func items(query: String) -> [UnifiedSearchItem] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !q.isEmpty else { return [] }
+        return loadedPages().compactMap { page -> UnifiedSearchItem? in
+            let meta: String
+            if page.title.range(of: q, options: .caseInsensitive) != nil {
+                meta = page.folder.isEmpty
+                    ? "Notebook page"
+                    : "Notebook \u{00B7} \(NotebookStore.humanise(lastComponentOf: page.folder))"
+            } else if let range = page.content.range(of: q, options: .caseInsensitive) {
+                meta = Self.excerpt(around: range, in: page.content)
+            } else {
+                return nil
+            }
+            return UnifiedSearchItem(
+                kind: .notebookPage,
+                id: page.id,
+                title: page.title,
+                meta: meta,
+                actionHint: "Open \u{21B5}",
+                activate: { onOpen(page.id) })
+        }
+    }
+
+    private static func excerpt(around range: Range<String.Index>, in content: String) -> String {
+        let start = content.index(range.lowerBound, offsetBy: -snippetContext, limitedBy: content.startIndex)
+            ?? content.startIndex
+        let end = content.index(range.upperBound, offsetBy: snippetContext, limitedBy: content.endIndex)
+            ?? content.endIndex
+        var text = String(content[start..<end]).replacingOccurrences(of: "\n", with: " ")
+        if start != content.startIndex { text = "\u{2026}" + text }
+        if end != content.endIndex { text += "\u{2026}" }
+        return text
     }
 }
