@@ -100,11 +100,19 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     ///
     /// `String`-backed for the same reason `ShiftTopLevelView` is:
     /// `HelmSegmentedTabs` deals in caller-owned ids.
-    private enum ShiftTasksView: String { case board, list }
+    ///
+    /// F5 added the third: a calendar. It is the same switch rather than a
+    /// new control, because it answers the third question this page gets -
+    /// the board is "what is in flight", the list is "everything, by due
+    /// date", and the calendar is "when does this land, and does the repeat
+    /// rule I just wrote do what I meant". A recurrence rule in particular
+    /// has nowhere else in this app it can be verified by eye.
+    private enum ShiftTasksView: String { case board, list, calendar }
     private var tasksView: ShiftTasksView = .board
     private let tasksViewToggle = HelmSegmentedTabs(items: [
         .init(id: ShiftTasksView.board.rawValue, title: "Board"),
         .init(id: ShiftTasksView.list.rawValue, title: "List"),
+        .init(id: ShiftTasksView.calendar.rawValue, title: "Calendar"),
     ], selected: ShiftTasksView.board.rawValue, size: .compact)
 
     /// Which slice of the captain's tasks the page is showing - the sidebar's
@@ -213,6 +221,11 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     private let boardSection = NSStackView()
     private let boardToolbar = NSStackView()
     private let boardView = ShiftBoardView()
+    /// F5's third view. Mounted beside the board and only ever hidden, the
+    /// same treatment the board itself gets - and hidden through the *stack*,
+    /// which drops a hidden arranged subview out of layout entirely rather
+    /// than leaving its constraints behind (AGENTS.md gotcha (11)).
+    private let calendarView = ShiftCalendarView()
     private let projectFilterBar = ShiftProjectFilterBar()
     /// `nil` = every project, matching `ShiftProjectFilterBar`'s own "All
     /// projects" chip. Held here rather than read back off the chip row so
@@ -390,6 +403,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         // (AGENTS.md gotcha (11)'s one exception), Follow-ups takes the row
         // on its own rather than sitting beside an empty half.
         dashboardContainer.addArrangedSubview(boardSection)
+        dashboardContainer.addArrangedSubview(calendarView)
         dashboardContainer.addArrangedSubview(tasksRow)
         // Projects is its own full-width section, a direct child of the
         // dashboard rather than nested in either column - it renders a
@@ -432,6 +446,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
             projectsSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             weeklyReviewSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             boardSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            calendarView.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             // The toolbar spans the page so its trailing-pinned Board/List
             // switch actually lands at the page's own trailing edge.
             tabRow.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
@@ -924,6 +939,9 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         boardView.onAddTask = { [weak self] column in self?.addTask(in: column) }
         boardView.onDropTask = { [weak self] id, column in self?.moveTask(id: id, to: column) ?? false }
 
+        calendarView.onOpenTask = { [weak self] id in self?.openBoardTask(id: id) }
+        calendarView.onAddTask = { [weak self] day in self?.addTask(on: day) }
+
         boardSection.orientation = .vertical
         boardSection.alignment = .leading
         boardSection.spacing = HelmMetrics.s3
@@ -969,6 +987,31 @@ final class ShiftController: NSViewController, DaylightDrillActions {
             // seeing at the top of a Done pile.
             .sorted { ($0.completedAt ?? "") > ($1.completedAt ?? "") }
         return byColumn
+    }
+
+    /// What the calendar draws: every filtered active task, plus the
+    /// recently-completed ones the board's Done column already shows. Both
+    /// halves run through the same filters, so a project chip filters the
+    /// grid exactly as it filters the board.
+    private func calendarTasks() -> [ShiftTask] {
+        var tasks = store.activeTasks.filter(matchesFilters)
+        let cutoff = Calendar.current.date(byAdding: .day, value: -Self.doneColumnLookbackDays, to: Date())
+        tasks += store.allCompletedTasks()
+            .filter(matchesFilters)
+            .filter { task in
+                guard let cutoff,
+                      let completed = task.completedAt.flatMap(ShiftStore.date(fromISO8601:)) else { return false }
+                return completed >= cutoff
+            }
+        return tasks
+    }
+
+    /// A double-click on a calendar day: the same New Task sheet every other
+    /// affordance opens, with that day already filled in.
+    private func addTask(on day: String) {
+        var prefill = ShiftTask.fresh()
+        prefill.dueDate = day
+        presentTaskEditor(for: nil, prefill: prefill, defaultProjectID: projectFilter)
     }
 
     private func matchesProjectFilter(_ task: ShiftTask) -> Bool {
@@ -1569,6 +1612,11 @@ final class ShiftController: NSViewController, DaylightDrillActions {
         // page has been corrected for before.
         projectFilterBar.setProjects(store.projects, theme: theme)
         boardView.setTasks(boardTasks(), projects: store.projects, theme: theme)
+        // The calendar reads the same filtered set the board and the list do,
+        // plus the completed tasks the Done column already looks back over -
+        // a month grid that silently drops everything finished would read as
+        // a month where nothing happened.
+        calendarView.configure(tasks: calendarTasks(), projects: store.projects)
         applyTasksViewVisibility()
 
         followUpListView.setItems(followUps)
@@ -1613,7 +1661,9 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     private func applyTasksViewVisibility() {
         let boardShowing = !isProjectDetailFullPage && tasksView == .board
         boardSection.isHidden = !boardShowing
-        let hideTasks = isProjectDetailFullPage || boardShowing
+        let calendarShowing = !isProjectDetailFullPage && tasksView == .calendar
+        calendarView.isHidden = !calendarShowing
+        let hideTasks = isProjectDetailFullPage || boardShowing || calendarShowing
         taskPanel.isHidden = hideTasks
         // The *column wrapper*, not just the panel inside it. `tasksRow` is
         // `.fillEqually`, and a visible-but-empty column still claims its
@@ -2235,16 +2285,25 @@ final class ShiftController: NSViewController, DaylightDrillActions {
     }
 
     var debugBoardView: ShiftBoardView? { boardView }
+
+    /// F5's calendar, and whether it is the view that is actually showing -
+    /// both halves, because a calendar that renders correctly while hidden
+    /// is the exact shape of a regression the switch cannot show.
+    var debugCalendarView: ShiftCalendarView { calendarView }
+    var debugCalendarIsVisible: Bool { !calendarView.isHidden }
+
     var debugProjectFilterBar: ShiftProjectFilterBar? { projectFilterBar }
     var debugBoardIsVisible: Bool { !boardSection.isHidden }
     var debugTaskPanelIsVisible: Bool { !taskPanel.isHidden }
 
     /// Drives the real toggle's own handler, so a test cannot pass against a
     /// pill wired to nothing.
-    func debugSelectTasksView(_ id: String) {
-        guard let view = ShiftTasksView(rawValue: id) else { return }
-        switchTasksView(view)
-    }
+    ///
+    /// F5 routed this through `HelmSegmentedTabs.debugClickTab` rather than
+    /// calling `switchTasksView` directly: the previous version proved the
+    /// page's switch function worked and said nothing about whether the pill
+    /// reaches it, which is the half that breaks when a third pill is added.
+    func debugSelectTasksView(_ id: String) { tasksViewToggle.debugClickTab(id: id) }
 
     /// The page's one render pass, for a test that has just mutated the store
     /// behind its back.
@@ -2313,6 +2372,7 @@ final class ShiftController: NSViewController, DaylightDrillActions {
             .withAlphaComponent(0.6).cgColor
         projectFilterBar.applyTheme(theme)
         boardView.applyTheme(theme)
+        calendarView.applyTheme(theme)
         boardHint.textColor = muted
 
         reviewGreeting.textColor = ink

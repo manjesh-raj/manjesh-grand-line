@@ -3728,6 +3728,16 @@ final class HelmSegmentedTabs: NSView {
         return true
     }
 
+    #if FM_SELFTESTS
+    /// Drives the same path a real pill click takes - `select` plus the
+    /// caller's `onSelect` - so a suite proves the pill is wired to the page
+    /// rather than only that the page's own switch function works.
+    func debugClickTab(id: String) {
+        select(id)
+        onSelect?(id)
+    }
+    #endif
+
     @objc private func pillClicked(_ sender: NSClickGestureRecognizer) {
         guard let id = sender.view?.identifier?.rawValue else { return }
         // Repaint immediately, then hand the id up: a page that re-themes on

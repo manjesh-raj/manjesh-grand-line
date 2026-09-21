@@ -1091,6 +1091,17 @@ noted.
   call; a component that themes itself must do so *after* it builds its chrome.
 - **A theme observer repaints; it never fetches** (GL-24), and it must not
   rebuild a page that is not on screen.
+- **`HelmTint.neutral` is page ink, and washing it as a *tinted surface*
+  produces a near-black chip.** `HelmContrast.tintedSurface` is correct for
+  every real hue and wrong for this one, because `.neutral` resolves to
+  `chromeInkHex` - so the wash lands a few percent off full ink rather than a
+  few percent off the surface. It matters because `.neutral` is what
+  `ShiftProjectPalette` gives a record with **no** project, which is most of
+  them: the commonest chip on a surface is then also its heaviest. A no-identity
+  chip wants `HelmField.fill` plus ink text, the same treatment the Kanban's
+  cards already use. Caught in a real off-screen render
+  ([`34-recurrence-and-calendar.md`](docs/history/34-recurrence-and-calendar.md)),
+  not from the code.
 - `HelmDomainHue.identityHex` is for identity (it resolves to `.neutral` off the
   Daylight family); `fallbackTint` resolves a *semantic* slot and will paint an
   alert bar on a benign row.
@@ -1218,6 +1229,7 @@ can correct an earlier one - and several do.
 | [`31-testing-policy.md`](docs/history/31-testing-policy.md) | Where the window-backed / pure-logic rule came from, and the audit behind it |
 | [`32-notebook.md`](docs/history/32-notebook.md) | The Notebook: the page tree, the reused Monaco editor, the markdown preview, wiki-links and backlinks |
 | [`33-capture-and-clipboard.md`](docs/history/33-capture-and-clipboard.md) | Universal capture (the ⌥Space router) and the encrypted clipboard history behind ⌘⇧V |
+| [`34-recurrence-and-calendar.md`](docs/history/34-recurrence-and-calendar.md) | Recurring tasks (`ShiftRecurrence`), the per-task reminder offset, and the Tasks page's calendar view |
 
 ## Maintaining this file
 

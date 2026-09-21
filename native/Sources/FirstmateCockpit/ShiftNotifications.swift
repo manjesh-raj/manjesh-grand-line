@@ -108,7 +108,11 @@ final class ShiftNotificationScheduler {
         var dueTaskCount = 0
         for task in store.activeTasks {
             guard let due = ShiftDateFormatting.dateTime(from: task.dueDate, time: task.dueTime) else { continue }
-            guard due <= horizon else { continue }
+            // F5's "remind me N minutes before": the per-task offset replaces
+            // this scheduler's own `lookahead` for the task that carries one,
+            // rather than adding a second mechanism beside it. A task with no
+            // offset keeps the exact behaviour it had.
+            guard due <= Self.horizon(for: task, now: now, default: horizon) else { continue }
             dueTaskCount += 1
             guard notifiedTaskDueAt[task.id] != due else { continue }
             notifiedTaskDueAt[task.id] = due
@@ -146,6 +150,20 @@ final class ShiftNotificationScheduler {
         }
 
         onDueCountsChanged?(dueTaskCount, dueFollowUpCount)
+    }
+
+    /// How far ahead of `task`'s due time this poll is willing to fire.
+    ///
+    /// `static` and parameterised so the pure-logic suite can assert the rule
+    /// without a timer, a store or a notification centre - the whole of what
+    /// "remind me N minutes before" means is this one comparison.
+    ///
+    /// `0` is a real offset ("at the due time") and is deliberately not the
+    /// same as `nil` ("this app's default lookahead"), which is why the
+    /// optional is unwrapped rather than defaulted.
+    static func horizon(for task: ShiftTask, now: Date, default fallback: Date) -> Date {
+        guard let minutes = task.reminderMinutesBefore else { return fallback }
+        return now.addingTimeInterval(TimeInterval(max(0, minutes) * 60))
     }
 
     private func notify(title: String, body: String, identifier: String,

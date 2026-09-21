@@ -423,9 +423,16 @@ final class ShiftStore {
             task.completedAt = iso
             task.updatedAt = iso
             activeTasks.remove(at: idx)
+            let spawned = Self.nextOccurrence(after: task, now: now)
+            if let spawned { activeTasks.append(spawned) }
             persistActiveTasks()
             appendToCompletedMonth(task, month: ShiftStore.monthKey(for: now))
             logActivity(kind: "task_completed", summary: "Completed \"\(task.title)\"", targetID: task.id, now: now)
+            if let spawned {
+                logActivity(kind: "task_recurrence_advanced",
+                            summary: "Scheduled the next \"\(spawned.title)\"",
+                            targetID: spawned.id, now: now)
+            }
         } else {
             guard let (month, task) = findCompletedTask(id: id) else { return }
             var restored = task
@@ -438,6 +445,50 @@ final class ShiftStore {
             logActivity(kind: "task_reopened", summary: "Reopened \"\(restored.title)\"", targetID: restored.id, now: now)
         }
         notify()
+    }
+
+    /// The next instance of a recurring task, or `nil` when the task does
+    /// not repeat or its rule has run out (F5).
+    ///
+    /// **Completing an instance is what advances the series.** There is no
+    /// background expansion and no stored series: one instance is live at a
+    /// time, and finishing it writes the next one into `active.yaml`. That is
+    /// what makes a recurring task behave like every other task everywhere
+    /// else in this app - the board, the list, the calendar, the notifier and
+    /// Weekly Review all see an ordinary task with a due date, and none of
+    /// them needed to learn what a rule is.
+    ///
+    /// Three things the new instance deliberately does not carry over:
+    /// `completedAt` (it is not done), the subtasks' done flags (a checklist
+    /// on a repeating task is the checklist for *this* occurrence), and the
+    /// attachment (the file is keyed by task id, so a new id has none - and
+    /// copying the bytes for every occurrence of a daily task is how a
+    /// git-synced tree grows without bound, GL-35).
+    ///
+    /// Reopening a completed recurring task does **not** withdraw the
+    /// instance this spawned. Un-completing is a correction to one
+    /// occurrence, and silently deleting a future task the captain may
+    /// already have edited is the worse of the two surprises.
+    static func nextOccurrence(after task: ShiftTask, now: Date = Date()) -> ShiftTask? {
+        guard let rule = task.recurrence,
+              let anchor = ShiftDateFormatting.dateTime(from: task.dueDate, time: task.dueTime),
+              let next = rule.next(after: anchor, anchor: anchor) else { return nil }
+        let iso = ShiftStore.iso8601(now)
+        let (dateStr, timeStr) = ShiftDateFormatting.components(from: next)
+        var spawned = task
+        spawned.id = UUID().uuidString
+        spawned.status = .todo
+        spawned.completedAt = nil
+        spawned.createdAt = iso
+        spawned.updatedAt = iso
+        spawned.dueDate = dateStr
+        // A task with a date but no time keeps having no time: `components`
+        // always returns both, so the time is dropped back off here rather
+        // than inventing a 00:00 deadline the original never had.
+        spawned.dueTime = task.dueTime == nil ? nil : timeStr
+        spawned.subtasks = task.subtasks.map { ShiftSubtask(id: UUID().uuidString, title: $0.title, done: false) }
+        spawned.hasAttachment = false
+        return spawned
     }
 
     /// Toggles one subtask's done state on a task, wherever it currently

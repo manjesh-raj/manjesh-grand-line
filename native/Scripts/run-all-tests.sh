@@ -355,6 +355,10 @@ NEEDS_SESSION=(
   # a drag session needs a window to drag in. Its pure-logic half
   # (FM_RUN_SHIFT_BOARD_TESTS) is deliberately not here and runs in CI.
   "FM_RUN_SHIFT_BOARD_VIEW_TESTS"
+  # F5's calendar: mounts the real Tasks page in a real window, clicks the
+  # Calendar pill and reads the month grid's own laid-out cell frames. Its
+  # pure-logic half (FM_RUN_SHIFT_RECURRENCE_TESTS) is deliberately not here.
+  "FM_RUN_SHIFT_CALENDAR_VIEW_TESTS"
   "FM_RUN_SHIFT_TASKS_PAGE_TESTS"
   # ---------------------------------------------------------------------
   # The full-app audit's §7.1 finding: these eight all create real
