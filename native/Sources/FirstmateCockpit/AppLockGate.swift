@@ -170,6 +170,17 @@ enum AppLockedSurface {
     /// popover may open at all, since a reopened popover can still show a
     /// previous reply from before the lock engaged.
     case strawHatMenuBarPopover
+    /// F12: a `;abbrev` snippet trigger expanding into whatever app has focus.
+    ///
+    /// Its own case rather than sharing `.dictation`'s, per this file's own
+    /// header rule, and the two are genuinely different surfaces even though
+    /// they share one Accessibility grant and one paste path: dictation types
+    /// what the captain is saying *right now*, this types what they saved
+    /// earlier. Against a walk-up threat model that difference is the whole
+    /// point - the saved text is the captain's data, and a passer-by who types
+    /// `;sig` gets it with nothing to say at the microphone. A shared case
+    /// would let either lose its gate with no test failing.
+    case snippetExpansion
 }
 
 final class AppLockGate {

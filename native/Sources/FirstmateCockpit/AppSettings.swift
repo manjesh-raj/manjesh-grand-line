@@ -38,6 +38,7 @@ final class AppSettings {
         static let terminalShortcuts = "fm.terminalShortcuts"
         static let quickAccess = "fm.quickAccess"
         static let hasSeenWelcome = "fm.hasSeenWelcome"
+        static let snippetExpansionEnabled = "fm.snippetExpansionEnabled"
     }
 
     /// GL-P3 (audit §6.10): the defaults store is injectable.
@@ -182,6 +183,21 @@ final class AppSettings {
     var dictationCleanupEnabled: Bool {
         get { defaults.bool(forKey: Keys.dictationCleanupEnabled) }
         set { defaults.set(newValue, forKey: Keys.dictationCleanupEnabled) }
+    }
+
+    /// F12's master switch: whether a snippet's `;abbrev` trigger expands
+    /// while the captain is typing in other apps.
+    ///
+    /// Off by default, and unlike the Dictation toggles above the reason is
+    /// not a download or a network call - it is that this one installs a
+    /// global keyboard monitor. A feature that watches every keystroke on the
+    /// machine is opt-in even when the watching is as bounded as
+    /// `SnippetExpander`'s (see that file's "Keystroke privacy" note). Turning
+    /// it off tears the monitors down rather than leaving them installed and
+    /// ignored.
+    var snippetExpansionEnabled: Bool {
+        get { defaults.bool(forKey: Keys.snippetExpansionEnabled) }
+        set { defaults.set(newValue, forKey: Keys.snippetExpansionEnabled) }
     }
 
     /// Dictation's "Use local Whisper engine" toggle

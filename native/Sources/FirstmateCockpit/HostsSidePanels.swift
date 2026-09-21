@@ -717,6 +717,11 @@ final class HostsSideStack: NSView {
     let workspace = HostsWorkspacePanel()
     let detail = HostsDetailPanel()
     let quickActions = HostsQuickActionsPanel()
+    /// F12. Shown only on the Snippets tab - it is the one panel here that is
+    /// about a single tab rather than about the page. An *arranged* subview,
+    /// so hiding it genuinely removes it from the column's layout (gotcha
+    /// (11): an ordinary hidden `NSView` would keep its height forever).
+    let expansion = SnippetExpansionPanel()
 
     private let scroll = NSScrollView()
     private let document = FlippedView()
@@ -725,7 +730,7 @@ final class HostsSideStack: NSView {
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = NSStackView(views: [workspace, detail, quickActions])
+        let stack = NSStackView(views: [workspace, detail, expansion, quickActions])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = HelmMetrics.s4
@@ -829,6 +834,7 @@ final class HostsSideStack: NSView {
     func applyTheme(_ theme: HelmTheme) {
         workspace.applyTheme(theme)
         detail.applyTheme(theme)
+        expansion.applyTheme(theme)
         quickActions.applyTheme(theme)
     }
 }

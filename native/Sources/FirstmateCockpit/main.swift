@@ -140,6 +140,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         },
         onUp: { [weak self] in self?.dictationEngine.stopRecording() }
     )
+    // F12 (`fm/grandline-feature-f12-snippet-expander`): the system-wide
+    // `;abbrev` expander. One instance for the app's whole lifetime, over the
+    // same `snippetStore` the Hosts page edits - same shape as
+    // `dictationHotkey`/`shiftHotkey` above, and deliberately the same one
+    // Accessibility grant as both. Its monitors are installed only while the
+    // captain has turned the feature on; see `SnippetExpander.refresh()`.
+    lazy var snippetExpander = SnippetExpander(store: snippetStore)
     // fm/grandline-app-lock: the app-level password lock's timing state
     // machine - see AppLock.swift's header for the idle/hard-logout math.
     let appLock = AppLockController()
@@ -506,6 +513,37 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         dictationHotkey.start()
 
+        // F12. Three wirings, all of them "ask the one place that knows":
+        // whether a terminal is on screen (the `.consoleOnly` scope's whole
+        // question), the store's own change signal, and the page's card.
+        snippetExpander.isConsoleFocusedProvider = { [weak self] in
+            self?.appShell.isTerminalDestinationShowing ?? false
+        }
+        snippetStore.observe { [weak self] in self?.snippetExpander.rebuildTable() }
+        hostsPanel.snippetExpansionState = { [weak self] in
+            guard let self else { return (enabled: false, trusted: false, triggerCount: 0) }
+            return (enabled: AppSettings.shared.snippetExpansionEnabled,
+                    trusted: self.snippetExpander.isAccessibilityTrusted,
+                    triggerCount: self.snippetExpander.armedTriggerCount)
+        }
+        hostsPanel.onSnippetExpansionToggled = { [weak self] enabled in
+            AppSettings.shared.snippetExpansionEnabled = enabled
+            // The settings write alone would leave the monitors exactly as
+            // they were - the same trap `DictationHotkey.updateShortcut`'s own
+            // header records for the shortcut recorder.
+            self?.snippetExpander.refresh()
+            // Turning it on is the first moment this feature genuinely needs
+            // the permission, which is when this app asks for it (Dictation's
+            // own rule). It is the same single grant, so this is a silent
+            // no-op for a captain who already granted it for ⌥Space.
+            if enabled { self?.snippetExpander.requestPermissionIfNeeded() }
+        }
+        hostsPanel.onRequestAccessibilityTrust = { [weak self] in
+            self?.snippetExpander.requestPermissionIfNeeded()
+        }
+        // Off by default, so on a fresh install this installs nothing at all.
+        snippetExpander.refresh()
+
         // `shiftMenuBar` is `lazy` - force it into existence now so its
         // `NSStatusItem` actually appears at launch rather than only the
         // first time something else happens to reference the property.
@@ -846,6 +884,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         BackgroundSignalsPoller.shared.stop()
         ScheduleRunner.shared.stop()
         dictationHotkey.stop()
+        snippetExpander.stop()
         appLock.stop()
     }
 
@@ -2943,6 +2982,19 @@ if ProcessInfo.processInfo.environment["FM_RUN_SCRATCHPAD_TESTS"] == "1" {
 }
 if ProcessInfo.processInfo.environment["FM_RUN_SCRATCHPAD_VIEW_TESTS"] == "1" {
     exit(ScratchpadPadViewSelfTest.run() ? 0 : 1)
+}
+
+// F12's snippet expander (`fm/grandline-feature-f12-snippet-expander`). Two
+// suites, split the way AGENTS.md's "Writing a self-test" requires: the
+// trigger grammar, the lookup, the placeholders and the scope/exclusion policy
+// assert nothing that needs a window and therefore guard CI's blocking lane,
+// while the Snippets page's own card, rows and editor sheet are measured in a
+// real `NSWindow` and live in `NEEDS_SESSION`.
+if ProcessInfo.processInfo.environment["FM_RUN_SNIPPET_EXPANSION_TESTS"] == "1" {
+    exit(SnippetExpansionSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_SNIPPET_EXPANDER_VIEW_TESTS"] == "1" {
+    exit(SnippetExpanderViewSelfTest.run() ? 0 : 1)
 }
 
 if ProcessInfo.processInfo.environment["FM_RUN_NOTEBOOK_TESTS"] == "1" {
