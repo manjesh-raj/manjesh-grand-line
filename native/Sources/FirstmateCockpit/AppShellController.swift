@@ -2605,6 +2605,25 @@ final class AppShellController: NSViewController {
         codePreview.runCodeSnippet()
     }
 
+    /// F15's ⌘⇧S. Unlike `runCodeSnippetFromMenu` - which refuses off its own
+    /// page because ⌘R has a page-local meaning - this one *navigates*: the
+    /// capture is the thing the captain asked for, the Whiteboard is only
+    /// where it lands, and refusing because they happened to be on Console
+    /// would make the chord feel broken. Same shape as every `new*FromMenu`
+    /// below.
+    @objc func captureScreenRegionFromMenu() {
+        show(.whiteboard)
+        whiteboard.captureTapped()
+    }
+
+    /// The copy half. This one *does* refuse off-page: there is no board to
+    /// copy anywhere else, and navigating to the Whiteboard to copy whatever
+    /// happens to be on it is not what the item says.
+    @objc func copyWhiteboardImageFromMenu() {
+        guard case .rail(.whiteboard)? = currentDestinationKindForMenus else { return }
+        whiteboard.copyImageTapped()
+    }
+
     @objc func newCredentialFromMenu() {
         show(.poneglyph)
         poneglyph.newCredentialFromMenu()

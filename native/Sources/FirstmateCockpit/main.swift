@@ -1372,6 +1372,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                         keyEquivalent: "r").withSymbol("play.fill")
         runSnippetItem.target = menuTarget
         fileMenu.addItem(runSnippetItem)
+        // F15's capture, beside F11's Run Snippet and for the same reason: a
+        // page verb reachable from a chord gets a real menu item, so the chord
+        // is discoverable and lands in the Help menu's generated shortcut
+        // sheet for free (`KeyboardShortcutCatalog` walks this tree).
+        //
+        // **Not the mockup's ⌘⇧5.** That chord belongs to macOS's own
+        // Screenshot app system-wide, so an app menu item declaring it would
+        // never fire - the system consumes the event before any app sees it,
+        // which is a dead menu item of exactly the kind AGENTS.md's duplicate-
+        // chord rule exists to prevent, just with the system rather than a
+        // sibling item as the winner. ⌘⇧S was checked free against this file's
+        // own chords (⌘⌃S is Show Hosts; nothing claims ⇧⌘S), which is what
+        // `NavigationCoherenceSelfTest` enforces.
+        let captureRegionItem = NSMenuItem(title: "Capture Screen Region\u{2026}",
+                                           action: #selector(AppShellController.captureScreenRegionFromMenu),
+                                           keyEquivalent: "s").withSymbol("camera.viewfinder")
+        captureRegionItem.keyEquivalentModifierMask = [.command, .shift]
+        captureRegionItem.target = menuTarget
+        fileMenu.addItem(captureRegionItem)
+        // No chord: the board's own header button is the discoverable copy
+        // action, and every free ⌘⇧ letter that reads as "copy" is taken
+        // (⌘⇧C is the Log Analyzer's Copy Analysis). Same "menu item only, no
+        // keyEquivalent" convention as Quick Connect and Find in Terminal.
+        let copyBoardItem = NSMenuItem(title: "Copy Board as Image",
+                                       action: #selector(AppShellController.copyWhiteboardImageFromMenu),
+                                       keyEquivalent: "").withSymbol("doc.on.doc")
+        copyBoardItem.target = menuTarget
+        fileMenu.addItem(copyBoardItem)
 
         // Edit menu - Cut/Copy/Paste/Select All + Find.
         let editMenuItem = NSMenuItem()
@@ -2839,6 +2867,21 @@ if ProcessInfo.processInfo.environment["FM_RUN_WHITEBOARD_VIEW_TESTS"] == "1" {
 // text-to-diagram layer beside the AI one. Pure logic and **CI-runnable** -
 // unlike its AI sibling, which needs a fake `claude` on disk, the whole point
 // of this layer is that no such thing is involved.
+// F15 of full review #3 §8 (`fm/grandline-feature-f15-screenshot-annotate`):
+// screenshot capture -> Whiteboard -> annotate -> copy. Two suites, split the
+// same way the Whiteboard's own pair is - `ScreenCaptureAnnotateSelfTest` is
+// pure logic (the capture decision, the pasteboard intake, the encode and the
+// placement maths) and runs in CI; `WhiteboardCaptureViewSelfTest` drives a
+// real Excalidraw canvas and pixel-samples the flattened export, so it needs a
+// session.
+if ProcessInfo.processInfo.environment["FM_RUN_SCREEN_CAPTURE_ANNOTATE_TESTS"] == "1" {
+    exit(ScreenCaptureAnnotateSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_WHITEBOARD_CAPTURE_VIEW_TESTS"] == "1" {
+    exit(WhiteboardCaptureViewSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_WHITEBOARD_DSL_TESTS"] == "1" {
     exit(WhiteboardDSLSelfTest.run() ? 0 : 1)
 }

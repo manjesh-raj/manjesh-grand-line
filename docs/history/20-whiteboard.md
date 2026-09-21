@@ -144,3 +144,102 @@ and `Vendor/Excalidraw/README.md`'s two new sections before extending any of it.
     with the font race injected, both the assigned width and the "expected" width were the same
     wrong number and the check passed against the very defect it exists for. It forces the face in
     from the test first and carries a vacuity guard that fails when the two measurements agree.
+
+## F15 - screenshot capture and annotate (`fm/grandline-feature-f15-screenshot-annotate`)
+
+**Full review #3 §8's F15 - "capture region -> Whiteboard, annotate, copy" - shipped as two buttons on
+this destination and two File-menu items, not as a page of its own.**
+Three new files: `ScreenRegionCapture.swift` (how a region of the screen becomes an `NSImage`),
+`WhiteboardCaptureScene.swift` (the pure middle: encode, place, flatten, copy) and one new bridge
+command, `exportImage`, in `Vendor/Excalidraw/src/whiteboard.js`.
+The captain's own reviewed mockup is F15 in the "Grand Line Futures" artifact, and the shape here
+matches it: a capture verb and a copy verb in the drill header, and a subtitle that says the
+unredacted original is never written to disk.
+
+- **`screencapture -i`, not ScreenCaptureKit, and the reason is TCC rather than API age.**
+  SCK has no region-drag input at all - it captures a display, a window or an application - so
+  choosing it would have meant hand-building the selection overlay every Mac user already has in
+  muscle memory.
+  It also needs Screen Recording permission, which `screencapture` in *interactive* mode does not:
+  the system's own capture agent does the capture on the captain's explicit drag, so this app never
+  holds a standing "read every pixel" grant.
+  For an app carrying a credential vault that is the better posture, not merely the cheaper one.
+  The cost, stated rather than discovered: a capture cannot be scripted or scheduled, because it
+  needs the captain present.
+- **`-c`, so the unredacted original never reaches disk.**
+  That is what makes the footer promise real rather than a slogan, and it also means the intake path
+  is the one this app already had - `ShiftImageAttachmentWell.image(fromPasteboard:)`, unchanged
+  since the task-attachment work.
+  Two consequences were checked rather than assumed: the general pasteboard is clobbered (which is
+  what `⌃⇧⌘4` does system-wide, and the flow's own last step overwrites it again anyway), and the
+  capture never lands in the encrypted clipboard history, because
+  `ClipboardHistoryStore.record(from:)` only ever records `.string`.
+  That second one is asserted against the real store, with its own discriminating half, because "a
+  screenshot of a token silently landed in an on-disk history" is the failure this app cannot have.
+- **Cancel is not failure, and the exit status cannot tell them apart.**
+  `screencapture -i` exits **0** when the captain presses Escape.
+  What separates the two is that a cancelled capture writes nothing, so the rule is
+  `NSPasteboard.changeCount` moving across the run - extracted into
+  `ScreenRegionCapture.decide(outcome:status:stderr:pasteboardChanged:)`, a pure function, precisely
+  so the three-way decision is testable with no screen.
+  A cancel is deliberately silent: escaping out of a misjudged drag is a decision, and a toast for
+  it would fire constantly.
+- **The capture is not re-encoded through `normalizedPNGData`, and that is the one place F15 declines
+  to reuse an existing path.**
+  That function redraws at the image's **point** size, halving a Retina capture.
+  For a task attachment that is right; for a screenshot of a log line or a dashboard axis it throws
+  away the only thing that made the capture worth taking.
+  `WhiteboardCaptureScene.pngCapture` encodes the backing representation's own pixel grid instead
+  and records the scale, so the image is *placed* at the size the captain dragged while carrying
+  twice the detail into a zoom.
+  The suite asserts both halves, including that `normalizedPNGData` really does halve it - if that
+  ever stops being true, the justification for a second encoder is wrong and should fail.
+- **Nothing new was invented on the canvas.**
+  `loadScene` has taken a `files` array alongside element skeletons since the component-icon work, so
+  a capture is one more file plus one `image` element through that same sink.
+  A capture **appends below** whatever is already on the board rather than replacing it, which means
+  the board is read back first - `boardBottom` over a real `snapshot`, not an assumption.
+- **A real bug the window-backed suite caught, and the reason that suite exists:**
+  `toSkeleton` omits any numeric field whose value is `0`, so the first capture - placed at the
+  origin - comes back with **no `y` at all**.
+  The first `boardBottom` required one, returned `nil` for a board holding exactly one capture, and
+  the second capture landed exactly on top of the first.
+  Every logic-level assertion passed throughout; the failure was only visible against a real canvas.
+- **`exportImage` is Excalidraw's own `exportToCanvas`**, so a freehand stroke, a bound arrow label
+  and a blurred rectangle all flatten the way the captain drew them.
+  The native side has no renderer and should never grow one.
+  An empty board **refuses** rather than returning a blank PNG over the captain's clipboard, the
+  background is included (a transparent PNG pasted into a ticket renders dark-on-white), and
+  `maxWidthOrHeight` is bounded from the native side because the PNG travels back base64-encoded
+  inside one bridge reply (GL-35).
+- **The bridge command must not be declared `async`, and this cost a debugging round.**
+  The native side evaluates `window.GrandLineWhiteboard.<name>(id, payload);` as an expression
+  statement, and `evaluateJavaScript` fails an expression whose value is a `Promise` with "returned a
+  result of an unsupported type" - which reaches the caller as a bridge failure *before* the real
+  reply arrives, so a working export looked broken.
+  The entry point is now a plain method that starts `exportImageAsync` and returns nothing.
+  **Any future bridge command doing async work needs the same shape.**
+- **GL-09: both halves are gated, with a case each.**
+  `screencapture -i` draws its crosshair over the whole *display*, above this app's own lock overlay,
+  and the chord lives in the File menu, which no overlay covers - so a locked app could otherwise be
+  made to grab any pixel on screen and put it on the clipboard.
+  `.screenCapture` and `.whiteboardCopy` are separate `AppLockedSurface` cases per that file's own
+  header rule, and each was confirmed to fail by name with the *other* gate still in place.
+- **⌘⇧S, not the mockup's ⌘⇧5.**
+  ⌘⇧5 belongs to macOS's Screenshot app system-wide, so an app menu item declaring it would never
+  fire - a dead menu item of exactly the kind the duplicate-chord rule exists to prevent, with the
+  system rather than a sibling item as the winner.
+  ⌘⇧S was checked free against `buildMenu`'s own chords (⌘⌃S is Show Hosts).
+  Copy Board as Image gets a menu item and no chord: the header button is the discoverable copy
+  action and every ⌘⇧ letter that reads as "copy" is taken.
+- **What was NOT verified, plainly.**
+  The actual system region drag cannot run in CI or from an agent session - it needs a captain to
+  drag a rectangle - so `ScreenRegionCapture.capture` is built with the subprocess behind an
+  injectable `Runner` and everything on both sides of that one call is covered.
+  `FM_RUN_SCREEN_CAPTURE_ANNOTATE_TESTS` (CI's blocking lane) covers the decision, the intake, the
+  encode and the placement maths; `FM_RUN_WHITEBOARD_CAPTURE_VIEW_TESTS` (`NEEDS_SESSION`) drives a
+  real Excalidraw canvas with an injected capture and **pixel-samples the flattened PNG** for the
+  fixture's own colour - which is the only check that can tell a working export from one rendering
+  a broken placeholder, confirmed by dropping the `files` from the payload and watching it fail
+  alone while everything else still passed.
+  The live half - the crosshair, the shutter, the real clipboard - is the captain's own check.

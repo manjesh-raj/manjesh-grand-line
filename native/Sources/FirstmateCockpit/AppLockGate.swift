@@ -123,6 +123,24 @@ enum AppLockedSurface {
     /// screen's password field loses first responder to a terminal nobody can
     /// see, so the password itself is typed into a remote shell.
     case terminalFocus
+    /// F15: launching the system region picker.
+    ///
+    /// The lock overlay is a view inside this app's window, and
+    /// `screencapture -i` draws its crosshair over the whole *display* -
+    /// above the overlay, above everything. So a locked app whose menu bar is
+    /// still reachable could be made to grab any pixel on the screen and put
+    /// it on the clipboard. The chord is in the File menu, which no overlay
+    /// covers, which is what makes this reachable rather than theoretical.
+    case screenCapture
+    /// F15's other half: flattening the Whiteboard and writing it to the
+    /// clipboard.
+    ///
+    /// Its own case rather than sharing `screenCapture`'s, per this file's
+    /// header rule: they are different harms at different call sites - one
+    /// grabs the screen, the other copies out whatever the captain had on the
+    /// board behind the overlay - and a suite asserting the capture is gated
+    /// passes just as happily with this one deleted.
+    case whiteboardCopy
     /// Audit #2 §5.1(b): opening the incident card.
     ///
     /// An `NSPopover` is its own window, layered above the main window and
