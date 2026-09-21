@@ -86,6 +86,7 @@ enum CodeRunnerViewSelfTest {
         checkRunControlsFollowTheLanguage(controller, check)
         checkFormatAppliesToTheEditor(controller, store, check)
         checkARealRunReachesThePane(controller, check)
+        checkRunnersPopoverOpensAndIsLockDismissible(controller, check)
 
         window.orderOut(nil)
         print(ok ? "CodeRunnerViewSelfTest: OK" : "CodeRunnerViewSelfTest: FAILURES")
@@ -117,6 +118,7 @@ enum CodeRunnerViewSelfTest {
             check(!pane.debugCopyVisible, "Copy must not be offered before there is output")
             check(pane.debugStatusText == "RUNNING",
                   "got \(pane.debugStatusText) while running")
+            check(pane.debugSpinnerRunning, "the activity bar should be running")
             check(pane.debugDetailText.contains("python3 3.12.4"),
                   "the running pane should name what is running, got \(pane.debugDetailText)")
             check(pane.debugDetailText.contains("30"),
@@ -124,6 +126,9 @@ enum CodeRunnerViewSelfTest {
 
             let ok = outcome(.ok, status: 0, output: "hello", duration: 1.84)
             pane.render(.finished(ok))
+            check(!pane.debugSpinnerRunning,
+                  "the activity bar must stop once the run has finished - a bar still sliding "
+                  + "beside EXIT 0 says the opposite of what the pane says")
             check(pane.debugStatusText == "EXIT 0", "got \(pane.debugStatusText) for a clean run")
             check(!pane.debugStopVisible, "Stop must go away once the run has finished")
             check(pane.debugCopyVisible, "Copy must appear once there is output")
@@ -542,6 +547,36 @@ enum CodeRunnerViewSelfTest {
               "a stopped run must read as stopped, got "
               + controller.debugOutputPane.debugStatusText)
         controller.debugCloseCurrent()
+    }
+
+    /// The mockup's runner list, and GL-09.
+    ///
+    /// A popover left open when the app lock fires stays readable and
+    /// interactive **above** the lock overlay unless `AppLockGate` can close
+    /// it, so this asserts both that the popover really opens and that the gate
+    /// really holds it - `LockGateCoverageSelfTest` is the source guard for the
+    /// registration, and this is the behavioural half the source guard cannot
+    /// see (AGENTS.md: the two catch different things).
+    private static func checkRunnersPopoverOpensAndIsLockDismissible(
+        _ controller: CodePreviewController,
+        _ check: (Bool, String) -> Void) {
+        check(controller.debugRunnersPopover == nil,
+              "no popover should exist before the button is pressed")
+        controller.debugShowRunners()
+        guard let popover = controller.debugRunnersPopover else {
+            check(false, "pressing the runners button should build a popover")
+            return
+        }
+        check(popover.behavior == .transient, "the popover should dismiss on an outside click")
+        check(popover.contentSize.height > 100 && popover.contentSize.width > 200,
+              "the popover laid out at \(popover.contentSize), which is not a real size")
+        check(AppLockGate.shared.debugDismissiblePopovers.contains { $0 === popover },
+              "the popover must be registered with AppLockGate, or the lock cannot close it")
+        // Pressing again closes it rather than stacking a second one.
+        controller.debugShowRunners()
+        check(controller.debugRunnersPopover === popover,
+              "a second press must not build a second popover")
+        popover.performClose(nil)
     }
 
     // MARK: Helpers

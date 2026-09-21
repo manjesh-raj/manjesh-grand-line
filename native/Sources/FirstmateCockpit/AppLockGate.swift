@@ -277,6 +277,12 @@ final class AppLockGate {
     /// a never-shown panel leaves no trace).
     var debugRegisteredWindows: [NSWindow] { secondaryWindows.compactMap { $0() } }
 
+    /// The popovers currently registered, resolved through their providers -
+    /// the behavioural counterpart to `LockGateCoverageSelfTest`'s source
+    /// grep, which can see that a file *calls* `registerLockDismissiblePopover`
+    /// but not that the popover it hands over is the one it shows.
+    var debugDismissiblePopovers: [NSPopover] { dismissiblePopovers.compactMap { $0() } }
+
     /// How many providers are registered, resolved or not.
     ///
     /// `debugRegisteredWindows` above cannot see a surface whose window only

@@ -174,6 +174,11 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     private lazy var runnersButton = HelmPageToolbar.iconButton(
         symbol: "cpu", tooltip: "Which runners and formatters this machine has",
         target: self, action: #selector(runnersTapped))
+    /// Retained rather than local, so `AppLockGate` can find it: GL-09 / audit
+    /// §5.1(b) - a popover left open when the app lock fires stays readable and
+    /// interactive *above* the lock overlay unless the gate can close it, and
+    /// `LockGateCoverageSelfTest` fails the run on an unregistered one.
+    private var runnersPopover: NSPopover?
     private let outputPane = CodeRunOutputPane()
     private var outputPaneHeight: NSLayoutConstraint?
     private var outputPaneTopGap: NSLayoutConstraint?
@@ -508,6 +513,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     /// `CodeRunnerViewSelfTest` asserts to the point.
     private func buildOutputPane(in root: NSView) {
         root.addSubview(outputPane)
+        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.runnersPopover }
         outputPane.onStop = { [weak self] in self?.stopRun() }
         outputPane.onCopy = { [weak self] in self?.copyOutput() }
         outputPane.onClear = { [weak self] in self?.clearOutput() }
@@ -1266,17 +1272,25 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     /// and GL-14's rule: "this app cannot run Python" and "Python is not
     /// installed here" are different sentences.
     @objc private func runnersTapped() {
-        let popover = NSPopover()
-        popover.behavior = .transient
+        if let existing = runnersPopover, existing.isShown {
+            existing.performClose(nil)
+            return
+        }
+        let language = currentSnippet?.language ?? CodePreviewLanguage.plainText
+        // Both reads are cache-only (GL-12), and the button is disabled until
+        // the warm-up has landed, so this cannot show an empty list.
         let content = CodeRunnersPopoverView(
             runners: CodeToolInventory.shared.runnerInventory(),
-            currentLanguage: currentSnippet?.language ?? CodePreviewLanguage.plainText,
-            formatter: CodeToolInventory.shared.formatter(
-                for: (currentSnippet?.language ?? CodePreviewLanguage.plainText).id),
+            currentLanguage: language,
+            formatter: runner.formatter(for: language.id),
             theme: theme)
+        let popover = NSPopover()
+        popover.behavior = .transient
         popover.contentViewController = NSViewController()
         popover.contentViewController?.view = content
+        content.layoutSubtreeIfNeeded()
         popover.contentSize = content.fittingSize
+        runnersPopover = popover
         popover.show(relativeTo: runnersButton.bounds, of: runnersButton, preferredEdge: .maxY)
     }
 
@@ -1565,6 +1579,8 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     func debugStopRun() { stopRun() }
     func debugClearOutput() { clearOutput() }
     func debugRefreshRunControls() { refreshRunControls() }
+    var debugRunnersPopover: NSPopover? { runnersPopover }
+    func debugShowRunners() { runnersTapped() }
     /// Drives the pane through a state without running anything, so a suite
     /// can assert every rendering - including the ones that need a tool this
     /// machine may not have.

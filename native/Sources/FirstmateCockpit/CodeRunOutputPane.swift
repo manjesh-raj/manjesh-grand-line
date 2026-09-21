@@ -53,7 +53,12 @@ final class CodeRunOutputPane: NSView {
     private let statusLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(labelWithString: "")
     private let pathLabel = NSTextField(labelWithString: "")
-    private let spinner = NSProgressIndicator()
+    /// G4's replacement for a stock spinner, and the only sanctioned one -
+    /// `FeedbackModernizationSelfTest` fails the run on an `NSProgressIndicator`
+    /// anywhere in these sources. It hides itself when stopped, observes the
+    /// theme on its own, and is already gated on Reduce Motion internally.
+    private let spinner = HelmProgressBar.inlineActivity(
+        hue: RailDestination.codePreview.domainHue)
     private lazy var stopButton = HelmPageToolbar.labeledButton(
         symbol: "stop.fill", title: "Stop",
         tooltip: "Stop this run", target: self, action: #selector(stopTapped))
@@ -109,20 +114,12 @@ final class CodeRunOutputPane: NSView {
             view.setContentHuggingPriority(.required, for: .horizontal)
         }
 
-        spinner.translatesAutoresizingMaskIntoConstraints = false
-        spinner.style = .spinning
-        spinner.controlSize = .small
-        // `isDisplayedWhenStopped = false` stops it *drawing* and leaves its
-        // 16pt frame in the row - measured in the render probe as a gap after
-        // the status word. A hidden **arranged subview** is the one thing an
-        // `NSStackView` genuinely excludes from layout (gotcha (11) notes the
-        // same asymmetry from the other side), so it is hidden, not merely
-        // undrawn.
-        spinner.isDisplayedWhenStopped = false
-        spinner.isHidden = true
-        // GL-16: a looping animation is gated on Reduce Motion, and the
-        // spinner is the only animation this pane has.
-        spinner.usesThreadedAnimation = false
+        // `hidesWhenStopped` is what keeps the row tight: a stopped indicator
+        // that merely stops *drawing* keeps its frame, which the render probe
+        // showed as a gap after the status word. A hidden **arranged subview**
+        // is the one thing an `NSStackView` genuinely excludes from layout
+        // (gotcha (11) notes the same asymmetry from the other side).
+        spinner.hidesWhenStopped = true
 
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
@@ -210,12 +207,12 @@ final class CodeRunOutputPane: NSView {
         switch state {
         case .idle:
             isHidden = true
-            spinner.stopAnimation(nil)
+            spinner.stopAnimation()
             textView.string = ""
             statusLabel.stringValue = ""
             detailLabel.stringValue = ""
             pathLabel.stringValue = ""
-            spinner.isHidden = true
+            spinner.stopAnimation()
 
         case .running(let tool):
             isHidden = false
@@ -226,13 +223,12 @@ final class CodeRunOutputPane: NSView {
             // and the RUNNING chip is what says a run is in flight. A pane
             // whose only "something is happening" signal is an animation says
             // nothing at all to a captain who turned animation off.
-            if HelmMotion.isReduced {
-                spinner.isHidden = true
-                spinner.stopAnimation(nil)
-            } else {
-                spinner.isHidden = false
-                spinner.startAnimation(nil)
-            }
+            // `HelmProgressBar` gates its own motion on Reduce Motion, so
+            // there is no branch here - and the RUNNING chip, not the bar, is
+            // what says a run is in flight to a captain who turned animation
+            // off. A pane whose only "something is happening" signal is an
+            // animation says nothing at all to them (GL-16).
+            spinner.startAnimation()
             stopButton.isHidden = false
             copyButton.isHidden = true
             clearButton.isHidden = true
@@ -240,8 +236,7 @@ final class CodeRunOutputPane: NSView {
 
         case .finished(let outcome):
             isHidden = false
-            spinner.isHidden = true
-            spinner.stopAnimation(nil)
+            spinner.stopAnimation()
             stopButton.isHidden = true
             copyButton.isHidden = false
             clearButton.isHidden = false
@@ -407,7 +402,7 @@ final class CodeRunOutputPane: NSView {
     var debugStatusText: String { statusLabel.stringValue }
     var debugDetailText: String { "\(detailLabel.stringValue) \(pathLabel.stringValue)" }
     var debugPathText: String { pathLabel.stringValue }
-    var debugSpinnerHidden: Bool { spinner.isHidden }
+    var debugSpinnerRunning: Bool { spinner.isRunning }
     var debugOutputBackground: NSColor? { textView.backgroundColor }
     var debugOutputForeground: NSColor? { textView.textColor }
     var debugStopVisible: Bool { !stopButton.isHidden }
