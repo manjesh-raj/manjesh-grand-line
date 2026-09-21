@@ -649,6 +649,11 @@ final class StickyNoteView: NSView {
     private let titleField = NSTextField(string: "")
     private let textView: NSTextView
     private let textScroll = NSScrollView()
+    /// The checklist note's body (F6), shown in place of `textScroll` when
+    /// this note has a checklist. Both are built and constrained up front
+    /// and swapped by `isHidden`, so becoming a checklist and going back is
+    /// a visibility change rather than a rebuild of the note's layout.
+    private let checklistView = StickyChecklistView()
     private let resizeHandle = StickyNoteResizeHandleView()
 
     var onTitleChanged: ((String) -> Void)?
@@ -765,10 +770,17 @@ final class StickyNoteView: NSView {
         textScroll.borderType = .noBorder
         addSubview(textScroll)
 
+        addSubview(checklistView)
+
         resizeHandle.translatesAutoresizingMaskIntoConstraints = false
         addSubview(resizeHandle)
 
         NSLayoutConstraint.activate([
+            checklistView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            checklistView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
+            checklistView.topAnchor.constraint(equalTo: titleField.bottomAnchor, constant: 2),
+            checklistView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
+
             textScroll.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
             textScroll.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
             textScroll.topAnchor.constraint(equalTo: titleField.bottomAnchor, constant: 2),
@@ -816,6 +828,15 @@ final class StickyNoteView: NSView {
             self.onResized?(self.frame.size)
         }
 
+        checklistView.onToggle = { [weak self] itemID in self?.onChecklistItemToggled?(itemID) }
+        checklistView.onItemTextChanged = { [weak self] itemID, text in
+            self?.onChecklistItemTextChanged?(itemID, text)
+        }
+        checklistView.onItemRemoved = { [weak self] itemID in self?.onChecklistItemRemoved?(itemID) }
+        checklistView.onAddItem = { [weak self] in self?.onChecklistItemAdded?() }
+        checklistView.onEditingEnded = { [weak self] in self?.onEditingEnded?() }
+
+        applyChecklist(note.checklist)
         applyColor()
         applyRotation(note.rotationDegrees)
         applyRelativeTimestamp(note.createdAt)
@@ -879,6 +900,7 @@ final class StickyNoteView: NSView {
         textView.textColor = ink
         textView.insertionPointColor = ink
         resizeHandle.applyInk(ink)
+        checklistView.applyInk(ink, font: StickyFont.hand(HelmType.scaled(13)))
         pin.layer?.backgroundColor = HelmTheme.nsColor(Self.pinFill).cgColor
         pin.layer?.borderColor = HelmTheme.nsColor(Self.pinEdge).cgColor
         menuButton.attributedTitle = NSAttributedString(
@@ -933,11 +955,78 @@ final class StickyNoteView: NSView {
     var onUnarchiveRequested: (() -> Void)?
     var onMakeTaskRequested: (() -> Void)?
 
+    // F6's own additions - all forwarded, never performed here, under the
+    // same rule as the three above.
+    var onConvertToChecklistRequested: (() -> Void)?
+    var onConvertToTextRequested: (() -> Void)?
+    var onColorChangeRequested: ((StickyNoteColor) -> Void)?
+    var onChecklistItemToggled: ((String) -> Void)?
+    var onChecklistItemTextChanged: ((String, String) -> Void)?
+    var onChecklistItemRemoved: ((String) -> Void)?
+    var onChecklistItemAdded: (() -> Void)?
+
+    /// Whether this note is currently a checklist, so the menu offers the
+    /// right verb - the same shape as `isArchived` below.
+    private(set) var isChecklist = false
+
+    /// Swap the note's body between the text view and the checklist. `nil`
+    /// is a text note; a non-nil (even empty) array is a checklist.
+    func applyChecklist(_ items: [StickyChecklistItem]?) {
+        isChecklist = items != nil
+        textScroll.isHidden = isChecklist
+        checklistView.isHidden = !isChecklist
+        guard let items else { return }
+        checklistView.apply(items: items, ink: HelmTheme.nsColor(color.inkHex),
+                            font: StickyFont.hand(HelmType.scaled(13)))
+    }
+
+    /// The note's paper, repainted live (F6's `Colour \u{25B8}`). The board
+    /// rebuilds nothing: a recolour is one note's own chrome, and rebuilding
+    /// the view would drop the caret out of a field the captain is typing
+    /// in.
+    func applyColor(_ newColor: StickyNoteColor) {
+        color = newColor
+        applyColor()
+    }
+
+    /// Put the caret in the checklist's last row, after adding one.
+    func focusLastChecklistRow() { checklistView.focusLastRow() }
+
+    /// Re-read the body from the store after something other than typing
+    /// changed it.
+    ///
+    /// The one caller is F6's checklist conversion, which rewrites `text`
+    /// (see `StickyChecklist`) - so turning a checklist back into text must
+    /// show the markdown the checklist rendered to, not the body the note
+    /// had before it ever became one. Guarded on inequality so it can never
+    /// reset the insertion point for nothing.
+    func applyText(_ text: String) {
+        guard textView.string != text else { return }
+        textView.string = text
+        refreshHandleDescriptions()
+    }
+
     /// Whether this note is in the archive, so the menu offers the right verb.
     /// Set by the controller when it builds the view and when it re-renders.
     var isArchived = false
 
-    @objc private func overflowClicked(_ sender: NSButton) {
+    /// F6's right-click. The finding's own words are "right-click a sticky",
+    /// and a corkboard is the one page in this app where that is the
+    /// *obvious* gesture - but the \u{22EF} button stays, because a
+    /// discoverable affordance and a fast one are different jobs and the
+    /// empty state already teaches the button by name.
+    ///
+    /// Overriding `menu(for:)` rather than assigning `self.menu` is what
+    /// keeps the body text view's own editing menu intact: AppKit asks the
+    /// deepest view under the cursor first, so a right-click *in the text*
+    /// still gets Cut/Copy/Paste and a right-click on the paper, the header
+    /// or the title gets this one.
+    override func menu(for event: NSEvent) -> NSMenu? { buildContextMenu() }
+
+    /// One menu, two ways in. The order follows the reviewed mockup: the
+    /// promotion first (it is the feature), the two shape changes next, and
+    /// the two destructive-ish verbs last behind a separator.
+    private func buildContextMenu() -> NSMenu {
         let menu = NSMenu()
         if isArchived {
             menu.addItem(withTitle: "Put Back on the Board",
@@ -945,12 +1034,50 @@ final class StickyNoteView: NSView {
         } else {
             menu.addItem(withTitle: "Make a Task\u{2026}", action: #selector(makeTaskClicked), keyEquivalent: "")
             menu.addItem(.separator())
+            menu.addItem(withTitle: isChecklist ? "Turn into Text" : "Turn into a Checklist",
+                         action: #selector(toggleChecklistClicked), keyEquivalent: "")
+            menu.addItem(colorMenuItem())
+            menu.addItem(.separator())
             menu.addItem(withTitle: "Archive Note", action: #selector(archiveClicked), keyEquivalent: "")
         }
         menu.addItem(.separator())
         menu.addItem(withTitle: "Delete Note", action: #selector(deleteClicked), keyEquivalent: "")
-        menu.items.forEach { $0.target = self }
+        // Only the top-level items - a submenu's own items are targeted
+        // where they are built, and re-targeting them here would point the
+        // colour items at the wrong selector.
+        menu.items.forEach { if $0.submenu == nil { $0.target = self } }
+        return menu
+    }
+
+    /// The mockup's "Colour \u{25B8}". `representedObject` carries the
+    /// colour rather than a tag, so adding a seventh paper hue to
+    /// `StickyNoteColor` needs no parallel integer mapping to stay in step.
+    private func colorMenuItem() -> NSMenuItem {
+        let parent = NSMenuItem(title: "Colour", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        for candidate in StickyNoteColor.allCases {
+            let item = NSMenuItem(title: candidate.displayName, action: #selector(colorClicked(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = candidate
+            item.state = candidate == color ? .on : .off
+            submenu.addItem(item)
+        }
+        parent.submenu = submenu
+        return parent
+    }
+
+    @objc private func overflowClicked(_ sender: NSButton) {
+        let menu = buildContextMenu()
         menu.popUp(positioning: nil, at: NSPoint(x: sender.bounds.width, y: sender.bounds.height), in: sender)
+    }
+
+    @objc private func toggleChecklistClicked() {
+        isChecklist ? onConvertToTextRequested?() : onConvertToChecklistRequested?()
+    }
+
+    @objc private func colorClicked(_ sender: NSMenuItem) {
+        guard let candidate = sender.representedObject as? StickyNoteColor else { return }
+        onColorChangeRequested?(candidate)
     }
 
     @objc private func deleteClicked() {
@@ -977,6 +1104,12 @@ final class StickyNoteView: NSView {
     var debugTimestampText: String { timestampLabel.stringValue }
     var debugTimestampFont: NSFont? { timestampLabel.font }
     var debugMenuButtonFont: NSFont? { menuButton.font }
+    var debugChecklistView: StickyChecklistView { checklistView }
+    var debugColor: StickyNoteColor { color }
+    var debugTextScroll: NSScrollView { textScroll }
+    /// The exact menu a right-click builds, so a suite can assert its items
+    /// without driving a real event through the window server.
+    var debugContextMenu: NSMenu { buildContextMenu() }
     #endif
 }
 
@@ -1006,4 +1139,304 @@ extension StickyNoteView: NSTextFieldDelegate {
         guard (obj.object as? NSTextField) === titleField else { return }
         onEditingEnded?()
     }
+}
+
+// MARK: - The checklist note (review #3's F6)
+
+/// One row of a checklist note: a checkbox and an editable line of text.
+///
+/// The row owns no state beyond the item id it speaks for - every toggle and
+/// every keystroke is forwarded to `StickyChecklistView`, which forwards it
+/// to the controller, which writes it to the store. The board has exactly one
+/// writer, and it is not a view.
+final class StickyChecklistRowView: NSView {
+    let itemID: String
+
+    private let box = NSButton()
+    private let field = NSTextField(string: "")
+    private var isDone: Bool
+    private var ink: NSColor = .labelColor
+
+    var onToggle: (() -> Void)?
+    var onTextChanged: ((String) -> Void)?
+    var onEditingEnded: (() -> Void)?
+    /// Return in a row's field: the captain is writing a list, so the next
+    /// thing they want is the next row, not a dismissed field.
+    var onReturn: (() -> Void)?
+    /// A row emptied and left is a row deleted - the same gesture Reminders
+    /// and Notes use, and the reason this view needs no per-row delete
+    /// button crowding a 186pt-wide note.
+    var onEmptied: (() -> Void)?
+
+    static let boxSide: CGFloat = 13
+
+    init(item: StickyChecklistItem) {
+        self.itemID = item.id
+        self.isDone = item.isDone
+        super.init(frame: .zero)
+        translatesAutoresizingMaskIntoConstraints = false
+
+        box.translatesAutoresizingMaskIntoConstraints = false
+        // No `bezelStyle`: this is a borderless, image-only control, so a
+        // stock bezel would never draw - and `HelmContrastSelfTest` bans one
+        // outright (AGENTS.md's component index: reach for `HelmButton`,
+        // never a stock bezel). The checkbox is hand-drawn from an SF Symbol
+        // in `applyInk` for the same reason the note's own chrome is: it
+        // sits on literal paper, where a themed control does not belong.
+        box.isBordered = false
+        box.imagePosition = .imageOnly
+        box.target = self
+        box.action = #selector(boxClicked)
+        // GL-16: a real control, so it carries a real label rather than
+        // reading as an unnamed button under VoiceOver.
+        box.setAccessibilityRole(.checkBox)
+        addSubview(box)
+
+        // Plain and chrome-less for the same reason the note's title field
+        // is (see `StickyNoteView`'s own note): this sits on a note's literal
+        // paper colour, where the app's sunken-well recipe would be the one
+        // piece of the design system that does not belong.
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.lineBreakMode = .byTruncatingTail
+        field.cell?.usesSingleLineMode = true
+        field.delegate = self
+        field.stringValue = item.text
+        addSubview(field)
+
+        NSLayoutConstraint.activate([
+            box.leadingAnchor.constraint(equalTo: leadingAnchor),
+            box.centerYAnchor.constraint(equalTo: field.centerYAnchor),
+            box.widthAnchor.constraint(equalToConstant: Self.boxSide),
+            box.heightAnchor.constraint(equalToConstant: Self.boxSide),
+
+            field.leadingAnchor.constraint(equalTo: box.trailingAnchor, constant: 6),
+            field.trailingAnchor.constraint(equalTo: trailingAnchor),
+            field.topAnchor.constraint(equalTo: topAnchor, constant: 1),
+            field.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -1),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    var text: String { field.stringValue }
+
+    func focusField() { field.selectText(nil) }
+
+    /// Repaint against the note's own ink. Called on construction and
+    /// whenever the note is recoloured, exactly like `StickyNoteView
+    /// .applyColor` - a checklist row is part of the note's paper, so it
+    /// follows the paper's ink and not a theme token.
+    func applyInk(_ ink: NSColor, font: NSFont) {
+        self.ink = ink
+        field.font = font
+        applyDoneStyling()
+        // An SF Symbol tinted by hand: `contentTintColor` on a borderless
+        // button is the documented way to recolour a template image, and the
+        // note's ink is provably >= 4.5:1 against its own paper
+        // (`StickyBoardSelfTest.checkColorContrast`), so the box inherits
+        // that margin rather than needing a contrast rule of its own.
+        let name = isDone ? "checkmark.square.fill" : "square"
+        box.image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: Self.boxSide, weight: .regular))
+        box.contentTintColor = ink
+        box.setAccessibilityValue(isDone ? 1 : 0)
+        box.setAccessibilityLabel(field.stringValue.isEmpty ? "Checklist item" : field.stringValue)
+        box.toolTip = isDone ? "Mark not done" : "Mark done"
+    }
+
+    func setDone(_ done: Bool) {
+        guard done != isDone else { return }
+        isDone = done
+        applyInk(ink, font: field.font ?? .systemFont(ofSize: 11))
+    }
+
+    /// A done item is struck through and dimmed, matching the mockup. Both
+    /// are applied through `attributedStringValue` rather than by swapping
+    /// `textColor`, because the strikethrough has no plain-field equivalent
+    /// - and both are re-applied after an edit rather than during one, so a
+    /// keystroke never moves the insertion point.
+    private func applyDoneStyling() {
+        let font = field.font ?? StickyFont.hand(HelmType.scaled(12))
+        guard isDone else {
+            field.textColor = ink
+            field.stringValue = field.stringValue
+            return
+        }
+        field.attributedStringValue = NSAttributedString(
+            string: field.stringValue,
+            attributes: [
+                .font: font,
+                .foregroundColor: ink.withAlphaComponent(0.55),
+                .strikethroughStyle: NSUnderlineStyle.single.rawValue,
+                .strikethroughColor: ink.withAlphaComponent(0.55),
+            ])
+    }
+
+    @objc private func boxClicked() { onToggle?() }
+
+    #if FM_SELFTESTS
+    var debugCheckbox: NSButton { box }
+    var debugField: NSTextField { field }
+    #endif
+}
+
+extension StickyChecklistRowView: NSTextFieldDelegate {
+    func controlTextDidChange(_ obj: Notification) {
+        onTextChanged?(field.stringValue)
+    }
+
+    func controlTextDidEndEditing(_ obj: Notification) {
+        if field.stringValue.trimmingCharacters(in: .whitespaces).isEmpty {
+            onEmptied?()
+            return
+        }
+        applyDoneStyling()
+        onEditingEnded?()
+    }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        guard selector == #selector(NSResponder.insertNewline(_:)) else { return false }
+        onReturn?()
+        return true
+    }
+}
+
+/// The body of a checklist note - the rows, the "+ item" affordance and the
+/// "2 of 4" footer the mockup prints.
+///
+/// Swapped in place of the note's text view rather than added beside it: a
+/// note is one thing or the other (`StickyNote.checklist`), and rendering
+/// both would give the captain two bodies to edit and the store two rival
+/// sources for one note's content.
+final class StickyChecklistView: NSView {
+    private let scroll = NSScrollView()
+    private let document = FlippedView()
+    private let stack = NSStackView()
+    private let addButton = NSButton(title: "+ item", target: nil, action: nil)
+    private let summaryLabel = NSTextField(labelWithString: "")
+
+    private var rows: [StickyChecklistRowView] = []
+    private var items: [StickyChecklistItem] = []
+
+    var onToggle: ((String) -> Void)?
+    var onItemTextChanged: ((String, String) -> Void)?
+    var onItemRemoved: ((String) -> Void)?
+    var onAddItem: (() -> Void)?
+    var onEditingEnded: (() -> Void)?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        // AGENTS.md gotcha (11): a view given manual constraints must clear
+        // this *before* they are activated, or AppKit silently pins it to
+        // the zero frame it was born with - and a hidden one still fights
+        // the window's own fitting size from inside the constraint graph.
+        translatesAutoresizingMaskIntoConstraints = false
+
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.hasVerticalScroller = false
+        scroll.hasHorizontalScroller = false
+        scroll.drawsBackground = false
+        scroll.borderType = .noBorder
+        addSubview(scroll)
+
+        // AGENTS.md gotcha (9): a plain `NSView` document view is not
+        // flipped, so a checklist shorter than the note would rest against
+        // the bottom of the clip view with a gap above it.
+        document.translatesAutoresizingMaskIntoConstraints = false
+        scroll.documentView = document
+
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 3
+        document.addSubview(stack)
+
+        addButton.translatesAutoresizingMaskIntoConstraints = false
+        addButton.isBordered = false
+        addButton.target = self
+        addButton.action = #selector(addClicked)
+        addButton.toolTip = "Add a checklist item"
+        addSubview(addButton)
+
+        summaryLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(summaryLabel)
+
+        NSLayoutConstraint.activate([
+            scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: addButton.topAnchor, constant: -2),
+
+            // AGENTS.md gotcha (4): the document view pins to the **clip**
+            // view, never to the scroll view, or an always-visible scroller
+            // track draws over its trailing edge.
+            document.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor),
+            document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+            document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+
+            stack.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: document.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+
+            addButton.leadingAnchor.constraint(equalTo: leadingAnchor),
+            addButton.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            summaryLabel.trailingAnchor.constraint(equalTo: trailingAnchor),
+            summaryLabel.centerYAnchor.constraint(equalTo: addButton.centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    /// Rebuild the rows from a note's checklist.
+    ///
+    /// Rows are rebuilt wholesale rather than diffed: a note holds a handful
+    /// of items, the rebuild happens only on a structural change (a toggle,
+    /// an add, a delete - never on a keystroke, which updates the store and
+    /// leaves the field alone), and a diffing path would be the third place
+    /// in this feature that has to agree about what an item is.
+    func apply(items: [StickyChecklistItem], ink: NSColor, font: NSFont) {
+        self.items = items
+        for row in rows { stack.removeArrangedSubview(row); row.removeFromSuperview() }
+        rows = items.map { item in
+            let row = StickyChecklistRowView(item: item)
+            row.onToggle = { [weak self] in self?.onToggle?(item.id) }
+            row.onTextChanged = { [weak self] text in self?.onItemTextChanged?(item.id, text) }
+            row.onEmptied = { [weak self] in self?.onItemRemoved?(item.id) }
+            row.onReturn = { [weak self] in self?.onAddItem?() }
+            row.onEditingEnded = { [weak self] in self?.onEditingEnded?() }
+            return row
+        }
+        for row in rows {
+            stack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
+        applyInk(ink, font: font)
+    }
+
+    func applyInk(_ ink: NSColor, font: NSFont) {
+        for row in rows { row.applyInk(ink, font: font) }
+        addButton.attributedTitle = NSAttributedString(
+            string: "+ item",
+            attributes: [.font: font, .foregroundColor: ink.withAlphaComponent(0.55)])
+        summaryLabel.attributedStringValue = NSAttributedString(
+            string: StickyChecklist.summary(items),
+            attributes: [.font: HelmType.chip(), .foregroundColor: ink.withAlphaComponent(0.55)])
+    }
+
+    /// Put the caret in the last row - what the captain wants right after
+    /// "+ item" or a Return.
+    func focusLastRow() { rows.last?.focusField() }
+
+    @objc private func addClicked() { onAddItem?() }
+
+    #if FM_SELFTESTS
+    var debugRows: [StickyChecklistRowView] { rows }
+    var debugSummaryText: String { summaryLabel.stringValue }
+    var debugAddButton: NSButton { addButton }
+    #endif
 }

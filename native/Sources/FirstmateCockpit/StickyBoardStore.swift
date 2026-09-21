@@ -388,6 +388,43 @@ final class StickyBoardStore {
     /// healthy board; a self-test asserts it, and it is worth knowing about.
     var unreadableRecordCount: Int { unreadableRecords.count }
 
+    /// Keys this build writes for a note. Anything else found on a record
+    /// this build **could** decode is preserved verbatim - see `passthrough`.
+    ///
+    /// Adding a field to `StickyNote` means adding its key here in the same
+    /// change, or this build will treat its own output as foreign and write
+    /// every note's record twice over. `StickyBoardSelfTest
+    /// .checkUnknownKeyPassthrough` asserts a round trip through a real
+    /// store leaves a note's record with no duplicated keys, which is what
+    /// catches that mistake.
+    static let knownKeys: Set<String> = [
+        "id", "title", "text", "color", "x", "y", "width", "height",
+        "rotation", "created_at", "archived_at", "checklist",
+    ]
+
+    /// Per-note keys this build did not recognise, kept verbatim and written
+    /// straight back out - the *decodable*-record half of the same rule
+    /// `unreadableRecords` implements for a record that will not decode at
+    /// all.
+    ///
+    /// **The gap this closes is the one review #3's F6 names as the
+    /// checklist variant's prerequisite.** `unreadableRecords` only catches a
+    /// record this build cannot make sense of; a record it reads perfectly
+    /// well but which carries one extra key from a newer build used to lose
+    /// that key on the very next write, because `yaml(_:)` re-serialises from
+    /// the decoded struct and the struct has nowhere to put it. That is the
+    /// worse of the two failure modes in practice: the note keeps working, so
+    /// nothing looks wrong, and the newer build silently finds its own field
+    /// gone every time the older one is opened - across a git sync whose
+    /// entire purpose is two machines on two builds.
+    ///
+    /// Rebuilt from disk on every `reloadAll()`. An entry for a note deleted
+    /// in this session is deliberately kept until the next reload, so an Undo
+    /// (`restoreNote`) restores the whole record rather than a lossy copy of
+    /// it; the map is therefore bounded by board size plus this session's own
+    /// deletions, which is the same order of magnitude.
+    private var passthrough: [String: [(key: Yaml, value: Yaml)]] = [:]
+
     /// How long a text edit waits before it reaches disk (full-app audit,
     /// findings 3.3/4.6).
     ///
@@ -448,9 +485,12 @@ final class StickyBoardStore {
             isInFailedLoadState = false
             var decoded: [StickyNote] = []
             var unreadable: [(sortKey: Date, raw: Yaml)] = []
+            var extras: [String: [(key: Yaml, value: Yaml)]] = [:]
             for item in items {
                 if let note = Self.note(from: item) {
                     decoded.append(note)
+                    let unknown = Self.unknownPairs(in: item)
+                    if !unknown.isEmpty { extras[note.id] = unknown }
                 } else {
                     // Preserved, not dropped - see `unreadableRecords`.
                     unreadable.append((Self.createdAtOrDistantFuture(item), item))
@@ -464,6 +504,7 @@ final class StickyBoardStore {
                     """)
             }
             unreadableRecords = unreadable
+            passthrough = extras
             notes = decoded.sorted { $0.createdAt < $1.createdAt }
         case .missing:
             isInFailedLoadState = false
@@ -567,6 +608,100 @@ final class StickyBoardStore {
         return notes[index]
     }
 
+    /// Repaint a note (F6's `Colour \u{25B8}` submenu).
+    ///
+    /// Structural rather than typed, so it writes immediately like every
+    /// other rare, deliberate change - see `persistDebounce`. Returns the
+    /// previous colour so the caller can offer a real Undo (GL-33) instead of
+    /// re-deriving one.
+    @discardableResult
+    func updateColor(id: String, color: StickyNoteColor) -> StickyNoteColor? {
+        guard let index = notes.firstIndex(where: { $0.id == id }) else { return nil }
+        let previous = notes[index].color
+        guard previous != color else { return previous }
+        notes[index].color = color
+        persist()
+        return previous
+    }
+
+    // MARK: The checklist variant (F6)
+
+    /// Turn a note into a checklist, edit the checklist it already has, or
+    /// (with `nil`) turn it back into a plain text note.
+    ///
+    /// **This is the one place `text` and `checklist` are kept in step**, and
+    /// every other checklist mutator below routes through it. `text` is the
+    /// authoritative plain-text rendering whenever a checklist exists - see
+    /// `StickyChecklist`'s doc comment for the four things that buys - so a
+    /// checklist that wrote itself into `checklist` without re-rendering
+    /// `text` would leave `\u{2318}K`, the hub peek and a promoted task all
+    /// reading a stale body. Turning a checklist back off leaves `text`
+    /// exactly as it was last rendered, which is why the round trip is
+    /// lossless and needs no second stored copy.
+    @discardableResult
+    func setChecklist(id: String, items: [StickyChecklistItem]?) -> StickyNote? {
+        guard let index = notes.firstIndex(where: { $0.id == id }) else { return nil }
+        notes[index].checklist = items
+        if let items { notes[index].text = StickyChecklist.text(fromItems: items) }
+        persist()
+        return notes[index]
+    }
+
+    /// Convert this note's existing body into checklist items - the context
+    /// menu's "Turn into a Checklist". A no-op on a note that is already one,
+    /// so a doubled click cannot re-parse (and so re-id) every row underneath
+    /// the captain's cursor.
+    @discardableResult
+    func convertToChecklist(id: String) -> StickyNote? {
+        guard let note = notes.first(where: { $0.id == id }), !note.isChecklist else { return nil }
+        return setChecklist(id: id, items: StickyChecklist.items(fromText: note.text))
+    }
+
+    /// The inverse. `text` already holds the markdown the captain was looking
+    /// at, so this drops the structure and keeps the content.
+    @discardableResult
+    func convertToText(id: String) -> StickyNote? {
+        guard let note = notes.first(where: { $0.id == id }), note.isChecklist else { return nil }
+        return setChecklist(id: id, items: nil)
+    }
+
+    @discardableResult
+    func toggleChecklistItem(noteID: String, itemID: String) -> StickyNote? {
+        guard let note = notes.first(where: { $0.id == noteID }), let items = note.checklist else { return nil }
+        return setChecklist(id: noteID, items: StickyChecklist.toggling(items, id: itemID))
+    }
+
+    /// Debounced, unlike the structural changes above: this one is called
+    /// once per character typed into an item's field, exactly like
+    /// `updateText`.
+    func updateChecklistItemText(noteID: String, itemID: String, text: String) {
+        guard let index = notes.firstIndex(where: { $0.id == noteID }),
+              let items = notes[index].checklist,
+              let itemIndex = items.firstIndex(where: { $0.id == itemID }) else { return }
+        var updated = items
+        updated[itemIndex].text = text
+        notes[index].checklist = updated
+        notes[index].text = StickyChecklist.text(fromItems: updated)
+        schedulePersist()
+    }
+
+    /// Appends a row and returns it, so the view can focus the field it just
+    /// created rather than hunting for it by index.
+    @discardableResult
+    func addChecklistItem(noteID: String, text: String = "") -> StickyChecklistItem? {
+        guard let note = notes.first(where: { $0.id == noteID }), let items = note.checklist else { return nil }
+        let item = StickyChecklistItem.fresh(text: text)
+        setChecklist(id: noteID, items: items + [item])
+        return item
+    }
+
+    @discardableResult
+    func removeChecklistItem(noteID: String, itemID: String) -> StickyNote? {
+        guard let note = notes.first(where: { $0.id == noteID }), let items = note.checklist,
+              items.contains(where: { $0.id == itemID }) else { return nil }
+        return setChecklist(id: noteID, items: items.filter { $0.id != itemID })
+    }
+
     /// The undo half of `deleteNote` - re-inserts a note that was just
     /// removed, restoring its exact original id/text/color/position/
     /// rotation/created-at. A no-op if a note with that id already exists
@@ -641,7 +776,7 @@ final class StickyBoardStore {
         // every single write (which would make `git diff` unreadable for the
         // build that *can* read it).
         var merged: [(sortKey: Date, raw: Yaml)] =
-            notes.map { ($0.createdAt, Self.yaml($0)) } + unreadableRecords
+            notes.map { ($0.createdAt, yaml($0)) } + unreadableRecords
         merged.sort { $0.sortKey < $1.sortKey }
         do {
             try ShiftYaml.writeList(path: notesPath, key: "notes", items: merged.map(\.raw))
@@ -656,7 +791,7 @@ final class StickyBoardStore {
     // MARK: YAML - reuses `ShiftYamlBridge`'s generic scalar helpers
     // (`LogAnalyzerStore.swift`) rather than a fourth copy of them.
 
-    private static func yaml(_ n: StickyNote) -> Yaml {
+    private func yaml(_ n: StickyNote) -> Yaml {
         var m = YamlOrderedMap()
         m[ShiftYamlBridge.key("id")] = ShiftYamlBridge.str(n.id)
         m[ShiftYamlBridge.key("title")] = ShiftYamlBridge.str(n.title)
@@ -675,7 +810,38 @@ final class StickyBoardStore {
         if let archivedAt = n.archivedAt {
             m[ShiftYamlBridge.key("archived_at")] = ShiftYamlBridge.str(ShiftYamlBridge.isoString(archivedAt))
         }
+        // F6's checklist variant, under the same write-only-when-set rule as
+        // `archived_at` above: a text note's record stays byte-identical to
+        // what this store has always produced, so adding this feature is not
+        // a diff on every line of the captain's synced file.
+        if let checklist = n.checklist {
+            m[ShiftYamlBridge.key("checklist")] = .array(checklist.map { item in
+                var im = YamlOrderedMap()
+                im[ShiftYamlBridge.key("id")] = ShiftYamlBridge.str(item.id)
+                im[ShiftYamlBridge.key("text")] = ShiftYamlBridge.str(item.text)
+                im[ShiftYamlBridge.key("done")] = .bool(item.isDone)
+                return .dictionary(im)
+            })
+        }
+        // Whatever a newer build wrote that this one does not understand,
+        // put back exactly as it was found - see `passthrough`. Appended
+        // last so this build's own keys keep their established order and the
+        // resulting `git diff` stays readable.
+        for pair in passthrough[n.id] ?? [] {
+            m[pair.key] = pair.value
+        }
         return .dictionary(m)
+    }
+
+    /// The pairs on a record whose key this build does not write. A
+    /// non-string key (legal YAML, never something this store produces) is
+    /// preserved too - it is by definition not one of `knownKeys`.
+    private static func unknownPairs(in y: Yaml) -> [(key: Yaml, value: Yaml)] {
+        guard let dict = y.dictionary else { return [] }
+        return dict.pairs.filter { pair in
+            guard case .string(let name, _) = pair.key else { return true }
+            return !knownKeys.contains(name)
+        }
     }
 
     /// A preserved record's own `created_at`, so it keeps its position in the
@@ -715,9 +881,29 @@ final class StickyBoardStore {
         // absent key is "not archived", never a decode failure. A note written
         // by an older build has no `archived_at` and must still load.
         let archivedAt = ShiftYamlBridge.date(dict[ShiftYamlBridge.key("archived_at")])
+        // F6, same rule again: an absent `checklist` is a text note, never a
+        // decode failure. A present-but-empty one is a checklist the captain
+        // emptied, which is a different state - see `StickyNote.checklist`.
+        let checklist = checklistItems(dict[ShiftYamlBridge.key("checklist")])
         return StickyNote(id: id, title: title, text: text, color: color, x: x, y: y2,
                           width: Double(size.width), height: Double(size.height),
                           rotationDegrees: rotation, createdAt: createdAt,
-                          archivedAt: archivedAt)
+                          archivedAt: archivedAt, checklist: checklist)
+    }
+
+    /// A stored checklist, or `nil` when the key is absent or holds
+    /// something that is not a list. An item with no readable `text` is
+    /// dropped rather than rendered as a blank row; an item with no `id`
+    /// gets a fresh one, since an id is this build's own handle on the row
+    /// and a missing one costs nothing to replace.
+    private static func checklistItems(_ y: Yaml?) -> [StickyChecklistItem]? {
+        guard let y, let array = y.array else { return nil }
+        return array.compactMap { entry in
+            guard let dict = entry.dictionary,
+                  let text = ShiftYamlBridge.string(dict[ShiftYamlBridge.key("text")]) else { return nil }
+            let id = ShiftYamlBridge.string(dict[ShiftYamlBridge.key("id")]) ?? UUID().uuidString
+            let done = dict[ShiftYamlBridge.key("done")]?.bool ?? false
+            return StickyChecklistItem(id: id, text: text, isDone: done)
+        }
     }
 }

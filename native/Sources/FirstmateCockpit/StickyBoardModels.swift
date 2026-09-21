@@ -47,6 +47,13 @@ import AppKit
 enum StickyNoteColor: String, CaseIterable, Codable {
     case yellow, pink, blue, green, orange, purple
 
+    /// How the colour is named in F6's `Colour \u{25B8}` submenu. Capitalised
+    /// here rather than at the call site so the menu never has to know that
+    /// the raw value happens to be a lowercase English colour word.
+    var displayName: String {
+        rawValue.prefix(1).uppercased() + rawValue.dropFirst()
+    }
+
     /// The note's paper fill.
     var paperHex: String {
         switch self {
@@ -210,7 +217,26 @@ struct StickyNote: Identifiable, Equatable {
     /// half GL-01 is actually about - see `StickyBoardStore.note(from:)`.
     var archivedAt: Date?
 
+    /// The checklist note variant (review #3's F6), or `nil` for an ordinary
+    /// free-text note.
+    ///
+    /// **Optional, not an empty array**, and the distinction carries real
+    /// meaning: `nil` is "this is a text note", `[]` is "this is a checklist
+    /// the captain has emptied", and those two render differently (a text
+    /// note shows its body field, an empty checklist shows its "+ item"
+    /// affordance and an honest "No items yet"). Collapsing them would make
+    /// deleting a checklist's last item silently turn the note back into a
+    /// text note under the captain's cursor.
+    ///
+    /// `text` remains the authoritative plain-text rendering whenever this is
+    /// non-nil - see `StickyChecklist`'s own doc comment for why, and
+    /// `StickyBoardStore.setChecklist` for the one place that keeps the two
+    /// in step.
+    var checklist: [StickyChecklistItem]?
+
     var isArchived: Bool { archivedAt != nil }
+
+    var isChecklist: Bool { checklist != nil }
 
     var size: CGSize { CGSize(width: width, height: height) }
 }
@@ -252,8 +278,105 @@ enum StickyNotePromotion {
     static func task(from note: StickyNote, now: Date = Date()) -> ShiftTask {
         var task = ShiftTask.fresh(now: now)
         task.title = UnifiedSearchStickyNoteProvider.displayTitle(for: note)
+        // A checklist note's `text` is already its markdown rendering (see
+        // `StickyChecklist`), so a promoted checklist arrives in the task's
+        // description as `- [x] …` lines rather than as nothing - no special
+        // case needed here, which is the whole point of keeping `text` in
+        // sync rather than storing the body in two rival places.
         task.description = note.text
         task.priority = priority(for: note.color)
         return task
+    }
+}
+
+// MARK: - The checklist note (review #3's F6)
+
+/// One line of a checklist note.
+///
+/// `id` is stable and persisted for exactly the reason `StickyNote.id` is:
+/// the view toggles and renames items by id, and an id re-derived from the
+/// item's own text would change the moment the captain edits that text -
+/// which is precisely when the view is holding a reference to it.
+struct StickyChecklistItem: Identifiable, Equatable {
+    let id: String
+    var text: String
+    var isDone: Bool
+
+    static func fresh(text: String = "", isDone: Bool = false) -> StickyChecklistItem {
+        StickyChecklistItem(id: UUID().uuidString, text: text, isDone: isDone)
+    }
+}
+
+/// The pure logic behind the checklist note variant - parsing, rendering,
+/// toggling and counting - with no store, no view and no window, so
+/// `StickyBoardSelfTest` can assert all of it in CI's blocking lane.
+///
+/// **`StickyNote.text` stays the authoritative plain-text rendering of a
+/// checklist**, kept in sync by the store on every checklist change. That is
+/// a deliberate design choice rather than an implementation detail, and it
+/// buys four things at the cost of one derived field:
+///
+///   - `⌘K`'s sticky provider, the hub's peek and
+///     `UnifiedSearchStickyNoteProvider.displayTitle` keep working over a
+///     checklist note with no changes at all - they read `text`.
+///   - `StickyNotePromotion` carries a checklist into a task's description
+///     as readable markdown, again with no special case.
+///   - "Turn back into text" is lossless and needs no second stored copy of
+///     the body: dropping the checklist leaves exactly the markdown the
+///     captain was already looking at.
+///   - A build that does not know what `checklist:` is still renders the
+///     note's content, because the content is in `text` where it has always
+///     been. (It would lose the *done* flags on a rewrite were it not for
+///     `StickyBoardStore`'s unknown-key passthrough - see that file.)
+enum StickyChecklist {
+    /// `- [x] ` / `- [ ] `, plus the plain `- ` / `* ` bullets a captain is
+    /// as likely to have typed by hand, and a bare line (which becomes an
+    /// unchecked item). Everything after the marker is the item's text.
+    static func items(fromText text: String) -> [StickyChecklistItem] {
+        text.components(separatedBy: .newlines)
+            .compactMap { line in
+                let trimmed = line.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.isEmpty else { return nil }
+                return StickyChecklistItem.fresh(text: itemText(trimmed), isDone: isDoneMarker(trimmed))
+            }
+    }
+
+    /// The inverse: the markdown a checklist renders to, one item per line.
+    static func text(fromItems items: [StickyChecklistItem]) -> String {
+        items.map { "- [\($0.isDone ? "x" : " ")] \($0.text)" }.joined(separator: "\n")
+    }
+
+    /// "2 of 4" - the footer the mockup prints under a checklist note. An
+    /// empty checklist says so rather than reading "0 of 0", which looks
+    /// like a bug rather than like an empty list.
+    static func summary(_ items: [StickyChecklistItem]) -> String {
+        guard !items.isEmpty else { return "No items yet" }
+        return "\(items.filter(\.isDone).count) of \(items.count)"
+    }
+
+    /// Flips one item, returning a whole new array - the store writes the
+    /// result, so the toggle itself stays a pure function a test can assert
+    /// without a store. Unknown ids are a no-op, not a crash.
+    static func toggling(_ items: [StickyChecklistItem], id: String) -> [StickyChecklistItem] {
+        items.map { $0.id == id ? StickyChecklistItem(id: $0.id, text: $0.text, isDone: !$0.isDone) : $0 }
+    }
+
+    // MARK: Parsing helpers
+
+    private static func isDoneMarker(_ trimmed: String) -> Bool {
+        let lowered = trimmed.lowercased()
+        return lowered.hasPrefix("- [x]") || lowered.hasPrefix("* [x]")
+    }
+
+    /// Strips whichever marker the line carries. Deliberately ordered
+    /// longest-first: `- [ ] ` starts with `- `, so testing the bare bullet
+    /// first would leave `[ ] ` in the item's own text.
+    private static func itemText(_ trimmed: String) -> String {
+        for marker in ["- [x]", "- [X]", "- [ ]", "* [x]", "* [X]", "* [ ]", "- ", "* "] {
+            if trimmed.lowercased().hasPrefix(marker.lowercased()) {
+                return String(trimmed.dropFirst(marker.count)).trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return trimmed
     }
 }

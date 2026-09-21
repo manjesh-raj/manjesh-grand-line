@@ -1112,6 +1112,20 @@ noted.
   `init(from:)` with `decodeIfPresent` and a default** (GL-01). A Swift-side
   default does *not* make a declared key optional to the synthesised decoder,
   and getting this wrong made every existing `hosts.json` undecodable once.
+- **A store that re-serialises from a decoded struct silently drops any key
+  it does not know, and that is a GL-01 failure with no symptom.** GL-01's
+  usual shape is a *read* that fails; this is a read that succeeds and a
+  *write* that loses something. A whole-file rewrite built from decoded
+  values can only write the fields this build has, so a record carrying one
+  extra key from a newer build loses it on the very next edit - across a git
+  sync whose entire purpose is two machines on two builds, with nothing
+  failing and nothing to notice. Preserving a record that will not decode at
+  all (`StickyBoardStore.unreadableRecords`) is a *different* mechanism and
+  does not cover this. `StickyBoardStore`'s `knownKeys` + `passthrough` pair
+  is the worked example: capture the unrecognised pairs per record on read,
+  append them on write, and list every key this build writes in one place so
+  a new field that is forgotten there fails a test rather than duplicating
+  itself. Any hand-written whole-file serialiser wants the same shape.
 - **Git-backed stores share one working tree and one serial queue**
   (`ShiftGitSync.sharedQueue`). Two queues against one tree race on
   `.git/index.lock`. A terminate-time flush dispatches **onto** that queue with

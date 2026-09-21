@@ -430,17 +430,32 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
             addNoteView(for: note)
         }
         for note in visible { noteViews[note.id]?.isArchived = note.isArchived }
+        updateArchiveButton()
         updateFooter()
         updateOverlay()
     }
 
     @objc private func archiveToggleTapped() {
         showingArchive.toggle()
-        archiveButton.toolTip = showingArchive
-            ? "Back to the board"
-            : "Show archived notes"
         rebuildNoteViews()
         onDrillSubtitleChanged?()
+    }
+
+    /// The reviewed mockup prints the archive's size on the button itself
+    /// ("Archive 14"), which is the difference between a drawer you know has
+    /// something in it and one you have to open to find out. The count is
+    /// dropped at zero rather than shown as "Archive 0" - an empty drawer's
+    /// honest state is already the button's own quiet default, and a zero
+    /// reads as a badge that failed to load.
+    ///
+    /// `title` is the one HelmButton property a page may set; `restyle()`
+    /// owns the other four (AGENTS.md's component index).
+    private func updateArchiveButton() {
+        let archived = store.archivedNotes.count
+        archiveButton.title = showingArchive || archived == 0 ? "Archive" : "Archive \(archived)"
+        archiveButton.toolTip = showingArchive
+            ? "Back to the board"
+            : (archived == 1 ? "Show the 1 archived note" : "Show \(archived) archived notes")
     }
 
     /// UX10's archive verb, with GL-33's Undo - the caller still holds the
@@ -485,6 +500,54 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
         noteView.onMakeTaskRequested = { [weak self, id = note.id] in
             guard let self, let current = self.store.notes.first(where: { $0.id == id }) else { return }
             self.onMakeTaskFromNote?(current)
+        }
+        // F6: the checklist variant and the colour submenu. Each one writes
+        // through the store and then re-applies the result to the note's own
+        // view - never `rebuildNoteViews()`, which would tear down the view
+        // the captain is typing into and drop the caret with it.
+        noteView.onConvertToChecklistRequested = { [weak self, id = note.id] in
+            guard let self, let updated = self.store.convertToChecklist(id: id) else { return }
+            // The conversion normalises `text` into markdown, so the hidden
+            // text view is brought along too - otherwise going straight back
+            // to text would show the pre-conversion body.
+            self.noteViews[id]?.applyText(updated.text)
+            self.noteViews[id]?.applyChecklist(updated.checklist)
+        }
+        noteView.onConvertToTextRequested = { [weak self, id = note.id] in
+            guard let self, let updated = self.store.convertToText(id: id) else { return }
+            self.noteViews[id]?.applyText(updated.text)
+            self.noteViews[id]?.applyChecklist(updated.checklist)
+        }
+        noteView.onColorChangeRequested = { [weak self, id = note.id] newColor in
+            guard let self, let previous = self.store.updateColor(id: id, color: newColor) else { return }
+            self.noteViews[id]?.applyColor(newColor)
+            // GL-33: the undo restores the colour the caller already had in
+            // hand, rather than guessing at what it used to be.
+            Toast.showUndo(in: self.view, message: "Note recoloured") { [weak self] in
+                guard let self else { return }
+                self.store.updateColor(id: id, color: previous)
+                self.noteViews[id]?.applyColor(previous)
+            }
+        }
+        noteView.onChecklistItemToggled = { [weak self, id = note.id] itemID in
+            guard let self, let updated = self.store.toggleChecklistItem(noteID: id, itemID: itemID) else { return }
+            self.noteViews[id]?.applyChecklist(updated.checklist)
+        }
+        noteView.onChecklistItemTextChanged = { [weak self, id = note.id] itemID, text in
+            // Debounced in the store, like every other keystroke on this
+            // page - and deliberately NOT followed by a re-apply, which
+            // would rebuild the row under the cursor on every character.
+            self?.store.updateChecklistItemText(noteID: id, itemID: itemID, text: text)
+        }
+        noteView.onChecklistItemRemoved = { [weak self, id = note.id] itemID in
+            guard let self, let updated = self.store.removeChecklistItem(noteID: id, itemID: itemID) else { return }
+            self.noteViews[id]?.applyChecklist(updated.checklist)
+        }
+        noteView.onChecklistItemAdded = { [weak self, id = note.id] in
+            guard let self, self.store.addChecklistItem(noteID: id) != nil,
+                  let updated = self.store.notes.first(where: { $0.id == id }) else { return }
+            self.noteViews[id]?.applyChecklist(updated.checklist)
+            self.noteViews[id]?.focusLastChecklistRow()
         }
         canvas.addSubview(noteView)
         noteViews[note.id] = noteView
@@ -536,7 +599,7 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
                 symbol: wantsArchiveCopy ? "archivebox" : "note.text",
                 title: wantsArchiveCopy ? "Nothing archived yet" : "Your board is empty",
                 body: wantsArchiveCopy
-                    ? "Archive a note from its \u{22EF} menu and it waits here instead of crowding the board."
+                    ? "Right-click a note (or use its \u{22EF} menu) to archive it, and it waits here instead of crowding the board."
                     : "Click \u{201C}New Note\u{201D} above to add your first sticky note.",
                 size: .standard, boxed: false,
                 hue: RailDestination.stickyBoard.domainHue,
@@ -732,6 +795,11 @@ final class StickyBoardController: NSViewController, DaylightDrillActions {
     var debugScrollView: NSScrollView { scrollView }
     func debugNewNote() { newNoteTapped() }
     func debugDeleteNote(id: String) { deleteNote(id: id) }
+    /// Drives the real toolbar action, so a suite exercises the archive
+    /// drawer the way the button does rather than setting the flag itself.
+    func debugToggleArchive() { archiveToggleTapped() }
+    var debugShowingArchive: Bool { showingArchive }
+    var debugArchiveButton: HelmButton { archiveButton }
     /// Re-themes this instance directly, bypassing `ThemeManager.shared.
     /// setTheme` - which persists to real `UserDefaults` - so a self-test
     /// theme sweep never clobbers the captain's own saved preference on a
