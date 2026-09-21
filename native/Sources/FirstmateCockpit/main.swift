@@ -79,7 +79,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// UX4. See its construction in `buildMenu` for why the title is part of
     /// the contract rather than decoration.
     var contextualNewItem: NSMenuItem?
-    lazy var shiftQuickCapture = ShiftQuickCaptureController(store: shiftStore)
+    /// F2: the ⌥Space router. Built with the shell's own filer, which is
+    /// where every one of the five writes lives (see
+    /// `AppShellController.makeCaptureFiler`) - this panel owns no store.
+    lazy var shiftQuickCapture: ShiftQuickCaptureController = {
+        let capture = ShiftQuickCaptureController(filer: appShell.makeCaptureFiler())
+        return capture
+    }()
     lazy var shiftNotifications = ShiftNotificationScheduler(store: shiftStore)
     lazy var shiftHotkey = ShiftGlobalHotkey { [weak self] in self?.shiftQuickCapture.present() }
     /// Audit §2 item 7: ⌘T/⌘D/⌘W/⌘R/⇧⌘R/⌘1-9 for Console and Tools tabs,
@@ -418,14 +424,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // below) wires that control to call back through this property, and
         // would silently clobber a direct assignment made before that point.
         appShell.onSearchTapped = { [weak self] in self?.unifiedSearch.present() }
-        shiftQuickCapture.onCaptured = { [weak self] in
-            self?.appShell.showToast("Task captured")
+        // F2: the toast names where it went, because the router has five
+        // answers now and "Task captured" would be wrong for four of them.
+        shiftQuickCapture.onCaptured = { [weak self] destination in
+            self?.appShell.showToast("Captured to \(destination.railDestination.title)")
         }
         // The global hotkey's system-wide (other-app-frontmost) case needs
         // Accessibility permission - see `ShiftGlobalHotkey`'s header for
         // exactly why. Requesting it here (once, at launch) surfaces the
         // real macOS prompt the first time this app ever runs rather than
         // silently failing later.
+        // F3: arm the clipboard-history capture loop. Once, here - see
+        // `ClipboardHistoryController.startCapturing()` for why not at init.
+        appShell.startClipboardHistoryCapture()
         shiftHotkey.requestPermissionIfNeeded()
         shiftHotkey.start()
         tabShortcuts.start()
@@ -1338,6 +1349,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         editMenu.addItem(withTitle: "Cut", symbol: "scissors", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         editMenu.addItem(withTitle: "Copy", symbol: "doc.on.doc", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         editMenu.addItem(withTitle: "Paste", symbol: "doc.on.clipboard", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        // F3: ⌘⇧V. Checked free against this file's own menu before it was
+        // taken - the Edit menu's Paste is ⌘V and nothing claimed ⇧⌘V - which
+        // is the check `NavigationCoherenceSelfTest` now enforces for every
+        // chord here (AGENTS.md: a duplicate key equivalent silently makes one
+        // of the two items permanently dead).
+        let clipboardHistoryItem = NSMenuItem(title: "Clipboard History\u{2026}",
+                                              action: #selector(AppShellController.toggleClipboardHistory),
+                                              keyEquivalent: "v").withSymbol("doc.on.clipboard")
+        clipboardHistoryItem.keyEquivalentModifierMask = [.command, .shift]
+        clipboardHistoryItem.target = menuTarget
+        editMenu.addItem(clipboardHistoryItem)
         editMenu.addItem(withTitle: "Select All", symbol: "selection.pin.in.out", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editMenu.addItem(NSMenuItem.separator())
         editMenu.addItem(withTitle: "Find…", symbol: "magnifyingglass", action: #selector(ConsoleController.showFind), keyEquivalent: "f")
@@ -1520,7 +1542,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // permission at all as long as this app is frontmost, so it's a
         // meaningful discoverability aid even before that permission is
         // granted.
-        let quickCaptureItem = NSMenuItem(title: "Quick Capture", action: #selector(AppDelegate.showShiftQuickCapture), keyEquivalent: " ").withSymbol("square.and.pencil")
+        let quickCaptureItem = NSMenuItem(title: "Capture\u{2026}", action: #selector(AppDelegate.showShiftQuickCapture), keyEquivalent: " ").withSymbol("square.and.pencil")
         quickCaptureItem.keyEquivalentModifierMask = [.option]
         quickCaptureItem.target = self
         shiftMenu.addItem(quickCaptureItem)
@@ -1827,6 +1849,18 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     // 3s debounce never fires before a headless suite process exits - but a
     // real hazard regardless, and the exact class of bug this whole block
     // exists to close for every present and future suite at once).
+    // F3: the clipboard history is a sealed file plus a Keychain item, and
+    // both need redirecting for the same reason every store above does - a
+    // suite must neither read nor overwrite the captain's real history, and
+    // must certainly not create a real Keychain item on his machine.
+    // `FM_CLIPBOARD_HISTORY_EPHEMERAL` is what `ClipboardHistoryKey.load`
+    // honours to use a per-process random key instead of the Keychain.
+    if (ProcessInfo.processInfo.environment["FM_CLIPBOARD_HISTORY_FILE"] ?? "").isEmpty {
+        setenv("FM_CLIPBOARD_HISTORY_FILE", scratchRoot.appendingPathComponent("clipboard-history.sealed").path, 1)
+    }
+    if (ProcessInfo.processInfo.environment["FM_CLIPBOARD_HISTORY_EPHEMERAL"] ?? "").isEmpty {
+        setenv("FM_CLIPBOARD_HISTORY_EPHEMERAL", "1", 1)
+    }
     if (ProcessInfo.processInfo.environment["FM_STICKY_BOARD_DIR"] ?? "").isEmpty {
         setenv("FM_STICKY_BOARD_DIR", scratchRoot.appendingPathComponent("sticky-board", isDirectory: true).path, 1)
     }
@@ -2756,6 +2790,35 @@ if ProcessInfo.processInfo.environment["FM_RUN_CODE_PREVIEW_VIEW_TESTS"] == "1" 
 // a real window (and the real vendored Monaco bundle), so it is window-backed
 // and lives in `run-all-tests.sh`'s NEEDS_SESSION list. The split is AGENTS.md's
 // own rule: the test is what the suite asserts, never what it imports.
+// `fm/grandline-feature-f2-f3-capture-clipboard` (F2 of full review #3 §8).
+// `CaptureRouterSelfTest` is pure logic - the chord map, the shared draft
+// parse, the derived store names, the crew classifier's prompt and reply
+// parsing, and the concealed-pasteboard refusal - and runs in CI's blocking
+// lane. `CaptureRouterViewSelfTest` mounts the real ⌥Space panel and drives
+// real key equivalents and real tile clicks, so it is window-backed and lives
+// in `run-all-tests.sh`'s NEEDS_SESSION list. The split is AGENTS.md's own
+// rule: the test is what the suite asserts, never what it imports.
+// `fm/grandline-feature-f2-f3-capture-clipboard` (F3 of full review #3 §8).
+// `ClipboardHistorySelfTest` is pure logic - the capture rule, the Poneglyph
+// exclusion proved in both directions, the rolling eviction and what a pin
+// does to it, the sealed round trip, GL-01's unreadable-file state and the
+// shared `changeCount` watch - and runs in CI's blocking lane.
+// `ClipboardHistoryViewSelfTest` builds the real ⌘⇧V panel, so it is
+// window-backed and lives in `run-all-tests.sh`'s NEEDS_SESSION list.
+if ProcessInfo.processInfo.environment["FM_RUN_CLIPBOARD_HISTORY_TESTS"] == "1" {
+    exit(ClipboardHistorySelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_CLIPBOARD_HISTORY_VIEW_TESTS"] == "1" {
+    exit(ClipboardHistoryViewSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_CAPTURE_ROUTER_TESTS"] == "1" {
+    exit(CaptureRouterSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_CAPTURE_ROUTER_VIEW_TESTS"] == "1" {
+    exit(CaptureRouterViewSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_NOTEBOOK_TESTS"] == "1" {
     exit(NotebookSelfTest.run() ? 0 : 1)
 }

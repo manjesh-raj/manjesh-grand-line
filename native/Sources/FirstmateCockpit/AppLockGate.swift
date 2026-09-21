@@ -52,6 +52,15 @@ enum AppLockedSurface {
     case menuBarPopover
     /// ⌥Space global quick capture.
     case quickCapture
+    /// F3: ⌘⇧V clipboard history.
+    ///
+    /// Its own case rather than sharing `.unifiedSearch`'s, per this file's
+    /// own header rule and for the concrete reason §5.2 records: a suite
+    /// asserting the palette is gated would pass just as happily with this
+    /// panel's gate deleted. It is the most disclosing of the walk-up
+    /// surfaces - a transcript of everything the captain has copied - and it
+    /// is a `.floating` panel, which the lock overlay cannot cover.
+    case clipboardHistory
     /// ⌘K unified search.
     ///
     /// Audit §5.2: this used to reuse `.quickCapture`, directly against this

@@ -76,7 +76,10 @@ enum AuditSecurityLockSelfTest {
         setenv("FM_SHIFT_DIR", scratch.path, 1)
         defer { unsetenv("FM_SHIFT_DIR") }
 
-        let capture = ShiftQuickCaptureController(store: ShiftStore())
+        // F2 turned this panel into a router with no store of its own; the
+        // gate registration this case asserts is unchanged, so an unwired
+        // filer is exactly right here.
+        let capture = ShiftQuickCaptureController(filer: .unwired)
         guard let capturePanel = capture.window else {
             check(false, "⌥Space quick capture built no window at all")
             return report(failures)

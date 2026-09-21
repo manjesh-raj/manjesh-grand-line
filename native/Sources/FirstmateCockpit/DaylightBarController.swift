@@ -289,6 +289,16 @@ final class DaylightBarController: NSViewController {
     /// is - see `RecentDestinationsPopover.swift`'s own header for the
     /// forward-don't-own wiring.
     let recentDestinations = RecentDestinationsController()
+    /// F3: the ⌘⇧V clipboard history, sitting immediately after Recents.
+    ///
+    /// Placed by this bar's own stated convention for a control that is *not*
+    /// a destination shortcut (the theme toggle, Recents): a fixed-size icon
+    /// square with a plain required gap on both sides, which needs no
+    /// window-cap protection of its own (gotcha 13) because its width is
+    /// `DaylightBarIconButton.side` and never moves. It belongs beside Recents
+    /// rather than in the quick-access row because it opens a panel rather
+    /// than navigating anywhere.
+    let clipboardHistory = ClipboardHistoryController()
     /// Forwarded, never owned - the bar has no idea what a destination *is*,
     /// exactly as it has no idea what a space means (`onSelectSpace`).
     var onSelectDestination: ((RailDestination) -> Void)?
@@ -454,6 +464,7 @@ final class DaylightBarController: NSViewController {
         bar.addSubview(drillActions)
         bar.addSubview(searchPill)
         bar.addSubview(recentDestinations.button)
+        bar.addSubview(clipboardHistory.button)
         bar.addSubview(quickAccessRow)
         bar.addSubview(quickAccessOverflowButton)
         bar.addSubview(themeToggleButton)
@@ -516,8 +527,11 @@ final class DaylightBarController: NSViewController {
             searchPill.trailingAnchor.constraint(equalTo: recentDestinations.button.leadingAnchor, constant: -HelmMetrics.s2),
             searchPill.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
 
-            recentDestinations.button.trailingAnchor.constraint(equalTo: quickAccessRow.leadingAnchor, constant: -HelmMetrics.s2),
+            recentDestinations.button.trailingAnchor.constraint(equalTo: clipboardHistory.button.leadingAnchor, constant: -HelmMetrics.s2),
             recentDestinations.button.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
+
+            clipboardHistory.button.trailingAnchor.constraint(equalTo: quickAccessRow.leadingAnchor, constant: -HelmMetrics.s2),
+            clipboardHistory.button.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
             recentDestinations.button.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
             recentDestinations.button.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
 
@@ -1285,6 +1299,7 @@ final class DaylightBarController: NSViewController {
         var out: [(String, HelmBarPanel)] = [
             ("notifications", notificationCenter.debugPanel),
             ("recents", recentDestinations.debugPanel),
+            ("clipboard", clipboardHistory.debugPanel),
         ]
         if let avatarPanel { out.append(("avatar", avatarPanel)) }
         return out

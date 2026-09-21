@@ -156,6 +156,11 @@ final class AppShellController: NSViewController {
     /// The Sticky Board's own store - one instance, for the reason its own
     /// declaration gives.
     var stickyBoardStore: StickyBoardStore { stickyBoard.store }
+
+    /// The one `ShiftStore` (GL-23), held rather than only passed through, so
+    /// F2's capture filer can write a task without a second instance. Every
+    /// other reader on this controller already shares it via `ShiftController`.
+    let shiftStore: ShiftStore
     /// `fm/swap-vault-poneglyph-naming-in-grand-lin-1f`: the `.vault`
     /// destination is Automic Vault's hardening panel again (`vault`,
     /// `VaultController`), and the captain's own personal credential vault is
@@ -470,6 +475,7 @@ final class AppShellController: NSViewController {
         // search palette, and quick capture - all of which need to read/
         // write the same tasks/follow-ups this page shows, not a second
         // independent store instance.
+        self.shiftStore = shiftStore
         self.shift = ShiftController(store: shiftStore)
         // GL-23 again: the same shared instance the Log Analyzer, the crew's
         // `command_search` tool and the ⌘K palette already read.
@@ -2438,6 +2444,82 @@ final class AppShellController: NSViewController {
     private func makeTaskFromStickyNote(_ note: StickyNote) {
         show(.shift)
         shift.presentTaskEditor(prefilledFrom: note)
+    }
+
+    // MARK: Clipboard history (F3)
+
+    /// ⌘⇧V. The panel and its store live on the bar (see
+    /// `DaylightBarController.clipboardHistory`); this is the menu's way in,
+    /// and the one place the "paste it back" toast is worded.
+    @objc func toggleClipboardHistory() {
+        bar.clipboardHistory.toggle()
+    }
+
+    /// Arm the capture loop. Called once, from `main.swift` - never at init;
+    /// see `ClipboardHistoryController.startCapturing()` for why.
+    func startClipboardHistoryCapture() {
+        bar.clipboardHistory.startCapturing()
+        bar.clipboardHistory.onPasted = { [weak self] _ in
+            self?.showToast("Copied \u{2014} \u{2318}V to paste it")
+        }
+    }
+
+    // MARK: Universal capture (F2)
+
+    /// The five writes ⌥Space's router reaches, bound to the stores this
+    /// controller already owns.
+    ///
+    /// **Why the panel does not own any of this.** GL-23: `CredentialVaultStore`
+    /// and `StickyBoardStore` cache, so a second instance is a second source
+    /// of truth, and this controller is the one place all five destinations
+    /// are already in scope. The same "forward, never own" shape
+    /// `RecentDestinationsController.configure` uses, for the same reason.
+    ///
+    /// **Four of the five file silently; ⌘4 hands off, on purpose.** A
+    /// captured credential is a *secret* with no title, category or location,
+    /// and the vault may well be locked when ⌥Space fires (a locked
+    /// `CredentialVaultStore.add` refuses outright). So ⌘4 navigates to
+    /// Poneglyph and opens its own Add sheet with the secret already filled -
+    /// the same "select the destination first, then act on it" shape every
+    /// creation verb above uses, and the one destination where a silent write
+    /// would be the wrong answer even if it were possible.
+    func makeCaptureFiler() -> CaptureFiler {
+        CaptureFiler { [weak self] destination, draft in
+            guard let self else { return .refused("The app shell went away.") }
+            switch destination {
+            case .task:
+                var task = ShiftTask.fresh()
+                task.title = draft.title
+                task.description = draft.body
+                if let due = draft.dueDate {
+                    let (dateStr, timeStr) = ShiftDateFormatting.components(from: due)
+                    task.dueDate = dateStr
+                    task.dueTime = draft.dueHasTime ? timeStr : nil
+                }
+                self.shiftStore.addTask(task)
+                return .filed(.task)
+
+            case .sticky:
+                self.stickyBoard.addCapturedNote(title: draft.title, text: draft.body)
+                return .filed(.sticky)
+
+            case .note:
+                _ = self.notebookStore.createPage(
+                    title: CaptureRouter.notebookTitle(for: draft),
+                    content: draft.text)
+                return .filed(.note)
+
+            case .codeSnippet:
+                _ = self.codePreviewStore.create(name: CaptureRouter.snippetName(for: draft),
+                                                 content: draft.text)
+                return .filed(.codeSnippet)
+
+            case .credential:
+                self.show(.poneglyph)
+                self.poneglyph.presentCapturedCredential(secret: draft.text)
+                return .handedOff(.credential)
+            }
+        }
     }
 
     @objc func newCodeSnippetFromMenu() {

@@ -779,8 +779,27 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         presentEditor(editing: credential)
     }
 
-    private func presentEditor(editing credential: VaultCredential?) {
-        let editor = CredentialVaultEditorController(editing: credential)
+    /// F2: ⌥Space's ⌘4 landed here with a secret.
+    ///
+    /// Opens the ordinary Add sheet with only the secret field filled - see
+    /// `CredentialVaultEditorController.capturedSecret` for why this is not a
+    /// draft `VaultCredential` passed as `editing`, and
+    /// `AppShellController.makeCaptureFiler` for why ⌘4 hands off at all
+    /// rather than writing (the vault can be locked, and a captured line has
+    /// no title).
+    ///
+    /// The lock is *not* checked here: the sheet is a form, not a disclosure,
+    /// and `store.add` refuses on its own while locked with the error this
+    /// page already reports. Opening it locked is what shows the captain the
+    /// unlock screen behind it, which is the useful outcome.
+    func presentCapturedCredential(secret: String) {
+        noteInteraction()
+        presentEditor(editing: nil, capturedSecret: secret)
+    }
+
+    private func presentEditor(editing credential: VaultCredential?, capturedSecret: String? = nil) {
+        let editor = CredentialVaultEditorController(editing: credential,
+                                                     capturedSecret: capturedSecret)
         editor.onSave = { [weak self] saved in
             guard let self else { return }
             let result = credential == nil ? self.store.add(saved) : self.store.update(saved)
