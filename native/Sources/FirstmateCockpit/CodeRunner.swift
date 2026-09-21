@@ -563,12 +563,24 @@ enum CodeSandbox {
     /// whatever the captain's shell exports, and a *filter* is a list somebody
     /// has to keep in step with the next secret. A fixed set cannot leak
     /// something nobody thought of.
-    static func environment(writable: String, path: String) -> [String: String] {
+    /// - Parameter home: what `$HOME` should be.
+    ///
+    ///   For `.untrustedCode` this is the scratch directory: the profile denies
+    ///   reading the real home anyway, and a snippet that writes to `~` should
+    ///   land somewhere it is allowed to.
+    ///
+    ///   For `.installedTool` it is the **real** home, and the two halves have
+    ///   to agree or the trust level is decorative: `.installedTool` allows
+    ///   home *reads* precisely so a formatter can find `.prettierrc`,
+    ///   `pyproject.toml` or `.swift-format` - and a redirected `$HOME` means
+    ///   it never looks there, so the allowance buys nothing. Writes are still
+    ///   denied, so a formatter cannot touch that configuration.
+    static func environment(writable: String, path: String, home: String? = nil) -> [String: String] {
         [
             "PATH": path,
-            // Both point into the scratch directory, so a tool that insists on
-            // a home or a temp dir gets one it is allowed to write to.
-            "HOME": writable,
+            "HOME": home ?? writable,
+            // Always the scratch directory: a tool that insists on a temp dir
+            // gets one it is allowed to write to, at either trust level.
             "TMPDIR": writable,
             "LANG": "en_US.UTF-8",
             "LC_ALL": "en_US.UTF-8",
@@ -923,7 +935,9 @@ final class CodeRunner {
                     arguments: ["-f", profileURL.path, executable]
                         + tool.argv(script: "", sandbox: workPath),
                     cwd: work,
-                    env: CodeSandbox.environment(writable: workPath, path: CodeSandbox.runnerPath),
+                    env: CodeSandbox.environment(writable: workPath,
+                                                 path: CodeSandbox.runnerPath,
+                                                 home: homePath),
                     stdin: Data(content.utf8),
                     timeout: Self.formatWallClock,
                     label: "code-format \(tool.tool)")

@@ -303,6 +303,21 @@ enum CodeRunnerSelfTest {
         let after = CodeSandbox.environment(writable: "/private/tmp/w", path: "/usr/bin")
         check(after["FM_CODE_RUNNER_SECRET_PROBE"] == nil,
               "a run's environment must not inherit this process's variables")
+
+        // **The two trust levels have to agree between the profile and the
+        // environment, or one of them is decorative.** `.installedTool` allows
+        // home *reads* so a formatter can find `.prettierrc` - which buys
+        // nothing if `$HOME` points at the scratch directory, because then it
+        // never looks there. So a formatter gets the real home and a snippet
+        // does not, and both directions are checked.
+        let tool = CodeSandbox.environment(writable: "/private/tmp/w", path: "/usr/bin",
+                                           home: "/Users/cap")
+        check(tool["HOME"] == "/Users/cap",
+              "a formatter must get the real home, so its own config is findable")
+        check(tool["TMPDIR"] == "/private/tmp/w",
+              "…and still write its temp files into the scratch directory, got \(tool)")
+        check(Set(tool.keys) == Set(env.keys),
+              "the two trust levels must carry the same variable set, not different ones")
     }
 
     // MARK: Availability
