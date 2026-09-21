@@ -103,7 +103,7 @@ exists to stop being the only option. Three changes, all small:
 Plus a drop target on the destination's whole root view (`public.url` and a
 plain string, which is what a browser puts on the dragging pasteboard for a
 dragged tab - never `.fileURL`, which is what every other drop zone in this app
-accepts), a ⌘V button in the page toolbar and the drill header, a `New Link`
+accepts), a ⌘V button in the page toolbar and the drill header, a `New Saved Link`
 File-menu verb through `ContextualNewAction`, and a ⌘K provider.
 
 ### Why the AI summary is opt-in per card
