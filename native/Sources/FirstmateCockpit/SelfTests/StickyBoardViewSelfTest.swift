@@ -62,6 +62,9 @@ enum StickyBoardViewSelfTest {
         checkBoardHeader(controller, check)
         checkDeleteAndUndo(controller, check)
         checkCorkGrainIsDocumentAnchored(check)
+        checkContextMenu(controller, check)
+        checkChecklistNote(controller, check)
+        checkArchiveDrawer(controller, check)
 
         if ok {
             print("[sticky-board-view] OK - all window-backed StickyBoard checks passed")
@@ -756,6 +759,199 @@ enum StickyBoardViewSelfTest {
 
         check(controller.debugStore.notes.count == countBefore, "clicking the real Undo button should restore the note in the store")
         check(controller.debugNoteViews[id] != nil, "clicking the real Undo button should re-add the note's view")
+    }
+
+    // MARK: F6 (review #3 §8) - the right-click menu, the checklist note and
+    // the archive drawer, all driven through real views in a real window.
+
+    /// The context menu the mockup shows, asserted on the menu a real
+    /// right-click builds (`NSView.menu(for:)`) rather than on a list of
+    /// strings the test wrote itself.
+    private static func checkContextMenu(_ controller: StickyBoardController, _ check: (Bool, String) -> Void) {
+        controller.debugNewNote()
+        guard let noteView = controller.debugNoteViews.values.first(where: { !$0.isArchived }) else {
+            check(false, "expected an active note view to right-click")
+            return
+        }
+        let titles = noteView.debugContextMenu.items.map(\.title)
+        check(titles.contains("Make a Task\u{2026}"), "F6's promotion must be on the note's own menu, got \(titles)")
+        check(titles.contains("Turn into a Checklist"), "a text note's menu must offer the checklist conversion, got \(titles)")
+        check(titles.contains("Colour"), "the menu must carry the colour submenu, got \(titles)")
+        check(titles.contains("Archive Note") && titles.contains("Delete Note"),
+              "the menu must keep both existing verbs, got \(titles)")
+        // Order matters - the promotion is the feature, so it leads.
+        if let promote = titles.firstIndex(of: "Make a Task\u{2026}"),
+           let archive = titles.firstIndex(of: "Archive Note"),
+           let delete = titles.firstIndex(of: "Delete Note") {
+            check(promote < archive && archive < delete,
+                  "the menu should read promote, then archive, then delete - got \(titles)")
+        } else {
+            check(false, "could not locate the three verbs to check their order: \(titles)")
+        }
+
+        // The colour submenu names every paper colour and ticks the one this
+        // note is actually wearing.
+        guard let colorItem = noteView.debugContextMenu.items.first(where: { $0.title == "Colour" }),
+              let submenu = colorItem.submenu else {
+            check(false, "the Colour item should carry a real submenu")
+            return
+        }
+        check(submenu.items.count == StickyNoteColor.allCases.count,
+              "the colour submenu should offer every paper colour, got \(submenu.items.count)")
+        check(submenu.items.filter { $0.state == .on }.count == 1,
+              "exactly one colour should be ticked - the one the note is wearing")
+        check(submenu.items.allSatisfy { $0.representedObject is StickyNoteColor },
+              "each colour item must carry its own StickyNoteColor, not a positional tag")
+
+        // A real click on a colour item has to reach the store, not just the
+        // view - this is the half a menu-shape assertion cannot see.
+        guard let target = submenu.items.first(where: { ($0.representedObject as? StickyNoteColor) != noteView.debugColor }),
+              let wanted = target.representedObject as? StickyNoteColor,
+              let action = target.action else {
+            check(false, "expected a colour item other than the note's current colour")
+            return
+        }
+        _ = target.target?.perform(action, with: target)
+        check(controller.debugStore.notes.first(where: { $0.id == noteView.noteID })?.color == wanted,
+              "clicking a colour item should repaint the note in the store, not only in the view")
+        check(noteView.debugColor == wanted, "and in the view it was clicked on")
+    }
+
+    /// The checklist note: converting, rendering, toggling a real checkbox,
+    /// and converting back.
+    private static func checkChecklistNote(_ controller: StickyBoardController, _ check: (Bool, String) -> Void) {
+        controller.debugNewNote()
+        guard let noteView = controller.debugNoteViews.values.first(where: { !$0.isArchived }) else {
+            check(false, "expected an active note view for the checklist case")
+            return
+        }
+        let id = noteView.noteID
+        controller.debugStore.updateText(id: id, text: "Freeze deploys\nSnapshot RDS\nPage rota")
+        controller.debugStore.flushPendingWrite()
+
+        check(!noteView.isChecklist, "a fresh note is a text note")
+        check(!noteView.debugTextScroll.isHidden, "a text note shows its text view")
+        check(noteView.debugChecklistView.isHidden, "a text note hides the checklist view")
+
+        // Through the real callback the controller installed - so this
+        // exercises the wiring, not a direct store poke.
+        noteView.onConvertToChecklistRequested?()
+        controller.view.layoutSubtreeIfNeeded()
+
+        check(noteView.isChecklist, "converting should put the note view into its checklist state")
+        check(noteView.debugTextScroll.isHidden, "a checklist note must hide the text view, or it has two bodies")
+        check(!noteView.debugChecklistView.isHidden, "a checklist note must show the checklist view")
+        let rows = noteView.debugChecklistView.debugRows
+        check(rows.count == 3, "three body lines should render as three rows, got \(rows.count)")
+        check(noteView.debugChecklistView.debugSummaryText == "0 of 3",
+              "the footer should read the mockup's `n of m`, got \(noteView.debugChecklistView.debugSummaryText.debugDescription)")
+        // The menu's verb follows the note's shape.
+        check(noteView.debugContextMenu.items.map(\.title).contains("Turn into Text"),
+              "a checklist note's menu should offer the way back")
+
+        // A real click on the real checkbox, through the real callbacks.
+        let beforeRender = renderBodySignature(noteView)
+        rows[0].debugCheckbox.performClick(nil)
+        controller.view.layoutSubtreeIfNeeded()
+        let stored = controller.debugStore.notes.first(where: { $0.id == id })
+        check(stored?.checklist?.first?.isDone == true,
+              "clicking a row's checkbox should mark that item done in the store")
+        check(stored?.text.hasPrefix("- [x] ") == true,
+              "and must keep `text` in step, got \(stored?.text.debugDescription ?? "nil")")
+        check(noteView.debugChecklistView.debugSummaryText == "1 of 3",
+              "the footer should follow, got \(noteView.debugChecklistView.debugSummaryText.debugDescription)")
+
+        // AGENTS.md's render convention: assert what is *painted*, not only
+        // what was computed. A ticked box and a struck-through line are a
+        // visibly different note, and a checklist that updated its model
+        // without repainting would pass every assertion above.
+        let afterRender = renderBodySignature(noteView)
+        let changed = zip(beforeRender, afterRender).filter { $0 != $1 }.count
+        check(!beforeRender.isEmpty && beforeRender.count == afterRender.count,
+              "the two renders must be comparable - \(beforeRender.count) vs \(afterRender.count) samples")
+        check(changed > 0, "ticking a checklist item must change what the note actually paints, \(changed) pixels differed")
+        // The discriminating half: an unchanged note must render identically,
+        // or "some pixels differed" proves nothing about the tick.
+        check(zip(afterRender, renderBodySignature(noteView)).filter { $0 != $1 }.isEmpty,
+              "two renders of an unchanged note must match, or this probe is measuring noise")
+
+        // Adding and removing a row, again through the installed callbacks.
+        noteView.onChecklistItemAdded?()
+        check(controller.debugStore.notes.first(where: { $0.id == id })?.checklist?.count == 4,
+              "the + item affordance should append a row")
+        check(noteView.debugChecklistView.debugRows.count == 4, "and the view should show it")
+
+        noteView.onConvertToTextRequested?()
+        check(!noteView.isChecklist, "converting back should return the note to its text state")
+        check(!noteView.debugTextScroll.isHidden, "and show the text view again")
+        check(noteView.debugTextView.string.contains("- [x] Freeze deploys"),
+              "the text view must show the markdown the checklist rendered to, got \(noteView.debugTextView.string.debugDescription)")
+    }
+
+    /// The archive drawer: the toolbar toggle really swaps which set the
+    /// board draws, and the empty states differ.
+    private static func checkArchiveDrawer(_ controller: StickyBoardController, _ check: (Bool, String) -> Void) {
+        controller.debugNewNote()
+        guard let noteView = controller.debugNoteViews.values.first(where: { !$0.isArchived }) else {
+            check(false, "expected an active note view to archive")
+            return
+        }
+        let id = noteView.noteID
+        let activeBefore = controller.debugStore.activeNotes.count
+
+        let archivedBefore = controller.debugStore.archivedNotes.count
+        noteView.onArchiveRequested?()
+        check(controller.debugStore.activeNotes.count == activeBefore - 1,
+              "archiving should take the note off the active board")
+        // The mockup prints the drawer's size on the button.
+        check(controller.debugArchiveButton.title == "Archive \(archivedBefore + 1)",
+              "the Archive button should carry the count, got \(controller.debugArchiveButton.title.debugDescription)")
+        check(controller.debugNoteViews[id] == nil,
+              "an archived note's view must be torn down while the board shows the active set")
+
+        controller.debugToggleArchive()
+        check(controller.debugNoteViews[id] != nil, "the archive drawer must draw the archived note")
+        check(controller.debugArchiveButton.title == "Archive",
+              "inside the drawer the button is the way back, so it drops the count - got \(controller.debugArchiveButton.title.debugDescription)")
+        guard let archivedView = controller.debugNoteViews[id] else { return }
+        check(archivedView.isArchived, "the drawn note should know it is archived")
+        let archivedTitles = archivedView.debugContextMenu.items.map(\.title)
+        check(archivedTitles.contains("Put Back on the Board"),
+              "an archived note's menu offers the way back, got \(archivedTitles)")
+        check(!archivedTitles.contains("Archive Note"),
+              "and must not offer to archive it again, got \(archivedTitles)")
+
+        archivedView.onUnarchiveRequested?()
+        check(controller.debugStore.activeNotes.count == activeBefore,
+              "unarchiving should put the note back on the board")
+        controller.debugToggleArchive()
+        check(controller.debugNoteViews[id] != nil, "and the board should draw it again")
+    }
+
+    /// The note's body region, sampled from a real render.
+    ///
+    /// AGENTS.md's two hard-won rules for this call are both applied here:
+    /// the rep comes back measured in **pixels**, so the point coordinates
+    /// are scaled by `pixelsWide / bounds.width` before indexing, and the
+    /// samples are compared against each other in the rep's own colour space
+    /// rather than converted to sRGB.
+    private static func renderBodySignature(_ noteView: StickyNoteView) -> [String] {
+        let region = noteView.bounds
+        guard region.width > 4, region.height > 4,
+              let rep = noteView.bitmapImageRepForCachingDisplay(in: region) else { return [] }
+        noteView.cacheDisplay(in: region, to: rep)
+        let scaleX = CGFloat(rep.pixelsWide) / region.width
+        let scaleY = CGFloat(rep.pixelsHigh) / region.height
+        var samples: [String] = []
+        for px in stride(from: 4, to: Int(region.width) - 4, by: 2) {
+            for py in stride(from: 30, to: Int(region.height) - 6, by: 2) {
+                let x = Int(CGFloat(px) * scaleX)
+                let y = Int(CGFloat(py) * scaleY)
+                guard x < rep.pixelsWide, y < rep.pixelsHigh, let c = rep.colorAt(x: x, y: y) else { continue }
+                samples.append(String(format: "%.3f-%.3f-%.3f", c.redComponent, c.greenComponent, c.blueComponent))
+            }
+        }
+        return samples
     }
 
     // MARK: Helpers
