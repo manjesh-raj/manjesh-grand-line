@@ -199,6 +199,16 @@ enum AppLockedSurface {
     /// `;sig` gets it with nothing to say at the microphone. A shared case
     /// would let either lose its gate with no test failing.
     case snippetExpansion
+    /// F16: opening the Poneglyph menu-bar status item's own popover.
+    ///
+    /// Its own case rather than sharing `.strawHatMenuBarPopover` or
+    /// `.menuBarPopover`, per this file's header rule - three independent
+    /// status items, and a shared case would let any of them lose its gate
+    /// with no test noticing. It is also the strictest of the three by what
+    /// it would show: a popover is its own window layered above the lock
+    /// overlay, and this one renders live authentication codes for the
+    /// captain's own accounts, refreshed every second.
+    case poneglyphMenuBarPopover
 }
 
 final class AppLockGate {

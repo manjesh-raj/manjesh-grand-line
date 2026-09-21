@@ -187,6 +187,11 @@ NEEDS_SESSION=(
   # real window and clicks real Reveal/Copy buttons. Its storage/crypto half
   # (`FM_RUN_CREDENTIAL_VAULT_TESTS`) is pure logic and deliberately NOT here.
   "FM_RUN_CREDENTIAL_VAULT_VIEW_TESTS"
+  # F16/F17's UI half: the countdown ring on a real row, the Add sheet's
+  # generator, the Recovery & import sheet and the menu-bar popover - all in a
+  # real window. Its pure half (`FM_RUN_PONEGLYPH_TOTP_TESTS`) carries the RFC
+  # 6238 vectors and the recovery wrap, and is deliberately NOT here.
+  "FM_RUN_PONEGLYPH_TOTP_VIEW_TESTS"
   "FM_RUN_APP_SHELL_BODY_WIDTH_TESTS"
   # Mounts the real shell in a real window and sweeps its width, to prove
   # Bootstrap's own labels can no longer dictate it.

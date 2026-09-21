@@ -1942,7 +1942,13 @@ final class HelmFormSheet: NSView {
     /// (if any) sit at the column's trailing edge on the same line - for a
     /// section whose own control belongs beside its name rather than in a row
     /// of its own.
-    func addSection(_ title: String, number: String? = nil, actions: [NSView] = []) {
+    /// Returns the header row it appended, so a caller with a section that
+    /// only applies to one variant of its form can hide the header along
+    /// with the rows under it (F16's Two-factor section, which a secure note
+    /// has no use for). A hidden arranged subview of an `NSStackView` drops
+    /// out of layout entirely, so nothing is left behind.
+    @discardableResult
+    func addSection(_ title: String, number: String? = nil, actions: [NSView] = []) -> NSView {
         let label = NSTextField(labelWithString: "")
         label.attributedStringValue = NSAttributedString(string: title.uppercased(), attributes: [
             .font: HelmType.kicker(),
@@ -1965,7 +1971,7 @@ final class HelmFormSheet: NSView {
         guard !actions.isEmpty else {
             appendFullWidth(head)
             contentStack.setCustomSpacing(HelmMetrics.s2, after: head)
-            return
+            return head
         }
         let spacer = NSView()
         spacer.translatesAutoresizingMaskIntoConstraints = false
@@ -1984,6 +1990,7 @@ final class HelmFormSheet: NSView {
         row.translatesAutoresizingMaskIntoConstraints = false
         appendFullWidth(row)
         contentStack.setCustomSpacing(HelmMetrics.s2, after: row)
+        return row
     }
 
     /// The mockup's `.fnum` - a small rounded square carrying the section

@@ -42,6 +42,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // below, after `appShell` exists - the forward-don't-own convention
     // every out-of-window surface in this app follows.
     lazy var strawHatMenuBar = StrawHatMenuBarController()
+    /// F16: Poneglyph's own status item - the third instance of the same
+    /// shape, wired below like the other two and owning no store (see
+    /// `PoneglyphMenuBarController`'s header).
+    lazy var poneglyphMenuBar = PoneglyphMenuBarController()
     // F5 (`fm/grandline-feature-f5-command-palette-expansion`): the `⌘K`
     // command palette, now the app's one search/verb surface - it absorbed
     // Shift's own separate ⌘⇧P palette (`ShiftSearchController`, deleted), so
@@ -560,6 +564,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         strawHatMenuBar.onOpenFullChat = { [weak self] in self?.appShell.show(.strawHat) }
         _ = strawHatMenuBar
+
+        // F16: same pattern, same reason for forcing the `lazy` property.
+        // Every closure forwards into `AppShellController`, which forwards
+        // into the one `CredentialVaultController` and its one store.
+        poneglyphMenuBar.codesProvider = { [weak self] in self?.appShell.poneglyphQuickCodes ?? [] }
+        poneglyphMenuBar.vaultIsUnlocked = { [weak self] in self?.appShell.poneglyphIsUnlocked ?? false }
+        poneglyphMenuBar.onCopy = { [weak self] id in self?.appShell.copyPoneglyphCodeFromMenuBar(id: id) }
+        poneglyphMenuBar.onOpenVault = { [weak self] in
+            NSApp.activate(ignoringOtherApps: true)
+            self?.window.makeKeyAndOrderFront(nil)
+            self?.appShell.show(.poneglyph)
+        }
+        _ = poneglyphMenuBar
 
         buildMenu()
 
@@ -3426,6 +3443,18 @@ if ProcessInfo.processInfo.environment["FM_RUN_CREDENTIAL_VAULT_TESTS"] == "1" {
     exit(CredentialVaultSelfTest.run() ? 0 : 1)
 }
 
+// F16/F17 (`fm/grandline-feature-f16-f17-poneglyph-totp-recovery`): the
+// Poneglyph additions' pure-logic half - RFC 6238 against the RFC's own eight
+// published test vectors across SHA1/SHA256/SHA512, base32's RFC 4648 vectors
+// and its refusals, `otpauth://` parsing, the password generator's alphabets
+// and entropy arithmetic, the recovery key's wrap/unwrap round trip through a
+// real store on a scratch directory (including the wrong-key and
+// re-key-invalidates-the-kit cases), and the three CSV importers against real
+// export headers. See PoneglyphTOTPRecoverySelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_PONEGLYPH_TOTP_TESTS"] == "1" {
+    exit(PoneglyphTOTPRecoverySelfTest.run() ? 0 : 1)
+}
+
 // The credential vault's window-backed half: the real destination in a real
 // window, driving the real Reveal and Copy buttons on a real list row - and
 // asserting both directions of the captain's split (Copy must not reveal,
@@ -3435,6 +3464,17 @@ if ProcessInfo.processInfo.environment["FM_RUN_CREDENTIAL_VAULT_TESTS"] == "1" {
 // CredentialVaultViewSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_CREDENTIAL_VAULT_VIEW_TESTS"] == "1" {
     exit(CredentialVaultViewSelfTest.run() ? 0 : 1)
+}
+
+// F16/F17's window-backed half: the countdown ring on a real list row driven
+// by a fabricated instant through the app's one TOTP clock, the Add sheet's
+// kind switch / generator / Two-factor field, the Recovery & import sheet end
+// to end (print a key, then import a CSV into a real vault and grep the file
+// for the imported values), the printed card asserted by pixel, and the
+// menu-bar popover including both states it must refuse to show. See
+// PoneglyphTOTPRecoveryViewSelfTest.swift's header.
+if ProcessInfo.processInfo.environment["FM_RUN_PONEGLYPH_TOTP_VIEW_TESTS"] == "1" {
+    exit(PoneglyphTOTPRecoveryViewSelfTest.run() ? 0 : 1)
 }
 
 // `fm/grandline-recents-navigation`: the "Recents" dropdown on the top bar -

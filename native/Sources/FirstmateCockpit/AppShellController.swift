@@ -3473,6 +3473,24 @@ final class AppShellController: NSViewController {
         strawHat.send(text, completion: completion)
     }
 
+    // MARK: F16 - the Poneglyph menu-bar popover
+
+    /// The rows the status item's popover shows, and the copy it performs.
+    ///
+    /// Forwarded into the one `CredentialVaultController` rather than given
+    /// a store of its own: `CredentialVaultStore` caches, GL-23 says a
+    /// caching store gets exactly one instance, and two would hold two
+    /// copies of the decrypted set and race each other's writes. Same
+    /// forward-don't-own shape as `askCrewFromMenuBar` above.
+    var poneglyphQuickCodes: [PoneglyphQuickCode] { poneglyph.quickCodeEntries }
+
+    var poneglyphIsUnlocked: Bool { poneglyph.isVaultUnlocked }
+
+    @discardableResult
+    func copyPoneglyphCodeFromMenuBar(id: String) -> String? {
+        poneglyph.copyQuickCode(id: id)
+    }
+
     /// `fm/grandline-k8s-cluster-tail`: the Shape-C deep link. A host page's
     /// own "Tail Logs" / "Cluster" toolbar buttons land here with that host
     /// already selected as the scope, so the captain reaches the same one

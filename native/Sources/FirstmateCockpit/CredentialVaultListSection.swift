@@ -113,6 +113,16 @@ final class CredentialVaultListSection: NSObject, NSTableViewDataSource, NSTable
         /// height by construction, matching them, instead of needing its own
         /// alignment math.
         var requiresTouchIDIndicator: Bool = false
+        /// F16: this credential's 2FA configuration, or nil. Drives the row's
+        /// countdown ring and its code button; the row derives both from
+        /// `TOTPTicker.shared.now` rather than holding a code, so a row that
+        /// has been on screen for two minutes is never showing a stale one.
+        var totp: VaultTOTP? = nil
+        /// Copy the *current* code. A separate callback from `copy` on
+        /// purpose: a captain copying a 2FA code and a captain copying the
+        /// password are doing two different things, and collapsing them
+        /// would make one of the two impossible from the row.
+        var copyCode: (() -> Void)?
         var overflow: [Action] = []
         /// Double-click, and the `⋯` menu's first entry: open Item Detail.
         var activate: (() -> Void)?
@@ -254,6 +264,21 @@ final class CredentialVaultListSection: NSObject, NSTableViewDataSource, NSTable
 
     /// Scroll back to the top - called when the filter changes, so a captain
     /// who searches does not land halfway down the results of the last query.
+    /// F16: refresh every visible 2FA row's code and ring from one instant,
+    /// without a `reloadData` - which would drop the captain's selection and
+    /// their scroll position once a second, and rebuild every row in the
+    /// list to move two numbers.
+    func tickTOTP(now: Date) {
+        let theme = self.theme
+        for row in table.rows(in: table.visibleRect).lowerBound..<table.rows(in: table.visibleRect).upperBound
+        where items.indices.contains(row) {
+            guard let config = items[row].totp,
+                  let view = table.view(atColumn: 0, row: row, makeIfNecessary: false) as? CredentialVaultRecordView
+            else { continue }
+            view.updateTOTP(config, now: now, theme: theme)
+        }
+    }
+
     func scrollToTop() {
         table.scrollRowToVisible(0)
     }
@@ -295,6 +320,14 @@ final class CredentialVaultListSection: NSObject, NSTableViewDataSource, NSTable
 
     /// `row`'s real Copy button - the other half of the split the captain asked
     /// for, and the reason a probe has to be able to click each independently.
+    func debugTOTPRing(_ row: Int) -> TOTPRingView? {
+        (debugRowView(row) as? CredentialVaultRecordView)?.debugTOTPRing
+    }
+
+    func debugTOTPCodeButton(_ row: Int) -> HelmButton? {
+        (debugRowView(row) as? CredentialVaultRecordView)?.debugTOTPCodeButton
+    }
+
     func debugCopyButton(_ row: Int) -> NSButton? {
         (debugRowView(row) as? CredentialVaultRecordView)?.debugCopyButton
     }
@@ -553,6 +586,11 @@ private final class CredentialVaultRecordView: NSView {
     /// move that fixes its vertical alignment (see `TrailingActionsStack`'s
     /// own header note above).
     private let touchIDIndicator = NSImageView()
+    /// F16's countdown ring and the code beside it, both hidden on a row
+    /// with no 2FA. The code is a button because the only thing anyone
+    /// wants to do with a six-digit code is copy it.
+    private let totpRing = TOTPRingView()
+    private let totpCodeButton = HelmButton(title: "", variant: .quiet, size: .small, symbol: "doc.on.doc")
     /// `.quiet`, so two icon buttons per row read as row-level affordances
     /// rather than two competing bordered controls on every line.
     private let revealButton = HelmButton(title: "", variant: .quiet, size: .small, symbol: "eye")
@@ -563,6 +601,7 @@ private final class CredentialVaultRecordView: NSView {
 
     private var reveal: (() -> Void)?
     private var copy: (() -> Void)?
+    private var copyCode: (() -> Void)?
     private var overflow: [CredentialVaultListSection.Action] = []
 
     init() {
@@ -587,6 +626,14 @@ private final class CredentialVaultRecordView: NSView {
         touchIDIndicator.setContentHuggingPriority(.required, for: .horizontal)
         touchIDIndicator.setContentCompressionResistancePriority(.required, for: .horizontal)
         touchIDIndicator.isHidden = true
+        totpRing.isHidden = true
+        totpCodeButton.isHidden = true
+        totpCodeButton.setContentHuggingPriority(.required, for: .horizontal)
+        totpCodeButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // Before the fingerprint and the action buttons, so the row reads
+        // ring, code, then the icon cluster - the mockup's own order.
+        actions.addArrangedSubview(totpRing)
+        actions.addArrangedSubview(totpCodeButton)
         actions.addArrangedSubview(touchIDIndicator)
 
         for button in [revealButton, copyButton, overflowButton] {
@@ -611,6 +658,8 @@ private final class CredentialVaultRecordView: NSView {
         copyButton.action = #selector(copyClicked)
         overflowButton.target = self
         overflowButton.action = #selector(overflowClicked)
+        totpCodeButton.target = self
+        totpCodeButton.action = #selector(copyCodeClicked)
         overflowButton.toolTip = "More actions"
 
         addSubview(row)
@@ -627,7 +676,17 @@ private final class CredentialVaultRecordView: NSView {
     func configure(_ item: CredentialVaultListSection.Item, theme: HelmTheme, selected: Bool) {
         reveal = item.reveal
         copy = item.copy
+        copyCode = item.copyCode
         overflow = item.overflow
+
+        if let config = item.totp {
+            totpRing.isHidden = false
+            totpCodeButton.isHidden = false
+            updateTOTP(config, now: TOTPTicker.shared.now, theme: theme)
+        } else {
+            totpRing.isHidden = true
+            totpCodeButton.isHidden = true
+        }
 
         touchIDIndicator.isHidden = !item.requiresTouchIDIndicator
         touchIDIndicator.toolTip = item.requiresTouchIDIndicator ? "Requires Touch ID to reveal" : nil
@@ -657,6 +716,32 @@ private final class CredentialVaultRecordView: NSView {
         row.configure(item.content, theme: theme)
     }
 
+    /// Re-derive the ring and the code from one instant. Called on
+    /// `configure` and on every tick of `TOTPTicker`, so both paths produce
+    /// the identical rendering from the identical clock.
+    func updateTOTP(_ config: VaultTOTP, now: Date, theme: HelmTheme) {
+        guard !totpRing.isHidden else { return }
+        let remaining = TOTP.secondsRemaining(config, at: now)
+        totpRing.fraction = TOTP.fractionRemaining(config, at: now)
+        totpRing.secondsText = "\(remaining)"
+        totpRing.applyTheme(theme, urgent: remaining <= 5)
+        if let code = TOTP.code(config, at: now) {
+            totpCodeButton.title = TOTP.grouped(code)
+            totpCodeButton.isEnabled = true
+            totpCodeButton.toolTip = "Copy this 2FA code - it changes in \(remaining)s"
+            totpRing.setAccessibilityLabel("Two-factor code expires in \(remaining) seconds")
+        } else {
+            // GL-14: a seed that will not decode is not a code of zero. The
+            // row says the seed is unreadable rather than showing six digits
+            // that would fail at a login prompt.
+            totpCodeButton.title = "2FA seed unreadable"
+            totpCodeButton.isEnabled = false
+            totpCodeButton.toolTip = "This credential's stored 2FA seed is not valid base32 - edit it to fix"
+            totpRing.fraction = 0
+            totpRing.secondsText = "!"
+        }
+    }
+
     func setSelected(_ selected: Bool) { row.isRowSelected = selected }
 
     var debugAccentRow: HelmAccentRow { row }
@@ -666,6 +751,8 @@ private final class CredentialVaultRecordView: NSView {
     /// `debugRevealButton`'s to confirm the two now share a centerY.
     var debugTouchIDIndicator: NSImageView? { touchIDIndicator.isHidden ? nil : touchIDIndicator }
     var debugActionsStack: NSStackView { actions }
+    var debugTOTPRing: TOTPRingView? { totpRing.isHidden ? nil : totpRing }
+    var debugTOTPCodeButton: HelmButton? { totpCodeButton.isHidden ? nil : totpCodeButton }
     func debugMenu() -> NSMenu? { overflow.isEmpty ? nil : buildMenu() }
 
     /// The `⋯` menu and the right-click menu are built from one array, so the
@@ -683,6 +770,7 @@ private final class CredentialVaultRecordView: NSView {
         return menu
     }
 
+    @objc private func copyCodeClicked() { copyCode?() }
     @objc private func revealClicked() { reveal?() }
     @objc private func copyClicked() { copy?() }
 

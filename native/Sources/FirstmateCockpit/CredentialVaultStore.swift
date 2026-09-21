@@ -604,6 +604,12 @@ final class CredentialVaultStore {
         append(.init(kind: .locked, detail: reason))
         persistAuditOnly("lock record")
         vaultKey = nil
+        // F17: the recovery-unlock flag is a property of the *session*, not
+        // of the vault. Leaving it set across a lock would let the next
+        // ordinary password unlock re-key without proving the old password,
+        // which is precisely what `resetMasterPasswordAfterRecovery`'s gate
+        // exists to prevent.
+        unlockedViaRecoveryKey = false
         file = nil
         credentials = []
         baseline = []
@@ -981,7 +987,21 @@ final class CredentialVaultStore {
                                    verifier: rekey.newVerifier,
                                    items: [],
                                    auditLog: Data(),
-                                   settings: Data())
+                                   settings: Data(),
+                                   // F17: `recovery` is deliberately left
+                                   // nil. The old wrap holds the OLD vault
+                                   // key's bytes, and every payload is about
+                                   // to be re-sealed under the new one - so
+                                   // unwrapping it would hand back a key
+                                   // that opens nothing, which is a far
+                                   // worse outcome than "your recovery key
+                                   // no longer works". It cannot be re-
+                                   // wrapped either: the code was shown once
+                                   // and is not stored anywhere (see
+                                   // `CredentialVaultRecovery`'s header), so
+                                   // the app does not have it. The Settings
+                                   // sheet says a new kit must be printed.
+                                   recovery: nil)
         append(.init(kind: .passwordChanged))
         // Any stored Touch ID key was the *old* derived key and no longer
         // opens anything - forgetting it is correctness, not tidiness.
@@ -1047,6 +1067,283 @@ final class CredentialVaultStore {
         var updated = settings
         updated.touchIDUnlockEnabled = false
         return updateSettings(updated)
+    }
+
+    // MARK: Recovery key (F17)
+
+    /// Whether this vault carries a printable recovery key. Read by the
+    /// Recovery & import sheet to decide between "print one" and "replace
+    /// the one you have".
+    var hasRecoveryKey: Bool { file?.recovery != nil }
+
+    /// Whether the file **on disk** carries a recovery wrap, readable while
+    /// the vault is locked - which is the only moment it matters, since the
+    /// unlock screen has to decide whether to offer that door at all.
+    ///
+    /// Decodes the file rather than consulting `file` (nil while locked).
+    /// That costs a JSON parse of a few tens of kilobytes, and it is only
+    /// called from the locked branch of the page's `render()`, so it is not
+    /// on any hot path. It reads only the cleartext header - no key is
+    /// involved and nothing is decrypted.
+    var recoveryKeyExistsOnDisk: Bool {
+        guard let data = try? Data(contentsOf: fileURL),
+              let onDisk = try? JSONDecoder().decode(CredentialVaultFile.self, from: data) else { return false }
+        return onDisk.recovery != nil
+    }
+
+    /// When the current kit was created, for the printed card's own
+    /// provenance line.
+    var recoveryKeyCreatedAt: Date? { file?.recovery?.createdAt }
+
+    /// Print a new recovery kit: generate a code, wrap this session's vault
+    /// key under it, and persist the wrap.
+    ///
+    /// Returns the code **once**. Nothing stores it - not this object, not
+    /// the Keychain, not the file (which holds only the salt, the round count
+    /// and the sealed box). A caller that loses it before the captain writes
+    /// it down must enrol again, which is why the sheet renders it before
+    /// offering anything else.
+    ///
+    /// Synchronous, unlike `unlock`/`changeMasterPassword`: it runs exactly
+    /// one PBKDF2 derivation, the captain has already pressed a button that
+    /// says "print", and the sheet shows a progress state around the call.
+    /// Enrolling replaces any existing wrap, which is the honest meaning of
+    /// printing a new kit - the old printout stops working, and the sheet
+    /// says so before this is called.
+    func enrollRecoveryKey() -> Result<String, Error> {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let vaultKey, file != nil else { return .failure(CredentialVaultStoreError.locked) }
+        let code = CredentialVaultRecovery.newCode()
+        do {
+            let wrap = try CredentialVaultRecovery.wrap(vaultKey: vaultKey, code: code)
+            let previous = file?.recovery
+            file?.recovery = wrap
+            append(.init(kind: .recoveryKeyPrinted))
+            do {
+                try persist()
+            } catch {
+                // All-or-nothing, the same shape `finishPasswordChange`
+                // uses: a wrap held in memory but not on disk would let the
+                // captain file a printout that the next launch does not
+                // honour.
+                file?.recovery = previous
+                if !auditLog.isEmpty { auditLog.removeLast() }
+                PersistenceFailureReporter.report(what: "the credential vault's recovery key",
+                                                  path: fileURL.path, error: error)
+                return .failure(error)
+            }
+            gitSync?.markDirty()
+            onChange?()
+            return .success(code)
+        } catch {
+            return .failure(error)
+        }
+    }
+
+    /// Forget the recovery key. The printout stops working immediately.
+    @discardableResult
+    func removeRecoveryKey() -> Result<Void, Error> {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard isUnlocked, file?.recovery != nil else { return .failure(CredentialVaultStoreError.locked) }
+        let previous = file?.recovery
+        file?.recovery = nil
+        append(.init(kind: .recoveryKeyRemoved))
+        do {
+            try persist()
+        } catch {
+            file?.recovery = previous
+            if !auditLog.isEmpty { auditLog.removeLast() }
+            PersistenceFailureReporter.report(what: "the credential vault's recovery key",
+                                              path: fileURL.path, error: error)
+            return .failure(error)
+        }
+        gitSync?.markDirty()
+        onChange?()
+        return .success(())
+    }
+
+    /// Unlock with a printed recovery key instead of the master password.
+    ///
+    /// Runs the unwrap's PBKDF2 off the main thread and finishes through
+    /// `finishUnlock`, exactly like the password and Touch ID paths - so the
+    /// verifier check, the audit record and the throttle behave identically
+    /// however the vault was opened. A wrong code counts as a failed attempt
+    /// for the same reason a wrong password does: it is a guess.
+    func unlockWithRecoveryKey(_ code: String, completion: @escaping (VaultUnlockOutcome) -> Void) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        if let wait = throttleRemaining() {
+            completion(.throttled(retryAfter: wait))
+            return
+        }
+        var backup: String?
+        guard let onDisk = StoreLoadFailure.decodeJSON(CredentialVaultFile.self,
+                                                       at: fileURL,
+                                                       label: "credential vault",
+                                                       didBackUp: &backup) else {
+            loadFailureBackupPath = backup
+            completion(.unreadable("The vault file could not be read."))
+            return
+        }
+        guard let wrap = onDisk.recovery else {
+            completion(.failed(CredentialVaultRecoveryError.noRecoveryKeyEnrolled.localizedDescription))
+            return
+        }
+        guard CredentialVaultRecovery.looksWellFormed(code) else {
+            // Not counted as an attempt: nothing was guessed, the string is
+            // simply not a recovery key. `.staleTouchIDKey`'s own reasoning.
+            completion(.failed(CredentialVaultRecoveryError.malformedRecoveryKey.localizedDescription))
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let recovered: Result<CredentialVaultKey, Error>
+            do {
+                recovered = .success(try CredentialVaultRecovery.unwrap(wrap, code: code, vaultSalt: onDisk.kdf.salt))
+            } catch {
+                recovered = .failure(error)
+            }
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if case .failure(let error) = recovered {
+                    // A wrong code fails the unwrap rather than the
+                    // verifier, so it never reaches `finishUnlock`'s own
+                    // counting branch - counted here instead, so the
+                    // throttle covers this door too.
+                    if case CredentialVaultRecoveryError.wrongRecoveryKey = error {
+                        completion(self.countFailedAttempt())
+                        return
+                    }
+                    completion(.failed(error.localizedDescription))
+                    return
+                }
+                self.unlockedViaRecoveryKey = true
+                let outcome = self.finishUnlock(recovered, file: onDisk, method: "recovery key")
+                if case .unlocked = outcome {} else { self.unlockedViaRecoveryKey = false }
+                completion(outcome)
+            }
+        }
+    }
+
+    /// Whether the current session was opened with the recovery key rather
+    /// than the master password. Cleared by `lock`.
+    ///
+    /// The one thing it gates is `resetMasterPasswordAfterRecovery` - see
+    /// that method for why a normal unlocked session must not be able to
+    /// re-key without the current password.
+    private(set) var unlockedViaRecoveryKey = false
+
+    /// Set a new master password on a session opened with the recovery key.
+    ///
+    /// A captain who recovered this way does not know the old password by
+    /// definition, so `changeMasterPassword`'s "prove you know the current
+    /// one" precondition cannot be met - and leaving the vault openable only
+    /// by a printed sheet of paper is not a resting state. This is the exit.
+    ///
+    /// **Gated on `unlockedViaRecoveryKey`, and that gate is the whole
+    /// security argument.** Without it, this would be "any unlocked vault can
+    /// be re-keyed without the old password", which weakens every session -
+    /// an unattended unlocked window could be permanently taken over. With
+    /// it, the caller has already proven possession of a 160-bit secret, so
+    /// this is exactly as strong as the password path.
+    ///
+    /// The re-key drops the recovery wrap like any other password change
+    /// (`finishPasswordChange`), so the printout the captain just used stops
+    /// working and the sheet asks them to print a new one.
+    func resetMasterPasswordAfterRecovery(newPassword: String,
+                                          completion: @escaping (Result<Void, Error>) -> Void) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard unlockedViaRecoveryKey, isUnlocked, let onDisk = file else {
+            completion(.failure(CredentialVaultStoreError.locked))
+            return
+        }
+        guard let currentKey = vaultKey else {
+            completion(.failure(CredentialVaultStoreError.locked))
+            return
+        }
+        let kdf = onDisk.kdf
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let derived: Result<DerivedRekey, Error>
+            do {
+                let newSalt = CredentialVaultCrypto.newSalt()
+                let newKey = try CredentialVaultCrypto.deriveKey(password: newPassword, salt: newSalt)
+                derived = .success(DerivedRekey(currentKey: currentKey,
+                                                newKey: newKey,
+                                                newSalt: newSalt,
+                                                newVerifier: try CredentialVaultCrypto.makeVerifier(newKey)))
+            } catch {
+                derived = .failure(error)
+            }
+            DispatchQueue.main.async {
+                guard let self else {
+                    completion(.failure(CredentialVaultStoreError.locked))
+                    return
+                }
+                let result = self.finishPasswordChange(derived, derivedAgainstSalt: kdf.salt)
+                if case .success = result { self.unlockedViaRecoveryKey = false }
+                completion(result)
+            }
+        }
+    }
+
+    /// The failed-attempt bookkeeping `finishUnlock` does inline, reachable
+    /// from the recovery path (which fails before the verifier is ever
+    /// consulted). One copy, so the two doors cannot end up with two
+    /// different throttles.
+    private func countFailedAttempt() -> VaultUnlockOutcome {
+        failedAttempts += 1
+        guard failedAttempts >= Self.attemptsBeforeThrottle else {
+            return .wrongPassword(attemptsUntilDelay: Self.attemptsBeforeThrottle - failedAttempts)
+        }
+        let over = failedAttempts - Self.attemptsBeforeThrottle
+        let delay = min(Self.maxThrottleSeconds, 30.0 * pow(2.0, Double(over)))
+        throttledUntil = Date().addingTimeInterval(delay)
+        AppLog.keychain.error("credential vault: \(self.failedAttempts, privacy: .public) failed unlock attempts - delaying \(Int(delay), privacy: .public)s")
+        return .throttled(retryAfter: delay)
+    }
+
+    // MARK: Import (F17)
+
+    /// Write a planned CSV import into the vault.
+    ///
+    /// Every record goes through the same `persist()` every manually-added
+    /// credential does, so each one is sealed under its own per-item HKDF
+    /// subkey before anything reaches disk - there is no bulk path, no
+    /// staging file and no unencrypted intermediate. One write for the whole
+    /// batch rather than one per row, because 148 separate re-seals of the
+    /// whole file is 148 git-dirty marks for one action.
+    ///
+    /// `merging` decides what a duplicate (same title and account) does:
+    /// `true` updates the existing record's secret in place, `false` adds a
+    /// second one. Never silently either - the sheet asks.
+    @discardableResult
+    func importCredentials(_ incoming: [VaultCredential], merging: Bool) -> Result<Int, Error> {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard isUnlocked else { return .failure(CredentialVaultStoreError.locked) }
+        guard !incoming.isEmpty else { return .success(0) }
+
+        var written = 0
+        for var candidate in incoming {
+            let existingIndex = credentials.firstIndex {
+                $0.title.lowercased() == candidate.title.lowercased()
+                    && $0.account.lowercased() == candidate.account.lowercased()
+            }
+            if let existingIndex, merging {
+                var merged = credentials[existingIndex]
+                merged.secret = candidate.secret
+                if merged.location.isEmpty { merged.location = candidate.location }
+                if merged.notes.isEmpty { merged.notes = candidate.notes }
+                if merged.totp == nil { merged.totp = candidate.totp }
+                merged.tags = Array(Set(merged.tags + candidate.tags)).sorted()
+                merged.updatedAt = Date()
+                credentials[existingIndex] = merged
+                append(.init(kind: .updated, itemID: merged.id, itemTitle: merged.title, detail: "imported"))
+            } else {
+                candidate.sortOrder = nextSortOrder(inCategory: candidate.category)
+                credentials.append(candidate)
+                append(.init(kind: .created, itemID: candidate.id, itemTitle: candidate.title, detail: "imported"))
+            }
+            written += 1
+        }
+        return finishWrite(returning: written)
     }
 
     // MARK: Sync
@@ -1137,6 +1434,15 @@ final class CredentialVaultStore {
         }
         var updated = base
         updated.formatVersion = CredentialVaultFile.currentFormatVersion
+        // F17: the recovery wrap is neither an item nor a header the merge
+        // reasons about, so it has to be carried forward by hand or a write
+        // that adopted on-disk changes would silently discard an enrolment
+        // this session just made. In-memory wins when it has one (this Mac
+        // just printed a kit), on-disk otherwise (another Mac did). Both
+        // wraps hold the *same* vault key - the key is unchanged by
+        // enrolment - so either is correct; what must never happen is
+        // ending up with none.
+        updated.recovery = current.recovery ?? base.recovery
         updated.items = entries
         updated.auditLog = try CredentialVaultCrypto.seal(auditLog, vaultKey: vaultKey, purpose: Self.auditPurpose)
         updated.settings = try CredentialVaultCrypto.seal(settings, vaultKey: vaultKey, purpose: Self.settingsPurpose)

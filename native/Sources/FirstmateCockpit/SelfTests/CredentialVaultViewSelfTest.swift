@@ -689,23 +689,33 @@ enum CredentialVaultViewSelfTest {
         // One "All credentials" row over one row per category, in the enum's
         // own order - so the sidebar's shape is a function of the model rather
         // than a hand-maintained list that can drift from it.
-        check(sidebar.debugRowCount == CredentialCategory.allCases.count + 1,
-              "the sidebar should have an All row plus one per category, got \(sidebar.debugRowCount)")
+        // F16 added the **Kinds** axis above Collections, so the shape is
+        // now All, three kinds, then one row per category - still derived
+        // from the model (`CredentialVaultSidebar.allSelections`) rather
+        // than a hand-maintained list that can drift from it.
+        check(sidebar.debugRowCount == CredentialVaultSidebar.allSelections.count,
+              "the sidebar should have one row per selection, got \(sidebar.debugRowCount)")
         check(sidebar.debugRowTitles.first == "All credentials",
               "the first row should be All credentials, got \(sidebar.debugRowTitles.first ?? "-")")
-        check(sidebar.debugRowTitles.dropFirst() == ArraySlice(CredentialCategory.allCases.map(\.title)),
+        check(Array(sidebar.debugRowTitles.dropFirst(4)) == CredentialCategory.allCases.map(\.title),
               "the collection rows should be the categories in order, got \(sidebar.debugRowTitles)")
-        check(sidebar.debugHeaders == ["Vault", "Collections"],
-              "the two section headers should be Vault and Collections, got \(sidebar.debugHeaders)")
+        check(Array(sidebar.debugRowTitles[1...3]) == ["Logins", "2FA codes", "Secure notes"],
+              "the kind rows should sit above the collections, got \(sidebar.debugRowTitles)")
+        check(sidebar.debugHeaders == ["Vault", "Kinds", "Collections"],
+              "the three section headers should be Vault, Kinds and Collections, got \(sidebar.debugHeaders)")
 
-        // Counts: the All row totals, each collection reports its own.
+        // Counts: the All row totals, each collection reports its own. The
+        // seeded four are all logins with no 2FA and no notes, so the kind
+        // rows read 4 / 0 / 0 - which is also what proves the two axes are
+        // counted independently rather than one being a relabelling of the
+        // other.
         check(sidebar.debugRowCounts.first == "4",
               "All credentials should count every credential, got \(sidebar.debugRowCounts.first ?? "-")")
-        check(sidebar.debugRowCounts == ["4", "2", "1", "1", "0"],
+        check(sidebar.debugRowCounts == ["4", "4", "0", "0", "2", "1", "1", "0"],
               "each collection should report its own count, got \(sidebar.debugRowCounts)")
 
         // Clicking a collection filters the list *and* moves the highlight.
-        let emailRow = 1
+        let emailRow = 4
         sidebar.debugClickRow(emailRow)
         check(recordCount() == 2, "clicking Email should leave the two email credentials, got \(recordCount())")
         check(sidebar.debugSelectedIndex == emailRow,
@@ -719,9 +729,27 @@ enum CredentialVaultViewSelfTest {
         // navigation ("where are my matches") rather than a second copy of the
         // filter chips it replaced.
         controller.debugSetQuery("manjesh")
-        check(sidebar.debugRowCounts == ["3", "2", "0", "1", "0"],
+        check(sidebar.debugRowCounts == ["3", "3", "0", "0", "2", "0", "1", "0"],
               "counts should be scoped by the current search, got \(sidebar.debugRowCounts)")
         controller.debugSetQuery("")
+
+        // F16: the kind axis really filters, not only counts. A 2FA seed on
+        // one of the four is the discriminating fixture - without it the
+        // "2FA codes" row would read zero for the right answer and the
+        // wrong reason.
+        guard let first = controller.debugStore.credentials.first else {
+            check(false, "the fixture needs a credential to give a 2FA seed to")
+            return
+        }
+        var withTOTP = first
+        withTOTP.totp = VaultTOTP(secret: "JBSWY3DPEHPK3PXP")
+        _ = controller.debugStore.update(withTOTP)
+        controller.debugRender()
+        check(sidebar.debugRowCounts[2] == "1",
+              "the 2FA row should count the one credential with a seed, got \(sidebar.debugRowCounts[2])")
+        sidebar.debugClickRow(2)
+        check(recordCount() == 1, "the 2FA row should filter to that one credential, got \(recordCount())")
+        sidebar.debugClickRow(0)
     }
 
     /// Selecting a credential fills the panel, and the panel shows the whole of
@@ -836,9 +864,11 @@ enum CredentialVaultViewSelfTest {
               "a credential filtered out of the list should drop out of the panel too")
         controller.debugSetQuery("")
 
-        // Filtered out by a collection.
+        // Filtered out by a collection. Row 4 is Email, the first
+        // *category* row since F16 put the three Kinds rows above them -
+        // and Email is the one collection this cloud credential is not in.
         controller.debugSelectCredential(id: aws.id)
-        controller.debugSidebar.debugClickRow(1)
+        controller.debugSidebar.debugClickRow(4)
         check(controller.debugInspector.credential == nil,
               "a credential outside the selected collection should drop out of the panel")
         controller.debugSidebar.debugClickRow(0)
