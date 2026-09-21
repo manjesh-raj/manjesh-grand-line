@@ -103,6 +103,57 @@ enum CredentialVaultInk {
     }
 }
 
+// MARK: - Kind
+
+/// What a credential *is*, as opposed to what it is *about* (which is
+/// `CredentialCategory`). F16 adds the second member.
+///
+/// Two axes rather than a fifth category, because they answer different
+/// questions and a captain filters by both: "my AWS things" is a category,
+/// "the free-form notes I keep in here" is a kind. Collapsing them would mean
+/// a secure note about AWS had to give up one of the two facts.
+///
+/// A secure note stores its body in `VaultCredential.secret` - the same
+/// sealed field a password uses, so it takes the same per-item HKDF subkey
+/// and the same encryption with no parallel storage path. What differs is
+/// only how the app treats it: multi-line, opened rather than revealed, and
+/// never routed to the clipboard by a row's Copy button (a note is prose, and
+/// putting prose on the pasteboard is how a break-glass procedure ends up in
+/// a chat window).
+enum CredentialKind: String, Codable, CaseIterable {
+    case login
+    case secureNote
+
+    var title: String {
+        switch self {
+        case .login: return "Login"
+        case .secureNote: return "Secure note"
+        }
+    }
+
+    var pluralTitle: String {
+        switch self {
+        case .login: return "Logins"
+        case .secureNote: return "Secure notes"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .login: return "key.fill"
+        case .secureNote: return "note.text"
+        }
+    }
+
+    /// Rule 2 of this file's header, applied to an enum: a kind from a newer
+    /// build renders as a login rather than costing the captain the whole
+    /// credential.
+    init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = CredentialKind(rawValue: raw) ?? .login
+    }
+}
+
 // MARK: - Credential
 
 /// One stored credential. Every field of this type is inside the item's own
@@ -124,6 +175,14 @@ struct VaultCredential: Codable, Equatable, Identifiable {
     /// Per-item extra gate, phase 4 of the report's build plan. Stored from the
     /// start so an item saved today does not need a migration to carry it.
     var requiresTouchIDToReveal: Bool
+    /// F16. `.login` for everything written before this field existed, which
+    /// is what every one of those records is.
+    var kind: CredentialKind
+    /// F16's TOTP seed and its parameters, or nil for a credential with no
+    /// 2FA. Inside the sealed payload like every other field here, so the
+    /// seed - which is as sensitive as the password beside it - is encrypted
+    /// at rest and never in the clear on disk.
+    var totp: VaultTOTP?
     var createdAt: Date
     var updatedAt: Date
     /// When the value was last revealed or copied - the row's "used 2 days ago".
@@ -156,6 +215,8 @@ struct VaultCredential: Codable, Equatable, Identifiable {
          tags: [String] = [],
          notes: String = "",
          requiresTouchIDToReveal: Bool = false,
+         kind: CredentialKind = .login,
+         totp: VaultTOTP? = nil,
          createdAt: Date = Date(),
          updatedAt: Date = Date(),
          lastUsedAt: Date? = nil,
@@ -169,6 +230,8 @@ struct VaultCredential: Codable, Equatable, Identifiable {
         self.tags = tags
         self.notes = notes
         self.requiresTouchIDToReveal = requiresTouchIDToReveal
+        self.kind = kind
+        self.totp = totp
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.lastUsedAt = lastUsedAt
@@ -188,6 +251,8 @@ struct VaultCredential: Codable, Equatable, Identifiable {
         tags = try c.decodeIfPresent([String].self, forKey: .tags) ?? []
         notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
         requiresTouchIDToReveal = try c.decodeIfPresent(Bool.self, forKey: .requiresTouchIDToReveal) ?? false
+        kind = try c.decodeIfPresent(CredentialKind.self, forKey: .kind) ?? .login
+        totp = try c.decodeIfPresent(VaultTOTP.self, forKey: .totp)
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? Date()
         updatedAt = try c.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
         lastUsedAt = try c.decodeIfPresent(Date.self, forKey: .lastUsedAt)
@@ -220,6 +285,14 @@ struct VaultCredential: Codable, Equatable, Identifiable {
         if account.lowercased().contains(needle) { return true }
         if location.lowercased().contains(needle) { return true }
         if category.title.lowercased().contains(needle) { return true }
+        if kind.title.lowercased().contains(needle) { return true }
+        // Never `totp.secret` and never `secret`, for the reason the doc
+        // comment above gives: matching on a stored value confirms a guess
+        // with no reveal and no audit event behind it. A secure note's body
+        // lives in `secret`, so this rule is what keeps note *contents*
+        // unsearchable too - deliberate, and stated here so a future
+        // "search inside notes" request is a decision rather than an
+        // oversight.
         return tags.contains { $0.lowercased().contains(needle) }
     }
 }
@@ -245,6 +318,11 @@ struct VaultAuditEvent: Codable, Equatable, Identifiable {
         case locked
         case synced
         case passwordChanged
+        /// F17. Both are vault-level events with no item, and both are worth
+        /// keeping forever: "when did a printable key to this vault last
+        /// exist" is exactly the question an audit log should answer.
+        case recoveryKeyPrinted
+        case recoveryKeyRemoved
 
         var symbol: String {
             switch self {
@@ -257,6 +335,8 @@ struct VaultAuditEvent: Codable, Equatable, Identifiable {
             case .locked: return "lock.fill"
             case .synced: return "arrow.triangle.2.circlepath"
             case .passwordChanged: return "key.fill"
+            case .recoveryKeyPrinted: return "printer.fill"
+            case .recoveryKeyRemoved: return "printer.dotmatrix"
             }
         }
 
@@ -267,7 +347,8 @@ struct VaultAuditEvent: Codable, Equatable, Identifiable {
             case .deleted: return .critical
             case .revealed: return .warn
             case .copied: return .accent
-            case .unlocked, .passwordChanged: return .violet
+            case .unlocked, .passwordChanged, .recoveryKeyPrinted: return .violet
+            case .recoveryKeyRemoved: return .warn
             case .locked, .synced: return .neutral
             }
         }
@@ -337,6 +418,8 @@ struct VaultAuditEvent: Codable, Equatable, Identifiable {
         case .locked: return "Locked the vault"
         case .synced: return "Synced to manjesh-config"
         case .passwordChanged: return "Changed the master password"
+        case .recoveryKeyPrinted: return "Printed a new recovery key"
+        case .recoveryKeyRemoved: return "Removed the recovery key"
         }
     }
 }
@@ -463,19 +546,31 @@ struct CredentialVaultFile: Codable {
     /// `VaultSettings`, sealed. Encrypted like everything else because
     /// "auto-lock is off" is itself a fact worth not publishing to a git host.
     var settings: Data
+    /// F17's second wrap of the vault key, or nil for a vault with no
+    /// recovery kit printed. Optional rather than a format bump, per this
+    /// struct's own `currentFormatVersion` note: an older build decodes a
+    /// file carrying one and simply ignores it, and a newer build decodes an
+    /// older file as "no recovery key".
+    ///
+    /// Carrying only a salt, a round count and a sealed box, all of which a
+    /// legitimate recovery needs and none of which is secret - the same
+    /// reasoning the cleartext `kdf` header beside it records.
+    var recovery: CredentialVaultRecoveryWrap?
 
     init(formatVersion: Int = CredentialVaultFile.currentFormatVersion,
          kdf: KDFParameters,
          verifier: Data,
          items: [Entry] = [],
          auditLog: Data,
-         settings: Data) {
+         settings: Data,
+         recovery: CredentialVaultRecoveryWrap? = nil) {
         self.formatVersion = formatVersion
         self.kdf = kdf
         self.verifier = verifier
         self.items = items
         self.auditLog = auditLog
         self.settings = settings
+        self.recovery = recovery
     }
 
     init(from decoder: Decoder) throws {
@@ -486,5 +581,6 @@ struct CredentialVaultFile: Codable {
         items = try c.decodeIfPresent([Entry].self, forKey: .items) ?? []
         auditLog = try c.decodeIfPresent(Data.self, forKey: .auditLog) ?? Data()
         settings = try c.decodeIfPresent(Data.self, forKey: .settings) ?? Data()
+        recovery = try c.decodeIfPresent(CredentialVaultRecoveryWrap.self, forKey: .recovery)
     }
 }

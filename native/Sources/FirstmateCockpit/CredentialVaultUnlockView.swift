@@ -32,7 +32,10 @@ final class CredentialVaultUnlockView: NSView {
 
     enum Mode: Equatable {
         case create
-        case unlock(touchIDAvailable: Bool)
+        /// `recoveryAvailable` defaults to false so every existing call site
+        /// (and every existing suite) reads unchanged - F17's door is only
+        /// offered on a vault that actually has a printed key behind it.
+        case unlock(touchIDAvailable: Bool, recoveryAvailable: Bool = false)
         case unreadable(reason: String, backupPath: String?)
     }
 
@@ -40,6 +43,9 @@ final class CredentialVaultUnlockView: NSView {
     var onCreate: ((String) -> Void)?
     var onUnlock: ((String) -> Void)?
     var onUnlockWithTouchID: (() -> Void)?
+    /// F17: unlock with a printed recovery key. The controller runs the
+    /// unwrap; this view only collects the typed code.
+    var onUnlockWithRecoveryKey: ((String) -> Void)?
 
     private let card = HelmCard()
     private let iconTile = IconTileView(size: HelmMetrics.tileLarge, cornerRadius: 12)
@@ -74,6 +80,17 @@ final class CredentialVaultUnlockView: NSView {
     private let primaryButton = HelmButton(title: "Unlock", variant: .primary)
     private let touchIDButton = HelmButton(title: "Unlock with Touch ID", variant: .secondary, symbol: "touchid")
     private let orLabel = NSTextField(labelWithString: "or")
+    /// F17. A `.quiet` link rather than a third bordered button: it is the
+    /// door you take once, on the worst day, and it must not compete with
+    /// the password field every other day.
+    private let recoveryLinkButton = HelmButton(title: "Use a recovery key", variant: .quiet, size: .small,
+                                                symbol: "shield.lefthalf.filled")
+    /// Deliberately a plain field, not a secure one: a captain is
+    /// transcribing 32 characters off a printed sheet, and masking that is
+    /// how a typo becomes five failed attempts and a throttle.
+    private let recoveryField = HelmTextField(placeholder: "7QK4 2MRD 9FTV \u{2026}")
+    private var usingRecoveryKey = false
+    private var recoveryAvailable = false
     private var infoCard: NSView?
     private let infoLabel = NSTextField(wrappingLabelWithString: "")
 
@@ -114,6 +131,9 @@ final class CredentialVaultUnlockView: NSView {
         primaryButton.keyEquivalent = "\r"
         touchIDButton.target = self
         touchIDButton.action = #selector(touchIDClicked)
+        recoveryLinkButton.target = self
+        recoveryLinkButton.action = #selector(recoveryLinkClicked)
+        recoveryField.isHidden = true
 
         let orRow = NSStackView(views: [orLabel])
         orRow.orientation = .horizontal
@@ -141,9 +161,9 @@ final class CredentialVaultUnlockView: NSView {
         // Order matters: the warning sits **above** the fields. The one moment
         // "there is no recovery" changes what a captain does is before they
         // choose a password, not after.
-        for view in [iconTile, titleLabel, subtitleLabel, warningCard, passwordField, confirmField,
+        for view in [iconTile, titleLabel, subtitleLabel, warningCard, passwordField, recoveryField, confirmField,
                      strengthBar, strengthLabel, savedItRow, messageLabel,
-                     primaryButton, orRow, touchIDButton] as [NSView] {
+                     primaryButton, orRow, touchIDButton, recoveryLinkButton] as [NSView] {
             column.addArrangedSubview(view)
         }
         for view in [warningCard, strengthBar, savedItRow] as [NSView] {
@@ -154,7 +174,7 @@ final class CredentialVaultUnlockView: NSView {
         // labels and the icon tile keep their own size. Without the width ties
         // a leading-aligned vertical stack leaves both fields at their
         // intrinsic width, which is narrower than the card.
-        for view in [passwordField, confirmField, primaryButton, touchIDButton] as [NSView] {
+        for view in [passwordField, recoveryField, confirmField, primaryButton, touchIDButton] as [NSView] {
             view.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
         }
         subtitleLabel.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
@@ -210,9 +230,15 @@ final class CredentialVaultUnlockView: NSView {
             primaryButton.isHidden = false
             orLabel.isHidden = true
             touchIDButton.isHidden = true
+            recoveryLinkButton.isHidden = true
+            recoveryField.isHidden = true
+            usingRecoveryKey = false
             updateStrength()
 
-        case .unlock(let touchIDAvailable):
+        case .unlock(let touchIDAvailable, let recoveryAvailable):
+            self.recoveryAvailable = recoveryAvailable
+            self.usingRecoveryKey = false
+            recoveryField.stringValue = ""
             iconTile.configure(symbol: "lock.fill", tint: .accent)
             titleLabel.stringValue = "Poneglyph"
             subtitleLabel.stringValue = "Enter your master password to unlock."
@@ -228,6 +254,7 @@ final class CredentialVaultUnlockView: NSView {
             primaryButton.isHidden = false
             orLabel.isHidden = !touchIDAvailable
             touchIDButton.isHidden = !touchIDAvailable
+            applyRecoveryMode()
 
         case .unreadable(let reason, let backupPath):
             iconTile.configure(symbol: "exclamationmark.triangle.fill", tint: .critical)
@@ -244,6 +271,9 @@ final class CredentialVaultUnlockView: NSView {
             primaryButton.isHidden = true
             orLabel.isHidden = true
             touchIDButton.isHidden = true
+            recoveryLinkButton.isHidden = true
+            recoveryField.isHidden = true
+            usingRecoveryKey = false
             if let backupPath {
                 showInfo("Your original file was copied aside to \(backupPath) before anything else happened. Nothing has been overwritten.")
             } else {
@@ -280,6 +310,15 @@ final class CredentialVaultUnlockView: NSView {
     /// Drives the same path `controlTextDidChange` does, so a suite can set a
     /// field and have the gate re-evaluate exactly as typing would.
     func debugFieldsChanged() { updateStrength() }
+    var debugRecoveryLinkVisible: Bool { !recoveryLinkButton.isHidden }
+    var debugRecoveryFieldVisible: Bool { !recoveryField.isHidden }
+    var debugPasswordFieldVisible: Bool { !passwordField.isHidden }
+    var debugSubtitleText: String { subtitleLabel.stringValue }
+    var debugPrimaryTitle: String { primaryButton.title }
+    var debugMessageText: String { messageLabel.stringValue }
+    func debugClickRecoveryLink() { recoveryLinkClicked() }
+    func debugTypeRecoveryKey(_ code: String) { recoveryField.stringValue = code }
+    func debugClickPrimary() { primaryClicked() }
     #endif
 
     func focusPasswordField() {
@@ -294,6 +333,8 @@ final class CredentialVaultUnlockView: NSView {
         primaryButton.isEnabled = !busy
         touchIDButton.isEnabled = !busy
         passwordField.isEnabled = !busy
+        recoveryField.isEnabled = !busy
+        recoveryLinkButton.isEnabled = !busy
         confirmField.isEnabled = !busy
         if busy { showMessage("Deriving your key\u{2026}", tint: .neutral) }
     }
@@ -408,6 +449,21 @@ final class CredentialVaultUnlockView: NSView {
             }
             onCreate?(password)
         case .unlock:
+            guard !usingRecoveryKey else {
+                let code = recoveryField.stringValue
+                guard CredentialVaultRecovery.looksWellFormed(code) else {
+                    // Said before a derivation runs, because an obviously
+                    // short code is a transcription slip rather than a wrong
+                    // key - and letting it through would burn a real attempt
+                    // against the throttle.
+                    showMessage("A recovery key is \(CredentialVaultRecovery.codeCharacterCount) letters and digits - "
+                                + "check the sheet and try again.")
+                    window?.makeFirstResponder(recoveryField)
+                    return
+                }
+                onUnlockWithRecoveryKey?(code)
+                return
+            }
             let password = passwordField.stringValue
             guard !password.isEmpty else {
                 window?.makeFirstResponder(passwordField)
@@ -421,6 +477,49 @@ final class CredentialVaultUnlockView: NSView {
     }
 
     @objc private func touchIDClicked() { onUnlockWithTouchID?() }
+
+    // MARK: F17 - the recovery door
+
+    @objc private func recoveryLinkClicked() {
+        usingRecoveryKey.toggle()
+        applyRecoveryMode()
+        window?.makeFirstResponder(usingRecoveryKey ? recoveryField : passwordField)
+    }
+
+    /// Swap the field and the wording. Both directions in one function, so
+    /// the two states cannot drift - and so backing out of the recovery door
+    /// really does restore the ordinary one.
+    private func applyRecoveryMode() {
+        recoveryLinkButton.isHidden = !recoveryAvailable
+        guard recoveryAvailable else {
+            recoveryField.isHidden = true
+            passwordField.isHidden = false
+            return
+        }
+        recoveryField.isHidden = !usingRecoveryKey
+        passwordField.isHidden = usingRecoveryKey
+        if usingRecoveryKey {
+            subtitleLabel.stringValue = "Type the recovery key from the sheet you printed. "
+                + "Spaces and dashes do not matter, and O reads as 0."
+            primaryButton.title = "Unlock with the recovery key"
+            recoveryLinkButton.title = "Use the master password instead"
+            recoveryLinkButton.symbolName = "key.fill"
+            // Touch ID holds the key derived from the *password*; offering it
+            // beside the recovery door would be a third answer to a question
+            // the captain has already answered.
+            orLabel.isHidden = true
+            touchIDButton.isHidden = true
+        } else {
+            subtitleLabel.stringValue = "Enter your master password to unlock."
+            primaryButton.title = "Unlock"
+            recoveryLinkButton.title = "Use a recovery key"
+            recoveryLinkButton.symbolName = "shield.lefthalf.filled"
+            if case .unlock(let touchIDAvailable, _) = mode {
+                orLabel.isHidden = !touchIDAvailable
+                touchIDButton.isHidden = !touchIDAvailable
+            }
+        }
+    }
 
     // MARK: Theme
 

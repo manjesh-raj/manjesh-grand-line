@@ -1121,6 +1121,9 @@ noted.
 | `HelmCountBadge` | a bare number in a card header's action slot |
 | `HelmType` roles | a literal `systemFont(ofSize:)`; `HelmMetrics` for spacing and radii |
 | `HelmMotion` | a direct `accessibilityDisplayShouldReduceMotion` read - source-guarded |
+| `CSVParser` (in `CredentialVaultImport.swift`) | a split-on-comma reader. It handles quoted commas, escaped quotes and embedded newlines - and **`\r\n` is one `Character` in Swift**, so a hand-rolled parser matching `"\n"` alone reads a whole Windows-exported CSV as a single row |
+| `TOTPTicker.shared.now` | a `Date()` of your own in anything that renders a 2FA code or its countdown. One clock, or two surfaces disagree about the same code |
+| `CredentialVaultRecoveryKitView` as the shape for any future **print** view | a themed view sent to a printer. It draws explicit black on white and does not observe `ThemeManager` - a themed page prints a near-black rectangle under Dusk - and the same view renders the PDF, so paper and file cannot drift |
 | `OffScreenProbe.window(...)` | `NSWindow(contentRect:)` in a suite - source-guarded |
 | `SelfTestAssertions` | a local `check`/`fail` pair in a suite - source-guarded |
 
@@ -1273,6 +1276,17 @@ noted.
   was re-keyed elsewhere. Audit-only events (a reveal, a copy, a lock) are
   batched and never `markDirty()`: publishing them produces a commit log of
   when each secret was looked at.
+- **The vault's recovery key is a second wrap of the same key, and three of
+  its properties are load-bearing.** `CredentialVaultRecovery.swift`'s header
+  is the authority; read it before touching that path. The short version: the
+  password path is unchanged by enrolment, the recovery *code* is 160 random
+  bits (which is the whole reason the second door is no easier than the first
+  - shortening it turns this into a backdoor), and a master-password change
+  **drops** the wrap because it holds the old key's bytes and the code was
+  shown once and stored nowhere. A session opened by recovery may re-key
+  without the old password; that is gated on `unlockedViaRecoveryKey` and
+  nothing else, because without the gate every ordinary unlocked session
+  could be taken over.
 - **An AI-authored command is never executed on its stored risk level.**
   `CommandRiskConfirmation.confirmAIAuthored` is unconditional, and a model
   rewriting a template re-derives the level through `heuristicRisk` with

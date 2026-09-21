@@ -81,6 +81,23 @@ struct CredentialVaultKey: CustomStringConvertible, CustomDebugStringConvertible
         guard raw.count == CredentialVaultCrypto.keyByteCount else { return nil }
         return CredentialVaultKey(key: SymmetricKey(data: raw), salt: salt)
     }
+
+    /// F17's recovery path: rebuild the key from the 32 bytes
+    /// `CredentialVaultRecovery.unwrap` just recovered from the second wrap,
+    /// plus the *vault file's* own salt.
+    ///
+    /// Its own named factory rather than a second caller of
+    /// `fromKeychainBytes`, for the reason that one is named the way it is:
+    /// these two are the only routes by which raw key bytes re-enter this
+    /// type, and each should be conspicuous in a diff on its own terms. The
+    /// length check is the same one and for the same reason - bytes of the
+    /// wrong length mean the blob is not what this code wrote, and padding or
+    /// truncating would manufacture a key that opens nothing while looking
+    /// like it should.
+    static func fromUnwrappedBytes(_ raw: Data, salt: Data) -> CredentialVaultKey? {
+        guard raw.count == CredentialVaultCrypto.keyByteCount else { return nil }
+        return CredentialVaultKey(key: SymmetricKey(data: raw), salt: salt)
+    }
 }
 
 enum CredentialVaultCryptoError: LocalizedError, Equatable {

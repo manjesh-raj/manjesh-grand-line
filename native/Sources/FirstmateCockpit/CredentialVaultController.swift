@@ -69,6 +69,12 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
     private let addButton = HelmButton(title: "Add credential", variant: .primary, symbol: "plus")
     private let lockButton = HelmButton(title: "Lock", variant: .secondary, symbol: "lock.fill")
     private let settingsButton = HelmButton(title: "", variant: .quiet, symbol: "gearshape")
+    /// F17. Its own header action rather than a row inside Settings: the
+    /// recovery key is the answer to "what if I forget the master password",
+    /// and a captain who is worried about that is not going to find it three
+    /// clicks inside a preferences sheet. Same reasoning the mockup's own
+    /// note gives for pairing it with import.
+    private let recoveryButton = HelmButton(title: "", variant: .quiet, symbol: "shield.lefthalf.filled")
 
     private var listContainer: NSView!
     /// The credential the inspector is showing, if any. Survives a re-render
@@ -78,15 +84,19 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
     private var themeObservation: ThemeObservation?
 
     private var query = ""
-    /// `nil` is "All". A category rather than a free-text filter, matching the
-    /// mockup's chips.
-    private var categoryFilter: CredentialCategory?
+    /// Which sidebar collection is showing. F16 widened this from a
+    /// `CredentialCategory?` to `CredentialVaultSidebar.Selection`, which
+    /// carries the kind axis as well - see that type.
+    private var collectionFilter: CredentialVaultSidebar.Selection = .all
     /// Which rows currently have their value on screen. Keyed by credential id
     /// so the state survives a `reloadData` - which happens on every store
     /// change, including one caused by a *different* row's copy.
     private var revealedIDs: Set<String> = []
 
     private var autoLockTimer: Timer?
+    /// F16's 1Hz subscription, held so it can be dropped when the page goes
+    /// off screen.
+    private var totpObservation: UUID?
     private var lastInteraction = Date()
 
     /// The credential this page most recently opened a detail sheet for, so a
@@ -145,7 +155,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
     /// Settings sit beside it because both are page-level and neither has a
     /// home in the list below. All three are hidden while locked - there is
     /// nothing to add to, lock, or configure behind the gate.
-    var drillHeaderActions: [NSView] { [settingsButton, lockButton, addButton] }
+    var drillHeaderActions: [NSView] { [recoveryButton, settingsButton, lockButton, addButton] }
 
     // MARK: Layout
 
@@ -161,6 +171,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         unlockView.onCreate = { [weak self] password in self?.createVault(password) }
         unlockView.onUnlock = { [weak self] password in self?.attemptUnlock(password) }
         unlockView.onUnlockWithTouchID = { [weak self] in self?.attemptTouchIDUnlock() }
+        unlockView.onUnlockWithRecoveryKey = { [weak self] code in self?.attemptRecoveryUnlock(code) }
 
         for child in [unlockView, listContainer!] as [NSView] {
             child.translatesAutoresizingMaskIntoConstraints = false
@@ -184,6 +195,9 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         settingsButton.target = self
         settingsButton.action = #selector(settingsTapped)
         settingsButton.toolTip = "Poneglyph settings and audit log"
+        recoveryButton.target = self
+        recoveryButton.action = #selector(recoveryTapped)
+        recoveryButton.toolTip = "Recovery key and CSV import"
 
         store.onChange = { [weak self] in self?.render() }
         CredentialVaultClipboard.shared.onCountdown = { [weak self] remaining in
@@ -224,9 +238,9 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         list.onSelectRow = { [weak self] id in self?.selectCredential(id: id) }
         list.onReorder = { [weak self] draggedID, beforeID in self?.reorderCredential(id: draggedID, before: beforeID) }
 
-        sidebar.onSelect = { [weak self] category in
+        sidebar.onSelect = { [weak self] selection in
             guard let self else { return }
-            self.categoryFilter = category
+            self.collectionFilter = selection
             self.noteInteraction()
             self.render()
             self.list.scrollToTop()
@@ -358,6 +372,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         noteInteraction()
         startAutoLockTimer()
         render()
+        startTOTPTicker()
         if !store.isUnlocked { unlockView.focusPasswordField() }
     }
 
@@ -370,6 +385,28 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         // time the page is looked at.
         autoLockTimer?.invalidate()
         autoLockTimer = nil
+        // GL-13, same reasoning: nobody can see a countdown on a hidden
+        // page, and the ticker stops itself once its last observer leaves.
+        stopTOTPTicker()
+    }
+
+    // MARK: F16 - the live 2FA countdown
+
+    /// One subscription for the whole list, not one per row. Each tick
+    /// updates the visible rows in place (`tickTOTP`) rather than reloading
+    /// the table, which would drop the selection and the scroll position
+    /// once a second.
+    private func startTOTPTicker() {
+        guard totpObservation == nil else { return }
+        totpObservation = TOTPTicker.shared.observe { [weak self] in
+            guard let self, self.store.isUnlocked else { return }
+            self.list.tickTOTP(now: TOTPTicker.shared.now)
+        }
+    }
+
+    private func stopTOTPTicker() {
+        TOTPTicker.shared.unobserve(totpObservation)
+        totpObservation = nil
     }
 
     // MARK: Render
@@ -394,7 +431,8 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
                 unlockView.setMode(.create)
             case .present:
                 unlockView.setMode(.unlock(touchIDAvailable: store.settings.touchIDUnlockEnabled
-                                           || CredentialVaultKeyStore.hasStoredKey))
+                                           || CredentialVaultKeyStore.hasStoredKey,
+                                           recoveryAvailable: store.recoveryKeyExistsOnDisk))
             case .unreadable(let reason, let backupPath):
                 unlockView.setMode(.unreadable(reason: reason, backupPath: backupPath))
             }
@@ -406,11 +444,8 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
     /// each row says how many matches that collection holds right now, which is
     /// what makes it navigation rather than a second copy of the filter chips.
     private func renderSidebar() {
-        let matching = store.credentials.filter { $0.matches(query) }
-        var counts: [CredentialCategory: Int] = [:]
-        for credential in matching { counts[credential.category, default: 0] += 1 }
-        sidebar.setCounts(total: matching.count, counts: counts)
-        sidebar.select(categoryFilter)
+        sidebar.setCounts(matching: store.credentials.filter { $0.matches(query) })
+        sidebar.select(collectionFilter)
     }
 
     /// Show whatever is selected, or the panel's own empty state.
@@ -431,7 +466,7 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
 
     private func filteredCredentials() -> [VaultCredential] {
         store.credentials.filter { credential in
-            (categoryFilter == nil || credential.category == categoryFilter) && credential.matches(query)
+            collectionFilter.includes(credential) && credential.matches(query)
         }
     }
 
@@ -476,11 +511,22 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         var content = HelmAccentRow.Content(tint: credential.category.tint,
                                             kicker: "",
                                             title: credential.title)
-        content.badgeSymbol = credential.category.symbol
+        content.badgeSymbol = credential.kind == .secureNote ? credential.kind.symbol : credential.category.symbol
         // The revealed value takes over the meta line, in code font - see
         // `CredentialVaultListSection.swift`'s header for why the value goes
         // here rather than in a third line.
-        if revealed {
+        if credential.kind == .secureNote {
+            // GL-14's instinct on a row: say what is there without showing
+            // it. A line count is a fact about the note; its first line
+            // would be its contents.
+            let lines = credential.secret.isEmpty
+                ? 0
+                : credential.secret.split(separator: "\n", omittingEmptySubsequences: false).count
+            content.meta = lines == 0
+                ? "An empty note \u{00B7} encrypted with the vault key"
+                : "\(lines) line\(lines == 1 ? "" : "s") \u{00B7} encrypted with the vault key"
+            content.metaIsCode = false
+        } else if revealed {
             content.meta = credential.secret.isEmpty ? "(no value stored)" : credential.secret
             content.metaIsCode = true
         } else {
@@ -503,9 +549,19 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         item.category = credential.category
         item.isRevealed = revealed
         item.requiresTouchIDIndicator = credential.requiresTouchIDToReveal
+        item.totp = credential.totp
         let id = credential.id
-        item.reveal = { [weak self] in self?.toggleReveal(id: id) }
-        item.copy = { [weak self] in self?.copyValue(id: id) }
+        // F16: a secure note is prose, not a value to paste. It offers
+        // neither Reveal (six lines will not fit on a row's meta line) nor
+        // Copy (a break-glass procedure on the pasteboard is how it ends up
+        // in a chat window) - it opens in the inspector, which is what the
+        // mockup's own row shows.
+        let isNote = credential.kind == .secureNote
+        item.reveal = isNote ? nil : { [weak self] in self?.toggleReveal(id: id) }
+        item.copy = isNote ? nil : { [weak self] in self?.copyValue(id: id) }
+        if credential.totp != nil {
+            item.copyCode = { [weak self] in self?.copyTOTPCode(id: id) }
+        }
         // A single click selects the row, which is what fills the inspector;
         // a double click is the same action rather than a second one, so the
         // gesture a captain reaches for from the old sheet still works.
@@ -588,6 +644,44 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
             self.unlockView.setBusy(false)
             self.handleUnlockOutcome(outcome)
         }
+    }
+
+    /// F17: the printed-key door.
+    ///
+    /// Shares `handleUnlockOutcome` with the other two, so an unlock is
+    /// recorded, throttled and rendered identically however it happened -
+    /// and then adds the one thing this door owes the captain: a prompt to
+    /// choose a new master password, because they got in without knowing
+    /// the old one and the vault must not be left openable only by a sheet
+    /// of paper.
+    private func attemptRecoveryUnlock(_ code: String) {
+        unlockView.setBusy(true)
+        store.unlockWithRecoveryKey(code) { [weak self] outcome in
+            guard let self else { return }
+            self.unlockView.setBusy(false)
+            self.handleUnlockOutcome(outcome)
+            guard case .unlocked = outcome else { return }
+            self.promptForNewMasterPasswordAfterRecovery()
+        }
+    }
+
+    /// After a recovery unlock, the old password is - by definition -
+    /// unknown, and the recovery wrap the captain just used is still the
+    /// only spare key. `HelmConfirm` states that, and the Settings sheet is
+    /// where the change actually happens (one password-change UI, not two).
+    private func promptForNewMasterPasswordAfterRecovery() {
+        let change = HelmConfirm.confirm(
+            title: "Set a new master password",
+            body: "You unlocked this vault with a recovery key, so the old master password is still the one "
+                + "on the vault and you do not know it. Choose a new one now - the recovery key you just used "
+                + "stops working when you do, and Poneglyph will offer you a new one to print.",
+            confirmTitle: "Change it now",
+            cancelTitle: "Later",
+            confirmIsDefault: true,
+            symbol: "key.fill",
+            hue: RailDestination.poneglyph.domainHue)
+        guard change else { return }
+        settingsTapped()
     }
 
     private func handleUnlockOutcome(_ outcome: VaultUnlockOutcome) {
@@ -709,6 +803,66 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         Toast.show(in: view, message: "Copied \u{2014} clears in \(store.settings.clipboardClearSeconds)s")
     }
 
+    /// F16: copy the current 2FA code.
+    ///
+    /// Derived from `TOTPTicker.shared.now` - the same clock the row is
+    /// drawing from - rather than a fresh `Date()`, so what lands on the
+    /// clipboard is exactly the code the captain was looking at when they
+    /// clicked. The code goes out concealed and on the same auto-clear timer
+    /// as any other vault value, and it is audited as a copy: a 2FA code is
+    /// a credential for the thirty seconds it lives.
+    ///
+    /// The clear timer is the *shorter* of the clipboard setting and the
+    /// code's own remaining life, because a code that has already rotated is
+    /// not a secret worth holding - and leaving it there invites pasting it
+    /// after it stopped working.
+    private func copyTOTPCode(id: String) {
+        noteInteraction()
+        guard let credential = store.credential(id: id), let config = credential.totp else { return }
+        let now = TOTPTicker.shared.now
+        guard let code = TOTP.code(config, at: now) else {
+            Toast.show(in: view, message: "That credential's 2FA seed is not readable \u{2014} edit it to fix")
+            return
+        }
+        let remaining = TOTP.secondsRemaining(config, at: now)
+        CredentialVaultClipboard.shared.copy(code, clearAfter: min(store.settings.clipboardClearSeconds, remaining))
+        store.recordCopy(id: id)
+        Toast.show(in: view, message: "Copied the 2FA code \u{2014} it changes in \(remaining)s")
+    }
+
+    /// F16's menu-bar popover asks the page for its rows rather than
+    /// holding a store of its own.
+    ///
+    /// GL-23 is the reason: `CredentialVaultStore` caches, so there must be
+    /// exactly one - two instances would hold two copies of the decrypted
+    /// set and race each other's writes. The menu bar therefore follows the
+    /// same forward-don't-own convention every other out-of-window surface
+    /// in this app uses (`AppShellController.askCrewFromMenuBar` is the
+    /// worked example).
+    var quickCodeEntries: [PoneglyphQuickCode] {
+        guard store.isUnlocked else { return [] }
+        return store.credentials
+            .filter { $0.totp != nil }
+            .sorted(by: VaultCredential.displayOrder)
+            .map { PoneglyphQuickCode(id: $0.id, title: $0.title, account: $0.account, totp: $0.totp!) }
+    }
+
+    var isVaultUnlocked: Bool { store.isUnlocked }
+
+    /// Copy a code from outside the window. Same clipboard writer, same
+    /// auto-clear and the same `copied` audit event as the in-window row -
+    /// a code copied from the menu bar is exactly as much of a disclosure.
+    @discardableResult
+    func copyQuickCode(id: String) -> String? {
+        guard store.isUnlocked, let credential = store.credential(id: id), let config = credential.totp else { return nil }
+        let now = TOTPTicker.shared.now
+        guard let code = TOTP.code(config, at: now) else { return nil }
+        let remaining = TOTP.secondsRemaining(config, at: now)
+        CredentialVaultClipboard.shared.copy(code, clearAfter: min(store.settings.clipboardClearSeconds, remaining))
+        store.recordCopy(id: id)
+        return code
+    }
+
     /// The account is not a secret, so this needs no gate, no audit event and
     /// no clipboard timer - it is the "Copy Name"-shaped convenience the old
     /// panel had, kept because it is genuinely useful when filling a login form.
@@ -813,6 +967,16 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         editor.onDelete = { [weak self] toDelete in
             self?.confirmDelete(id: toDelete.id)
         }
+        // F16: a generated password is a secret from the moment it exists,
+        // so copying one out of the sheet goes through the vault's own
+        // concealed writer and its auto-clear - never a bare
+        // `NSPasteboard.setString` inside the sheet.
+        editor.onCopyGenerated = { [weak self] value in
+            guard let self else { return }
+            CredentialVaultClipboard.shared.copy(value, clearAfter: self.store.settings.clipboardClearSeconds)
+            Toast.show(in: self.view,
+                       message: "Copied the generated password \u{2014} clears in \(self.store.settings.clipboardClearSeconds)s")
+        }
         presentAsSheet(editor)
     }
 
@@ -854,13 +1018,36 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
         }
     }
 
+    /// F17's sheet. Reachable only while unlocked, which is what
+    /// `drillHeaderActions`' own hiding already enforces - enrolling a
+    /// recovery key wraps the *session's* vault key, so there is nothing to
+    /// wrap behind the gate.
+    @objc private func recoveryTapped() {
+        noteInteraction()
+        guard store.isUnlocked else { return }
+        let sheet = CredentialVaultRecoverySheetController(store: store)
+        sheet.onCopyCode = { [weak self] code in
+            guard let self else { return }
+            // Through the vault's own concealed writer and auto-clear, like
+            // every other secret this app copies - and deliberately on the
+            // *short* side, since a recovery key on a clipboard is the one
+            // string worth losing fastest.
+            CredentialVaultClipboard.shared.copy(code, clearAfter: self.store.settings.clipboardClearSeconds)
+            Toast.show(in: self.view,
+                       message: "Copied \u{2014} paste it somewhere you trust, then print it")
+        }
+        sheet.onChanged = { [weak self] in self?.render() }
+        presentAsSheet(sheet)
+    }
+
     @objc private func settingsTapped() {
         noteInteraction()
         let settings = CredentialVaultSettingsController(
             settings: store.settings,
             auditEvents: store.auditLog,
             syncSummary: Self.syncSummary(store),
-            touchIDAvailable: CredentialVaultKeyStore.biometryAvailable)
+            touchIDAvailable: CredentialVaultKeyStore.biometryAvailable,
+            unlockedViaRecoveryKey: store.unlockedViaRecoveryKey)
         settings.onSettingsChanged = { [weak self] updated in
             guard let self else { return }
             _ = self.store.updateSettings(updated)
@@ -889,8 +1076,16 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
             // same key/file/audit-log state. `changeMasterPassword` takes a
             // completion now and owns the split itself (see its own doc
             // comment), so everything this page can observe happens on main.
-            self.store.changeMasterPassword(currentPassword: current, newPassword: new,
-                                            completion: completion)
+            // F17: a session opened with the recovery key cannot prove the
+            // old password, so it takes the store's own gated reset instead
+            // - see `resetMasterPasswordAfterRecovery` for why that gate is
+            // the whole security argument for it existing at all.
+            if self.store.unlockedViaRecoveryKey {
+                self.store.resetMasterPasswordAfterRecovery(newPassword: new, completion: completion)
+            } else {
+                self.store.changeMasterPassword(currentPassword: current, newPassword: new,
+                                                completion: completion)
+            }
         }
         presentAsSheet(settings)
     }
@@ -1089,8 +1284,15 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
     var debugClipboardPillVisible: Bool { !clipboardPill.isHidden }
     func debugRender() { render() }
     func debugSetQuery(_ text: String) { query = text; render() }
+    /// Kept taking a raw *category* id, which is what every existing suite
+    /// passes - F16's wider selection gets its own accessor beside it rather
+    /// than churning those call sites.
     func debugSelectCategory(_ id: String) {
-        categoryFilter = CredentialCategory(rawValue: id)
+        collectionFilter = CredentialCategory(rawValue: id).map { .category($0) } ?? .all
+        render()
+    }
+    func debugSelectCollection(_ selection: CredentialVaultSidebar.Selection) {
+        collectionFilter = selection
         render()
     }
     func debugToggleReveal(id: String) { toggleReveal(id: id) }

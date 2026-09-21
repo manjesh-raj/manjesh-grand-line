@@ -48,14 +48,24 @@ final class CredentialVaultSettingsController: NSViewController {
     private let passwordMessage = NSTextField(wrappingLabelWithString: "")
     private var form: HelmFormSheet!
 
+    /// F17: whether this session was opened with the printed recovery key.
+    ///
+    /// The captain then does not know the current master password - that is
+    /// the whole reason they used the key - so asking for it would make the
+    /// one change they urgently need impossible. Defaulted, so every
+    /// existing call site and suite reads unchanged.
+    private let unlockedViaRecoveryKey: Bool
+
     init(settings: VaultSettings,
          auditEvents: [VaultAuditEvent],
          syncSummary: String,
-         touchIDAvailable: Bool) {
+         touchIDAvailable: Bool,
+         unlockedViaRecoveryKey: Bool = false) {
         self.settings = settings
         self.auditEvents = auditEvents
         self.syncSummary = syncSummary
         self.touchIDAvailable = touchIDAvailable
+        self.unlockedViaRecoveryKey = unlockedViaRecoveryKey
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -127,6 +137,14 @@ final class CredentialVaultSettingsController: NSViewController {
         // three sections up.
         _ = sheet.addInfoCard(symbol: "exclamationmark.triangle.fill",
                               text: "If you think this password may have leaked, rotate the underlying secrets too. Earlier commits in your config repo still hold the old encrypted vault, and the old password still opens those - changing it here protects everything written from now on, not what is already in that history.")
+        if unlockedViaRecoveryKey {
+            _ = sheet.addInfoCard(symbol: "shield.lefthalf.filled",
+                                  text: "You unlocked this vault with a recovery key, so Poneglyph is not asking for "
+                                      + "the old master password - you do not have it. Setting a new one re-encrypts "
+                                      + "every credential and retires the recovery key you just used; print a new one "
+                                      + "straight afterwards.")
+        }
+        currentPasswordField.isHidden = unlockedViaRecoveryKey
         sheet.addRow(currentPasswordField)
         sheet.addRow(newPasswordField)
         sheet.addRow(confirmPasswordField)
@@ -218,7 +236,7 @@ final class CredentialVaultSettingsController: NSViewController {
         let current = currentPasswordField.stringValue
         let new = newPasswordField.stringValue
         let confirm = confirmPasswordField.stringValue
-        guard !current.isEmpty else {
+        guard unlockedViaRecoveryKey || !current.isEmpty else {
             showPasswordMessage("Enter your current master password.", tint: .critical)
             return
         }
@@ -263,6 +281,7 @@ final class CredentialVaultSettingsController: NSViewController {
     #if FM_SELFTESTS
     var debugTouchIDRow: HelmToggleRow { touchIDRow }
     var debugCurrentPasswordField: HelmSecureTextField { currentPasswordField }
+    var debugCurrentPasswordFieldVisible: Bool { !currentPasswordField.isHidden }
     var debugNewPasswordField: HelmSecureTextField { newPasswordField }
     var debugConfirmPasswordField: HelmSecureTextField { confirmPasswordField }
     var debugPasswordMessage: String { passwordMessage.stringValue }

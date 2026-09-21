@@ -831,6 +831,15 @@ enum HelmContrastSelfTest {
                 guard trimmed.contains(".kern:") else { continue }
                 // The token itself is fine wherever it appears.
                 if trimmed.contains("HelmType.kickerKern") { continue }
+                // A per-line escape hatch with a stated reason, the same
+                // shape (and for the same reason) as `NEEDS_SESSION`'s
+                // `# session-not-window:` and this directory's own
+                // `OffScreenProbe-exempt:` - deliberately not a file
+                // allowlist. The legitimate case is text that is not chrome
+                // at all: `CredentialVaultRecoveryKitView` draws for a
+                // *printer*, where the app's scaled chrome type and its
+                // kern are simply the wrong units.
+                if line.contains("kern-exempt:") { continue }
                 offenders.append("\(file.lastPathComponent):\(n + 1) \(trimmed)")
             }
         }
