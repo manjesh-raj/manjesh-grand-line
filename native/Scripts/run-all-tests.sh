@@ -318,6 +318,13 @@ NEEDS_SESSION=(
   # window server and a live web content process. FM_RUN_CODE_PREVIEW_TESTS
   # covers the logic half and does run in CI.
   "FM_RUN_CODE_PREVIEW_VIEW_TESTS"
+  # F11's UI half: mounts the real Code Preview page in a real window, drives
+  # the real Run/Format buttons and measures the editor's own rendered height
+  # with the output pane hidden and shown. Its logic half
+  # (FM_RUN_CODE_RUNNER_TESTS) is the one that asserts the sandbox profile, the
+  # wall clock and the pruned environment, and is deliberately NOT here - those
+  # checks belong in the blocking lane.
+  "FM_RUN_CODE_RUNNER_VIEW_TESTS"
   # `fm/grandline-feature-f1-notebook` (F1): mounts the real Notebook
   # destination in a real window, measures its three view modes' rendered
   # geometry, reads painted colours back out of the preview's own attributed

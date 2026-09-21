@@ -376,6 +376,11 @@ final class AppShellController: NSViewController {
     /// navigation.
     private var currentDestinationKind: RecentDestinationKind?
 
+    /// `currentDestinationKind`, for the menu actions in this file that must
+    /// only fire on one page. Read-only on purpose: a menu action may ask
+    /// where the captain is, never move them.
+    private var currentDestinationKindForMenus: RecentDestinationKind? { currentDestinationKind }
+
     /// Add/Edit Host, requested from the Hosts panel - forwarded to whoever
     /// owns the host store (the app delegate), since this controller only
     /// arranges views and knows nothing about persistence.
@@ -2584,6 +2589,20 @@ final class AppShellController: NSViewController {
     @objc func newCodeSnippetFromMenu() {
         show(.codePreview)
         codePreview.newSnippetFromMenu()
+    }
+
+    /// F11's ⌘R. Unlike every creation verb above, this one deliberately does
+    /// **not** navigate first: ⌘R means "run what I am looking at", and a
+    /// chord that jumps to another destination and executes a snippet the
+    /// captain was not looking at is the wrong answer in a way a no-op is not.
+    ///
+    /// So it is a no-op anywhere but Code Preview. This app implements no
+    /// `validateMenuItem` (see `NavigationCoherenceSelfTest`'s note on why
+    /// that matters for chords), so the item stays enabled everywhere and the
+    /// guard lives here.
+    @objc func runCodeSnippetFromMenu() {
+        guard case .rail(.codePreview)? = currentDestinationKindForMenus else { return }
+        codePreview.runCodeSnippet()
     }
 
     @objc func newCredentialFromMenu() {

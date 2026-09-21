@@ -63,3 +63,147 @@
 - **Lesson for the next person to touch `CodePreviewTheme.Key` or `code-preview.js`'s `applyTheme(t)`: the two are a hand-maintained wire contract with no compiler check across the language boundary.** Adding, renaming, or reordering a case on either side needs the matching edit on the other, and "the Swift-side dictionary has the key" is not proof the JS side reads it - only a real render readback (like `readThemeProbe`) proves that.
 
 **The Recents dropdown (`fm/grandline-recents-navigation`) got its second, captain-driven placement correction in the same task**: it sat right after the space pills - reading as a stray extra space pill next to Engineering - and now sits on the *other* side of the search field, grouped with the Sticky Board/Code Preview quick-access icons (search -> Recents -> Sticky Board -> Code Preview -> theme -> bell -> avatar). Pure `DaylightBarController` constraint-chain reordering (the button is still a fixed-size control with a plain required gap on both sides, same as its neighbours); no change to `RecentDestinations`' own logic. `RecentDestinationsSelfTest.test_barButtonSitsBeforeStickyBoardAfterSearch` measures real frame positions after a real layout pass and was confirmed to catch the old placement as a regression before being updated to the new one.
+
+## `fm/grandline-feature-f11-code-preview-run-format`: Run and Format (F11 of full review #3 §8)
+
+The report's own entry: "**F11 - Code Preview: run and format.** 'Run' for the scripting languages present
+on the machine (python/node/swift/bash via `Subprocess`, sandboxed to a temp dir, output in a bottom pane)
+and 'Format' per language. Scope: M."
+
+Built to the shape the captain already reviewed in the F11 mockup
+(`data/grandline-future-features-mockups-artifact/report.md`): a Format button carrying its formatter's
+name, a Run button on ⌘R, a bottom pane whose header states the exit code, the wall clock and the
+sandbox, and a list of which runners this machine actually has.
+
+### What "sandboxed" means here, and what it does not
+
+This is the only feature in the app that executes arbitrary code, so the claim is enumerated rather
+than asserted, and `CodeRunnerSelfTest` checks the profile as **text** and the denials as **behaviour**.
+
+Every run is `/usr/bin/sandbox-exec -f <profile>` around the interpreter, in a fresh temporary
+directory, with:
+
+- **the network denied** (`(deny network*)`);
+- **every write denied** except inside that directory - a sandboxed `open("/tmp/x", "w")` raises
+  `PermissionError`, measured;
+- **the captain's home directory unreadable**, which is where the credentials worth stealing are
+  (`~/.ssh`, `~/.aws`, this app's own stores). The one exception is an interpreter's own install
+  prefix, so a `node` under `~/.nvm` still starts - and that exception is refused outright for a
+  binary sitting loose in `$HOME`, because the narrowest exception that would help is `$HOME` itself;
+- a **30-second wall clock**, enforced by `Subprocess`'s SIGTERM-then-SIGKILL bound;
+- a **Stop button** (`SubprocessCancellation`);
+- a **fixed five-variable environment** - `PATH`, `HOME`, `TMPDIR`, `LANG`, `LC_ALL`. Built from
+  nothing rather than filtered from `ProcessInfo`, because a filter is a list somebody has to keep in
+  step with the next secret, and this process's own environment carries a GitHub token and every
+  `FM_*` store override;
+- **stdin on `/dev/null`** and **output capped at 256 KB**, with the cap stated in the pane when it bites.
+
+**What it is not, stated because the difference is the whole point.** The profile is `(allow default)`
+with three denials layered on top, not an allowlist. Reads outside the home directory - `/usr`, `/etc`,
+`/tmp`, another mounted volume - still succeed, and the interpreter runs as the captain with the
+captain's own privileges. It stops a snippet destroying or leaking the captain's data. It is not a
+virtual machine, and a local exploit of `sandbox-exec` itself is out of scope. An allowlist was
+considered and rejected: the set of paths a working interpreter touches differs per tool, per version
+and per machine, so it would fail closed on the captain's machine in ways this repo cannot reproduce.
+If `sandbox-exec` is ever absent the run is **refused**, never quietly downgraded to an unconfined one.
+
+### Four things that were measured rather than reasoned
+
+- **`NSString`/`URL.resolvingSymlinksInPath` does not resolve a `/var/folders` temp path**, because it
+  is documented to *strip* a leading `/private`. A profile naming `/var/folders/…` therefore matches
+  nothing against a child whose real cwd is `/private/var/folders/…`, and the symptom is a denial
+  **inside the directory that was supposed to be writable** - which reads as a broken sandbox rather
+  than a broken path. `CodeSandbox.realPath` is `realpath(3)`. This also produced a second, confusing
+  symptom worth recognising: `/usr/bin/python3` is an `xcrun` shim, and with the paths mismatched it
+  printed `couldn't create cache file …/xcrun_db-…` on every run's stderr. Once the paths resolve
+  correctly that noise is gone, so it is a symptom of the path bug and not something to allow around.
+- **`swift <file>` needs `-module-cache-path` inside the sandbox.** The driver compiles before it runs
+  and wants a module cache under the user's caches directory, which the write denial covers, so a
+  perfectly good script dies with a bare `error: permissionDenied`.
+- **A `height == 0` at `contentTie` (499) loses to the view's own content.** Collapsing the output
+  pane that way left it at 45pt - its header row is a real 28pt button row with required constraints -
+  so the editor gave up 155pt where 200 was expected. Raising the constraint above 500 is gotcha (13),
+  so what moves instead is the **status bar's own top constraint**: it hangs off the pane while the
+  pane is showing and off the editor card while it is not, and nothing then derives from a hidden
+  pane's height at all.
+- **`NSProgressIndicator.isDisplayedWhenStopped = false` stops it drawing and keeps its 16pt frame.**
+  It read as a gap after the status word. A hidden *arranged subview* is the one thing an
+  `NSStackView` genuinely excludes from layout, so it is hidden rather than merely undrawn.
+
+### Three defects the render probe caught that no assertion would have
+
+The pane was rendered off-screen in Dusk, Daylight and Light per the "Verifying native UI bugs"
+convention, and looked at:
+
+- **One header label holding the whole detail line truncated into nonsense.** "1.84 s · python3 3.12.4
+  · no network · temp cwd /private/…/gl-run-9f2a/work" is longer than the row at any realistic width,
+  and `byTruncatingMiddle` ate the middle of the *sentence*: it rendered as `no net…cwd /private/…`.
+  Split into a sentence that never truncates and a path label that does, which is gotcha (5)'s rule
+  applied properly.
+- **`HelmField.fill` made the output body and the card one flat surface** in both registers - that
+  token is a *well on a card*, separated by its own hairline border, and this body has none. The body
+  now uses `theme.backgroundHex`, which is the ground Monaco is painted on immediately above (every
+  syntax colour in `CodePreviewTheme.palette` is contrast-verified against it), so the output reads as
+  a continuation of the code surface rather than as a form field below it.
+- The spinner gap above, and a crowded `EXIT 1 0.21 s` boundary fixed with one custom stack spacing.
+
+### Decisions worth knowing
+
+- **The mockup's "Runners found" sidebar is a popover here.** This page has no sidebar - its snippets
+  are tab chips along the toolbar - so the information is kept verbatim and the container changes.
+  Absent tools are **listed as absent** rather than left out (the mockup's own `ruby · absent` row):
+  GL-14's rule, since "this app cannot run Python" and "Python is not installed here" are different
+  sentences.
+- **Format supplies its own Undo, because Monaco's cannot.** The formatted text has to reach the page
+  through `openSnippet`, which is `model.setValue` on the JS side, and that **resets Monaco's undo
+  stack** - so ⌘Z in the editor cannot take a format back. Adding a `replaceContent` bridge command
+  that used `executeEdits` would preserve it and would mean regenerating the 3.8MB bundle (node,
+  network, a committed binary diff) for one call; deliberately not done. Instead the pre-format text
+  is right there in memory, which is exactly the condition GL-33 sets for offering an Undo at all, so
+  `Toast.showUndo` restores it.
+- **Every formatter is a stdin-to-stdout filter**, asserted at the argv rather than promised: no
+  formatter is ever pointed at a real file, and `-w`/`--write` in a recipe fails the suite. A
+  formatter that exits 0 and prints nothing is treated as a **failure**, not as a format - applying
+  that would empty the captain's snippet.
+- **Formatters get a slightly wider profile than snippets** (`.installedTool`): still no network and
+  still no writes outside the scratch directory, but home *reads* are allowed, because that is where
+  `.prettierrc`, `pyproject.toml` and `.swift-format` live.
+- **JSON has a formatter floor.** `python3 -m json.tool` is Python's standard library, so JSON
+  formats anywhere python exists - which is every macOS. That is also what makes the format round trip
+  testable on a machine with no formatters installed, which this one is.
+- **⌘R does not navigate.** Every other contextual menu verb in `AppShellController` selects its
+  destination first; this one is a no-op anywhere but Code Preview, because a chord that jumps to
+  another page and executes a snippet the captain was not looking at is the wrong answer in a way a
+  no-op is not. The chord was checked free against `main.swift`'s own chords first, per the duplicate
+  key-equivalent rule.
+- **One run at a time**, per tab. A pane belongs to the tab its run was started from, so switching
+  tabs shows that tab's own last output rather than the neighbour's, and closing a tab cancels its run.
+
+### Verification
+
+`FM_RUN_CODE_RUNNER_TESTS` is pure logic and runs in the **blocking** CI lane - deliberately, because
+it is the suite that asserts the sandbox profile's denials, their ordering, the path quoting, the wall
+clock and the pruned environment. Every machine-dependent decision above it runs against an injected
+`CodeToolProbing`, so "an absent tool reads as absent" means the same thing on a machine with every
+formatter and on a CI runner with none. The real-run half (a sandboxed `python3`: scratch write allowed,
+outside write denied, home read denied, network denied, a `while True` killed at a short-override wall
+clock, a cancel honoured, a real JSON format round trip) is **skipped out loud** where there is no
+`python3`. `FM_RUN_CODE_RUNNER_VIEW_TESTS` is window-backed and in `NEEDS_SESSION`.
+
+**Three injected regressions, each confirmed to fail by name and then restored:**
+
+- removing `(deny network*)` from the profile - failed the two profile-text cases *and* the real
+  denial case;
+- pinning the status bar to the pane unconditionally (the naive collapse) - failed both geometry
+  cases, the editor losing 57pt to a pane that was not there;
+- removing the pane's empty-output substitution - failed the GL-14 case.
+
+**One of this task's own checks was found to be vacuous and fixed rather than kept.** The network
+denial originally asserted only that a sandboxed `socket.create_connection(('1.1.1.1', 443))` fails -
+and it *passed with the denial deliberately removed*, because this machine cannot reach that address
+at all. It now runs the same DNS probe **unsandboxed first** and skips out loud if the machine has no
+network, so the check measures the sandbox rather than the firewall.
+
+**Not verified: the app was never launched** (the worktree rule). The pane's appearance is from real
+off-screen renders in three palettes, and its status word's contrast is measured against a real render
+in all fourteen; the live half is the captain's own check.

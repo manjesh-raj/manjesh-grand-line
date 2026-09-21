@@ -163,6 +163,31 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     private let overlay = NSView()
     private var overlayState: HelmEmptyState?
 
+    private lazy var runButton = HelmPageToolbar.labeledButton(
+        symbol: "play.fill", title: "Run",
+        tooltip: "Run this snippet in a sandboxed temp directory (\u{2318}R)",
+        target: self, action: #selector(runTapped))
+    private lazy var formatButton = HelmPageToolbar.labeledButton(
+        symbol: "text.alignleft", title: "Format",
+        tooltip: "Format this snippet with the formatter installed for its language",
+        target: self, action: #selector(formatTapped))
+    private lazy var runnersButton = HelmPageToolbar.iconButton(
+        symbol: "cpu", tooltip: "Which runners and formatters this machine has",
+        target: self, action: #selector(runnersTapped))
+    /// Retained rather than local, so `AppLockGate` can find it: GL-09 / audit
+    /// §5.1(b) - a popover left open when the app lock fires stays readable and
+    /// interactive *above* the lock overlay unless the gate can close it, and
+    /// `LockGateCoverageSelfTest` fails the run on an unregistered one.
+    private var runnersPopover: NSPopover?
+    private let outputPane = CodeRunOutputPane()
+    private var outputPaneHeight: NSLayoutConstraint?
+    private var outputPaneTopGap: NSLayoutConstraint?
+    /// The status bar hangs off the pane when it is showing and off the editor
+    /// card when it is not - see `renderPane` for why swapping the constraint
+    /// is the only shape that works here.
+    private var statusBarBelowPane: NSLayoutConstraint?
+    private var statusBarBelowEditor: NSLayoutConstraint?
+
     private let statusBar = NSView()
     private let statusSeparator = NSView()
     private let cursorLabel = NSTextField(labelWithString: "")
@@ -173,6 +198,21 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     private var wrapOn = false
     private var themeObservation: ThemeObservation?
     private var fontObservation: FontSizeObservation?
+
+    // MARK: Run and format (F11)
+
+    private let runner = CodeRunner()
+    /// Live only while a run is in flight - this is what Stop cancels, and
+    /// what makes a second Run while one is running impossible.
+    private var activeRun: SubprocessCancellation?
+    /// Which snippet the pane is showing, keyed by snippet. A run belongs to
+    /// the tab it was started from, so switching tabs shows that tab's own last
+    /// output rather than the neighbour's - the same per-tab independence the
+    /// editor's models already have.
+    private var paneStates: [String: CodeRunPaneState] = [:]
+    /// True while a format is in flight, so the button cannot be pressed twice
+    /// and apply an older result over a newer one.
+    private var isFormatting = false
 
     private static let cardInset: CGFloat = HelmMetrics.s3
     private static let statusBarHeight: CGFloat = 26
@@ -230,7 +270,9 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
 
         buildToolbar(in: root)
         buildEditor(in: root)
+        buildOutputPane(in: root)
         buildStatusBar(in: root)
+        buildStatusBarPlacement()
 
         webView.onReady = { [weak self] in self?.editorBecameReady() }
         webView.onPageError = { [weak self] message in self?.report(error: message) }
@@ -273,7 +315,8 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
             showOverlay(symbol: "exclamationmark.triangle",
                         title: "No editor bundle",
                         body: CodePreviewAssets.missingBundleMessage)
-            for control in [plusButton, findButton, wrapButton, copyButton, clearButton] {
+            for control in [plusButton, findButton, wrapButton, copyButton, clearButton,
+                            runButton, formatButton, runnersButton] {
                 control.isEnabled = false
             }
             languagePicker.isEnabled = false
@@ -281,6 +324,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         rebuildLanguagePicker()
         applyTheme()
         refreshStatusBar()
+        refreshRunControls()
     }
 
     override func viewDidAppear() {
@@ -382,7 +426,15 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         // twitching every time a language is detected.
         languagePicker.widthAnchor.constraint(equalToConstant: 150).isActive = true
 
+        // F11's two verbs lead the action cluster, and the reviewed mockup's
+        // order is kept (Format, then Run): Run is the one the captain reaches
+        // for, so it sits closest to the utilities it is not one of.
+        // `runnersButton` is the mockup's "Runners found" sidebar list, which
+        // this page has nowhere to put - it has tab chips where the mockup
+        // drew a snippet sidebar - so the same information is one click away
+        // in a popover rather than permanently occupying 180pt of editor.
         toolbar.setTrailing(HelmPageToolbar.group([
+            runnersButton, formatButton, runButton,
             languagePicker, findButton, wrapButton, zoomStepper, copyButton, clearButton,
         ]))
 
@@ -437,6 +489,66 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         ])
     }
 
+    /// The bottom pane (F11).
+    ///
+    /// **Hiding it is not enough, and neither is collapsing its height** -
+    /// both were measured, in that order, by the suite that now guards this.
+    ///
+    /// AppKit gotchas (11) and (15): a hidden `NSView` participates in Auto
+    /// Layout exactly as much as a visible one, so `isHidden = true` alone left
+    /// the editor 188pt shorter with nothing to show for it. Collapsing the
+    /// height constraint is not enough either, and this is the part that is
+    /// easy to get wrong: the pane's own header row is a real 28pt button row
+    /// with required constraints, so a **`height == 0` at `contentTie` (499)
+    /// loses to its own content** and the pane still resolves to 45pt -
+    /// measured exactly that way (the editor gave up 155pt where 200 was
+    /// expected). Raising that constraint above 499 is not the fix either;
+    /// gotcha (13) is about what a content constraint above 500 does to the
+    /// captain's window.
+    ///
+    /// So the status bar's own top constraint is what moves: it hangs off the
+    /// **pane** while the pane is showing and off the **editor card** while it
+    /// is not, and nothing then derives from a hidden pane's height at all.
+    /// The hidden state reproduces the page's pre-F11 geometry exactly, which
+    /// `CodeRunnerViewSelfTest` asserts to the point.
+    private func buildOutputPane(in root: NSView) {
+        root.addSubview(outputPane)
+        AppLockGate.shared.registerLockDismissiblePopover { [weak self] in self?.runnersPopover }
+        outputPane.onStop = { [weak self] in self?.stopRun() }
+        outputPane.onCopy = { [weak self] in self?.copyOutput() }
+        outputPane.onClear = { [weak self] in self?.clearOutput() }
+
+        let height = outputPane.heightAnchor.constraint(equalToConstant: 0)
+        // Below `NSLayoutPriorityWindowSizeStayPut` (500), per gotcha (13):
+        // anything above it can resize the captain's whole window, and this
+        // page is mounted for the process's life whether or not it is showing.
+        height.priority = HelmDaylightPriority.contentTie
+        height.isActive = true
+        outputPaneHeight = height
+
+        // Always active, so a hidden pane still has a defined vertical
+        // position and Auto Layout has nothing to call ambiguous.
+        let gap = outputPane.topAnchor.constraint(equalTo: editorCard.bottomAnchor,
+                                                  constant: Self.cardInset)
+        gap.isActive = true
+        outputPaneTopGap = gap
+
+        NSLayoutConstraint.activate([
+            outputPane.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: Self.cardInset),
+            outputPane.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -Self.cardInset),
+        ])
+    }
+
+    /// The status bar's two alternative top constraints. Built after both the
+    /// pane and the status bar exist, and only one is ever active.
+    private func buildStatusBarPlacement() {
+        statusBarBelowEditor = statusBar.topAnchor.constraint(
+            equalTo: editorCard.bottomAnchor, constant: Self.cardInset)
+        statusBarBelowPane = statusBar.topAnchor.constraint(
+            equalTo: outputPane.bottomAnchor, constant: Self.cardInset)
+        statusBarBelowEditor?.isActive = true
+    }
+
     private func buildStatusBar(in root: NSView) {
         statusBar.translatesAutoresizingMaskIntoConstraints = false
         statusBar.wantsLayer = true
@@ -471,7 +583,10 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
             statusBar.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             statusBar.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             statusBar.heightAnchor.constraint(equalToConstant: Self.statusBarHeight),
-            statusBar.topAnchor.constraint(equalTo: editorCard.bottomAnchor, constant: Self.cardInset),
+            // Deliberately absent here: the status bar's top constraint is one
+            // of the two `buildOutputPane` owns and swaps, because a page that
+            // has never run anything must have exactly the geometry it had
+            // before F11 existed.
 
             statusSeparator.leadingAnchor.constraint(equalTo: statusBar.leadingAnchor),
             statusSeparator.trailingAnchor.constraint(equalTo: statusBar.trailingAnchor),
@@ -497,6 +612,17 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         pushTheme()
         pushFontSize(FontSizeManager.shared.size)
         restoreSnippetsIfNeeded()
+        refreshRunControls()
+        // F11 / GL-12: asking "what interpreters and formatters does this
+        // machine have" means resolving ~15 executables and running
+        // `--version` on each, so it happens off the main thread and the two
+        // buttons are re-derived when the answer lands. Started here rather
+        // than in `loadView` for the same reason the page itself is: a session
+        // that never opens Code Preview pays nothing.
+        runner.warmUp { [weak self] in
+            self?.refreshRunControls()
+            self?.onDrillSubtitleChanged?()
+        }
         onDrillSubtitleChanged?()
     }
 
@@ -594,6 +720,10 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         styleChips()
         rebuildLanguagePicker()
         refreshStatusBar()
+        // F11: the pane belongs to a tab, so selecting one shows that tab's
+        // own last run - never the neighbour's.
+        renderPane()
+        refreshRunControls()
     }
 
     private func closeTab(key: String) {
@@ -611,6 +741,10 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         let wasPersisted = snippet.persisted
 
         open.removeAll { $0.key == key }
+        // F11: a closed tab's output goes with it. Stop first if it is the one
+        // running - a run whose tab is gone has nowhere to report.
+        if currentKey == key, activeRun != nil { activeRun?.cancel() }
+        paneStates.removeValue(forKey: key)
         webView.call("closeSnippet", payload: ["id": key])
         if wasPersisted { store.delete(name: name) }
 
@@ -772,6 +906,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         // the file at all is cheaper still.
         if !wasPersisted { persistTabOrder() }
         refreshStatusBar()
+        refreshRunControls()
         onDrillSubtitleChanged?()
     }
 
@@ -845,6 +980,9 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         webView.call("setLanguage", payload: ["id": snippet.key, "language": language.id])
         rebuildLanguagePicker()
         refreshStatusBar()
+        // A language change is a change of interpreter and formatter, so
+        // both buttons have to be re-derived.
+        refreshRunControls()
     }
 
     // MARK: Actions
@@ -979,6 +1117,262 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         ])
         if snippet.persisted { store.save(name: snippet.name, content: "") }
         refreshStatusBar()
+        refreshRunControls()
+    }
+
+    // MARK: Run and format (F11)
+
+    /// ⌘R, and the toolbar's Run button.
+    ///
+    /// One run at a time, on purpose: a second Run while one is in flight
+    /// would give the pane two writers and the captain no way to tell whose
+    /// output they are reading.
+    @objc func runCodeSnippet() { runTapped() }
+
+    @objc private func runTapped() {
+        guard activeRun == nil else { return }
+        guard let snippet = currentSnippet else { return }
+        let content = snippet.content
+        guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            Toast.show(in: view, message: "There is nothing in this snippet to run")
+            return
+        }
+        let languageID = snippet.language.id
+        guard let presence = runner.runner(for: languageID) else {
+            // Not a toast: this is a state the pane exists to explain, and it
+            // names the interpreters it looked for so the captain knows what
+            // to install. A toast would fade before they read it.
+            show(state: .finished(CodeRunOutcome(
+                kind: .launchFailed, status: -1,
+                output: CodeRunner.noRunnerMessage(for: languageID),
+                duration: 0, sandboxPath: "", truncated: false, toolDescription: "")),
+                 for: snippet.key)
+            return
+        }
+
+        let key = snippet.key
+        show(state: .running(tool: presence.version.map { "\(presence.tool.displayName) \($0)" }
+                                ?? presence.tool.displayName),
+             for: key)
+        refreshRunControls()
+        activeRun = runner.run(content: content, languageID: languageID) { [weak self] outcome in
+            guard let self else { return }
+            self.activeRun = nil
+            self.show(state: .finished(outcome), for: key)
+            self.refreshRunControls()
+            AppLog.lifecycle.info("""
+                code preview: ran a \(languageID, privacy: .public) snippet - \
+                \(String(describing: outcome.kind), privacy: .public) in \
+                \(outcome.duration, privacy: .public)s
+                """)
+        }
+        // `run` answers immediately when it refuses, in which case the handle
+        // is nil and the completion above has already put the reason in the
+        // pane - so there is nothing to correct here, only the controls.
+        refreshRunControls()
+    }
+
+    private func stopRun() {
+        activeRun?.cancel()
+    }
+
+    private func copyOutput() {
+        let text = outputPane.outputText
+        guard !text.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+        Toast.show(in: view, message: "Copied the output")
+    }
+
+    private func clearOutput() {
+        guard let key = currentKey else { return }
+        show(state: .idle, for: key)
+    }
+
+    /// The toolbar's Format button.
+    ///
+    /// The formatted text replaces the snippet's content wholesale, which
+    /// Monaco's own `setValue` does - and `setValue` **resets Monaco's undo
+    /// stack**, so ⌘Z in the editor cannot take a format back. Rather than
+    /// leave the captain with an irreversible transformation of their own
+    /// code, the app supplies the undo itself: the pre-format text is right
+    /// here in memory, which is exactly the condition GL-33 sets for offering
+    /// an Undo at all.
+    @objc private func formatTapped() {
+        guard !isFormatting else { return }
+        guard let snippet = currentSnippet else { return }
+        let before = snippet.content
+        guard !before.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            Toast.show(in: view, message: "There is nothing in this snippet to format")
+            return
+        }
+        let languageID = snippet.language.id
+        guard runner.formatter(for: languageID) != nil else {
+            Toast.show(in: view, message: CodeRunner.noFormatterMessage(for: languageID))
+            return
+        }
+
+        isFormatting = true
+        refreshRunControls()
+        let key = snippet.key
+        runner.format(content: before, languageID: languageID) { [weak self] result in
+            guard let self else { return }
+            self.isFormatting = false
+            self.refreshRunControls()
+            // The snippet may have been closed, or a different one selected,
+            // while the formatter was thinking. Applying the result to
+            // whatever happens to be showing now would overwrite the wrong
+            // file, so it is dropped instead.
+            guard let target = self.snippet(for: key) else { return }
+            switch result {
+            case .failure(let failure):
+                // The formatter's own complaint is the useful half - a syntax
+                // error's line and column - so it goes in the pane rather than
+                // a toast that truncates it.
+                self.show(state: .finished(CodeRunOutcome(
+                    kind: .failed, status: 1, output: failure.combined,
+                    duration: 0, sandboxPath: "", truncated: false,
+                    toolDescription: "")), for: key)
+            case .success(let formatted):
+                guard formatted != target.content else {
+                    Toast.show(in: self.view, message: "Already formatted")
+                    return
+                }
+                self.replaceContent(of: target, with: formatted)
+                Toast.showUndo(in: self.view, message: "Formatted \(target.name)") { [weak self] in
+                    guard let self, let restored = self.snippet(for: key) else { return }
+                    self.replaceContent(of: restored, with: before)
+                }
+            }
+        }
+    }
+
+    /// Puts `content` into a snippet, in the editor and on disk.
+    ///
+    /// `openSnippet` is how the page is told about a wholesale replacement -
+    /// the same call `clearTapped` uses, and the only one the vendored bundle
+    /// exposes for it (adding a `replaceContent` bridge command would mean
+    /// regenerating the 3.8MB Monaco bundle, which needs node and network; see
+    /// `Vendor/Monaco/README.md`). `snippetChanged` is then called by hand
+    /// because a native-side replacement produces no page-side change event.
+    private func replaceContent(of snippet: OpenSnippet, with content: String) {
+        snippet.content = content
+        webView.call("openSnippet", payload: [
+            "id": snippet.key, "language": snippet.language.id,
+            "content": content, "select": snippet.key == currentKey,
+        ])
+        snippetChanged(key: snippet.key, content: content)
+    }
+
+    /// The mockup's "Runners found" list, as a popover.
+    ///
+    /// One row per runnable language with its interpreter and version, then
+    /// the formatter for the language on screen. Absent tools are **listed as
+    /// absent** rather than left out - the mockup's own `ruby · absent` row,
+    /// and GL-14's rule: "this app cannot run Python" and "Python is not
+    /// installed here" are different sentences.
+    @objc private func runnersTapped() {
+        if let existing = runnersPopover, existing.isShown {
+            existing.performClose(nil)
+            return
+        }
+        let language = currentSnippet?.language ?? CodePreviewLanguage.plainText
+        // Both reads are cache-only (GL-12), and the button is disabled until
+        // the warm-up has landed, so this cannot show an empty list.
+        let content = CodeRunnersPopoverView(
+            runners: CodeToolInventory.shared.runnerInventory(),
+            currentLanguage: language,
+            formatter: runner.formatter(for: language.id),
+            theme: theme)
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = NSViewController()
+        popover.contentViewController?.view = content
+        content.layoutSubtreeIfNeeded()
+        popover.contentSize = content.fittingSize
+        runnersPopover = popover
+        popover.show(relativeTo: runnersButton.bounds, of: runnersButton, preferredEdge: .maxY)
+    }
+
+    /// Records a pane state against a snippet and shows it if that snippet is
+    /// the one on screen.
+    private func show(state: CodeRunPaneState, for key: String) {
+        if case .idle = state {
+            paneStates.removeValue(forKey: key)
+        } else {
+            paneStates[key] = state
+        }
+        guard key == currentKey else { return }
+        renderPane()
+    }
+
+    /// Draws whatever the selected tab's last run was - or hides the pane.
+    private func renderPane() {
+        let state = currentKey.flatMap { paneStates[$0] } ?? .idle
+        outputPane.render(state)
+        let showing: Bool
+        if case .idle = state { showing = false } else { showing = true }
+        outputPaneHeight?.constant = showing ? CodeRunOutputPane.preferredHeight : 0
+        // Deactivate before activating: two active `statusBar.top ==` ties are
+        // a required conflict, and AppKit resolves those by breaking one and
+        // quietly resizing something - see gotcha (13).
+        if showing {
+            statusBarBelowEditor?.isActive = false
+            statusBarBelowPane?.isActive = true
+        } else {
+            statusBarBelowPane?.isActive = false
+            statusBarBelowEditor?.isActive = true
+        }
+        // A tie does not re-derive itself on every change (gotcha (14)), and
+        // this one changes the editor's own height - so the pass is forced
+        // rather than hoped for.
+        view.layoutSubtreeIfNeeded()
+    }
+
+    /// Enables Run and Format for what the current snippet can actually do.
+    ///
+    /// A disabled button with a tooltip that says why beats a button that
+    /// fails - which is the whole of F11's "handle the case where the
+    /// interpreter isn't installed".
+    private func refreshRunControls() {
+        let language = currentSnippet?.language ?? CodePreviewLanguage.plainText
+        let hasContent = !(currentSnippet?.content.trimmingCharacters(in: .whitespacesAndNewlines)
+                            .isEmpty ?? true)
+        let runnerPresence = runner.runner(for: language.id)
+        let formatterPresence = runner.formatter(for: language.id)
+        // "Not probed yet" is a third state, and GL-14's rule applies to it:
+        // it is not "not installed". Both buttons stay off and say so until
+        // the warm-up lands, which is a fraction of a second after the page
+        // first appears.
+        let known = runner.isWarm
+
+        runButton.isEnabled = known && runnerPresence != nil && hasContent
+            && activeRun == nil && CodeSandbox.isAvailable
+        formatButton.isEnabled = known && formatterPresence != nil && hasContent && !isFormatting
+        runnersButton.isEnabled = known
+
+        if !known {
+            let waiting = "Checking which interpreters and formatters this machine has\u{2026}"
+            runButton.toolTip = waiting
+            formatButton.toolTip = waiting
+            runnersButton.toolTip = waiting
+            return
+        }
+        runnersButton.toolTip = "Which runners and formatters this machine has"
+
+        if !CodeSandbox.isAvailable {
+            runButton.toolTip = CodeRunner.sandboxMissingMessage
+        } else if let runnerPresence {
+            let tool = runnerPresence.version.map { "\(runnerPresence.tool.displayName) \($0)" }
+                ?? runnerPresence.tool.displayName
+            runButton.toolTip = "Run this snippet with \(tool), sandboxed to a temp directory "
+                + "with no network and a \(Int(CodeRunner.wallClock))s limit (\u{2318}R)"
+        } else {
+            runButton.toolTip = CodeRunner.noRunnerMessage(for: language.id)
+        }
+        formatButton.toolTip = formatterPresence
+            .map { "Format this snippet with \($0.tool.displayName)" }
+            ?? CodeRunner.noFormatterMessage(for: language.id)
     }
 
     @objc private func languagePicked() {
@@ -1085,6 +1479,7 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
         overlay.wantsLayer = true
         overlay.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         overlayState?.applyTheme(theme)
+        outputPane.applyTheme(theme)
         styleChips()
         styleStatusLabels()
         pushTheme()
@@ -1168,6 +1563,31 @@ final class CodePreviewController: NSViewController, DaylightDrillActions {
     /// at all) - so a suite has to call the decision rather than wait for a
     /// signal that cannot arrive.
     func debugRetryRestoreAfterLateClone() { retryRestoreIfCloneArrivedLate() }
+    var debugOutputPane: CodeRunOutputPane { outputPane }
+    var debugCurrentSnippetKey: String? { currentKey }
+    var debugStatusBarFrame: NSRect { statusBar.frame }
+    static var debugCardInset: CGFloat { cardInset }
+    var debugRunButtonEnabled: Bool { runButton.isEnabled }
+    var debugFormatButtonEnabled: Bool { formatButton.isEnabled }
+    var debugRunButtonTooltip: String? { runButton.toolTip }
+    var debugFormatButtonTooltip: String? { formatButton.toolTip }
+    var debugOutputPaneHeight: CGFloat { outputPaneHeight?.constant ?? -1 }
+    var debugOutputPaneTopGap: CGFloat { outputPaneTopGap?.constant ?? -1 }
+    var debugIsRunning: Bool { activeRun != nil }
+    func debugRun() { runTapped() }
+    func debugFormat() { formatTapped() }
+    func debugStopRun() { stopRun() }
+    func debugClearOutput() { clearOutput() }
+    func debugRefreshRunControls() { refreshRunControls() }
+    var debugRunnersPopover: NSPopover? { runnersPopover }
+    func debugShowRunners() { runnersTapped() }
+    /// Drives the pane through a state without running anything, so a suite
+    /// can assert every rendering - including the ones that need a tool this
+    /// machine may not have.
+    func debugShowPane(_ state: CodeRunPaneState) {
+        guard let key = currentKey else { return }
+        show(state: state, for: key)
+    }
     func debugRename(from: String, to: String) {
         guard let snippet = open.first(where: { $0.name == from }) else { return }
         renameTab(key: snippet.key, to: to)

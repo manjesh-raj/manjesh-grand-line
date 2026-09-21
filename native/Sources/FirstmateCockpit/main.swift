@@ -1352,6 +1352,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                        keyEquivalent: "n").withSymbol("plus.circle")
         contextualNewItem?.target = menuTarget
         if let contextualNewItem { fileMenu.addItem(contextualNewItem) }
+        // F11's ⌘R. Checked free against this file's own chords before it was
+        // taken - nothing else in `NSApp.mainMenu` claims "r" with any
+        // modifier mask - which is the check `NavigationCoherenceSelfTest`
+        // enforces for every chord here (AGENTS.md: a duplicate key equivalent
+        // silently makes one of the two items permanently dead).
+        //
+        // It sits in the File menu beside the contextual ⌘N rather than in a
+        // menu of its own: it is the page's own verb, the same way ⌘N is, and
+        // this app's convention is that a page action reachable from a chord
+        // gets a real menu item so the chord is discoverable.
+        let runSnippetItem = NSMenuItem(title: "Run Snippet",
+                                        action: #selector(AppShellController.runCodeSnippetFromMenu),
+                                        keyEquivalent: "r").withSymbol("play.fill")
+        runSnippetItem.target = menuTarget
+        fileMenu.addItem(runSnippetItem)
 
         // Edit menu - Cut/Copy/Paste/Select All + Find.
         let editMenuItem = NSMenuItem()
@@ -2832,6 +2847,24 @@ if ProcessInfo.processInfo.environment["FM_RUN_CODE_PREVIEW_TESTS"] == "1" {
 }
 if ProcessInfo.processInfo.environment["FM_RUN_CODE_PREVIEW_VIEW_TESTS"] == "1" {
     exit(CodePreviewViewSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-feature-f11-code-preview-run-format` (F11 of full review #3
+// §8): Run and Format in Code Preview. Split the same way again, and the split
+// matters more here than usual - `CodeRunnerSelfTest` is the suite that asserts
+// the `sandbox-exec` profile's denials, the wall clock and the pruned
+// environment, and those are exactly the checks that must guard the *blocking*
+// CI lane. It needs no window: a real subprocess round trip does not (it is
+// skipped out loud on a machine with no `python3`), and every
+// machine-dependent decision above it runs against an injected
+// `CodeToolProbing`. `CodeRunnerViewSelfTest` mounts the real Code Preview
+// page in a real window to drive the real Run/Format buttons and read the real
+// output pane back, so that half is window-backed.
+if ProcessInfo.processInfo.environment["FM_RUN_CODE_RUNNER_TESTS"] == "1" {
+    exit(CodeRunnerSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_CODE_RUNNER_VIEW_TESTS"] == "1" {
+    exit(CodeRunnerViewSelfTest.run() ? 0 : 1)
 }
 
 // `fm/grandline-feature-f1-notebook` (F1 of full review #3 §8).
