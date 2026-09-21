@@ -2886,6 +2886,19 @@ final class AppShellController: NSViewController {
         stickyBoard.shutdown()
     }
 
+    /// Flush every open Scratchpad tab's debounced text on the way to quitting
+    /// (F9, `fm/grandline-feature-f9-scratchpad-calculator`).
+    ///
+    /// The shell's forward for the same reason its neighbours are: `tools` is
+    /// `private` and the app delegate is where `applicationWillTerminate`
+    /// lives. Without it, ⌘Q inside the pad's 500ms save debounce loses the
+    /// last thing typed - which for a pad you come back to is the one failure
+    /// that would make the feature untrustworthy. Safe on a page with no
+    /// Scratchpad tab open: a tab of another kind flushes nothing.
+    func shutdownScratchpads() {
+        tools.flushScratchpads()
+    }
+
     /// Flush the reading list's debounced git commit on the way to quitting
     /// (F4, `fm/grandline-feature-f4-reading-list`).
     ///

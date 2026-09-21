@@ -814,6 +814,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // it.
         saveSessionState()
         appShell.shutdownStickyBoard()
+        // F9: the same class again, one page over. The Scratchpad pad's write
+        // is debounced at 500ms, so ⌘Q straight after typing would otherwise
+        // lose the last line of a pad whose whole promise is that it is still
+        // there next launch.
+        appShell.shutdownScratchpads()
         // Audit 2 §6.8 / §2.8: the same class one destination over, and the
         // call site `CodePreviewController.shutdown()`'s own doc comment had
         // promised since it shipped while having none. Without it, ⌘Q inside
@@ -2004,6 +2009,13 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     if (ProcessInfo.processInfo.environment["FM_READING_LIST_DIR"] ?? "").isEmpty {
         setenv("FM_READING_LIST_DIR", scratchRoot.appendingPathComponent("reading-list", isDirectory: true).path, 1)
     }
+    // F9's scratchpad (`fm/grandline-feature-f9-scratchpad-calculator`).
+    // `ScratchpadStore()` is reachable from a bare, no-argument production
+    // constructor - every Scratchpad tab builds one - so a suite that opens
+    // that tab would otherwise read and rewrite the captain's own pads.
+    if (ProcessInfo.processInfo.environment["FM_SCRATCHPAD_FILE"] ?? "").isEmpty {
+        setenv("FM_SCRATCHPAD_FILE", scratchRoot.appendingPathComponent("scratchpad.json").path, 1)
+    }
     // The full-app audit's §7.2, and the entry that generalises every one
     // above: `FM_SHIFT_DIR` is the *root* override the whole
     // `GrandLineDocs/` family resolves through.
@@ -2918,6 +2930,19 @@ if ProcessInfo.processInfo.environment["FM_RUN_READING_LIST_TESTS"] == "1" {
 }
 if ProcessInfo.processInfo.environment["FM_RUN_READING_LIST_VIEW_TESTS"] == "1" {
     exit(ReadingListViewSelfTest.run() ? 0 : 1)
+}
+
+// F9's scratchpad calculator (`fm/grandline-feature-f9-scratchpad-calculator`).
+// Two suites, split the way AGENTS.md's "Writing a self-test" requires: the
+// engine (lexer, parser, units, currency, dates, formatting) asserts nothing
+// that needs a window and therefore guards CI's blocking lane, while the pad's
+// own two-column view is measured in a real `NSWindow` and lives in
+// `NEEDS_SESSION`.
+if ProcessInfo.processInfo.environment["FM_RUN_SCRATCHPAD_TESTS"] == "1" {
+    exit(ScratchpadEngineSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_SCRATCHPAD_VIEW_TESTS"] == "1" {
+    exit(ScratchpadPadViewSelfTest.run() ? 0 : 1)
 }
 
 if ProcessInfo.processInfo.environment["FM_RUN_NOTEBOOK_TESTS"] == "1" {
