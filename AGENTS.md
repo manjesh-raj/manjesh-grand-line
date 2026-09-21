@@ -994,6 +994,20 @@ actually collapse - the cards inside it outrank it, and a hidden 200pt rail
 measured 154.5pt. Keep the visible width at 499 and give the collapsed state
 its own required zero.
 
+**And the case where even that is not available, measured in
+`fm/grandline-feature-f11-code-preview-run-format`.** A required zero works
+only where the collapsing view's own content can reach zero. Code Preview's
+output pane cannot: its header is a real 28pt button row with required
+constraints, so `height == 0` at `contentTie` lost to its own content and the
+pane still resolved to **45pt** - the editor above it gave up 155pt where 200
+was expected, and `isHidden` changed nothing (gotcha (15): a hidden view is
+still in the graph). Raising that constraint over 500 is gotcha (13) again. So
+**collapse the pane's neighbour instead of the pane**: the status bar below it
+owns two alternative `top ==` constraints, one to the pane and one to the
+editor card, exactly one active, swapped in `renderPane`. Nothing then derives
+from a hidden pane's height at all, and the hidden state reproduces the page's
+geometry from before the pane existed - which is the thing to assert.
+
 ---
 
 ## GL invariants
@@ -1156,6 +1170,26 @@ noted.
 - **One subprocess runner and one AI runner**: `Subprocess` (GL-02/03/04/15) and
   `ClaudeOneShot` (GL-26). Do not add a third invocation shape. Interactive and
   PTY work is the terminal's, not theirs.
+- **Arbitrary *captain-authored* code runs in exactly one place: `CodeRunner`,
+  under `sandbox-exec`.** Code Preview's Run is the only surface in this app
+  that executes a snippet, and it is confined (network denied, writes denied
+  outside a fresh temp directory, the home directory unreadable, a fixed
+  five-variable environment, a wall clock, a cancel handle) with the profile
+  asserted as text by `FM_RUN_CODE_RUNNER_TESTS`. Two rules follow. A missing
+  `sandbox-exec` **refuses** the run rather than downgrading it to an
+  unconfined one; and nothing else in this app gains an "execute this text"
+  path - a second one would be a second, unreviewed sandbox. What the sandbox
+  does **not** do is in `docs/history/22-code-preview.md`, written out rather
+  than implied, and any change to the profile belongs there too.
+- **`resolvingSymlinksInPath` does not resolve a `/var/folders` temporary
+  path**, and anything that matches paths by prefix has to care. `NSString`'s
+  resolver is documented to *strip* a leading `/private`, so a temp directory
+  comes back as `/var/folders/…` while the child process's real cwd is
+  `/private/var/folders/…`. A `sandbox-exec` profile naming the first form
+  matches nothing, and the symptom is a denial inside the one directory that
+  was supposed to be writable - which reads as a broken sandbox rather than a
+  broken path. `CodeSandbox.realPath` is `realpath(3)` and is the copy to
+  reach for.
 - **Every `claude -p` run is fail-closed on the built-in tool set.**
   `--allowedTools` is *additive to* `~/.claude/settings.json`'s
   `permissions.allow`, and `--strict-mcp-config` scopes only MCP servers - so
@@ -1226,7 +1260,7 @@ can correct an earlier one - and several do.
 | [`19-incident-mode.md`](docs/history/19-incident-mode.md) | Incident mode (F8) |
 | [`20-whiteboard.md`](docs/history/20-whiteboard.md) | The embedded Excalidraw whiteboard and its DSL |
 | [`21-sticky-board.md`](docs/history/21-sticky-board.md) | The Sticky Board |
-| [`22-code-preview.md`](docs/history/22-code-preview.md) | The embedded Monaco code preview |
+| [`22-code-preview.md`](docs/history/22-code-preview.md) | The embedded Monaco code preview, and its sandboxed Run / Format |
 | [`23-straw-hat-pirates.md`](docs/history/23-straw-hat-pirates.md) | The AI crew: the roster, the reply envelope, proposals, MCP tools |
 | [`24-window-and-layout.md`](docs/history/24-window-and-layout.md) | The body-width tie and the `contentView` drift - the two repairs behind the "black region" |
 | [`25-removed-features.md`](docs/history/25-removed-features.md) | VPN control and local video generation: built, then removed |
