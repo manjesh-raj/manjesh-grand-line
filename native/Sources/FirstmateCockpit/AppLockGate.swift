@@ -254,6 +254,24 @@ enum AppLockedSurface {
     /// only thing standing between a locked machine and a shortcut that ships
     /// the captain's context to a subprocess.
     case appIntentAskCrew
+
+    // MARK: F23 - the widgets
+
+    /// F23: publishing the widget snapshot, and applying a widget button's
+    /// queued action.
+    ///
+    /// Its own case rather than sharing `.menuBarContent`'s, per this file's
+    /// header rule - and this is the surface that rule was written for. A
+    /// widget is the only thing in this app that renders the captain's data
+    /// **on the desktop**, outside every window and overlay this app can
+    /// draw: no `orderOut`, no lock screen and no popover dismissal reaches
+    /// it. The gate does two different jobs here, which is also why it is one
+    /// case in two call sites: `WidgetSnapshotPublisher.publishNow` publishes
+    /// an explicitly *empty* `.locked` snapshot (overwriting rows that are
+    /// already on screen, rather than merely declining to write new ones),
+    /// and `drainPendingActions` refuses to apply a tapped tick while locked
+    /// while *keeping* it queued for after the unlock.
+    case widgetSnapshot
 }
 
 final class AppLockGate {

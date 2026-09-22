@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- A widget extension is always sandboxed by the system; this is not
+         optional and not a choice this project is making. -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <!-- The only way out of that sandbox that this extension needs: read
+         access to the one directory the app publishes its snapshot into, and
+         write access to the `actions/` subdirectory a tapped button queues
+         into.
+
+         **This is the line that is blocked.** An App Group identifier is
+         only honoured when it is prefixed by a real Team ID and the binary
+         is signed by that team; `codesign -dv` on this app reports
+         `TeamIdentifier=not set`. Until the Developer ID work lands, the
+         value below is the unprefixed form - which is what the app itself
+         writes to (an unsandboxed process may simply write under
+         `~/Library/Group Containers/`), and which the sandbox will refuse to
+         resolve for this extension.
+
+         Filling this in is two edits, in two files, and they must agree:
+         this value, and `GrandLineWidgetContainer.appGroupIdentifier` in
+         `WidgetSharedContract.swift`. `WidgetSnapshotSelfTest` asserts they
+         do. -->
+    <key>com.apple.security.application-groups</key>
+    <array>
+        <string>group.com.firstmate.cockpit.native</string>
+    </array>
+</dict>
+</plist>

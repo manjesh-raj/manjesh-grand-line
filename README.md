@@ -146,6 +146,7 @@ grep -rhoE '"FM_[A-Z0-9_]+"' native/Sources/FirstmateCockpit/*.swift | tr -d '"'
 | `FM_NOTEBOOK_DIR` | The Notebook's page tree (`GrandLineDocs/notebook/`). Falls back to `FM_SHIFT_DIR`, then the synced clone |
 | `FM_READING_LIST_DIR` | The Reading List's `links.yaml` and its per-host favicon cache (`GrandLineDocs/reading-list/`). Falls back to `FM_SHIFT_DIR`, then the synced clone |
 | `FM_SCRATCHPAD_FILE` | `scratchpad.json` (the Tools > Scratchpad tabs' saved pads, keyed by tab name) |
+| `FM_WIDGET_DIR` | Where the app publishes `widget-snapshot.json` and reads the widgets' queued taps from. Defaults to the App Group container the WidgetKit extension reads (`~/Library/Group Containers/group.com.firstmate.cockpit.native/GrandLineWidgets/`) - see `native/Widgets/README.md` |
 | `FM_CLIPBOARD_HISTORY_FILE` | The encrypted clipboard history (`clipboard-history.sealed`) |
 | `FM_CLIPBOARD_HISTORY_EPHEMERAL` | `1` seals the clipboard history with a per-process random key instead of the Keychain item - what the self-test process sets, so a suite never creates or reads a real Keychain entry |
 | `FM_STRAW_HAT_DIR` | The Straw Hat crew's saved conversations (redacted). Falls back to `FM_SHIFT_DIR`, then the synced clone |

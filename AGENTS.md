@@ -27,7 +27,7 @@ as they are rather than rewritten across 180 files.
 ## Contents
 
 - [Working in this repository](#working-in-this-repository) - worktrees, the shared stash, the shared working tree
-- [Build, run, test](#build-run-test) - the two CI lanes, and the vendored patches a sync must re-apply
+- [Build, run, test](#build-run-test) - the two CI lanes, the second (widget) binary, and the vendored patches a sync must re-apply
 - [Verification conventions](#verification-conventions) - how a change is proved here
 - [Writing a self-test](#writing-a-self-test)
 - [The AppKit gotcha catalogue](#the-appkit-gotcha-catalogue) - 18 measured traps
@@ -288,6 +288,41 @@ paid for once each.
   stripped, because a merge that drops the code under a doc comment leaves the
   comment - and the comment names the symbol.
 
+### There is a second binary, and one file is compiled into both
+
+`native/Widgets/GrandLineWidgets/` is a **WidgetKit extension** (F23), and it
+is not a SwiftPM target: SwiftPM has no bundle product, so
+`Scripts/build-widget-extension.sh` compiles it with `swiftc` and assembles the
+`.appex` by hand - the same shape `build_native_app.sh` already uses for the
+app. `swift build` does not build it and CI does not either; run
+`Scripts/build-widget-extension.sh --check` after touching it.
+
+Three rules follow, and they apply to anything shared with that process:
+
+- **`Sources/FirstmateCockpit/WidgetSharedContract.swift` is the only file
+  compiled into both binaries**, which is why it imports nothing but
+  `Foundation`. Adding an `AppKit`/`Yaml` import to it breaks the extension's
+  build, not the app's. The extension cannot link `FirstmateCockpit` - the app's
+  model types reach AppKit within a line or two of anything useful.
+- **A table the extension has to duplicate needs a source guard, not a
+  comment.** `WidgetPalette.swift` restates `DaylightTokens`' hexes because it
+  cannot import them, and
+  `WidgetSnapshotSelfTest.checkThePaletteMatchesDaylight` fails the run if the
+  two ever disagree. Same for the App Group id, which lives in the contract and
+  in the entitlements file.
+- **A loadable `.appex` needs `-application-extension -parse-as-library` plus
+  `-Xlinker -e -Xlinker _NSExtensionMain`.** Without the last one the bundle is
+  a signed binary with an `_main` no widget host ever calls, and nothing fails
+  loudly.
+
+The extension is **blocked on the Developer ID item**, and precisely: a widget
+extension is always sandboxed, so reading the App Group container needs
+`com.apple.security.application-groups` with a Team-ID-prefixed identifier and
+a team-signed binary, and `codesign -dv` reports `TeamIdentifier=not set`. The
+*app* half works today (an unsandboxed process may write under
+`~/Library/Group Containers/` with no entitlement - measured). See
+`native/Widgets/README.md` for the two edits that unblock it.
+
 ### The two CI lanes
 
 Both are blocking. `test` runs the headless-safe suites; `test-windowed` runs
@@ -371,6 +406,19 @@ tiles of a 600pt panel failed with `delta 0.0000` - two identical *background*
 pixels - which reads exactly like a real colour bug. Scale by
 `rep.pixelsWide / bounds.width` (and the same for height) before indexing, and
 mirror the row for an unflipped view.
+
+**`ImageRenderer` is the substitute when the thing being drawn is SwiftUI
+rather than an `NSView`**, and it is a real rasterised render rather than a
+preview. `cacheDisplay` has nothing to render for a widget, and the system's
+widget host will not load this app's extension until the Developer ID work
+lands - so `Scripts/render-widget-previews.sh` compiles the extension's real
+view files, renders every state at both widget families' real point sizes, and
+writes PNGs the agent reads back with `Read`. It found a real defect on its
+first run (F23's medium Sticky widget repeating a kicker on all three notes and
+wrapping it). One thing it needs: **`EnvironmentValues.widgetFamily` is
+read-only**, so a view that reads it directly can only ever be drawn by a
+widget host - keep the environment read in the entry view and pass the family
+down as a parameter.
 
 **Two probe rules that cost real time here.**
 
@@ -1394,6 +1442,7 @@ can correct an earlier one - and several do.
 | [`39-daily-review.md`](docs/history/39-daily-review.md) | The daily review (F20): Overview's general-user briefing, its stated-gap rule, and the app's one read-only EventKit path |
 | [`40-menu-bar-mode.md`](docs/history/40-menu-bar-mode.md) | Menu-bar (compact) mode (F22): the merged status item, the four-tab popover that hosts the vault's and the crew's own popover controllers, and the window/Dock/last-window lifecycle |
 | [`41-app-intents-and-full-export.md`](docs/history/41-app-intents-and-full-export.md) | App Intents / Shortcuts (F21), the `.glbackup` bundle's five new sections (F24), and `GrandLineServices` |
+| [`42-widgets.md`](docs/history/42-widgets.md) | The WidgetKit extension (F23): the Tasks-due and Sticky-note widgets, the published snapshot, the queued-tap channel, and the Developer ID dependency |
 
 ## Maintaining this file
 

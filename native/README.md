@@ -146,6 +146,28 @@ the two states that copy is in.
 So: to get the actions registered, package the app on a Mac with Xcode
 installed. The script prints a warning when it skips the step.
 
+### The widget extension
+
+```bash
+cd native
+./Scripts/build-widget-extension.sh --check     # compile + link only
+./Scripts/build-widget-extension.sh --embed     # assemble, sign, drop into dist/<app>/Contents/PlugIns
+```
+
+`swift build` does **not** build this - SwiftPM has no bundle product, so the
+`.appex` is assembled by that script the same way the app bundle is assembled
+above. It is blocked on the Developer ID item and the boundary is written out
+in [`Widgets/README.md`](Widgets/README.md): what compiles, what runs today,
+and the two edits that make the widgets actually load.
+
+The extension declares `AppIntent` types of its own (the tick, and the sticky
+widget's note picker), so the section above applies to it too: without
+`appintentsmetadataprocessor` the `.appex` carries no `Metadata.appintents`
+and the widget's own configuration sheet has no note list to offer. The tick
+does not depend on it - a `Button(intent:)` inside a widget is resolved by
+WidgetKit directly - and neither half is reachable at all until the signing
+work lands.
+
 ### Local signing setup (one-time, per machine)
 
 The script codesigns with a local self-signed identity named exactly
