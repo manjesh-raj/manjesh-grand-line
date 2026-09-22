@@ -219,6 +219,45 @@ column computations in `max(minimumColumns, …)`. `KubeBridgeSelfTest`'s
 `KubernetesDestinationSelfTest.test_feedTabIsWidenedForMachineReadableOutput`
 proves the feed tab actually asks for it.
 
+## Sixth patch: an unused `withUnsafeBytes` result (`fm/grandline-swiftterm-unsafebytes-warning-fix`)
+
+**File:** `Apple/Metal/MetalTerminalRenderer.swift`, at both of its vertex-buffer
+upload sites - `BufferPool.makeBuffer<T>(_:)` and the renderer's own
+`makeStaticBuffer<T>(_:)`. Two lines changed, both of the same shape.
+
+**What it fixes.** Building this app printed two warnings from the vendored
+tree, which is the only reason the captain saw them at all:
+
+```
+MetalTerminalRenderer.swift:1744:22: warning: result of call to 'withUnsafeBytes' is unused [#no-usage]
+MetalTerminalRenderer.swift:1950:18: warning: result of call to 'withUnsafeBytes' is unused [#no-usage]
+```
+
+Both sites read `vertices.withUnsafeBytes { raw in memcpy(...) }`. `memcpy`
+returns its destination pointer, so a single-expression closure around it infers
+that pointer as its own result type, and `withUnsafeBytes` dutifully hands the
+value back. Nobody wants it, and the compiler says so. The fix is one `_ = ` per
+site, plus a comment saying why.
+
+**Why there is no upstream seam - and this one is genuinely simpler than
+patches 1-5.** There is no missing `public`/`open` hook here and no behaviour to
+override. This is a **diagnostics** gap in third-party source: nothing outside a
+file can silence a warning emitted inside it, so the only place the fix can live
+is the file. It is not a fix this app needs upstream to adopt in order to work -
+it needs it only to keep its own build output clean (GL-07's standing bar: the
+build fails on any warning in this app's own sources, and vendored noise is what
+trains everyone to stop reading the rest).
+
+**What it deliberately does not touch.** The `memcpy` itself, its arguments, the
+buffer lifetime and the pointer's scope are all unchanged. `_ = ` discards a
+value that was already being discarded; the generated code is the same.
+
+**Re-applying it after a SwiftTerm upgrade:** prefix every
+`vertices.withUnsafeBytes` call in `Apple/Metal/MetalTerminalRenderer.swift` with
+`_ = `. `VendoredPatchesSelfTest` asserts *both* sites, by count rather than by
+presence - a re-apply that fixes one and misses the other is exactly the failure
+a `contains` check would wave through.
+
 ## Updating this vendored copy, and the scheduled check
 
 **Pinned:** upstream `1.15.0` (`dd2fb8ac5b861e7bf617c872895e338f38165648`).
@@ -226,11 +265,11 @@ proves the feed tab actually asks for it.
 **Re-check:** every 183 days (six months), or sooner if upstream publishes a
 security fix.
 
-The five patches below are the price of this pin, and the review that filed
+The six patches above are the price of this pin, and the review that filed
 this section (P9 of full review #3) is right that the cost of a sync is
-re-applying all five. So the standing decision is **stay pinned and re-check on
-a schedule**, not "bump when a newer tag exists" - and the check exists to
-notice the one thing that would change that decision.
+re-applying every one of them. So the standing decision is **stay pinned and
+re-check on a schedule**, not "bump when a newer tag exists" - and the check
+exists to notice the one thing that would change that decision.
 
 ### What would change the decision
 
@@ -246,7 +285,7 @@ the next scheduled check:
 
 A newer tag on its own is **not** a reason. Nothing in this app is waiting on
 an upstream feature, and every release since the pin has to be re-diffed against
-all five patch sites by hand.
+all six patch sites by hand.
 
 ### The check itself
 
@@ -258,11 +297,11 @@ why it is in `native/MANUAL-CHECKS.md` rather than a suite:
 curl -sS "https://api.github.com/repos/migueldeicaza/SwiftTerm/tags?per_page=5" \
   | python3 -c "import json,sys; [print(t['name']) for t in json.load(sys.stdin)]"
 
-# 2. How big is the gap, and did it touch our five patch sites?
+# 2. How big is the gap, and did it touch our six patch sites?
 curl -sS "https://api.github.com/repos/migueldeicaza/SwiftTerm/compare/v1.15.0...v<new>" \
-  | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['total_commits'], 'commits,', len(d['files']), 'files'); [print('%+6d/-%-5d %s' % (f['additions'], f['deletions'], f['filename'])) for f in d['files'] if any(w in f['filename'] for w in ('MacExtensions','iOSExtensions','AppleTerminalView','MacTerminalView'))]"
+  | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['total_commits'], 'commits,', len(d['files']), 'files'); [print('%+6d/-%-5d %s' % (f['additions'], f['deletions'], f['filename'])) for f in d['files'] if any(w in f['filename'] for w in ('MacExtensions','iOSExtensions','AppleTerminalView','MacTerminalView','MetalTerminalRenderer'))]"
 
-# 3. For each of the five patches, read the upstream function and answer one
+# 3. For each of the six patches, read the upstream function and answer one
 #    question: is the root cause fixed, or is there a hook now?
 curl -sS "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/v<new>/Sources/SwiftTerm/Mac/MacExtensions.swift"
 
@@ -272,13 +311,18 @@ curl -sS "https://raw.githubusercontent.com/migueldeicaza/SwiftTerm/v<new>/Sourc
 ```
 
 `VendoredPatchesSelfTest` is the automated half, and it deliberately covers the
-*other* hazard: it asserts all five patches are still present in this tree, so a
+*other* hazard: it asserts all six patches are still present in this tree, so a
 sync that silently drops one fails by name rather than being found in
 production. It also reads the `Last checked` date above and prints a NOTE (never
 a failure - a date cannot break somebody else's build) once it is older than the
 re-check interval.
 
 ### 2026-09-19, against v1.20.0: stay pinned
+
+*(This check predates the sixth patch, which was added on 2026-09-22 and has no
+upstream question to answer - it is a warning-only edit, not an override of
+upstream behaviour. The five verdicts below are left exactly as they were
+recorded.)*
 
 Upstream is **three releases ahead** of the review that filed this (which said
 1.19.0). The gap is **81 commits across 123 files**, and it is feature work
@@ -308,7 +352,7 @@ scheduled check is the place to ask again.
 
 ### Re-applying the patches, if a sync does happen
 
-Replace `Sources/SwiftTerm` with the new tree, then re-apply all five. Each
+Replace `Sources/SwiftTerm` with the new tree, then re-apply all six. Each
 patch's own section above ends with the specific hunks; in summary:
 
 | # | Files |
@@ -318,6 +362,7 @@ patch's own section above ends with the specific hunks; in summary:
 | 3 | `Apple/AppleTerminalView.swift` (`invalidationRegion` + its `updateDisplay` call site) |
 | 4 | `Mac/MacTerminalView.swift` (the property block), `Apple/AppleTerminalView.swift` (`queuePendingDisplay`) |
 | 5 | `Mac/MacTerminalView.swift`, `iOS/iOSTerminalView.swift` (the `minimumColumns` property), `Apple/AppleTerminalView.swift` (two `max(minimumColumns, …)` clamps) |
+| 6 | `Apple/Metal/MetalTerminalRenderer.swift` (a `_ = ` on both `vertices.withUnsafeBytes` calls) |
 
 Then run `FM_RUN_VENDORED_PATCHES_TESTS=1` first - it names any patch that did
 not come back - followed by the terminal suites that prove each one behaves:
@@ -325,3 +370,6 @@ not come back - followed by the terminal suites that prove each one behaves:
 `FM_RUN_TERMINAL_WRAP_REDRAW_TESTS` (3),
 `FM_RUN_TERMINAL_DISPLAY_GATING_TESTS` (4), and
 `FM_RUN_KUBE_BRIDGE_TESTS` plus `FM_RUN_KUBERNETES_DESTINATION_TESTS` (5).
+Patch 6 has no behavioural suite because it has no behaviour - a warning-clean
+`swift build` is the check, and `FM_RUN_VENDORED_PATCHES_TESTS` is what makes a
+dropped re-apply fail by name rather than only in build output nobody reads.

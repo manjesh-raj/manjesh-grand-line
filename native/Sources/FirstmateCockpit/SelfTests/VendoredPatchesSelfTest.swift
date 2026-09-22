@@ -1,6 +1,6 @@
 // Manjesh Grand Line - native macOS app.
 //
-// Permanent guard on the five local patches carried in
+// Permanent guard on the six local patches carried in
 // `native/Vendor/SwiftTerm` (P9 of full review #3). Run with:
 //
 //   swift build && FM_RUN_VENDORED_PATCHES_TESTS=1 .build/debug/FirstmateCockpit; echo $?
@@ -10,8 +10,8 @@
 // The review's finding about the pin is that "every sync is a five-patch
 // re-apply". The hazard in that sentence is not the pin being old - a stale
 // pin is a decision, recorded and re-taken on a schedule in that directory's
-// own README - it is a *re-apply that silently drops one of the five*. Four of
-// the five live in two files upstream rewrites heavily (measured at v1.20.0:
+// own README - it is a *re-apply that silently drops one of them*. Four of
+// the six live in two files upstream rewrites heavily (measured at v1.20.0:
 // `Apple/AppleTerminalView.swift` +813/-157, `Mac/MacTerminalView.swift`
 // +647/-54), so the realistic failure is a hunk lost in a merge, not a
 // deliberate removal - and every one of them then fails silently, in a way this
@@ -82,7 +82,21 @@ enum VendoredPatchesSelfTest {
             ("Sources/SwiftTerm/Apple/AppleTerminalView.swift", "max(minimumColumns,"),
             ("Sources/SwiftTerm/Apple/AppleTerminalView.swift", "max (minimumColumns,"),
         ]),
+        (6, "discarded withUnsafeBytes result", [
+            ("Sources/SwiftTerm/Apple/Metal/MetalTerminalRenderer.swift",
+             "_ = vertices.withUnsafeBytes"),
+        ]),
     ]
+
+    /// Patch 6 is applied at **two** call sites in one file, and the presence
+    /// check above is a `contains` - so it is satisfied by either of them. That
+    /// is not enough here: a re-apply that fixes one `makeBuffer` and misses
+    /// the other passes that check while the build is still warning-dirty. This
+    /// asserts the real invariant instead - every `vertices.withUnsafeBytes`
+    /// call in that file discards its result.
+    private static let patch6File = "Sources/SwiftTerm/Apple/Metal/MetalTerminalRenderer.swift"
+    private static let patch6Call = "vertices.withUnsafeBytes"
+    private static let patch6Fixed = "_ = vertices.withUnsafeBytes"
 
     static func run() -> Bool {
         print("VendoredPatchesSelfTest")
@@ -94,6 +108,7 @@ enum VendoredPatchesSelfTest {
         }
 
         checkEveryPatchIsStillPresent(vendor, &ok)
+        checkBothWithUnsafeBytesCallsDiscardTheirResult(vendor, &ok)
         checkTheUpstreamCheckIsRecorded(vendor, &ok)
 
         print(ok ? "VendoredPatchesSelfTest: all checks passed"
@@ -114,7 +129,7 @@ enum VendoredPatchesSelfTest {
         return dir
     }
 
-    // MARK: - All five patches are still in the tree
+    // MARK: - Every patch is still in the tree
 
     private static func checkEveryPatchIsStillPresent(_ vendor: URL, _ ok: inout Bool) {
         // A marker list that resolved to nothing would report every patch as
@@ -154,7 +169,7 @@ enum VendoredPatchesSelfTest {
             } else {
                 fail("patch \(patch.number) (\(patch.name)) looks dropped: "
                      + missing.joined(separator: "; ")
-                     + "\n      A sync must re-apply all five - see "
+                     + "\n      A sync must re-apply every one of them - see "
                      + "native/Vendor/SwiftTerm/README.md's re-apply table, then "
                      + "re-run that patch's own behavioural suite.", &ok)
             }
@@ -192,6 +207,61 @@ enum VendoredPatchesSelfTest {
     /// neither is individually required.
     private static func isAlternativeMarker(_ marker: String) -> Bool {
         marker.hasPrefix("max(minimumColumns") || marker.hasPrefix("max (minimumColumns")
+    }
+
+    // MARK: - Patch 6 covers every call site, not just one
+
+    /// Every `vertices.withUnsafeBytes` call in the Metal renderer discards its
+    /// result.
+    ///
+    /// `memcpy` returns its destination pointer, so a single-expression closure
+    /// around it infers that pointer as its own result type and
+    /// `withUnsafeBytes` then hands back a value nobody wants - which the
+    /// compiler reports as `result of call to 'withUnsafeBytes' is unused`.
+    /// There were two such calls and both warned; a re-apply that catches one
+    /// and misses the other satisfies the `contains` check above while the
+    /// build is still dirty, so the count is what is asserted here.
+    ///
+    /// The discriminating power is asserted first: a file with no such call at
+    /// all would otherwise pass this vacuously.
+    private static func checkBothWithUnsafeBytesCallsDiscardTheirResult(_ vendor: URL, _ ok: inout Bool) {
+        let file = vendor.appendingPathComponent(patch6File)
+        guard let raw = try? String(contentsOf: file, encoding: .utf8) else {
+            fail("could not read \(patch6File)", &ok)
+            return
+        }
+        let text = strippingComments(raw)
+
+        let calls = occurrences(of: patch6Call, in: text)
+        let discarded = occurrences(of: patch6Fixed, in: text)
+
+        guard calls > 0 else {
+            fail("\(patch6File) contains no \"\(patch6Call)\" call at all - this "
+                 + "check was asserting nothing. If upstream restructured the "
+                 + "renderer, re-derive patch 6 against the new shape rather "
+                 + "than deleting this.", &ok)
+            return
+        }
+
+        if calls == discarded {
+            print("  OK   patch 6 covers all \(calls) withUnsafeBytes call sites")
+        } else {
+            fail("\(calls - discarded) of \(calls) \"\(patch6Call)\" calls in "
+                 + "\(patch6File) still use their result - each one is a "
+                 + "`result of call to 'withUnsafeBytes' is unused` warning. "
+                 + "Prefix it with `_ = `; see native/Vendor/SwiftTerm/README.md's "
+                 + "sixth patch.", &ok)
+        }
+    }
+
+    private static func occurrences(of needle: String, in text: String) -> Int {
+        var count = 0
+        var index = text.startIndex
+        while let r = text.range(of: needle, range: index..<text.endIndex) {
+            count += 1
+            index = r.upperBound
+        }
+        return count
     }
 
     // MARK: - The scheduled check left a record

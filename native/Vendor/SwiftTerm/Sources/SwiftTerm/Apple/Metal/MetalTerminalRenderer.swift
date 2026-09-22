@@ -1741,7 +1741,11 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
             guard let buffer = dequeue(length: length) else {
                 return nil
             }
-            vertices.withUnsafeBytes { raw in
+            // Grand Line patch 6: `memcpy` returns its destination pointer, so this
+            // single-expression closure infers that as its result type and
+            // `withUnsafeBytes` hands the pointer back unused. Discarded explicitly so
+            // the build stays warning-clean; the copy itself is unchanged.
+            _ = vertices.withUnsafeBytes { raw in
                 memcpy(buffer.contents(), raw.baseAddress!, byteCount)
             }
             frameBuffers.append(buffer)
@@ -1947,7 +1951,11 @@ final class MetalTerminalRenderer: NSObject, MTKViewDelegate {
         guard let buffer = device.makeBuffer(length: byteCount, options: .storageModeShared) else {
             return (nil, 0)
         }
-        vertices.withUnsafeBytes { raw in
+        // Grand Line patch 6: `memcpy` returns its destination pointer, so this
+        // single-expression closure infers that as its result type and
+        // `withUnsafeBytes` hands the pointer back unused. Discarded explicitly so
+        // the build stays warning-clean; the copy itself is unchanged.
+        _ = vertices.withUnsafeBytes { raw in
             memcpy(buffer.contents(), raw.baseAddress!, byteCount)
         }
         return (buffer, count)
