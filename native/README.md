@@ -129,6 +129,23 @@ installed over `/Applications`. The version comes from `git describe` (GL-18), s
 a release is cut by tagging - never by editing a constant. Releases are
 unsigned; see the repo-root README.
 
+### App Intents / Shortcuts registration (F21)
+
+The five `AppIntent` types compile into the binary with a plain `swift build`,
+but Shortcuts, Siri and Spotlight discover them from a `Metadata.appintents`
+bundle that only Xcode's `appintentsmetadataprocessor` can produce. SwiftPM
+never runs it.
+
+`build_native_app.sh` runs it itself **when it can find it**, as a packaging
+step - the build command is unchanged on a machine without it, so
+`swift build` stays Command-Line-Tools-only as this project requires. A bundle
+packaged without the processor is not broken: it simply publishes no Shortcuts
+actions, and Settings → **Shortcuts & Siri** reads the bundle and says which of
+the two states that copy is in.
+
+So: to get the actions registered, package the app on a Mac with Xcode
+installed. The script prints a warning when it skips the step.
+
 ### Local signing setup (one-time, per machine)
 
 The script codesigns with a local self-signed identity named exactly

@@ -56,7 +56,13 @@ import Foundation
 // MARK: Bundle format
 
 struct GrandLineBackup: Codable {
-    static let currentFormatVersion = 1
+    /// 1 -> 2 with F24's five new sections (`BackupStores.swift`). That file's
+    /// header explains why this one is a genuine exception to the
+    /// "an optional field needs no bump" rule stated above: the rule is about
+    /// a *new* build reading an *old* bundle, which still works and is
+    /// asserted; the bump is about an old build reading a new one and calling
+    /// a silent five-section partial restore a success.
+    static let currentFormatVersion = 2
 
     var formatVersion: Int
     var hosts: [Host]
@@ -67,14 +73,20 @@ struct GrandLineBackup: Codable {
     /// `nil` only when reading a bundle exported before this field existed -
     /// see this file's header on why that needs no format-version bump.
     var dictation: BackupDictation?
+    /// F24: tasks, the Notebook, the Sticky Board, Code Preview's snippets and
+    /// the sealed vault. `nil` for every v1 bundle, which is what makes an
+    /// older `.glbackup` still import cleanly for what it does contain.
+    var stores: BackupStoreArchives?
 
-    init(hosts: [Host], snippets: [Snippet], keys: [SSHKey], settings: BackupSettings, dictation: BackupDictation? = nil) {
+    init(hosts: [Host], snippets: [Snippet], keys: [SSHKey], settings: BackupSettings,
+         dictation: BackupDictation? = nil, stores: BackupStoreArchives? = nil) {
         self.formatVersion = Self.currentFormatVersion
         self.hosts = hosts
         self.snippets = snippets
         self.keys = keys
         self.settings = settings
         self.dictation = dictation
+        self.stores = stores
     }
 }
 
@@ -163,10 +175,19 @@ struct BackupDictation: Codable {
 enum GrandLineBackupBuilder {
     /// Builds a bundle from the live stores - only the `SSHKey` metadata
     /// referenced by at least one host is included, never the whole key list.
-    static func build(hosts: [Host], snippets: [Snippet], allKeys: [SSHKey], dictationStore: DictationStore) -> GrandLineBackup {
+    ///
+    /// `storeRoots` is F24's half: `nil` builds exactly the v1 bundle this
+    /// function always built (which is what Bootstrap's restore step and the
+    /// self-tests want), and a value adds the five file-backed sections. The
+    /// roots come from the caller's own live store instances rather than being
+    /// re-derived here - see `BackupStoreArchives.Roots`.
+    static func build(hosts: [Host], snippets: [Snippet], allKeys: [SSHKey], dictationStore: DictationStore,
+                      storeRoots: BackupStoreArchives.Roots? = nil) -> GrandLineBackup {
         let referencedKeyIDs = Set(hosts.compactMap { $0.keyID })
         let keys = allKeys.filter { referencedKeyIDs.contains($0.id) }
-        return GrandLineBackup(hosts: hosts, snippets: snippets, keys: keys, settings: .fromCurrent(), dictation: .fromCurrent(store: dictationStore))
+        return GrandLineBackup(hosts: hosts, snippets: snippets, keys: keys, settings: .fromCurrent(),
+                               dictation: .fromCurrent(store: dictationStore),
+                               stores: storeRoots.map { BackupStoreArchives.build(roots: $0) })
     }
 }
 
@@ -263,6 +284,9 @@ enum BackupImport {
         /// whether applying it would change what's currently configured.
         var shortcutStatus: BackupDiffStatus?
         var shortcutDisplay: String?
+        /// F24's five sections, or `nil` when the bundle carries none (a v1
+        /// file) or when the caller supplied no roots to diff against.
+        var stores: BackupStoreImport.Preview?
 
         var newHostsCount: Int { hostRows.filter { $0.status == .new }.count }
         var changedHostsCount: Int { hostRows.filter { $0.status == .changed }.count }
@@ -280,7 +304,7 @@ enum BackupImport {
     /// same host set), then falls back to a case-insensitive label match (a
     /// host/snippet recreated with a new id since the export still counts as
     /// "the same thing, possibly changed" rather than a duplicate).
-    static func diff(bundle: GrandLineBackup, existingHosts: [Host], existingSnippets: [Snippet], existingKeys: [SSHKey], existingVocabulary: [String] = [], existingShortcut: KeyChord? = nil) -> Preview {
+    static func diff(bundle: GrandLineBackup, existingHosts: [Host], existingSnippets: [Snippet], existingKeys: [SSHKey], existingVocabulary: [String] = [], existingShortcut: KeyChord? = nil, storeRoots: BackupStoreArchives.Roots? = nil) -> Preview {
         var hostRows: [BackupHostDiffRow] = []
         var rejectedHostWarnings: [String] = []
         for bundleHost in bundle.hosts {
@@ -349,10 +373,21 @@ enum BackupImport {
             shortcutStatus = (bundleShortcut == existingShortcut) ? .unchanged : .changed
         }
 
+        // F24. Both halves have to be present for this to mean anything: a
+        // bundle with no `stores` section has nothing to compare, and a caller
+        // with no roots has nothing to compare it *to*. Either way `nil` is
+        // "this import does not touch those stores", which is what the preview
+        // then says rather than showing five rows of zeroes.
+        var storePreview: BackupStoreImport.Preview?
+        if let archives = bundle.stores, let storeRoots {
+            storePreview = BackupStoreImport.diff(archives, roots: storeRoots)
+        }
+
         return Preview(
             hostRows: hostRows, snippetRows: snippetRows, keyWarnings: keyWarnings,
             rejectedHostWarnings: rejectedHostWarnings, settingsSummary: bundle.settings.summary,
-            vocabularyRows: vocabularyRows, shortcutStatus: shortcutStatus, shortcutDisplay: shortcutDisplay
+            vocabularyRows: vocabularyRows, shortcutStatus: shortcutStatus, shortcutDisplay: shortcutDisplay,
+            stores: storePreview
         )
     }
 
@@ -374,7 +409,13 @@ enum BackupImport {
     /// valid. Unchanged items are left untouched. The bundle's settings
     /// subset is always applied, since the diff preview already showed it
     /// before this was called.
-    static func apply(_ preview: Preview, bundle: GrandLineBackup, hostStore: HostStore, snippetStore: SnippetStore, dictationStore: DictationStore? = nil) {
+    ///
+    /// F24's sections ride the same call, with one deliberate asymmetry: the
+    /// vault is written only when `allowVaultReplace` says so *or* there is
+    /// no vault here to lose. Replacing a vault is the one action in this
+    /// whole file that cannot be undone from inside the app, so it does not
+    /// share a boolean with a sticky note.
+    static func apply(_ preview: Preview, bundle: GrandLineBackup, hostStore: HostStore, snippetStore: SnippetStore, dictationStore: DictationStore? = nil, storeRoots: BackupStoreArchives.Roots? = nil, allowVaultReplace: Bool = false) {
         for row in preview.hostRows {
             var host = row.bundleHost
             switch row.status {
@@ -402,6 +443,12 @@ enum BackupImport {
         bundle.settings.apply()
         if let dictationStore {
             bundle.dictation?.apply(to: dictationStore)
+        }
+        if let storePreview = preview.stores, let archives = bundle.stores, let storeRoots {
+            BackupStoreImport.apply(storePreview, archives: archives, roots: storeRoots)
+            if let vaultRow = storePreview.vault {
+                BackupStoreImport.applyVault(vaultRow, to: storeRoots.vaultFile, allowReplace: allowVaultReplace)
+            }
         }
     }
 }

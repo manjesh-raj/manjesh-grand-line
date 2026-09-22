@@ -36,8 +36,55 @@ BUILD_VERSION="${GIT_DESCRIBE#v}"
 ICON_SRC="../assets/icon.icns"
 SIGNING_IDENTITY="Firstmate Cockpit Local Dev"
 
+# ---------------------------------------------------------------------------
+# F21 (App Intents / Shortcuts).
+#
+# The five `AppIntent` types in Sources/FirstmateCockpit/GrandLineAppIntents.swift
+# compile into the binary with a plain `swift build`, but Shortcuts, Siri and
+# Spotlight do not find them that way: they are discovered from a
+# `Metadata.appintents` bundle inside Contents/Resources, produced by Xcode's
+# `appintentsmetadataprocessor`. SwiftPM never runs that tool - it is an Xcode
+# build phase - and AGENTS.md's "Build, run, test" is explicit that this
+# project builds with Command Line Tools and never Xcode.
+#
+# Both stay true here, because this is a *packaging* step and not a build one:
+#
+#   - `swift build` on its own is unchanged and needs nothing from Xcode. The
+#     two extra swiftc flags below are added ONLY when the processor is
+#     actually present, so a CLT-only machine takes the same command it always
+#     did rather than failing on a flag its compiler may not know.
+#   - A `.app` packaged without the processor is not broken. It simply
+#     publishes no Shortcuts actions, and Settings' "Shortcuts & Siri" card
+#     reads the bundle and says so (GL-14 - it never claims five working
+#     actions it does not have).
+#
+# The processor needs two inputs the compiler has to be asked for: the list of
+# source files, and the `.swiftconstvalues` file the Swift frontend emits when
+# told which protocols to gather conformances for. That protocol list is
+# written below rather than shipped by Xcode, which ships none.
+APPINTENTS_PROCESSOR="$(xcrun --find appintentsmetadataprocessor 2>/dev/null || true)"
+APPINTENTS_WORK="$(mktemp -d)"
+trap 'rm -rf "$APPINTENTS_WORK"' EXIT
+SWIFT_BUILD_EXTRA=()
+if [ -n "$APPINTENTS_PROCESSOR" ] && [ -x "$APPINTENTS_PROCESSOR" ]; then
+  cat > "$APPINTENTS_WORK/protocols.json" <<'PROTOCOLS'
+["AppEntity","AppEnum","AppIntent","AppShortcutsProvider","DynamicOptionsProvider","EntityIdentifierConvertible","EntityPropertyQuery","EntityQuery","EntityStringQuery","IndexedEntity","PersistentAppEntity","TransientAppEntity","URLRepresentableEntity","URLRepresentableEnum","URLRepresentableIntent"]
+PROTOCOLS
+  # Each -Xfrontend forwards exactly one following argument, which is why the
+  # flag and its value each need their own pair. Getting this wrong makes
+  # SwiftPM treat the JSON as an input source file, with a confusing
+  # "unexpected input file" error.
+  SWIFT_BUILD_EXTRA=(-Xswiftc -emit-const-values
+                     -Xswiftc -Xfrontend -Xswiftc -const-gather-protocols-file
+                     -Xswiftc -Xfrontend -Xswiftc "$APPINTENTS_WORK/protocols.json")
+else
+  echo "⚠️  No appintentsmetadataprocessor (it ships with Xcode, not Command Line Tools)."
+  echo "    The app will build and run normally, but its five Shortcuts/Siri actions"
+  echo "    will not be registered with the system. Settings → Shortcuts & Siri says so."
+fi
+
 echo "Building $EXECUTABLE_NAME (release) - version $VERSION (build $BUILD_VERSION)…"
-swift build -c release
+swift build -c release "${SWIFT_BUILD_EXTRA[@]}"
 
 BIN="./.build/release/$EXECUTABLE_NAME"
 [ -x "$BIN" ] || { echo "build did not produce $BIN"; exit 1; }
@@ -86,6 +133,38 @@ if [ -d "Vendor/Monaco/web" ]; then
 else
   echo "⚠️  No Vendor/Monaco/web - the Code Preview destination will show its"
   echo "    \"no bundle\" empty state. Run Scripts/build-monaco-web.sh to build it."
+fi
+
+# F21: the metadata bundle, from the const values the release build just
+# emitted. Best effort by design - a failure here prints and carries on rather
+# than failing the package, since everything else about the app is fine
+# without it.
+if [ -n "$APPINTENTS_PROCESSOR" ] && [ -x "$APPINTENTS_PROCESSOR" ]; then
+  CONST_VALUES="$(find .build -path "*release/FirstmateCockpit.build/FirstmateCockpit.swiftconstvalues" -print -quit)"
+  if [ -n "$CONST_VALUES" ]; then
+    find "$PWD/Sources/FirstmateCockpit" -name '*.swift' > "$APPINTENTS_WORK/sources.txt"
+    printf '%s\n' "$PWD/$CONST_VALUES" > "$APPINTENTS_WORK/constvals.txt"
+    if "$APPINTENTS_PROCESSOR" \
+        --output "$APP_DIR/Contents/Resources" \
+        --toolchain-dir "$(dirname "$(dirname "$APPINTENTS_PROCESSOR")")" \
+        --module-name "$EXECUTABLE_NAME" \
+        --sdk-root "$(xcrun --show-sdk-path)" \
+        --xcode-version "$(xcodebuild -version 2>/dev/null | tail -1 | awk '{print $3}')" \
+        --platform-family macOS \
+        --deployment-target 13.0 \
+        --target-triple "$(uname -m)-apple-macos13.0" \
+        --source-file-list "$APPINTENTS_WORK/sources.txt" \
+        --swift-const-vals-list "$APPINTENTS_WORK/constvals.txt" \
+        --force >/dev/null 2>&1 \
+       && [ -d "$APP_DIR/Contents/Resources/Metadata.appintents" ]; then
+      echo "App Intents metadata written - Shortcuts/Siri actions will register."
+    else
+      echo "⚠️  appintentsmetadataprocessor did not produce Metadata.appintents."
+      echo "    The app is fine; it just has no Shortcuts/Siri actions this build."
+    fi
+  else
+    echo "⚠️  No .swiftconstvalues from the release build - skipping App Intents metadata."
+  fi
 fi
 
 cat > "$APP_DIR/Contents/Info.plist" <<PLIST

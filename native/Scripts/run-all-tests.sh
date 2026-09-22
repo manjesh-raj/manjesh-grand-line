@@ -353,6 +353,14 @@ NEEDS_SESSION=(
   # parser, the wiki-link scanner, the backlink index, the store) is
   # deliberately not here and does run in CI.
   "FM_RUN_NOTEBOOK_VIEW_TESTS"
+  # F21/F24 (`fm/grandline-feature-f21-f24-intents-import-export`): mounts the
+  # real Settings page in a real window and reads the two new cards back out of
+  # the live view hierarchy - the five App Intent rows including Copy
+  # Credential's "guarded" chip, and the Backup card's per-store inventory with
+  # its deliberately-excluded row. Both halves' pure logic
+  # (FM_RUN_APP_INTENT_ACTIONS_TESTS, FM_RUN_BACKUP_STORES_TESTS) is
+  # deliberately not here and does run in CI's blocking job.
+  "FM_RUN_INTENTS_BACKUP_VIEW_TESTS"
   # `fm/grandline-feature-f4-reading-list` (F4): mounts the real Reading List
   # destination in a real window, lays its card grid out at real widths, reads
   # painted colours back out of an off-screen render, and resizes the window to

@@ -1135,6 +1135,7 @@ noted.
 | `TOTPTicker.shared.now` | a `Date()` of your own in anything that renders a 2FA code or its countdown. One clock, or two surfaces disagree about the same code |
 | `CredentialVaultRecoveryKitView` as the shape for any future **print** view | a themed view sent to a printer. It draws explicit black on white and does not observe `ThemeManager` - a themed page prints a near-black rectangle under Dusk - and the same view renders the PDF, so paper and file cannot drift |
 | a menu-bar surface's **existing** content controller, at an injected width with `showsOwnHeader: false` | a lookalike pane for the same thing. F22's compact popover hosts `PoneglyphMenuBarPopoverController` and `StrawHatMenuBarPopoverController` themselves as two of its four tabs, so the countdown rings, the copy flash and the crew's reply states have exactly one implementation. Both take `init(width:showsOwnHeader:)` defaulting to their standalone behaviour - a required fixed width inside a narrower popover is a constraint conflict, and gotcha (13)'s window-size cap |
+| `GrandLineServices.shared` | a second `ShiftStore()`/`NotebookStore()`/`CredentialVaultStore()` built by a non-UI entry point. `AppShellController` registers the live instances there; an App Intent, the Backup card or anything else with no view controller reads them from it, and gets `nil` (not a fresh store) before the shell is up. It is a **registry, not a factory** - the vault is its one exception, and that file's header says why |
 | `OffScreenProbe.window(...)` | `NSWindow(contentRect:)` in a suite - source-guarded |
 | `SelfTestAssertions` | a local `check`/`fail` pair in a suite - source-guarded |
 
@@ -1293,6 +1294,31 @@ noted.
   reading the string, so "a vault secret never reaches this store" is a
   property of the control flow rather than of a filter somebody could reorder.
 
+- **Anything that reaches the vault from outside the vault page goes through
+  the vault's own unlock, and returns a confirmation rather than the secret.**
+  F21's Copy Credential App Intent is the worked example and the reason this is
+  a rule: an entry point that handed a credential back as a value - a shortcut
+  variable, a tool result, an automation's output - turns one Touch ID prompt
+  into permanent access to the whole vault for anything that can invoke it. The
+  secret goes on the pasteboard through `CredentialVaultClipboard` (concealed,
+  auto-clearing) and the caller is told *which* credential was copied, never
+  what it is. Three gates in order, none substituting for another: `AppLockGate`,
+  the vault's own lock (`unlockWithTouchID`, and a refusal - never a prompt of
+  your own - when the captain has turned it off), then the credential's own
+  `requiresTouchIDToReveal`. **Look the credential up only after the vault is
+  unlocked**, or the difference between "not found" and "vault locked" makes a
+  locked vault an oracle for which titles exist.
+- **A `.glbackup` section for a file-backed store carries the files, not the
+  decoded models.** Re-serialising a directory store through its models is the
+  symptomless GL-01 failure this file already describes, one restore later: a
+  whole-file rewrite can only write the fields this build knows. `BackupStores.swift`
+  carries bytes, which also round-trips attachments, passthrough keys and order
+  files without knowing they exist. Validate the relative path on **both** sides
+  (`BackupArchivePath`) - a bundle is a file from another machine, so GL-08's
+  lesson applies to its paths. The vault travels **sealed** (the already-encrypted
+  file, copied - never decrypted, never re-wrapped), a restore **merges and
+  never deletes**, and replacing an existing vault needs its own
+  `DestructiveConfirm` separate from the import confirm.
 - **A store whose file is git-synced must reconcile before it writes.** A pull
   can change the file underneath an in-memory copy, and a whole-file rewrite
   from that copy silently discards whatever arrived. `CredentialVaultStore`
@@ -1367,6 +1393,7 @@ can correct an earlier one - and several do.
 | [`38-snippet-expander.md`](docs/history/38-snippet-expander.md) | The snippet expander (F12): the `;abbrev` trigger grammar, the generalised Snippets store, and system-wide expansion over Dictation's own paste path |
 | [`39-daily-review.md`](docs/history/39-daily-review.md) | The daily review (F20): Overview's general-user briefing, its stated-gap rule, and the app's one read-only EventKit path |
 | [`40-menu-bar-mode.md`](docs/history/40-menu-bar-mode.md) | Menu-bar (compact) mode (F22): the merged status item, the four-tab popover that hosts the vault's and the crew's own popover controllers, and the window/Dock/last-window lifecycle |
+| [`41-app-intents-and-full-export.md`](docs/history/41-app-intents-and-full-export.md) | App Intents / Shortcuts (F21), the `.glbackup` bundle's five new sections (F24), and `GrandLineServices` |
 
 ## Maintaining this file
 

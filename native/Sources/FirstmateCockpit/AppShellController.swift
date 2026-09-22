@@ -575,6 +575,16 @@ final class AppShellController: NSViewController {
             readingListStore: readingListStore,
             commandLibraryStore: commandLibraryStore,
             stickyBoardStore: stickyBoard.store))
+        // F21/F24: hand the four file-backed stores and the focus timer to
+        // `GrandLineServices`, which is how an App Intent (no view controller,
+        // possibly a launch it triggered itself) and Settings' Backup card
+        // reach the *same* instances this shell just built - never a second
+        // one (GL-23). A registry, not a factory: see that file's header.
+        GrandLineServices.shared.register(shiftStore: shiftStore,
+                                          notebookStore: notebookStore,
+                                          stickyBoardStore: stickyBoard.store,
+                                          codePreviewStore: codePreviewStore,
+                                          focusTimer: focusTimer)
         super.init(nibName: nil, bundle: nil)
         // F20: Overview's daily review reads the sticky board and the reading
         // list, both of which are built above - after `overview` itself, which

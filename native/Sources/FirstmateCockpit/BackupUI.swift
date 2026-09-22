@@ -30,7 +30,11 @@ enum BackupUI {
     /// first. Shows counts (hosts/snippets/referenced keys) before the write,
     /// and a toast confirming what was written after.
     static func exportFlow(from viewController: NSViewController, hostStore: HostStore, keyStore: SSHKeyStore, snippetStore: SnippetStore, dictationStore: DictationStore) {
-        let bundle = GrandLineBackupBuilder.build(hosts: hostStore.hosts, snippets: snippetStore.snippets, allKeys: keyStore.keys, dictationStore: dictationStore)
+        // F24: `GrandLineServices.backupRoots` is `nil` only before the shell
+        // has registered, in which case this builds exactly the v1 bundle it
+        // always did rather than an empty-looking set of new sections.
+        let bundle = GrandLineBackupBuilder.build(hosts: hostStore.hosts, snippets: snippetStore.snippets, allKeys: keyStore.keys, dictationStore: dictationStore,
+                                                  storeRoots: GrandLineServices.shared.backupRoots)
 
         resolveGitHubAvailability { githubAvailable in
             guard let destination = chooseDestination(
@@ -62,7 +66,7 @@ enum BackupUI {
         // a temporary probe reading `panel.url` after `makeKeyAndOrderFront`.
         panel.nameFieldStringValue = "grand-line-backup"
         panel.allowedContentTypes = [backupContentType]
-        panel.message = summaryLine(hostCount: bundle.hosts.count, snippetCount: bundle.snippets.count, keyCount: bundle.keys.count, vocabularyCount: bundle.dictation?.vocabulary?.count ?? 0)
+        panel.message = summaryLine(bundle)
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
@@ -103,13 +107,35 @@ enum BackupUI {
         }
     }
 
-    private static func summaryLine(hostCount: Int, snippetCount: Int, keyCount: Int, vocabularyCount: Int) -> String {
+    /// What this specific bundle carries, counted from the bundle itself -
+    /// never a fixed list of section names, so a section that came back empty
+    /// says nothing rather than claiming a zero (GL-14).
+    private static func summaryLine(_ bundle: GrandLineBackup) -> String {
+        let hostCount = bundle.hosts.count
+        let snippetCount = bundle.snippets.count
         var bits = ["\(hostCount) host\(hostCount == 1 ? "" : "s")", "\(snippetCount) snippet\(snippetCount == 1 ? "" : "s")"]
-        if keyCount > 0 {
-            bits.append("\(keyCount) referenced key\(keyCount == 1 ? "" : "s") (metadata only - no private key material)")
+        if bundle.keys.count > 0 {
+            bits.append("\(bundle.keys.count) referenced key\(bundle.keys.count == 1 ? "" : "s") (metadata only - no private key material)")
         }
+        let vocabularyCount = bundle.dictation?.vocabulary?.count ?? 0
         if vocabularyCount > 0 {
             bits.append("\(vocabularyCount) dictation vocabulary word\(vocabularyCount == 1 ? "" : "s")")
+        }
+        if let stores = bundle.stores {
+            for section in BackupStoreSection.allCases {
+                guard let archive = stores.archive(for: section) else { continue }
+                if archive.unreadable {
+                    // GL-21/GL-14: a section that could not be read is named
+                    // as unread, never folded into the happy list or silently
+                    // dropped to zero.
+                    bits.append("\(section.title): COULD NOT BE READ")
+                } else if !archive.files.isEmpty {
+                    bits.append("\(archive.files.count) file\(archive.files.count == 1 ? "" : "s") of \(section.title.lowercased())")
+                }
+            }
+            if let vault = stores.vault {
+                bits.append("the vault (\(vault.summary))")
+            }
         }
         return "About to export: " + bits.joined(separator: ", ") + "."
     }
@@ -178,16 +204,39 @@ enum BackupUI {
     /// The shared tail of both import paths: diff against the live stores,
     /// confirm, apply, toast.
     private static func diffAndApply(_ bundle: GrandLineBackup, from viewController: NSViewController, hostStore: HostStore, keyStore: SSHKeyStore, snippetStore: SnippetStore, dictationStore: DictationStore, onApplied: (() -> Void)?) {
+        let storeRoots = GrandLineServices.shared.backupRoots
         let preview = BackupImport.diff(
             bundle: bundle, existingHosts: hostStore.hosts, existingSnippets: snippetStore.snippets, existingKeys: keyStore.keys,
-            existingVocabulary: dictationStore.vocabulary, existingShortcut: AppSettings.shared.dictationShortcut
+            existingVocabulary: dictationStore.vocabulary, existingShortcut: AppSettings.shared.dictationShortcut,
+            storeRoots: storeRoots
         )
 
         guard confirmImport(preview, in: viewController) else { return }
-        BackupImport.apply(preview, bundle: bundle, hostStore: hostStore, snippetStore: snippetStore, dictationStore: dictationStore)
+
+        // F24: replacing an existing vault is its own question, asked only
+        // when it is actually on the table. `.adopt` (no vault here) and
+        // `.identical` (same bytes) need nothing extra - the import confirm
+        // already covered them - and asking anyway would train the captain to
+        // click through the one prompt that matters.
+        var allowVaultReplace = false
+        if preview.stores?.vault?.disposition == .wouldReplace {
+            allowVaultReplace = confirmVaultReplace(preview.stores?.vault, in: viewController)
+        }
+
+        BackupImport.apply(preview, bundle: bundle, hostStore: hostStore, snippetStore: snippetStore, dictationStore: dictationStore,
+                           storeRoots: storeRoots, allowVaultReplace: allowVaultReplace)
+        // The two cached stores re-read what was just written underneath them;
+        // without this the next edit on the Tasks page or the Sticky Board
+        // would write its pre-restore array back over the restore.
+        GrandLineServices.shared.reloadStoresAfterRestore()
+
         let appliedHosts = preview.newHostsCount + preview.changedHostsCount
         let appliedSnippets = preview.newSnippetsCount + preview.changedSnippetsCount
-        Toast.show(in: viewController.view, message: "Imported \(appliedHosts) host(s), \(appliedSnippets) snippet(s)")
+        var message = "Imported \(appliedHosts) host(s), \(appliedSnippets) snippet(s)"
+        if let files = preview.stores?.totalFilesToWrite, files > 0 {
+            message += ", \(files) file(s)"
+        }
+        Toast.show(in: viewController.view, message: message)
         onApplied?()
     }
 
@@ -287,6 +336,21 @@ enum BackupUI {
         if !preview.rejectedHostWarnings.isEmpty {
             lines.append("\u{26A0} \(preview.rejectedHostWarnings.count) host(s) in this file were REFUSED as unsafe - see below.")
         }
+        if let stores = preview.stores {
+            for row in stores.rows where !row.unchangedFiles.isEmpty || row.willWriteCount > 0 || row.sourceUnreadable {
+                lines.append(row.summaryLine)
+            }
+            if let vault = stores.vault {
+                switch vault.disposition {
+                case .adopt:
+                    lines.append("Vault: \(vault.archive.summary). It will be restored, and needs its own master password from the machine it came from.")
+                case .identical:
+                    lines.append("Vault: already identical to the one on this Mac - nothing to do.")
+                case .wouldReplace:
+                    lines.append("\u{26A0} Vault: a DIFFERENT vault already exists here. You will be asked separately before anything replaces it.")
+                }
+            }
+        }
         return lines.joined(separator: "\n")
     }
 
@@ -338,6 +402,47 @@ enum BackupUI {
             lines.append("REFUSED - NOT IMPORTED (GL-08)")
             for warning in preview.rejectedHostWarnings { lines.append("  - \(warning)") }
         }
+        if let stores = preview.stores {
+            for row in stores.rows {
+                lines.append("")
+                lines.append("\(row.section.title.uppercased()) - \(row.section.detail)")
+                if row.sourceUnreadable {
+                    lines.append("  ! the machine that exported this could not read the folder, so nothing here will be written (GL-21)")
+                    continue
+                }
+                if row.sourceTruncated {
+                    lines.append("  ! the export hit its size limit - this section is incomplete")
+                }
+                // The listing is per file, capped: a real notebook is
+                // thousands of pages and a confirm sheet nobody scrolls to the
+                // end of is the same as no confirm at all.
+                for path in row.newFiles.prefix(listedFilesPerSection) { lines.append("  [NEW] \(path)") }
+                for path in row.changedFiles.prefix(listedFilesPerSection) { lines.append("  [CHANGED] \(path)") }
+                let listed = min(row.newFiles.count, listedFilesPerSection) + min(row.changedFiles.count, listedFilesPerSection)
+                if row.willWriteCount > listed {
+                    lines.append("  \u{2026} and \(row.willWriteCount - listed) more file(s) to write")
+                }
+                if row.willWriteCount == 0 { lines.append("  (nothing to write - every file here is already identical)") }
+                if !row.unchangedFiles.isEmpty { lines.append("  \(row.unchangedFiles.count) unchanged") }
+                if !row.localOnlyFiles.isEmpty {
+                    lines.append("  \(row.localOnlyFiles.count) file(s) exist only on this Mac and are KEPT - a restore merges, it never deletes")
+                }
+                for path in row.rejectedPaths { lines.append("  [REFUSED - unsafe path] \(path)") }
+            }
+            if let vault = stores.vault {
+                lines.append("")
+                lines.append("PONEGLYPH VAULT (sealed)")
+                lines.append("  \(vault.archive.summary)")
+                lines.append("  The credentials are not readable by this import - the file is copied still encrypted,")
+                lines.append("  and unlocking it needs the master password it had on the machine it came from.")
+                lines.append("  Touch ID does not travel: that key is stored ThisDeviceOnly in the other Mac's Keychain.")
+                switch vault.disposition {
+                case .adopt: lines.append("  [NEW] there is no vault on this Mac yet - this one will be adopted")
+                case .identical: lines.append("  [UNCHANGED] identical to the vault already here")
+                case .wouldReplace: lines.append("  [NEEDS CONFIRMATION] a different vault is already here")
+                }
+            }
+        }
 
         let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 440, height: 220))
         textView.string = lines.joined(separator: "\n")
@@ -363,6 +468,28 @@ enum BackupUI {
         textView.backgroundColor = HelmField.fill(theme)
         textView.textColor = HelmField.ink(theme)
         return scroll
+    }
+
+    /// How many files per section the scrollable listing names individually.
+    private static let listedFilesPerSection = 40
+
+    /// GL-06's shape for the one irreversible thing an import can do.
+    ///
+    /// Separate from the main confirm on purpose. The import alert is a
+    /// preview of a merge - additive, and a captain is meant to be able to say
+    /// yes to it. Overwriting a vault is neither: the credentials it replaces
+    /// are gone unless a copy exists elsewhere, so it goes through the app's
+    /// one irreversible-action prompt (GL-06), where Return means Cancel.
+    private static func confirmVaultReplace(_ row: BackupStoreImport.Preview.VaultRow?, in viewController: NSViewController) -> Bool {
+        guard let row else { return false }
+        return DestructiveConfirm.confirm(
+            message: "Replace the vault on this Mac?",
+            detail: "This backup carries a different Poneglyph vault (\(row.archive.summary)).\n\n"
+                + "Restoring it REPLACES the vault already on this Mac. The credentials in the current vault "
+                + "are not merged and cannot be recovered afterwards unless you have another copy.\n\n"
+                + "The restored vault is still encrypted and will need the master password it had on the "
+                + "machine it came from - Touch ID does not travel with it.",
+            confirmTitle: "Replace Vault")
     }
 
     private static func presentError(_ error: Error, in viewController: NSViewController) {
