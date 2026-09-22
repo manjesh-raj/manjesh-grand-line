@@ -292,6 +292,41 @@ NOTE - never a failure - once the recorded date is older than the interval.
 
 ---
 
+## 17. Widgets and the Developer ID (F23)
+
+Nothing in this section can be automated or even attempted from a worktree, and
+it is the one open item F23 was scoped around.
+
+`native/Widgets/README.md` is the authority; this is the checklist.
+
+- [ ] **Developer ID.** `security find-identity -v -p codesigning` shows a
+      `Developer ID Application: … (TEAMID)` certificate. Until it does,
+      everything below is unreachable - and `codesign -dv "dist/Manjesh Grand
+      Line.app"` reporting `TeamIdentifier=not set` is the current state.
+- [ ] **The App Group id agrees in both files.** Set
+      `GrandLineWidgetContainer.appGroupIdentifier` and
+      `GrandLineWidgets/GrandLineWidgets.entitlements` to
+      `<TeamID>.group.com.firstmate.cockpit.native`.
+      `FM_RUN_WIDGET_SNAPSHOT_TESTS` fails if they diverge, so this cannot be
+      half-done.
+- [ ] **Build, embed, launch.** `./build_native_app.sh` then
+      `Scripts/build-widget-extension.sh --embed`, then launch the installed
+      copy once so Launch Services registers the extension.
+- [ ] **The two widgets appear in the widget gallery** (right-click the
+      desktop > Edit Widgets), under "Manjesh Grand Line".
+- [ ] **They render real data**, not `Not available`. If they say
+      `Not available`, the App Group entitlement is not being honoured - that
+      is the expected failure, not a code bug.
+- [ ] **A tick works end to end.** Tap a task's checkbox on the desktop: the
+      row strikes through and reads "applies when the app opens"; bring the app
+      forward; the task is completed in Tasks, and a *recurring* one has
+      spawned its next occurrence.
+- [ ] **The lock covers it.** Lock the app (GL-09). Within a refresh both
+      widgets show "Locked" with no task titles and no counts. Tap a checkbox
+      while locked - nothing is applied; unlock, and it applies then.
+- [ ] **Both registers.** Switch the app between a Daylight and a Dusk theme;
+      the widgets follow the *app's* register, not the system appearance.
+
 ## When something here fails
 
 Prefer turning it into an automated suite if the failure is reachable

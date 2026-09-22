@@ -101,6 +101,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return capture
     }()
     lazy var shiftNotifications = ShiftNotificationScheduler(store: shiftStore)
+    /// F23: publishes the widget snapshot and drains what a tapped widget
+    /// button queued. Holds no store of its own - the `ShiftStore` above and
+    /// `appShell`'s one `StickyBoardStore` (GL-23), which is why it is
+    /// `lazy`: `appShell` has to exist first.
+    lazy var widgetPublisher = WidgetSnapshotPublisher(
+        shiftStore: shiftStore,
+        stickyStore: appShell.stickyBoardStore
+    )
     lazy var shiftHotkey = ShiftGlobalHotkey { [weak self] in self?.shiftQuickCapture.present() }
     /// Audit §2 item 7: ⌘T/⌘D/⌘W/⌘R/⇧⌘R/⌘1-9 for Console and Tools tabs,
     /// restored after the Tab menu's removal took them. A local monitor
@@ -703,6 +711,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // `contentViewController` assignment above) - lock now so the very
         // first frame the captain sees is the lock screen, not the console.
         appLock.lock(reason: .launch)
+
+        // F23: the widgets. `start()` registers the store/lock observers,
+        // publishes once and applies anything a widget button queued while
+        // the app was not running.
+        //
+        // **Deliberately after the window and after `.launch`'s lock**, for
+        // two reasons rather than one. It reads `appShell.stickyBoardStore`,
+        // and forcing that `lazy` property earlier would move
+        // `AppShellController`'s construction ahead of the carefully-ordered
+        // window/`contentViewController`/lock sequence above - which the
+        // comment on `appLock.onLock` explains has already been got wrong
+        // once. And publishing *after* the launch lock means the first
+        // snapshot this process ever writes is the locked one, so a relaunch
+        // cannot flash yesterday's tasks onto the desktop before the password
+        // has been typed (GL-09).
+        //
+        // Cheap by construction - one small JSON write against
+        // already-loaded in-memory arrays, no subprocess and no file read
+        // (GL-12).
+        widgetPublisher.start()
 
         // F2: keep the saved session current on every navigation, so a crash
         // or a force-quit loses at most whatever changed since the last one.
@@ -2263,6 +2291,16 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     if (ProcessInfo.processInfo.environment["FM_SCRATCHPAD_FILE"] ?? "").isEmpty {
         setenv("FM_SCRATCHPAD_FILE", scratchRoot.appendingPathComponent("scratchpad.json").path, 1)
     }
+    // F23's widget snapshot (`fm/grandline-feature-f23-widgets`). The one
+    // store in this app whose default location is **outside** the captain's
+    // profile in the usual sense - it is the App Group container the widget
+    // extension reads - and `WidgetSnapshotPublisher` is reachable from
+    // `AppDelegate` at launch, so any suite that builds one would otherwise
+    // publish fabricated tasks into the real shared container and reload the
+    // captain's real widgets with them.
+    if (ProcessInfo.processInfo.environment["FM_WIDGET_DIR"] ?? "").isEmpty {
+        setenv("FM_WIDGET_DIR", scratchRoot.appendingPathComponent("widgets", isDirectory: true).path, 1)
+    }
     // The full-app audit's §7.2, and the entry that generalises every one
     // above: `FM_SHIFT_DIR` is the *root* override the whole
     // `GrandLineDocs/` family resolves through.
@@ -2420,6 +2458,17 @@ if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_STORE_TESTS"] == "1" {
 // needs a real window and lives in ShiftBoardViewSelfTest.
 if ProcessInfo.processInfo.environment["FM_RUN_SHIFT_BOARD_TESTS"] == "1" {
     exit(ShiftBoardSelfTest.run() ? 0 : 1)
+}
+
+// F23 of full review #3 §8 (`fm/grandline-feature-f23-widgets`): the widget
+// pipeline's pure logic - the snapshot's projection from real store types,
+// its round trip through the shared container, the digest both widgets draw
+// from, GL-14's unavailable/locked states, and the reverse channel a tapped
+// widget button writes into. No window and no WidgetKit, so this guards CI's
+// *blocking* lane; the extension's own rendering half cannot be asserted from
+// here at all (see `native/Widgets/README.md`).
+if ProcessInfo.processInfo.environment["FM_RUN_WIDGET_SNAPSHOT_TESTS"] == "1" {
+    exit(WidgetSnapshotSelfTest.run() ? 0 : 1)
 }
 
 // The same board's view half: a real ShiftController mounted in a real

@@ -344,6 +344,26 @@ final class StickyBoardStore {
 
     private var notesPath: String { root.appendingPathComponent("notes.yaml").path }
 
+    // MARK: Change notification
+    //
+    // F23 (the widgets) is the first reader outside this store's own
+    // controller that needs to know the board changed. `ShiftStore` has had
+    // `observe`/`notify()` since its first phase and this is deliberately the
+    // same shape - one handler list, fired after a successful write and after
+    // a reload - rather than a second mechanism.
+    //
+    // Fired from `persist()`'s success path and from the end of `reloadAll()`,
+    // which between them are every way `notes` changes. A handler must be
+    // cheap and must not write back into this store.
+
+    private var changeHandlers: [() -> Void] = []
+
+    func observe(_ handler: @escaping () -> Void) { changeHandlers.append(handler) }
+
+    private func notifyChanged() {
+        for handler in changeHandlers { handler() }
+    }
+
     // MARK: GL-01 - refuse to overwrite a file this store could not read.
     //
     // A single-file version of `ShiftStore`'s `loadFailurePaths`/
@@ -520,6 +540,7 @@ final class StickyBoardStore {
             // `notes` is left exactly as it was in memory - a parse failure
             // must never be read as "there are now zero notes".
         }
+        notifyChanged()
     }
 
     // MARK: Writing
@@ -786,6 +807,7 @@ final class StickyBoardStore {
             return
         }
         gitSync?.markDirty()
+        notifyChanged()
     }
 
     // MARK: YAML - reuses `ShiftYamlBridge`'s generic scalar helpers
