@@ -120,3 +120,38 @@ Full suite 197 passed / 0 failed afterwards.
 Every other `NSTextField` action in the app was surveyed.
 Three exist - `CompactModePopover`'s capture line, `IncidentCardView`'s note, `KubernetesController`'s namespace - and all three are *submit* actions, where Return-only is the correct behaviour and a blur commit would be its own bug.
 The silent-loss shape is specific to a field whose value is **persisted**, and Gmail's two were the only such fields on this page wired by hand instead of through `configure(_:)`.
+
+## Both OAuth fields are masked, with a reveal toggle (`fm/grandline-gmail-oauth-fields-mask-reveal`)
+
+The captain's ask: "hide this by default and have a button/icon to make this visible for both client ID and secret".
+Both fields were plain `HelmTextField`s, so a Settings page open on a shared screen put the client ID and the client secret on display.
+
+**There was already exactly one implementation of this pattern**, in the credential editor's Secret row - a `HelmSecureTextField`, a `HelmTextField` and a Show/Hide toggle, kept in step by hand inside `CredentialVaultEditorController`.
+Adding a second copy for Settings (and a third for the secret) is the thing this repository's component index exists to prevent, so the pattern was lifted into `HelmRevealableSecretField` and both hosts now use it.
+The credential editor's behaviour is unchanged - its debug accessors forward to the component, so its own suite drives the same objects it always did.
+
+**The component, and the three properties that matter.**
+
+- Exactly one of the two fields is in layout at a time, so the row's height and the button's position do not move across a toggle.
+  A single field whose cell is swapped would be one view rather than two, but `NSSecureTextFieldCell` is what does the masking and swapping a live cell loses the field editor.
+- Both halves carry the same text at all times.
+  The toggle copies from the outgoing half before it swaps, so a `controlTextDidEndEditing` commit fired *by* the toggle (moving the first responder ends editing on the outgoing field) reads the right value whichever half the delegate sees.
+  Measured while writing this: `NSTextField.stringValue` reads back through the live field editor mid-edit, so no `currentEditor()` dance is needed - copying from the *incoming* half is the direction that breaks, and there is a named check for it.
+- Masking is display-only.
+  The component owns no store and no commit path, and `GoogleOAuthClientStore` holds the same strings in both states.
+
+**`editableFields` is plural on purpose.**
+A field whose value is persisted needs a `delegate` as well as a target/action (gotcha (19), and the section above).
+A masked control that wired only its visible half would reopen `fm/grandline-gmail-oauth-field-not-saving` in the half nobody was looking at, so `SettingsController` wires both through `configure(_:)`.
+`textFieldChanged(_:)` now asks `owns(_:)` before its `switch`, because the sender is one of the two halves and never the control itself - a `case` on the property would have matched neither, silently.
+
+**The client ID is masked too**, as asked.
+It is not a secret in the way the client secret is - it travels in the authorization URL - but it identifies the captain's own Google Cloud project, and neither belongs on screen by default.
+
+**Verification.**
+`checkBothFieldsAreMaskedUntilRevealed` and `checkTheRevealedHalfCommitsToo` in `GmailSettingsViewSelfTest` (window-backed, already in `NEEDS_SESSION`).
+They assert the *painted* state rather than the control's own bookkeeping: the visible half's cell must really be an `NSSecureTextFieldCell`, since `isRevealed == false` alone would pass against a control that had lost its secure cell entirely.
+The two fixture values are asserted to differ first, so a control showing the wrong one cannot pass by coincidence.
+Independence is asserted in both directions, and the store is read at the end.
+Four injections, each confirmed to fail by name: defaulting to revealed fails 21 checks; dropping `plainField` from `editableFields` fails `typing into the revealed half and clicking away must save it`; copying from the incoming half on toggle fails `toggling mid-edit must carry the typed text across`; and reading a stale `stringValue` instead of the editor fails nothing, which is how the `currentEditor()` read came to be dropped as a check that could not fail.
+Full suite before: 199 passed / 0 failed. After: see the PR.

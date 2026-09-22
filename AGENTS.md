@@ -1235,6 +1235,7 @@ noted.
 | `HelmStatTile`, `HelmEmptyState`, `HelmSegmentedTabs`, `HelmPlateCard`, `HelmModuleCard` | four, two, three and two prior copies respectively |
 | `HelmRingGauge` (`configure(value:total:)` for a count, `configure(fraction:text:)` for anything else) | a hand-rolled arc. It is a fixed 66pt with a centre label, so a *chip-sized* ring is legitimately its own small view - F7's is - but a card-sized one is this |
 | `HelmField` / `HelmTextField` / `HelmTextView` / `HelmSearchField` / `HelmChipInput` / `HelmDateField` / `HelmToggle` | a raw `NSTextField()`, `NSSearchField()`, `NSDatePicker` or `NSSwitch` - source-guarded |
+| `HelmRevealableSecretField` | a hand-rolled masked field plus Show/Hide toggle. Wire **both** `editableFields` (gotcha (19)), and ask `owns(_:)` in a delegate - the sender is one of its two halves, never the control |
 | `HelmFormSheet` | a hand-built editor sheet |
 | `HelmConfirm` | an `NSAlert`, **except** where a command or binary is about to execute outside this app's control (the risk gates, the herdr restart, `beginSheetModal`) |
 | `Feedback.report(_:kind:persistence:in:)` | deciding at the call site whether something is a toast or a bell entry. State whether it is **still true after a toast would have faded** (GL-30's own dividing line) and let it route; pair a `.lasting` report with `Feedback.clear(id:)` on the path that resolves it. A blocked *decision* is still `HelmConfirm`/`DestructiveConfirm` - it needs an answer, so it needs a return path |
