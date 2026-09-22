@@ -83,7 +83,17 @@ enum IntentsBackupSettingsViewSelfTest {
                                   snippetStore: SnippetStore(), dictationStore: DictationStore())
     }
 
-    private static func withMountedSettings(width: CGFloat = 1180,
+    /// Mount the page and **select the category whose card the case is
+    /// about**.
+    ///
+    /// `fm/grandline-settings-page-sidebar-redesign` made Settings a
+    /// master/detail page: only the selected category's cards are in the view
+    /// tree, and the other six are detached rather than hidden (gotcha (15)).
+    /// So "walk the real hierarchy for this card" now has to say which pane
+    /// it expects to find it in - which is a stronger claim than the old one,
+    /// since it also asserts the card is reachable through the navigation.
+    private static func withMountedSettings(_ category: SettingsController.Category,
+                                            width: CGFloat = 1180,
                                             _ body: (SettingsController, NSWindow) -> Void) {
         // `autoreleasepool` is mandatory around AppKit construct/teardown in a
         // headless suite: nothing turns the run loop, so removed views are
@@ -96,6 +106,8 @@ enum IntentsBackupSettingsViewSelfTest {
             let window = OffScreenProbe.window(width: width, height: 1000)
             window.contentView = controller.view
             controller.view.frame = NSRect(x: 0, y: 0, width: width, height: 1000)
+            controller.view.layoutSubtreeIfNeeded()
+            controller.debugSidebar.debugClickRow(id: category.rawValue)
             controller.view.layoutSubtreeIfNeeded()
             body(controller, window)
             window.contentView = nil
@@ -125,7 +137,7 @@ enum IntentsBackupSettingsViewSelfTest {
     // MARK: F21 - the intents card
 
     private static func checkIntentsCardRendersEveryAction(_ check: (Bool, String) -> Void) {
-        withMountedSettings { controller, _ in
+        withMountedSettings(.intents) { controller, _ in
             guard let card = card(titled: "Shortcuts & Siri", in: controller.view) else {
                 check(false, "the Shortcuts & Siri card is mounted on the Settings page")
                 return
@@ -146,7 +158,7 @@ enum IntentsBackupSettingsViewSelfTest {
     }
 
     private static func checkGuardedChipIsOnCopyCredentialOnly(_ check: (Bool, String) -> Void) {
-        withMountedSettings { controller, _ in
+        withMountedSettings(.intents) { controller, _ in
             guard let card = card(titled: "Shortcuts & Siri", in: controller.view) else {
                 check(false, "the Shortcuts & Siri card is mounted")
                 return
@@ -171,7 +183,7 @@ enum IntentsBackupSettingsViewSelfTest {
     /// different x positions. `alignsTrailingToEdge` is what fixes it, and this
     /// is the only way to see that it did.
     private static func checkIntentRowsShareOneTrailingColumn(_ check: (Bool, String) -> Void) {
-        withMountedSettings { controller, _ in
+        withMountedSettings(.intents) { controller, _ in
             guard let card = card(titled: "Shortcuts & Siri", in: controller.view) else {
                 check(false, "the Shortcuts & Siri card is mounted")
                 return
@@ -219,7 +231,7 @@ enum IntentsBackupSettingsViewSelfTest {
     // MARK: F24 - the backup card
 
     private static func checkBackupCardListsEveryStore(_ check: (Bool, String) -> Void) {
-        withMountedSettings { controller, _ in
+        withMountedSettings(.backup) { controller, _ in
             guard let card = card(titled: "Backup & Restore", in: controller.view) else {
                 check(false, "the Backup & Restore card is mounted")
                 return
@@ -259,7 +271,7 @@ enum IntentsBackupSettingsViewSelfTest {
     /// you can see what it leaves behind. So the exclusion is a rendered row,
     /// not an omission.
     private static func checkBackupCardNamesTheExclusion(_ check: (Bool, String) -> Void) {
-        withMountedSettings { controller, _ in
+        withMountedSettings(.backup) { controller, _ in
             guard let card = card(titled: "Backup & Restore", in: controller.view) else {
                 check(false, "the Backup & Restore card is mounted")
                 return
@@ -291,13 +303,20 @@ enum IntentsBackupSettingsViewSelfTest {
             // before growing it proves anything.
             check(controller.view.frame.width == 900, "the page starts at 900pt")
 
-            for target in [1400.0, 1512.0] as [CGFloat] {
-                var frame = window.frame
-                frame.size.width = target
-                window.setFrame(frame, display: true)
+            // Both cards, one pane each - the page shows only the selected
+            // category now, so "with both new cards mounted" means visiting
+            // both rather than trusting one render.
+            for category in [SettingsController.Category.intents, .backup] {
+                controller.debugSidebar.debugClickRow(id: category.rawValue)
                 controller.view.layoutSubtreeIfNeeded()
-                check(abs(window.contentView!.frame.width - target) < 2,
-                      "the window holds \(Int(target))pt with both new cards mounted (got \(window.contentView!.frame.width))")
+                for target in [1400.0, 1512.0] as [CGFloat] {
+                    var frame = window.frame
+                    frame.size.width = target
+                    window.setFrame(frame, display: true)
+                    controller.view.layoutSubtreeIfNeeded()
+                    check(abs(window.contentView!.frame.width - target) < 2,
+                          "the window holds \(Int(target))pt on the \(category.rawValue) pane (got \(window.contentView!.frame.width))")
+                }
             }
 
             // And back down, which is the direction gotcha (14) found a stale

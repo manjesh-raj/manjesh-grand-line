@@ -1992,6 +1992,11 @@ final class AppShellController: NSViewController {
     /// A3's state, as the bar currently has it.
     var scrollEdgeActiveForTests: Bool { bar.scrollEdgeActiveForTests }
     var scrollEdgeWatchedForTests: [NSScrollView] { scrollEdge.watchedForTests }
+    /// The Settings page itself, so a suite can drive its own category
+    /// sidebar - `fm/grandline-settings-page-sidebar-redesign` made the page
+    /// master/detail, and which pane is showing decides how tall its
+    /// document is.
+    var settingsForTests: SettingsController { settings }
     #endif
 
     /// The view a mounted slot owns, for identity comparison across a
