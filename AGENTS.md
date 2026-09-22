@@ -1218,6 +1218,20 @@ noted.
   which is this app's one "get an image off a pasteboard" function. Both halves
   consult `AppLockGate`: the system crosshair draws *over* this app's lock
   overlay.
+- **One calendar path, and it is read-only: `DailyReviewCalendar.swift`.** It
+  is the only file in the app that imports `EventKit`, it never calls `save`,
+  `remove`, `commit`, `saveCalendar` or `removeCalendar`, and it hands out
+  strings (`DailyReviewEventRow`) rather than `EKEvent`s, so no caller can
+  reach an event object through it. `FM_RUN_DAILY_REVIEW_TESTS` guards both
+  halves - the forbidden calls, and the "exactly one importer" rule - because
+  the behaviour cannot be asserted without writing to a real calendar to see
+  whether it happened. Two consequences for any future calendar work: the
+  permission request belongs to a real click and never to a page appearing
+  (TCC prompts are not something a card may fire on its own), and **an
+  unbundled build must refuse to ask** - `.build/debug/FirstmateCockpit` has no
+  `Info.plist`, and TCC kills a process that requests access without a usage
+  description, so `canPrompt` checks for the key first.
+
 - **One subprocess runner and one AI runner**: `Subprocess` (GL-02/03/04/15) and
   `ClaudeOneShot` (GL-26). Do not add a third invocation shape. Interactive and
   PTY work is the terminal's, not theirs.
@@ -1340,6 +1354,7 @@ can correct an earlier one - and several do.
 | [`36-focus-timer.md`](docs/history/36-focus-timer.md) | The focus timer (F7): the task-bound Pomodoro, the bar chip and its ring popover, and Weekly Review's "time on tasks" tile |
 | [`37-scratchpad-calculator.md`](docs/history/37-scratchpad-calculator.md) | The Scratchpad calculator (F9): the Tools tab, the expression engine, the unit/currency tables and the date words |
 | [`38-snippet-expander.md`](docs/history/38-snippet-expander.md) | The snippet expander (F12): the `;abbrev` trigger grammar, the generalised Snippets store, and system-wide expansion over Dictation's own paste path |
+| [`39-daily-review.md`](docs/history/39-daily-review.md) | The daily review (F20): Overview's general-user briefing, its stated-gap rule, and the app's one read-only EventKit path |
 
 ## Maintaining this file
 

@@ -137,6 +137,13 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <string>Probe build. Dictation uses your microphone while you hold the dictation shortcut.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Probe build. Dictation uses Speech Recognition to turn speech into text.</string>
+    <!-- F20: read-only calendar access for the daily review, so a probe can
+         exercise that column the way the packaged app does. Both spellings,
+         for the reason build_native_app.sh states. -->
+    <key>NSCalendarsUsageDescription</key>
+    <string>Probe build. Grand Line reads today’s events for the daily review and never writes to your calendar.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Probe build. Grand Line reads today’s events for the daily review and never writes to your calendar.</string>
 </dict>
 </plist>
 PLIST

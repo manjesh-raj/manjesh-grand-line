@@ -3158,6 +3158,22 @@ if ProcessInfo.processInfo.environment["FM_RUN_MORNING_BRIEFING_TESTS"] == "1" {
     exit(MorningBriefingSelfTest.run() ? 0 : 1)
 }
 
+// F20 (`fm/grandline-feature-f20-daily-review-briefing`): the daily review's
+// composer - what each of its six sources contributes, and the stated-gap
+// rule that is the whole point of the feature (a section that could not be
+// read says so rather than showing a zero). Also the source guard that keeps
+// the EventKit path read-only. `DailyReviewViewSelfTest` mounts the real
+// Overview page in a real window and measures the card's three columns, so it
+// is window-backed and lives in `run-all-tests.sh`'s NEEDS_SESSION list - the
+// split is AGENTS.md's own rule: the test is what the suite asserts, never
+// what it imports.
+if ProcessInfo.processInfo.environment["FM_RUN_DAILY_REVIEW_TESTS"] == "1" {
+    exit(DailyReviewSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_DAILY_REVIEW_VIEW_TESTS"] == "1" {
+    exit(DailyReviewViewSelfTest.run() ? 0 : 1)
+}
+
 // F9 (v1, multi-host command execution): the host-selection logic - tag
 // matching, the never-preselected invariant, the risk gate firing once per
 // host, and the unfilled-parameter refusal applied across a whole selection.

@@ -48,6 +48,25 @@ final class FleetController: NSViewController {
     private let quotaUsage = QuotaUsageController()
     private var isGeneratingBriefing = false
 
+    // MARK: F20 - the daily review
+    //
+    // The general-user briefing, directly under F12's fleet-shaped one - see
+    // `DailyReviewData.swift`'s header for why they are two cards rather than
+    // one longer one. It reads the same shared `ShiftStore` above plus the
+    // shell's own sticky-board and reading-list stores, handed over by
+    // `attachDailyReviewSources` (they are built after this controller is, so
+    // they cannot come through `init`). Nothing here fetches: every store is
+    // read from the arrays it already has in memory, and the one genuinely
+    // external read - today's calendar events - happens only after the
+    // captain has turned the column on.
+    private let dailyReviewCard = DailyReviewCard()
+    private var stickyBoardStore: StickyBoardStore?
+    private var readingListStore: ReadingListStore?
+    /// Replaced by a stub in `DailyReviewViewSelfTest`, which is what lets the
+    /// calendar column be rendered and asserted with no EventKit call, no
+    /// permission prompt and no reading of the captain's real calendar.
+    var dailyReviewCalendar: DailyReviewCalendarReading = EventKitDailyReviewCalendar()
+
     /// `fm/polish-straw-hat-overview-card-and-voice-c8d3` took four
     /// dependencies back off this page: the command library's root and the
     /// three phase-3 write stores. Every one of them existed only for the
@@ -305,6 +324,10 @@ final class FleetController: NSViewController {
         // costs this page nothing.
         buildBriefingCard()
         overviewContainer.addArrangedSubview(briefingCard)
+        // F20 sits directly under F12: the fleet's briefing first (it is the
+        // one that can be holding the crew up), then the captain's own day.
+        buildDailyReviewCard()
+        overviewContainer.addArrangedSubview(dailyReviewCard)
         overviewContainer.addArrangedSubview(loadingSection)
         overviewContainer.addArrangedSubview(bannerRow)
         // F7: the "Needs your call" list sits directly under the banner that
@@ -332,6 +355,7 @@ final class FleetController: NSViewController {
         inFlightSection.isHidden = true
         needsSection.isHidden = true
         briefingCard.isHidden = true
+        dailyReviewCard.isHidden = true
         logSection.isHidden = true
 
         content.addSubview(contentStack)
@@ -344,6 +368,7 @@ final class FleetController: NSViewController {
             overviewContainer.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             logSection.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
             briefingCard.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
+            dailyReviewCard.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
             loadingSection.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
             bannerRow.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
             statsRow.widthAnchor.constraint(equalTo: overviewContainer.widthAnchor),
@@ -403,6 +428,11 @@ final class FleetController: NSViewController {
         // persisted record - the AI call is not repeated on every visit, and
         // the card does not flicker in behind the fleet fetch.
         showCachedBriefingIfAvailable()
+        // F20 is recomputed on every appearance rather than cached for the
+        // day: it is an in-memory scan of stores the app already holds, and
+        // a briefing that still said "2 due" after both were ticked off
+        // would be worse than no card.
+        renderDailyReview()
         refresh()
     }
 
@@ -1105,6 +1135,141 @@ final class FleetController: NSViewController {
         }
     }
 
+    // MARK: F20 - the daily review
+
+    /// Hands over the two stores this controller does not own. Called once by
+    /// `AppShellController` after it has built them - GL-23's rule: these are
+    /// the *shared* instances, never a second copy, because both cache their
+    /// records and a second writer would race the first.
+    func attachDailyReviewSources(stickyBoardStore: StickyBoardStore,
+                                  readingListStore: ReadingListStore) {
+        self.stickyBoardStore = stickyBoardStore
+        self.readingListStore = readingListStore
+    }
+
+    private func buildDailyReviewCard() {
+        dailyReviewCard.onDismiss = { [weak self] in self?.dismissDailyReview() }
+        dailyReviewCard.onOpenSettings = { [weak self] in self?.onNavigateToDestination?(.settings) }
+        dailyReviewCard.onPlanDay = { [weak self] in self?.onNavigateToDestination?(.shift) }
+        dailyReviewCard.onStartTask = { [weak self] id in self?.onOpenShiftTask?(id) }
+        dailyReviewCard.onConnectCalendar = { [weak self] in self?.connectDailyReviewCalendar() }
+    }
+
+    /// Reads the six sources and renders. Cheap by construction: every store
+    /// below is asked for an array it already holds, so this is a handful of
+    /// filters over a few hundred records at worst.
+    ///
+    /// GL-14 runs through the whole function: a store in its failed-load state
+    /// yields `.unavailable(reason)`, never an empty array, and the card
+    /// states the gap instead of drawing a zero.
+    private func renderDailyReview() {
+        guard AppSettings.shared.dailyReviewEnabled else {
+            dailyReviewCard.isHidden = true
+            return
+        }
+        let now = Date()
+        guard AppSettings.shared.dailyReviewDismissedDay != MorningBriefing.dayKey(for: now) else {
+            dailyReviewCard.isHidden = true
+            return
+        }
+
+        var inputs = DailyReviewInputs()
+        inputs.now = now
+
+        // Tasks and follow-ups - the shared store's own in-memory lists, the
+        // same ones the Tasks page is showing.
+        if shiftStore.isInFailedLoadState {
+            let reason = "your tasks could not be read - a file in the Tasks store failed to parse"
+            inputs.tasks = .unavailable(reason)
+            inputs.followUps = .unavailable(reason)
+        } else {
+            inputs.tasks = .available(shiftStore.activeTasks)
+            inputs.followUps = .available(shiftStore.followUps)
+            var names: [String: String] = [:]
+            for project in shiftStore.projects { names[project.id] = project.name }
+            inputs.projectNames = names
+        }
+
+        // The sticky board and the reading list. A store that was never
+        // attached is a wiring mistake rather than a captain-facing state, so
+        // it says so plainly rather than pretending the board is empty.
+        if let store = stickyBoardStore {
+            inputs.stickies = store.isInFailedLoadState
+                ? .unavailable("your sticky board could not be read - its file failed to parse")
+                : .available(store.activeNotes)
+        } else {
+            inputs.stickies = .unavailable("the sticky board is not connected to this page")
+        }
+        if let store = readingListStore {
+            inputs.reading = store.isInFailedLoadState
+                ? .unavailable("your reading list could not be read - its file failed to parse")
+                : .available(store.links)
+        } else {
+            inputs.reading = .unavailable("the reading list is not connected to this page")
+        }
+
+        // Habits: F8 has not shipped. A stated gap, not a hidden section -
+        // see `DailyReviewHabits`.
+        inputs.habits = DailyReviewHabits.read()
+
+        // The calendar, and the only place this app reads EventKit. Off until
+        // the captain turns it on, and then read-only.
+        if AppSettings.shared.dailyReviewCalendarEnabled {
+            inputs.calendar = dailyReviewCalendar.events(on: now)
+        } else {
+            inputs.calendar = .unavailable(DisabledDailyReviewCalendar.offReason)
+        }
+        dailyReviewCard.setCalendarConnectable(dailyReviewCalendarIsConnectable())
+
+        dailyReviewCard.render(DailyReviewComposer.digest(from: inputs), theme: theme)
+        dailyReviewCard.isHidden = false
+    }
+
+    /// Whether offering "Show today's calendar" can actually lead anywhere.
+    /// A denied or restricted grant cannot be changed from inside this app
+    /// (only System Settings can), and an unbundled build must not ask at all
+    /// - see `EventKitDailyReviewCalendar.canPrompt`.
+    private func dailyReviewCalendarIsConnectable() -> Bool {
+        guard dailyReviewCalendar.canPrompt else { return false }
+        switch dailyReviewCalendar.access {
+        case .denied, .restricted, .writeOnly: return false
+        case .readable: return !AppSettings.shared.dailyReviewCalendarEnabled
+        case .notDetermined: return true
+        }
+    }
+
+    private func connectDailyReviewCalendar() {
+        dailyReviewCalendar.requestAccess { [weak self] access in
+            guard let self else { return }
+            switch access {
+            case .readable:
+                AppSettings.shared.dailyReviewCalendarEnabled = true
+            case .denied, .restricted, .writeOnly, .notDetermined:
+                // Not silently swallowed: the captain pressed a button and is
+                // owed an answer, and the card's own gap line will now carry
+                // the specific reason.
+                Feedback.report("Grand Line could not read your calendar.", kind: .warning,
+                                persistence: .transient, in: self.view)
+            }
+            self.renderDailyReview()
+        }
+    }
+
+    private func dismissDailyReview() {
+        AppSettings.shared.dailyReviewDismissedDay = MorningBriefing.dayKey()
+        dailyReviewCard.isHidden = true
+    }
+
+    #if FM_SELFTESTS
+    /// GL-27: debug builds only. The suite drives the real page rather than
+    /// the card alone, which is what proves the wiring as well as the render.
+    var debugDailyReviewCard: DailyReviewCard { dailyReviewCard }
+    func debugRenderDailyReview() { renderDailyReview() }
+    func debugAttachDailyReviewStores(sticky: StickyBoardStore, reading: ReadingListStore) {
+        attachDailyReviewSources(stickyBoardStore: sticky, readingListStore: reading)
+    }
+    #endif
+
     // MARK: Theme
 
     private func applyTheme() {
@@ -1132,6 +1297,7 @@ final class FleetController: NSViewController {
 
         bannerRow.applyTheme(theme)
         briefingCard.applyTheme(theme)
+        dailyReviewCard.applyTheme(theme)
         inFlightHeader.textColor = ink
         inFlightGlyph.applyTheme(theme)
         inFlightCountChip.layer?.backgroundColor = ink.withAlphaComponent(0.08).cgColor
