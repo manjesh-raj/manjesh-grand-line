@@ -99,12 +99,20 @@ final class EventKitDailyReviewCalendar: DailyReviewCalendarReading {
             @unknown default: return .notDetermined
             }
         }
+        // A plain `default`, not `@unknown default`: `.fullAccess` and
+        // `.writeOnly` are perfectly *known* cases of `EKAuthorizationStatus`
+        // that merely carry an availability annotation, so a switch outside
+        // the `#available` branch above is non-exhaustive without them and
+        // cannot name them either. CI fails this app's build on any warning,
+        // and `@unknown default` here is that warning ("switch must be
+        // exhaustive"). The branch above keeps its `@unknown default`, so a
+        // genuinely new case still gets diagnosed where it matters.
         switch status {
         case .authorized: return .readable
         case .denied: return .denied
         case .restricted: return .restricted
         case .notDetermined: return .notDetermined
-        @unknown default: return .notDetermined
+        default: return .notDetermined
         }
     }
 
