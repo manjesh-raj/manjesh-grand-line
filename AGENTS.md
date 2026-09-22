@@ -863,6 +863,16 @@ spacer absorbing 1024pt of a 1352pt row anyway while the text column sat at its
 200pt floor - the exact pre-fix geometry. A spacer that must stay collapsed
 needs a real low-priority `width == 0` constraint, not a hugging priority.
 
+**The way out, when the view that must absorb the slack is a stack or a scroll
+view** (both have no intrinsic size, so neither a content- nor a stack-priority
+API decides anything): stop asking one stack to distribute it. Pin the chrome
+above to the container's top edge and the chrome below to its bottom edge as
+two separate groups, and let the flexible middle be what is left between them.
+`CompactModePopoverController` is the worked example - it is what gives F22's
+menu-bar popover one fixed size on all four tabs
+([`40-menu-bar-mode.md`](docs/history/40-menu-bar-mode.md)) - and the same
+shape is what any fixed-size card with a swappable middle wants.
+
 ### (13) Any content constraint above priority 500 can resize the whole window
 
 **A window only holds its own size at `NSLayoutPriorityWindowSizeStayPut`
