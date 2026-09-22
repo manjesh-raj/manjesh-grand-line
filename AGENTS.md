@@ -887,6 +887,21 @@ the same view is a window-size cap**, and the intended-per-row priority band
 for anything that must beat the stack defaults but never touch the window is
 251-499. `FM_RUN_CONTRAST_TESTS`'s `checkRowDoesNotResizeWindow` guards it.
 
+**The cost of living in that band: two constraints at 499 *tie*, and Auto
+Layout breaks the tie on its own.** `HelmPageSidebar` puts its own
+`width == 208` at `contentTie` (499) precisely so it can never be a floor -
+which means any other 499 constraint in the same row is its equal. Measured
+(`fm/grandline-settings-page-sidebar-redesign`): Settings caps its detail
+column, so a wide window leaves real slack beside it, and with the content's
+scroll view pinned to `sidebar.trailingAnchor` (the shape `SchedulesController`
+and `CredentialVaultController` both use, where the content genuinely wants
+every point) that slack went into the **column** - the nav rows rendered 303pt
+wide against the component's own 208, at a 1400pt window. Nothing failed; the
+suites all passed at that width, and only an off-screen render showed it. So:
+a page whose content column is **capped** must pin that content to the page by
+a constant and let the column's 499 width stand uncontested, rather than
+chaining the two together. A page whose content is uncapped may keep the chain.
+
 ### (14) A required `==` tie does not self-verify on every resize
 
 **A correctly-declared required `==` width tie can still leave a view stuck at

@@ -31,6 +31,72 @@ import AppKit
 
 final class SettingsController: NSViewController, DaylightDrillActions {
 
+    /// One row of the page's left navigation column, and the set of cards its
+    /// detail pane shows.
+    ///
+    /// `fm/grandline-settings-page-sidebar-redesign`. This page used to be one
+    /// continuously-scrolling column of ten cards, which is how it grew: every
+    /// feature that needed a preference added a card to the bottom, and the
+    /// captain ended up scrolling past the theme grid to reach Backup. The
+    /// shape is now the one macOS System Settings uses - a category list on
+    /// the left, one category's cards on the right.
+    ///
+    /// **The cards themselves did not change.** A category is a grouping of
+    /// the existing `HelmCard`s and nothing else, which is what keeps this a
+    /// navigation change: every toggle, picker and button is the same object,
+    /// built by the same `build*Section()` method, wired to the same action.
+    ///
+    /// The grouping is by *what the captain came here to change*, not by
+    /// which feature shipped it:
+    ///
+    ///   - `.terminal` holds Connection, Terminal and Terminal Shortcuts.
+    ///     All three are "how a terminal tab opens and behaves"; splitting the
+    ///     working directory away from the font size would make the captain
+    ///     visit two panes to set up one tab.
+    ///   - `.briefings` holds Morning briefing and Daily review, which are two
+    ///     cards of the same kind - what Fleet generates for you each morning
+    ///     - and were already written as siblings (see each card's own comment
+    ///     at its construction site).
+    ///   - Every other card is its own category, because each is already the
+    ///     only thing of its kind on the page.
+    enum Category: String, CaseIterable {
+        case appearance
+        case terminal
+        case briefings
+        case menuBar
+        case intents
+        case security
+        case backup
+
+        /// The sidebar row's label, and the drill header's subtitle.
+        var title: String {
+            switch self {
+            case .appearance: return "Appearance"
+            case .terminal: return "Terminal"
+            case .briefings: return "Briefings"
+            case .menuBar: return "Menu bar"
+            case .intents: return "Shortcuts & Siri"
+            case .security: return "Security"
+            case .backup: return "Backup"
+            }
+        }
+
+        /// The row's leading glyph. Each one is the symbol its own card
+        /// header already carries, so the nav row and the card it reveals are
+        /// visibly the same thing.
+        var symbol: String {
+            switch self {
+            case .appearance: return "paintpalette"
+            case .terminal: return "terminal"
+            case .briefings: return "sparkles"
+            case .menuBar: return "menubar.rectangle"
+            case .intents: return "sparkle"
+            case .security: return "lock.shield"
+            case .backup: return "tray.and.arrow.up.fill"
+            }
+        }
+    }
+
     /// Set by `AppShellController` - "re-read my subtitle". The drill header
     /// belongs to the shell; a page writing into it directly is how two owners
     /// of one view start disagreeing.
@@ -55,8 +121,15 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// label is deleted; the one fact it carried that the header did not - that
     /// none of this leaves the machine - is here, alongside a real number this
     /// page owns.
+    ///
+    /// It now leads with the selected category, which is what makes the
+    /// shell's own header read "Settings / Appearance" the way the reference
+    /// mockup does - the page has sub-navigation, and the header is where a
+    /// captain reads where they are. The locality fact stays: it is the one
+    /// thing this page says that the header otherwise would not, and it is
+    /// true of every category rather than of the one being shown.
     var drillHeaderSubtitle: String? {
-        "\(HelmTheme.allThemes.count) themes \u{00B7} everything here is stored locally on this machine"
+        "\(selectedCategory.title) \u{00B7} everything here is stored locally on this machine"
     }
 
     /// The four stores the "Backup & Restore" card exports from / imports
@@ -129,29 +202,56 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     private let compactDockSwitch = HelmToggle()
     private let compactBadgeSwitch = HelmToggle()
 
-    /// The six section cards in reading order - the input to
-    /// `rebuildCardLayout()`, which decides whether they sit in one column or
-    /// two. Separate from `cards` (the re-theming registry) because that list
-    /// is append-on-create and says nothing about arrangement.
+    /// Every section card, keyed by the category whose detail pane shows it,
+    /// in the order that pane stacks them.
+    ///
+    /// Built once in `loadView` and never rebuilt: navigating between
+    /// categories reparents cards, it does not recreate them, so a toggle the
+    /// captain flipped is the same object whichever pane it is currently in.
+    private var cardsByCategory: [Category: [HelmCard]] = [:]
+
+    /// Every section card in reading order, which is the concatenation of
+    /// `cardsByCategory` over `Category.allCases`. Separate from `cards` (the
+    /// re-theming registry) because that list is append-on-create and says
+    /// nothing about arrangement.
     private var cardsInOrder: [HelmCard] = []
 
-    /// The page's own vertical stack. Holds either the six cards directly (one
-    /// column) or a single horizontal two-column row.
+    /// The page's left navigation column - one row per `Category`.
+    ///
+    /// The shared component, not a second copy (AGENTS.md's component index):
+    /// `HelmPageSidebar` already carries the row's `HoverHighlightView`
+    /// hover/press/focus-ring treatment, GL-16's radio-button role for a
+    /// one-of-many filter, the accent-wash selected fill and the corrected
+    /// selected ink. A count would claim each category holds some number of
+    /// things, which is not true of a settings pane, so every row is built
+    /// with `showsCount: false`.
+    private let sidebar = HelmPageSidebar()
+
+    /// The detail pane's own vertical stack. Holds exactly the selected
+    /// category's cards.
     private let cardsContainer = NSStackView()
 
-    /// Which arrangement is currently built, so a resize or a theme change that
-    /// does not cross a boundary costs nothing.
-    private var lastLayoutWasTwoColumn: Bool?
+    /// Which category's cards `cardsContainer` currently holds, so a resize
+    /// or a theme change that did not move the selection costs nothing.
+    private var mountedCategory: Category?
 
-    /// The narrowest content width two columns are allowed at.
+    private var selectedCategory: Category = .appearance
+
+    /// How wide the detail pane's card column is allowed to get.
     ///
-    /// Not a taste value: below this each card's own rows (a title, a wrapping
-    /// description and a trailing control cluster) start fighting for the same
-    /// ~400pt, and the honest fallback is one full-width column. It also keeps
-    /// this page clear of the window-width floor `AppShellBodyWidthSelfTest`
-    /// guards - two columns simply do not engage at the narrow end of its
-    /// sweep, rather than engaging and then having to be pried back open.
-    private static let twoColumnMinWidth: CGFloat = 940
+    /// A cap, not a width. The page used to answer a wide window by splitting
+    /// its ten cards into two columns; with a category on screen at a time
+    /// there are rarely enough cards for a second column to be anything but a
+    /// ragged gap, so the detail pane is one column and simply stops widening
+    /// - the same answer System Settings gives, and the reason a 1500pt
+    /// window does not render a 1200pt-wide row with a toggle stranded at its
+    /// far edge.
+    ///
+    /// Required is safe here **because it is a maximum** (gotcha (17)'s
+    /// footnote to gotcha (13)): a `<=` can never be a floor on how narrow
+    /// the window may get, which a required `==` or `>=` at this width would
+    /// be.
+    private static let detailMaxWidth: CGFloat = 900
 
     /// Every `HelmCard` on this page, re-themed together. The card owns its own
     /// header icon tile and subtitle label, so neither needs a registry here.
@@ -231,41 +331,96 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         // card already got. Backup & Restore is the last card here now.
         let backup = card(icon: "tray.and.arrow.up.fill", tint: .info, title: "Backup & Restore", subtitle: "Move saved hosts, snippets, and preferences between machines", content: buildBackupSection())
 
-        // §7's "two-column cards" is a *layout* decision taken per pass rather
-        // than a fixed stack, so `cardsInOrder` is the content and
-        // `rebuildCardLayout()` is the arrangement. Order is the reading order
-        // in one column and the round-robin source in two.
-        cardsInOrder = [connection, appearance, terminal, shortcuts, briefing, dailyReview,
-                        compact, intents, security, backup]
+        // The category map is the page's structure now, and `cardsInOrder`
+        // is derived from it so the two can never disagree about which cards
+        // exist. Reading order within a category is the order the cards were
+        // built in above.
+        cardsByCategory = [
+            .appearance: [appearance],
+            .terminal: [connection, terminal, shortcuts],
+            .briefings: [briefing, dailyReview],
+            .menuBar: [compact],
+            .intents: [intents],
+            .security: [security],
+            .backup: [backup],
+        ]
+        cardsInOrder = Category.allCases.flatMap { cardsByCategory[$0] ?? [] }
 
         let stack = cardsContainer
         stack.orientation = .vertical
         stack.alignment = .leading
         // 14 - unchanged from the flat stack this replaced, so a captain on any
         // of the twelve pre-Daylight palettes sees the same page they always
-        // did. The two-column arrangement uses §2.7's own 16pt gap instead.
+        // did.
         stack.spacing = 14
         stack.translatesAutoresizingMaskIntoConstraints = false
 
         let content = FlippedView()
         content.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(stack)
+        // `leading ==` plus `trailing <=` plus a required width cap, never a
+        // required `==` width tie (gotcha (3)): the cap is what stops a
+        // 1500pt window rendering a 1200pt-wide settings row, and the
+        // inequality is what stops the cap becoming the window's own frame.
+        let widthCap = stack.widthAnchor.constraint(lessThanOrEqualToConstant: Self.detailMaxWidth)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: HelmMetrics.pageGutter),
-            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
+            stack.trailingAnchor.constraint(lessThanOrEqualTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
             stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 18),
             stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -20),
+            widthCap,
         ])
-        rebuildCardLayout()
+        // "And otherwise be as wide as you are allowed to be." Below
+        // `NSLayoutPriorityWindowSizeStayPut` (500), so it can never widen
+        // the window (gotcha (13)); above the stack's own content, so the
+        // column fills the pane rather than shrink-wrapping onto its widest
+        // card.
+        let widthGrow = stack.trailingAnchor.constraint(equalTo: content.trailingAnchor,
+                                                        constant: -HelmMetrics.pageGutter)
+        widthGrow.priority = HelmDaylightPriority.contentTie
+        widthGrow.isActive = true
+
+        buildSidebar()
+        rebuildDetailPane()
 
         let scroll = NSScrollView()
         scroll.documentView = content
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(sidebar)
         root.addSubview(scroll)
         NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            // **The nav column sits outside the scroll view**, the same
+            // arrangement `SchedulesController` and `CredentialVaultController`
+            // use and for the same reason: it is navigation, so scrolling a
+            // long category (Terminal Shortcuts is nine rows) must not carry
+            // the category list off the top of the page with it.
+            sidebar.leadingAnchor.constraint(equalTo: root.leadingAnchor,
+                                             constant: HelmMetrics.pageGutter),
+            sidebar.topAnchor.constraint(equalTo: root.topAnchor, constant: 18),
+            sidebar.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor,
+                                            constant: -HelmMetrics.pageGutter),
+        ])
+        NSLayoutConstraint.activate([
+            // **Measured from the page, not from the column's trailing edge**,
+            // and the difference is visible. `HelmPageSidebar`'s own width
+            // constraint sits at `contentTie` (499) so it can never be a
+            // window-width floor (gotcha (13)), which means it yields to
+            // anything that outranks it - and it also merely *ties* with
+            // another 499 constraint rather than beating it. This page's
+            // detail column is capped at `detailMaxWidth`, so at a wide
+            // window there is real slack in the row, and with the scroll
+            // view's leading tied to `sidebar.trailingAnchor` Auto Layout
+            // resolved that slack by widening the column: measured at a
+            // 1400pt window, the nav rows rendered 303pt wide against the
+            // component's own 208. Pinning the scroll view to the page by a
+            // constant leaves the column's width uncontested, and the slack
+            // lands where it belongs - to the right of the detail pane.
+            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor,
+                                            constant: HelmMetrics.pageGutter + HelmPageSidebar.width
+                                                + HelmMetrics.s5 - HelmMetrics.pageGutter),
+            sidebar.trailingAnchor.constraint(lessThanOrEqualTo: scroll.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             scroll.topAnchor.constraint(equalTo: root.topAnchor),
             scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
@@ -308,195 +463,93 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         // fixed on the Tools page).
         guard !view.isHidden else { return }
         view.window?.contentView?.layoutSubtreeIfNeeded()
-        // §7's two-column arrangement is width-driven, so it re-decides on the
-        // same signal the theme grid's column count already did.
-        rebuildCardLayout()
         layoutDidChangeWidths()
         appearanceGridWidthMayHaveChanged()
     }
 
-    // MARK: Card layout (Daylight §7's "two-column cards")
+    // MARK: Navigation (the category list and the detail pane)
 
-    /// One column or two, decided from the container's real width - and from
-    /// **width alone**.
+    /// Build the left column, once.
     ///
-    /// `fm/grandline-settings-layout-theme-dependent-fix`: this used to also
-    /// require `theme.isDaylight`, on the reasoning that two columns was
-    /// Daylight's own arrangement and the twelve pre-Daylight palettes should
-    /// keep the single column they always had. That reasoning was itself the
-    /// bug: selecting a theme is supposed to change colors, never which cards
-    /// exist, how many columns they sit in, or how dense the Appearance
-    /// card's own theme grid renders - and gating the column count on
-    /// `theme.isDaylight` violated all three at once, since
-    /// `rebuildAppearanceGrid()` derives its own grid density from
-    /// `appearanceContainer`'s real width, which is half the page in two
-    /// columns and the whole page in one. A captain switching from a Daylight
-    /// theme to a legacy one (or back) therefore saw the *page itself*
-    /// restructure - a captain screenshot comparing "Daylight" against "Helm
-    /// Light" at the same window size showed a materially different layout,
-    /// not just different colors. The fix is to drop the theme condition
-    /// entirely: the same two-column-above-`twoColumnMinWidth` rule now
-    /// applies to every theme, so the layout is a pure function of the
-    /// window's width and never of which of the 14 themes is selected.
+    /// Declarative (`setSections`) rather than the append API, because the
+    /// component's declarative path is the one that carries a selection
+    /// across a rebuild - and because one array here is easier to read
+    /// against `Category.allCases` than seven `appendRow` calls.
+    private func buildSidebar() {
+        sidebar.setSections([
+            HelmPageSidebar.Section(header: "Settings", rows: Category.allCases.map {
+                HelmPageSidebar.Row(id: $0.rawValue, indicator: .symbol($0.symbol),
+                                    title: $0.title, showsCount: false)
+            })
+        ])
+        sidebar.select(selectedCategory.rawValue)
+        sidebar.onSelect = { [weak self] id in
+            guard let self, let category = Category(rawValue: id) else { return }
+            self.select(category)
+        }
+        sidebar.applyTheme(theme)
+    }
+
+    /// Move the detail pane to `category`.
     ///
-    /// The split is a plain round robin over `cardsInOrder` rather than any
-    /// attempt to balance heights. Heights here are genuinely data-dependent
-    /// (the Appearance card grows with the theme grid's row count, Security
-    /// with its status),
-    /// so a balancing pass would reshuffle the cards under the captain as that
-    /// data changed - which is worse than a slightly uneven pair of columns
-    /// that always holds the same card in the same place.
-    private func rebuildCardLayout() {
-        // `ThemeManager.shared.observe`'s closure fires *synchronously* at
-        // registration (this codebase's own, repeatedly-documented gotcha -
-        // see `HelmFormSheet`'s own header for the same trap). That
-        // registration sits at the very top of `loadView()`, right after
-        // `view = root` - which is what makes `isViewLoaded` true - and well
-        // before `cardsInOrder`/`cardsContainer` are ever populated a few
-        // lines later. Without this guard, that premature synchronous fire
-        // ran the whole method against an empty `cardsInOrder`, which did
-        // nothing *visible* but still set `lastLayoutWasTwoColumn` to a real,
-        // non-nil value - so the REAL call moments later (with all six cards
-        // finally in `cardsInOrder`) found `lastLayoutWasTwoColumn` already
-        // equal to the freshly computed `twoColumn` and returned via the
-        // no-op guard below without ever adding a single card. Confirmed live
-        // via a temporary probe: the page rendered its drill header
-        // correctly and then nothing else, on every theme (not just
-        // Daylight) - `cardsInOrder` held all 6 real `HelmCard` instances the
-        // whole time, but `cardsContainer` had zero arranged subviews.
-        // Bailing here, before that side effect can happen, means the first
-        // call that actually has cards to arrange is the one that decides
-        // `lastLayoutWasTwoColumn`.
-        guard !cardsInOrder.isEmpty else { return }
-        // Re-entrancy guard - defence in depth, and honestly labelled as such.
-        // Reparenting six cards mutates the view tree, which can drive a layout
-        // pass, which calls `viewDidLayout`, which lands back here mid-teardown.
-        // The failure that was actually *measured* (all six cards left detached,
-        // no superview, the page stuck in one column at 1500pt) was fixed by
-        // reading the width from a source that does not move mid-rebuild - see
-        // `contentColumnWidth()`; re-checked by injection, this guard alone does
-        // not fix it and that fix alone does. It stays because a re-entrant
-        // rebuild is a real hazard on its own terms, not because it is what
-        // closed the bug.
-        guard !isRebuildingCardLayout else { return }
-        let twoColumn = contentColumnWidth() >= Self.twoColumnMinWidth
-        guard lastLayoutWasTwoColumn != twoColumn else { return }
-        isRebuildingCardLayout = true
-        defer { isRebuildingCardLayout = false }
-        lastLayoutWasTwoColumn = twoColumn
+    /// The sidebar has already moved its own selection by the time its
+    /// `onSelect` reaches here (a `.filter` row does that itself), so this is
+    /// also the path a programmatic selection takes and `sidebar.select` is
+    /// idempotent on the row that is already selected.
+    func select(_ category: Category) {
+        guard selectedCategory != category else { return }
+        selectedCategory = category
+        sidebar.select(category.rawValue)
+        rebuildDetailPane()
+        // The shell owns the drill header; this page only says "re-read me"
+        // (see `onDrillSubtitleChanged`). Without this the header would keep
+        // naming whichever category the captain arrived on.
+        onDrillSubtitleChanged?()
+        // A category the captain has never opened starts at its own top, and
+        // one they scrolled through last time should not hand its offset to
+        // the next one - the pane is a different document now.
+        view.layoutSubtreeIfNeeded()
+        scrollToTop()
+    }
+
+    /// Put exactly the selected category's cards in the detail pane.
+    ///
+    /// **Reparenting, never rebuilding.** Every card is constructed once in
+    /// `loadView` and lives for the controller's lifetime, so a toggle keeps
+    /// its state, its target/action and its place in `refreshFromSettings`'s
+    /// sync whether or not its card is currently on screen. What changes here
+    /// is only which of them `cardsContainer` holds.
+    ///
+    /// Leaving the other categories' cards *out of the view tree* is also
+    /// what makes this cheap: gotcha (15) measured that a hidden view is
+    /// still solved by the window's full-screen minimum-size derivation, so
+    /// `isHidden` would have kept all ten cards' constraint chains live. A
+    /// detached card has no path to the window at all.
+    private func rebuildDetailPane() {
+        guard !cardsByCategory.isEmpty else { return }
+        guard mountedCategory != selectedCategory else { return }
+        mountedCategory = selectedCategory
 
         for v in cardsContainer.arrangedSubviews {
             cardsContainer.removeArrangedSubview(v)
             v.removeFromSuperview()
         }
-        // A card may be moving from one parent stack to another. The width tie
-        // its previous arrangement gave it is held by *that* parent, not by the
-        // card, and `removeFromSuperview()` is documented to drop any
-        // constraint referring to the view being removed - so detaching each
-        // card is what actually clears the old tie. Doing it explicitly (rather
-        // than relying on the column stacks above being discarded) also covers
-        // the one-column case, where the tie lives on `cardsContainer`, which
-        // survives.
+        // A card is moving between parents, and the width tie its previous
+        // pane gave it is held by *that* parent. `removeFromSuperview()` is
+        // documented to drop any constraint referring to the view being
+        // removed, so detaching is what actually clears the old tie - the
+        // same step the two-column arrangement this replaced needed.
         for card in cardsInOrder { card.removeFromSuperview() }
 
-        guard twoColumn else {
-            for card in cardsInOrder {
-                cardsContainer.addArrangedSubview(card)
-                card.widthAnchor.constraint(equalTo: cardsContainer.widthAnchor).isActive = true
-            }
-            layoutDidChangeWidths()
-            return
+        for card in cardsByCategory[selectedCategory] ?? [] {
+            cardsContainer.addArrangedSubview(card)
+            card.widthAnchor.constraint(equalTo: cardsContainer.widthAnchor).isActive = true
         }
-
-        let columns = (0..<2).map { index -> NSStackView in
-            let column = NSStackView(views: cardsInOrder.enumerated()
-                .filter { $0.offset % 2 == index }
-                .map { $0.element })
-            column.orientation = .vertical
-            column.alignment = .leading
-            column.spacing = HelmMetrics.s4
-            column.translatesAutoresizingMaskIntoConstraints = false
-            // AGENTS.md gotcha (12) + (13): an `NSStackView` resists clipping
-            // below its arranged subviews at `.defaultHigh` (750) by default,
-            // which is *above* `NSLayoutPriorityWindowSizeStayPut` (500) - so a
-            // column of cards left at the default is a window-width floor,
-            // doubled by `.fillEqually`. The stack-level API is the one that
-            // bites here; the content-level one is a no-op on a view with no
-            // intrinsic size.
-            column.setClippingResistancePriority(.defaultLow, for: .horizontal)
-            // Review #3's B9: **the column must hug its own content
-            // vertically, or its cards get stretched to fill it.**
-            //
-            // A vertical `NSStackView` left at the default `.gravityAreas`
-            // distribution has no rule for which arranged subview absorbs
-            // leftover height, so whatever slack the column is given lands on
-            // one card by Auto Layout's own tie-breaking - measured here as
-            // the one-row Connection card resolving to **504pt against its own
-            // 133pt fitting height**, i.e. 371pt of empty card. The row below
-            // is already `.top`-aligned, so the honest shape is simply that no
-            // slack exists: `setHuggingPriority` is the *stack*-level API, the
-            // one that bites on a view with no intrinsic content size (gotcha
-            // (12) - the content-level call would be a no-op here).
-            //
-            // Vertical only. The horizontal pair above is what keeps this
-            // column off the window-width floor and is deliberately untouched.
-            column.setHuggingPriority(.required, for: .vertical)
-            for card in column.arrangedSubviews {
-                card.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
-            }
-            return column
-        }
-
-        // **A plain container with explicit constraints, not an
-        // `NSStackView`** - review #3's B9, and the reason is measured.
-        //
-        // This was a horizontal stack at `.fillEqually` with `alignment =
-        // .top`, which reads as "each column keeps its own height" and does
-        // not behave that way: the stack also installs a `bottom == bottom`
-        // alignment constraint, so the shorter column was stretched to the
-        // taller one's height (1291 against its own 920pt of content) and the
-        // 371pt of slack landed on one card. A vertical `NSStackView` at the
-        // default `.gravityAreas` has no rule for who absorbs leftover height,
-        // and a `HelmCard` has no intrinsic content size, so hugging priorities
-        // on either the column or the cards are a no-op there (gotcha (12)) -
-        // measured, `setHuggingPriority(.required, for: .vertical)` on the
-        // column changed nothing. The result on screen was the one-row
-        // Connection card rendering **504pt tall against a 133pt fitting
-        // height**.
-        //
-        // Four constraints per column say exactly what was meant instead: both
-        // start at the row's top, neither may exceed its bottom, and the row
-        // shrink-wraps onto the taller of the two. A column then takes its own
-        // content height from its own `.gravityAreas` chain, with no slack to
-        // distribute, so every card keeps its natural height.
-        let row = NSView()
-        row.translatesAutoresizingMaskIntoConstraints = false
-        for column in columns { row.addSubview(column) }
-        let left = columns[0], right = columns[1]
-        // Priority 1, below everything: "and take the smallest height that
-        // satisfies all of the above" - the same shrink-wrap idiom
-        // `HelmDrillHeader` uses for its own cluster.
-        let shrinkWrap = row.heightAnchor.constraint(equalToConstant: 0)
-        shrinkWrap.priority = NSLayoutConstraint.Priority(1)
-        NSLayoutConstraint.activate([
-            left.leadingAnchor.constraint(equalTo: row.leadingAnchor),
-            right.leadingAnchor.constraint(equalTo: left.trailingAnchor, constant: HelmMetrics.s4),
-            right.trailingAnchor.constraint(equalTo: row.trailingAnchor),
-            left.widthAnchor.constraint(equalTo: right.widthAnchor),
-            left.topAnchor.constraint(equalTo: row.topAnchor),
-            right.topAnchor.constraint(equalTo: row.topAnchor),
-            left.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor),
-            right.bottomAnchor.constraint(lessThanOrEqualTo: row.bottomAnchor),
-            shrinkWrap,
-        ])
-        cardsContainer.addArrangedSubview(row)
-        row.widthAnchor.constraint(equalTo: cardsContainer.widthAnchor).isActive = true
         layoutDidChangeWidths()
     }
 
     override func viewDidLayout() {
         super.viewDidLayout()
-        rebuildCardLayout()
         layoutDidChangeWidths()
     }
 
@@ -568,15 +621,18 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         return usable > 0 ? usable : HelmResponsiveGrid.fallbackContainerWidth
     }
 
-    /// How wide one card actually is - the whole content column in one-column
-    /// mode, half of it (less the gap) in two.
+    /// How wide one card actually is - the detail pane's whole column, capped
+    /// at `detailMaxWidth`.
+    ///
+    /// The cap has to be applied here as well as in the constraint, because
+    /// this is what `layoutDidChangeWidths` re-wraps the description labels
+    /// against, and over-estimating that width is the dangerous direction:
+    /// AppKit sizes a label's height for one line at
+    /// `preferredMaxLayoutWidth`, the text then wraps narrower, and the extra
+    /// line draws outside the label's own bounds.
     private func availableCardWidth() -> CGFloat {
-        let container = contentColumnWidth()
-        guard lastLayoutWasTwoColumn == true else { return container }
-        return (container - HelmMetrics.s4) / 2
+        min(contentColumnWidth(), Self.detailMaxWidth)
     }
-
-    private var isRebuildingCardLayout = false
 
     /// Wrapping description labels, each with how much of its card's body
     /// width is spoken for by chrome it sits beside (a `descRow`'s own padding,
@@ -1798,21 +1854,28 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// own cards, which show every palette's swatches).
     private func repaintForTheme() {
         guard isViewLoaded else { return }
-        // The column arrangement no longer depends on which theme is active
-        // (see `rebuildCardLayout`'s own header) - only on the container's
-        // width, which a theme change never touches. This call is therefore
-        // always a no-op here in practice; it stays so a window resize that
-        // happens to coincide with a theme change is still covered by the
-        // same guard `rebuildCardLayout` already has.
-        rebuildCardLayout()
+        // Which cards are in the detail pane is a function of the captain's
+        // selection and of nothing else - a theme change never moves it. What
+        // a theme change does move is the grid's own swatches, below.
         rebuildAppearanceGrid()
         applyTheme()
     }
 
     #if FM_SELFTESTS
-    /// Probe surface for `DaylightDrillPageSlice6SelfTest`.
+    /// Probe surface for `DaylightDrillPageSlice6SelfTest`. Every card the
+    /// page owns, across all seven categories - not only the mounted ones.
     var debugCards: [HelmCard] { cardsInOrder }
-    var debugIsTwoColumn: Bool { lastLayoutWasTwoColumn == true }
+    /// The left navigation column, so a suite can read its selection and
+    /// drive a real row click rather than only calling `select(_:)`.
+    var debugSidebar: HelmPageSidebar { sidebar }
+    var debugSelectedCategory: Category { selectedCategory }
+    /// The cards currently in the detail pane, in the order it stacks them.
+    var debugMountedCards: [HelmCard] {
+        cardsContainer.arrangedSubviews.compactMap { $0 as? HelmCard }
+    }
+    /// What each category is expected to show, so a suite can assert the
+    /// mapping itself rather than re-deriving it from the thing under test.
+    func debugCards(in category: Category) -> [HelmCard] { cardsByCategory[category] ?? [] }
     /// Every toggle on the page, in card order: Terminal's two, F12's
     /// briefing, F20's daily review and its calendar column, then F22's
     /// three. `DaylightDrillPageSlice6SelfTest` asserts the count, so a
@@ -1825,13 +1888,12 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     var debugCompactModeSwitch: HelmToggle { compactModeSwitch }
     var debugCompactDockSwitch: HelmToggle { compactDockSwitch }
     var debugCompactBadgeSwitch: HelmToggle { compactBadgeSwitch }
-    /// How many of the six real cards actually reached `cardsContainer`'s own
-    /// view tree - robust to one-column vs. two-column arrangement, since a
-    /// card sits either as a direct arranged subview of `cardsContainer`
-    /// (one column) or nested inside one of its two column stacks (two
-    /// columns). Exists for `checkSettingsRendersOnFirstLoad`, which guards
-    /// the exact "all six cards exist but none of them are on screen"
-    /// regression this file's `rebuildCardLayout()` fix closed.
+    /// How many cards actually reached `cardsContainer`'s own view tree.
+    /// Exists for `checkSettingsRendersOnFirstLoad`, which guards the
+    /// "every card exists and none of them is on screen" regression this
+    /// file's detail-pane rebuild could reintroduce - now the selected
+    /// category's count rather than all ten, since the other six categories
+    /// are deliberately detached.
     var debugCardsInTree: Int { cardsInOrder.filter { $0.isDescendant(of: cardsContainer) }.count }
     /// The Appearance card's own theme-picker grid, one entry per row
     /// (`HelmResponsiveGrid.rows`'s dark-theme rows first, then the light
@@ -1839,9 +1901,9 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// row into. Used by `SettingsThemeLayoutParitySelfTest` to assert the
     /// grid's own density is a pure function of layout width and never of
     /// which theme happens to be selected - the second half of the bug
-    /// `rebuildCardLayout`'s `twoColumn` fix closes, since this grid's own
-    /// column count is derived from `appearanceContainer`'s real width, which
-    /// used to differ between one-column and two-column mode.
+    /// `fm/grandline-settings-layout-theme-dependent-fix` closed, since this
+    /// grid's own column count is derived from `appearanceContainer`'s real
+    /// width.
     var debugAppearanceGridColumnCounts: [Int] {
         appearanceContainer.arrangedSubviews.compactMap { ($0 as? NSStackView)?.arrangedSubviews.count }
     }
@@ -1856,6 +1918,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     private func applyTheme() {
         let line = HelmTheme.nsColor(theme.chromeLineHex)
         let muted = HelmTheme.mutedInk(theme)
+        sidebar.applyTheme(theme)
         for card in cards { card.applyTheme(theme) }
         // The recorders paint their own chrome and their own recording state,
         // so they take the theme directly rather than through any of the

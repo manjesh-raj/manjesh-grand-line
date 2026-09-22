@@ -349,8 +349,17 @@ enum Audit3BugFixesSelfTest {
 
     // MARK: B9 - a card is as tall as its own content
 
+    /// B9 was measured against §7's two-column arrangement, where the short
+    /// column was stretched to the tall one's height and the slack landed on
+    /// one card (the Connection card resolving to 504pt against 133pt of
+    /// content). `fm/grandline-settings-page-sidebar-redesign` replaced that
+    /// arrangement with a sidebar and a single-column detail pane, so the
+    /// exact mechanism is gone - but **the property B9 is about is not**, and
+    /// a vertical `NSStackView` at the default `.gravityAreas` distribution
+    /// is precisely the thing that reintroduces it. The case now sweeps every
+    /// category's pane rather than one two-column render.
     private static func checkSettingsColumnsKeepCardsAtTheirOwnHeight(_ ok: inout Bool) {
-        print("\n-- B9: two columns do not stretch a short card to match a tall one --")
+        print("\n-- B9: a detail pane does not stretch a card past its own content --")
         withScratchEnv {
             let settings = SettingsController(hostStore: HostStore(), keyStore: SSHKeyStore(),
                                               snippetStore: SnippetStore(), dictationStore: DictationStore())
@@ -361,25 +370,32 @@ enum Audit3BugFixesSelfTest {
             settings.viewDidLayout()
             settings.view.layoutSubtreeIfNeeded()
 
-            // Vacuity guard: the defect only exists in two-column mode, so a
-            // run that fell back to one column would pass while testing
-            // nothing.
-            guard settings.debugIsTwoColumn else {
-                fail("Settings rendered one column at 1512pt - this check is vacuous", &ok)
-                return
-            }
             var worst: (name: String, frame: CGFloat, fitting: CGFloat)?
-            for card in settings.debugCards {
-                let slack = card.frame.height - card.fittingSize.height
-                if slack > 1, slack > (worst.map { $0.frame - $0.fitting } ?? 0) {
-                    worst = ("card", card.frame.height, card.fittingSize.height)
+            var measured = 0
+            for category in SettingsController.Category.allCases {
+                settings.select(category)
+                settings.view.layoutSubtreeIfNeeded()
+                // Vacuity guard: a pane that mounted nothing, or mounted
+                // cards that never laid out, would pass while measuring
+                // nothing at all.
+                let mounted = settings.debugMountedCards
+                guard !mounted.isEmpty, mounted.allSatisfy({ $0.frame.height > 1 }) else {
+                    fail("\(category.rawValue) mounted \(mounted.count) laid-out cards - this check is vacuous", &ok)
+                    return
+                }
+                measured += mounted.count
+                for card in mounted {
+                    let slack = card.frame.height - card.fittingSize.height
+                    if slack > 1, slack > (worst.map { $0.frame - $0.fitting } ?? 0) {
+                        worst = (category.rawValue, card.frame.height, card.fittingSize.height)
+                    }
                 }
             }
             if let worst {
-                fail("a card is \(worst.frame)pt tall against \(worst.fitting)pt of content - "
+                fail("\(worst.name): a card is \(worst.frame)pt tall against \(worst.fitting)pt of content - "
                      + "review #3's B9 is back", &ok)
             } else {
-                check(true, "every card is exactly as tall as its own content", &ok)
+                check(true, "every one of \(measured) cards is exactly as tall as its own content", &ok)
             }
         }
     }

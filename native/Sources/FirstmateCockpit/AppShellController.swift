@@ -965,6 +965,10 @@ final class AppShellController: NSViewController {
         // prompt exactly like Bootstrap's provisioning actions - same
         // one-shot Console command-tab mechanism, just reached from Settings
         // instead.
+        // Settings' own sidebar moves the header's subtitle - it names the
+        // selected category, the way the reference mockup's "Settings /
+        // Shortcuts & Siri" does.
+        settings.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         settings.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
         settings.onRunCommandTracked = { [weak self] label, command, completion in
             self?.runInConsole(label: label, command: command, completion: completion)
@@ -2006,6 +2010,11 @@ final class AppShellController: NSViewController {
     /// A3's state, as the bar currently has it.
     var scrollEdgeActiveForTests: Bool { bar.scrollEdgeActiveForTests }
     var scrollEdgeWatchedForTests: [NSScrollView] { scrollEdge.watchedForTests }
+    /// The Settings page itself, so a suite can drive its own category
+    /// sidebar - `fm/grandline-settings-page-sidebar-redesign` made the page
+    /// master/detail, and which pane is showing decides how tall its
+    /// document is.
+    var settingsForTests: SettingsController { settings }
     #endif
 
     /// The view a mounted slot owns, for identity comparison across a

@@ -3577,6 +3577,15 @@ if ProcessInfo.processInfo.environment["FM_RUN_SETTINGS_THEME_LAYOUT_PARITY_TEST
     exit(SettingsThemeLayoutParitySelfTest.run() ? 0 : 1)
 }
 
+// `fm/grandline-settings-page-sidebar-redesign`: Settings is a sidebar-
+// navigated master/detail page now. The risk that suite exists for is silent
+// loss of reach - a setting that still works and has no row that reveals it
+// - so it asserts the category partition, a real row press swapping the
+// pane, and a representative control per category writing through.
+if ProcessInfo.processInfo.environment["FM_RUN_SETTINGS_SIDEBAR_TESTS"] == "1" {
+    exit(SettingsSidebarNavigationSelfTest.run() ? 0 : 1)
+}
+
 // `fm/grand-line-console-claude-usage-button`: the "Claude usage" toolbar
 // button restored beside Compose - its availability must mirror Compose's
 // own byte-for-byte across tab-selection transitions, on both the shared

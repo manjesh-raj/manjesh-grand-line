@@ -460,6 +460,12 @@ final class HelmCard: NSView {
     private var headerTitle: NSTextField?
     private var headerSubtitle: NSTextField?
 
+    #if FM_SELFTESTS
+    /// The card's own header title, so a suite reporting on a set of cards
+    /// can name the one that failed rather than saying "a card".
+    var debugHeaderTitle: String? { headerTitle?.stringValue }
+    #endif
+
     init() {
         super.init(frame: .zero)
         wantsLayer = true

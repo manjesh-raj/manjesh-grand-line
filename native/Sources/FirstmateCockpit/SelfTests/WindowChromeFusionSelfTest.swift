@@ -615,8 +615,15 @@ enum WindowChromeFusionSelfTest {
             defer { window.close() }
             window.setFrame(NSRect(x: -20_000, y: 0, width: 1100, height: 600), display: true)
 
-            // Settings is the page most reliably taller than a 600pt window.
+            // Settings is the page most reliably taller than a 600pt window -
+            // and since `fm/grandline-settings-page-sidebar-redesign` made it
+            // master/detail, *which pane* decides that. Terminal is the tall
+            // one: three cards, nine shortcut rows among them. The default
+            // Appearance pane is a single card and does not reliably overflow
+            // 600pt, which is what this case started failing on.
             shell.show(.settings)
+            shell.settingsForTests.debugSidebar
+                .debugClickRow(id: SettingsController.Category.terminal.rawValue)
             window.contentView?.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.1))
 

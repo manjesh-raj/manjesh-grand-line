@@ -32,21 +32,21 @@
 //      that matters is repainting Daylight's `paper` instead: a code area would
 //      then be the same colour as the page and have no boundary against the
 //      card it sits in.
-//   6. **Settings' two-column threshold is width-driven, and now a fixed
-//      case below documents `fm/grandline-settings-layout-theme-dependent-
-//      fix`'s own correction**: this used to also require `theme.isDaylight`,
-//      so a captain switching between a Daylight theme and a legacy one at
-//      the same window size saw the page itself restructure - one column
-//      became two, and the Appearance card's own theme-grid density changed
-//      with it, since that grid's column count is derived from
-//      `appearanceContainer`'s real width, which differs between one- and
-//      two-column mode. Selecting a theme must only ever change colours, so
-//      the gate is gone: every theme now crosses to two columns at the same
-//      width, and all six cards survive the reparent either way. Measured
-//      from real frames. `SettingsThemeLayoutParitySelfTest` is the dedicated
-//      suite proving a Daylight theme and a legacy theme resolve to a
-//      byte-identical layout fingerprint at a shared width; this case is
-//      what is left of the original Daylight-specific coverage.
+//   6. **Settings' page structure is a pure function of the captain's own
+//      navigation, never of the theme.** This case has been through two
+//      shapes. It began as §7's two-column threshold, then documented
+//      `fm/grandline-settings-layout-theme-dependent-fix`'s correction to it
+//      (the threshold used to also require `theme.isDaylight`, so switching
+//      between a Daylight theme and a legacy one at the same window size
+//      restructured the page). `fm/grandline-settings-page-sidebar-redesign`
+//      then replaced the two-column arrangement entirely: Settings is a
+//      sidebar-navigated master/detail page, and the detail pane stacks one
+//      category's cards in a single capped column. The **property** is
+//      unchanged and is what the case still asserts - the same category
+//      shows the same cards at the same widths on every palette.
+//      `SettingsThemeLayoutParitySelfTest` is the dedicated suite sweeping
+//      all fourteen; `SettingsSidebarNavigationSelfTest` is the one that
+//      proves the navigation itself works.
 //   7. **`HelmToggle` shows the pill on Daylight and a real `NSSwitch`
 //      elsewhere**, moves its knob, and writes through to `AppSettings` - the
 //      whole point of replacing the control is that it still is one.
@@ -54,9 +54,9 @@
 //      painted a hue as its own label over a wash of itself, the audit's §5.7
 //      defect - the same copy slice 2 deleted from Health. This was the last
 //      one, so it is measured (contrast floor) and source-guarded.
-//   9. **No new window-width floor.** Two columns doubles every minimum inside
-//      Settings, and AGENTS.md gotcha (13) is this codebase's most expensive
-//      recurring bug. `AppShellBodyWidthSelfTest` is the broad sweep; this is
+//   9. **No new window-width floor.** AGENTS.md gotcha (13) is this
+//      codebase's most expensive recurring bug, and Settings has been a
+//      repeat offender. `AppShellBodyWidthSelfTest` is the broad sweep; this is
 //      the local one for the two pages just touched, on Daylight, which that
 //      sweep does not select.
 //
@@ -97,7 +97,7 @@ enum DaylightDrillPageSlice6SelfTest {
         for check in [checkDrillConformances, checkOldCaptionsAreGone,
                       checkToolsGridUsesModulePlates, checkPlateNoteFits,
                       checkPlatesDoNotAccumulate,
-                      checkCodeEditorsAreWells, checkSettingsTwoColumnLayout,
+                      checkCodeEditorsAreWells, checkSettingsDetailPaneIsThemeIndependent,
                       checkToggleRecipe, checkSharedPill, checkNoWindowWidthFloor,
                       checkSettingsRendersOnFirstLoad] {
             var ok = true
@@ -558,11 +558,21 @@ enum DaylightDrillPageSlice6SelfTest {
         }
     }
 
-    // MARK: 6. Settings' two-column layout (§7, corrected by
-    // `fm/grandline-settings-layout-theme-dependent-fix`)
+    // MARK: 6. Settings' detail pane (§7's two-column arrangement, replaced
+    // by the sidebar redesign in `fm/grandline-settings-page-sidebar-redesign`)
 
-    private static func checkSettingsTwoColumnLayout(_ ok: inout Bool) {
-        print("\n-- §7: Settings' two-column threshold is width-driven, not theme-driven --")
+    /// **This case used to assert §7's two-column card layout.** That layout
+    /// is gone: Settings is now a sidebar-navigated master/detail page, and
+    /// the detail pane stacks one category's cards in a single capped column.
+    ///
+    /// What the case is *for* has not changed, and it is the thing
+    /// `fm/grandline-settings-layout-theme-dependent-fix` established -
+    /// **selecting a theme changes colours and never structure.** The
+    /// structural property being asserted is simply the new one: the same
+    /// category shows the same cards, at the same width, whichever theme is
+    /// active, and the pane never falls back to a second column.
+    private static func checkSettingsDetailPaneIsThemeIndependent(_ ok: inout Bool) {
+        print("\n-- §7: Settings' detail pane is category-driven, not theme-driven --")
         let restore = ThemeManager.shared.theme
         defer { ThemeManager.shared.setTheme(restore) }
 
@@ -580,72 +590,69 @@ enum DaylightDrillPageSlice6SelfTest {
             ok = false
             return
         }
-        // Held so the one-column check below asserts "the same cards came
-        // back" rather than a second literal that has to be found and moved
-        // every time a card is added. The literal above is the one place the
-        // expected number is stated.
-        let builtCards = settings.debugCards.count
-        if !settings.debugIsTwoColumn {
-            print("  FAIL Settings stayed one column at 1500pt on Daylight")
-            ok = false
-        }
-        var columnXs = Set<CGFloat>()
-        for card in settings.debugCards {
-            guard let origin = card.superview?.convert(card.frame.origin, to: settings.view) else { continue }
-            columnXs.insert((origin.x * 10).rounded() / 10)
-        }
-        if columnXs.count != 2 {
-            print("  FAIL cards sit at \(columnXs.count) distinct x positions, want 2: \(columnXs.sorted())")
-            ok = false
-        }
-        for card in settings.debugCards where card.window == nil {
-            print("  FAIL a card was orphaned by the reparent into columns")
+        // Every card belongs to exactly one category, so the seven panes
+        // partition the ten cards. A card added without a category would be
+        // unreachable, which is the one thing this redesign must never do.
+        let mapped = SettingsController.Category.allCases.flatMap { settings.debugCards(in: $0) }
+        if mapped.count != settings.debugCards.count {
+            print("  FAIL \(mapped.count) of \(settings.debugCards.count) cards are reachable from a category")
             ok = false
         }
 
-        // Narrow enough and it falls back to one column, on the same theme.
-        window.setFrame(NSRect(x: 0, y: 0, width: 820, height: 900), display: true)
-        settings.view.frame = NSRect(x: 0, y: 0, width: 820, height: 900)
-        settings.view.layoutSubtreeIfNeeded()
-        if settings.debugIsTwoColumn {
-            print("  FAIL Settings kept two columns at 820pt, below its own minimum")
-            ok = false
-        }
-        if settings.debugCards.count != builtCards {
-            print("  FAIL a card was lost coming back to one column: "
-                  + "\(settings.debugCards.count) of \(builtCards)")
-            ok = false
+        // The fingerprint: for each category, which cards the pane holds and
+        // how wide it lays them out.
+        func fingerprint(_ page: SettingsController) -> [String] {
+            SettingsController.Category.allCases.map { category in
+                page.select(category)
+                page.view.layoutSubtreeIfNeeded()
+                let widths = page.debugMountedCards.map { ($0.frame.width * 10).rounded() / 10 }
+                let xs = Set(page.debugMountedCards.compactMap { card in
+                    card.superview.map { ((($0.convert(card.frame.origin, to: page.view)).x) * 10).rounded() / 10 }
+                })
+                return "\(category.rawValue):\(page.debugMountedCards.count) w=\(widths) x=\(xs.sorted())"
+            }
         }
 
-        // `fm/grandline-settings-layout-theme-dependent-fix`: the twelve
-        // legacy palettes now cross to two columns at the SAME width a
-        // Daylight theme does - the opposite of what this case asserted
-        // before that fix, which encoded the very bug being fixed
-        // ("the twelve must be untouched") as expected behaviour. A captain
-        // comparing "Daylight" against a legacy theme at the same window
-        // size must see identical structure, not a page that reflows.
+        let daylightPrint = fingerprint(settings)
+        // One column means one distinct leading edge per pane, always.
+        for category in SettingsController.Category.allCases {
+            settings.select(category)
+            settings.view.layoutSubtreeIfNeeded()
+            let xs = Set(settings.debugMountedCards.compactMap { card in
+                card.superview.map { ((($0.convert(card.frame.origin, to: settings.view)).x) * 10).rounded() / 10 }
+            })
+            if xs.count != 1 {
+                print("  FAIL \(category.rawValue) laid its cards at \(xs.count) distinct x positions, want 1: \(xs.sorted())")
+                ok = false
+            }
+            for card in settings.debugMountedCards where card.window == nil {
+                print("  FAIL \(category.rawValue) orphaned a card on selection")
+                ok = false
+            }
+        }
+
         ThemeManager.shared.setTheme(otherTheme)
         let legacy = makeSettings()
-        let legacyWindow = mount(legacy, width: 1800)
+        let legacyWindow = mount(legacy, width: 1500)
         defer { _ = legacyWindow }
         legacy.view.layoutSubtreeIfNeeded()
-        if !legacy.debugIsTwoColumn {
-            print("  FAIL \(otherTheme.id) stayed one column at 1800pt; the layout must be width-driven, not theme-driven")
+        let legacyPrint = fingerprint(legacy)
+
+        // Discriminating power first (AGENTS.md: a check that cannot fail is
+        // worse than no check) - the fingerprint has to distinguish
+        // *something*, or matching proves nothing.
+        if Set(daylightPrint).count < 2 {
+            print("  FAIL the fingerprint is vacuous - every category reads identically: \(daylightPrint)")
+            ok = false
+        }
+        if daylightPrint != legacyPrint {
+            print("  FAIL \(otherTheme.id) lays the panes out differently from Daylight at the same width")
+            print("       daylight: \(daylightPrint)")
+            print("       \(otherTheme.id): \(legacyPrint)")
             ok = false
         }
 
-        // And below the same threshold, the legacy theme falls back to one
-        // column too - the threshold applies, not just "two columns forever
-        // now regardless of width".
-        let legacyNarrow = makeSettings()
-        let legacyNarrowWindow = mount(legacyNarrow, width: 820)
-        defer { _ = legacyNarrowWindow }
-        legacyNarrow.view.layoutSubtreeIfNeeded()
-        if legacyNarrow.debugIsTwoColumn {
-            print("  FAIL \(otherTheme.id) kept two columns at 820pt, below its own minimum")
-            ok = false
-        }
-        if ok { print("  ok   two columns on Daylight at 1500 and on \(otherTheme.id) at 1800, one column at 820 on both") }
+        if ok { print("  ok   seven panes, one column each, identical on Daylight and \(otherTheme.id) at 1500pt") }
     }
 
     // MARK: 7. `HelmToggle` (§6.9)
@@ -866,10 +873,23 @@ enum DaylightDrillPageSlice6SelfTest {
             ok = false
             return
         }
+        // The detail pane holds exactly the selected category's cards, so
+        // the expected number is that category's own - not all ten. The
+        // regression this guards is unchanged: the page building every card
+        // and putting none of them on screen.
+        let want = settings.debugCards(in: settings.debugSelectedCategory).count
         let inTree = settings.debugCardsInTree
-        guard inTree == settings.debugCards.count else {
-            print("  FAIL Settings built \(settings.debugCards.count) cards but only \(inTree) "
-                  + "reached the screen - the rest are orphaned")
+        guard want > 0, inTree == want else {
+            print("  FAIL Settings' \(settings.debugSelectedCategory.rawValue) pane put \(inTree) "
+                  + "of its \(want) cards on screen - the rest are orphaned")
+            ok = false
+            return
+        }
+        // And the sidebar is what makes the other nine reachable, so a page
+        // that renders its first pane and no navigation is still broken.
+        guard settings.debugSidebar.selection == settings.debugSelectedCategory.rawValue else {
+            print("  FAIL the sidebar's selection is \(settings.debugSidebar.selection ?? "nil"), "
+                  + "not \(settings.debugSelectedCategory.rawValue)")
             ok = false
             return
         }
@@ -879,7 +899,7 @@ enum DaylightDrillPageSlice6SelfTest {
             ok = false
             return
         }
-        print("  ok   Settings: \(inTree)/\(settings.debugCards.count) cards reached the tree, "
+        print("  ok   Settings: \(inTree)/\(want) \(settings.debugSelectedCategory.rawValue) cards reached the tree, "
               + "\(texts.count) labels rendered")
     }
 }

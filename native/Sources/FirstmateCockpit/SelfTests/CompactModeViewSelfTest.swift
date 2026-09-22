@@ -542,6 +542,16 @@ enum CompactModeViewSelfTest {
             let window = OffScreenProbe.window(width: 1000, height: 800)
             window.contentViewController = settings
             settings.view.layoutSubtreeIfNeeded()
+            // `fm/grandline-settings-page-sidebar-redesign` made Settings a
+            // master/detail page, and compact mode's discoverable home is now
+            // the "Menu bar" category rather than a card somewhere down one
+            // long scroll. Driven through the sidebar's own row handler, so
+            // this also asserts the row exists and reaches the pane - a
+            // stronger claim than the tree walk alone made.
+            settings.debugSidebar.debugClickRow(id: SettingsController.Category.menuBar.rawValue)
+            settings.view.layoutSubtreeIfNeeded()
+            check(settings.debugSelectedCategory == .menuBar,
+                  "the \"Menu bar\" sidebar row reaches compact mode's own pane")
 
             let labels = allSubviews(of: settings.view).compactMap { $0 as? NSTextField }
                 .map { $0.stringValue }

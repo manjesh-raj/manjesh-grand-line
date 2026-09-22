@@ -147,3 +147,140 @@
 - **`.onAim` now has zero `ToolRowLayout` callers and was deliberately kept rather than deleted.** `abandonPendingClear`'s precedent (delete the un-guarded variant once its last caller goes) was considered and does not transfer: that was one wrong variant of one action, whereas this is half of a deliberately mirrored policy whose other half is live and tested. Deleting it would make the two row components answer the same question differently. The safeguard is the doc note on the enum plus a source guard, not removal.
 - **The reusable half is why no render and no `isHidden` check could see this.** `.onAim` hides with `alphaValue`, and `cacheDisplay` - this repo's screenshot substitute - draws an `alphaValue = 0` view **visibly** (the lesson `HostsListSection` already recorded), while `checkButton.isHidden` stayed `false` throughout, which is exactly why the captain's buttons still worked on hover. **Read the alpha.** `UpdatesController.debugRowActionStates` exists for that and reads it back off the real row rather than re-deriving it.
 - **`FM_RUN_UPDATES_ACTION_VISIBILITY_TESTS`** (window-backed, so it is in `run-all-tests.sh`'s `NEEDS_SESSION` list) asserts every row's actions at rest, an `.updateAvailable` row's Update button, that the button keeps its **own** hover feedback (the fix had to drop the gating without touching `HelmButton`'s feedback), and a source guard that this page does not opt back in. **It asserts its own discriminating power first**: the bug only bites a category longer than `alwaysRevealRowCount`, so a future catalog whose every category is short would let the policy return with every assertion still passing - that case fails loudly instead. All three injected regressions reproduced by name, including the vacuity guard.
+
+## Settings became a sidebar-navigated master/detail page
+
+`fm/grandline-settings-page-sidebar-redesign`, from a captain report with four
+screenshots of the page as it stood.
+
+**The shape that was replaced.** Settings was one continuously-scrolling column
+of ten `HelmCard`s, arranged into two columns above 940pt of content width.
+That is how it grew: every feature that needed a preference added a card to the
+bottom of `cardsInOrder`, and F20, F21, F22 and F23 each added one within about
+a week of each other. By the end the captain was scrolling past the fourteen
+theme swatches to reach Export/Import, and the two-column round robin meant
+Security sat beside Terminal Shortcuts for no reason either of them could
+explain.
+
+**The shape now** is the one macOS System Settings uses, and the one the F21
+mockup had already drawn for its own sub-page: a `HelmPageSidebar` on the left
+listing seven categories, and a detail pane on the right showing only the
+selected category's cards. The shell's drill header already carried the back
+arrow, the icon tile and the "Settings" title, so the only header change is
+that its subtitle now names the selected category.
+
+### The category mapping
+
+Seven categories over the same ten cards. Nothing was dropped, nothing was
+rewritten - a category is a grouping of the existing cards and nothing else,
+which is what keeps this a navigation change rather than a rebuild of every
+toggle and picker.
+
+| Category | Cards |
+|---|---|
+| Appearance | Appearance |
+| Terminal | Connection, Terminal, Terminal Shortcuts |
+| Briefings | Morning briefing, Daily review |
+| Menu bar | Compact mode |
+| Shortcuts & Siri | Shortcuts & Siri |
+| Security | Security |
+| Backup | Backup & Restore |
+
+The two groupings that merge cards are the two that were already written as
+siblings. Connection, Terminal and Terminal Shortcuts are all "how a terminal
+tab opens and behaves", and splitting the working directory away from the font
+size would make the captain visit two panes to set up one tab. Morning briefing
+and Daily review are two briefings over two sets of data, and each card's own
+construction comment already says it sits beside the other deliberately.
+
+### What was measured
+
+- **The nav column absorbed the page's slack, and the render showed it.**
+  `HelmPageSidebar`'s own width constraint sits at `contentTie` (499) so it can
+  never be a window-width floor (gotcha (13)), which means it also merely
+  *ties* with another 499 constraint rather than beating it. The detail column
+  is capped at 900pt, so a wide window has real slack in the row - and with the
+  scroll view's leading tied to `sidebar.trailingAnchor` (the shape
+  `SchedulesController` and `CredentialVaultController` both use, where the
+  content genuinely wants to be wide) Auto Layout resolved that slack by
+  widening the column. Measured at a 1400pt window: the nav rows rendered
+  **303pt wide against the component's own 208**. The fix is to pin the scroll
+  view to the page by a constant and cap the column with `trailing <=`, which
+  leaves the column's own width uncontested and lands the slack to the right of
+  the detail pane, where it belongs.
+- **Two columns went away rather than being kept per category.** With one
+  category on screen there are rarely enough cards for a second column to be
+  anything but a ragged gap, and a category with one card would render it at
+  half width beside nothing. The detail pane is one column with a required
+  `<= 900` cap - required is safe because it is a **maximum** (gotcha (17)'s
+  footnote to (13)); a `==` or `>=` at that width would be a window-size cap.
+- **The other six categories' cards are detached, not hidden.** Gotcha (15)
+  measured that a hidden view is still solved by the window's full-screen
+  minimum-size derivation, so `isHidden` would have kept all ten cards'
+  constraint chains live. Cards are still built once and reparented, never
+  rebuilt, so a toggle keeps its state and its wiring whichever pane it is in.
+- **Rendered off-screen in both themes, seven panes each**, through a temporary
+  `FM_DEBUG_SETTINGS_RENDER` probe reverted before commit (the "Verifying
+  native UI bugs" convention). That probe is what caught the 303pt column; the
+  self-tests all passed at that width.
+
+### The suites
+
+`FM_RUN_SETTINGS_SIDEBAR_TESTS` (`SettingsSidebarNavigationSelfTest`,
+window-backed) is the new one, and its subject is **silent loss of reach** -
+the failure mode where a setting still exists, still works, still syncs, and
+has no row that reveals it. Nothing about that is visible in a diff, a build,
+or a render of whichever pane happens to be selected. It asserts the category
+partition against the page's own card list, a real row press swapping the pane
+(through `HelmPageSidebar.debugClickRow(id:)`, the same `pick` the click
+gesture calls), that the selected row is painted differently from a resting one
+on both a Daylight and a legacy palette, that the header subtitle follows the
+selection *and is announced*, and that a representative control per category
+still writes through to `AppSettings` via `accessibilityPerformPress`.
+Confirmed by injection: a card built and left out of the category map fails
+`"a card (Backup & Restore) belongs to no category - it is built, wired, and
+unreachable"`; an unwired `onSelect` fails 28 cases; a dropped
+`onDrillSubtitleChanged?()` fails `"the page announced 0 subtitle changes"`.
+
+Three existing suites were rewritten rather than relaxed, because each was
+asserting the two-column arrangement as a *proxy* for something that is still
+true:
+
+- `SettingsThemeLayoutParitySelfTest` now sweeps the sidebar inside its
+  fingerprint, measuring each card while its own pane is selected, and
+  compares `paneSizes` where it used to compare `isTwoColumn`. Strictly more
+  coverage: it is now ten cards across seven panes on all fourteen themes,
+  where it was ten cards in one scroll.
+- `DaylightDrillPageSlice6SelfTest`'s §7 case became "the detail pane is
+  category-driven, not theme-driven", with its own vacuity guard (the
+  fingerprint must distinguish at least two panes).
+- `Audit3BugFixesSelfTest`'s B9 - "a card is as tall as its own content" -
+  sweeps every pane instead of one two-column render. B9's original mechanism
+  is gone with the arrangement; the property it is about is exactly what a
+  vertical `NSStackView` at the default `.gravityAreas` reintroduces.
+
+Three more failed the full run and were corrected the same way - each was
+walking Settings' whole view tree for a card, or measuring its document
+height, and only the selected category's cards are in that tree now. Each case
+now says which pane it is about and drives `HelmPageSidebar.debugClickRow(id:)`
+to get there, which also asserts the card is reachable through the navigation:
+
+- `CompactModeViewSelfTest` - compact mode's "discoverable home" is the
+  **Menu bar** category now, and the case asserts the row reaches it.
+- `IntentsBackupSettingsViewSelfTest` - its `withMountedSettings` helper takes
+  the category, and its window-cap case visits both new cards' panes rather
+  than trusting one render.
+- `WindowChromeFusionSelfTest`'s A3 needs a page taller than a 600pt window to
+  scroll at all. Settings still is, but *which pane* now decides it: the
+  default Appearance pane is a single card and does not reliably overflow, so
+  the case selects **Terminal** (three cards, nine shortcut rows among them).
+  `AppShellController.settingsForTests` exists for that.
+
+### Left out, deliberately
+
+The selected category is **not** persisted across launches; Settings opens on
+Appearance every time. macOS System Settings does remember, and it would be a
+reasonable follow-up - it is left out here because it is a new `AppSettings`
+key and a new restore path, which is a different change from the navigation
+one, and because opening on a known pane is the less surprising default while
+the shape is new.

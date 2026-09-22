@@ -437,6 +437,10 @@ NEEDS_SESSION=(
   "FM_RUN_RECENT_DESTINATIONS_TESTS"
   "FM_RUN_TOPNAV_PILL_PRESSED_STATE_TESTS"
   "FM_RUN_SETTINGS_THEME_LAYOUT_PARITY_TESTS"
+  # `fm/grandline-settings-page-sidebar-redesign`: mounts a real Settings page
+  # in a real window and drives its sidebar, reading rendered geometry and
+  # painted row fills back out of it.
+  "FM_RUN_SETTINGS_SIDEBAR_TESTS"
   "FM_RUN_UPDATES_REFRESH_BUTTON_THEME_TESTS"
   "FM_RUN_CONSOLE_CLAUDE_USAGE_TESTS"
   "FM_RUN_TAB_FORWARD_DRAGS_TOGGLE_TESTS"
