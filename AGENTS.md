@@ -1210,7 +1210,7 @@ noted.
 | `CredentialVaultRecoveryKitView` as the shape for any future **print** view | a themed view sent to a printer. It draws explicit black on white and does not observe `ThemeManager` - a themed page prints a near-black rectangle under Dusk - and the same view renders the PDF, so paper and file cannot drift |
 | a menu-bar surface's **existing** content controller, at an injected width with `showsOwnHeader: false` | a lookalike pane for the same thing. F22's compact popover hosts `PoneglyphMenuBarPopoverController` and `StrawHatMenuBarPopoverController` themselves as two of its four tabs, so the countdown rings, the copy flash and the crew's reply states have exactly one implementation. Both take `init(width:showsOwnHeader:)` defaulting to their standalone behaviour - a required fixed width inside a narrower popover is a constraint conflict, and gotcha (13)'s window-size cap |
 | `GrandLineServices.shared` | a second `ShiftStore()`/`NotebookStore()`/`CredentialVaultStore()` built by a non-UI entry point. `AppShellController` registers the live instances there; an App Intent, the Backup card or anything else with no view controller reads them from it, and gets `nil` (not a fresh store) before the shell is up. It is a **registry, not a factory** - the vault is its one exception, and that file's header says why |
-| `DaylightSpace.destination` | a space pill that navigates by naming its own case. A pill is a canvas *filter* by default and a page when that table says so; `filtersCanvas` is what a canvas-shaped loop (and a canvas-shaped test sweep) filters on, so adding a page-shaped tab is one property and no edit anywhere else |
+| `DaylightSpace.destination` | a space pill that navigates by naming its own case. A pill is a canvas *filter* by default and a page when that table says so; `filtersCanvas` is what a canvas-shaped loop (and a canvas-shaped test sweep) filters on, so adding a page-shaped tab is one property and no edit anywhere else. **A space's own page is top-level, not a drill page**: `AppShellController.show` asks `DaylightSpace.owning(destination:)` whether the bar keeps its wordmark and space pills, so such a page has no drill header and must not conform to `DaylightDrillActions`. Naming the canvas there instead shipped once, and hid the whole tab strip the moment the new tab's own pill was pressed |
 | `OffScreenProbe.window(...)` | `NSWindow(contentRect:)` in a suite - source-guarded |
 | `SelfTestAssertions` | a local `check`/`fail` pair in a suite - source-guarded |
 
@@ -1289,6 +1289,17 @@ noted.
   (`ShiftGitSync.sharedQueue`). Two queues against one tree race on
   `.git/index.lock`. A terminate-time flush dispatches **onto** that queue with
   a short bound and cancels the pending debounce inside the queue block.
+- **An OAuth refresh token is a secret, and it lives in the Keychain with the
+  metadata that describes it.** `GoogleAccount.swift` stores one generic
+  password per account slot (`ThisDeviceOnly`, never iCloud-synced) holding the
+  tokens *and* the email address and granted scopes - one item rather than two,
+  because the address a card displays is a claim about which token is stored,
+  and splitting them is how a card comes to name an account whose token was
+  already deleted. Nothing about it is written to a JSON store or git-synced.
+  There is no `FM_*` path to redirect, so `main.swift`'s `#if FM_SELFTESTS`
+  block swaps the **store itself** for `InMemoryGoogleAccountStore` - a suite
+  that reached the real one would create Keychain items holding fabricated
+  tokens on the captain's own machine.
 - **Secrets never reach disk or argv.** Private key material and vault
   passphrases live in the Keychain (`ThisDeviceOnly`, never iCloud-synced);
   credential material on a pasteboard goes through
@@ -1318,6 +1329,22 @@ noted.
   unbundled build must refuse to ask** - `.build/debug/FirstmateCockpit` has no
   `Info.plist`, and TCC kills a process that requests access without a usage
   description, so `canPrompt` checks for the key first.
+
+- **There are two calendar *sources* now, and the read-only guarantee is a
+  different mechanism in each.** The local one is the file above, guarded by a
+  source grep because EventKit hands out an object that *can* write. The remote
+  one is a connected Google account (`GoogleCalendarSource.swift`), where the
+  guarantee lives one layer lower: `calendar.readonly` is the only calendar
+  scope this app ever requests, so the token physically cannot write - assert
+  the **scope list**, not just the call sites. `DailyReviewCalendarSources` is
+  the one place that decides which sources are on, both hosts of the daily
+  review card read it, and `CompositeDailyReviewCalendar` merges them. Two
+  rules that fall out of a *remote* source and cost real thought:
+  `DailyReviewCalendarReading.events(on:)` is **synchronous and on the main
+  thread**, so a network source must serve a cached snapshot and refresh in the
+  background (GL-04/GL-12); and before that first refresh lands it must report
+  a **stated gap, never an empty day** (GL-14) - "not read yet" and "nothing
+  on" are different sentences. `docs/history/43-google-accounts.md`.
 
 - **One subprocess runner and one AI runner**: `Subprocess` (GL-02/03/04/15) and
   `ClaudeOneShot` (GL-26). Do not add a third invocation shape. Interactive and
@@ -1470,6 +1497,7 @@ can correct an earlier one - and several do.
 | [`40-menu-bar-mode.md`](docs/history/40-menu-bar-mode.md) | Menu-bar (compact) mode (F22): the merged status item, the four-tab popover that hosts the vault's and the crew's own popover controllers, and the window/Dock/last-window lifecycle |
 | [`41-app-intents-and-full-export.md`](docs/history/41-app-intents-and-full-export.md) | App Intents / Shortcuts (F21), the `.glbackup` bundle's five new sections (F24), and `GrandLineServices` |
 | [`42-widgets.md`](docs/history/42-widgets.md) | The WidgetKit extension (F23): the Tasks-due and Sticky-note widgets, the published snapshot, the queued-tap channel, and the Developer ID dependency |
+| [`43-google-accounts.md`](docs/history/43-google-accounts.md) | Gmail sign-in (two independent Google accounts), the OAuth/PKCE flow, and Google Calendar as a second read-only source for the daily review |
 
 ## Maintaining this file
 

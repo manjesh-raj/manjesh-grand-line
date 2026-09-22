@@ -70,6 +70,8 @@ enum DailyReviewViewSelfTest {
             checkDismissAndDisable(stores, check: check)
             checkPageEmptyStates(stores, check: check)
             checkFleetStillHostsIt(stores, check: check)
+            checkTheShellTreatsOverviewAsATopLevelPage(stores, check: check)
+            checkHeaderButtonsAreLabelled(stores, check: check)
         }
 
         return report(failures)
@@ -206,9 +208,8 @@ enum DailyReviewViewSelfTest {
             let widths = card.debugColumns.map { $0.superview?.frame.width ?? 0 }
             check(widths.allSatisfy { $0 > 10 },
                   "the columns should still be visible at 760pt, got \(widths)")
-            // The other axis, for the page host's viewport-height minimum: it
-            // is tied to the clip view at 499, so shrinking the window must
-            // shrink the card rather than the window refusing to shrink.
+            // The other axis: nothing on this page may become a height floor
+            // on the window either (gotcha (13)).
             window.setFrame(NSRect(x: frame.minX, y: frame.minY, width: 760, height: 520),
                             display: true)
             controller.view.layoutSubtreeIfNeeded()
@@ -347,21 +348,38 @@ enum DailyReviewViewSelfTest {
                   "with a review to show, the page shows the card and no empty state")
             check(card.frame.height > 150,
                   "and the card really is laid out on it, got \(card.frame.height)")
-            // The card IS the page: full width inside the page gutter, which
-            // is the difference between a destination and a card floating in
-            // an empty page. 1300pt window, 24pt gutter each side.
-            let expectedWidth = page.view.frame.width - HelmMetrics.pageGutter * 2
+            // The card IS the page: full width inside the gutter. The gutter
+            // is `DaylightBarController.sideMargin`, not `HelmMetrics.pageGutter`
+            // - the bar is a floating panel directly above this card, and 24
+            // against its 22 left the two edges 2pt out of line. The captain
+            // reported exactly that.
+            let expectedWidth = page.view.frame.width - DaylightBarController.sideMargin * 2
             check(abs(card.frame.width - expectedWidth) < 1,
-                  "the card should fill the page inside its gutter - expected \(expectedWidth), "
-                  + "got \(card.frame.width) on a \(page.view.frame.width)pt page")
-            // ...and its height, which is what makes it read as a page rather
-            // than as a card that lost its dashboard. A minimum, so a taller
-            // card is still free to scroll.
-            check(card.frame.height > page.view.frame.height - 100,
-                  "the card should fill the page's height too - got \(card.frame.height) "
-                  + "on a \(page.view.frame.height)pt page")
-            check(page.drillHeaderSubtitle?.isEmpty == false,
-                  "the drill header should carry the review's own headline")
+                  "the card should fill the page inside the bar's own margin - expected "
+                  + "\(expectedWidth), got \(card.frame.width) on a \(page.view.frame.width)pt page")
+            // ...and sizes to its **content** in the other axis.
+            //
+            // `fm/grandline-overview-layout-fix-gmail-settings` removed the
+            // viewport-height minimum this used to assert the opposite of.
+            // What that produced, in the captain's own screenshot: a 317pt
+            // card stretched to 592pt, its three column rules running down
+            // through ~275pt of empty background and its footer parked on the
+            // bottom edge of the window.
+            //
+            // The fixture's discriminating power first (a check that cannot
+            // fail is worse than no check): the page has to be genuinely
+            // taller than the card, or "the card did not stretch" asserts
+            // nothing at all.
+            check(page.view.frame.height - card.fittingSize.height > 200,
+                  "this fixture only discriminates while the page is much taller than the "
+                  + "card - page \(page.view.frame.height), card \(card.fittingSize.height)")
+            check(abs(card.frame.height - card.fittingSize.height) < 1,
+                  "the card should size to its content, not stretch to the viewport - fitting "
+                  + "\(card.fittingSize.height), got \(card.frame.height) on a "
+                  + "\(page.view.frame.height)pt page")
+            check(page.pageSummary == card.debugHeadline,
+                  "the page's own summary should be the headline the card is painting - "
+                  + "page says \"\(page.pageSummary ?? "")\", card says \"\(card.debugHeadline)\"")
 
             card.debugPressDismiss()
             page.debugRenderDailyReview()
@@ -377,6 +395,130 @@ enum DailyReviewViewSelfTest {
             AppSettings.shared.dailyReviewEnabled = true
         }
         AppSettings.shared.dailyReviewDismissedDay = nil
+    }
+
+    // MARK: 9 - the shell treats Overview as a top-level page
+
+    /// `fm/grandline-overview-layout-fix-gmail-settings`, and the half of
+    /// this fix no page-level check can see: the *shell's* chrome around the
+    /// page.
+    ///
+    /// The captain's screenshot showed the Overview tab rendering with a back
+    /// arrow, a page title and **no tab strip at all**, plus a "SESSIONS /
+    /// Prod Bastion" terminal strip above the review card. Both came from the
+    /// shell rather than from `DailyOverviewController`:
+    ///
+    /// - `AppShellController.show` asked `slot.id == .homeCanvas` to decide
+    ///   whether the bar keeps its wordmark and space pills. The Overview
+    ///   page is opened by a space pill but is not the canvas, so it fell
+    ///   through to the drill cluster, which *hides the pills* - a pill that
+    ///   hides the pill strip the moment you press it.
+    /// - the session strip was gated on "is there a live session" alone, so
+    ///   it drew on every destination including this one.
+    ///
+    /// Measured before the fix, in this exact shape: `drillNavIsHidden =
+    /// false`, `pillsAreHidden = true`.
+    ///
+    /// Mounts a real `AppShellController`, because the property under test is
+    /// what `show(_:)` does - a page-level mount cannot reach it.
+    private static func checkTheShellTreatsOverviewAsATopLevelPage(
+        _ stores: Stores, check: (Bool, String) -> Void) {
+        autoreleasepool {
+            let window = OffScreenProbe.window(width: 1300, height: 900,
+                                               styleMask: [.titled, .resizable])
+            let hostStore = HostStore()
+            let keyStore = SSHKeyStore()
+            let snippetStore = SnippetStore()
+            let dictationStore = DictationStore()
+            let shell = AppShellController(
+                hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore,
+                                            snippetStore: snippetStore),
+                console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore,
+                                           isFirstmateConsole: false),
+                settings: SettingsController(hostStore: hostStore, keyStore: keyStore,
+                                             snippetStore: snippetStore,
+                                             dictationStore: dictationStore),
+                hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore,
+                shiftStore: stores.shift, dictationStore: dictationStore,
+                commandLibraryStore: CommandLibraryStore(), scheduleStore: ScheduleStore(),
+                makeHostConsole: {
+                    ConsoleController(keyStore: keyStore, snippetStore: snippetStore,
+                                      isFirstmateConsole: false)
+                })
+            window.contentViewController = shell
+            window.orderFront(nil)
+            defer {
+                window.orderOut(nil)
+                window.contentViewController = nil
+            }
+
+            shell.show(.dailyOverview)
+            shell.view.layoutSubtreeIfNeeded()
+            check(shell.drillHeaderIsHiddenForTests,
+                  "Overview is a top-level page, so the bar should carry no drill cluster")
+            check(!shell.barPillsAreHiddenForTests,
+                  "and the space pills should still be there - hiding them is what removed "
+                  + "the whole tab strip the captain reported missing")
+            check(!shell.barWordmarkIsHiddenForTests,
+                  "and the wordmark comes back with them")
+
+            // The other direction, so this cannot pass by the bar simply
+            // never showing a drill cluster at all.
+            shell.show(.logAnalyzer)
+            shell.view.layoutSubtreeIfNeeded()
+            check(!shell.drillHeaderIsHiddenForTests,
+                  "a page reached by drilling in should still get the drill cluster")
+            check(shell.barPillsAreHiddenForTests,
+                  "and should still trade the pills for it")
+
+            // The session strip. Its fixture needs real discriminating power:
+            // with no live session it is hidden everywhere, so the check
+            // would pass on a build that never had the fix.
+            shell.sessions.register(hostID: UUID(), label: "Prod Bastion",
+                                    accentHex: nil, state: .connected)
+            shell.show(.console)
+            shell.view.layoutSubtreeIfNeeded()
+            check(!shell.sessionStripIsHiddenForTests,
+                  "the live session really is registered, and the strip really does draw "
+                  + "somewhere - without this the Overview check below is vacuous")
+            check(shell.sessionStripHeightForTests > 0,
+                  "and it reserves real height there, got \(shell.sessionStripHeightForTests)")
+
+            shell.show(.dailyOverview)
+            shell.view.layoutSubtreeIfNeeded()
+            check(shell.sessionStripIsHiddenForTests,
+                  "a terminal session strip does not belong over the daily review")
+            check(shell.sessionStripHeightForTests == 0,
+                  "and it should reserve no height there either, got "
+                  + "\(shell.sessionStripHeightForTests)")
+            check(shell.bodyTopInsetForTests == DaylightBarController.reservedTopHeight,
+                  "so the page starts immediately under the bar, got "
+                  + "\(shell.bodyTopInsetForTests)")
+        }
+    }
+
+    // MARK: 10 - the header's two buttons read as words
+
+    /// The captain reported "Settings"/"Dismiss" rendering as a gear and an
+    /// X. They were two `HelmPageToolbar.iconButton`s; they are labelled
+    /// `HelmButton`s now, on the one card both hosts share.
+    private static func checkHeaderButtonsAreLabelled(_ stores: Stores,
+                                                      check: (Bool, String) -> Void) {
+        seed(stores)
+        AppSettings.shared.dailyReviewEnabled = true
+        AppSettings.shared.dailyReviewDismissedDay = nil
+        withMountedPage(stores) { _, card, _ in
+            let titles = card.debugHeaderActions.map(\.title)
+            check(titles == ["Settings", "Dismiss"],
+                  "the header's actions should say what they do, got \(titles)")
+            for button in card.debugHeaderActions {
+                check(button.frame.width > 40,
+                      "and be laid out at a real labelled width, got \(button.frame.width) "
+                      + "for \"\(button.title)\"")
+                check(button.toolTip?.isEmpty == false,
+                      "keeping the tooltip the icon button carried, for \"\(button.title)\"")
+            }
+        }
     }
 
     // MARK: 8 - Fleet still hosts its own copy

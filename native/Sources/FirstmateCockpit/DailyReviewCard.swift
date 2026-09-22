@@ -106,12 +106,26 @@ final class DailyReviewCard: NSView {
     private var surface: NSColor { HelmTheme.nsColor(theme.chromeBackgroundHex) }
 
     override init(frame frameRect: NSRect) {
-        settingsButton = HelmPageToolbar.iconButton(symbol: "gearshape",
-                                                    tooltip: "Daily review settings",
-                                                    target: nil, action: nil)
-        dismissButton = HelmPageToolbar.iconButton(symbol: "xmark",
-                                                   tooltip: "Dismiss until tomorrow",
-                                                   target: nil, action: nil)
+        // `fm/grandline-overview-layout-fix-gmail-settings`: labelled
+        // buttons, not a gear and an X.
+        //
+        // The captain's approved mockup for this card has always said
+        // "Settings" and "Dismiss" in words; the build shipped two
+        // `HelmPageToolbar.iconButton`s instead, and he reported them as
+        // unreadable - which they are: a bare X on a card whose whole point
+        // is "here is your day" reads as closing the page, not as putting
+        // today's review away, and a gear on a card says nothing about
+        // *which* settings it opens. There is room for both words - this
+        // header's text column is the only thing allowed to flex
+        // (`HelmCard.setHeader`), so the two buttons keep their natural
+        // width and the headline truncates first.
+        //
+        // Both hosts of this card get this, which is the point of there
+        // being one card (see `DailyOverviewController`'s header).
+        settingsButton = HelmButton(title: "Settings", variant: .quiet)
+        settingsButton.toolTip = "Daily review settings"
+        dismissButton = HelmButton(title: "Dismiss", variant: .secondary)
+        dismissButton.toolTip = "Dismiss until tomorrow"
         super.init(frame: frameRect)
         translatesAutoresizingMaskIntoConstraints = false
         build()
@@ -741,6 +755,9 @@ final class DailyReviewCard: NSView {
     }
 
     func debugPressDismiss() { dismissClicked() }
+    /// The header's two action buttons, so a suite can assert they read as
+    /// words rather than as a gear and an X.
+    var debugHeaderActions: [HelmButton] { [settingsButton, dismissButton] }
     func debugPressStart() { startClicked() }
     func debugPressPlanDay() { planClicked() }
     func debugPressConnectCalendar() { connectCalendarClicked() }

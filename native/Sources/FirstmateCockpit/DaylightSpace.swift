@@ -155,6 +155,18 @@ enum DaylightSpace: String, CaseIterable {
     /// Whether picking this pill filters the home canvas (the original
     /// model) rather than navigating to a page of its own.
     var filtersCanvas: Bool { destination == nil }
+
+    /// The space whose own page this destination is, if any - the reverse of
+    /// `destination`, and the one place that lookup is spelled out.
+    ///
+    /// `AppShellController.show` reads it to decide whether the bar keeps its
+    /// space pills (a top-level page) or swaps them for the drill cluster (a
+    /// page the captain drilled into). Without it, a pill that opens a page
+    /// lit that pill and then hid the whole pill strip behind a back arrow -
+    /// which is what the captain reported against the new Overview tab.
+    static func owning(destination: RailDestination) -> DaylightSpace? {
+        allCases.first { $0.destination == destination }
+    }
 }
 
 /// Every module the canvas can render.

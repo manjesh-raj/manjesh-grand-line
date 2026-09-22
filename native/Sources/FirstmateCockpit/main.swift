@@ -2137,6 +2137,23 @@ if ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("FM_R
     // run. See `SelfTestDefaultsGuard`'s own header.
     SelfTestDefaultsGuard.arm()
 
+    // `fm/grandline-overview-layout-fix-gmail-settings`: the Google accounts.
+    //
+    // Not a file - a **Keychain** item - and it is exactly the shape this
+    // block exists for: `GoogleAccountStore.shared` is reachable from a bare
+    // production path (`SettingsController` builds its Gmail card on
+    // `loadView`, so every suite that mounts an `AppShellController` reaches
+    // it), and a suite that wrote there would create real Keychain items
+    // holding fabricated OAuth tokens on the captain's own machine, under the
+    // app's real service name. There is no `FM_*` path to redirect, so the
+    // store itself is swapped for the in-memory one.
+    //
+    // The client store is overridden to "no client configured", which is the
+    // shipped state anyway - a suite must never read the captain's real
+    // client id, and must certainly never be able to start a real sign-in.
+    GoogleAccountStore.shared = InMemoryGoogleAccountStore()
+    GoogleOAuthClientStore.shared.override = .some(nil)
+
     if (ProcessInfo.processInfo.environment["FM_FLEET_LOG_DIR"] ?? "").isEmpty {
         setenv("FM_FLEET_LOG_DIR", scratchRoot.appendingPathComponent("fleet-log", isDirectory: true).path, 1)
     }
@@ -2688,6 +2705,21 @@ if ProcessInfo.processInfo.environment["FM_RUN_VAULT_RECIPE_GIT_TESTS"] == "1" {
 // real, current content width across a series of resizes, and self-heals
 // if that tie is ever silently broken - see AppShellBodyWidthSelfTest.swift's
 // header.
+// `fm/grandline-overview-layout-fix-gmail-settings`: the Google sign-in flow -
+// PKCE, the authorization request, the redirect, the token exchange, the
+// record merge, the calendar read and the two-source merge. Pure logic with
+// both the browser and the network stubbed, so it guards the blocking CI
+// lane. See GoogleAccountsSelfTest.swift's header.
+// The Gmail settings category, rendered in a real window - two independent
+// slots, four states, both registers. See GmailSettingsViewSelfTest.swift.
+if ProcessInfo.processInfo.environment["FM_RUN_GMAIL_SETTINGS_VIEW_TESTS"] == "1" {
+    exit(GmailSettingsViewSelfTest.run() ? 0 : 1)
+}
+
+if ProcessInfo.processInfo.environment["FM_RUN_GOOGLE_ACCOUNTS_TESTS"] == "1" {
+    exit(GoogleAccountsSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_APP_SHELL_BODY_WIDTH_TESTS"] == "1" {
     exit(AppShellBodyWidthSelfTest.run() ? 0 : 1)
 }

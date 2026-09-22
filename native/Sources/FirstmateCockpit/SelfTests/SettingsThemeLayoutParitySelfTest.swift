@@ -409,8 +409,8 @@ enum SettingsThemeLayoutParitySelfTest {
         // a page - so the honest response to a card genuinely being added is
         // to move the literal and say which change moved it, not to relax it
         // into a `>=`.
-        guard daylightFP.cardCount == 10 else {
-            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 10")
+        guard daylightFP.cardCount == 11 else {
+            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 11")
             ok = false
             return
         }

@@ -1412,12 +1412,21 @@ enum DaylightModuleSelfTest {
                 if !shell.mountedDestinationSlotsForTests.contains(destination.slot) {
                     fail("selecting \(space.rawValue) did not mount \(destination)", &ok)
                 }
-                if shell.drillHeaderIsHiddenForTests {
-                    fail("\(space.rawValue) landed on the canvas - its pill is meant to open \(destination)", &ok)
+                // Which page is showing, read off the shell's own current
+                // destination rather than off the drill header's title.
+                //
+                // `fm/grandline-overview-layout-fix-gmail-settings`: a pill's
+                // own page is top-level, so it has no drill header to read -
+                // and the drill header's title was never the thing under test
+                // here anyway. `currentContextTitle` is what the window title
+                // and the Recents list already read.
+                if shell.currentContextTitle != destination.title {
+                    fail("\(space.rawValue)'s pill opened "
+                         + "'\(shell.currentContextTitle ?? "nothing")', expected '\(destination.title)'", &ok)
                 }
-                if shell.drillHeaderForTests.titleForTests != destination.title {
-                    fail("\(space.rawValue)'s pill opened a page titled "
-                         + "'\(shell.drillHeaderForTests.titleForTests)', expected '\(destination.title)'", &ok)
+                if let view = shell.destinationViewIfMountedForTests(destination.slot),
+                   view.isHiddenOrHasHiddenAncestor {
+                    fail("\(space.rawValue)'s pill mounted \(destination) but left it hidden", &ok)
                 }
                 if canvas.selectedSpace != .command {
                     fail("selecting \(space.rawValue) changed the canvas's own filter to "
@@ -1442,7 +1451,15 @@ enum DaylightModuleSelfTest {
                 fail("the canvas hides the space pills - they only collapse on a drill page", &ok)
             }
 
-            for dest in RailDestination.allCases where dest != .homeCanvas {
+            // `fm/grandline-overview-layout-fix-gmail-settings`: the canvas is
+            // no longer the only top-level page. A space pill that opens a
+            // page of its own (`DaylightSpace.destination` - the Overview tab
+            // is the first) is still the top of the navigation, so it keeps
+            // the wordmark and the pills exactly as the canvas does. The
+            // sweep below is about **drill** pages; a page opened by a pill
+            // is asserted the other way, immediately after it.
+            let topLevel = Set(DaylightSpace.allCases.compactMap(\.destination) + [.homeCanvas])
+            for dest in RailDestination.allCases where !topLevel.contains(dest) {
                 shell.show(dest)
                 if shell.drillHeaderIsHiddenForTests {
                     fail("\(dest) has no drill header - it would have no way back", &ok)
@@ -1482,6 +1499,26 @@ enum DaylightModuleSelfTest {
                     fail("the canvas lost its space over a \(dest) round trip: now \(canvas.selectedSpace.rawValue)", &ok)
                 }
             }
+
+            // The other half of that rule: a pill that opens a page must not
+            // hide the pill strip it was pressed on. Shipped that way once -
+            // the captain reported the new Overview tab rendering with a back
+            // arrow and no tabs at all.
+            for space in DaylightSpace.allCases {
+                guard let dest = space.destination else { continue }
+                shell.selectSpace(space)
+                if !shell.drillHeaderIsHiddenForTests {
+                    fail("\(dest) is a pill's own page - it should carry no drill cluster", &ok)
+                }
+                if shell.bar.pillsAreHiddenForTests {
+                    fail("\(dest) hid the space pills the captain pressed to get there", &ok)
+                }
+                if shell.bar.wordmarkIsHiddenForTests {
+                    fail("\(dest) hid the wordmark - it is a top-level page, not a drill", &ok)
+                }
+            }
+            shell.selectSpace(.stores)
+            shell.show(.homeCanvas)
 
             // The canvas rebuilds fifteen self-theming cards on every space
             // switch. Each card - and each card's gradient tile - registers a

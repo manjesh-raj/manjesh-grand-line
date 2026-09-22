@@ -55,7 +55,7 @@ enum SettingsSidebarNavigationSelfTest {
     /// `DaylightDrillPageSlice6SelfTest` keeps one: "every card is reachable"
     /// is vacuous if the page built none, and a card genuinely appearing
     /// should have to come here and say so.
-    private static let expectedCardCount = 10
+    private static let expectedCardCount = 11
 
     static func run() -> Bool {
         // A suite that changes the active theme MUST put it back - see
