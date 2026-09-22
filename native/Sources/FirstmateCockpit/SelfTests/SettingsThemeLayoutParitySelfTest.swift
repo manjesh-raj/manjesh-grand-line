@@ -85,8 +85,8 @@ enum SettingsThemeLayoutParitySelfTest {
         defer { ThemeManager.shared.setTheme(savedTheme) }
 
         var allOK = true
-        for check in [checkFingerprintMatchesAtTwoColumnWidth,
-                      checkFingerprintMatchesAtOneColumnWidth,
+        for check in [checkFingerprintMatchesAtWideWidth,
+                      checkFingerprintMatchesAtNarrowWidth,
                       checkFingerprintMatchesAcrossAllThemes] {
             var ok = true
             check(&ok)
@@ -148,7 +148,10 @@ enum SettingsThemeLayoutParitySelfTest {
     /// asserted differently - see `structurallyEqual`'s own comment.
     private struct LayoutFingerprint {
         let cardCount: Int
-        let isTwoColumn: Bool
+        /// How many cards each category's detail pane mounted, in
+        /// `Category.allCases` order. The sidebar redesign's structural
+        /// claim: the page's navigation shape is the same on every theme.
+        let paneSizes: [Int]
         /// Each card's resolved width, in `cardsInOrder` reading order.
         let cardWidths: [CGFloat]
         /// Each card's leading (X) edge, converted into the page's own
@@ -172,34 +175,45 @@ enum SettingsThemeLayoutParitySelfTest {
     }
 
     private static func fingerprint(for settings: SettingsController) -> LayoutFingerprint {
-        // Measured against the scroll view's **document**, not the page.
+        // **Measured one category at a time**, because that is what the page
+        // is now: a card is only laid out while its own pane is selected
+        // (`fm/grandline-settings-page-sidebar-redesign` detaches the other
+        // six categories rather than hiding them, per gotcha (15)). Sweeping
+        // the sidebar here is what keeps every card measured, and it is also
+        // the only way a suite can see that the panes themselves are
+        // theme-independent.
         //
-        // Scroll position is not layout, and this suite compares layout. The
-        // page pins its own offset in `viewWillAppear` -> `scrollToTop`; a
-        // harness that mounts a controller without an appearance cycle does
-        // not, so converting into the page's coordinate space folded whatever
-        // offset happened to be current into every Y. That is what CI kept
-        // reporting as a theme mismatch: mounts landing in one of two states
-        // 171pt apart, with the **reference** theme itself flipping between
-        // them on a re-measure - which no theme-dependent layout can do -
-        // while every width, X position and grid column count matched exactly,
-        // because only the offset moved. Trying to pin the offset instead was
-        // not enough: a document that grows after the pin (several cards fill
-        // themselves in asynchronously) leaves it stale again.
-        let reference: NSView = documentView(for: settings) ?? settings.view
-        let origins: [CGPoint] = settings.debugCards.map { card in
-            guard let origin = card.superview?.convert(card.frame.origin, to: reference) else {
-                return CGPoint(x: -1, y: -1)
+        // Geometry is read in each card's **own superview's** space - the
+        // detail pane's stack. Scroll position is not layout, and this suite
+        // compares layout: converting into the page's coordinate space folded
+        // whatever offset happened to be current into every Y, which is what
+        // CI kept reporting as a theme mismatch (mounts landing in one of two
+        // states 171pt apart, with the *reference* theme flipping between
+        // them on a re-measure - which no theme-dependent layout can do).
+        var widths: [CGFloat] = []
+        var xs: [CGFloat] = []
+        var ys: [CGFloat] = []
+        var paneSizes: [Int] = []
+        var gridColumns: [Int] = []
+        for category in SettingsController.Category.allCases {
+            settings.select(category)
+            settings.view.layoutSubtreeIfNeeded()
+            let mounted = settings.debugMountedCards
+            paneSizes.append(mounted.count)
+            for card in mounted {
+                widths.append(rounded(card.frame.width))
+                xs.append(rounded(card.frame.origin.x))
+                ys.append(rounded(card.frame.origin.y))
             }
-            return origin
+            if category == .appearance { gridColumns = settings.debugAppearanceGridColumnCounts }
         }
         return LayoutFingerprint(
             cardCount: settings.debugCards.count,
-            isTwoColumn: settings.debugIsTwoColumn,
-            cardWidths: settings.debugCards.map { rounded($0.frame.width) },
-            cardXPositions: origins.map { rounded($0.x) },
-            cardYPositions: origins.map { rounded($0.y) },
-            appearanceGridColumnCounts: settings.debugAppearanceGridColumnCounts
+            paneSizes: paneSizes,
+            cardWidths: widths,
+            cardXPositions: xs,
+            cardYPositions: ys,
+            appearanceGridColumnCounts: gridColumns
         )
     }
 
@@ -267,17 +281,8 @@ enum SettingsThemeLayoutParitySelfTest {
         return previous
     }
 
-    /// The scrolled document the cards actually live in, or `nil` if this
-    /// page ever stops being scroll-backed (in which case the fingerprint
-    /// falls back to the page itself, exactly as it used to).
-    private static func documentView(for settings: SettingsController) -> NSView? {
-        var view: NSView? = settings.debugCards.first
-        while let current = view, !(current is NSScrollView) { view = current.superview }
-        return (view as? NSScrollView)?.documentView
-    }
-
     private static func describe(_ fp: LayoutFingerprint) -> String {
-        "cards=\(fp.cardCount) twoColumn=\(fp.isTwoColumn) widths=\(fp.cardWidths) " +
+        "cards=\(fp.cardCount) panes=\(fp.paneSizes) widths=\(fp.cardWidths) " +
         "x=\(fp.cardXPositions) y=\(fp.cardYPositions) grid=\(fp.appearanceGridColumnCounts)"
     }
 
@@ -311,7 +316,7 @@ enum SettingsThemeLayoutParitySelfTest {
     /// an absolute origin it is stable.
     private static func structurallyEqual(_ a: LayoutFingerprint, _ b: LayoutFingerprint) -> Bool {
         guard a.cardCount == b.cardCount,
-              a.isTwoColumn == b.isTwoColumn,
+              a.paneSizes == b.paneSizes,
               a.appearanceGridColumnCounts == b.appearanceGridColumnCounts,
               a.cardYPositions.count == b.cardYPositions.count,
               columnIndices(a) == columnIndices(b),
@@ -328,7 +333,7 @@ enum SettingsThemeLayoutParitySelfTest {
     /// is chosen against the defect rather than against the noise. The bug
     /// this file exists for put a card at *half* the content width in one
     /// theme and the *full* width in the other, with the Appearance grid at a
-    /// different column count - a 2x difference, and one that `isTwoColumn`,
+    /// different column count - a 2x difference, and one that `paneSizes`,
     /// `columnIndices`, `widthShape` and the grid density each catch on their
     /// own, exactly, with no tolerance at all.
     ///
@@ -383,9 +388,9 @@ enum SettingsThemeLayoutParitySelfTest {
         }
     }
 
-    // MARK: 1. Above the two-column threshold
+    // MARK: 1. At a wide window
 
-    private static func checkFingerprintMatchesAtTwoColumnWidth(_ ok: inout Bool) {
+    private static func checkFingerprintMatchesAtWideWidth(_ ok: inout Bool) {
         print("\n-- a Daylight theme and a legacy theme produce an identical layout at 1500pt --")
         let (daylightFP, daylightWindow) = fingerprint(theme: daylightTheme, width: 1500)
         defer { _ = daylightWindow }
@@ -409,8 +414,11 @@ enum SettingsThemeLayoutParitySelfTest {
             ok = false
             return
         }
-        if !daylightFP.isTwoColumn {
-            print("  FAIL Daylight (\(daylightTheme.id)) did not reach two columns at 1500pt - the threshold itself may be broken")
+        // Vacuity: "both themes produced the same panes" means nothing if
+        // the panes were empty. Every category must have mounted at least
+        // one card, and the seven must account for all ten.
+        if daylightFP.paneSizes.contains(0) || daylightFP.paneSizes.reduce(0, +) != daylightFP.cardCount {
+            print("  FAIL the panes do not partition the page's cards: \(daylightFP.paneSizes) over \(daylightFP.cardCount)")
             ok = false
         }
         if !structurallyEqual(daylightFP, legacyFP) {
@@ -422,17 +430,19 @@ enum SettingsThemeLayoutParitySelfTest {
         if ok { print("  ok   \(daylightTheme.id) and \(legacyTheme.id) match: \(describe(daylightFP))") }
     }
 
-    // MARK: 2. Below the two-column threshold
+    // MARK: 2. At a narrow window
 
-    private static func checkFingerprintMatchesAtOneColumnWidth(_ ok: inout Bool) {
+    private static func checkFingerprintMatchesAtNarrowWidth(_ ok: inout Bool) {
         print("\n-- a Daylight theme and a legacy theme produce an identical layout at 820pt --")
         let (daylightFP, daylightWindow) = fingerprint(theme: daylightTheme, width: 820)
         defer { _ = daylightWindow }
         let (legacyFP, legacyWindow) = fingerprint(theme: legacyTheme, width: 820)
         defer { _ = legacyWindow }
 
-        if daylightFP.isTwoColumn || legacyFP.isTwoColumn {
-            print("  FAIL one of these fell into two columns at 820pt, below the threshold (Daylight=\(daylightFP.isTwoColumn), legacy=\(legacyFP.isTwoColumn))")
+        // The navigation shape does not change with the window's width
+        // either - narrowing the page must not merge or drop a category.
+        if daylightFP.paneSizes != legacyFP.paneSizes || daylightFP.paneSizes.contains(0) {
+            print("  FAIL the panes differ or are empty at 820pt (Daylight=\(daylightFP.paneSizes), legacy=\(legacyFP.paneSizes))")
             ok = false
         }
         if !structurallyEqual(daylightFP, legacyFP) {

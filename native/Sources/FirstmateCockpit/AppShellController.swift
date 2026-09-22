@@ -947,6 +947,10 @@ final class AppShellController: NSViewController {
         // prompt exactly like Bootstrap's provisioning actions - same
         // one-shot Console command-tab mechanism, just reached from Settings
         // instead.
+        // Settings' own sidebar moves the header's subtitle - it names the
+        // selected category, the way the reference mockup's "Settings /
+        // Shortcuts & Siri" does.
+        settings.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         settings.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
         settings.onRunCommandTracked = { [weak self] label, command, completion in
             self?.runInConsole(label: label, command: command, completion: completion)
