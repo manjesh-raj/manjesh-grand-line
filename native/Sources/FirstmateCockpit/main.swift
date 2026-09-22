@@ -3233,6 +3233,23 @@ if ProcessInfo.processInfo.environment["FM_RUN_COMPACT_MODE_VIEW_TESTS"] == "1" 
     exit(CompactModeViewSelfTest.run() ? 0 : 1)
 }
 
+// F24: the five new `.glbackup` sections - the file archive, the per-file
+// diff, the merge-not-overwrite apply and the sealed vault's round trip. Pure
+// logic; deliberately NOT in `NEEDS_SESSION`.
+if ProcessInfo.processInfo.environment["FM_RUN_BACKUP_STORES_TESTS"] == "1" {
+    exit(BackupStoreSectionsSelfTest.run() ? 0 : 1)
+}
+// F21: the five App Intent actions and, above all, Copy Credential's
+// auth-gating. Pure logic - the vault unlock and the biometric challenge are
+// both injected, so nothing here needs a fingerprint.
+if ProcessInfo.processInfo.environment["FM_RUN_APP_INTENT_ACTIONS_TESTS"] == "1" {
+    exit(AppIntentActionsSelfTest.run() ? 0 : 1)
+}
+// F21/F24's UI halves: the two new Settings cards, mounted in a real window.
+if ProcessInfo.processInfo.environment["FM_RUN_INTENTS_BACKUP_VIEW_TESTS"] == "1" {
+    exit(IntentsBackupSettingsViewSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_NOTEBOOK_TESTS"] == "1" {
     exit(NotebookSelfTest.run() ? 0 : 1)
 }

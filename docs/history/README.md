@@ -71,3 +71,5 @@ so `git log` is the tiebreaker.
 | [`37-scratchpad-calculator.md`](37-scratchpad-calculator.md) | Scratchpad calculator (F9): the Tools tab, its expression engine and unit/currency tables | 12KB |
 | [`38-snippet-expander.md`](38-snippet-expander.md) | Snippet expander (F12): the `;abbrev` trigger grammar and system-wide expansion | 13KB |
 | [`39-daily-review.md`](39-daily-review.md) | Daily review (F20): Overview's general-user briefing and its read-only calendar | 14KB |
+| [`40-menu-bar-mode.md`](40-menu-bar-mode.md) | Menu-bar (compact) mode (F22): the merged status item, its four-tab popover and the window/Dock lifecycle | 25KB |
+| [`41-app-intents-and-full-export.md`](41-app-intents-and-full-export.md) | App Intents / Shortcuts (F21) and the `.glbackup` bundle's five new sections (F24) | 20KB |

@@ -68,6 +68,12 @@ enum GitHubBackupSource {
         }
     }
 
+    /// The point past which this route is refused - see `export`. 20MB is
+    /// comfortably above a config-shaped bundle (hosts, snippets, tasks and a
+    /// modest notebook) and comfortably below where a single base64'd JSON PUT
+    /// starts failing in ways nobody can diagnose.
+    static let maxGitHubBundleBytes = 20 * 1024 * 1024
+
     /// Create-or-update: reads the existing file's `sha` first (if any) so
     /// the Contents API PUT updates in place instead of erroring on an
     /// already-existing path - the same "one fixed file, always overwritten"
@@ -87,6 +93,22 @@ enum GitHubBackupSource {
         }
 
         let data = try GrandLineBackupFile.encode(bundle)
+        // F24 made this path capable of carrying a whole Notebook, every task
+        // attachment and the sealed vault, where before it was hosts and
+        // snippets. The Contents API takes the file base64'd inside one JSON
+        // body, so a large bundle is a single enormous PUT - and GitHub's own
+        // failure for one is a timeout or an opaque 4xx, minutes later, which
+        // reads as "GitHub is broken" rather than "this bundle is too big for
+        // this route". Say so up front instead. The local-file export has no
+        // such limit and is the right destination for a full move; this route
+        // exists for the config the captain wants versioned.
+        guard data.count <= maxGitHubBundleBytes else {
+            let size = ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)
+            let cap = ByteCountFormatter.string(fromByteCount: Int64(maxGitHubBundleBytes), countStyle: .file)
+            throw GitHubBackupError.requestFailed(
+                "this backup is \(size), and GitHub's Contents API is not a sensible route for anything over \(cap). "
+                + "Export to a local file instead - that path has no size limit and carries exactly the same bundle.")
+        }
         let base64 = data.base64EncodedString()
 
         // One retry with a freshly re-fetched sha on a 409 - GitHub's Contents

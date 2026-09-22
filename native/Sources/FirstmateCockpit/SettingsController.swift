@@ -216,6 +216,14 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         let compact = card(icon: "menubar.rectangle", tint: .info, title: "Compact mode",
                            subtitle: "Live in the menu bar, with no main window",
                            content: buildCompactModeSection())
+        // F21. Its own card rather than rows inside Security: these are not
+        // toggles, they are five actions this app publishes to the rest of the
+        // system, and the one thing a captain needs from this card is to see
+        // what those five are before wiring one into a shortcut - especially
+        // the guarded one.
+        let intents = card(icon: "sparkle", tint: .info, title: "Shortcuts & Siri",
+                           subtitle: "Five actions Siri, Shortcuts, Spotlight and Raycast can run",
+                           content: buildIntentsSection())
         let security = card(icon: "lock.shield", tint: .violet, title: "Security", subtitle: "System-level convenience toggles", content: buildSecuritySection())
         // F1 / GL-11's Health card moved off this page entirely, onto its own
         // rail destination (`fm/grandline-health-sidebar-move`,
@@ -228,7 +236,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         // `rebuildCardLayout()` is the arrangement. Order is the reading order
         // in one column and the round-robin source in two.
         cardsInOrder = [connection, appearance, terminal, shortcuts, briefing, dailyReview,
-                        compact, security, backup]
+                        compact, intents, security, backup]
 
         let stack = cardsContainer
         stack.orientation = .vertical
@@ -1443,18 +1451,122 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         }
     }
 
-    // MARK: Backup & Restore
+    // MARK: Shortcuts & Siri (F21)
 
-    private let backupStatusLabel = NSTextField(wrappingLabelWithString: "")
-
-    /// Export/Import share one implementation (`BackupUI.swift`) with the
-    /// Bootstrap page's "Restore Grand Line config" step - this card is just
-    /// the two buttons plus a live counts line, never its own logic.
-    private func buildBackupSection() -> NSView {
-        let desc = NSTextField(wrappingLabelWithString: "Write everything this app knows locally - saved hosts, snippets, and the preferences above - to a single file, or bring one in from another machine. SSH private keys never leave the Keychain; a restored host referencing a key not on this machine needs that key re-added from the Keys screen.")
+    /// The five App Intents, listed from `GrandLineIntentCatalog` rather than
+    /// hardcoded here - so a sixth intent cannot be added without this card
+    /// gaining a row (and `AppIntentActionsSelfTest` fails the run if the
+    /// catalogue and the intent types in `GrandLineAppIntents.swift` disagree).
+    ///
+    /// The card says nothing about *enabling* anything, unlike the mockup's
+    /// five toggles. There is nothing to enable: an App Intent is published by
+    /// the app bundle's metadata, and a per-intent switch here would be a
+    /// control that either does nothing or - worse - reads as a security
+    /// boundary while the real ones (the app lock, the vault's own lock, the
+    /// per-credential Touch ID gate) sit elsewhere. Each row states what it
+    /// takes and, for Copy Credential, what it deliberately will not do.
+    private func buildIntentsSection() -> NSView {
+        let desc = NSTextField(wrappingLabelWithString: "These run without bringing the window forward. Find them in Shortcuts under \u{201C}Manjesh Grand Line\u{201D}, or say them to Siri.")
         desc.font = .systemFont(ofSize: 11)
         mutedLabel(desc)
         wrapping(desc)
+
+        var rows: [NSView] = []
+        for entry in GrandLineIntentCatalog.entries {
+            let trailing: NSView
+            if let note = entry.guardNote {
+                // Amber, and the one row on this card carrying a chip at all.
+                // "Guarded" is the mockup's own word for it, and it is the
+                // single thing about this list a captain has to read before
+                // wiring any of it into a shortcut.
+                trailing = pillView(text: note, colorHex: HelmTint.warn.hex(in: theme))
+            } else {
+                trailing = rowLabel("action")
+            }
+            rows.append(descRow(title: entry.title, desc: entry.parameters, trailing: trailing,
+                                alignsTrailingToEdge: true))
+        }
+
+        // GL-14, and the honest half of F21: the types are in the binary
+        // either way, but Shortcuts only finds them when the packaged app
+        // carries `Metadata.appintents` - which `build_native_app.sh` writes
+        // only on a machine with Xcode's `appintentsmetadataprocessor`. A card
+        // listing five actions while this copy publishes none would be exactly
+        // the "unknown rendered as available" defect, so it says which of the
+        // two this copy is.
+        let status = NSTextField(wrappingLabelWithString: SettingsController.intentRegistrationStatusText())
+        status.font = .systemFont(ofSize: 11)
+        mutedLabel(status)
+        wrapping(status)
+
+        let section = NSStackView(views: [desc] + rows + [status])
+        section.orientation = .vertical
+        section.alignment = .leading
+        section.spacing = 10
+        for row in rows {
+            row.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
+        }
+        return section
+    }
+
+    /// Whether *this* copy of the app publishes its intents to the system.
+    ///
+    /// A real check against the running bundle rather than a constant: the
+    /// same source builds an unbundled `swift build` binary (no bundle at all,
+    /// so nothing is registered) and a packaged `.app` that may or may not
+    /// have had the metadata step run.
+    static func intentRegistrationStatusText() -> String {
+        guard let resources = Bundle.main.resourceURL,
+              Bundle.main.bundleIdentifier != nil else {
+            return "This copy is running unbundled (swift build / swift run), so nothing is registered with Shortcuts. The packaged app is what publishes these."
+        }
+        let metadata = resources.appendingPathComponent("Metadata.appintents")
+        if FileManager.default.fileExists(atPath: metadata.path) {
+            return "Registered with the system \u{2014} these five appear in Shortcuts and Spotlight."
+        }
+        return "Not registered on this copy: the app bundle carries no Metadata.appintents. native/build_native_app.sh writes it only when Xcode's appintentsmetadataprocessor is present - rebuild the app on a Mac with Xcode installed to publish them."
+    }
+
+    // MARK: Backup & Restore
+
+    private let backupStatusLabel = NSTextField(wrappingLabelWithString: "")
+    /// F24's "what goes in the bundle" list. Rebuilt rather than re-themed,
+    /// like `securityStack`, because each row's trailing control differs by
+    /// what the measurement found.
+    private let backupContentsStack = LayoutReportingStack()
+
+    /// F24: one measurement per file-backed section, `nil` until the
+    /// off-main-thread walk lands. `nil` renders as "Measuring…", never as a
+    /// confident zero (GL-14) - an unmeasured store and an empty one are
+    /// different things and the row that conflates them is the one that makes
+    /// a captain skip the export.
+    private var backupMeasurements: [BackupStoreSection: (files: Int, bytes: Int, unreadable: Bool)] = [:]
+    /// Whether a vault file exists on this machine, and how big. `nil` until
+    /// measured, same contract as above.
+    private var backupVaultMeasurement: (exists: Bool, credentials: Int, bytes: Int)?
+    private var isMeasuringBackup = false
+
+    /// Export/Import share one implementation (`BackupUI.swift`) with the
+    /// Bootstrap page's "Restore Grand Line config" step - this card holds no
+    /// logic of its own, only the two buttons and an honest inventory of what
+    /// they would move.
+    ///
+    /// F24 turned that inventory from one counts line into a real per-store
+    /// list, for the reason the mockup's own note gives: a one-file move is
+    /// only trustworthy if you can see what it leaves behind. So the two
+    /// deliberate exclusions are rows on this list rather than an omission -
+    /// terminal scrollback and session state, which are machine-specific, and
+    /// SSH private key material, which never leaves the Keychain.
+    private func buildBackupSection() -> NSView {
+        let desc = NSTextField(wrappingLabelWithString: "Write everything this app knows locally to a single file, or bring one in from another machine. A restore is a merge with a preview, never a silent overwrite - nothing on this Mac is deleted by one.")
+        desc.font = .systemFont(ofSize: 11)
+        mutedLabel(desc)
+        wrapping(desc)
+
+        backupContentsStack.orientation = .vertical
+        backupContentsStack.alignment = .leading
+        backupContentsStack.spacing = 10
+        backupContentsStack.translatesAutoresizingMaskIntoConstraints = false
 
         backupStatusLabel.font = .systemFont(ofSize: 11)
         mutedLabel(backupStatusLabel)
@@ -1466,10 +1578,12 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         buttonRow.orientation = .horizontal
         buttonRow.spacing = 8
 
-        let section = NSStackView(views: [desc, backupStatusLabel, buttonRow])
+        let section = NSStackView(views: [desc, backupContentsStack, backupStatusLabel, buttonRow])
         section.orientation = .vertical
         section.alignment = .leading
-        section.spacing = 8
+        section.spacing = 10
+        backupContentsStack.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
+        rebuildBackupContents()
         return section
     }
 
@@ -1477,6 +1591,124 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         let hostCount = hostStore.hosts.count
         let snippetCount = snippetStore.snippets.count
         backupStatusLabel.stringValue = "Currently saved: \(hostCount) host\(hostCount == 1 ? "" : "s"), \(snippetCount) snippet\(snippetCount == 1 ? "" : "s")."
+        rebuildBackupContents()
+        measureBackupContents()
+    }
+
+    /// Walks the four store roots for a file count and a size, off the main
+    /// thread.
+    ///
+    /// Metadata only (`BackupFileArchiveBuilder.measure`), so this is a
+    /// stat-per-file rather than a read - but a notebook is up to 2000 files
+    /// and this runs on every visit to Settings, and "cheap enough" is exactly
+    /// the reasoning behind the main-thread `gh auth token` call that used to
+    /// beachball the Export button (T2, `BackupUI.resolveGitHubAvailability`).
+    /// Off-main from the start rather than after the same measurement.
+    private func measureBackupContents() {
+        guard !isMeasuringBackup, let roots = GrandLineServices.shared.backupRoots else { return }
+        isMeasuringBackup = true
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            var measured: [BackupStoreSection: (files: Int, bytes: Int, unreadable: Bool)] = [:]
+            for section in BackupStoreSection.allCases {
+                measured[section] = BackupFileArchiveBuilder.measure(root: roots.root(for: section))
+            }
+            // The vault is one file, and the count comes out of its plaintext
+            // envelope - nothing here unlocks or decrypts anything.
+            let vaultArchive = BackupVaultArchive.build(vaultFileURL: roots.vaultFile)
+            let vault = (exists: vaultArchive != nil,
+                         credentials: vaultArchive?.credentialCount ?? 0,
+                         bytes: vaultArchive?.sealedData?.count ?? 0)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isMeasuringBackup = false
+                self.backupMeasurements = measured
+                self.backupVaultMeasurement = vault
+                self.rebuildBackupContents()
+            }
+        }
+    }
+
+    private func rebuildBackupContents() {
+        for v in backupContentsStack.arrangedSubviews {
+            backupContentsStack.removeArrangedSubview(v)
+            v.removeFromSuperview()
+        }
+        hoverRows.removeAll { $0.superview == nil }
+
+        var rows: [NSView] = []
+        rows.append(backupRow(title: "Hosts, SSH keys, jump hosts",
+                              desc: "\(hostStore.hosts.count) host(s) and the metadata for the keys they reference. Private key material never leaves the Keychain.",
+                              trailing: pillView(text: "included", colorHex: theme.ansiHex[2])))
+        rows.append(backupRow(title: "Command snippets & dictation",
+                              desc: "\(snippetStore.snippets.count) snippet(s), the dictation vocabulary and shortcut, and the preferences above.",
+                              trailing: pillView(text: "included", colorHex: theme.ansiHex[2])))
+
+        for section in BackupStoreSection.allCases {
+            rows.append(backupRow(title: section.title,
+                                  desc: "\(section.detail). \(backupMeasurementText(for: section))",
+                                  trailing: pillView(text: "included", colorHex: theme.ansiHex[2])))
+        }
+
+        rows.append(backupRow(title: "Poneglyph vault",
+                              desc: backupVaultText(),
+                              // Amber, not green: "sealed" is a real caveat
+                              // (the master password does not travel with it),
+                              // and painting it the same as the rest would
+                              // tell the captain there is nothing to know.
+                              trailing: pillView(text: "sealed", colorHex: theme.ansiHex[3])))
+
+        rows.append(backupRow(title: "Terminal scrollback & session state",
+                              desc: "Deliberately left out. Scrollback is machine-specific, and what was on a terminal is not configuration - a restore should not reopen someone else's session.",
+                              // A muted label rather than a pill, deliberately.
+                              // Every pill on this page goes through
+                              // `HelmContrast.tintedSurface`, and AGENTS.md's
+                              // colour rules are explicit that washing a
+                              // no-identity/ink hue that way produces a
+                              // near-black chip - the heaviest thing on the
+                              // card would then be the one row that is *not*
+                              // in the bundle.
+                              trailing: rowLabel("excluded")))
+
+        for row in rows {
+            backupContentsStack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: backupContentsStack.widthAnchor).isActive = true
+        }
+        applyTheme()
+    }
+
+    /// `nil` measurement reads as "Measuring…"; an unreadable root says so
+    /// (GL-21 - "could not be enumerated" is not "empty"); everything else is
+    /// the real count.
+    private func backupMeasurementText(for section: BackupStoreSection) -> String {
+        guard GrandLineServices.shared.backupRoots != nil else { return "Not available until the app has finished starting up." }
+        guard let m = backupMeasurements[section] else { return "Measuring\u{2026}" }
+        if m.unreadable { return "\u{26A0} This folder could not be read, so its size is unknown." }
+        if m.files == 0 { return "Nothing here yet." }
+        return "\(m.files) file(s), \(SettingsController.byteText(m.bytes))."
+    }
+
+    private func backupVaultText() -> String {
+        guard GrandLineServices.shared.backupRoots != nil else { return "Not available until the app has finished starting up." }
+        guard let vault = backupVaultMeasurement else { return "Measuring\u{2026}" }
+        guard vault.exists else { return "No vault on this Mac yet." }
+        let count = vault.credentials < 0 ? "an unknown number of credentials" : "\(vault.credentials) credential(s)"
+        return "\(count), \(SettingsController.byteText(vault.bytes)). Carried still encrypted - never re-wrapped, never readable by the export. "
+            + "Restoring it needs the master password it had on the machine it came from; Touch ID does not travel."
+    }
+
+    static func byteText(_ bytes: Int) -> String {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: Int64(bytes))
+    }
+
+    /// The same `descRow` every other card uses, with the trailing pill pinned
+    /// to the row's own edge - these are seven rows of very different
+    /// description lengths, which is exactly the case AGENTS.md gotcha (10)
+    /// says `.gravityAreas` renders as seven pills at seven x positions.
+    private func backupRow(title: String, desc: String, trailing: NSView) -> NSView {
+        descRow(title: title, desc: desc, trailing: trailing, alignsTrailingToEdge: true)
     }
 
     @objc private func exportBackupClicked() {

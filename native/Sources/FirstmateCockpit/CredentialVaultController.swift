@@ -104,7 +104,13 @@ final class CredentialVaultController: NSViewController, DaylightDrillActions {
     /// the record is a value type and the store's copy is the truth.
 
     override init(nibName: String?, bundle: Bundle?) {
-        self.store = CredentialVaultStore()
+        // GL-23, and F21's reason for moving it: the vault store lives on
+        // `GrandLineServices` rather than here, so the Copy Credential App
+        // Intent reaches the *unlocked* store this page is showing rather than
+        // a second, permanently-locked instance of its own. This destination
+        // mounts lazily (GL-37), so the store also has to outlive any one
+        // mounting of it - which a property on this controller could not do.
+        self.store = GrandLineServices.shared.vault
         super.init(nibName: nibName, bundle: bundle)
     }
 

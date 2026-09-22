@@ -73,7 +73,9 @@ enum DaylightDrillPageSlice6SelfTest {
 
     /// How many cards Settings builds, stated **once** for this whole file.
     ///
-    /// Nine since F22 (`fm/grandline-feature-f22-menu-bar-mode`) gave compact
+    /// Ten since F21 (`fm/grandline-feature-f21-f24-intents-import-export`)
+    /// gave "Shortcuts & Siri" its own card, beside compact mode's; nine since
+    /// F22 (`fm/grandline-feature-f22-menu-bar-mode`) gave compact
     /// mode its own card, immediately before Security; eight since
     /// `fm/grandline-feature-f20-daily-review-briefing` gave F20's daily
     /// review its own, immediately after F12's morning briefing; seven before
@@ -87,7 +89,7 @@ enum DaylightDrillPageSlice6SelfTest {
     /// before, because F20 and F22 landed a day apart and each had to find and
     /// move all of them - the second of the two then hit a merge conflict in
     /// every copy.
-    private static let expectedCardCount = 9
+    private static let expectedCardCount = 10
 
 
     static func run() -> Bool {

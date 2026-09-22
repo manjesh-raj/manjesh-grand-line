@@ -392,7 +392,9 @@ enum SettingsThemeLayoutParitySelfTest {
         let (legacyFP, legacyWindow) = fingerprint(theme: legacyTheme, width: 1500)
         defer { _ = legacyWindow }
 
-        // Nine since F22 (`fm/grandline-feature-f22-menu-bar-mode`) added the
+        // Ten since F21 (`fm/grandline-feature-f21-f24-intents-import-export`)
+        // added the Shortcuts & Siri card; nine since F22
+        // (`fm/grandline-feature-f22-menu-bar-mode`) added the
         // Compact mode card; eight since
         // `fm/grandline-feature-f20-daily-review-briefing` added Daily
         // review, and seven before that, since
@@ -402,8 +404,8 @@ enum SettingsThemeLayoutParitySelfTest {
         // a page - so the honest response to a card genuinely being added is
         // to move the literal and say which change moved it, not to relax it
         // into a `>=`.
-        guard daylightFP.cardCount == 9 else {
-            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 9")
+        guard daylightFP.cardCount == 10 else {
+            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 10")
             ok = false
             return
         }

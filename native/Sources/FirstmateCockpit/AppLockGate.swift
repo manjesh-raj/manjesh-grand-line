@@ -220,6 +220,40 @@ enum AppLockedSurface {
     /// compact mode there is no window for the lock overlay to cover, so
     /// this gate is the whole of the lock.
     case compactModePopover
+
+    // MARK: F21 - App Intents
+
+    // Five cases rather than one `appIntent`, per this file's header rule and
+    // more pointedly than anywhere else it has been applied. These are the
+    // app's first entry points that need no window at all: Siri, Shortcuts,
+    // Spotlight or Raycast can fire one at an app that is locked, minimised,
+    // or was not even running a second ago. They are exactly the "runs while
+    // the main window is not frontmost and shows or writes the captain's
+    // data" shape GL-09 describes, and they differ enormously in what they
+    // would expose - so a single shared case would let Copy Credential lose
+    // its gate while a test asserting New Task is gated carried on passing.
+    //
+    // The writing ones are gated for the same reason as the reading ones: an
+    // intent that silently files tasks into a locked app is how a locked app
+    // stops meaning anything.
+
+    /// `GrandLineIntentActions.newTask`.
+    case appIntentNewTask
+    /// `GrandLineIntentActions.newNote`.
+    case appIntentNewNote
+    /// `GrandLineIntentActions.startFocusTimer`.
+    case appIntentStartTimer
+    /// `GrandLineIntentActions.copyCredential` - the strictest of the five.
+    /// The app lock is only the first of three gates it passes; the vault's
+    /// own lock and the credential's own per-item Touch ID gate are the other
+    /// two, and none of them substitutes for another.
+    case appIntentCopyCredential
+    /// `GrandLineIntentActions.askCrew`. Its own case rather than reusing
+    /// `.strawHatChat`, which the runner underneath *also* checks - two gates
+    /// on one path, and deliberately: the shared one would otherwise be the
+    /// only thing standing between a locked machine and a shortcut that ships
+    /// the captain's context to a subprocess.
+    case appIntentAskCrew
 }
 
 final class AppLockGate {
