@@ -38,7 +38,7 @@
 // be a worse promise than the honest one. It answers the question that
 // actually matters before inserting ("is that the shape I meant?") using the
 // app's own ink on the app's own field fill, with each component's hue as an
-// accent, which is also what keeps it legible in all fourteen themes rather
+// accent, which is also what keeps it legible in every theme rather
 // than only the light ones Excalidraw's own pastel palette is designed for.
 
 import AppKit

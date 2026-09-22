@@ -9,7 +9,7 @@
 //
 // **Note colors are a deliberate exception to this app's "everything is a
 // theme token" rule.** Every other surface in this app resolves its colors
-// through `HelmTheme`/`HelmTint` so it looks right in all 14 themes. A real
+// through `HelmTheme`/`HelmTint` so it looks right in every theme. A real
 // sticky note does not re-tint itself when the room's lighting changes - the
 // captain's own instruction was explicit that the six paper hues below stay
 // literal, fixed values. What DOES follow the active theme is the board's own
@@ -27,9 +27,9 @@
 //   - Board/toolbar/header chrome: full theme tokens (`HelmTheme`), like
 //     every other page in the app.
 //   - The cork surface and its wood frame: literal cork/wood hues, chosen
-//     per `theme.mode` - never per palette, so all seven light themes show
-//     the same cork and all seven dark ones show the same darker cork.
-//   - A note's own paper: one literal value, identical in all 14 themes.
+//     per `theme.mode` - never per palette, so every light theme shows
+//     the same cork and every dark one the same darker cork.
+//   - A note's own paper: one literal value, identical in every theme.
 //
 // Every (paper, ink) pair below clears WCAG AA's 4.5:1 text floor with real
 // margin (8.75-10.25:1, computed with the exact formula `HelmContrast.ratio`

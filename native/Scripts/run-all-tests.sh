@@ -177,6 +177,11 @@ SKIP_FLAGS=(
 # deliberately a per-entry marker with a stated reason rather than a blanket
 # allowlist, the same shape as `OffScreenProbe-exempt:` above.
 NEEDS_SESSION=(
+  # The six new theme families: a real Settings page mounted in a real window,
+  # painted with `cacheDisplay`, and sampled once per palette. Its pure half
+  # (`FM_RUN_THEME_FAMILY_TESTS` - the family pairing and the palette shape) is
+  # deliberately NOT here.
+  "FM_RUN_THEME_FAMILY_VIEW_TESTS"
   # Review #3's bug fixes: most are geometry, measured on real mounted pages in
   # a real window (a clipped Kanban column, a stretched Settings card, a
   # content-sized chip, the drill title's floor).

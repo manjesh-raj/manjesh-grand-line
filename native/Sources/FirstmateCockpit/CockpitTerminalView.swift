@@ -230,13 +230,13 @@ final class CockpitTerminalView: LocalProcessTerminalView {
     /// `selectedTextForegroundColor` are simply never consulted. What the
     /// captain sees highlighted in that state is the *child program's* own
     /// selection, painted from that program's own fixed palette with no idea
-    /// which of this app's 14 themes is active - herdr's documented default is
+    /// which of this app's themes is active - herdr's documented default is
     /// `selection_bg = "#313244"`, a dark navy, which is exactly the reported
     /// "dark navy block with dark, illegible text in light mode".
     ///
     /// That was measured rather than reasoned about, twice: with mouse
     /// reporting off the identical synthesized drag paints `selectionHex`
-    /// behind `selectionTextHex` in all 14 themes, and with it on the same drag
+    /// behind `selectionTextHex` in every theme, and with it on the same drag
     /// paints **nothing at all** (`fm/grand-line-shell-selection-investigate-fix`,
     /// whose report has the transcripts). No colour value in this app could
     /// have fixed that, because none of them were being read.

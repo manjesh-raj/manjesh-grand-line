@@ -2915,6 +2915,20 @@ if ProcessInfo.processInfo.environment["FM_RUN_ICONS_TYPOGRAPHY_TESTS"] == "1" {
 if ProcessInfo.processInfo.environment["FM_RUN_THEME_MOTION_WEB_ISLANDS_TESTS"] == "1" {
     exit(ThemeMotionWebIslandsSelfTest.run() ? 0 : 1)
 }
+// The six families the captain picked off the theme-suggestions board
+// (`fm/grandline-new-themes-nord-dracula-etc`). Two suites, split the way
+// AGENTS.md's "Writing a self-test" requires: the family pairing and the
+// palette shape assert nothing that needs a window and therefore guard CI's
+// blocking lane, while the real painted render of a real page under each new
+// palette is window-backed and lives in `NEEDS_SESSION`. Their *contrast* is
+// `HelmContrastSelfTest`'s, which sweeps `HelmTheme.allThemes` and needed no
+// edit at all.
+if ProcessInfo.processInfo.environment["FM_RUN_THEME_FAMILY_TESTS"] == "1" {
+    exit(ThemeFamilySelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_THEME_FAMILY_VIEW_TESTS"] == "1" {
+    exit(ThemeFamilyRenderSelfTest.run() ? 0 : 1)
+}
 if ProcessInfo.processInfo.environment["FM_RUN_CONFIRM_MIGRATION_TESTS"] == "1" {
     exit(ConfirmMigrationSelfTest.run() ? 0 : 1)
 }

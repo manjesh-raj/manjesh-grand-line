@@ -149,11 +149,25 @@ enum ThemeMotionWebIslandsSelfTest {
 
         // The other thirteen stay selectable - K1 moved a default, it did not
         // retire a palette.
-        if HelmTheme.allThemes.count != 14 {
-            print("  FAIL \(HelmTheme.allThemes.count) themes registered, want 14 - K1 must not remove a palette")
+        //
+        // Asserted as **the fourteen ids K1 shipped with, by name**, rather
+        // than as a count: a count guards the wrong direction. It fails on a
+        // palette being *added* (which is fine, and which
+        // `fm/grandline-new-themes-nord-dracula-etc` did twelve times) while
+        // still passing on one being swapped out for another, which is
+        // exactly the regression this check exists to catch.
+        let k1Palettes = ["daylight", "dusk", "helm-dark", "helm-light",
+                          "solarized-dark", "solarized-light",
+                          "catppuccin-mocha", "catppuccin-latte",
+                          "gruvbox-dark", "gruvbox-light",
+                          "tokyo-night-dark", "tokyo-night-light",
+                          "rose-pine-main", "rose-pine-dawn"]
+        let missing = k1Palettes.filter { HelmTheme.theme(id: $0) == nil }
+        if !missing.isEmpty {
+            print("  FAIL K1 palettes no longer registered: \(missing.joined(separator: ", "))")
             ok = false
         } else {
-            print("  OK   all 14 palettes still registered")
+            print("  OK   all 14 K1 palettes still registered (\(HelmTheme.allThemes.count) total)")
         }
 
         // The load-bearing half: `init` must only reach the fallback when
