@@ -39,6 +39,9 @@ final class AppSettings {
         static let quickAccess = "fm.quickAccess"
         static let hasSeenWelcome = "fm.hasSeenWelcome"
         static let snippetExpansionEnabled = "fm.snippetExpansionEnabled"
+        static let dailyReviewEnabled = "fm.dailyReviewEnabled"
+        static let dailyReviewCalendarEnabled = "fm.dailyReviewCalendarEnabled"
+        static let dailyReviewDismissedDay = "fm.dailyReviewDismissedDay"
     }
 
     /// GL-P3 (audit §6.10): the defaults store is injectable.
@@ -249,6 +252,50 @@ final class AppSettings {
             }
             guard let data = try? JSONEncoder().encode(newValue) else { return }
             defaults.set(data, forKey: Keys.morningBriefingRecord)
+        }
+    }
+
+    /// F20's "Daily review" card (Settings > Daily review). **On** by
+    /// default, and the difference from `morningBriefingEnabled` above is not
+    /// an oversight: F12 is off by default because it makes a `claude -p`
+    /// call, which costs network, the captain's own Claude authentication and
+    /// quota. F20 makes no call at all - it is an in-memory aggregation of
+    /// stores this app has already loaded for other pages - so there is
+    /// nothing to consent to before it runs. The one part of it that *does*
+    /// need consent, the calendar, has its own flag below and is off.
+    var dailyReviewEnabled: Bool {
+        get { defaults.object(forKey: Keys.dailyReviewEnabled) == nil ? true : defaults.bool(forKey: Keys.dailyReviewEnabled) }
+        set { defaults.set(newValue, forKey: Keys.dailyReviewEnabled) }
+    }
+
+    /// Whether the daily review may read today's calendar events. Off until
+    /// the captain presses the card's own "Show today's calendar", which is
+    /// the only thing in this app that asks EventKit for anything - see
+    /// `DailyReviewCalendar.swift`'s header. Turning it off does not revoke
+    /// the system grant (only System Settings can), it stops this app from
+    /// reading.
+    var dailyReviewCalendarEnabled: Bool {
+        get { defaults.bool(forKey: Keys.dailyReviewCalendarEnabled) }
+        set { defaults.set(newValue, forKey: Keys.dailyReviewCalendarEnabled) }
+    }
+
+    /// The day key (`MorningBriefing.dayKey`) the daily review was dismissed
+    /// on, so the card stays gone for the rest of that day and comes back
+    /// tomorrow.
+    ///
+    /// A day key rather than F12's `dismissed` flag inside a persisted record,
+    /// because this card has no record to carry one: its digest is recomputed
+    /// from the stores on every appearance (it is cheap, and a stale copy of
+    /// "what is due today" would be worse than none), so the dismissal is the
+    /// only thing there is to persist.
+    var dailyReviewDismissedDay: String? {
+        get { defaults.string(forKey: Keys.dailyReviewDismissedDay) }
+        set {
+            guard let newValue else {
+                defaults.removeObject(forKey: Keys.dailyReviewDismissedDay)
+                return
+            }
+            defaults.set(newValue, forKey: Keys.dailyReviewDismissedDay)
         }
     }
 

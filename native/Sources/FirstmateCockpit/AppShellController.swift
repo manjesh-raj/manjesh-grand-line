@@ -576,6 +576,13 @@ final class AppShellController: NSViewController {
             commandLibraryStore: commandLibraryStore,
             stickyBoardStore: stickyBoard.store))
         super.init(nibName: nil, bundle: nil)
+        // F20: Overview's daily review reads the sticky board and the reading
+        // list, both of which are built above - after `overview` itself, which
+        // is why this is an attach rather than two more `init` parameters.
+        // GL-23: the shared instances, the same ones the canvas and the two
+        // destinations use.
+        overview.attachDailyReviewSources(stickyBoardStore: stickyBoard.store,
+                                          readingListStore: readingListStore)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }

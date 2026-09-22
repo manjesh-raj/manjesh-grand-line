@@ -551,14 +551,16 @@ enum DaylightDrillPageSlice6SelfTest {
         defer { _ = window }
         settings.view.layoutSubtreeIfNeeded()
 
-        // Seven since `fm/grand-line-terminal-shortcuts-settings` gave the
-        // Console's configurable shortcuts their own card, immediately after
-        // Terminal. A literal rather than a derived count on purpose: this is
-        // the setup every column assertion below is measured against, and a
-        // card quietly appearing or vanishing should have to come here and say
-        // so.
-        guard settings.debugCards.count == 7 else {
-            print("  FAIL Settings has \(settings.debugCards.count) cards, want 7")
+        // Eight since `fm/grandline-feature-f20-daily-review-briefing` gave
+        // F20's daily review its own card, immediately after F12's morning
+        // briefing - seven before that, since
+        // `fm/grand-line-terminal-shortcuts-settings` gave the Console's
+        // configurable shortcuts theirs. A literal rather than a derived count
+        // on purpose: this is the setup every column assertion below is
+        // measured against, and a card quietly appearing or vanishing should
+        // have to come here and say so. This is that.
+        guard settings.debugCards.count == 8 else {
+            print("  FAIL Settings has \(settings.debugCards.count) cards, want 8")
             ok = false
             return
         }
@@ -588,7 +590,7 @@ enum DaylightDrillPageSlice6SelfTest {
             print("  FAIL Settings kept two columns at 820pt, below its own minimum")
             ok = false
         }
-        if settings.debugCards.count != 7 {
+        if settings.debugCards.count != 8 {
             print("  FAIL a card was lost coming back to one column")
             ok = false
         }
@@ -695,15 +697,17 @@ enum DaylightDrillPageSlice6SelfTest {
             ok = false
         }
 
-        // And Settings' three really are it, and really write through.
+        // And Settings' five really are it, and really write through. Three
+        // until `fm/grandline-feature-f20-daily-review-briefing` added F20's
+        // own pair (the card, and its calendar column).
         let restore = ThemeManager.shared.theme
         defer { ThemeManager.shared.setTheme(restore) }
         ThemeManager.shared.setTheme(daylight)
         let settings = makeSettings()
         let window = mount(settings)
         defer { _ = settings.view.window.map { _ in () }; _ = window }
-        if settings.debugToggles.count != 3 {
-            print("  FAIL Settings exposes \(settings.debugToggles.count) toggles, want 3")
+        if settings.debugToggles.count != 5 {
+            print("  FAIL Settings exposes \(settings.debugToggles.count) toggles, want 5")
             ok = false
         }
         let before = AppSettings.shared.autoReconnect
@@ -719,7 +723,7 @@ enum DaylightDrillPageSlice6SelfTest {
             print("  FAIL a bare NSSwitch is still visible on Daylight")
             ok = false
         }
-        if ok { print("  ok   the pill on Daylight and on \(otherTheme.id) (E5), 3 wired toggles") }
+        if ok { print("  ok   the pill on Daylight and on \(otherTheme.id) (E5), 5 wired toggles") }
     }
 
     // MARK: 8. Settings' pill is the shared one (§6.7)
@@ -825,14 +829,14 @@ enum DaylightDrillPageSlice6SelfTest {
         let window = mount(settings)
         defer { _ = window }
 
-        guard settings.debugCards.count == 7 else {
-            print("  FAIL Settings built \(settings.debugCards.count) cards, want 7")
+        guard settings.debugCards.count == 8 else {
+            print("  FAIL Settings built \(settings.debugCards.count) cards, want 8")
             ok = false
             return
         }
         let inTree = settings.debugCardsInTree
-        guard inTree == 7 else {
-            print("  FAIL Settings built 7 cards but only \(inTree) reached the screen - the rest are orphaned")
+        guard inTree == 8 else {
+            print("  FAIL Settings built 8 cards but only \(inTree) reached the screen - the rest are orphaned")
             ok = false
             return
         }
@@ -842,7 +846,7 @@ enum DaylightDrillPageSlice6SelfTest {
             ok = false
             return
         }
-        print("  ok   Settings: 7/7 cards reached the tree, \(texts.count) labels rendered")
+        print("  ok   Settings: 8/8 cards reached the tree, \(texts.count) labels rendered")
     }
 }
 

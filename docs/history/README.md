@@ -27,7 +27,7 @@ so `git log` is the tiebreaker.
 
 ## The files
 
-35 files.
+39 files.
 
 
 | File | Covers | Size |
@@ -69,3 +69,5 @@ so `git log` is the tiebreaker.
 | [`35-reading-list.md`](35-reading-list.md) | Reading list (F4): the link inbox, its metadata, tags and AI summary | 10KB |
 | [`36-focus-timer.md`](36-focus-timer.md) | Focus timer (F7): the task-bound Pomodoro, the bar chip and Weekly Review's "time on tasks" tile | 9KB |
 | [`37-scratchpad-calculator.md`](37-scratchpad-calculator.md) | Scratchpad calculator (F9): the Tools tab, its expression engine and unit/currency tables | 12KB |
+| [`38-snippet-expander.md`](38-snippet-expander.md) | Snippet expander (F12): the `;abbrev` trigger grammar and system-wide expansion | 13KB |
+| [`39-daily-review.md`](39-daily-review.md) | Daily review (F20): Overview's general-user briefing and its read-only calendar | 14KB |

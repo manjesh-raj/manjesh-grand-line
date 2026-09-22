@@ -118,6 +118,11 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     private let notifySwitch = HelmToggle()
     /// F12's opt-in. Off by default - see `AppSettings.morningBriefingEnabled`.
     private let morningBriefingSwitch = HelmToggle()
+    /// F20's card. **On** by default, unlike F12's - see
+    /// `AppSettings.dailyReviewEnabled` for why the two differ.
+    private let dailyReviewSwitch = HelmToggle()
+    /// F20's calendar column, which is the half that needs consent.
+    private let dailyReviewCalendarSwitch = HelmToggle()
 
     /// The six section cards in reading order - the input to
     /// `rebuildCardLayout()`, which decides whether they sit in one column or
@@ -190,6 +195,13 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         let briefing = card(icon: "sparkles", tint: .accent, title: "Morning briefing",
                             subtitle: "One generated summary of your fleet, PRs, tasks, drift and quota",
                             content: buildMorningBriefingSection())
+        // F20. Its own card beside F12's for the same reason that one has
+        // one: they are two different briefings over two different sets of
+        // data, and a captain turning one off usually wants the other left
+        // alone.
+        let dailyReview = card(icon: "sun.max", tint: .accent, title: "Daily review",
+                               subtitle: "Your own day on Fleet - tasks due, follow-ups, calendar, board and reading list",
+                               content: buildDailyReviewSection())
         let security = card(icon: "lock.shield", tint: .violet, title: "Security", subtitle: "System-level convenience toggles", content: buildSecuritySection())
         // F1 / GL-11's Health card moved off this page entirely, onto its own
         // rail destination (`fm/grandline-health-sidebar-move`,
@@ -201,7 +213,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         // than a fixed stack, so `cardsInOrder` is the content and
         // `rebuildCardLayout()` is the arrangement. Order is the reading order
         // in one column and the round-robin source in two.
-        cardsInOrder = [connection, appearance, terminal, shortcuts, briefing, security, backup]
+        cardsInOrder = [connection, appearance, terminal, shortcuts, briefing, dailyReview, security, backup]
 
         let stack = cardsContainer
         stack.orientation = .vertical
@@ -1148,6 +1160,51 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         AppSettings.shared.morningBriefingEnabled = morningBriefingSwitch.isOn
     }
 
+    // MARK: Daily review (F20)
+
+    private func buildDailyReviewSection() -> NSView {
+        dailyReviewSwitch.onToggle = { [weak self] in self?.dailyReviewToggled() }
+        let toggleRow = descRow(
+            title: "Show the daily review on Fleet",
+            desc: "A second card under the morning briefing: what is due today, the follow-ups waiting on you, today's calendar, your habits, the top notes on your sticky board and what is unread in your reading list.",
+            trailing: dailyReviewSwitch)
+
+        dailyReviewCalendarSwitch.onToggle = { [weak self] in self?.dailyReviewCalendarToggled() }
+        let calendarRow = descRow(
+            title: "Include today's calendar",
+            desc: "Reads today's events through EventKit and never writes to them. macOS asks for permission the first time; turning this off stops Grand Line reading your calendar.",
+            trailing: dailyReviewCalendarSwitch)
+
+        // The counterpart of the morning briefing card's network note, and
+        // the opposite claim: this one never leaves the machine.
+        let note = NSTextField(wrappingLabelWithString:
+            "Nothing here is sent anywhere. The card is assembled on this Mac from records the app has already loaded, with no AI call. A section it cannot read says so instead of showing a zero.")
+        note.font = .systemFont(ofSize: 11)
+        mutedLabel(note)
+        wrapping(note)
+
+        let section = NSStackView(views: [toggleRow, calendarRow, separator(), note])
+        section.orientation = .vertical
+        section.alignment = .leading
+        section.spacing = 12
+        toggleRow.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
+        calendarRow.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
+        note.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
+        return section
+    }
+
+    @objc private func dailyReviewToggled() {
+        AppSettings.shared.dailyReviewEnabled = dailyReviewSwitch.isOn
+    }
+
+    /// Turning the calendar on here does **not** prompt: the permission
+    /// request belongs to a real click on the card's own button, where the
+    /// captain can see what they are about to be asked for. This flag only
+    /// says the column may read once access exists.
+    @objc private func dailyReviewCalendarToggled() {
+        AppSettings.shared.dailyReviewCalendarEnabled = dailyReviewCalendarSwitch.isOn
+    }
+
     // MARK: Security
 
     private let securityStack = NSStackView()
@@ -1415,6 +1472,8 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         autoReconnectSwitch.isOn = AppSettings.shared.autoReconnect
         notifySwitch.isOn = AppSettings.shared.notifyOnNeedsDecision
         morningBriefingSwitch.isOn = AppSettings.shared.morningBriefingEnabled
+        dailyReviewSwitch.isOn = AppSettings.shared.dailyReviewEnabled
+        dailyReviewCalendarSwitch.isOn = AppSettings.shared.dailyReviewCalendarEnabled
 
         rebuildAppearanceGrid()
         refreshBackupStatus()
@@ -1442,7 +1501,8 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// Probe surface for `DaylightDrillPageSlice6SelfTest`.
     var debugCards: [HelmCard] { cardsInOrder }
     var debugIsTwoColumn: Bool { lastLayoutWasTwoColumn == true }
-    var debugToggles: [HelmToggle] { [autoReconnectSwitch, notifySwitch, morningBriefingSwitch] }
+    var debugToggles: [HelmToggle] { [autoReconnectSwitch, notifySwitch, morningBriefingSwitch,
+                                      dailyReviewSwitch, dailyReviewCalendarSwitch] }
     /// How many of the six real cards actually reached `cardsContainer`'s own
     /// view tree - robust to one-column vs. two-column arrangement, since a
     /// card sits either as a direct arranged subview of `cardsContainer`
@@ -1488,7 +1548,8 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         for label in subtitleViews {
             label.textColor = muted
         }
-        for toggle in [autoReconnectSwitch, notifySwitch, morningBriefingSwitch] {
+        for toggle in [autoReconnectSwitch, notifySwitch, morningBriefingSwitch,
+                       dailyReviewSwitch, dailyReviewCalendarSwitch] {
             toggle.applyTheme(theme)
         }
         for row in hoverRows {

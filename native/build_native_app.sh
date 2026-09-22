@@ -126,6 +126,15 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <string>Dictation uses your microphone to capture speech while you hold Right Option, so it can transcribe and paste it at your cursor.</string>
     <key>NSSpeechRecognitionUsageDescription</key>
     <string>Dictation uses Speech Recognition (on-device when available) to turn what you say into text.</string>
+    <!-- F20: the daily review reads today's events to show them on Fleet.
+         Read-only - `DailyReviewCalendar.swift` is the only file that imports
+         EventKit and it never saves, removes or commits anything. Both keys
+         are present because macOS 14 introduced the full-access spelling and
+         an older system still reads the original. -->
+    <key>NSCalendarsUsageDescription</key>
+    <string>Grand Line shows today’s events in your daily review on Fleet. It only reads them - it never adds, edits or deletes anything in your calendar.</string>
+    <key>NSCalendarsFullAccessUsageDescription</key>
+    <string>Grand Line shows today’s events in your daily review on Fleet. It only reads them - it never adds, edits or deletes anything in your calendar.</string>
 </dict>
 </plist>
 PLIST
