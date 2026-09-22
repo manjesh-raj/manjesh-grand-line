@@ -123,6 +123,11 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     private let dailyReviewSwitch = HelmToggle()
     /// F20's calendar column, which is the half that needs consent.
     private let dailyReviewCalendarSwitch = HelmToggle()
+    /// F22's three. Off by default - see `AppSettings.compactModeEnabled` and
+    /// its two neighbours for why each one is.
+    private let compactModeSwitch = HelmToggle()
+    private let compactDockSwitch = HelmToggle()
+    private let compactBadgeSwitch = HelmToggle()
 
     /// The six section cards in reading order - the input to
     /// `rebuildCardLayout()`, which decides whether they sit in one column or
@@ -202,6 +207,15 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         let dailyReview = card(icon: "sun.max", tint: .accent, title: "Daily review",
                                subtitle: "Your own day on Fleet - tasks due, follow-ups, calendar, board and reading list",
                                content: buildDailyReviewSection())
+        // F22. Its own card rather than three rows inside Appearance, on the
+        // same reasoning F12's briefing card records: this is not a look-and-
+        // feel preference, it is a switch that hides the main window and
+        // changes what the menu bar contains, and the card's subtitle is
+        // where that gets said. It sits immediately before Security because
+        // both are about how the app behaves when nobody is looking at it.
+        let compact = card(icon: "menubar.rectangle", tint: .info, title: "Compact mode",
+                           subtitle: "Live in the menu bar, with no main window",
+                           content: buildCompactModeSection())
         let security = card(icon: "lock.shield", tint: .violet, title: "Security", subtitle: "System-level convenience toggles", content: buildSecuritySection())
         // F1 / GL-11's Health card moved off this page entirely, onto its own
         // rail destination (`fm/grandline-health-sidebar-move`,
@@ -213,7 +227,8 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         // than a fixed stack, so `cardsInOrder` is the content and
         // `rebuildCardLayout()` is the arrangement. Order is the reading order
         // in one column and the round-robin source in two.
-        cardsInOrder = [connection, appearance, terminal, shortcuts, briefing, dailyReview, security, backup]
+        cardsInOrder = [connection, appearance, terminal, shortcuts, briefing, dailyReview,
+                        compact, security, backup]
 
         let stack = cardsContainer
         stack.orientation = .vertical
@@ -1205,6 +1220,68 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         AppSettings.shared.dailyReviewCalendarEnabled = dailyReviewCalendarSwitch.isOn
     }
 
+    // MARK: Compact mode (F22)
+
+    /// What the mode is wired to. `nil` in every self-test that mounts this
+    /// page without an app delegate, and in that case the toggles still
+    /// persist their settings - they simply have nothing to tell. Better than
+    /// reaching for `NSApp.delegate` here, which is nil in a headless suite
+    /// and would make this page crash rather than fail.
+    var onCompactModeSettingsChanged: (() -> Void)?
+
+    private func buildCompactModeSection() -> NSView {
+        compactModeSwitch.onToggle = { [weak self] in self?.compactModeToggled() }
+        compactDockSwitch.onToggle = { [weak self] in self?.compactModeToggled() }
+        compactBadgeSwitch.onToggle = { [weak self] in self?.compactModeToggled() }
+
+        let modeRow = descRow(
+            title: "Compact (menu bar) mode",
+            desc: "The main window stays closed. Tasks, notes, the vault and the crew are all "
+                + "reachable from the status item, which also takes a capture line - and \u{2303}\u{2325}G "
+                + "opens it from anywhere.",
+            trailing: compactModeSwitch)
+        let dockRow = descRow(
+            title: "Hide the Dock icon",
+            desc: "Runs the app as a menu-bar accessory (`LSUIElement`) while compact mode is on. "
+                + "Applied immediately, with no relaunch, and reversed the moment compact mode is "
+                + "switched off - so this can never leave you with no way back to the window.",
+            trailing: compactDockSwitch)
+        let badgeRow = descRow(
+            title: "Badge the status item with the overdue count",
+            desc: "Off by default \u{2014} a permanent red number is a bad neighbour in a menu bar. "
+                + "The count is one click away either way.",
+            trailing: compactBadgeSwitch)
+
+        let note = NSTextField(wrappingLabelWithString:
+            "Compact mode does not disable anything. The full window is one click or \u{2303}\u{2325}G away, "
+            + "and the app lock, the dictation hotkey, Schedules and every background poller keep "
+            + "running either way.")
+        note.font = .systemFont(ofSize: 11)
+        mutedLabel(note)
+        wrapping(note)
+
+        let section = NSStackView(views: [modeRow, dockRow, badgeRow, separator(), note])
+        section.orientation = .vertical
+        section.alignment = .leading
+        section.spacing = 12
+        for row in [modeRow, dockRow, badgeRow, note] as [NSView] {
+            row.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
+        }
+        return section
+    }
+
+    @objc private func compactModeToggled() {
+        AppSettings.shared.compactModeEnabled = compactModeSwitch.isOn
+        AppSettings.shared.compactModeHidesDockIcon = compactDockSwitch.isOn
+        AppSettings.shared.compactModeBadgesOverdueCount = compactBadgeSwitch.isOn
+        // One callback for all three rather than three: everything that
+        // follows from the settings is `CompactModeController.refresh()`,
+        // which re-reads all of them and is idempotent. Three separate
+        // notifications would invite three separate partial applications.
+        onCompactModeSettingsChanged?()
+    }
+
+
     // MARK: Security
 
     private let securityStack = NSStackView()
@@ -1474,6 +1551,9 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         morningBriefingSwitch.isOn = AppSettings.shared.morningBriefingEnabled
         dailyReviewSwitch.isOn = AppSettings.shared.dailyReviewEnabled
         dailyReviewCalendarSwitch.isOn = AppSettings.shared.dailyReviewCalendarEnabled
+        compactModeSwitch.isOn = AppSettings.shared.compactModeEnabled
+        compactDockSwitch.isOn = AppSettings.shared.compactModeHidesDockIcon
+        compactBadgeSwitch.isOn = AppSettings.shared.compactModeBadgesOverdueCount
 
         rebuildAppearanceGrid()
         refreshBackupStatus()
@@ -1501,8 +1581,18 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// Probe surface for `DaylightDrillPageSlice6SelfTest`.
     var debugCards: [HelmCard] { cardsInOrder }
     var debugIsTwoColumn: Bool { lastLayoutWasTwoColumn == true }
-    var debugToggles: [HelmToggle] { [autoReconnectSwitch, notifySwitch, morningBriefingSwitch,
-                                      dailyReviewSwitch, dailyReviewCalendarSwitch] }
+    /// Every toggle on the page, in card order: Terminal's two, F12's
+    /// briefing, F20's daily review and its calendar column, then F22's
+    /// three. `DaylightDrillPageSlice6SelfTest` asserts the count, so a
+    /// toggle added without coming here fails by name.
+    var debugToggles: [HelmToggle] {
+        [autoReconnectSwitch, notifySwitch, morningBriefingSwitch,
+         dailyReviewSwitch, dailyReviewCalendarSwitch,
+         compactModeSwitch, compactDockSwitch, compactBadgeSwitch]
+    }
+    var debugCompactModeSwitch: HelmToggle { compactModeSwitch }
+    var debugCompactDockSwitch: HelmToggle { compactDockSwitch }
+    var debugCompactBadgeSwitch: HelmToggle { compactBadgeSwitch }
     /// How many of the six real cards actually reached `cardsContainer`'s own
     /// view tree - robust to one-column vs. two-column arrangement, since a
     /// card sits either as a direct arranged subview of `cardsContainer`

@@ -405,6 +405,13 @@ NEEDS_SESSION=(
   # trigger grammar and the policy) is deliberately not here and runs in
   # CI's blocking lane.
   "FM_RUN_SNIPPET_EXPANDER_VIEW_TESTS"
+  # F22's compact (menu-bar) mode: mounts the real four-tab popover content in
+  # a real window, clicks its real segmented pills, and reads an overdue row's
+  # checkbox colour back out of a render. Its pure half
+  # (FM_RUN_COMPACT_MODE_TESTS - the policy, the hotkey chord, the tab table
+  # and the whole Today/Notes derivation) needs no window and deliberately
+  # guards the blocking lane instead.
+  "FM_RUN_COMPACT_MODE_VIEW_TESTS"
   "FM_RUN_SHIFT_TASKS_PAGE_TESTS"
   # ---------------------------------------------------------------------
   # The full-app audit's §7.1 finding: these eight all create real

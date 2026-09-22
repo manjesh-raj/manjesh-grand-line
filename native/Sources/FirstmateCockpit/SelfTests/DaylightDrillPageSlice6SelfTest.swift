@@ -71,6 +71,25 @@ import AppKit
 
 enum DaylightDrillPageSlice6SelfTest {
 
+    /// How many cards Settings builds, stated **once** for this whole file.
+    ///
+    /// Nine since F22 (`fm/grandline-feature-f22-menu-bar-mode`) gave compact
+    /// mode its own card, immediately before Security; eight since
+    /// `fm/grandline-feature-f20-daily-review-briefing` gave F20's daily
+    /// review its own, immediately after F12's morning briefing; seven before
+    /// that, since `fm/grand-line-terminal-shortcuts-settings` gave the
+    /// Console's configurable shortcuts theirs.
+    ///
+    /// A literal rather than a derived count on purpose: this is the setup
+    /// every column assertion in this file is measured against, and a card
+    /// quietly appearing or vanishing should have to come here and say so.
+    /// One named constant rather than the four scattered copies this had
+    /// before, because F20 and F22 landed a day apart and each had to find and
+    /// move all of them - the second of the two then hit a merge conflict in
+    /// every copy.
+    private static let expectedCardCount = 9
+
+
     static func run() -> Bool {
         var allOK = true
         for check in [checkDrillConformances, checkOldCaptionsAreGone,
@@ -551,19 +570,19 @@ enum DaylightDrillPageSlice6SelfTest {
         defer { _ = window }
         settings.view.layoutSubtreeIfNeeded()
 
-        // Eight since `fm/grandline-feature-f20-daily-review-briefing` gave
-        // F20's daily review its own card, immediately after F12's morning
-        // briefing - seven before that, since
-        // `fm/grand-line-terminal-shortcuts-settings` gave the Console's
-        // configurable shortcuts theirs. A literal rather than a derived count
-        // on purpose: this is the setup every column assertion below is
-        // measured against, and a card quietly appearing or vanishing should
-        // have to come here and say so. This is that.
-        guard settings.debugCards.count == 8 else {
-            print("  FAIL Settings has \(settings.debugCards.count) cards, want 8")
+        // See `expectedCardCount` for the number and why it is a literal.
+        // Every other card count in this file derives from this one.
+        guard settings.debugCards.count == expectedCardCount else {
+            print("  FAIL Settings has \(settings.debugCards.count) cards, "
+                  + "want \(expectedCardCount)")
             ok = false
             return
         }
+        // Held so the one-column check below asserts "the same cards came
+        // back" rather than a second literal that has to be found and moved
+        // every time a card is added. The literal above is the one place the
+        // expected number is stated.
+        let builtCards = settings.debugCards.count
         if !settings.debugIsTwoColumn {
             print("  FAIL Settings stayed one column at 1500pt on Daylight")
             ok = false
@@ -590,8 +609,9 @@ enum DaylightDrillPageSlice6SelfTest {
             print("  FAIL Settings kept two columns at 820pt, below its own minimum")
             ok = false
         }
-        if settings.debugCards.count != 8 {
-            print("  FAIL a card was lost coming back to one column")
+        if settings.debugCards.count != builtCards {
+            print("  FAIL a card was lost coming back to one column: "
+                  + "\(settings.debugCards.count) of \(builtCards)")
             ok = false
         }
 
@@ -697,17 +717,23 @@ enum DaylightDrillPageSlice6SelfTest {
             ok = false
         }
 
-        // And Settings' five really are it, and really write through. Three
-        // until `fm/grandline-feature-f20-daily-review-briefing` added F20's
-        // own pair (the card, and its calendar column).
+        // And Settings' toggles really are all of them, and really write
+        // through. Eight since F22 added compact mode's three; five since F20
+        // added its own pair (the card, and its calendar column); three
+        // before that (auto-reconnect, notifications, the morning briefing).
+        // The count is asserted rather than ignored for the same reason the
+        // card count above is: a toggle that appears without coming here is a
+        // toggle nothing has checked renders as a Daylight pill rather than a
+        // bare `NSSwitch`, which is exactly what the last check in this case
+        // is about.
         let restore = ThemeManager.shared.theme
         defer { ThemeManager.shared.setTheme(restore) }
         ThemeManager.shared.setTheme(daylight)
         let settings = makeSettings()
         let window = mount(settings)
         defer { _ = settings.view.window.map { _ in () }; _ = window }
-        if settings.debugToggles.count != 5 {
-            print("  FAIL Settings exposes \(settings.debugToggles.count) toggles, want 5")
+        if settings.debugToggles.count != 8 {
+            print("  FAIL Settings exposes \(settings.debugToggles.count) toggles, want 8")
             ok = false
         }
         let before = AppSettings.shared.autoReconnect
@@ -723,7 +749,10 @@ enum DaylightDrillPageSlice6SelfTest {
             print("  FAIL a bare NSSwitch is still visible on Daylight")
             ok = false
         }
-        if ok { print("  ok   the pill on Daylight and on \(otherTheme.id) (E5), 5 wired toggles") }
+        if ok {
+            print("  ok   the pill on Daylight and on \(otherTheme.id) (E5), "
+                  + "\(settings.debugToggles.count) wired toggles")
+        }
     }
 
     // MARK: 8. Settings' pill is the shared one (§6.7)
@@ -829,14 +858,16 @@ enum DaylightDrillPageSlice6SelfTest {
         let window = mount(settings)
         defer { _ = window }
 
-        guard settings.debugCards.count == 8 else {
-            print("  FAIL Settings built \(settings.debugCards.count) cards, want 8")
+        guard settings.debugCards.count == expectedCardCount else {
+            print("  FAIL Settings built \(settings.debugCards.count) cards, "
+                  + "want \(expectedCardCount)")
             ok = false
             return
         }
         let inTree = settings.debugCardsInTree
-        guard inTree == 8 else {
-            print("  FAIL Settings built 8 cards but only \(inTree) reached the screen - the rest are orphaned")
+        guard inTree == settings.debugCards.count else {
+            print("  FAIL Settings built \(settings.debugCards.count) cards but only \(inTree) "
+                  + "reached the screen - the rest are orphaned")
             ok = false
             return
         }
@@ -846,7 +877,8 @@ enum DaylightDrillPageSlice6SelfTest {
             ok = false
             return
         }
-        print("  ok   Settings: 8/8 cards reached the tree, \(texts.count) labels rendered")
+        print("  ok   Settings: \(inTree)/\(settings.debugCards.count) cards reached the tree, "
+              + "\(texts.count) labels rendered")
     }
 }
 

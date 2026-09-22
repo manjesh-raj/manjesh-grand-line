@@ -104,6 +104,22 @@ final class StrawHatMenuBarController: NSObject, NSPopoverDelegate {
         }
     }
 
+    /// F22: compact mode merges the crew's quick-ask into one status item
+    /// whose popover carries it as a tab, so the mode hides this one rather
+    /// than leaving two doors to the same surface - see
+    /// `CompactModePolicy.showsPerFeatureStatusItems`, which is the only
+    /// thing that decides this and is asserted in CI's blocking lane.
+    ///
+    /// Hidden, never torn down: `NSStatusItem.isVisible` is exactly this
+    /// API, the item keeps its store observation and its lock observer while
+    /// hidden, and turning compact mode off puts it back with its count
+    /// already current. An open popover is closed on the way out, because a
+    /// popover whose anchor just left the menu bar has nothing to sit under.
+    func setStatusItemVisible(_ visible: Bool) {
+        statusItem.isVisible = visible
+        if !visible { popover.performClose(nil) }
+    }
+
     @objc private func iconClicked() {
         guard let button = statusItem.button else { return }
         if popover.isShown {
@@ -208,6 +224,34 @@ final class StrawHatMenuBarPopoverController: NSViewController {
 
     static let width: CGFloat = 320
 
+    /// The width this content lays itself out at, and whether it draws its
+    /// own "Straw Hat Pirates" header row.
+    ///
+    /// **Both exist for F22.** Compact mode's popover
+    /// (`CompactModePopoverController`) hosts this exact controller as its
+    /// Crew tab rather than reimplementing the crew's quick-ask - the
+    /// reviewed mockup's whole judgment call is that the four tabs *are* the
+    /// existing popovers merged. Two things had to become parameters for that
+    /// to be reuse rather than a copy: the root's own required width
+    /// constraint (a required `320` inside a 330pt popover is a conflict, and
+    /// per AGENTS.md gotcha (13) a required content width above priority 500
+    /// is a window-size cap waiting to happen), and the header, which would
+    /// otherwise be the second title in a popover that already says
+    /// "Grand Line".
+    ///
+    /// The standalone status item passes neither, so its popover is
+    /// byte-identical to what it has always been.
+    private let contentWidth: CGFloat
+    private let showsOwnHeader: Bool
+
+    init(width: CGFloat = StrawHatMenuBarPopoverController.width, showsOwnHeader: Bool = true) {
+        self.contentWidth = width
+        self.showsOwnHeader = showsOwnHeader
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
     private let iconTile = IconTileView(size: 26, cornerRadius: 7)
     private let titleLabel = NSTextField(labelWithString: "Straw Hat Pirates")
 
@@ -252,7 +296,7 @@ final class StrawHatMenuBarPopoverController: NSViewController {
     var onSizeChanged: ((NSSize) -> Void)?
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: 220))
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: contentWidth, height: 220))
         root.wantsLayer = true
         view = root
 
@@ -265,6 +309,10 @@ final class StrawHatMenuBarPopoverController: NSViewController {
         headerRow.alignment = .centerY
         headerRow.spacing = 10
         headerRow.translatesAutoresizingMaskIntoConstraints = false
+        // A hidden *arranged subview of an `NSStackView`* drops out of layout
+        // entirely - the one exception AGENTS.md gotcha (11) names, and the
+        // same mechanism the four state views below already rely on.
+        headerRow.isHidden = !showsOwnHeader
 
         buildStateViews()
 
@@ -299,7 +347,7 @@ final class StrawHatMenuBarPopoverController: NSViewController {
         root.addSubview(outer)
 
         NSLayoutConstraint.activate([
-            root.widthAnchor.constraint(equalToConstant: Self.width),
+            root.widthAnchor.constraint(equalToConstant: contentWidth),
             outer.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 14),
             outer.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -14),
             outer.topAnchor.constraint(equalTo: root.topAnchor, constant: 14),

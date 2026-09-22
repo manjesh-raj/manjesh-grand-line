@@ -392,14 +392,18 @@ enum SettingsThemeLayoutParitySelfTest {
         let (legacyFP, legacyWindow) = fingerprint(theme: legacyTheme, width: 1500)
         defer { _ = legacyWindow }
 
-        // Eight since `fm/grandline-feature-f20-daily-review-briefing` added
-        // the Daily review card; seven before it, since
+        // Nine since F22 (`fm/grandline-feature-f22-menu-bar-mode`) added the
+        // Compact mode card; eight since
+        // `fm/grandline-feature-f20-daily-review-briefing` added Daily
+        // review, and seven before that, since
         // `fm/grand-line-terminal-shortcuts-settings` added Terminal
         // Shortcuts. Kept as a literal for this check's own vacuity: "both
         // themes produced the same layout" means nothing if neither produced
-        // a page.
-        guard daylightFP.cardCount == 8 else {
-            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 8")
+        // a page - so the honest response to a card genuinely being added is
+        // to move the literal and say which change moved it, not to relax it
+        // into a `>=`.
+        guard daylightFP.cardCount == 9 else {
+            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 9")
             ok = false
             return
         }

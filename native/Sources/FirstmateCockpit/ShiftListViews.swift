@@ -672,6 +672,17 @@ enum ShiftDateFormatting {
         return f
     }()
 
+    /// "16 Sep" - the month-day part alone, with no relative "Today"/
+    /// "Tomorrow" substitution.
+    ///
+    /// Exposed for F22's compact popover (`CompactModeDigest`), which decides
+    /// relative wording against an *injected* clock and so cannot use
+    /// `friendly(_:)`: that one resolves "Today" against `Calendar.current`
+    /// and the real `Date()`, which a suite pinning a fabricated instant
+    /// would read as a second, disagreeing clock. Sharing this formatter
+    /// rather than building a fourth one is GL-P3's own rule for this file.
+    static func monthDay(_ date: Date) -> String { monthDayFormatter.string(from: date) }
+
     /// "Today at 3:00 PM" / "Aug 12" (no time shown when `hhmm` is nil).
     static func friendly(_ yyyyMMdd: String, time hhmmStr: String?) -> String {
         let dayPart = friendly(yyyyMMdd)
