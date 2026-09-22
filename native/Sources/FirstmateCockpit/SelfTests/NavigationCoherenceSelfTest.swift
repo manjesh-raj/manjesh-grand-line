@@ -19,7 +19,8 @@
 //     menus owned is still bound somewhere in the tree.
 //   * **§7** - the naming and window-title halves of review #3's "other
 //     issues". "Home" names the canvas, "Fleet" names the fleet dashboard,
-//     and nothing user-facing says "Overview" any more; and
+//     "Overview" names exactly one thing (the daily review page, which
+//     `fm/grandline-overview-page-daily-review` added); and
 //     `AppDelegate.windowTitle(context:)` puts the current page in the window
 //     title, which is what Mission Control and the Window menu read. The
 //     *live* half - navigating actually renames the window - lives in
@@ -49,7 +50,7 @@ enum NavigationCoherenceSelfTest {
         ok = checkShortcutCatalog() && ok
         ok = checkFirstRunOnboarding() && ok
         ok = checkDestinationNamingIsCanonical() && ok
-        ok = checkNoSurfaceStillSaysOverview() && ok
+        ok = checkOverviewNamesExactlyOneThing() && ok
         ok = checkWindowTitleComposition() && ok
         return ok
     }
@@ -81,10 +82,13 @@ enum NavigationCoherenceSelfTest {
         check(canvas == "Home", "the canvas is called Home, got \(canvas)", &ok)
         check(fleet == "Fleet", "the fleet dashboard is called Fleet, got \(fleet)", &ok)
 
-        // The canvas's own default space pill, and the Recents kicker that
-        // falls back to it, both say what the canvas is called.
+        // The canvas's own space pill, and the Recents kicker that falls back
+        // to it, both say what the canvas is called. (It is the *second* pill
+        // since `fm/grandline-overview-page-daily-review`; which slot it sits
+        // in is `DaylightModuleSelfTest.checkSpaceTable`'s literal title list,
+        // not this suite's business - what matters here is the name.)
         check(DaylightSpace.overview.title == canvas,
-              "the canvas's first space pill says \(canvas), got \(DaylightSpace.overview.title)", &ok)
+              "the canvas's space pill says \(canvas), got \(DaylightSpace.overview.title)", &ok)
         check(RecentDestinationKind.rail(.homeCanvas).kicker == canvas,
               "a Recents row for the canvas is kickered \(canvas), got \(RecentDestinationKind.rail(.homeCanvas).kicker)", &ok)
 
@@ -103,20 +107,43 @@ enum NavigationCoherenceSelfTest {
         return ok
     }
 
-    /// No user-facing string in the app says "Overview" any more.
+    /// "Overview" names exactly one thing, and it is the daily review page.
     ///
-    /// A behavioural check and a source guard catch different things here.
-    /// The check above can only see the four accessors it names; this one
-    /// sees a fifth surface someone adds later, which is exactly how the app
-    /// accumulated three names in the first place.
+    /// **This guard used to forbid the word outright**, because review #3 §7
+    /// found three user-facing names ("Home", "Overview", "Fleet") for two
+    /// things. `fm/grandline-overview-page-daily-review` gives the word a
+    /// third, real referent on the captain's own ask - a top-level page of its
+    /// own - so the rule it enforces changes from "nobody says it" to "exactly
+    /// one thing is called it, and it is declared in exactly two files".
+    ///
+    /// The declaration sites are `DaylightSpace.title` (the pill) and
+    /// `RailDestination.title` (the page). Both are asserted to *contain* the
+    /// literal, so a rename that moved the name somewhere else would fail here
+    /// rather than quietly widening the allowance - and every other file is
+    /// still forbidden it, which is what stops a fourth meaning accumulating
+    /// the way the first three did.
     ///
     /// Comments are stripped before the search, so this file's own prose (and
     /// the several doc comments that explain the rename) do not fail the run.
     /// The stripping cuts at `//`, which also truncates a line carrying a URL
     /// - that only ever makes the guard more permissive, never a false alarm.
-    private static func checkNoSurfaceStillSaysOverview() -> Bool {
-        print("\n-- §7: no user-facing string still says \"Overview\" --")
+    private static func checkOverviewNamesExactlyOneThing() -> Bool {
+        print("\n-- §7: \"Overview\" names exactly one thing - the daily review page --")
         var ok = true
+
+        // The behavioural half: three names, three things, no two alike.
+        let canvas = RailDestination.homeCanvas.title
+        let fleet = RailDestination.overview.title
+        let review = RailDestination.dailyOverview.title
+        check(review == "Overview", "the daily review page is called Overview, got \(review)", &ok)
+        check(Set([canvas, fleet, review]).count == 3,
+              "the canvas, the fleet dashboard and the daily review page need three distinct names, got "
+              + "\(canvas)/\(fleet)/\(review)", &ok)
+        check(DaylightSpace.dailyOverview.title == review,
+              "the pill and the page it opens agree, pill says \(DaylightSpace.dailyOverview.title)", &ok)
+        check(DaylightSpace.dailyOverview.destination == .dailyOverview,
+              "...and the pill really opens that page", &ok)
+
         guard let dir = SelfTestSources.appSourceDirectory() else {
             fail("could not resolve the app's own source directory - this guard silently passes otherwise", &ok)
             return false
@@ -135,13 +162,22 @@ enum NavigationCoherenceSelfTest {
         check(!stripComments("// a comment mentioning \(canary)").contains(canary),
               "...and must remove one inside a comment", &ok)
 
+        // The two files that are allowed to say it - and are required to, so
+        // the allowance cannot outlive the declaration it exists for.
+        let declarationSites = ["DaylightSpace.swift", "RailDestination.swift"]
         var offenders: [String] = []
+        var declaring: [String] = []
         for file in files {
             guard let raw = try? String(contentsOf: file, encoding: .utf8) else { continue }
-            if stripComments(raw).contains(canary) { offenders.append(file.lastPathComponent) }
+            guard stripComments(raw).contains(canary) else { continue }
+            let name = file.lastPathComponent
+            if declarationSites.contains(name) { declaring.append(name) } else { offenders.append(name) }
         }
+        check(Set(declaring) == Set(declarationSites),
+              "the page's name must be declared in \(declarationSites), found it in \(declaring.sorted())", &ok)
         check(offenders.isEmpty,
-              "\"Overview\" is not a name in this app any more - the canvas is Home, the dashboard is Fleet. Still in: \(offenders)", &ok)
+              "\"Overview\" is the daily review page's name and nothing else's - the canvas is Home, the "
+              + "dashboard is Fleet. Also in: \(offenders.sorted())", &ok)
         return ok
     }
 

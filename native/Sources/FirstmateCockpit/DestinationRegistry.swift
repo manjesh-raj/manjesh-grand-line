@@ -113,6 +113,8 @@ enum DestinationSlotID: String, CaseIterable {
     /// Daylight Phase 2's home canvas - eagerly mounted, because it is the
     /// launch landing and the target of every drill page's back button.
     case homeCanvas
+    /// `fm/grandline-overview-page-daily-review`'s daily review page.
+    case dailyOverview
     case overview, strawHat, console, hosts, shift, review, logAnalyzer, kubernetes
     case tools, whiteboard, codePreview, stickyBoard, commandLibrary, vault, dictation, schedules, health, docs, notebook, readingList, runbooks, postmortems, poneglyph, settings
     /// The four Engineering setup pages. One slot each since
@@ -126,6 +128,7 @@ extension RailDestination {
     var slot: DestinationSlotID {
         switch self {
         case .homeCanvas: return .homeCanvas
+        case .dailyOverview: return .dailyOverview
         case .overview: return .overview
         case .strawHat: return .strawHat
         case .console: return .console
@@ -179,6 +182,9 @@ extension RailDestination {
     var drillSubtitle: String {
         switch self {
         case .homeCanvas: return ""
+        // In practice a fallback only: `DailyOverviewController` conforms to
+        // `DaylightDrillActions` and supplies its own live line.
+        case .dailyOverview: return "Today's tasks, follow-ups, calendar, board and reading"
         // `fm/polish-straw-hat-overview-card-and-voice-c8d3` narrowed this: the
         // crew chat is its own destination now, so Fleet's line is about the
         // dispatched-crewmate board it actually shows.

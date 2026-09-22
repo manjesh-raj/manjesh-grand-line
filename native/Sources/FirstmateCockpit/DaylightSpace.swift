@@ -1,7 +1,13 @@
 // Manjesh Grand Line - native macOS app.
 //
-// `DaylightSpace` - the five space pills, and the module-to-space table
+// `DaylightSpace` - the six space pills, and the module-to-space table
 // behind them (Daylight migration §5.3, §5.4).
+//
+// Five of the six filter the home canvas's module grid, which is the model
+// this file was written for. The sixth (`.dailyOverview`, labelled
+// "Overview") opens a page of its own instead - see `destination` below for
+// the one seam that makes that possible, and `docs/history/39-daily-review.md`
+// for why the daily review needed a page rather than a filter.
 //
 // **The one rule this file exists to keep true: a space is presentation
 // state and nothing else.** No store, poller, registry or notification
@@ -22,11 +28,25 @@
 
 import Foundation
 
-/// One of the five filters the bar's space pills switch between.
+/// One of the six the bar's space pills offer.
 ///
-/// Declaration order **is** pill order, left to right, and is what `⌘1`…`⌘5`
-/// index into - `allCases` is the single source for both.
+/// Declaration order **is** pill order, left to right, and is what `⌘1`…`⌘6`
+/// index into - `allCases` is the single source for both. `.dailyOverview` is
+/// declared first because the captain asked for the new Overview tab leftmost,
+/// which moved Home from ⌘1 to ⌘2 (Home keeps its own ⌘0 in the Go menu).
 enum DaylightSpace: String, CaseIterable {
+    /// `fm/grandline-overview-page-daily-review`: the sixth pill, and the one
+    /// that is **not** a canvas filter - see `destination` below. It opens
+    /// F20's daily review as a page of its own.
+    ///
+    /// The case is named `dailyOverview`, not `overview`: `.overview` already
+    /// means the canvas pill labelled "Home", and the *destination* of the
+    /// same name already means the Fleet dashboard. Two meanings for one word
+    /// is what produced `data/grandline-daily-review-card-not-showing`'s whole
+    /// investigation (F20's spec said "Overview", the implementation read that
+    /// as `RailDestination.overview`, and the captain was looking at Home).
+    /// A third would have been worse than the first two.
+    case dailyOverview
     case overview
     case command
     case operations
@@ -51,6 +71,11 @@ enum DaylightSpace: String, CaseIterable {
     /// renamed without touching data code.
     var title: String {
         switch self {
+        // The only user-facing "Overview" in the app, and deliberately so -
+        // see `NavigationCoherenceSelfTest.checkOverviewNamesExactlyOneThing`,
+        // which allows the word here and in `RailDestination.title` and
+        // nowhere else.
+        case .dailyOverview: return "Overview"
         case .overview: return "Home"
         case .command: return "Command"
         case .operations: return "Operations"
@@ -64,6 +89,11 @@ enum DaylightSpace: String, CaseIterable {
     /// before the first snapshot lands, never as a claim about the fleet.
     var subtitle: String {
         switch self {
+        // Carried for completeness rather than drawn: this pill opens a page,
+        // so no canvas hero ever renders it. Kept real (and asserted
+        // non-empty) so a future surface that lists the spaces has something
+        // honest to show.
+        case .dailyOverview: return "Your day, in one card."
         case .overview: return "Your whole control room at a glance."
         case .command: return "Console, tasks and the merge queue."
         case .operations: return "Hosts, logs, health and schedules - the running systems."
@@ -86,6 +116,9 @@ enum DaylightSpace: String, CaseIterable {
     /// invisible icon exactly that way before.
     var heroSymbol: String {
         switch self {
+        // The same glyph `DailyReviewCard` puts in its own header, so the
+        // pill, the drill header and the card all read as one thing.
+        case .dailyOverview: return "sun.max"
         case .overview: return "sailboat.fill"
         case .command: return "terminal.fill"
         case .operations: return "gauge.with.dots.needle.33percent"
@@ -96,6 +129,32 @@ enum DaylightSpace: String, CaseIterable {
 
     /// The 1-based index this space's `⌘N` shortcut carries.
     var shortcutIndex: Int { (Self.allCases.firstIndex(of: self) ?? 0) + 1 }
+
+    /// The page this pill **opens**, for a space that is a destination rather
+    /// than a filter over the canvas's module grid - `nil` for the five that
+    /// filter the canvas, which is every space this file was written for.
+    ///
+    /// **This is the one seam that lets a pill be a page.** The file header's
+    /// rule still holds: a space is presentation state, and nothing in the
+    /// data layer knows spaces exist. What changed is that
+    /// `AppShellController.selectSpace` now asks *where* a pill goes instead
+    /// of assuming the canvas - one table, read by the shell's navigation, by
+    /// `DaylightModule.space(forDestination:)` (so the ⌘K / deep-link path
+    /// lights the right pill) and by nothing else.
+    ///
+    /// A space with a destination has no modules, no canvas greeting and no
+    /// grid: `filtersCanvas` below is what every canvas-shaped loop should
+    /// filter on rather than naming this case.
+    var destination: RailDestination? {
+        switch self {
+        case .dailyOverview: return .dailyOverview
+        case .overview, .command, .operations, .stores, .engineering: return nil
+        }
+    }
+
+    /// Whether picking this pill filters the home canvas (the original
+    /// model) rather than navigating to a page of its own.
+    var filtersCanvas: Bool { destination == nil }
 }
 
 /// Every module the canvas can render.
@@ -384,6 +443,10 @@ enum DaylightModule: String, CaseIterable {
     /// last picked, not a property of the destination.
     static func space(forDestination dest: RailDestination) -> DaylightSpace? {
         guard dest != .overview, dest != .homeCanvas else { return nil }
+        // A space that *is* a page owns its own destination, and no module
+        // opens it - so this table is consulted first. Same one mapping rule:
+        // `DaylightSpace.destination` is read, never restated.
+        if let space = DaylightSpace.allCases.first(where: { $0.destination == dest }) { return space }
         return allCases.first { $0.opens == dest }?.space
     }
 

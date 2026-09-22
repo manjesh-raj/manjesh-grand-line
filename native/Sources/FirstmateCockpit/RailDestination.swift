@@ -230,6 +230,14 @@ enum RailDestination: String, CaseIterable {
     /// reachable through `show(_:)`), so nothing about routing needed a
     /// second concept.
     case homeCanvas
+    /// `fm/grandline-overview-page-daily-review`: F20's daily review, as a
+    /// page of its own. Titled "Overview", opened by the leftmost space pill
+    /// (`DaylightSpace.dailyOverview`).
+    ///
+    /// **Not `overview`** - that case is the Fleet dashboard and has been
+    /// since the Daylight rename. See `DaylightSpace.dailyOverview` for the
+    /// naming history this deliberately avoids repeating.
+    case dailyOverview
     case overview, strawHat, console, hosts, shift, review, logAnalyzer, kubernetes, tools, whiteboard, codePreview, stickyBoard, commandLibrary, vault, dictation, schedules, health, docs, notebook, readingList, runbooks, postmortems, updates, bootstrap, automation, githubSync, poneglyph, settings
 
     var symbol: String {
@@ -237,6 +245,12 @@ enum RailDestination: String, CaseIterable {
         // §4's tile table: the canvas is the app itself, so it takes the
         // app's own mark.
         case .homeCanvas: return "sailboat.fill"
+        // The same glyph the card's own header carries (`DailyReviewCard`'s
+        // `setHeader(symbol: "sun.max"...)`), so the pill, the drill header
+        // and the card agree. Verified to resolve by
+        // `DaylightModuleSelfTest.checkSymbolsResolve`'s space sweep -
+        // `NSImage(systemSymbolName:)` returns nil silently.
+        case .dailyOverview: return "sun.max"
         case .overview: return "square.grid.2x2"
         // Only the *fallback*, for a `StrawHatFlag` payload that stops
         // decoding - both tiles that render this destination take the Jolly
@@ -405,7 +419,7 @@ enum RailDestination: String, CaseIterable {
         case .automation: return AutomationIcon.image
         case .githubSync: return GithubSyncIcon.image
         case .settings: return SettingsAppIcon.image
-        case .homeCanvas, .overview, .review, .vault, .dictation, .bootstrap, .commandLibrary, .notebook,
+        case .homeCanvas, .dailyOverview, .overview, .review, .vault, .dictation, .bootstrap, .commandLibrary, .notebook,
              .readingList:
             return nil
         }
@@ -414,6 +428,10 @@ enum RailDestination: String, CaseIterable {
     var title: String {
         switch self {
         case .homeCanvas: return "Home"
+        // The app's one user-facing "Overview", and the only other place the
+        // word is allowed to appear as a literal - see
+        // `NavigationCoherenceSelfTest.checkOverviewNamesExactlyOneThing`.
+        case .dailyOverview: return "Overview"
         case .overview: return "Fleet"
         case .strawHat: return "Straw Hat Pirates"
         case .shift: return "Tasks"
@@ -488,14 +506,15 @@ enum RailDestination: String, CaseIterable {
         // A Setup sub-page like the four above it. `.good` is unclaimed in this
         // group and is the one remaining tint that collides with none of them.
         case .poneglyph: return .good
-        case .homeCanvas, .overview, .strawHat, .console, .hosts, .shift, .review, .logAnalyzer, .kubernetes,
+        case .homeCanvas, .dailyOverview, .overview, .strawHat, .console, .hosts, .shift, .review, .logAnalyzer, .kubernetes,
              .tools, .whiteboard, .stickyBoard, .codePreview, .commandLibrary, .vault, .dictation, .schedules, .health, .docs, .notebook, .readingList, .runbooks, .postmortems, .settings: return .accent
         }
     }
 
     var isDailyUse: Bool {
         switch self {
-        case .homeCanvas, .overview, .console, .hosts, .shift, .review, .logAnalyzer: return true
+        // Read every morning, which is what this property means.
+        case .homeCanvas, .dailyOverview, .overview, .console, .hosts, .shift, .review, .logAnalyzer: return true
         // A utility (`isDailyUse == false`) on the same criterion as
         // Log Analyzer's siblings: cluster state is looked at when something
         // is wrong, not checked every morning. Its own space is Operations

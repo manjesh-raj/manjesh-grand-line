@@ -635,6 +635,11 @@ extension RailDestination {
         switch self {
         // The hub itself carries the app's own identity hue.
         case .homeCanvas: return .blue
+        // `fm/grandline-overview-page-daily-review`: amber is this app's
+        // "here is your day" hue - `DaylightModule.briefing` already carries
+        // it, and the daily review is the same idea for the captain's own
+        // day rather than the fleet's.
+        case .dailyOverview: return .amber
         case .overview: return .blue          // Fleet
         // `fm/polish-straw-hat-overview-card-and-voice-c8d3`: violet is this
         // app's own "AI feature" hue - the composer popovers' tinted tile,
