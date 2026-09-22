@@ -37,7 +37,10 @@ Four files, and the split between them is the same one F12 already uses:
   rules, a footer, and no date maths or branching on availability.
 - **`FleetController`** reads the six sources and renders, directly under F12's
   briefing card. `AppShellController` hands it the sticky-board and reading-list
-  stores after it has built them (`attachDailyReviewSources`).
+  stores after it has built them (`attachDailyReviewSources`). **This page was
+  the wrong host, and a later task added the right one** - see "The placement
+  correction, and the Overview page" at the bottom of this file. Fleet still
+  carries the card; `DailyOverviewController` is now its primary home.
 
 Plus a Settings card ("Daily review", two toggles), three `AppSettings` keys,
 and `NSCalendarsUsageDescription` / `NSCalendarsFullAccessUsageDescription` in
@@ -263,7 +266,154 @@ Two real defects the suites found while being written, both fixed:
   "Verifying native UI bugs" section); the geometry above is read back from a
   real layout pass in a real `NSWindow`, which is this project's substitute.
 
-**Recommended manual check:** open Overview in the packaged app, press "Show
+**Recommended manual check:** open the Overview page in the packaged app
+(the leftmost pill - see the placement correction below), press "Show
 today's calendar" and grant access, and confirm today's events appear with
 their own calendar colours. Then dismiss the card and re-visit Overview - it
 should stay gone until tomorrow.
+
+---
+
+## The placement correction, and the Overview page (`fm/grandline-overview-page-daily-review`)
+
+F20's spec above says "a full-width card on Overview", and the implementation
+put it on `RailDestination.overview`. **That was the wrong page**, and nobody
+noticed for a release: `.overview` is titled **"Fleet"** in the running app, and
+the landing page the captain calls Overview is `.homeCanvas` / "Home". The
+captain reported the card as missing; it was rendering correctly, on a page he
+was not looking at.
+
+`data/grandline-daily-review-card-not-showing/report.md` (firstmate's own repo)
+is the scout investigation that established this, with a real off-screen probe
+of both controllers:
+
+```
+== HOME (RailDestination.homeCanvas, title="Home") ==
+  NO DailyReviewCard / MorningBriefingCard anywhere in this view tree
+== FLEET (RailDestination.overview, title="Fleet") ==
+  DailyReviewCard  isHidden=false frame=(0.0, 227.0, 1152.0, 333.0) window=true
+```
+
+No gating bug, no stale `UserDefaults`, no stale build, no layout gotcha - a
+naming collision, and one that had already been half-corrected once (review #3
+§7 renamed the canvas's first pill from "Overview" to "Home" precisely because
+three names were in use for two things).
+
+### What the captain asked for
+
+A **new, sixth top-level tab** called "Overview", leftmost, carrying the daily
+review as a page of its own - not a move, and with "Home" and its module grid
+left exactly as they are.
+
+### What shipped
+
+- **`DaylightSpace.dailyOverview`**, declared first, so it is the leftmost pill
+  and takes ⌘1 (Home moved to ⌘2 and keeps its own ⌘0 in the Go menu).
+- **`DaylightSpace.destination`** - the one new seam. A space pill was always a
+  *filter* over the home canvas's module grid; this property lets one be a page
+  instead, and `AppShellController.selectSpace` asks it rather than assuming the
+  canvas. `DaylightModule.space(forDestination:)` reads the same table, so a
+  ⌘K jump or a deep link to the page lights the right pill. Five of the six
+  spaces return `nil` and behave exactly as before; `filtersCanvas` is what
+  every canvas-shaped loop (and every canvas-shaped test sweep) filters on, so
+  nothing had to name the new case.
+- **`RailDestination.dailyOverview`** + a slot + `DailyOverviewController`,
+  which is a **host, not a rebuild**: the same `DailyReviewCard`, the same
+  `DailyReviewComposer.digest(from:)`, the same two gates, the same
+  `attachDailyReviewSources` wiring, the same `dailyReviewCalendar` seam.
+  `renderDailyReview()` was ported from `FleetController` rather than
+  reimplemented.
+- Two things the page needs that a card in a stack does not: a **viewport-height
+  minimum** so the card fills the page (see below), and a **real empty state**
+  for the two gated cases - a dismissed day and the feature turned off - because
+  a destination that renders nothing is a dead end where a hidden card is just a
+  shorter dashboard.
+
+### Why the case is named `dailyOverview`
+
+Because `.overview` already means two different things depending on which enum
+you are reading, and that ambiguity is the entire cause of this task. A third
+`overview` would have been worse than the two that already existed. The
+user-facing name is still "Overview" - it is the word the captain uses.
+
+`NavigationCoherenceSelfTest`'s "nothing says Overview any more" source guard
+was **rewritten rather than deleted**: it now asserts the word names exactly one
+thing, is declared in exactly the two files that declare it
+(`DaylightSpace.swift`, `RailDestination.swift`) and appears in no other source
+file. The rule it enforces changed; the protection did not.
+
+### Fleet keeps its copy - and why that is not the duplication the component index forbids
+
+The scout report flagged that two surfaces rendering one digest is something
+this repo argues against. The decision here is to **keep** Fleet's card, and the
+reasoning is that the component index's rule is about duplicate
+*implementations*, not duplicate *placements*: there is still exactly one
+`DailyReviewCard`, one composer, one dismissal key - dismissing on either page
+puts the day away on both, because both read
+`AppSettings.shared.dailyReviewDismissedDay`. Against that:
+
+- The captain asked for an addition, explicitly, after being asked whether this
+  should replace an existing tab.
+- Removing shipped UI he has not complained about, in the same change that adds
+  a page, is two decisions where one was asked for.
+- `DailyReviewViewSelfTest.checkFleetStillHostsIt` pins it, so dropping Fleet's
+  copy later fails by name and is a deliberate act rather than a silent one.
+
+If it does come out, `DailyOverviewController` changes not at all.
+
+### The page fills its own height
+
+Rendered off-screen at 1400x900, the first version put a 325pt card at the top
+of the page with 575pt of bare background under it - which reads as a card that
+lost its dashboard rather than as a destination. A **minimum** height on the
+content stack, tied to the scroll view's clip view at `HelmDaylightPriority
+.contentTie` (499), fills the viewport: the footer's actions sit on the bottom
+of the page and the two column rules run its height. A minimum rather than an
+equality so a genuinely taller card still scrolls, and 499 rather than anything
+higher because gotcha (13) is exactly this shape - a full-page content
+constraint over 500 resizes the window. The suite asserts both directions: the
+card fills the page, and a window shrunk to 760x520 really shrinks.
+
+### Verification
+
+Baseline before the change: **194 passed, 0 failed** (`run-all-tests.sh`, full).
+
+The window-backed suite moved host: `DailyReviewViewSelfTest` now mounts
+`DailyOverviewController` for every case, through a test-only
+`DailyReviewHosting` protocol over the debug hooks both controllers already had
+- which is what let the whole file change page without rewriting an assertion.
+
+| Injection | Result |
+| --- | --- |
+| `showEmptyState` leaves the empty state hidden | view suite fails "the page says so rather than rendering an empty destination" and the feature-off case |
+| the card's width tie replaced by `width == 400` | fails "the card should fill the page inside its gutter - expected 1252.0, got 400.0" (and the footer-rule check) |
+| the viewport-height minimum deactivated | fails "the card should fill the page's height too - got 352.0 on a 900.0pt page" |
+| `DaylightSpace.dailyOverview.destination` returns `nil` | `FM_RUN_DAYLIGHT_MODULE_TESTS` fails "space dailyOverview has no modules at all"; `FM_RUN_NAVIGATION_COHERENCE_TESTS` fails "the pill really opens that page" |
+| `selectSpace`'s destination branch removed (the pill goes back to filtering the canvas) | module suite fails "selecting dailyOverview did not mount dailyOverview", "landed on the canvas" and the drill-header title check |
+| `RailDestination.dailyOverview.title` renamed "Daily Review" | coherence suite fails three named checks, including the two-declaration-sites guard |
+
+One real finding the full suite turned up, and it is a harness correction rather
+than a product bug: `AppShellBodyWidthSelfTest
+.moduleCardCountDoesNotAccumulateOverALongSession` failed with "1 extra
+HelmGradientTile, 1 extra HoverHighlightView, and 3 extra ThemeManager
+observers ... constant across all 5 checkpoints - a bounded, one-time artifact,
+not a growing leak". That is exactly what it was: the case warmed up with one
+space round trip before reading its baseline, and a pill that opens a
+*destination* mounts that destination lazily and permanently (GL-37) on its
+first selection - which now happened after the baseline. The warm-up is a full
+sweep of `DaylightSpace.allCases` now, so the baseline is a real steady state;
+the same class of correction as the `autoreleasepool` one recorded in that
+file's own header. With it, 300 switches leave zero excess.
+
+Every injection was made by copying the file aside and restoring from that copy
+- never `git stash`, never `git checkout --`.
+
+**What was not verified:** no screenshot of the real running app (this repo has
+no Screen Recording grant); the page's appearance is an off-screen
+`cacheDisplay` render in both registers, read back as a PNG, per AGENTS.md's
+"Verifying native UI bugs" convention. The probe was reverted before commit.
+
+**Recommended manual check:** click the leftmost "Overview" pill (or ⌘1), and
+confirm the page carries the digest full-bleed with its footer at the bottom.
+Dismiss it and confirm the page says so rather than going blank, then check
+Fleet shows the same dismissal.

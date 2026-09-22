@@ -113,6 +113,10 @@ enum AuditUIFixesSelfTest {
             (.updates, .engineering),
             (.overview, nil),
             (.homeCanvas, nil),
+            // `fm/grandline-overview-page-daily-review`: a space that owns a
+            // page maps back to its own pill, which is what keeps the pill
+            // honest on a deep link or a ⌘K jump to that page.
+            (.dailyOverview, .dailyOverview),
         ]
         for (dest, want) in expected {
             let got = DaylightModule.space(forDestination: dest)

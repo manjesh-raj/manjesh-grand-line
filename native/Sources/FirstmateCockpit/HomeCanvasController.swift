@@ -450,6 +450,14 @@ final class HomeCanvasController: NSViewController {
     /// (AGENTS.md gotcha (11) - only an `NSStackView`'s *arranged* subviews
     /// leave layout when hidden, and these live inside packed rows).
     func select(space newSpace: DaylightSpace) {
+        // `fm/grandline-overview-page-daily-review`: a space that owns a
+        // destination (`DaylightSpace.destination`) is a page, not a filter -
+        // it has no modules and no greeting of its own, and the shell routes
+        // it through `show(_:)` instead. Ignored here rather than rendered as
+        // an empty grid, and ignored rather than trapped because a canvas is
+        // presentation: the honest behaviour for "filter to a space that is
+        // not a filter" is to keep the filter the captain last chose.
+        guard newSpace.filtersCanvas else { return }
         guard newSpace != space else { return }
         space = newSpace
         render()

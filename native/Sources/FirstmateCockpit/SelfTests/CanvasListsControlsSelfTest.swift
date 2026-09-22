@@ -1064,7 +1064,11 @@ enum CanvasListsControlsSelfTest {
         defer { window.orderOut(nil) }
 
         // Every other space first, while the fleet has reported nothing.
-        for space in DaylightSpace.allCases where space != .overview {
+        // `fm/grandline-overview-page-daily-review`: a space that owns a
+        // destination never reaches the canvas at all (`select(space:)`
+        // ignores it), so sweeping it here would assert the previously
+        // selected space's geometry twice under another name.
+        for space in DaylightSpace.allCases where space != .overview && space.filtersCanvas {
             canvas.select(space: space)
             canvas.debugRenderNow()
             let band = canvas.heroBandForTests

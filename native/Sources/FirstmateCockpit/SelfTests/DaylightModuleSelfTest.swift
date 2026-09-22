@@ -230,9 +230,30 @@ enum DaylightModuleSelfTest {
         // `RailDestination.allCases` loop below, unaffected by which modules
         // Overview shows.
 
-        // Every module belongs somewhere reachable, and every space has
-        // something in it - a space pill that filters to nothing is a dead end.
+        // Every module belongs somewhere reachable, and every space that
+        // *filters the canvas* has something in it - such a pill filtering to
+        // nothing is a dead end.
+        //
+        // `fm/grandline-overview-page-daily-review`: a space that owns a
+        // destination is not a filter and legitimately has no modules, so it
+        // is checked for the other property instead - that the page its pill
+        // opens is a real destination that maps back to this pill. Written as
+        // an either/or rather than an exemption list, so a sixth kind of pill
+        // cannot slip through by being neither.
         for space in DaylightSpace.allCases {
+            if let destination = space.destination {
+                if space.filtersCanvas {
+                    fail("space \(space.rawValue) owns \(destination) and still claims to filter the canvas", &ok)
+                }
+                if destination.title.isEmpty {
+                    fail("space \(space.rawValue) opens \(destination), which has no title", &ok)
+                }
+                if DaylightModule.space(forDestination: destination) != space {
+                    fail("\(destination) does not map back to the \(space.rawValue) pill - "
+                         + "every deep link and \u{2318}K would light the wrong one", &ok)
+                }
+                continue
+            }
             if DaylightModule.allCases.filter({ $0.isVisible(in: space) }).isEmpty {
                 fail("space \(space.rawValue) has no modules at all", &ok)
             }
@@ -242,7 +263,10 @@ enum DaylightModuleSelfTest {
         // Review #3 §7 renamed the first pill "Overview" -> "Home"; the
         // literal list is restated here rather than derived, exactly as
         // `checkSpaceTable`'s own header requires.
-        let expectedTitles = ["Home", "Command", "Operations", "Stores", "Engineering"]
+        // `fm/grandline-overview-page-daily-review` put the new Overview pill
+        // leftmost on the captain's own ask, which moved Home to the second
+        // slot and its shortcut from \u{2318}1 to \u{2318}2.
+        let expectedTitles = ["Overview", "Home", "Command", "Operations", "Stores", "Engineering"]
         let actualTitles = DaylightSpace.allCases.map(\.title)
         if actualTitles != expectedTitles {
             fail("space pill order/copy should be \(expectedTitles), got \(actualTitles)", &ok)
@@ -256,7 +280,7 @@ enum DaylightModuleSelfTest {
 
         if ok {
             print("  OK - 4 spaces x their locked modules, \(overviewOnly.count) Overview-only, Overview trimmed to "
-                  + "\(overviewVisibleModules.count), 5 pills in \u{2318}1-\u{2318}5 order")
+                  + "\(overviewVisibleModules.count), \(DaylightSpace.allCases.count) pills in shortcut order")
         }
     }
 
@@ -983,7 +1007,7 @@ enum DaylightModuleSelfTest {
     // MARK: 6 - bar anatomy
 
     private static func checkBarAnatomy(_ ok: inout Bool) {
-        print("\n-- floating bar: \u{00A7}6.3's geometry, five pills, and no `.behindWindow` vibrancy --")
+        print("\n-- floating bar: \u{00A7}6.3's geometry, its pills, and no `.behindWindow` vibrancy --")
         let bar = DaylightBarController()
         bar.loadView()
         // 1512, the captain's own screen width, deliberately above
@@ -1052,9 +1076,12 @@ enum DaylightModuleSelfTest {
             fail("not enough pills to drive a selection", &ok)
             return
         }
-        pills[2].performPrimaryAction()
+        // The fourth pill since `fm/grandline-overview-page-daily-review` put
+        // the Overview page's own pill leftmost - Home, Command and Operations
+        // each shifted right by one.
+        pills[3].performPrimaryAction()
         if picked != [.operations] {
-            fail("clicking the third pill reported \(picked.map(\.rawValue)), expected [operations]", &ok)
+            fail("clicking the fourth pill reported \(picked.map(\.rawValue)), expected [operations]", &ok)
         }
         if bar.selectedSpaceForTests != .operations {
             fail("the bar's own selection is \(bar.selectedSpaceForTests.rawValue) after a click on Operations", &ok)
@@ -1066,7 +1093,7 @@ enum DaylightModuleSelfTest {
         if !picked.isEmpty { fail("setSelectedSpace fired onSelectSpace - it must not", &ok) }
         if bar.selectedSpaceForTests != .stores { fail("setSelectedSpace did not move the selection", &ok) }
 
-        if ok { print("  OK - geometry, shadow, no vibrancy, 5 radio pills, click and silent-select") }
+        if ok { print("  OK - geometry, shadow, no vibrancy, \(pills.count) radio pills, click and silent-select") }
     }
 
     // MARK: 6b - the quick-access destination icons
@@ -1344,7 +1371,9 @@ enum DaylightModuleSelfTest {
                 fail("Straw Hat Pirates must be the LAST card on Overview, got "
                      + "\(canvas.visibleModulesForTests.map(\.rawValue))", &ok)
             }
-            for space in DaylightSpace.allCases where space != .overview {
+            // A space that owns a destination is a page, not a canvas filter -
+            // it is driven in its own case below rather than swept here.
+            for space in DaylightSpace.allCases where space != .overview && space.filtersCanvas {
                 shell.selectSpace(space)
                 let visible = Set(canvas.visibleModulesForTests)
                 guard let expected = lockedMembership[space] else { continue }
@@ -1364,6 +1393,35 @@ enum DaylightModuleSelfTest {
                 // Selecting a space lands on the canvas, whichever page was up.
                 if shell.drillHeaderIsHiddenForTests == false {
                     fail("selecting \(space.rawValue) left a drill header showing - it should be on the canvas", &ok)
+                }
+            }
+
+            // `fm/grandline-overview-page-daily-review`: the sixth pill is a
+            // page, and this is the behavioural half of that - a real click
+            // path (`selectSpace`, which is what the pill's own handler calls)
+            // landing on a real mounted destination, with the canvas's own
+            // filter left where the captain had it.
+            //
+            // Discriminating power first: the canvas is parked on a space that
+            // is NOT the one being clicked, so "the filter survived" cannot
+            // pass by accident.
+            shell.selectSpace(.command)
+            for space in DaylightSpace.allCases where !space.filtersCanvas {
+                guard let destination = space.destination else { continue }
+                shell.selectSpace(space)
+                if !shell.mountedDestinationSlotsForTests.contains(destination.slot) {
+                    fail("selecting \(space.rawValue) did not mount \(destination)", &ok)
+                }
+                if shell.drillHeaderIsHiddenForTests {
+                    fail("\(space.rawValue) landed on the canvas - its pill is meant to open \(destination)", &ok)
+                }
+                if shell.drillHeaderForTests.titleForTests != destination.title {
+                    fail("\(space.rawValue)'s pill opened a page titled "
+                         + "'\(shell.drillHeaderForTests.titleForTests)', expected '\(destination.title)'", &ok)
+                }
+                if canvas.selectedSpace != .command {
+                    fail("selecting \(space.rawValue) changed the canvas's own filter to "
+                         + "\(canvas.selectedSpace.rawValue) - a page pill must not touch it", &ok)
                 }
             }
 

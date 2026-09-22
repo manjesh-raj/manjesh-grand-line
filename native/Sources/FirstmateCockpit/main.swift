@@ -1917,13 +1917,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Go menu - UX3's "a 'Go' menu listing every destination with its
         // shortcut", and UX4's "give ⌘1-⌘5 to the spaces (the original
-        // Daylight spec)".
+        // Daylight spec)". Six of them since
+        // `fm/grandline-overview-page-daily-review` added the Overview pill,
+        // so the range is ⌘1-⌘6 and Home sits at ⌘2 (it keeps ⌘0 above).
         //
         // ⌘1-⌘9 have been genuinely free since the Tab menu's removal (see
         // the Hosts menu's own session-switcher comment, which records that
-        // and why the session switcher stayed on ⌘⌃1-9 regardless). The five
-        // spaces take ⌘1-⌘5, which is what `DaylightSpace.shortcutIndex` has
-        // described all along with nothing reading it.
+        // and why the session switcher stayed on ⌘⌃1-9 regardless). The
+        // spaces take ⌘1 upward in declaration order, which is what
+        // `DaylightSpace.shortcutIndex` reports - the loop below reads it
+        // rather than a hand-written list, so a sixth pill needed no edit
+        // here.
         //
         // The destination list below is generated from
         // `AllDestinationsOverlayController.groups()` - the same grouping the

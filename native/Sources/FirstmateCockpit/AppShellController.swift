@@ -97,6 +97,10 @@ final class AppShellController: NSViewController {
     private let console: ConsoleController
     private let settings: SettingsController
     private let overview: FleetController
+    /// `fm/grandline-overview-page-daily-review`: the Overview page - F20's
+    /// daily review on a destination of its own, opened by the leftmost space
+    /// pill. Lazily mounted like every other page that owns no live process.
+    private let dailyOverview: DailyOverviewController
     /// `fm/polish-straw-hat-overview-card-and-voice-c8d3`: the Straw Hat
     /// Pirates chat, its own destination since the captain asked for it to be
     /// its own Overview card rather than a tab inside Fleet's page. Lazily
@@ -491,6 +495,9 @@ final class AppShellController: NSViewController {
         // its records as well as writing them, so a second instance would be
         // a second writer to the same file.
         self.overview = FleetController(shiftStore: shiftStore)
+        // The same shared `ShiftStore` (GL-23), never a second instance - the
+        // daily review reads the very lists the Tasks page is showing.
+        self.dailyOverview = DailyOverviewController(shiftStore: shiftStore)
         // The four store dependencies below were `FleetController`'s while the
         // crew chat was a tab on that page; they came here with it. All three
         // stores are the shared instances (`stickyBoard.store` is `internal`
@@ -593,6 +600,11 @@ final class AppShellController: NSViewController {
         // destinations use.
         overview.attachDailyReviewSources(stickyBoardStore: stickyBoard.store,
                                           readingListStore: readingListStore)
+        // The Overview page hosts the same card, over the same two shared
+        // stores. One attach each rather than one store each - see
+        // `DailyOverviewController`'s header for why both hosts exist.
+        dailyOverview.attachDailyReviewSources(stickyBoardStore: stickyBoard.store,
+                                               readingListStore: readingListStore)
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
@@ -726,6 +738,7 @@ final class AppShellController: NSViewController {
         // closure* (which the wiring below does) - anything that touches a
         // destination's views goes through `show(_:)` first.
         mounter.register(DestinationSlot(id: .homeCanvas, title: RailDestination.homeCanvas.title, mountsEagerly: true, controller: homeCanvas))
+        mounter.register(DestinationSlot(id: .dailyOverview, title: RailDestination.dailyOverview.title, mountsEagerly: false, controller: dailyOverview))
         mounter.register(DestinationSlot(id: .overview, title: RailDestination.overview.title, mountsEagerly: true, controller: overview))
         mounter.register(DestinationSlot(id: .strawHat, title: RailDestination.strawHat.title, mountsEagerly: false, controller: strawHat))
         mounter.register(DestinationSlot(id: .console, title: RailDestination.console.title, mountsEagerly: true, controller: console))
@@ -918,6 +931,11 @@ final class AppShellController: NSViewController {
         // than new behaviour.
         overview.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
         overview.onOpenShiftTask = { [weak self] id in self?.openShiftTask(id: id) }
+        // F20's own page: the same two pass-throughs, plus the live drill
+        // subtitle every migrated page pushes rather than the header pulling.
+        dailyOverview.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
+        dailyOverview.onOpenShiftTask = { [weak self] id in self?.openShiftTask(id: id) }
+        dailyOverview.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Straw Hat phase 3 (M3.2): the crew's two navigation handoffs. Both
         // are pass-throughs into navigation this object already owns - a
         // handoff writes nothing, which is what lets its link row run on a
@@ -2392,6 +2410,16 @@ final class AppShellController: NSViewController {
     /// what a canvas is, and the canvas does not know how to navigate.
     func selectSpace(_ space: DaylightSpace) {
         bar.setSelectedSpace(space)
+        // `fm/grandline-overview-page-daily-review`: a pill can now be a page
+        // rather than a filter (`DaylightSpace.destination`). The table is
+        // asked rather than the case named, so a second such pill is one line
+        // in that enum and none here - and the canvas's own space selection is
+        // left alone, which is what makes a round trip through this page land
+        // back on the space the captain was last filtering.
+        if let destination = space.destination {
+            show(destination)
+            return
+        }
         homeCanvas.select(space: space)
         show(.homeCanvas)
     }

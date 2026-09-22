@@ -1259,6 +1259,25 @@ enum AppShellBodyWidthSelfTest {
             // generation rather than that one-time initial render - see
             // `test_initialCanvasRenderIsOrphanedOnce` for that one, in
             // isolation.
+            //
+            // `fm/grandline-overview-page-daily-review`: the warm-up is now a
+            // full sweep of every space rather than one round trip, because a
+            // pill can open a **destination** (`DaylightSpace.destination`)
+            // and a destination mounts lazily - once, permanently, by design
+            // (GL-37). Without the sweep, the first loop iteration below pays
+            // that one-time mount *after* the baseline was read, and its view
+            // tree (a gradient tile, a hover view, three theme observers) is
+            // then reported as a leak. Measured exactly that way: a constant
+            // one-time excess across all five checkpoints, which is the shape
+            // this case's own message already calls "not a growing leak".
+            //
+            // The same class of harness correction as the `autoreleasepool`
+            // one in this file's header: the baseline has to be a real steady
+            // state, and steady state now includes every page a pill can
+            // mount.
+            for space in DaylightSpace.allCases {
+                autoreleasepool { shell.selectSpace(space) }
+            }
             autoreleasepool { shell.selectSpace(.command) }
             autoreleasepool { shell.selectSpace(.overview) }
             let baselineInstances = HelmModuleCard.debugLiveInstanceCount

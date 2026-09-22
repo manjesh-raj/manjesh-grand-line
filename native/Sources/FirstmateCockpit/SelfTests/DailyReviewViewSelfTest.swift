@@ -1,7 +1,19 @@
 // Manjesh Grand Line - native macOS app.
 //
-// F20's render: the real `FleetController` mounted in a real `NSWindow`, over
-// scratch stores, with the card actually laid out.
+// F20's render: the real page mounted in a real `NSWindow`, over scratch
+// stores, with the card actually laid out.
+//
+// **Which page.** `fm/grandline-overview-page-daily-review` gave the daily
+// review a destination of its own (`DailyOverviewController`, titled
+// "Overview"), which is now the card's primary host - so every case below
+// drives that page. Fleet keeps its own copy of the card (the captain asked
+// for a new page rather than a move), and `checkFleetStillHostsIt` is the one
+// case that mounts `FleetController` instead, so dropping Fleet's copy later
+// fails here by name rather than silently.
+//
+// The mount is written against `DailyReviewHosting`, a test-only protocol over
+// the four debug hooks both controllers already had - which is what let the
+// whole file move host without rewriting a single assertion.
 //
 // **Why this is window-backed and separate from `DailyReviewSelfTest`.**
 // Everything here is a question about a real layout pass or a real painted
@@ -56,6 +68,8 @@ enum DailyReviewViewSelfTest {
             checkThemeRepaint(stores, check: check)
             checkCalendarGapAndButton(stores, check: check)
             checkDismissAndDisable(stores, check: check)
+            checkPageEmptyStates(stores, check: check)
+            checkFleetStillHostsIt(stores, check: check)
         }
 
         return report(failures)
@@ -69,8 +83,8 @@ enum DailyReviewViewSelfTest {
         let reading: ReadingListStore
     }
 
-    /// Mounts the real Overview page in a real off-screen window and hands
-    /// back its daily review card, already rendered.
+    /// Mounts the real page in a real off-screen window and hands back its
+    /// daily review card, already rendered.
     ///
     /// Deliberately assigns `window.contentView`, not `contentViewController`:
     /// that keeps AppKit's own appearance notifications out of it, so
@@ -79,9 +93,10 @@ enum DailyReviewViewSelfTest {
     /// instead, through the same function that appearance would have called.
     private static func withMountedPage(_ stores: Stores,
                                         calendar: DailyReviewCalendarReading? = nil,
-                                        _ body: (FleetController, DailyReviewCard, OffScreenProbeWindow) -> Void) {
+                                        host: (ShiftStore) -> DailyReviewHosting = { DailyOverviewController(shiftStore: $0) },
+                                        _ body: (DailyReviewHosting, DailyReviewCard, OffScreenProbeWindow) -> Void) {
         autoreleasepool {
-            let controller = FleetController(shiftStore: stores.shift)
+            let controller = host(stores.shift)
             if let calendar { controller.dailyReviewCalendar = calendar }
             controller.debugAttachDailyReviewStores(sticky: stores.sticky, reading: stores.reading)
             let window = OffScreenProbe.window(width: 1300, height: 900,
@@ -191,6 +206,14 @@ enum DailyReviewViewSelfTest {
             let widths = card.debugColumns.map { $0.superview?.frame.width ?? 0 }
             check(widths.allSatisfy { $0 > 10 },
                   "the columns should still be visible at 760pt, got \(widths)")
+            // The other axis, for the page host's viewport-height minimum: it
+            // is tied to the clip view at 499, so shrinking the window must
+            // shrink the card rather than the window refusing to shrink.
+            window.setFrame(NSRect(x: frame.minX, y: frame.minY, width: 760, height: 520),
+                            display: true)
+            controller.view.layoutSubtreeIfNeeded()
+            check(abs(window.frame.height - 520) < 1,
+                  "the window should hold 520pt tall with the review on the page, got \(window.frame.height)")
         }
     }
 
@@ -301,6 +324,82 @@ enum DailyReviewViewSelfTest {
         AppSettings.shared.dailyReviewEnabled = true
     }
 
+    // MARK: 7 - the page has somewhere to go when the card does not render
+
+    /// A card in a stack can vanish; a destination cannot. Both gated states
+    /// (dismissed for the day, turned off in Settings) put a real, laid-out
+    /// empty state on the page instead of leaving it blank.
+    ///
+    /// Discriminating power first: the populated state is asserted to show no
+    /// empty state, so "the empty state is showing" cannot pass vacuously
+    /// against a page that always shows it.
+    private static func checkPageEmptyStates(_ stores: Stores, check: (Bool, String) -> Void) {
+        seed(stores)
+        AppSettings.shared.dailyReviewEnabled = true
+        AppSettings.shared.dailyReviewDismissedDay = nil
+
+        withMountedPage(stores) { host, card, _ in
+            guard let page = host as? DailyOverviewController else {
+                check(false, "the default host should be the Overview page")
+                return
+            }
+            check(!card.isHidden && !page.debugEmptyStateIsShowing,
+                  "with a review to show, the page shows the card and no empty state")
+            check(card.frame.height > 150,
+                  "and the card really is laid out on it, got \(card.frame.height)")
+            // The card IS the page: full width inside the page gutter, which
+            // is the difference between a destination and a card floating in
+            // an empty page. 1300pt window, 24pt gutter each side.
+            let expectedWidth = page.view.frame.width - HelmMetrics.pageGutter * 2
+            check(abs(card.frame.width - expectedWidth) < 1,
+                  "the card should fill the page inside its gutter - expected \(expectedWidth), "
+                  + "got \(card.frame.width) on a \(page.view.frame.width)pt page")
+            // ...and its height, which is what makes it read as a page rather
+            // than as a card that lost its dashboard. A minimum, so a taller
+            // card is still free to scroll.
+            check(card.frame.height > page.view.frame.height - 100,
+                  "the card should fill the page's height too - got \(card.frame.height) "
+                  + "on a \(page.view.frame.height)pt page")
+            check(page.drillHeaderSubtitle?.isEmpty == false,
+                  "the drill header should carry the review's own headline")
+
+            card.debugPressDismiss()
+            page.debugRenderDailyReview()
+            check(card.isHidden, "dismissing hides the card on the page too")
+            check(page.debugEmptyStateIsShowing,
+                  "and the page says so rather than rendering an empty destination")
+
+            AppSettings.shared.dailyReviewDismissedDay = nil
+            AppSettings.shared.dailyReviewEnabled = false
+            page.debugRenderDailyReview()
+            check(page.debugEmptyStateIsShowing,
+                  "turning the feature off leaves the page its own state, not a blank page")
+            AppSettings.shared.dailyReviewEnabled = true
+        }
+        AppSettings.shared.dailyReviewDismissedDay = nil
+    }
+
+    // MARK: 8 - Fleet still hosts its own copy
+
+    /// The captain asked for a **new** page, not a move, so the fleet
+    /// dashboard keeps the card it has had since F20 - one card class, one
+    /// composer, one dismissal key, two hosts.
+    ///
+    /// Asserted rather than assumed: if Fleet's copy is ever dropped (a
+    /// reasonable later call - see `DailyOverviewController`'s header), this
+    /// fails by name and whoever drops it deletes this case deliberately.
+    private static func checkFleetStillHostsIt(_ stores: Stores, check: (Bool, String) -> Void) {
+        seed(stores)
+        AppSettings.shared.dailyReviewEnabled = true
+        AppSettings.shared.dailyReviewDismissedDay = nil
+        withMountedPage(stores, host: { FleetController(shiftStore: $0) }) { _, card, _ in
+            check(!card.isHidden, "the fleet dashboard should still carry the daily review")
+            check(!card.debugHeadline.isEmpty, "and it should render a real headline there too")
+            check(card.debugText(inColumn: 0).contains(where: { $0.contains("Renew wildcard TLS certificate") }),
+                  "and the same overdue task, from the same composer")
+        }
+    }
+
     // MARK: Fixtures
 
     /// A stub calendar. The reason `FleetController.dailyReviewCalendar` is a
@@ -392,5 +491,22 @@ enum DailyReviewViewSelfTest {
         return false
     }
 }
+
+/// The five hooks a page hosting `DailyReviewCard` exposes, so this suite can
+/// drive either host with one mount.
+///
+/// Test-only and declared here rather than in the app: neither controller
+/// needs to know the other exists, and a production protocol would be a
+/// second, weaker statement of what the two pages share.
+protocol DailyReviewHosting: AnyObject {
+    var view: NSView { get }
+    var dailyReviewCalendar: DailyReviewCalendarReading { get set }
+    var debugDailyReviewCard: DailyReviewCard { get }
+    func debugRenderDailyReview()
+    func debugAttachDailyReviewStores(sticky: StickyBoardStore, reading: ReadingListStore)
+}
+
+extension DailyOverviewController: DailyReviewHosting {}
+extension FleetController: DailyReviewHosting {}
 
 #endif

@@ -121,7 +121,7 @@ enum ContextualNewAction: String, CaseIterable {
         case .runbooks: return .runbook
         case .notebook: return .notebookPage
         case .readingList: return .savedLink
-        case .homeCanvas, .overview, .strawHat, .console, .review, .logAnalyzer,
+        case .homeCanvas, .dailyOverview, .overview, .strawHat, .console, .review, .logAnalyzer,
              .kubernetes, .tools, .whiteboard, .vault, .dictation, .health,
              .docs, .postmortems, .updates, .bootstrap, .automation,
              .githubSync, .settings:
