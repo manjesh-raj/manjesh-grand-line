@@ -1162,6 +1162,17 @@ final class FleetController: NSViewController {
     /// GL-14 runs through the whole function: a store in its failed-load state
     /// yields `.unavailable(reason)`, never an empty array, and the card
     /// states the gap instead of drawing a zero.
+    /// Re-render, but only if this page has ever been built.
+    ///
+    /// The shell calls this on an event that happened somewhere else (a
+    /// Google account connecting), and touching `view` on a page that has
+    /// never been visited would mount it - exactly what GL-37's laziness
+    /// exists to avoid.
+    func renderDailyReviewIfMounted() {
+        guard isViewLoaded else { return }
+        renderDailyReview()
+    }
+
     private func renderDailyReview() {
         guard AppSettings.shared.dailyReviewEnabled else {
             dailyReviewCard.isHidden = true
@@ -1212,10 +1223,13 @@ final class FleetController: NSViewController {
         // see `DailyReviewHabits`.
         inputs.habits = DailyReviewHabits.read()
 
-        // The calendar, and the only place this app reads EventKit. Off until
-        // the captain turns it on, and then read-only.
-        if AppSettings.shared.dailyReviewCalendarEnabled {
-            inputs.calendar = dailyReviewCalendar.events(on: now)
+        // The calendar. Two sources now - this Mac's own through EventKit,
+        // and any connected Google account - each behind its own switch, and
+        // `DailyReviewCalendarSources` owns which of them are on. Both are
+        // read-only; `nil` means every source is off, which is a state rather
+        // than an absence.
+        if let calendar = DailyReviewCalendarSources.shared.source(local: dailyReviewCalendar) {
+            inputs.calendar = calendar.events(on: now)
         } else {
             inputs.calendar = .unavailable(DisabledDailyReviewCalendar.offReason)
         }

@@ -63,6 +63,13 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         case appearance
         case terminal
         case briefings
+        /// `fm/grandline-overview-layout-fix-gmail-settings`: Google sign-in
+        /// for up to two accounts. Its own category rather than a card under
+        /// `.briefings`, even though its one consumer today is the daily
+        /// review's calendar column - it is an *account* connection, which is
+        /// the thing the captain comes here to change, and a second consumer
+        /// would not move it.
+        case gmail
         case menuBar
         case intents
         case security
@@ -74,6 +81,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             case .appearance: return "Appearance"
             case .terminal: return "Terminal"
             case .briefings: return "Briefings"
+            case .gmail: return "Gmail"
             case .menuBar: return "Menu bar"
             case .intents: return "Shortcuts & Siri"
             case .security: return "Security"
@@ -89,6 +97,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             case .appearance: return "paintpalette"
             case .terminal: return "terminal"
             case .briefings: return "sparkles"
+            case .gmail: return "envelope"
             case .menuBar: return "menubar.rectangle"
             case .intents: return "sparkle"
             case .security: return "lock.shield"
@@ -321,6 +330,9 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         // system, and the one thing a captain needs from this card is to see
         // what those five are before wiring one into a shortcut - especially
         // the guarded one.
+        let gmail = card(icon: "envelope", tint: .violet, title: "Gmail",
+                         subtitle: "Sign in to Google for work, for personal, for both, or for neither",
+                         content: buildGmailSection())
         let intents = card(icon: "sparkle", tint: .info, title: "Shortcuts & Siri",
                            subtitle: "Five actions Siri, Shortcuts, Spotlight and Raycast can run",
                            content: buildIntentsSection())
@@ -339,6 +351,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             .appearance: [appearance],
             .terminal: [connection, terminal, shortcuts],
             .briefings: [briefing, dailyReview],
+            .gmail: [gmail],
             .menuBar: [compact],
             .intents: [intents],
             .security: [security],
@@ -1284,6 +1297,213 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         AppSettings.shared.dailyReviewCalendarEnabled = dailyReviewCalendarSwitch.isOn
     }
 
+    // MARK: Gmail (Google sign-in)
+
+    /// One row per slot, plus the client-id field and the calendar toggle.
+    ///
+    /// Held as properties rather than rebuilt, for this page's own reason:
+    /// every card is constructed once in `loadView` and reparented between
+    /// categories, so a row that rebuilt itself would lose its place in
+    /// `refreshFromSettings`'s sync.
+    private var gmailRows: [GoogleAccountSlot: GmailAccountRow] = [:]
+    private let gmailClientIDField = HelmTextField(placeholder: "1234-abcd.apps.googleusercontent.com")
+    private let gmailClientSecretField = HelmTextField(placeholder: "Client secret (optional)")
+    private let gmailCalendarSwitch = HelmToggle()
+    private let gmailStatusLabel = NSTextField(wrappingLabelWithString: "")
+
+    /// Set by `AppShellController` so a sign-in that connects a calendar can
+    /// make the Overview page re-read it. Optional: this page works with
+    /// nothing wired, which is what every self-test that mounts it relies on.
+    var onGoogleAccountsChanged: (() -> Void)?
+
+    private func buildGmailSection() -> NSView {
+        // **Neither account is mandatory**, and the copy says so before the
+        // captain has to infer it from two buttons.
+        let intro = NSTextField(wrappingLabelWithString:
+            "Connect a Google account to read its calendar into your daily review. "
+            + "Work and personal are completely independent - sign in to one, both or "
+            + "neither, and signing out of one leaves the other alone. Grand Line asks "
+            + "Google for read-only calendar access and your address, and for nothing else.")
+        intro.font = .systemFont(ofSize: 11)
+        mutedLabel(intro)
+        wrapping(intro)
+
+        var rowViews: [NSView] = [intro]
+        for slot in GoogleAccountSlot.allCases {
+            // A rule between them, so two independent accounts read as two
+            // things rather than as one group - which is the whole point of
+            // there being two.
+            if slot != GoogleAccountSlot.allCases.first { rowViews.append(separator()) }
+            let row = GmailAccountRow(slot: slot)
+            row.onConnect = { [weak self] in self?.connectGoogle(slot) }
+            row.onDisconnect = { [weak self] in self?.disconnectGoogle(slot) }
+            gmailRows[slot] = row
+            rowViews.append(row)
+        }
+
+        gmailCalendarSwitch.onToggle = { [weak self] in self?.googleCalendarToggled() }
+        let calendarRow = descRow(
+            title: "Use Google Calendar in the daily review",
+            desc: "Adds a connected account\u{2019}s events to the review\u{2019}s calendar column, "
+                + "alongside your Mac\u{2019}s own calendars rather than instead of them. Read-only: "
+                + "the only scope Grand Line ever asks Google for cannot write.",
+            trailing: gmailCalendarSwitch)
+
+        // The client id. This is the captain-owned half, and the reason it is
+        // a field at all rather than a constant: an OAuth client id is issued
+        // by a Google Cloud project, and this app cannot create one. There is
+        // deliberately no built-in default - a fake id would put a Connect
+        // button on the page that always fails with an opaque Google error.
+        gmailClientIDField.target = self
+        gmailClientIDField.action = #selector(gmailClientChanged)
+        gmailClientSecretField.target = self
+        gmailClientSecretField.action = #selector(gmailClientChanged)
+        let idRow = descRow(title: "Google OAuth client ID",
+                            desc: "From your own Google Cloud project - create an OAuth client of "
+                                + "type \u{201C}Desktop app\u{201D} and paste its ID here. Stored in the "
+                                + "Keychain, never on disk. FM_GOOGLE_OAUTH_CLIENT_ID overrides it.",
+                            trailing: gmailClientIDField, alignsTrailingToEdge: true)
+        let secretRow = descRow(title: "Client secret",
+                                desc: "Optional. Google issues one for a Desktop client and its "
+                                    + "token endpoint expects it back.",
+                                trailing: gmailClientSecretField, alignsTrailingToEdge: true)
+
+        gmailStatusLabel.font = .systemFont(ofSize: 11)
+        mutedLabel(gmailStatusLabel)
+        wrapping(gmailStatusLabel)
+
+        rowViews.append(separator())
+        rowViews.append(calendarRow)
+        rowViews.append(separator())
+        rowViews.append(idRow)
+        rowViews.append(secretRow)
+        rowViews.append(gmailStatusLabel)
+
+        let section = NSStackView(views: rowViews)
+        section.orientation = .vertical
+        section.alignment = .leading
+        section.spacing = 12
+        for view in rowViews {
+            view.widthAnchor.constraint(equalTo: section.widthAnchor).isActive = true
+        }
+        // A field is a control, not text: a required width would be a window
+        // floor (gotcha (13)), so both get a generous preferred width below
+        // `NSLayoutPriorityWindowSizeStayPut`.
+        for field in [gmailClientIDField, gmailClientSecretField] {
+            let width = field.widthAnchor.constraint(equalToConstant: 280)
+            width.priority = HelmDaylightPriority.contentTie
+            width.isActive = true
+        }
+        return section
+    }
+
+    /// Repaint every Gmail surface from the store. One function, called from
+    /// `refreshFromSettings` and after every sign-in or sign-out, so the two
+    /// cards can never disagree with what is stored.
+    private func refreshGmailSection() {
+        let configuration = GoogleOAuth.configuration()
+        for (slot, row) in gmailRows {
+            row.render(record: GoogleAccountStore.shared.record(for: slot),
+                       isConfigured: configuration != nil,
+                       isBusy: GoogleSignInController.shared.inFlight.contains(slot),
+                       theme: theme)
+        }
+        gmailCalendarSwitch.isOn = AppSettings.shared.googleCalendarEnabled
+        let stored = GoogleOAuthClientStore.shared.configuration()
+        if gmailClientIDField.stringValue != (stored?.clientID ?? "") {
+            gmailClientIDField.stringValue = stored?.clientID ?? ""
+        }
+        if gmailClientSecretField.stringValue != (stored?.clientSecret ?? "") {
+            gmailClientSecretField.stringValue = stored?.clientSecret ?? ""
+        }
+        gmailStatusLabel.stringValue = Self.gmailStatusLine(for: configuration)
+    }
+
+    /// The one sentence under the client-id field, and the honest statement
+    /// of what is and is not set up.
+    ///
+    /// A stated gap, in GL-14's own spirit: "no client ID" is not "sign-in is
+    /// broken", and the captain should be able to read which of the two they
+    /// are looking at.
+    static func gmailStatusLine(for configuration: GoogleOAuthConfiguration?) -> String {
+        guard let configuration else {
+            return "No OAuth client ID yet, so Connect cannot run - Grand Line cannot create one "
+                + "for you. Create a Google Cloud project, add an OAuth client of type "
+                + "\u{201C}Desktop app\u{201D}, and paste its ID above."
+        }
+        guard configuration.looksWellFormed else {
+            return "That does not look like a Google client ID - they end in "
+                + "\u{201C}.apps.googleusercontent.com\u{201D}. Connect will use it anyway, but "
+                + "Google will probably refuse it."
+        }
+        return "Ready. Connect opens Google\u{2019}s own sign-in page in Safari, so Grand Line "
+            + "never sees your password."
+    }
+
+    @objc private func gmailClientChanged() {
+        let id = gmailClientIDField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let secret = gmailClientSecretField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            // GL-10: the write is reported, never silently dropped.
+            try GoogleOAuthClientStore.shared.setConfiguration(
+                id.isEmpty ? nil : GoogleOAuthConfiguration(clientID: id,
+                                                            clientSecret: secret.isEmpty ? nil : secret))
+        } catch {
+            Feedback.report("Grand Line could not store the Google client ID: "
+                            + error.localizedDescription,
+                            kind: .warning, persistence: .transient, in: view)
+        }
+        refreshGmailSection()
+    }
+
+    @objc private func googleCalendarToggled() {
+        AppSettings.shared.googleCalendarEnabled = gmailCalendarSwitch.isOn
+        if !gmailCalendarSwitch.isOn { DailyReviewCalendarSources.shared.forgetGoogle() }
+        onGoogleAccountsChanged?()
+    }
+
+    private func connectGoogle(_ slot: GoogleAccountSlot) {
+        refreshGmailSection()
+        GoogleSignInController.shared.signIn(slot: slot, from: view.window) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let record):
+                if record.canReadCalendar {
+                    Feedback.report("Connected \(record.email.isEmpty ? slot.title : record.email).",
+                                    kind: .done, persistence: .transient, in: self.view)
+                } else {
+                    // Signed in, no calendar. A stated gap rather than a
+                    // success that quietly does nothing.
+                    Feedback.report("Connected, but that account did not grant calendar access - "
+                                    + "the daily review will say so.",
+                                    kind: .warning, persistence: .transient, in: self.view)
+                }
+            case .failure(.cancelled):
+                break
+            case .failure(let error):
+                Feedback.report(error.errorDescription ?? "Google sign-in failed.",
+                                kind: .warning, persistence: .transient, in: self.view)
+            }
+            self.refreshGmailSection()
+            self.onGoogleAccountsChanged?()
+        }
+        refreshGmailSection()
+    }
+
+    private func disconnectGoogle(_ slot: GoogleAccountSlot) {
+        // A sign-out is not destructive in GL-06's sense - nothing of the
+        // captain's is deleted, and signing back in restores it - so it needs
+        // no `DestructiveConfirm`. It does revoke the token with Google,
+        // which is the part that cannot be undone from here, so the button
+        // says "Disconnect" rather than "Remove".
+        GoogleSignInController.shared.signOut(slot: slot)
+        // The cached day of events belongs to the account that just went
+        // away; keeping it would render a disconnected account's calendar.
+        DailyReviewCalendarSources.shared.forgetGoogle()
+        refreshGmailSection()
+        onGoogleAccountsChanged?()
+    }
+
     // MARK: Compact mode (F22)
 
     /// What the mode is wired to. `nil` in every self-test that mounts this
@@ -1839,6 +2059,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         morningBriefingSwitch.isOn = AppSettings.shared.morningBriefingEnabled
         dailyReviewSwitch.isOn = AppSettings.shared.dailyReviewEnabled
         dailyReviewCalendarSwitch.isOn = AppSettings.shared.dailyReviewCalendarEnabled
+        refreshGmailSection()
         compactModeSwitch.isOn = AppSettings.shared.compactModeEnabled
         compactDockSwitch.isOn = AppSettings.shared.compactModeHidesDockIcon
         compactBadgeSwitch.isOn = AppSettings.shared.compactModeBadgesOverdueCount
@@ -1869,6 +2090,17 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// drive a real row click rather than only calling `select(_:)`.
     var debugSidebar: HelmPageSidebar { sidebar }
     var debugSelectedCategory: Category { selectedCategory }
+    /// The Gmail card's two slot rows, in card order.
+    var debugGmailRows: [GmailAccountRow] {
+        GoogleAccountSlot.allCases.compactMap { gmailRows[$0] }
+    }
+    var debugGmailStatusText: String { gmailStatusLabel.stringValue }
+    var debugGmailCalendarSwitch: HelmToggle { gmailCalendarSwitch }
+    var debugGmailClientIDField: HelmTextField { gmailClientIDField }
+    /// Drives the field's real target/action, the way a commit from the field
+    /// editor does - never the private method, so the wiring is under test too.
+    func debugCommitGmailClient() { gmailClientChanged() }
+    func debugRefreshGmail() { refreshGmailSection() }
     /// The cards currently in the detail pane, in the order it stacks them.
     var debugMountedCards: [HelmCard] {
         cardsContainer.arrangedSubviews.compactMap { $0 as? HelmCard }

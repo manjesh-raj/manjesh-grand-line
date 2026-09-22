@@ -417,3 +417,86 @@ no Screen Recording grant); the page's appearance is an off-screen
 confirm the page carries the digest full-bleed with its footer at the bottom.
 Dismiss it and confirm the page says so rather than going blank, then check
 Fleet shows the same dismissal.
+
+---
+
+## The Overview page's layout, corrected (`fm/grandline-overview-layout-fix-gmail-settings`)
+
+The captain sent a screenshot of the page above, and five things were wrong with
+it. Four were in the **shell around the page** rather than in
+`DailyOverviewController`, which is why the page's own suite was green
+throughout.
+
+**The tab strip was gone.** `AppShellController.show` asked
+`slot.id == .homeCanvas` to decide whether the bar keeps its wordmark and space
+pills, and everything else got the drill cluster - which *hides the pills*
+(`DaylightBarController.setDrillContext`). So the new Overview tab, which is
+opened by a space pill, rendered with a back arrow and no tab strip at all: a
+pill that hid the pill strip the moment you pressed it. Measured in an
+off-screen probe before the fix: `drillNavIsHidden = false`,
+`pillsAreHidden = true`.
+
+The fix is one question changed. `DaylightSpace.owning(destination:)` is the
+reverse of the `destination` table #441 added, and `show(_:)` now asks
+"is this page some space's own page, or the canvas" rather than naming the
+canvas. A second such page is one line in that enum and none in the shell -
+which is what the `destination` seam was for in the first place.
+
+The consequence worth recording: **a top-level page has no drill header**, so
+`DailyOverviewController`'s `DaylightDrillActions` conformance and its
+`onDrillSubtitleChanged` wiring were dead. Both are gone. The line it computed
+is kept as `pageSummary` and asserted against what the card is actually
+painting, rather than against a header nobody renders.
+
+**A terminal session strip drew over the review card.** `SESSIONS / Prod
+Bastion`, on a page with nothing to do with terminals. The strip was gated on
+"is there a live session" alone, which is how `fm/grandline-session-switcher`
+built it ("reachable from anywhere"). `RailDestination.showsSessionStrip` is
+the second input, and `.dailyOverview` is the one page it is off on - a table
+rather than a `dest == .dailyOverview` in the shell, so a second such page is
+one line. Everywhere else the strip is unchanged.
+
+**The card sat 2pt inside the bar above it.** The Daylight bar is a floating
+panel inset `DaylightBarController.sideMargin` (22) from the window; the page
+used `HelmMetrics.pageGutter` (24). Measured at 1220pt: bar 22..1198, card
+24..1196. Four points on a 1220pt page, and the captain saw it at once, because
+this is the only page in the app whose single element's edge is vertically
+adjacent to the bar's. Every other page keeps `pageGutter`.
+
+**The dead zone below the card was the card.** #441 added a viewport-height
+minimum at `contentTie` so the card "fills the page rather than floating at the
+top of it". What that actually produces is in the captain's screenshot: a 317pt
+card stretched to 592pt, its three column rules running down through ~275pt of
+empty background and its footer parked on the bottom edge of the window. The
+constraint is gone. A card sizes to its content, and what is under it is page
+background - which is what the approved mockup shows and what every other short
+page here already does.
+
+**"Settings" and "Dismiss" were a gear and an X.** Two
+`HelmPageToolbar.iconButton`s. A bare X on a card whose whole point is "here is
+your day" reads as closing the page rather than as putting today's review away,
+and a gear says nothing about *which* settings it opens. Two labelled
+`HelmButton`s now, on the one card both hosts share.
+
+### Verification
+
+Root-caused with a real off-screen probe rather than by reading the code, per
+AGENTS.md's "Verifying native UI bugs" convention - the measurements above are
+that probe's. After: pills back, card 1468x289 at x=22 against a 289pt fitting
+size, document 341pt against an 824pt viewport. Rendered at 1512pt in Dusk and
+Catppuccin Latte and read back; both match the mockup's chrome. The probe was
+reverted before commit.
+
+Five injections confirmed the new checks catch real regressions: reverting
+`isTopLevel` to the canvas-only test fails the three bar-chrome checks by name;
+`showsSessionStrip` always-true fails the three strip checks;
+the viewport fill back fails the card-height check (848 against a 352 fitting
+size); `pageGutter` back fails the width check by exactly 4pt; the icon buttons
+back fails the labelled-button check with `["", ""]`.
+
+`DaylightModuleSelfTest`'s drill sweep asserted the old rule and had to change
+with it: it now excludes every top-level space page from the drill loop and
+asserts the *opposite* property for them in a loop of its own, so both
+directions are still covered. Its "which page did the pill open" check moved
+off the drill header's title (a top-level page has none) onto
+`currentContextTitle`, which the window title and the Recents list already read.

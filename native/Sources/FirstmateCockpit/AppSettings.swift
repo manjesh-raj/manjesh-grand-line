@@ -41,6 +41,7 @@ final class AppSettings {
         static let snippetExpansionEnabled = "fm.snippetExpansionEnabled"
         static let dailyReviewEnabled = "fm.dailyReviewEnabled"
         static let dailyReviewCalendarEnabled = "fm.dailyReviewCalendarEnabled"
+        static let googleCalendarEnabled = "fm.googleCalendarEnabled"
         static let dailyReviewDismissedDay = "fm.dailyReviewDismissedDay"
         static let compactModeEnabled = "fm.compactModeEnabled"
         static let compactModeHidesDockIcon = "fm.compactModeHidesDockIcon"
@@ -314,6 +315,23 @@ final class AppSettings {
     var dailyReviewCalendarEnabled: Bool {
         get { defaults.bool(forKey: Keys.dailyReviewCalendarEnabled) }
         set { defaults.set(newValue, forKey: Keys.dailyReviewCalendarEnabled) }
+    }
+
+    /// Whether a connected Google account's calendar joins the daily
+    /// review's calendar column.
+    ///
+    /// `fm/grandline-overview-layout-fix-gmail-settings`. Separate from
+    /// `dailyReviewCalendarEnabled` on purpose: that one gates the **local**
+    /// Mac calendars behind a TCC grant this app has to ask for, and this one
+    /// gates a remote source the captain already consented to by signing in.
+    /// One flag for both would make turning off EventKit also turn off
+    /// Google, which is not what either switch says.
+    ///
+    /// Off until asked, like its sibling, and useless on its own - a
+    /// connected account is the other half.
+    var googleCalendarEnabled: Bool {
+        get { defaults.bool(forKey: Keys.googleCalendarEnabled) }
+        set { defaults.set(newValue, forKey: Keys.googleCalendarEnabled) }
     }
 
     /// The day key (`MorningBriefing.dayKey`) the daily review was dismissed

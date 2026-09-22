@@ -210,6 +210,15 @@ final class DailyOverviewController: NSViewController {
         // holds, and a review that still said "2 due" after both were ticked
         // off would be worse than no page.
         renderDailyReview()
+        // The one source that is not in memory: a connected Google account's
+        // calendar. Read in the background and re-rendered only if it
+        // actually changed - `events(on:)` is synchronous and on the main
+        // thread, so the network half can never be in it (GL-04/GL-12).
+        // Costs nothing at all when no account is connected.
+        DailyReviewCalendarSources.shared.refreshGoogle(for: Date()) { [weak self] changed in
+            guard changed, let self, !self.view.isHidden else { return }
+            self.renderDailyReview()
+        }
     }
 
     private func scrollToTop() {
@@ -234,6 +243,17 @@ final class DailyOverviewController: NSViewController {
     /// - same gates, same GL-14 unavailability states, same composer. The one
     /// addition is the empty state, which a page needs and a card in a stack
     /// does not.
+    /// Re-render, but only if this page has ever been built.
+    ///
+    /// The shell calls this on an event that happened somewhere else (a
+    /// Google account connecting), and a lazily-mounted page that has never
+    /// been visited has no views to render into - touching `view` here would
+    /// mount it, which is exactly what GL-37's laziness exists to avoid.
+    func renderDailyReviewIfMounted() {
+        guard isViewLoaded else { return }
+        renderDailyReview()
+    }
+
     func renderDailyReview() {
         guard AppSettings.shared.dailyReviewEnabled else {
             showEmptyState(title: "The daily review is turned off",
@@ -287,10 +307,13 @@ final class DailyOverviewController: NSViewController {
         // Habits: F8 has not shipped. A stated gap, not a hidden section.
         inputs.habits = DailyReviewHabits.read()
 
-        // The calendar, and the only place this app reads EventKit. Off until
-        // the captain turns it on, and then read-only.
-        if AppSettings.shared.dailyReviewCalendarEnabled {
-            inputs.calendar = dailyReviewCalendar.events(on: now)
+        // The calendar. Two sources now - this Mac's own through EventKit,
+        // and any connected Google account - each behind its own switch, and
+        // `DailyReviewCalendarSources` owns which of them are on. Both are
+        // read-only; `nil` means every source is off, which is a state rather
+        // than an absence.
+        if let calendar = DailyReviewCalendarSources.shared.source(local: dailyReviewCalendar) {
+            inputs.calendar = calendar.events(on: now)
         } else {
             inputs.calendar = .unavailable(DisabledDailyReviewCalendar.offReason)
         }

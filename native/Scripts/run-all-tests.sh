@@ -197,6 +197,11 @@ NEEDS_SESSION=(
   # own width under a shrink (gotcha (13)). Its composer half
   # (`FM_RUN_DAILY_REVIEW_TESTS`) is pure logic and deliberately NOT here.
   "FM_RUN_DAILY_REVIEW_VIEW_TESTS"
+  # `fm/grandline-overview-layout-fix-gmail-settings`: mounts a real
+  # `SettingsController` in a real window and asserts laid-out geometry and
+  # painted colour. Its sibling `FM_RUN_GOOGLE_ACCOUNTS_TESTS` is pure logic
+  # and deliberately NOT here.
+  "FM_RUN_GMAIL_SETTINGS_VIEW_TESTS"
   "FM_RUN_APP_SHELL_BODY_WIDTH_TESTS"
   # Mounts the real shell in a real window and sweeps its width, to prove
   # Bootstrap's own labels can no longer dictate it.

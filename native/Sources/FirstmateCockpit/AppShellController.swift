@@ -969,6 +969,16 @@ final class AppShellController: NSViewController {
         // selected category, the way the reference mockup's "Settings /
         // Shortcuts & Siri" does.
         settings.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
+        // `fm/grandline-overview-layout-fix-gmail-settings`: a Google account
+        // connected (or disconnected, or its calendar switch flipped) changes
+        // what the daily review's calendar column can read, on both hosts.
+        // Pushed from Settings rather than polled, and the pages re-read the
+        // source rather than being handed one.
+        settings.onGoogleAccountsChanged = { [weak self] in
+            guard let self else { return }
+            self.dailyOverview.renderDailyReviewIfMounted()
+            self.overview.renderDailyReviewIfMounted()
+        }
         settings.onRunCommand = { [weak self] label, command in self?.runInConsole(label: label, command: command) }
         settings.onRunCommandTracked = { [weak self] label, command, completion in
             self?.runInConsole(label: label, command: command, completion: completion)
