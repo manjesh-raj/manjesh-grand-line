@@ -210,7 +210,7 @@ enum StrawHatMember: String, CaseIterable {
     /// records that a domain hue resolves to a *uniform* `.neutral` on all
     /// twelve non-Daylight palettes, which would collapse exactly the
     /// per-crew differentiation M2.4 exists to provide. A `HelmTint` resolves
-    /// to a real, distinct colour in every one of the fourteen themes.
+    /// to a real, distinct colour in every one of the app's themes.
     ///
     /// **None of these is `.critical`, on purpose.** AGENTS.md's Dictation
     /// note records the trap: a semantic tint on a benign row paints an alert

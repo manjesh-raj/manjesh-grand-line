@@ -73,3 +73,6 @@ so `git log` is the tiebreaker.
 | [`39-daily-review.md`](39-daily-review.md) | Daily review (F20): Overview's general-user briefing and its read-only calendar | 14KB |
 | [`40-menu-bar-mode.md`](40-menu-bar-mode.md) | Menu-bar (compact) mode (F22): the merged status item, its four-tab popover and the window/Dock lifecycle | 25KB |
 | [`41-app-intents-and-full-export.md`](41-app-intents-and-full-export.md) | App Intents / Shortcuts (F21) and the `.glbackup` bundle's five new sections (F24) | 20KB |
+| [`42-widgets.md`](42-widgets.md) | WidgetKit extension (F23): the Tasks-due and Sticky-note widgets and the Developer ID dependency | 13KB |
+| [`43-google-accounts.md`](43-google-accounts.md) | Gmail sign-in, the OAuth/PKCE flow, and Google Calendar as a second read-only source for the daily review | 9KB |
+| [`44-new-theme-families.md`](44-new-theme-families.md) | Six new theme families: the picker from 14 palettes to 26 (Nord, Dracula, One, Ayu, Night Owl, Oxocarbon) | 11KB |

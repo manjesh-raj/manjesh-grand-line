@@ -1253,6 +1253,17 @@ noted.
   explicit stable hash over the UTF-8 bytes; `ReadingListHostHue.hue(for:)` and
   `ReadingListTags.stableIndex(of:)` are the worked examples, and both are
   asserted for stability rather than only for range.
+- **A new palette is one surface step, and the step is the family's own
+  canonical editor background.** `backgroundHex` is simultaneously the page
+  ground *and* the terminal background, so a palette whose card differs from
+  its page reopens the seam
+  `fm/grand-line-legacy-terminal-canvas-chrome-match` closed - unless it
+  carries a real `terminalCard`, which only the Daylight family does.
+  `ThemeFamilySelfTest.checkPaletteShape` fails the run on one that does not,
+  and also on a `pairId` that is one-way (`ThemeManager.toggle()` *silently*
+  falls back to the plain Helm swap, so a broken pair drops the captain out of
+  their family on a keystroke and nothing else notices).
+  [`44-new-theme-families.md`](docs/history/44-new-theme-families.md).
 - A Daylight-family restyle branches on `theme.isDaylight` and leaves the other
   twelve palettes byte-identical. Branch **colour and geometry recipes** that
   way - never *structure*: a page whose column count depends on the theme is a
@@ -1498,6 +1509,7 @@ can correct an earlier one - and several do.
 | [`41-app-intents-and-full-export.md`](docs/history/41-app-intents-and-full-export.md) | App Intents / Shortcuts (F21), the `.glbackup` bundle's five new sections (F24), and `GrandLineServices` |
 | [`42-widgets.md`](docs/history/42-widgets.md) | The WidgetKit extension (F23): the Tasks-due and Sticky-note widgets, the published snapshot, the queued-tap channel, and the Developer ID dependency |
 | [`43-google-accounts.md`](docs/history/43-google-accounts.md) | Gmail sign-in (two independent Google accounts), the OAuth/PKCE flow, and Google Calendar as a second read-only source for the daily review |
+| [`44-new-theme-families.md`](docs/history/44-new-theme-families.md) | The six families that took the picker from 14 palettes to 26 (Nord, Dracula/Alucard, One, Ayu, Night Owl/Light Owl, Oxocarbon) |
 
 ## Maintaining this file
 

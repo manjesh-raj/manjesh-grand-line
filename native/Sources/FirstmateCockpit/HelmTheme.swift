@@ -644,8 +644,298 @@ extension HelmTheme {
         // is no separate card to paint (K2 / HelmTerminalCard).
         terminalCard: nil
     )
+}
 
-    /// All 14 palettes: the Daylight family (`daylight` and its Phase 6 dark
+// MARK: - The 6 captain-picked families (grandline-new-themes-nord-dracula-etc)
+//
+// Nord, Dracula/Alucard, One Dark/One Light, Ayu, Night Owl/Light Owl and
+// Oxocarbon - the six families the captain picked off the theme-suggestions
+// board. Sourcing, the per-family contrast table and the reasoning behind
+// every deviation below are in `docs/history/44-new-theme-families.md`; the
+// upstream file each hex was lifted from is named per family here.
+//
+// **Two conventions these twelve inherit rather than invent**, both of them
+// load-bearing and both easy to get wrong:
+//
+// 1. `backgroundHex == chromeBackgroundHex`, and both are the family's own
+//    canonical editor background. Every pre-Daylight palette is one-step
+//    (`fm/grand-line-legacy-terminal-canvas-chrome-match` made it so, to kill
+//    the seam between the terminal canvas and the chrome around it), and
+//    `backgroundHex` is simultaneously the page ground *and* the terminal
+//    background - so a second surface step here would reopen exactly that
+//    seam. The card is separated from the page by `chromeLineHex` at
+//    `HelmDesignSystem.borderAlpha`, the same way `gruvbox-light` and both
+//    Tokyo Nights already are.
+// 2. `selectionTextHex` is the primary button's label on the accent fill as
+//    well as the terminal's selected-run ink, so it has to clear 4.5:1 on
+//    `accentHex`. Four of the accents below are darkened for exactly that
+//    reason, each along its own hue line and each marked.
+
+extension HelmTheme {
+    // --- Nord (github.com/nordtheme/nord, src/nord.css nord0-nord15) ---
+    //
+    // Nord ships **dark only** upstream. The light half is ours: it reuses
+    // Nord's own Snow Storm ramp for the surfaces (which Nord does publish)
+    // and darkens the Aurora/Frost hues along their own hue lines for paper.
+    // That is a real ownership cost - there is no upstream to re-sync a Nord
+    // light from - and it is recorded here rather than left to be discovered.
+    static let nordPolar = HelmTheme(
+        id: "nord-polar", mode: .dark, name: "Nord", pairId: "nord-snow",
+        // nord0. Nord's own editor background, used for both surfaces per the
+        // one-step convention above; nord1 (`3b4252`) is Nord's elevated
+        // surface and is what `chromeLineHex`'s neighbour would have been.
+        chromeBackgroundHex: "2e3440",
+        chromeInkHex: "d8dee9",   // nord4
+        chromeLineHex: "4c566a",  // nord3
+        accentHex: "88c0d0",      // nord8, Nord's own primary accent
+        foregroundHex: "d8dee9", backgroundHex: "2e3440",
+        cursorHex: "88c0d0", selectionHex: "88c0d0",
+        selectionTextHex: "2e3440", // nord0 on nord8: 6.24:1
+        ansiHex: [
+            "3b4252", "bf616a", "a3be8c", "ebcb8b", "81a1c1", "b48ead", "88c0d0", "e5e9f0",
+            "4c566a", "bf616a", "a3be8c", "ebcb8b", "5e81ac", "b48ead", "8fbcbb", "eceff4",
+        ],
+        terminalCard: nil
+    )
+
+    static let nordSnow = HelmTheme(
+        id: "nord-snow", mode: .light, name: "Nord Snow Storm", pairId: "nord-polar",
+        chromeBackgroundHex: "eceff4", // nord6
+        chromeInkHex: "2e3440",        // nord0
+        // nord4 (`d8dee9`) is Nord's own divider tone and measures 1.11:1 on
+        // nord6 - invisible, and this app's card border carries real load
+        // (`HelmDesignSystem.borderAlpha`). Darkened along the same blue-grey
+        // line to `c2cbd8`, which reads as a hairline without becoming a rule.
+        chromeLineHex: "c2cbd8",
+        // nord10 (`5e81ac`) darkened 17% along its own hue line. The canonical
+        // value carries a white label at only 3.50:1, and this slot is the
+        // primary button's fill - see convention (2) above. The scout's board
+        // proposed a 14% darkening (`516f94`); measured against this app's own
+        // `HelmContrast` that lands at **4.497:1** and fails the floor by
+        // three thousandths, so it is one more step down the same line.
+        accentHex: "4e6b8f",
+        foregroundHex: "2e3440", backgroundHex: "eceff4",
+        cursorHex: "4e6b8f", selectionHex: "4e6b8f",
+        selectionTextHex: "eceff4", // nord6 on the darkened nord10: 4.77:1
+        ansiHex: [
+            // Aurora and Frost are published for a dark ground. Every slot
+            // here is the canonical hue darkened for paper; the greys
+            // (nord0-nord3) are verbatim.
+            "4c566a", "a54049", "4a663a", "8a6a1f", "3b628f", "7d5178", "2e6a78", "4c566a",
+            "434c5e", "bf616a", "5b7a46", "a17c2a", "5e81ac", "8f6389", "3d7e8c", "2e3440",
+        ],
+        terminalCard: nil
+    )
+
+    // --- Dracula / Alucard (github.com/dracula/dracula-theme README.md) ---
+    //
+    // The one family on this list that publishes its own light half, and
+    // publishes it as a real palette rather than a community port.
+    static let dracula = HelmTheme(
+        id: "dracula", mode: .dark, name: "Dracula", pairId: "alucard",
+        chromeBackgroundHex: "282a36", // Dracula `Background`
+        chromeInkHex: "f8f8f2",        // `Foreground`
+        chromeLineHex: "44475a",       // `Current Line` / `Selection`
+        accentHex: "bd93f9",           // `Purple`
+        foregroundHex: "f8f8f2", backgroundHex: "282a36",
+        cursorHex: "bd93f9", selectionHex: "bd93f9",
+        selectionTextHex: "282a36", // 5.90:1
+        ansiHex: [
+            "21222c", "ff5555", "50fa7b", "f1fa8c", "bd93f9", "ff79c6", "8be9fd", "f8f8f2",
+            "6272a4", "ff6e6e", "69ff94", "ffffa5", "d6acff", "ff92df", "a4ffff", "ffffff",
+        ],
+        terminalCard: nil
+    )
+
+    static let alucard = HelmTheme(
+        id: "alucard", mode: .light, name: "Alucard", pairId: "dracula",
+        // Alucard's `Background` is the cream `fffbeb`, not white - that cream
+        // *is* the theme's identity, so it is the single surface here. The
+        // pure-white `ffffff` the family publishes alongside it is Alucard's
+        // elevated surface and has no role under the one-step convention.
+        chromeBackgroundHex: "fffbeb",
+        chromeInkHex: "1f1f1f",  // `Foreground`
+        chromeLineHex: "cfcfde", // `Current Line`
+        accentHex: "644ac9",     // `Purple`
+        foregroundHex: "1f1f1f", backgroundHex: "fffbeb",
+        cursorHex: "644ac9", selectionHex: "644ac9",
+        selectionTextHex: "fffbeb", // 6.02:1
+        ansiHex: [
+            "6c664b", "cb3a2a", "14710a", "846e15", "644ac9", "a3144d", "036a96", "1f1f1f",
+            "6c664b", "cb3a2a", "14710a", "846e15", "644ac9", "a3144d", "036a96", "1f1f1f",
+        ],
+        terminalCard: nil
+    )
+
+    // --- One Dark / One Light (github.com/atom/one-*-syntax, styles/colors.less) ---
+    //
+    // Atom publishes these as HSL in Less (`hsl(220, 13%, 18%)`); every value
+    // below is that arithmetic resolved, not a downstream port's rounding.
+    static let oneDark = HelmTheme(
+        id: "one-dark", mode: .dark, name: "One Dark", pairId: "one-light",
+        chromeBackgroundHex: "282c34", // `syntax-bg`
+        chromeInkHex: "abb2bf",        // `mono-1`
+        chromeLineHex: "3e4451",       // `syntax-cursor-line`
+        accentHex: "61afef",           // `hue-2`
+        foregroundHex: "abb2bf", backgroundHex: "282c34",
+        cursorHex: "61afef", selectionHex: "61afef",
+        selectionTextHex: "282c34", // 5.92:1
+        ansiHex: [
+            "3f4451", "e06c75", "98c379", "e5c07b", "61afef", "c678dd", "56b6c2", "abb2bf",
+            "5c6370", "e06c75", "98c379", "e5c07b", "61afef", "c678dd", "56b6c2", "ffffff",
+        ],
+        terminalCard: nil
+    )
+
+    static let oneLight = HelmTheme(
+        id: "one-light", mode: .light, name: "One Light", pairId: "one-dark",
+        chromeBackgroundHex: "fafafa", // `syntax-bg`
+        chromeInkHex: "383a42",        // `mono-1`
+        chromeLineHex: "d4d4d5",       // `syntax-cursor-line`
+        // `hue-2` (`4078f2`) darkened 9% along its own hue line: the canonical
+        // value carries a white label at 3.88:1 - convention (2) above.
+        accentHex: "3a6ddc",
+        foregroundHex: "383a42", backgroundHex: "fafafa",
+        cursorHex: "3a6ddc", selectionHex: "3a6ddc",
+        selectionTextHex: "fafafa", // 4.57:1
+        ansiHex: [
+            "383a42", "e45649", "50a14f", "986801", "4078f2", "a626a4", "0184bc", "696c77",
+            "a0a1a7", "ca1243", "50a14f", "c18401", "4078f2", "a626a4", "0184bc", "383a42",
+        ],
+        terminalCard: nil
+    )
+
+    // --- Ayu (github.com/ayu-theme/vscode-ayu, built ayu-dark.json / ayu-light.json) ---
+    //
+    // `ayu-colors` publishes a computed lightness ramp (`$palette.yellow.l4`)
+    // rather than literal hex, so the values come out of `vscode-ayu`'s built
+    // theme files - the same ramp already evaluated.
+    //
+    // **Ayu makes the hairline load-bearing**, and more so than any other
+    // family here: `base` and `lift` are only 1.03:1 apart upstream, so under
+    // the one-step convention a card is separated from the page by
+    // `chromeLineHex` alone. That is the same position `gruvbox-light` and
+    // both Tokyo Nights are already in, and it is faithful to Ayu - the
+    // `1b1f29` / `dfe2e6` lines below are deliberately the strongest divider
+    // each half publishes rather than its faintest.
+    static let ayuDark = HelmTheme(
+        id: "ayu-dark", mode: .dark, name: "Ayu Dark", pairId: "ayu-light",
+        chromeBackgroundHex: "0d1017", // `editor.background`
+        chromeInkHex: "bfbdb6",        // `editor.foreground`
+        chromeLineHex: "1b1f29",       // `editorGroup.border`
+        accentHex: "e6b450",           // Ayu's one amber accent
+        foregroundHex: "bfbdb6", backgroundHex: "0d1017",
+        cursorHex: "e6b450", selectionHex: "e6b450",
+        selectionTextHex: "0d1017", // 9.98:1
+        ansiHex: [
+            "1b1f29", "f06b73", "70bf56", "fdb04c", "4fbfff", "d0a1ff", "93e2c8", "c7c7c7",
+            "686868", "f07178", "aad94c", "ffb454", "59c2ff", "d2a6ff", "95e6cb", "ffffff",
+        ],
+        terminalCard: nil
+    )
+
+    static let ayuLight = HelmTheme(
+        id: "ayu-light", mode: .light, name: "Ayu Light", pairId: "ayu-dark",
+        chromeBackgroundHex: "fcfcfc", // `editor.background`
+        chromeInkHex: "5c6166",        // `editor.foreground`
+        chromeLineHex: "dfe2e6",       // `editorGroup.border`
+        accentHex: "f29718",           // the same amber, light-corrected upstream
+        foregroundHex: "5c6166", backgroundHex: "fcfcfc",
+        cursorHex: "f29718", selectionHex: "f29718",
+        // Ayu Light's amber is a *light* fill, so its label is Ayu's own dark
+        // `common.ui` ink rather than the page ground every other light theme
+        // here uses - a pale label on this accent measures under 2:1.
+        selectionTextHex: "1f2430", // 6.81:1
+        ansiHex: [
+            "5c6166", "f06b6c", "6cbf43", "e7a100", "21a1e2", "a176cb", "4abc96", "8a9199",
+            "8a9199", "f07171", "86b300", "eba400", "22a4e6", "a37acc", "4cbf99", "5c6166",
+        ],
+        terminalCard: nil
+    )
+
+    // --- Night Owl / Light Owl (github.com/sdras/night-owl-vscode-theme) ---
+    //
+    // The accessibility answer of the six: built for low light and for
+    // colour-blind readers, and it measures that way (11.00:1 ink, 11.25:1
+    // button label on the dark half).
+    static let nightOwl = HelmTheme(
+        id: "night-owl", mode: .dark, name: "Night Owl", pairId: "light-owl",
+        chromeBackgroundHex: "011627", // `editor.background`
+        chromeInkHex: "d6deeb",        // `editor.foreground`
+        chromeLineHex: "122d42",       // `editorGroup.border`
+        accentHex: "7fdbca",           // Night Owl's signature teal
+        foregroundHex: "d6deeb", backgroundHex: "011627",
+        cursorHex: "7fdbca", selectionHex: "7fdbca",
+        selectionTextHex: "011627", // 11.25:1
+        ansiHex: [
+            "011627", "ef5350", "22da6e", "c5e478", "82aaff", "c792ea", "21c7a8", "ffffff",
+            "575656", "ef5350", "22da6e", "ffeb95", "82aaff", "c792ea", "7fdbca", "ffffff",
+        ],
+        terminalCard: nil
+    )
+
+    static let lightOwl = HelmTheme(
+        id: "light-owl", mode: .light, name: "Light Owl", pairId: "night-owl",
+        chromeBackgroundHex: "fbfbfb", // `editor.background`
+        chromeInkHex: "403f53",        // `editor.foreground`
+        chromeLineHex: "d9d9d9",       // `editorGroup.border`
+        // Light Owl's own teal (`2aa298`) darkened 21% along its hue line: the
+        // canonical value carries a white label at 3.13:1 - convention (2).
+        accentHex: "218078",
+        foregroundHex: "403f53", backgroundHex: "fbfbfb",
+        cursorHex: "218078", selectionHex: "218078",
+        selectionTextHex: "ffffff", // 4.75:1
+        ansiHex: [
+            "403f53", "de3d3b", "08916a", "a37f00", "288ed7", "d6438a", "2aa298", "93a1a1",
+            "989fb1", "de3d3b", "08916a", "daaa01", "288ed7", "d6438a", "2aa298", "403f53",
+        ],
+        terminalCard: nil
+    )
+
+    // --- Oxocarbon (github.com/nyoom-engineering/oxocarbon.nvim) ---
+    //
+    // IBM Carbon's own grey ramp with Carbon's electric accents - the only
+    // achromatic chrome on offer here, and the sharpest departure from
+    // anything already shipped.
+    static let oxocarbonDark = HelmTheme(
+        id: "oxocarbon-dark", mode: .dark, name: "Oxocarbon", pairId: "oxocarbon-light",
+        chromeBackgroundHex: "161616", // base00, Carbon gray-100
+        chromeInkHex: "f2f4f8",        // base05
+        chromeLineHex: "393939",       // base02, Carbon gray-80
+        accentHex: "33b1ff",           // Carbon blue-40
+        foregroundHex: "f2f4f8", backgroundHex: "161616",
+        cursorHex: "33b1ff", selectionHex: "33b1ff",
+        selectionTextHex: "161616", // 7.65:1
+        ansiHex: [
+            "262626", "ee5396", "42be65", "ff7eb6", "78a9ff", "be95ff", "3ddbd9", "dde1e6",
+            "525252", "ee5396", "42be65", "be95ff", "33b1ff", "82cfff", "08bdba", "ffffff",
+        ],
+        terminalCard: nil
+    )
+
+    static let oxocarbonLight = HelmTheme(
+        id: "oxocarbon-light", mode: .light, name: "Oxocarbon Light", pairId: "oxocarbon-dark",
+        chromeBackgroundHex: "f4f4f4", // light base00, Carbon gray-10
+        chromeInkHex: "161616",        // Carbon gray-100
+        chromeLineHex: "e0e0e0",       // Carbon gray-20
+        accentHex: "0f62fe",           // Carbon blue-60, the interactive token
+        foregroundHex: "161616", backgroundHex: "f4f4f4",
+        cursorHex: "0f62fe", selectionHex: "0f62fe",
+        selectionTextHex: "ffffff", // 5.00:1
+        ansiHex: [
+            // oxocarbon.nvim's own light half leaves several ANSI slots on
+            // Material hues that are neither Carbon nor legible on gray-10.
+            // Those slots take IBM Carbon v11's own token ramp instead, which
+            // is the palette oxocarbon is itself derived from.
+            "525252", "da1e28", "0e6027", "8e6a00", "0f62fe", "8a3ffc", "005d5d", "525252",
+            "6f6f6f", "da1e28", "198038", "b28600", "0f62fe", "a56eff", "007d79", "161616",
+        ],
+        terminalCard: nil
+    )
+}
+
+extension HelmTheme {
+    /// All 26 palettes: the Daylight family (`daylight` and its Phase 6 dark
     /// companion `dusk` - see `HelmDaylight.swift`), then the two hand-pinned
     /// Helm originals, then the 10 sourced-family themes grouped by family
     /// (dark variant then its light pair).
@@ -666,6 +956,12 @@ extension HelmTheme {
         gruvboxDark, gruvboxLight,
         tokyoNightDark, tokyoNightLight,
         rosePineMain, rosePineDawn,
+        nordPolar, nordSnow,
+        dracula, alucard,
+        oneDark, oneLight,
+        ayuDark, ayuLight,
+        nightOwl, lightOwl,
+        oxocarbonDark, oxocarbonLight,
     ]
 
     static func theme(id: String) -> HelmTheme? {

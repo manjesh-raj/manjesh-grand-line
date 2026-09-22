@@ -373,7 +373,7 @@ extension KubernetesController {
         // having changed rather than as something new having opened. This is
         // `ConsoleController`'s own SRE Lead pane reasoning: a fill difference
         // alone is not enough, because `chromeBackgroundHex` and
-        // `backgroundHex` are the same value in three of the fourteen themes.
+        // `backgroundHex` are the same value in every pre-Daylight palette.
         describeDrawer.layer?.backgroundColor = HelmTheme.nsColor(theme.chromeBackgroundHex).cgColor
         describeDrawer.layer?.borderWidth = 1
         describeDrawer.layer?.borderColor = HelmTheme.nsColor(theme.accentHex)
