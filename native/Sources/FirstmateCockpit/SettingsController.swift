@@ -1306,8 +1306,18 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// categories, so a row that rebuilt itself would lose its place in
     /// `refreshFromSettings`'s sync.
     private var gmailRows: [GoogleAccountSlot: GmailAccountRow] = [:]
-    private let gmailClientIDField = HelmTextField(placeholder: "1234-abcd.apps.googleusercontent.com")
-    private let gmailClientSecretField = HelmTextField(placeholder: "Client secret (optional)")
+    // Both are masked by default with their own Show toggle, through the one
+    // `HelmRevealableSecretField` the credential editor's Secret row also
+    // uses. The client ID is not a secret in the way the client secret is -
+    // it travels in the authorization URL - but it identifies the captain's
+    // own Google Cloud project, and a Settings page read over a shoulder or a
+    // shared screen should not put either on display by default. Masking is
+    // display-only: `GoogleOAuthClientStore` sees the same string in both
+    // states.
+    private let gmailClientIDField =
+        HelmRevealableSecretField(placeholder: "1234-abcd.apps.googleusercontent.com")
+    private let gmailClientSecretField =
+        HelmRevealableSecretField(placeholder: "Client secret (optional)")
     private let gmailCalendarSwitch = HelmToggle()
     private let gmailStatusLabel = NSTextField(wrappingLabelWithString: "")
 
@@ -1361,8 +1371,15 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         // silently gone. `configure(_:)` also wires the `delegate`, which is
         // what carries `controlTextDidEndEditing` into the same commit.
         // (`fm/grandline-gmail-oauth-field-not-saving`.)
-        configure(gmailClientIDField)
-        configure(gmailClientSecretField)
+        // Both halves of each control, never only the visible one: a field
+        // whose value is persisted needs the `delegate` as well as the
+        // target/action, and a masked control that wired one half would
+        // reopen `fm/grandline-gmail-oauth-field-not-saving` in the other.
+        for control in [gmailClientIDField, gmailClientSecretField] {
+            control.editableFields.forEach(configure)
+        }
+        gmailClientIDField.revealHint = "Show the OAuth client ID"
+        gmailClientSecretField.revealHint = "Show the client secret"
         let idRow = descRow(title: "Google OAuth client ID",
                             desc: "From your own Google Cloud project - create an OAuth client of "
                                 + "type \u{201C}Desktop app\u{201D} and paste its ID here. Stored in the "
@@ -1394,10 +1411,8 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         // A field is a control, not text: a required width would be a window
         // floor (gotcha (13)), so both get a generous preferred width below
         // `NSLayoutPriorityWindowSizeStayPut`.
-        for field in [gmailClientIDField, gmailClientSecretField] {
-            let width = field.widthAnchor.constraint(equalToConstant: 280)
-            width.priority = HelmDaylightPriority.contentTie
-            width.isActive = true
+        for control in [gmailClientIDField, gmailClientSecretField] {
+            control.setPreferredFieldWidth(280)
         }
         return section
     }
@@ -2035,15 +2050,19 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     }
 
     @objc private func textFieldChanged(_ sender: NSTextField) {
+        // The Gmail controls are checked before the switch because the sender
+        // is one of a `HelmRevealableSecretField`'s two halves, never the
+        // control itself - a `case` on the property would match neither.
+        // Both fields write one stored pair, so either one committing re-reads
+        // both, which is what makes the order they are edited in irrelevant.
+        if gmailClientIDField.owns(sender) || gmailClientSecretField.owns(sender) {
+            gmailClientChanged()
+            return
+        }
         let value = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         switch sender {
         case shellCwdField:
             AppSettings.shared.defaultShellCwd = value.isEmpty ? nil : value
-        case gmailClientIDField, gmailClientSecretField:
-            // Both fields write one stored pair, so either one committing
-            // re-reads both - which is also what makes the order they are
-            // edited in irrelevant.
-            gmailClientChanged()
         default:
             break
         }
@@ -2106,8 +2125,8 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     }
     var debugGmailStatusText: String { gmailStatusLabel.stringValue }
     var debugGmailCalendarSwitch: HelmToggle { gmailCalendarSwitch }
-    var debugGmailClientIDField: HelmTextField { gmailClientIDField }
-    var debugGmailClientSecretField: HelmTextField { gmailClientSecretField }
+    var debugGmailClientIDField: HelmRevealableSecretField { gmailClientIDField }
+    var debugGmailClientSecretField: HelmRevealableSecretField { gmailClientSecretField }
     /// Calls the commit directly. Deliberately *not* a stand-in for the field's
     /// own wiring: it reaches past both the Return action and the end-editing
     /// delegate, which is exactly how `fm/grandline-gmail-oauth-field-not-saving`

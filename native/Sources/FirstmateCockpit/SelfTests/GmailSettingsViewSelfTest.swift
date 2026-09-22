@@ -42,6 +42,8 @@ enum GmailSettingsViewSelfTest {
         checkTheFourStates(check)
         checkTheClientIDFieldAndItsStatusLine(check)
         checkPastingAndClickingAwayCommits(check)
+        checkBothFieldsAreMaskedUntilRevealed(check)
+        checkTheRevealedHalfCommitsToo(check)
         checkBothRegistersPaintLegibleText(check)
         checkNothingHereCapsTheWindow(check)
 
@@ -258,8 +260,13 @@ enum GmailSettingsViewSelfTest {
     private static func checkPastingAndClickingAwayCommits(_ check: (Bool, String) -> Void) {
         GoogleOAuthClientStore.shared.override = .some(nil)
         withMountedSettings { settings, window, _ in
-            let idField = settings.debugGmailClientIDField
-            let secretField = settings.debugGmailClientSecretField
+            // Both controls are masked by default, so the half a click lands
+            // in - and the half with a field editor - is the secure one.
+            // `visibleField` is what a real captain is typing into.
+            let idControl = settings.debugGmailClientIDField
+            let secretControl = settings.debugGmailClientSecretField
+            let idField = idControl.visibleField
+            let secretField = secretControl.visibleField
 
             // 1. Paste into the ID field through its real field editor.
             check(window.makeFirstResponder(idField),
@@ -270,8 +277,8 @@ enum GmailSettingsViewSelfTest {
                 return
             }
             editor.insertText(clientID)
-            check(idField.stringValue == clientID,
-                  "the pasted text should reach the field, got \(idField.stringValue)")
+            check(idControl.stringValue == clientID,
+                  "the pasted text should reach the field, got \(idControl.stringValue)")
             // The discriminating half: nothing is saved *yet*, so a pass below
             // cannot come from a store that was already configured.
             check(GoogleOAuth.configuration() == nil,
@@ -308,6 +315,155 @@ enum GmailSettingsViewSelfTest {
             idField.sendAction(idField.action, to: idField.target)
             check(GoogleOAuth.configuration()?.clientID == clientID,
                   "Return still commits, got \(GoogleOAuth.configuration()?.clientID ?? "nothing")")
+            window.makeFirstResponder(nil)
+        }
+    }
+
+    // MARK: 4c - masked by default, revealed on demand
+
+    /// The captain's ask: both OAuth fields hidden by default, with a button
+    /// to show each one.
+    ///
+    /// Four properties, and the last is the one that makes this a *display*
+    /// change rather than a storage one:
+    ///
+    ///   1. Both start masked - the visible half is the one whose cell is an
+    ///      `NSSecureTextFieldCell`, which is what actually draws bullets.
+    ///      Asserting `isRevealed == false` alone would pass against a
+    ///      control that had lost its secure cell entirely.
+    ///   2. The reveal toggle puts the real value on screen, in a field that
+    ///      is *not* secure.
+    ///   3. Toggling again re-masks it.
+    ///   4. The two toggles are independent, and `GoogleOAuthClientStore`
+    ///      holds the same strings throughout - masking never reaches the
+    ///      store.
+    /// Whether what is on screen is really drawn as bullets. `isRevealed` is
+    /// this control's own bookkeeping; the cell is AppKit's.
+    private static func masksItsText(_ field: NSTextField) -> Bool {
+        (field.cell as? NSSecureTextFieldCell) != nil
+    }
+
+    private static func checkBothFieldsAreMaskedUntilRevealed(_ check: (Bool, String) -> Void) {
+        let secret = "s3cret-value"
+        GoogleOAuthClientStore.shared.override = .some(
+            GoogleOAuthConfiguration(clientID: clientID, clientSecret: secret))
+        withMountedSettings { settings, _, _ in
+            settings.debugRefreshGmail()
+            let idControl = settings.debugGmailClientIDField
+            let secretControl = settings.debugGmailClientSecretField
+
+            // The fixture's own discriminating power: there is something to
+            // hide, and the two values differ, so a control showing the wrong
+            // one cannot pass by coincidence.
+            check(idControl.stringValue == clientID && secretControl.stringValue == secret,
+                  "both controls should hold the stored pair before anything is toggled")
+            check(clientID != secret, "the two fixture values must differ")
+
+            for (name, control) in [("client ID", idControl), ("client secret", secretControl)] {
+                check(!control.isRevealed, "the \(name) should start masked")
+                check(control.visibleField === control.maskedField,
+                      "the \(name)'s visible half should be the secure one")
+                check(masksItsText(control.visibleField),
+                      "the \(name)'s visible cell does not mask its text - it would render the "
+                      + "value in the clear")
+                check(control.plainField.isHidden,
+                      "the \(name)'s plain half should be out of layout while masked")
+                check(control.revealButton.title == "Show",
+                      "the \(name)'s toggle should offer Show, got \(control.revealButton.title)")
+            }
+
+            // 2. Reveal the ID only. A real click through the button's own
+            // target/action, not a direct call to the toggle.
+            idControl.revealButton.performClick(nil)
+            settings.view.layoutSubtreeIfNeeded()
+            check(idControl.isRevealed, "clicking Show should reveal the client ID")
+            check(idControl.visibleField === idControl.plainField,
+                  "and put the plain half in layout")
+            check(!masksItsText(idControl.visibleField),
+                  "the revealed half must not mask its text, or nothing is shown")
+            check(idControl.visibleField.stringValue == clientID,
+                  "the revealed field should show the real value, got "
+                  + "\(idControl.visibleField.stringValue)")
+            check(idControl.revealButton.title == "Hide",
+                  "and the toggle should now offer Hide")
+            check(idControl.maskedField.isHidden, "the secure half leaves layout while revealed")
+
+            // Independence: revealing one must not reveal the other.
+            check(!secretControl.isRevealed,
+                  "revealing the client ID must not reveal the client secret")
+            check(masksItsText(secretControl.visibleField),
+                  "the client secret stays behind its own secure cell")
+
+            // 3. Toggling again re-masks.
+            idControl.revealButton.performClick(nil)
+            settings.view.layoutSubtreeIfNeeded()
+            check(!idControl.isRevealed, "clicking again should re-mask the client ID")
+            check(masksItsText(idControl.visibleField),
+                  "and put the secure cell back on screen")
+            check(idControl.stringValue == clientID,
+                  "re-masking must not lose the value, got \(idControl.stringValue)")
+
+            // The secret's own toggle, so neither is asserted only through
+            // the other.
+            secretControl.revealButton.performClick(nil)
+            check(secretControl.isRevealed && !idControl.isRevealed,
+                  "the two toggles are independent in both directions")
+            check(secretControl.visibleField.stringValue == secret,
+                  "the revealed secret should show the real value")
+
+            // 4. Nothing above touched the store.
+            check(GoogleOAuth.configuration()?.clientID == clientID,
+                  "masking is display-only - the stored client ID must be untouched, got "
+                  + "\(GoogleOAuth.configuration()?.clientID ?? "nothing")")
+            check(GoogleOAuth.configuration()?.clientSecret == secret,
+                  "and so must the stored client secret, got "
+                  + "\(GoogleOAuth.configuration()?.clientSecret ?? "nothing")")
+        }
+    }
+
+    /// The commit path, driven while the field is **revealed** - the half that
+    /// `checkPastingAndClickingAwayCommits` never sees, and the one a masking
+    /// change could silently leave unwired. Same shape as that case: a real
+    /// field editor, then focus moved away, then the *store* is read.
+    private static func checkTheRevealedHalfCommitsToo(_ check: (Bool, String) -> Void) {
+        GoogleOAuthClientStore.shared.override = .some(nil)
+        withMountedSettings { settings, window, _ in
+            let idControl = settings.debugGmailClientIDField
+            idControl.revealButton.performClick(nil)
+            settings.view.layoutSubtreeIfNeeded()
+            check(idControl.isRevealed, "the client ID should be revealed for this case")
+
+            let field = idControl.visibleField
+            check(window.makeFirstResponder(field),
+                  "the revealed field should accept first responder")
+            guard let editor = field.currentEditor() else {
+                check(false, "the revealed field has no field editor - every assertion below "
+                      + "would be vacuous")
+                return
+            }
+            editor.insertText(clientID)
+            check(GoogleOAuth.configuration() == nil,
+                  "mid-edit, nothing is committed yet - otherwise this case proves nothing")
+            window.makeFirstResponder(nil)
+            check(GoogleOAuth.configuration()?.clientID == clientID,
+                  "typing into the revealed half and clicking away must save it - got "
+                  + "\(GoogleOAuth.configuration()?.clientID ?? "nothing")")
+
+            // And the toggle itself carries a mid-edit value across the swap,
+            // rather than showing the captain a stale one.
+            GoogleOAuthClientStore.shared.override = .some(nil)
+            settings.debugRefreshGmail()
+            let secretControl = settings.debugGmailClientSecretField
+            check(window.makeFirstResponder(idControl.visibleField),
+                  "focus returns to the client ID field")
+            idControl.visibleField.currentEditor()?.insertText(clientID)
+            idControl.revealButton.performClick(nil)
+            settings.view.layoutSubtreeIfNeeded()
+            check(idControl.stringValue == clientID,
+                  "toggling mid-edit must carry the typed text across, got "
+                  + "\(idControl.stringValue)")
+            check(secretControl.stringValue.isEmpty,
+                  "and must not spill into the other control")
             window.makeFirstResponder(nil)
         }
     }

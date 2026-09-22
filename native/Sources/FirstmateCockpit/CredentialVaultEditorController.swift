@@ -11,7 +11,7 @@
 //
 // Two things specific to this sheet:
 //
-//   * **The secret field is a `HelmSecureTextField` with a Show toggle.** It is
+//   * **The secret field is a `HelmRevealableSecretField`.** It is
 //     masked by default even here, because the most common reason to open this
 //     sheet on an existing item is to change the *notes* or the tags - not to
 //     look at the value. The toggle is local to this sheet and logs nothing:
@@ -57,9 +57,8 @@ final class CredentialVaultEditorController: NSViewController, NSTextFieldDelega
     private let kindCard = HelmFieldCard(label: "Kind")
     private let categoryCard = HelmFieldCard(label: "Category")
     private let accountField = HelmTextField(placeholder: "user@example.com, an IAM user, an ARN\u{2026}")
-    private let secretField = HelmSecureTextField(placeholder: "The value you'll paste elsewhere")
-    private let plainSecretField = HelmTextField(placeholder: "The value you'll paste elsewhere")
-    private let showSecretButton = HelmButton(title: "Show", variant: .quiet, size: .small, symbol: "eye")
+    private let secretControl =
+        HelmRevealableSecretField(placeholder: "The value you'll paste elsewhere")
     private let locationField = HelmTextField(placeholder: "console.aws.amazon.com, an endpoint\u{2026}")
     private let tagsInput = HelmChipInput(placeholder: "Add a tag and press Return")
     private let notesView = HelmTextView(height: 90)
@@ -88,7 +87,6 @@ final class CredentialVaultEditorController: NSViewController, NSTextFieldDelega
 
     private var selectedCategory: CredentialCategory
     private var selectedKind: CredentialKind
-    private var secretIsVisible = false
 
     /// F2: a secret handed in by ⌥Space's router, to seed the secret field of
     /// an **Add** sheet.
@@ -142,23 +140,13 @@ final class CredentialVaultEditorController: NSViewController, NSTextFieldDelega
         form.addField("Where it's used", locationField)
 
         form.addSection("Secret", number: "02")
-        // The field and its Show toggle in one row. Exactly one of the masked
-        // and plain fields is in layout at a time rather than both being built
-        // and one hidden: an `NSStackView` drops a hidden arranged subview out
-        // of layout entirely, which is what keeps the row's height stable
-        // across the toggle.
-        let secretRow = NSStackView(views: [secretField, plainSecretField, showSecretButton])
-        secretRow.orientation = .horizontal
-        secretRow.alignment = .centerY
-        secretRow.spacing = HelmMetrics.s2
-        secretRow.distribution = .fill
-        secretRow.setHuggingPriority(.required, for: .horizontal)
-        showSecretButton.setContentHuggingPriority(.required, for: .horizontal)
-        showSecretButton.setContentCompressionResistancePriority(.required, for: .horizontal)
-        showSecretButton.target = self
-        showSecretButton.action = #selector(toggleSecretVisibility)
-        showSecretButton.toolTip = "Show the value in this form while you edit it"
-        plainSecretField.isHidden = true
+        // The field and its Show toggle, through the one component that owns
+        // that pairing (`HelmRevealableSecretField`) - the Settings page's two
+        // Google OAuth fields are the other host. Masked by default even here,
+        // because the most common reason to open this sheet on an existing
+        // item is to change the notes or the tags, not to look at the value.
+        let secretRow = secretControl
+        secretControl.revealHint = "Show the value in this form while you edit it"
         form.addRow(secretRow)
 
         generatorToggleButton.target = self
@@ -218,8 +206,7 @@ final class CredentialVaultEditorController: NSViewController, NSTextFieldDelega
         if let existing {
             titleField.stringValue = existing.title
             accountField.stringValue = existing.account
-            secretField.stringValue = existing.secret
-            plainSecretField.stringValue = existing.secret
+            secretControl.stringValue = existing.secret
             locationField.stringValue = existing.location
             tagsInput.setTokens(existing.tags)
             notesView.string = existing.notes
@@ -232,8 +219,7 @@ final class CredentialVaultEditorController: NSViewController, NSTextFieldDelega
             // purpose - `save` already refuses an untitled credential and
             // focuses the title field, which is exactly the one thing the
             // captain still has to supply.
-            secretField.stringValue = capturedSecret
-            plainSecretField.stringValue = capturedSecret
+            secretControl.stringValue = capturedSecret
         }
 
         form.setFooter(target: self,
@@ -259,21 +245,6 @@ final class CredentialVaultEditorController: NSViewController, NSTextFieldDelega
     }
 
     // MARK: Actions
-
-    /// Keeps the two fields in step so whichever one is visible is the one
-    /// `save` reads - see `currentSecret`.
-    @objc private func toggleSecretVisibility() {
-        secretIsVisible.toggle()
-        if secretIsVisible {
-            plainSecretField.stringValue = secretField.stringValue
-        } else {
-            secretField.stringValue = plainSecretField.stringValue
-        }
-        secretField.isHidden = secretIsVisible
-        plainSecretField.isHidden = !secretIsVisible
-        showSecretButton.title = secretIsVisible ? "Hide" : "Show"
-        showSecretButton.symbolName = secretIsVisible ? "eye.slash" : "eye"
-    }
 
     // MARK: F16 - kind, generator, two-factor
 
@@ -304,8 +275,7 @@ final class CredentialVaultEditorController: NSViewController, NSTextFieldDelega
     /// `PasswordGeneratorPanel`'s header on why dragging the slider must not
     /// overwrite a password the captain already typed.
     private func useGeneratedPassword(_ value: String) {
-        secretField.stringValue = value
-        plainSecretField.stringValue = value
+        secretControl.stringValue = value
     }
 
     /// Read a 2FA seed from the clipboard.
@@ -383,9 +353,7 @@ final class CredentialVaultEditorController: NSViewController, NSTextFieldDelega
         return components.string ?? config.secret
     }
 
-    private var currentSecret: String {
-        secretIsVisible ? plainSecretField.stringValue : secretField.stringValue
-    }
+    private var currentSecret: String { secretControl.stringValue }
 
     @objc private func save() {
         let titleText = titleField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -457,9 +425,10 @@ final class CredentialVaultEditorController: NSViewController, NSTextFieldDelega
 
     #if FM_SELFTESTS
     var debugTitleField: HelmTextField { titleField }
-    var debugSecretField: HelmSecureTextField { secretField }
-    var debugPlainSecretField: HelmTextField { plainSecretField }
-    var debugShowSecretButton: HelmButton { showSecretButton }
+    var debugSecretControl: HelmRevealableSecretField { secretControl }
+    var debugSecretField: HelmSecureTextField { secretControl.maskedField }
+    var debugPlainSecretField: HelmTextField { secretControl.plainField }
+    var debugShowSecretButton: HelmButton { secretControl.revealButton }
     var debugNotesView: HelmTextView { notesView }
     var debugTagsInput: HelmChipInput { tagsInput }
     var debugTouchIDRow: HelmToggleRow { touchIDRow }
@@ -482,7 +451,7 @@ final class CredentialVaultEditorController: NSViewController, NSTextFieldDelega
         renderTOTPStatus()
     }
     func debugPasteTOTP() { pasteTOTPFromClipboard() }
-    var debugSecretIsVisible: Bool { secretIsVisible }
+    var debugSecretIsVisible: Bool { secretControl.isRevealed }
     func debugSave() { save() }
     func debugSelectCategory(_ category: CredentialCategory) { selectedCategory = category }
     #endif
