@@ -30,7 +30,7 @@ as they are rather than rewritten across 180 files.
 - [Build, run, test](#build-run-test) - the two CI lanes, the second (widget) binary, and the vendored patches a sync must re-apply
 - [Verification conventions](#verification-conventions) - how a change is proved here
 - [Writing a self-test](#writing-a-self-test)
-- [The AppKit gotcha catalogue](#the-appkit-gotcha-catalogue) - 18 measured traps
+- [The AppKit gotcha catalogue](#the-appkit-gotcha-catalogue) - 19 measured traps
 - [GL invariants](#gl-invariants) - GL-01 .. GL-38, one line each
 - [The component index](#the-component-index) - one button, one card, one row
 - [Stores, subprocesses and secrets](#stores-subprocesses-and-secrets)
@@ -553,7 +553,7 @@ fails unless its entry carries a trailing marker.
 
 ## The AppKit gotcha catalogue
 
-Eighteen traps, every one measured on this app rather than read about. Each was
+Nineteen traps, every one measured on this app rather than read about. Each was
 found by instrumenting a real layout or event pass; several took a full task to
 root-cause, and at least four have recurred in a new file after being fixed in
 an old one. **Read the ones that match what you are about to touch** - a tab
@@ -1127,6 +1127,43 @@ command uses.
 
     exportImage(callID, payload) { exportImageAsync(callID, payload); },
 
+
+### (19) An `NSTextField`'s target/action fires on Return and on nothing else
+
+**A field wired with `target`/`action` alone commits only for the captain who
+happens to press Return.** Focus loss - clicking away, tabbing to the next
+field, clicking the button the field was filled in for - sends no action at
+all. The text stays visibly in the field, so the page looks like it worked and
+nothing is saved.
+
+That is the whole of the captain-reported Gmail bug
+(`fm/grandline-gmail-oauth-field-not-saving`): `buildGmailSection` hand-wired
+`gmailClientIDField`/`gmailClientSecretField` to `gmailClientChanged`, the
+captain pasted an OAuth client ID and clicked Connect, and
+`GoogleOAuthClientStore` was never written. Measured in a real window - the
+pasted text reached `stringValue`, first responder moved on, the store stayed
+`nil`.
+
+**The rule: a field whose value is *persisted* needs a `delegate` as well**, so
+`controlTextDidEndEditing` reaches the same commit. `SettingsController`'s
+`configure(_:)` is this app's one place that wires all three
+(`target`/`action`/`delegate`) and every settings field goes through it - the
+two Gmail fields were the only ones wired by hand, which is exactly how the gap
+opened. A field whose action means **submit** (`CompactModePopover`'s capture
+line, `IncidentCardView`'s note, Kubernetes' namespace) is the legitimate
+Return-only case and must *not* gain one: committing a half-typed line on blur
+is its own bug.
+
+Two things that make this hard to catch. `sendsActionOnEndEditing = true` is
+the other half-fix and is **not** what this app uses - the delegate is, because
+a controller already owns one. And a suite that reaches the commit method
+directly (a `debugCommit…()` hook) passes with the wiring deleted: the only
+assertion that sees this is a **window-backed** one that drives the real field
+editor (`window.makeFirstResponder(field)`, `field.currentEditor()?.insertText`,
+then move first responder away) and then reads the *store*.
+`GmailSettingsViewSelfTest.checkPastingAndClickingAwayCommits` is the worked
+example, and it asserts the Return path in the same case so a future fix cannot
+trade one for the other.
 
 ---
 

@@ -41,6 +41,7 @@ enum GmailSettingsViewSelfTest {
         checkTheTwoSlotsAreIndependent(check)
         checkTheFourStates(check)
         checkTheClientIDFieldAndItsStatusLine(check)
+        checkPastingAndClickingAwayCommits(check)
         checkBothRegistersPaintLegibleText(check)
         checkNothingHereCapsTheWindow(check)
 
@@ -232,6 +233,82 @@ enum GmailSettingsViewSelfTest {
             settings.debugGmailClientIDField.stringValue = ""
             settings.debugCommitGmailClient()
             check(GoogleOAuth.configuration() == nil, "clearing the field unconfigures it")
+        }
+    }
+
+    // MARK: 4b - pasting, then clicking away
+
+    /// The captain's own bug (`fm/grandline-gmail-oauth-field-not-saving`):
+    /// paste a client ID, click somewhere else, and the value was silently
+    /// lost.
+    ///
+    /// Plain AppKit target/action on an `NSTextField` fires on **Return** and
+    /// on nothing else - not on focus loss - so a field wired with
+    /// `target`/`action` alone and no delegate commits only for the captain
+    /// who happens to press Return. Every other page on this controller goes
+    /// through `configure(_:)`, which wires `delegate` as well; these two were
+    /// wired by hand and did not.
+    ///
+    /// This case therefore refuses to use `debugCommitGmailClient()`: it
+    /// drives the **real** field editor (which is why the suite is window
+    /// backed - a field editor only exists inside a real window) and then
+    /// moves first responder away, which is the exact sequence a paste plus a
+    /// click elsewhere produces. Asserting the store afterwards is asserting
+    /// what was *saved*, not what was computed.
+    private static func checkPastingAndClickingAwayCommits(_ check: (Bool, String) -> Void) {
+        GoogleOAuthClientStore.shared.override = .some(nil)
+        withMountedSettings { settings, window, _ in
+            let idField = settings.debugGmailClientIDField
+            let secretField = settings.debugGmailClientSecretField
+
+            // 1. Paste into the ID field through its real field editor.
+            check(window.makeFirstResponder(idField),
+                  "the client ID field should accept first responder in a real window")
+            guard let editor = idField.currentEditor() else {
+                check(false, "the client ID field has no field editor - the paste cannot be "
+                      + "simulated, so every assertion below would be vacuous")
+                return
+            }
+            editor.insertText(clientID)
+            check(idField.stringValue == clientID,
+                  "the pasted text should reach the field, got \(idField.stringValue)")
+            // The discriminating half: nothing is saved *yet*, so a pass below
+            // cannot come from a store that was already configured.
+            check(GoogleOAuth.configuration() == nil,
+                  "mid-edit, nothing is committed yet - otherwise this case proves nothing")
+
+            // 2. Click away. No Return is ever sent.
+            check(window.makeFirstResponder(secretField),
+                  "focus should move to the next field, the way a click elsewhere moves it")
+            check(GoogleOAuth.configuration()?.clientID == clientID,
+                  "pasting and clicking away must save the client ID - got "
+                  + "\(GoogleOAuth.configuration()?.clientID ?? "nothing")")
+
+            // 3. The secret commits on blur too, and does not clobber the ID.
+            guard let secretEditor = secretField.currentEditor() else {
+                check(false, "the client secret field has no field editor")
+                return
+            }
+            secretEditor.insertText("s3cret")
+            window.makeFirstResponder(nil)
+            check(GoogleOAuth.configuration()?.clientSecret == "s3cret",
+                  "the client secret must commit on blur as well")
+            check(GoogleOAuth.configuration()?.clientID == clientID,
+                  "and committing the secret must leave the ID alone")
+
+            // 4. The Return path still works - the fix adds to it rather than
+            // replacing it, so this is the regression half of the case.
+            GoogleOAuthClientStore.shared.override = .some(nil)
+            settings.debugRefreshGmail()
+            check(GoogleOAuth.configuration() == nil, "the store was reset for the Return case")
+            check(window.makeFirstResponder(idField), "focus returns to the client ID field")
+            idField.currentEditor()?.insertText(clientID)
+            // `sendAction` is what Return does: it fires the field's own
+            // target/action without ending the edit session.
+            idField.sendAction(idField.action, to: idField.target)
+            check(GoogleOAuth.configuration()?.clientID == clientID,
+                  "Return still commits, got \(GoogleOAuth.configuration()?.clientID ?? "nothing")")
+            window.makeFirstResponder(nil)
         }
     }
 

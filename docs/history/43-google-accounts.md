@@ -92,3 +92,31 @@ One flag for both would make turning off EventKit also turn off Google, which is
 - The Settings pane was rendered off-screen at 1300pt in Dusk and Catppuccin Latte and read back (no screenshot grant in this environment, per AGENTS.md's convention); the probe was reverted before commit.
 - What was **not** verified: that Google accepts any of it.
   No real sign-in has been performed, because there is no client ID to perform one with.
+
+## The client-ID field did not save (`fm/grandline-gmail-oauth-field-not-saving`)
+
+The captain pasted an OAuth client ID, clicked away, and the value was gone.
+
+`buildGmailSection` hand-wired both fields with `target`/`action` alone, which AppKit fires on **Return** and on nothing else.
+Pasting and then clicking Connect - the natural thing to do, and what the captain did - sent no action, so `GoogleOAuthClientStore.setConfiguration` was never called.
+The text stayed visibly in the field, which is why it read as "it did not save" rather than as a crash.
+The full mechanism is AGENTS.md's gotcha (19).
+
+**Fix:** both fields now go through `SettingsController.configure(_:)`, the one place on this page that wires `target`, `action` **and** `delegate`, with a `gmailClientIDField, gmailClientSecretField` case in `textFieldChanged(_:)` calling the same commit.
+Return still works - the delegate is additive, not a replacement.
+
+**Why the existing suite missed it.**
+`checkTheClientIDFieldAndItsStatusLine` called the `debugCommitGmailClient()` hook, which reaches the private commit directly and so passes with the wiring deleted entirely.
+That hook's own doc comment claimed it drove "the field's real target/action", which it never did; it now says the opposite, in as many words.
+
+**Verification.**
+`checkPastingAndClickingAwayCommits` drives the real field editor in the real window - `makeFirstResponder`, `currentEditor()?.insertText`, then move first responder to the next field - and reads `GoogleOAuth.configuration()` afterwards, so it asserts what was *saved*.
+It asserts mid-edit that nothing is committed yet, so a pass cannot come from an already-configured store.
+It also drives the Return path in the same case, so a future change cannot trade one for the other.
+Written before the fix and run against it: three named checks failed (`pasting and clicking away must save the client ID - got nothing`, and the two secret-field ones), and all passed after.
+Full suite 197 passed / 0 failed afterwards.
+
+**Scope, checked rather than assumed.**
+Every other `NSTextField` action in the app was surveyed.
+Three exist - `CompactModePopover`'s capture line, `IncidentCardView`'s note, `KubernetesController`'s namespace - and all three are *submit* actions, where Return-only is the correct behaviour and a blur commit would be its own bug.
+The silent-loss shape is specific to a field whose value is **persisted**, and Gmail's two were the only such fields on this page wired by hand instead of through `configure(_:)`.

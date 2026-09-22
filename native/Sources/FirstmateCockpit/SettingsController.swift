@@ -1354,10 +1354,15 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         // by a Google Cloud project, and this app cannot create one. There is
         // deliberately no built-in default - a fake id would put a Connect
         // button on the page that always fails with an opaque Google error.
-        gmailClientIDField.target = self
-        gmailClientIDField.action = #selector(gmailClientChanged)
-        gmailClientSecretField.target = self
-        gmailClientSecretField.action = #selector(gmailClientChanged)
+        // Through `configure(_:)`, not a hand-wired `target`/`action` pair.
+        // Plain AppKit target/action fires on **Return** and on nothing else,
+        // so a field wired by hand commits only for the captain who happens to
+        // press it - paste a client ID and click Connect, and the value is
+        // silently gone. `configure(_:)` also wires the `delegate`, which is
+        // what carries `controlTextDidEndEditing` into the same commit.
+        // (`fm/grandline-gmail-oauth-field-not-saving`.)
+        configure(gmailClientIDField)
+        configure(gmailClientSecretField)
         let idRow = descRow(title: "Google OAuth client ID",
                             desc: "From your own Google Cloud project - create an OAuth client of "
                                 + "type \u{201C}Desktop app\u{201D} and paste its ID here. Stored in the "
@@ -2034,6 +2039,11 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         switch sender {
         case shellCwdField:
             AppSettings.shared.defaultShellCwd = value.isEmpty ? nil : value
+        case gmailClientIDField, gmailClientSecretField:
+            // Both fields write one stored pair, so either one committing
+            // re-reads both - which is also what makes the order they are
+            // edited in irrelevant.
+            gmailClientChanged()
         default:
             break
         }
@@ -2097,8 +2107,12 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     var debugGmailStatusText: String { gmailStatusLabel.stringValue }
     var debugGmailCalendarSwitch: HelmToggle { gmailCalendarSwitch }
     var debugGmailClientIDField: HelmTextField { gmailClientIDField }
-    /// Drives the field's real target/action, the way a commit from the field
-    /// editor does - never the private method, so the wiring is under test too.
+    var debugGmailClientSecretField: HelmTextField { gmailClientSecretField }
+    /// Calls the commit directly. Deliberately *not* a stand-in for the field's
+    /// own wiring: it reaches past both the Return action and the end-editing
+    /// delegate, which is exactly how `fm/grandline-gmail-oauth-field-not-saving`
+    /// shipped a field that only ever committed on Return.
+    /// `checkPastingAndClickingAwayCommits` drives the real editor instead.
     func debugCommitGmailClient() { gmailClientChanged() }
     func debugRefreshGmail() { refreshGmailSection() }
     /// The cards currently in the detail pane, in the order it stacks them.
