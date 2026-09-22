@@ -99,6 +99,22 @@ final class PoneglyphMenuBarController: NSObject, NSPopoverDelegate {
         }
     }
 
+    /// F22: compact mode merges the vault's 2FA quick-copy into one status
+    /// item whose popover carries it as a tab, so the mode hides this one
+    /// rather than leaving two doors to the same surface - see
+    /// `CompactModePolicy.showsPerFeatureStatusItems`, which is the only
+    /// thing that decides this and is asserted in CI's blocking lane.
+    ///
+    /// Hidden, never torn down: `NSStatusItem.isVisible` is exactly this
+    /// API, the item keeps its store observation and its lock observer while
+    /// hidden, and turning compact mode off puts it back with its count
+    /// already current. An open popover is closed on the way out, because a
+    /// popover whose anchor just left the menu bar has nothing to sit under.
+    func setStatusItemVisible(_ visible: Bool) {
+        statusItem.isVisible = visible
+        if !visible { popover.performClose(nil) }
+    }
+
     @objc private func iconClicked() {
         guard let button = statusItem.button else { return }
         if popover.isShown {
@@ -167,6 +183,26 @@ final class PoneglyphMenuBarPopoverController: NSViewController {
 
     static let width: CGFloat = 300
 
+    /// Injectable width, and whether this content draws its own
+    /// "Poneglyph / 2FA codes" header.
+    ///
+    /// Both exist for F22, for the reasons
+    /// `StrawHatMenuBarPopoverController`'s own pair records: compact mode's
+    /// popover hosts this controller as its Vault tab, a required `300` width
+    /// inside a 330pt popover is a constraint conflict, and a second title
+    /// under a header that already says "Grand Line" is noise. The standalone
+    /// status item passes neither and is unchanged.
+    private let contentWidth: CGFloat
+    private let showsOwnHeader: Bool
+
+    init(width: CGFloat = PoneglyphMenuBarPopoverController.width, showsOwnHeader: Bool = true) {
+        self.contentWidth = width
+        self.showsOwnHeader = showsOwnHeader
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
     var onCopy: ((String) -> String?)?
     var onOpenVault: (() -> Void)?
     var onSizeChanged: ((NSSize) -> Void)?
@@ -198,6 +234,11 @@ final class PoneglyphMenuBarPopoverController: NSViewController {
         header.alignment = .firstBaseline
         header.spacing = HelmMetrics.s2
         header.translatesAutoresizingMaskIntoConstraints = false
+        // Hidden rather than omitted: a hidden arranged subview of an
+        // `NSStackView` drops out of layout entirely (AGENTS.md gotcha (11)'s
+        // one named exception), so the column above it closes up with no
+        // second constraint path to maintain.
+        header.isHidden = !showsOwnHeader
 
         rowsStack.orientation = .vertical
         rowsStack.alignment = .leading
@@ -222,7 +263,7 @@ final class PoneglyphMenuBarPopoverController: NSViewController {
             column.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -HelmMetrics.s4),
             column.topAnchor.constraint(equalTo: root.topAnchor, constant: HelmMetrics.s4),
             column.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -HelmMetrics.s4),
-            root.widthAnchor.constraint(equalToConstant: Self.width),
+            root.widthAnchor.constraint(equalToConstant: contentWidth),
         ])
         applyTheme(ThemeManager.shared.theme)
     }

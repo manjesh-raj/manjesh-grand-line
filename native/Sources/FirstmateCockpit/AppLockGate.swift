@@ -209,6 +209,17 @@ enum AppLockedSurface {
     /// overlay, and this one renders live authentication codes for the
     /// captain's own accounts, refreshed every second.
     case poneglyphMenuBarPopover
+    /// F22: opening compact mode's merged status-item popover.
+    ///
+    /// Its own case rather than reusing any of the three above, per this
+    /// file's header rule, and here the rule earns its keep more plainly
+    /// than anywhere else: this one popover *contains* the tasks, vault and
+    /// crew surfaces those three cases gate, so a shared case would make
+    /// four gates look like coverage of one thing. It is also the only
+    /// walk-up surface in the app that is the captain's entire product - in
+    /// compact mode there is no window for the lock overlay to cover, so
+    /// this gate is the whole of the lock.
+    case compactModePopover
 }
 
 final class AppLockGate {

@@ -3567,7 +3567,25 @@ final class HelmSegmentedTabs: NSView {
     /// that is the theme a freshly built control is about to be given.
     private var appliedTheme: HelmTheme?
 
-    init(items: [Item], selected: String? = nil, size: Size = .standard) {
+    /// `equalWidths: true` makes the pills share the control's width equally,
+    /// for a caller that stretches the whole control rather than letting it
+    /// size to its labels.
+    ///
+    /// Opt-in, so every existing page is byte-identical. It exists because
+    /// stretching this control *without* it is AGENTS.md gotcha (10): the
+    /// pill row is a horizontal `NSStackView` left at its default
+    /// `.gravityAreas` distribution, which honours no hugging priority at
+    /// all, so a caller that pins both edges gets its leftover width resolved
+    /// by Auto Layout's own tie-breaking - which can drift between runs
+    /// depending on transient sibling content, with no code change. That is
+    /// the exact defect the Updates page's chevron and Bootstrap's step rows
+    /// were each fixed for. `.fillEqually` is the explicit distribution
+    /// gotcha (10)'s own fix prescribes.
+    ///
+    /// F22's compact popover is the first caller: a 330pt menu-bar popover
+    /// whose reviewed mockup draws four equal full-width segments.
+    init(items: [Item], selected: String? = nil, size: Size = .standard,
+         equalWidths: Bool = false) {
         self.size = size
         self.selectedID = selected ?? items.first?.id ?? ""
         super.init(frame: .zero)
@@ -3610,6 +3628,9 @@ final class HelmSegmentedTabs: NSView {
         row.orientation = .horizontal
         row.spacing = size.spacing
         row.translatesAutoresizingMaskIntoConstraints = false
+        // Explicit, never left at the default `.gravityAreas` when the caller
+        // stretches us - see `equalWidths`' own note and gotcha (10).
+        if equalWidths { row.distribution = .fillEqually }
 
         capsule.wantsLayer = true
         capsule.layer?.cornerRadius = size.capsuleRadius

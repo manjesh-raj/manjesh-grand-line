@@ -46,6 +46,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// shape, wired below like the other two and owning no store (see
     /// `PoneglyphMenuBarController`'s header).
     lazy var poneglyphMenuBar = PoneglyphMenuBarController()
+    /// F22: compact mode - the fourth status item, and the one that *merges*
+    /// the three above rather than joining them. `CompactMode.swift`'s header
+    /// is the whole design; `CompactModePopover.swift` is the popover the
+    /// reviewed mockup draws.
+    ///
+    /// Two objects rather than one because the content is what a suite wants
+    /// to drive (four tabs, a capture line) and the controller is what owns
+    /// the `NSStatusItem` - the same split all three of its siblings make.
+    lazy var compactModePopover = CompactModePopoverController()
+    lazy var compactMode = CompactModeController(content: compactModePopover)
     // F5 (`fm/grandline-feature-f5-command-palette-expansion`): the `⌘K`
     // command palette, now the app's one search/verb surface - it absorbed
     // Shift's own separate ⌘⇧P palette (`ShiftSearchController`, deleted), so
@@ -578,6 +588,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         _ = poneglyphMenuBar
 
+        // F22. Same forward-don't-own pattern as the three above, and the
+        // same reason for forcing the `lazy` properties - except that this
+        // one starts *hidden* and `compactMode.refresh()` (further down, once
+        // the window exists) is what decides whether it appears.
+        wireCompactMode()
+
         buildMenu()
 
         // fm/grandline-app-lock: wire the lock state machine to the shell's
@@ -671,6 +687,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+
+        // F22: only now, with a real window to hide. `refresh()` is what puts
+        // the status item in the menu bar, hides the three it merges, sets the
+        // activation policy and - if the captain left the mode on last
+        // session - orders this window straight back out. Deliberately after
+        // `makeKeyAndOrderFront` rather than instead of it: the window is
+        // built, laid out and session-restored exactly as it always was, so
+        // leaving compact mode later is instant and `AppShellController`'s own
+        // launch-time width tie (gotcha (14)) still runs against a real,
+        // visible window.
+        compactMode.refresh()
 
         // `loadView()` has now run at least once (triggered by the
         // `contentViewController` assignment above) - lock now so the very
@@ -851,8 +878,144 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         saveSessionState()
     }
 
+    // MARK: F22 - compact mode
+
+    /// Everything compact mode is wired to, in one place.
+    ///
+    /// Every closure here forwards into a store `AppDelegate` already owns or
+    /// into `AppShellController` - nothing new is constructed and nothing is
+    /// cached twice (GL-23). `CompactModePopoverController` holds no store of
+    /// its own precisely so this method is the whole of its access to the
+    /// app's data, which makes "what can the menu bar see and write?" a
+    /// question with one answer to read.
+    private func wireCompactMode() {
+        let popover = compactModePopover
+
+        // Today. Derived by `CompactModeDigest` from the *shared* `ShiftStore`
+        // - the same instance the Tasks page, the palette, ⌥Space and the
+        // Tasks status item all write through.
+        popover.todayProvider = { [weak self] in
+            guard let self else { return .empty }
+            return CompactModeDigest.today(tasks: self.shiftStore.activeTasks,
+                                           followUps: self.shiftStore.followUps,
+                                           focusSecondsToday: self.shiftStore.focusSecondsToday())
+        }
+        popover.onSetTaskCompleted = { [weak self] id, completed in
+            // GL-09: the popover cannot be open while locked, but this is the
+            // write, and a write is the thing that must not happen. The same
+            // belt-and-braces `ShiftMenuBarController.createQuickTask` keeps.
+            guard AppLockGate.shared.allows(.compactModePopover) else { return }
+            self?.shiftStore.setTaskCompleted(id: id, completed: completed)
+        }
+        popover.onOpenTasks = { [weak self] in self?.revealInFullWindow(.shift) }
+
+        // Notes - the third popover, reading the one `StickyBoardStore` the
+        // Sticky Board destination owns.
+        popover.notesProvider = { [weak self] in
+            guard let self else { return [] }
+            return CompactModeDigest.notes(self.appShell.stickyBoardStore.activeNotes)
+        }
+        popover.onRevealNote = { [weak self] id in
+            guard let self else { return }
+            NSApp.activate(ignoringOtherApps: true)
+            self.window?.makeKeyAndOrderFront(nil)
+            self.appShell.openStickyNote(id: id)
+        }
+        popover.onOpenStickyBoard = { [weak self] in self?.revealInFullWindow(.stickyBoard) }
+
+        // Vault - the same three forwards `poneglyphMenuBar` uses above, into
+        // the one `CredentialVaultController` and its one store.
+        popover.vaultCodesProvider = { [weak self] in self?.appShell.poneglyphQuickCodes ?? [] }
+        popover.vaultUnlockedProvider = { [weak self] in self?.appShell.poneglyphIsUnlocked ?? false }
+        popover.vaultPane.onCopy = { [weak self] id in self?.appShell.copyPoneglyphCodeFromMenuBar(id: id) }
+        popover.vaultPane.onOpenVault = { [weak self] in self?.revealInFullWindow(.poneglyph) }
+
+        // Crew - the crew page's own real runner and transcript, never a
+        // second conversation. Identical to `strawHatMenuBar`'s own wiring.
+        popover.crewPane.onAsk = { [weak self] text, completion in
+            self?.appShell.askCrewFromMenuBar(text, completion: completion)
+        }
+        popover.crewPane.onOpenFullChat = { [weak self] in self?.revealInFullWindow(.strawHat) }
+
+        // The footer capture line goes through the same filer ⌥Space does, so
+        // a task captured from the menu bar and one captured from the overlay
+        // are one code path with one set of refusals (F2).
+        popover.captureFiler = appShell.makeCaptureFiler()
+
+        compactMode.overdueCountProvider = { [weak self] in
+            guard let self else { return 0 }
+            return CompactModeDigest.today(tasks: self.shiftStore.activeTasks,
+                                           followUps: self.shiftStore.followUps,
+                                           focusSecondsToday: 0).overdueCount
+        }
+        compactMode.onOpenFullWindow = { [weak self] in self?.leaveCompactMode() }
+        compactMode.onOpenSettings = { [weak self] in
+            // The gear opens the window on Settings but does **not** leave
+            // the mode: the captain is going there to change the mode's own
+            // switches, and turning it off on their behalf first would be the
+            // app deciding the answer.
+            self?.revealInFullWindow(.settings)
+        }
+        compactMode.onHideMainWindow = { [weak self] in
+            // `orderOut`, not `close`: the window and its whole mounted shell
+            // survive, so leaving the mode is instant and every destination
+            // keeps its state. `applicationShouldTerminateAfterLastWindowClosed`
+            // is what stops this from quitting the app.
+            self?.window?.orderOut(nil)
+        }
+        compactMode.perFeatureStatusItemVisibility = { [weak self] visible in
+            guard let self else { return }
+            self.shiftMenuBar.setStatusItemVisible(visible)
+            self.strawHatMenuBar.setStatusItemVisible(visible)
+            self.poneglyphMenuBar.setStatusItemVisible(visible)
+        }
+
+        // Settings' three toggles. One callback for all three - see
+        // `SettingsController.compactModeToggled`.
+        settingsController.onCompactModeSettingsChanged = { [weak self] in
+            self?.compactMode.refresh()
+        }
+
+        // A task completed, added or deleted anywhere in the app moves this
+        // badge. GL-24's shape: the observer re-derives one count and
+        // repaints - `refreshBadge()` rather than `refresh()`, so ticking a
+        // checkbox does not re-apply the activation policy and re-decide
+        // three status items' visibility.
+        shiftStore.observe { [weak self] in self?.compactMode.refreshBadge() }
+
+        _ = compactMode
+    }
+
+    /// Raise the window on one destination without changing the mode.
+    private func revealInFullWindow(_ destination: RailDestination) {
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+        appShell.show(destination)
+    }
+
+    /// The popover's "Open full window", and the one clean way out of the
+    /// mode.
+    ///
+    /// Order matters: `exitCompactMode()` writes the setting and runs
+    /// `refresh()`, which puts the activation policy back to `.regular` -
+    /// and a `.accessory` app cannot activate or show a regular window, so
+    /// raising it first would silently do nothing.
+    private func leaveCompactMode() {
+        compactMode.exitCompactMode()
+        NSApp.activate(ignoringOtherApps: true)
+        window?.makeKeyAndOrderFront(nil)
+    }
+
+    /// F22: `false` while compact mode is on, and only then.
+    ///
+    /// The whole mode rests on this one answer. Compact mode's way of having
+    /// no window is to *close* the main one, and with the stock `true` that
+    /// would quit the app the instant the mode was switched on. The decision
+    /// lives in `CompactModePolicy.terminatesAfterLastWindowClosed` rather
+    /// than inline here, so it is asserted in CI's blocking lane rather than
+    /// only by whatever happens to exercise this delegate callback.
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        CompactModePolicy.current().terminatesAfterLastWindowClosed
     }
 
     /// Tear down every console's own materialized SSH keys and SRE Lead
@@ -3055,6 +3218,19 @@ if ProcessInfo.processInfo.environment["FM_RUN_SNIPPET_EXPANSION_TESTS"] == "1" 
 }
 if ProcessInfo.processInfo.environment["FM_RUN_SNIPPET_EXPANDER_VIEW_TESTS"] == "1" {
     exit(SnippetExpanderViewSelfTest.run() ? 0 : 1)
+}
+
+// F22's menu-bar (compact) mode. Two suites, split the way AGENTS.md's
+// "Writing a self-test" requires: the mode's policy, its hotkey chord, its
+// tab table and the whole Today/Notes derivation assert nothing that needs a
+// window and therefore guard CI's blocking lane, while the popover's chrome,
+// its pane swapping and its rendered colours are measured in a real
+// `NSWindow` and live in `NEEDS_SESSION`.
+if ProcessInfo.processInfo.environment["FM_RUN_COMPACT_MODE_TESTS"] == "1" {
+    exit(CompactModeSelfTest.run() ? 0 : 1)
+}
+if ProcessInfo.processInfo.environment["FM_RUN_COMPACT_MODE_VIEW_TESTS"] == "1" {
+    exit(CompactModeViewSelfTest.run() ? 0 : 1)
 }
 
 if ProcessInfo.processInfo.environment["FM_RUN_NOTEBOOK_TESTS"] == "1" {

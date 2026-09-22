@@ -82,6 +82,22 @@ final class ShiftMenuBarController: NSObject, NSPopoverDelegate {
         refreshCounts()
     }
 
+    /// F22: compact mode merges Tasks into one status item whose popover
+    /// carries it as a tab, so the mode hides this one rather than leaving
+    /// two doors to the same surface - see
+    /// `CompactModePolicy.showsPerFeatureStatusItems`, which is the only
+    /// thing that decides this and is asserted in CI's blocking lane.
+    ///
+    /// Hidden, never torn down: `NSStatusItem.isVisible` is exactly this
+    /// API, the item keeps its store observation and its lock observer while
+    /// hidden, and turning compact mode off puts it back with its count
+    /// already current. An open popover is closed on the way out, because a
+    /// popover whose anchor just left the menu bar has nothing to sit under.
+    func setStatusItemVisible(_ visible: Bool) {
+        statusItem.isVisible = visible
+        if !visible { popover.performClose(nil) }
+    }
+
     @objc private func iconClicked() {
         guard let button = statusItem.button else { return }
         if popover.isShown {

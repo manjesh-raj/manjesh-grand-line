@@ -483,6 +483,16 @@ fails unless its entry carries a trailing marker.
   suite reported `0:00` on a session that had just started, failing eleven
   checks. `FocusTimerController.clock` plus derived `fraction` /
   `countdownText` accessors is the shape; the views ask the controller.
+- **A `"YYYY-MM-DD"` fixture needs `Calendar.current`, not a pinned UTC one** -
+  the one place where forcing a fixed time zone makes a suite *wrong* rather
+  than hermetic. Task due dates, follow-up dates and sticky timestamps are
+  persisted as bare day strings and read back by `ShiftDateFormatting.date(from:)`,
+  whose formatter resolves them to **local** midnight, because "due today"
+  means today where the captain is. Measured on F22: a UTC fixture calendar put
+  every date 5.5 hours on the wrong side of `startOfDay` and reported a task
+  due today as overdue - the suite was measuring two calendars rather than the
+  feature. Pin the *day* instead, at local noon so no runner's time zone lands
+  the fixture on a boundary, and pass the same calendar production passes.
 - **`HelmContrast.ratio(a, b) < 1.01` is not a colour-equality check** - it
   compares relative *luminance*, so two different hues of similar brightness
   pass it. Compare `HelmContrast.components` element-wise.
@@ -1124,6 +1134,7 @@ noted.
 | `CSVParser` (in `CredentialVaultImport.swift`) | a split-on-comma reader. It handles quoted commas, escaped quotes and embedded newlines - and **`\r\n` is one `Character` in Swift**, so a hand-rolled parser matching `"\n"` alone reads a whole Windows-exported CSV as a single row |
 | `TOTPTicker.shared.now` | a `Date()` of your own in anything that renders a 2FA code or its countdown. One clock, or two surfaces disagree about the same code |
 | `CredentialVaultRecoveryKitView` as the shape for any future **print** view | a themed view sent to a printer. It draws explicit black on white and does not observe `ThemeManager` - a themed page prints a near-black rectangle under Dusk - and the same view renders the PDF, so paper and file cannot drift |
+| a menu-bar surface's **existing** content controller, at an injected width with `showsOwnHeader: false` | a lookalike pane for the same thing. F22's compact popover hosts `PoneglyphMenuBarPopoverController` and `StrawHatMenuBarPopoverController` themselves as two of its four tabs, so the countdown rings, the copy flash and the crew's reply states have exactly one implementation. Both take `init(width:showsOwnHeader:)` defaulting to their standalone behaviour - a required fixed width inside a narrower popover is a constraint conflict, and gotcha (13)'s window-size cap |
 | `OffScreenProbe.window(...)` | `NSWindow(contentRect:)` in a suite - source-guarded |
 | `SelfTestAssertions` | a local `check`/`fail` pair in a suite - source-guarded |
 
@@ -1355,6 +1366,7 @@ can correct an earlier one - and several do.
 | [`37-scratchpad-calculator.md`](docs/history/37-scratchpad-calculator.md) | The Scratchpad calculator (F9): the Tools tab, the expression engine, the unit/currency tables and the date words |
 | [`38-snippet-expander.md`](docs/history/38-snippet-expander.md) | The snippet expander (F12): the `;abbrev` trigger grammar, the generalised Snippets store, and system-wide expansion over Dictation's own paste path |
 | [`39-daily-review.md`](docs/history/39-daily-review.md) | The daily review (F20): Overview's general-user briefing, its stated-gap rule, and the app's one read-only EventKit path |
+| [`40-menu-bar-mode.md`](docs/history/40-menu-bar-mode.md) | Menu-bar (compact) mode (F22): the merged status item, the four-tab popover that hosts the vault's and the crew's own popover controllers, and the window/Dock/last-window lifecycle |
 
 ## Maintaining this file
 

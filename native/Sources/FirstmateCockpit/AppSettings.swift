@@ -42,6 +42,9 @@ final class AppSettings {
         static let dailyReviewEnabled = "fm.dailyReviewEnabled"
         static let dailyReviewCalendarEnabled = "fm.dailyReviewCalendarEnabled"
         static let dailyReviewDismissedDay = "fm.dailyReviewDismissedDay"
+        static let compactModeEnabled = "fm.compactModeEnabled"
+        static let compactModeHidesDockIcon = "fm.compactModeHidesDockIcon"
+        static let compactModeBadgesOverdueCount = "fm.compactModeBadgesOverdueCount"
     }
 
     /// GL-P3 (audit §6.10): the defaults store is injectable.
@@ -201,6 +204,40 @@ final class AppSettings {
     var snippetExpansionEnabled: Bool {
         get { defaults.bool(forKey: Keys.snippetExpansionEnabled) }
         set { defaults.set(newValue, forKey: Keys.snippetExpansionEnabled) }
+    }
+
+    /// F22's master switch: whether the app lives in the menu bar with no
+    /// main window (Settings > Compact mode).
+    ///
+    /// Off by default, and for a different reason from the opt-ins above -
+    /// nothing here downloads, calls the network or installs a keyboard
+    /// monitor. It is off because it *hides the main window*, and a fresh
+    /// install whose window never appeared would read as a launch failure.
+    /// See `CompactModePolicy` for everything that follows from it.
+    var compactModeEnabled: Bool {
+        get { defaults.bool(forKey: Keys.compactModeEnabled) }
+        set { defaults.set(newValue, forKey: Keys.compactModeEnabled) }
+    }
+
+    /// Whether compact mode also drops the Dock icon (`.accessory`, which is
+    /// `LSUIElement` at runtime).
+    ///
+    /// Read only through `CompactModePolicy.activationPolicy`, which gates it
+    /// on `compactModeEnabled` - so this can never leave a captain with a
+    /// window and no Dock icon to raise it from.
+    var compactModeHidesDockIcon: Bool {
+        get { defaults.bool(forKey: Keys.compactModeHidesDockIcon) }
+        set { defaults.set(newValue, forKey: Keys.compactModeHidesDockIcon) }
+    }
+
+    /// Whether the compact status item carries the overdue count as a title.
+    ///
+    /// Off by default, and the reviewed F22 mockup states the reason as part
+    /// of the design rather than as caution: a permanent red number is a bad
+    /// neighbour in a menu bar. The count is one click away either way.
+    var compactModeBadgesOverdueCount: Bool {
+        get { defaults.bool(forKey: Keys.compactModeBadgesOverdueCount) }
+        set { defaults.set(newValue, forKey: Keys.compactModeBadgesOverdueCount) }
     }
 
     /// Dictation's "Use local Whisper engine" toggle
