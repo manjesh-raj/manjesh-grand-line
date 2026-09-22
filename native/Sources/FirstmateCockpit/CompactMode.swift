@@ -244,6 +244,10 @@ final class CompactModeController: NSObject, NSPopoverDelegate {
         popover.contentViewController = content
         popover.behavior = .transient
         popover.delegate = self
+        // Set up front as well as on every report, so the very first frame
+        // AppKit lays out is already the card's real size rather than a
+        // default it then corrects.
+        popover.contentSize = CompactModePopoverController.contentSize
         content.onSizeChanged = { [weak self] size in self?.popover.contentSize = size }
         content.onOpenFullWindow = { [weak self] in
             self?.popover.performClose(nil)

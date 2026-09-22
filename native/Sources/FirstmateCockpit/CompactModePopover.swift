@@ -88,7 +88,30 @@ final class CompactModePopoverController: NSViewController {
     /// The mockup's own 330pt. Wide enough for a task title plus its caption
     /// at `HelmType`'s row sizes, and the width both embedded panes are built
     /// at so nothing inside letterboxes.
+    ///
+    /// Measured against the mockup rather than read off its pixels: the
+    /// mockup image is rendered at ~1.76x (its "Grand Line" title measures
+    /// 115px against the real app's 65.5pt at the same 12.5pt semibold), so
+    /// its 540px-wide card is ~307pt, not the ~520pt a raw pixel read
+    /// suggests. 330 is the mockup's card, slightly generous.
     static let width: CGFloat = 330
+
+    /// **The popover is one fixed size, on every tab.**
+    ///
+    /// It used to report `view.fittingSize.height` per tab, so the card grew
+    /// and shrank as the captain moved between Today / Notes / Vault / Crew -
+    /// measured on the captain's own screenshots at 286 / 246 / 211 / 279pt,
+    /// four different shapes for one surface. A popover is chrome, not a
+    /// document: its footer and its tab strip have to stay where the hand
+    /// left them.
+    ///
+    /// 360 is the mockup's own proportion at this width (its card is 588px
+    /// tall against 540 wide, so 1.089 x 330 = 359), and it clears the
+    /// tallest natural tab with room to spare. A tab whose content is taller
+    /// than the region scrolls inside it - `bodyScroll` - which is the case
+    /// the old "size to the content" shape handled by growing the whole card
+    /// instead.
+    static let height: CGFloat = 360
 
     // MARK: Wiring (all of it supplied by `AppDelegate`)
 
@@ -123,9 +146,14 @@ final class CompactModePopoverController: NSViewController {
     var onOpenSettings: (() -> Void)?
     /// Close the popover - used by a pane that has just navigated the window.
     var onDismiss: (() -> Void)?
-    /// Forwarded to `popover.contentSize`: four tabs of very different
-    /// heights, so this is not optional decoration. `RecentDestinationsPopover`'s
-    /// "compute then set" convention.
+    /// Forwarded to `popover.contentSize`.
+    ///
+    /// It reports `Self.contentSize` - the same two numbers every time,
+    /// whichever tab is showing. It used to report the active tab's own
+    /// fitting height, which is what made the card change shape under the
+    /// captain's hand. Kept as a callback rather than set once at
+    /// construction because `NSPopover` needs telling, and a surface that
+    /// stops reporting its size at all is the harder thing to notice.
     var onSizeChanged: ((NSSize) -> Void)?
 
     // MARK: Chrome
@@ -176,7 +204,7 @@ final class CompactModePopoverController: NSViewController {
     // MARK: Build
 
     override func loadView() {
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: 300))
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: Self.width, height: Self.height))
         root.wantsLayer = true
         view = root
 
@@ -192,31 +220,63 @@ final class CompactModePopoverController: NSViewController {
         buildCaptureRow()
         buildFooter()
 
-        let column = NSStackView(views: [
-            headerRow, headerDivider, tabsRow, bodyContainer,
-            captureDivider, captureRow, captureNotice,
-            footerDivider, footerRow,
-        ])
-        column.orientation = .vertical
-        column.alignment = .leading
-        // The dividers carry the vertical rhythm, so the stack's own spacing
-        // is the gap either side of one - half of `s2`, which is what makes a
-        // divider read as a rule between two groups rather than as a third
-        // element with its own margins.
-        column.spacing = HelmMetrics.s1
-        column.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(column)
+        // **Three pieces, not one column, and that is the whole fix.**
+        //
+        // The chrome above the body and the chrome below it are each pinned
+        // to their own edge of a fixed-size root; the body is whatever is
+        // left between them. So the header, the tab strip, the capture line
+        // and the footer are at the same coordinates on all four tabs, and a
+        // tab whose content wants more room gets a scroller rather than
+        // dragging the popover's own frame with it.
+        //
+        // Doing this with one stack instead would mean handing the body the
+        // stack's slack, and neither `bodyContainer` (an `NSStackView`) nor a
+        // scroll view has an intrinsic size - so a hugging priority on either
+        // is a no-op, which is AGENTS.md gotcha (12) exactly.
+        topGroup.setViews([headerRow, headerDivider, tabsRow], in: .leading)
+        bottomGroup.setViews([captureDivider, captureRow, captureNotice,
+                              footerDivider, footerRow], in: .leading)
+        for group in [topGroup, bottomGroup] {
+            group.orientation = .vertical
+            group.alignment = .leading
+            // The dividers carry the vertical rhythm, so the stack's own
+            // spacing is the gap either side of one - half of `s2`, which is
+            // what makes a divider read as a rule between two groups rather
+            // than as a third element with its own margins.
+            group.spacing = HelmMetrics.s1
+            group.translatesAutoresizingMaskIntoConstraints = false
+            root.addSubview(group)
+            for child in group.arrangedSubviews {
+                child.widthAnchor.constraint(equalTo: group.widthAnchor).isActive = true
+            }
+        }
+
+        buildBodyScroll()
+        root.addSubview(bodyScroll)
 
         NSLayoutConstraint.activate([
+            // Both fixed, both required: this view *is* the popover's content
+            // size, and `renderPane` reports exactly these two numbers rather
+            // than measuring anything.
             root.widthAnchor.constraint(equalToConstant: Self.width),
-            column.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            column.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            column.topAnchor.constraint(equalTo: root.topAnchor, constant: HelmMetrics.s2 + 2),
-            column.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -HelmMetrics.s2),
+            root.heightAnchor.constraint(equalToConstant: Self.height),
+
+            topGroup.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            topGroup.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            topGroup.topAnchor.constraint(equalTo: root.topAnchor, constant: HelmMetrics.s2 + 2),
+
+            bottomGroup.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            bottomGroup.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            bottomGroup.bottomAnchor.constraint(equalTo: root.bottomAnchor,
+                                                constant: -HelmMetrics.s2),
+
+            bodyScroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            bodyScroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            bodyScroll.topAnchor.constraint(equalTo: topGroup.bottomAnchor,
+                                            constant: HelmMetrics.s1),
+            bodyScroll.bottomAnchor.constraint(equalTo: bottomGroup.topAnchor,
+                                               constant: -HelmMetrics.s1),
         ])
-        for child in column.arrangedSubviews {
-            child.widthAnchor.constraint(equalTo: column.widthAnchor).isActive = true
-        }
 
         tabs.onSelect = { [weak self] id in
             guard let tab = CompactModeTab(rawValue: id) else { return }
@@ -230,6 +290,64 @@ final class CompactModePopoverController: NSViewController {
     private let headerRow = NSStackView()
     private let tabsRow = NSView()
     private let footerRow = NSStackView()
+
+    /// The chrome pinned to the top edge and the chrome pinned to the bottom
+    /// edge. See `loadView` for why these are two stacks rather than one.
+    private let topGroup = NSStackView()
+    private let bottomGroup = NSStackView()
+
+    /// The fixed region every tab's content is laid out *within*.
+    ///
+    /// Overflow is the case this exists for: the Today tab caps at
+    /// `CompactModeDigest.maxRows` tasks, and five rows plus both chips is
+    /// taller than the region at the smaller text sizes GL-32 scales up to.
+    /// Before this, that case grew the popover; now it scrolls.
+    private let bodyScroll = NSScrollView()
+
+    private func buildBodyScroll() {
+        bodyScroll.translatesAutoresizingMaskIntoConstraints = false
+        bodyScroll.drawsBackground = false
+        bodyScroll.borderType = .noBorder
+        bodyScroll.hasVerticalScroller = true
+        bodyScroll.hasHorizontalScroller = false
+        bodyScroll.autohidesScrollers = true
+        // Pinned rather than inherited. With "Show scroll bars: Always" a
+        // legacy scroller reserves a real ~15pt track that narrows the clip
+        // view - and both embedded panes constrain their own root to
+        // `Self.width` at required priority, so a narrowed clip view is a
+        // constraint conflict rather than a cosmetic inset. An overlay
+        // scroller reserves nothing.
+        bodyScroll.scrollerStyle = .overlay
+        bodyScroll.verticalScrollElasticity = .allowed
+
+        // Flipped, per gotcha (9): a plain `NSView` document view puts y=0 at
+        // its *bottom*, so content shorter than the viewport - which is every
+        // tab here, most of the time - would rest against the bottom of the
+        // clip view with a blank gap above it.
+        let document = FlippedView()
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(bodyContainer)
+        bodyScroll.documentView = document
+
+        NSLayoutConstraint.activate([
+            // The *clip* view, never the scroll view - gotcha (4).
+            document.widthAnchor.constraint(equalTo: bodyScroll.contentView.widthAnchor),
+            bodyContainer.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            bodyContainer.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            bodyContainer.topAnchor.constraint(equalTo: document.topAnchor),
+            bodyContainer.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+        ])
+    }
+
+    /// Put the body back at the top on every tab switch.
+    ///
+    /// `SettingsController`'s own `scrollToTop()` pair, for the same reason:
+    /// a flipped document view keeps the scroll offset it had, so arriving on
+    /// a short tab after scrolling a long one would land mid-content.
+    private func scrollBodyToTop() {
+        bodyScroll.contentView.scroll(to: .zero)
+        bodyScroll.reflectScrolledClipView(bodyScroll.contentView)
+    }
 
     private func buildHeader() {
         iconTile.configure(symbol: "sailboat", tint: .accent, pointSize: 12)
@@ -294,10 +412,15 @@ final class CompactModePopoverController: NSViewController {
 
         // All four panes are arranged subviews from the start, and exactly one
         // is unhidden. A hidden arranged subview of an `NSStackView` drops out
-        // of layout entirely - gotcha (11)'s one named exception - so the
-        // popover sizes to whichever tab is showing with no constraint
-        // swapping, which is what `StrawHatMenuBarPopoverController` already
-        // does for its own four states.
+        // of layout entirely - gotcha (11)'s one named exception - so only the
+        // showing tab contributes any height, with no constraint swapping,
+        // which is what `StrawHatMenuBarPopoverController` already does for
+        // its own four states.
+        //
+        // What that height no longer decides is the popover's own. This stack
+        // is the document view of `bodyScroll`, which occupies a fixed region
+        // between the top and bottom chrome - so a taller tab scrolls inside
+        // the card instead of resizing it.
         todayPane.onOpenTasks = { [weak self] in
             self?.onOpenTasks?()
             self?.onDismiss?()
@@ -441,8 +564,13 @@ final class CompactModePopoverController: NSViewController {
         if hasCapture { captureField.placeholderString = selected.capturePlaceholder }
 
         view.layoutSubtreeIfNeeded()
-        onSizeChanged?(NSSize(width: Self.width, height: view.fittingSize.height))
+        scrollBodyToTop()
+        onSizeChanged?(Self.contentSize)
     }
+
+    /// What the popover is, on every tab. Never measured from the content -
+    /// see `height`.
+    static var contentSize: NSSize { NSSize(width: width, height: height) }
 
     private func focusCaptureField() {
         guard selected.captureDestination != nil else { return }
@@ -482,7 +610,12 @@ final class CompactModePopoverController: NSViewController {
             overAnyOf: [HelmTheme.nsColor(theme.chromeBackgroundHex)],
             theme: theme)
         view.layoutSubtreeIfNeeded()
-        onSizeChanged?(NSSize(width: Self.width, height: view.fittingSize.height))
+        // The notice lives in the bottom group, so showing it takes its room
+        // out of the body region rather than out of the popover's frame - but
+        // the size is still reported, because `NSPopover` re-reads it and a
+        // caller that stops hearing about layout changes is one refactor away
+        // from a stale frame.
+        onSizeChanged?(Self.contentSize)
     }
 
     private func hideCaptureNotice() {
@@ -534,6 +667,16 @@ final class CompactModePopoverController: NSViewController {
     var debugTodayPane: CompactTodayPane { todayPane }
     var debugNotesPane: CompactNotesPane { notesPane }
     var debugCaptureRowIsHidden: Bool { captureRow.isHidden }
+    var debugBodyScroll: NSScrollView { bodyScroll }
+    /// The chrome's own frames, so a suite can assert they do not move
+    /// between tabs rather than only that the outer frame matches.
+    var debugChromeFrames: [String: NSRect] {
+        // In the root's own coordinates: each of these sits inside a group
+        // stack, so a raw `.frame` would compare two different spaces.
+        func inRoot(_ v: NSView) -> NSRect { v.convert(v.bounds, to: view) }
+        return ["tabs": inRoot(tabs), "footer": inRoot(footerRow),
+                "header": inRoot(headerRow), "body": inRoot(bodyScroll)]
+    }
     var debugCaptureNotice: String? { captureNotice.isHidden ? nil : captureNotice.stringValue }
     var debugCaptureField: HelmTextField { captureField }
     var debugOpenWindowButton: HelmButton { openWindowButton }

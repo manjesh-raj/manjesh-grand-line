@@ -8,8 +8,8 @@
 // **This suite is in `NEEDS_SESSION`**, and per AGENTS.md that classification
 // is operative rather than decorative. What is here needs a window: a
 // `HelmSegmentedTabs` pill's real click path, whether exactly one of four
-// panes is actually laid out, whether the popover's reported height really
-// changes between tabs, and whether an overdue row's checkbox is painted a
+// panes is actually laid out, whether the card really holds one fixed size
+// across all four tabs, and whether an overdue row's checkbox is painted a
 // different colour from a later one. Everything that is a *rule* - the
 // policy, the chord, the derivation - is `CompactModeSelfTest` and guards
 // CI's blocking lane.
@@ -20,8 +20,11 @@
 //     subviews from the start and exactly one is unhidden, which is the
 //     mechanism AGENTS.md gotcha (11) names as the *one* exception to "a
 //     hidden view still participates in layout". If that ever regresses to
-//     four plain hidden `NSView`s the popover silently sizes to the tallest
-//     tab forever, and nothing else in the app would notice.
+//     four plain hidden `NSView`s, all four tabs' content stacks up inside
+//     the body region at once and nothing else in the app would notice.
+//   * `checkThePopoverIsOneFixedSizeOnEveryTab`. The card used to report the
+//     active tab's own fitting height, so it changed shape under the
+//     captain's hand on every tab switch. See `docs/history/40-menu-bar-mode.md`.
 //   * `checkTheEmbeddedPanesAreTheRealControllers`. The Vault and Crew tabs
 //     host `PoneglyphMenuBarPopoverController` and
 //     `StrawHatMenuBarPopoverController` themselves - the whole point of the
@@ -94,7 +97,9 @@ enum CompactModeViewSelfTest {
         checkTheEmbeddedPanesAreTheRealControllers(check)
         checkTheCaptureLineOnlyExistsWhereItCanWrite(check)
         checkAFiledCaptureClearsAndARefusalDoesNot(check)
-        checkTheHeightIsReportedPerTab(check)
+        checkThePopoverIsOneFixedSizeOnEveryTab(check)
+        checkTheChromeDoesNotMoveBetweenTabs(check)
+        checkATallTabScrollsRatherThanGrows(check)
         checkUrgencyIsPaintedNotJustStated(check)
         checkTheChipsClearTheContrastFloor(check)
         checkEmptyStatesAppearRatherThanBlankRows(check)
@@ -359,25 +364,125 @@ enum CompactModeViewSelfTest {
         }
     }
 
-    private static func checkTheHeightIsReportedPerTab(_ check: (Bool, String) -> Void) {
-        mounted { controller, _ in
-            var reported: [CompactModeTab: CGFloat] = [:]
-            for tab in CompactModeTab.allCases {
-                var height: CGFloat = 0
-                controller.onSizeChanged = { height = $0.height }
-                controller.select(tab)
-                controller.view.layoutSubtreeIfNeeded()
-                controller.debugRenderPane()
-                reported[tab] = height
+    /// **The regression this branch exists for.**
+    ///
+    /// The popover used to report `view.fittingSize.height`, so its frame was
+    /// whatever the active tab's content happened to want - four different
+    /// cards for one surface, which is what the captain reported. Both
+    /// themes, because a Daylight restyle changes row metrics and a fix that
+    /// only holds in Dusk is not a fix.
+    ///
+    /// The first check is the one that stops this passing vacuously: the four
+    /// tabs' *content* has to really differ in natural height, or "the outer
+    /// frame is the same on all four" is a statement about nothing.
+    private static func checkThePopoverIsOneFixedSizeOnEveryTab(_ check: (Bool, String) -> Void) {
+        for theme in [lightTheme(), darkTheme()] {
+            mounted(theme: theme) { controller, _ in
+                var reported: [CompactModeTab: NSSize] = [:]
+                var outer: [CompactModeTab: NSSize] = [:]
+                var content: [CompactModeTab: CGFloat] = [:]
+                for tab in CompactModeTab.allCases {
+                    var size = NSSize.zero
+                    controller.onSizeChanged = { size = $0 }
+                    controller.select(tab)
+                    controller.debugRenderPane()
+                    controller.view.layoutSubtreeIfNeeded()
+                    reported[tab] = size
+                    outer[tab] = controller.view.frame.size
+                    content[tab] = controller.debugBodyScroll.documentView?.fittingSize.height ?? 0
+                }
+                controller.onSizeChanged = nil
+
+                let naturalHeights = Set(content.values.map { ($0 * 2).rounded() })
+                check(naturalHeights.count > 1,
+                      "\(theme.name): the four tabs' own content really is different heights, or "
+                          + "the equality below asserts nothing - got \(content)")
+                check(content.values.allSatisfy { $0 > 1 },
+                      "\(theme.name): and every tab lays out real content - a zero would make the "
+                          + "fixed frame trivially true. Got \(content)")
+
+                let expected = CompactModePopoverController.contentSize
+                for tab in CompactModeTab.allCases {
+                    let got = reported[tab] ?? .zero
+                    check(abs(got.width - expected.width) < 0.5
+                              && abs(got.height - expected.height) < 0.5,
+                          "\(theme.name): the \(tab.title) tab reports the popover's one fixed "
+                              + "content size \(expected) - got \(got)")
+                    let laid = outer[tab] ?? .zero
+                    check(abs(laid.width - expected.width) < 0.5
+                              && abs(laid.height - expected.height) < 0.5,
+                          "\(theme.name): and really lays out at it - got \(laid)")
+                }
             }
-            controller.onSizeChanged = nil
-            check(reported.values.allSatisfy { $0 > 0 },
-                  "every tab reports a real height - a zero would be a popover AppKit sizes to "
-                      + "nothing. Got \(reported)")
-            check(Set(reported.values).count > 1,
-                  "and the four tabs do not all report the same height, which is what proves the "
-                      + "hidden panes really are out of the layout rather than pinning it to the "
-                      + "tallest one. Got \(reported)")
+        }
+    }
+
+    /// The half the captain actually sees: the tab strip and the footer at
+    /// the same coordinates on every tab. An outer frame that matched while
+    /// the chrome inside it slid around would still read as the same bug.
+    private static func checkTheChromeDoesNotMoveBetweenTabs(_ check: (Bool, String) -> Void) {
+        mounted { controller, _ in
+            var frames: [CompactModeTab: [String: NSRect]] = [:]
+            for tab in CompactModeTab.allCases {
+                controller.select(tab)
+                controller.debugRenderPane()
+                controller.view.layoutSubtreeIfNeeded()
+                frames[tab] = controller.debugChromeFrames
+            }
+            guard let reference = frames[.today] else { return }
+            check(reference.values.allSatisfy { $0.width > 1 && $0.height > 1 },
+                  "every piece of chrome is really laid out, or the comparison below is vacuous - "
+                      + "got \(reference)")
+            // The body region itself is allowed to change - Vault and Crew
+            // take no capture line, so it grows into that row's space. The
+            // header, the tab strip and the footer are not.
+            for key in ["header", "tabs", "footer"] {
+                for tab in CompactModeTab.allCases where tab != .today {
+                    let a = reference[key] ?? .zero
+                    let b = frames[tab]?[key] ?? .zero
+                    check(abs(a.minX - b.minX) < 0.5 && abs(a.minY - b.minY) < 0.5
+                              && abs(a.width - b.width) < 0.5 && abs(a.height - b.height) < 0.5,
+                          "the \(key) sits at the same place on Today and on \(tab.title) - "
+                              + "got \(a) and \(b)")
+                }
+            }
+        }
+    }
+
+    /// A tab taller than the fixed region scrolls inside it. This is the case
+    /// the old "size to the content" shape handled by growing the card, so it
+    /// is the one a fixed size could have broken by clipping instead.
+    private static func checkATallTabScrollsRatherThanGrows(_ check: (Bool, String) -> Void) {
+        let crowded = CompactTodayDigest(
+            rows: (0..<CompactModeDigest.maxRows).map {
+                CompactTaskRow(id: "t\($0)",
+                               title: "A task with a title long enough to wrap onto a second line "
+                                   + "in a 330pt popover, number \($0)",
+                               detail: "overdue \u{00B7} 16 Sep", urgency: .overdue)
+            },
+            overdueCount: CompactModeDigest.maxRows,
+            focusChip: "17:24 focus",
+            followUpChip: "2 follow-ups")
+
+        mounted { controller, _ in
+            controller.todayProvider = { crowded }
+            controller.select(.notes)
+            controller.select(.today)
+            controller.debugRenderPane()
+            controller.view.layoutSubtreeIfNeeded()
+
+            let scroll = controller.debugBodyScroll
+            let documentHeight = scroll.documentView?.fittingSize.height ?? 0
+            let viewport = scroll.contentView.bounds.height
+            check(documentHeight > viewport,
+                  "the crowded fixture really does overflow the fixed body region, or this case "
+                      + "proves nothing - document \(documentHeight) against viewport \(viewport)")
+            check(abs(controller.view.frame.height - CompactModePopoverController.height) < 0.5,
+                  "and the popover is still its one fixed height rather than having grown to fit - "
+                      + "got \(controller.view.frame.height)")
+            check(scroll.contentView.bounds.origin.y < 0.5,
+                  "and the overflowing tab opens at its top rather than mid-content - got "
+                      + "\(scroll.contentView.bounds.origin.y)")
         }
     }
 

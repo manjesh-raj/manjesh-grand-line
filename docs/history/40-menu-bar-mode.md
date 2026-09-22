@@ -434,3 +434,159 @@ The clean run was taken after that pass finished, from `fm.themeID = dusk`, with
 cheap half of that pre-flight - and note that a naive `until ! pgrep -f
 "run-all-tests.sh"` waiter **matches its own command line** and never exits;
 break the literal (`run-all-tests[.]sh`) or it waits forever.
+
+---
+
+## The popover changed shape on every tab switch
+
+Reported by the captain with five screenshots (`fm/grandline-menubar-popover-
+consistent-sizing`): "even the height and width seems to be changing when I
+shift to the multiple tabs here. We want a very clean and consistent UI."
+
+### What was actually varying
+
+Measured off the captain's own 2x screenshots rather than assumed. The
+**width** was already constant - 657px on all four, which is this file's 330pt.
+What moved was the **height**:
+
+| Tab | Card height |
+|---|---|
+| Today | 286pt |
+| Notes | 246pt |
+| Vault | 211pt |
+| Crew | 279pt |
+
+Four shapes for one surface. Because an `NSPopover` grows from its anchor, a
+changing height also moves the footer and the tab strip under the hand that is
+using them, which is the half that reads as the card "jumping".
+
+**It was not an AppKit trap.** Gotchas (3), (13) and (14) were the obvious
+suspects and none of them applies: the size was being set deliberately, in one
+line, by this feature's own code.
+
+```swift
+onSizeChanged?(NSSize(width: Self.width, height: view.fittingSize.height))
+```
+
+`renderPane()` hid three panes, unhid one, and reported whatever the survivor
+happened to measure straight into `popover.contentSize`. The Vault and Crew
+tabs take no capture line (and deliberately so - see above), which removed a
+whole row as well, and that is the 68pt between Today and Vault.
+
+So the shipped behaviour was exactly what the code asked for. It was the ask
+that was wrong: a popover is chrome, not a document.
+
+### The fix: three pieces pinned to a fixed root, not one column
+
+The content view used to be a single vertical `NSStackView` holding everything
+from the header to the footer, pinned to all four edges of a root with no
+height of its own. It is now:
+
+- `topGroup` (header, rule, tab strip), pinned to the root's **top**.
+- `bottomGroup` (capture line, notice, rule, footer), pinned to the root's
+  **bottom**.
+- `bodyScroll`, filling whatever is between them.
+
+and the root carries `width == 330` **and** `height == 360`, both required and
+both constant. `renderPane` reports `CompactModePopoverController.contentSize`
+- the same two numbers on every tab - instead of measuring anything.
+
+**Why not keep one stack and give the body the slack?** Because neither
+candidate for "the view that absorbs it" has an intrinsic content size -
+`bodyContainer` is an `NSStackView` and `bodyScroll` is a scroll view - so a
+hugging priority on either is a no-op. That is AGENTS.md gotcha (12), and
+pinning the two chrome groups to their own edges sidesteps the question
+entirely.
+
+Two consequences worth stating, because both are deliberate:
+
+- **The body region is a different height on Vault and Crew than on Today and
+  Notes**, by exactly the capture row those two tabs do not have. The *card*
+  is identical and so is every piece of chrome; the region simply grows into
+  the space the capture line is not using. `checkTheChromeDoesNotMoveBetweenTabs`
+  asserts the header, tab strip and footer positions and deliberately exempts
+  the body.
+- **A sparse tab now has visible ground under it** - the vault's locked state
+  is two lines and a link against a 197pt region. That is the cost of a fixed
+  card and it was taken knowingly: the alternative, centring short content,
+  makes the Today list jump every time a checkbox is ticked.
+
+### Overflow, which the old shape handled by growing
+
+Today caps at `CompactModeDigest.maxRows` (five), and five rows with wrapped
+titles plus both chips is taller than the region - more so under GL-32's text
+scaling. The old code grew the popover; this one scrolls inside it.
+
+`bodyScroll` is an ordinary `NSScrollView` with two non-obvious settings:
+
+- **`documentView` is a `FlippedView`.** Gotcha (9): a plain `NSView` document
+  view puts y=0 at its *bottom*, so content shorter than the viewport - which
+  is most tabs, most of the time - would rest against the bottom of the clip
+  view with a blank gap above it. `scrollBodyToTop()` on every tab switch is
+  the other half of `SettingsController`'s own pair.
+- **`scrollerStyle = .overlay`, pinned rather than inherited.** With "Show
+  scroll bars: Always" a legacy scroller reserves a real ~15pt track that
+  narrows the clip view - and both embedded panes constrain their own root to
+  the popover's width at required priority, so a narrowed clip view here is a
+  *constraint conflict*, not a cosmetic inset.
+
+### The width was left at 330, and the brief's ~520pt was a pixel read
+
+The task brief read the mockup's card as ~520pt wide and the shipped one as
+too narrow. Measured against the mockup's own scale instead, they agree: the
+mockup image renders at ~1.76x (its "Grand Line" title is 115px against the
+real app's 65.5pt at the same 12.5pt semibold), so its 540px card is ~307pt.
+330 is the mockup's card, slightly generous, and it is also the width both
+embedded panes are built at.
+
+The **height** comes from the same measurement: the mockup's card is 588 x 540,
+a ratio of 1.089, so 1.089 x 330 = 359 -> **360**. That is not a coincidence
+worth much on its own, but it independently lands above the tallest natural
+tab (286) with room, which is the property that actually matters.
+
+### Verification
+
+`FM_RUN_COMPACT_MODE_VIEW_TESTS` loses `checkTheHeightIsReportedPerTab` - which
+asserted the *old* behaviour, that the four tabs report different heights - and
+gains three cases:
+
+| Case | Asserts |
+|---|---|
+| `checkThePopoverIsOneFixedSizeOnEveryTab` | the reported size **and** the laid-out frame are `330 x 360` on all four tabs, in both themes |
+| `checkTheChromeDoesNotMoveBetweenTabs` | header, tab strip and footer at identical root-relative frames on all four |
+| `checkATallTabScrollsRatherThanGrows` | a five-row Today fixture really overflows the region, the card is still 360, and the tab opens at its top |
+
+Each opens with its own discriminating-power check, per AGENTS.md: the first
+asserts the four tabs' *content* really is different natural heights (or "the
+frames match" is a statement about nothing), the second that every piece of
+chrome is really laid out, the third that the crowded fixture really does
+exceed the viewport.
+
+**Confirmed to catch a regression, not merely to pass.** Injected by copying
+the file aside and editing it - never `git stash`:
+
+| Injection | Failed |
+|---|---|
+| `onSizeChanged` back to `view.fittingSize.height`, root height constraint removed | 8 cases - every tab in both themes, printing the four different heights it got back |
+| the footer re-pinned under the body instead of to the root's bottom edge | `checkTheChromeDoesNotMoveBetweenTabs` by name, printing the footer at four different y positions |
+
+**Rendered, not reasoned.** A temporary `FM_DEBUG_COMPACT_RENDER` probe in the
+suite rendered all four tabs in both Daylight and Dusk through
+`cacheDisplay`/`bitmapImageRepForCachingDisplay` and wrote eight PNGs to the
+session scratchpad, read back with `Read`. All eight reported
+`view=(330.0, 360.0)`, and the images confirm the chrome sits at identical
+coordinates on every one. The probe was reverted before the commit, per the
+"Verifying native UI bugs without a real screenshot" convention.
+
+**Full suite**: 195 passed, 0 failed, 1 skipped (of 196), from
+`fm.themeID = dusk` with an empty `git status --porcelain` and no sibling pass
+running.
+
+### What was not verified
+
+The live half is the captain's own check, for the same reason this file already
+records: nothing here launched the app. The off-screen render is a real
+rasterised layout pass from AppKit's own engine, not a screenshot of the
+running popover, and an `NSPopover`'s own arrow and background chrome are drawn
+by AppKit around the content view rather than by this code, so they are not in
+the render.
