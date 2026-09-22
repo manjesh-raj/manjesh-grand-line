@@ -27,7 +27,7 @@
 
 import AppKit
 
-final class DailyOverviewController: NSViewController, DaylightDrillActions {
+final class DailyOverviewController: NSViewController {
 
     /// The shared `ShiftStore` (GL-23) - the same instance the Tasks page and
     /// Fleet's own copy of this card read. Never a second one: it caches as
@@ -52,10 +52,17 @@ final class DailyOverviewController: NSViewController, DaylightDrillActions {
     private var emptyState: HelmEmptyState!
     private var theme: HelmTheme = ThemeManager.shared.theme
 
-    /// §6.4's live subtitle. Recomputed on every render, so the header says
-    /// what the card says rather than a static line about the area.
-    private(set) var drillHeaderSubtitle: String?
-    var drillHeaderActions: [NSView] { [] }
+    /// The page's own one-line summary of what it is showing - the card's
+    /// headline, recomputed on every render.
+    ///
+    /// `fm/grandline-overview-layout-fix-gmail-settings` stopped this feeding
+    /// a drill header: Overview is a **top-level** page now, so the bar keeps
+    /// its wordmark and its space pills and draws no subtitle at all. It is
+    /// kept because it is the honest answer to "what is this page saying
+    /// right now", which the suite asserts and a later surface can read; it
+    /// is deliberately not a `DaylightDrillActions` conformance any more,
+    /// because that protocol is about a header this page does not have.
+    private(set) var pageSummary: String?
 
     init(shiftStore: ShiftStore) {
         self.shiftStore = shiftStore
@@ -93,8 +100,23 @@ final class DailyOverviewController: NSViewController, DaylightDrillActions {
 
         content.addSubview(contentStack)
         NSLayoutConstraint.activate([
-            contentStack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: HelmMetrics.pageGutter),
-            contentStack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
+            // `fm/grandline-overview-layout-fix-gmail-settings`: the bar's own
+            // side margin, not `HelmMetrics.pageGutter`.
+            //
+            // This page is one full-bleed card sitting immediately under the
+            // Daylight bar, and the bar is a floating panel inset
+            // `DaylightBarController.sideMargin` (22) from the window - so a
+            // 24pt page gutter put the card's edges 2pt inside the chrome
+            // directly above it. Measured in a real off-screen render at
+            // 1220pt: bar 22..1198, card 24..1196. Small, and the captain saw
+            // it at once, because the two edges are vertically adjacent and
+            // nothing else on the page competes for the eye. Every other page
+            // keeps `pageGutter`; none of them has a single element whose
+            // edge lines up with the bar's.
+            contentStack.leadingAnchor.constraint(equalTo: content.leadingAnchor,
+                                                  constant: DaylightBarController.sideMargin),
+            contentStack.trailingAnchor.constraint(equalTo: content.trailingAnchor,
+                                                   constant: -DaylightBarController.sideMargin),
             contentStack.topAnchor.constraint(equalTo: content.topAnchor, constant: HelmMetrics.s5),
             contentStack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -28),
             // The card is the page: full width inside the gutter, which is
@@ -118,23 +140,21 @@ final class DailyOverviewController: NSViewController, DaylightDrillActions {
             scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
-        // The card fills the page's height as well as its width. Without this
-        // a 325pt card sat at the top of a 900pt page with 575pt of bare
-        // background under it - measured in a real off-screen render, and it
-        // reads as a card that lost its dashboard rather than as a
-        // destination. With it, the card's own footer sits on the bottom of
-        // the viewport and the column rules run the height of the page.
+        // `fm/grandline-overview-layout-fix-gmail-settings` removed the
+        // viewport-height minimum that used to live here.
         //
-        // A **minimum** at `contentTie` (499), never an equality and never
-        // above 500: AGENTS.md gotcha (13) - a content constraint over 500 can
-        // resize the whole window, and this one is tied to the clip view,
-        // which is exactly the view that shrinks when the captain resizes.
-        // `>=` also leaves a genuinely taller card (a long task list, the
-        // calendar column on) free to scroll rather than being squashed.
-        let fill = contentStack.heightAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.heightAnchor,
-                                                        constant: -(HelmMetrics.s5 + 28))
-        fill.priority = HelmDaylightPriority.contentTie
-        fill.isActive = true
+        // It was added so the card "fills the page rather than floating at
+        // the top of it", and the captain's own screenshot is what that
+        // actually looks like: a 317pt card stretched to 592pt, its three
+        // column rules running down through ~275pt of empty background and
+        // its footer parked on the bottom edge of the window - a dead zone
+        // inside the card rather than under it. Measured in a real
+        // off-screen render (`card.fittingSize` 454x317 against a 1172x592
+        // frame) before the constraint came out.
+        //
+        // A card sizes to its content. What is under it is page background,
+        // which is what the captain's approved mockup shows and what every
+        // other short page in this app already does.
 
         ThemeManager.shared.observe { [weak self, weak root] theme in
             self?.theme = theme
@@ -280,7 +300,7 @@ final class DailyOverviewController: NSViewController, DaylightDrillActions {
         card.render(digest, theme: theme)
         card.isHidden = false
         emptyState.isHidden = true
-        setDrillSubtitle(digest.headline)
+        setPageSummary(digest.headline)
     }
 
     private func showEmptyState(title: String, body: String) {
@@ -288,19 +308,17 @@ final class DailyOverviewController: NSViewController, DaylightDrillActions {
         emptyState.isHidden = false
         emptyState.setText(title: title, body: body)
         emptyState.applyTheme(theme)
-        setDrillSubtitle(title)
+        setPageSummary(title)
     }
 
-    /// The header belongs to the shell, so this hands it the new line rather
-    /// than writing into it - `DaylightDrillActions`' own rule.
-    private func setDrillSubtitle(_ line: String) {
-        guard drillHeaderSubtitle != line else { return }
-        drillHeaderSubtitle = line
-        onDrillSubtitleChanged?()
+    private func setPageSummary(_ line: String) {
+        guard pageSummary != line else { return }
+        pageSummary = line
+        onPageSummaryChanged?()
     }
 
-    /// Set by the shell; called when this page's own subtitle changes.
-    var onDrillSubtitleChanged: (() -> Void)?
+    /// Set by the shell; called when this page's own summary changes.
+    var onPageSummaryChanged: (() -> Void)?
 
     /// Whether offering "Show today's calendar" can lead anywhere - a denied
     /// or restricted grant cannot be changed from inside this app, and an
@@ -345,6 +363,9 @@ final class DailyOverviewController: NSViewController, DaylightDrillActions {
     /// GL-27: debug builds only. The suite drives the real page rather than
     /// the card alone, which is what proves the wiring as well as the render.
     var debugDailyReviewCard: DailyReviewCard { card }
+    var debugScrollClipFrame: NSRect { scroll.contentView.frame }
+    var debugDocumentFrame: NSRect { scroll.documentView?.frame ?? .zero }
+    var debugContentStackFrame: NSRect { contentStack.frame }
     var debugEmptyStateIsShowing: Bool { !(emptyState?.isHidden ?? true) }
     func debugRenderDailyReview() { renderDailyReview() }
     func debugAttachDailyReviewStores(sticky: StickyBoardStore, reading: ReadingListStore) {

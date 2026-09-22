@@ -176,6 +176,24 @@ extension RailDestination {
         }
     }
 
+    /// Whether the live-SSH-session strip may show while this destination is
+    /// on screen.
+    ///
+    /// `fm/grandline-overview-layout-fix-gmail-settings`. The strip exists to
+    /// make an already-live session reachable "from anywhere"
+    /// (`docs/history/03-navigation-and-chrome.md`), and that is still true of
+    /// every page but one: the daily-review Overview, where a terminal tab
+    /// strip above the review card reads as leftover UI from another
+    /// destination rather than as an affordance - the captain reported it as
+    /// exactly that. A table rather than a `dest == .dailyOverview` in the
+    /// shell, so a second such page is one line here and none there.
+    var showsSessionStrip: Bool {
+        switch self {
+        case .dailyOverview: return false
+        default: return true
+        }
+    }
+
     /// The line under a drill page's title (Daylight §6.4). Deliberately
     /// short, static, and about the *area* rather than about live data - live
     /// numbers belong on that page's own header, which Phase 4 builds.

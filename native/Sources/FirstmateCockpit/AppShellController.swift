@@ -931,11 +931,11 @@ final class AppShellController: NSViewController {
         // than new behaviour.
         overview.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
         overview.onOpenShiftTask = { [weak self] id in self?.openShiftTask(id: id) }
-        // F20's own page: the same two pass-throughs, plus the live drill
-        // subtitle every migrated page pushes rather than the header pulling.
+        // F20's own page: the same two pass-throughs. No drill-subtitle
+        // wiring - `fm/grandline-overview-layout-fix-gmail-settings` made
+        // Overview a top-level page, which has no drill header to update.
         dailyOverview.onNavigateToDestination = { [weak self] dest in self?.show(dest) }
         dailyOverview.onOpenShiftTask = { [weak self] id in self?.openShiftTask(id: id) }
-        dailyOverview.onDrillSubtitleChanged = { [weak self] in self?.refreshDrillHeaderSubtitle() }
         // Straw Hat phase 3 (M3.2): the crew's two navigation handoffs. Both
         // are pass-throughs into navigation this object already owns - a
         // handoff writes nothing, which is what lets its link row run on a
@@ -2007,6 +2007,14 @@ final class AppShellController: NSViewController {
     var drillHeaderForTests: HelmDrillHeader { bar.drillNavForTests }
     var drillHeaderIsHiddenForTests: Bool { bar.drillNavIsHiddenForTests }
     var drillActionsForTests: [NSView] { bar.drillActionsForTests }
+    /// Whether the bar is showing the space-pill strip (a top-level page)
+    /// rather than the drill cluster - the property the Overview page's own
+    /// regression coverage asserts.
+    var barPillsAreHiddenForTests: Bool { bar.pillsAreHiddenForTests }
+    var barWordmarkIsHiddenForTests: Bool { bar.wordmarkIsHiddenForTests }
+    /// The Overview page itself, so a suite can drive the real page the shell
+    /// mounted rather than a second instance of it.
+    var dailyOverviewForTests: DailyOverviewController { dailyOverview }
     /// A3's state, as the bar currently has it.
     var scrollEdgeActiveForTests: Bool { bar.scrollEdgeActiveForTests }
     var scrollEdgeWatchedForTests: [NSScrollView] { scrollEdge.watchedForTests }
@@ -2056,8 +2064,25 @@ final class AppShellController: NSViewController {
                          symbol: dest.symbol,
                          hue: dest.domainHue,
                          artwork: dest.drillHeaderArtwork,
-                         isCanvas: slot.id == .homeCanvas,
+                         // `fm/grandline-overview-layout-fix-gmail-settings`:
+                         // a **top-level** page, not only the canvas. A space
+                         // pill that opens a page of its own
+                         // (`DaylightSpace.destination`) is still the top of
+                         // the navigation, so the bar keeps its wordmark and
+                         // its pill strip - the captain reported the new
+                         // Overview tab rendering with a back arrow and no
+                         // tabs at all, which is what naming the canvas here
+                         // did. Read off the same one table `selectSpace`
+                         // reads, never a second copy.
+                         isTopLevel: slot.id == .homeCanvas
+                             || DaylightSpace.owning(destination: dest) != nil,
                          slotController: slot.controller)
+
+        // The strip's second input (see `applySessionStripVisibility`): which
+        // page is showing. `currentDestinationKind` was set by
+        // `updateRecentDestinations(arriving:)` a few lines up, so this reads
+        // the destination the shell is navigating *to*.
+        applySessionStripVisibility()
 
         // A3: re-point the scroll-edge observer at what is now showing.
         // After `mounter.show` the slot's view exists but may not have been
@@ -2362,9 +2387,9 @@ final class AppShellController: NSViewController {
     /// The name is unchanged because this is still the same decision it
     /// always made; only where the result is rendered moved.
     private func applyDrillHeader(title: String, subtitle: String, symbol: String,
-                                  hue: HelmDomainHue, artwork: NSImage? = nil, isCanvas: Bool,
+                                  hue: HelmDomainHue, artwork: NSImage? = nil, isTopLevel: Bool,
                                   slotController: NSViewController?) {
-        guard !isCanvas else {
+        guard !isTopLevel else {
             bar.setDrillContext(nil)
             lastDrillContext = nil
             return
@@ -2821,7 +2846,7 @@ final class AppShellController: NSViewController {
                 self.updateRecentDestinations(arriving: .host(id: hostID, label: hostLabel))
                 self.applyDrillHeader(title: hostLabel, subtitle: "Dedicated host page",
                                       symbol: RailDestination.hosts.symbol,
-                                      hue: RailDestination.hosts.domainHue, isCanvas: false,
+                                      hue: RailDestination.hosts.domainHue, isTopLevel: false,
                                       slotController: controller)
                 self.retargetScrollEdge(to: controller.view)
                 self.activeHostID = hostID
@@ -3114,7 +3139,7 @@ final class AppShellController: NSViewController {
         updateRecentDestinations(arriving: .host(id: hostID, label: label))
         applyDrillHeader(title: label, subtitle: "Dedicated host page",
                          symbol: RailDestination.hosts.symbol,
-                         hue: RailDestination.hosts.domainHue, isCanvas: false,
+                         hue: RailDestination.hosts.domainHue, isTopLevel: false,
                          slotController: controller)
         // A3: a host console has no page scroll view, so this correctly
         // clears the edge rather than leaving the previous page's state.
@@ -3336,17 +3361,44 @@ final class AppShellController: NSViewController {
     private func applySessionRegistry(_ registry: HostSessionRegistry) {
         guard isViewLoaded, sessionStripHeightConstraint != nil else { return }
         sessionStrip.render(registry)
-        let visible = !registry.isEmpty
-        sessionStrip.isHidden = !visible
-        sessionStripHeightConstraint.constant = visible ? SessionStripView.height : 0
-        bodyTopConstraint.constant = DaylightBarController.reservedTopHeight
-            + (visible ? SessionStripView.gapBelowBar + SessionStripView.height : 0)
+        applySessionStripVisibility()
         // Rebuilding a hidden page's rows would be work nobody can see; it
         // gets them on its next `viewWillAppear` instead.
         if hostsPanel.isViewLoaded, !hostsPanel.view.isHidden {
             hostsPanel.refreshLiveSessionState()
         }
         updateKeyViewLoop()
+    }
+
+    /// Whether the strip is showing, and how much room it takes.
+    ///
+    /// Two inputs, and the second is `fm/grandline-overview-layout-fix-gmail-settings`'s:
+    /// there has to be a live session **and** the showing page has to be one
+    /// the strip belongs on (`RailDestination.showsSessionStrip`). The strip
+    /// was built to make a live session reachable "from anywhere"
+    /// (`docs/history/03-navigation-and-chrome.md`) and still is - the one
+    /// page it is now kept off is the daily-review Overview, where the
+    /// captain reported a terminal tab strip reading as leftover UI bleeding
+    /// into a page that has nothing to do with terminals.
+    ///
+    /// Called from both inputs' own change points - a registry change and a
+    /// navigation - because either alone can flip the answer.
+    private func applySessionStripVisibility() {
+        guard isViewLoaded, sessionStripHeightConstraint != nil else { return }
+        let visible = !sessions.isEmpty && currentDestinationShowsSessionStrip
+        sessionStrip.isHidden = !visible
+        sessionStripHeightConstraint.constant = visible ? SessionStripView.height : 0
+        bodyTopConstraint.constant = DaylightBarController.reservedTopHeight
+            + (visible ? SessionStripView.gapBelowBar + SessionStripView.height : 0)
+    }
+
+    /// Whether the page showing right now is one the session strip belongs
+    /// on. A destination the shell has never navigated to (launch, before the
+    /// first `show`) answers `true`, which is the strip's own historical
+    /// behaviour.
+    private var currentDestinationShowsSessionStrip: Bool {
+        guard case .rail(let dest)? = currentDestinationKind else { return true }
+        return dest.showsSessionStrip
     }
 
     private func hideAllDestinations() {
