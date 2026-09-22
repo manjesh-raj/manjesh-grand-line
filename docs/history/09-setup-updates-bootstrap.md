@@ -259,6 +259,23 @@ true:
   is gone with the arrangement; the property it is about is exactly what a
   vertical `NSStackView` at the default `.gravityAreas` reintroduces.
 
+Three more failed the full run and were corrected the same way - each was
+walking Settings' whole view tree for a card, or measuring its document
+height, and only the selected category's cards are in that tree now. Each case
+now says which pane it is about and drives `HelmPageSidebar.debugClickRow(id:)`
+to get there, which also asserts the card is reachable through the navigation:
+
+- `CompactModeViewSelfTest` - compact mode's "discoverable home" is the
+  **Menu bar** category now, and the case asserts the row reaches it.
+- `IntentsBackupSettingsViewSelfTest` - its `withMountedSettings` helper takes
+  the category, and its window-cap case visits both new cards' panes rather
+  than trusting one render.
+- `WindowChromeFusionSelfTest`'s A3 needs a page taller than a 600pt window to
+  scroll at all. Settings still is, but *which pane* now decides it: the
+  default Appearance pane is a single card and does not reliably overflow, so
+  the case selects **Terminal** (three cards, nine shortcut rows among them).
+  `AppShellController.settingsForTests` exists for that.
+
 ### Left out, deliberately
 
 The selected category is **not** persisted across launches; Settings opens on
