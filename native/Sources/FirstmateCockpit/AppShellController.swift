@@ -1175,6 +1175,10 @@ final class AppShellController: NSViewController {
             self?.overview.refreshIfNeeded()
             self?.review.refreshIfNeeded()
         }
+        // The Claude status card's own Refresh. Overview already owns the
+        // quota reading and both its readers; this forces it past the
+        // freshness window rather than adding a second fetch path.
+        homeCanvas.onRefreshQuota = { [weak self] in self?.overview.refreshQuotaNow() }
         // The Console module's peek rows. A closure, so the canvas never holds
         // a console or learns what a tab is.
         homeCanvas.consoleTabsProvider = { [weak self] in

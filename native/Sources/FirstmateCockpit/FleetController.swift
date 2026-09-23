@@ -741,6 +741,17 @@ final class FleetController: NSViewController {
     /// means a hung `quota-axi` cannot hold the queue indefinitely.
     private static let quotaQueue = DispatchQueue(label: "com.firstmate.cockpit.quota")
 
+    /// The Home canvas's Claude card Refresh: take a reading now, whatever the
+    /// cached one's age.
+    ///
+    /// The freshness window exists so a *navigation* does not spawn
+    /// `quota-axi` (GL-12/GL-13); a captain pressing Refresh on the card is
+    /// the opposite case, and skipping the fetch because a four-minute-old
+    /// reading is on file is exactly the stale first paint that made the card
+    /// look wrong. Publishes through `onQuotaChanged` like every other
+    /// reading, so the card clears its own in-flight state on failure too.
+    func refreshQuotaNow() { refreshQuota(force: true) }
+
     /// Takes a reading if the cached one has aged out, then publishes it.
     ///
     /// **This is why the card works at all when the briefing does not.** The
@@ -765,26 +776,6 @@ final class FleetController: NSViewController {
                 // Published on failure too, or the card keeps its skeleton
                 // where it should be stating the gap (GL-14).
                 self.onQuotaChanged?(result)
-            }
-        }
-    }
-
-    /// The briefing's own access to the same reading - cached if fresh, taken
-    /// if not, and never a second concurrent fetch.
-    private func withQuotaReading(_ completion: @escaping (QuotaFetchResult) -> Void) {
-        if let taken = lastQuotaAt, let cached = lastQuota,
-           Date().timeIntervalSince(taken) < Self.quotaFreshness {
-            completion(cached)
-            return
-        }
-        Self.quotaQueue.async { [weak self] in
-            let result = MorningBriefing.fetchQuota()
-            DispatchQueue.main.async {
-                guard let self else { return completion(result) }
-                self.lastQuota = result
-                self.lastQuotaAt = Date()
-                self.onQuotaChanged?(result)
-                completion(result)
             }
         }
     }
@@ -1134,14 +1125,13 @@ final class FleetController: NSViewController {
         inputs.toolUpdateCount = counts.toolUpdates
         inputs.setupDriftCount = counts.setupDrift
 
-        withQuotaReading { [weak self] quota in
-            guard let self else { return }
-            let briefingQuota = MorningBriefing.briefingInputs(from: quota)
-            inputs.quotaWeeklyPercentUsed = briefingQuota.weekly
-            inputs.quotaWeeklyPace = briefingQuota.pace
-            inputs.quotaSessionPercentUsed = briefingQuota.session
-            self.finishBriefing(inputs: inputs)
-        }
+        // No quota read here any more: the briefing's Claude-quota clause was
+        // removed when the Home canvas's Claude card took that reading over
+        // (see `MorningBriefingData.swift`'s header). `refreshQuota` still
+        // runs on every refresh pass for that card - this path simply stopped
+        // being one of its readers, which also means the briefing no longer
+        // waits on a 1-2s subprocess before it can be composed.
+        finishBriefing(inputs: inputs)
     }
 
     /// The local/AI split, at the one point it matters: the local clause list

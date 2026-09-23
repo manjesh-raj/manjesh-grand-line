@@ -618,7 +618,7 @@ enum DaylightModuleSelfTest {
             BriefingClause(text: "One pull request is ready to merge whenever you are.", target: .review),
             BriefingClause(text: "Two tasks are due today and the cert renewal is the urgent one.", target: .tasks),
             BriefingClause(text: "Three tools have updates waiting in Setup.", target: .updates),
-            BriefingClause(text: "Claude usage is comfortable for the rest of the day.", target: .quota),
+            BriefingClause(text: "Two machine setup items have drifted since Tuesday.", target: .setup),
         ]
         if clauses.count != HelmModuleCard.maxBriefingClauses {
             fail("this case measures \(clauses.count) clauses but the cap is "
@@ -873,7 +873,7 @@ enum DaylightModuleSelfTest {
             ("paragraph", .paragraph([
                 BriefingClause(text: "Two crew are working and nothing is blocked.", target: .fleet),
                 BriefingClause(text: "One pull request is ready to merge whenever you are.", target: .review),
-                BriefingClause(text: "Claude usage is comfortable for the rest of the day.", target: .quota),
+                BriefingClause(text: "Two machine setup items have drifted since Tuesday.", target: .setup),
             ])),
             ("note", .note(longNote)),
             ("metric", .metric(value: "12", unit: "updates", note: longNote)),

@@ -14,8 +14,8 @@
 //   - **`MorningBriefingLocal`** is computed on this machine with no network
 //     and no `claude`, and is *always* present. It turns `BriefingInputs`
 //     into a deterministic clause list ("2 PRs ready to merge", "1 task needs
-//     you", "2 forks behind upstream", "40% of the weekly quota used") whose
-//     joined form is exactly the plain stat line the degraded mode renders.
+//     you", "2 forks behind upstream") whose joined form is exactly the plain
+//     stat line the degraded mode renders.
 //   - **`MorningBriefingAI`** is one `ClaudeOneShot` call that rewrites those
 //     same numbers as prose. It can be absent - no `claude`, not
 //     authenticated, offline, a timeout - and its absence costs only the
@@ -40,14 +40,21 @@
 //   - fork drift / tool       `BackgroundSignalsPoller.lastCounts` - the counts
 //     updates / setup drift   that poller *already* computed for the
 //                             Notification Center, read rather than recomputed
-//   - Claude quota            `QuotaSource.fetch()` - the same source the
-//                             Claude-usage popover shows
 //
-// Four of those five are handed in by whoever already fetched them. The one
-// this file fetches itself is the quota, because nothing in the app caches it
-// (the popover fetches on open), and section 25 lists it as one of the five
-// inputs. It runs once per generated briefing - i.e. once a day, or when the
-// captain presses refresh.
+// Every one of those is handed in by whoever already fetched them: this file
+// fetches nothing of its own.
+//
+// **The Claude quota used to be a fifth input, and is deliberately not one
+// any more.** Section 25 listed it, and the briefing carried a "40% of the
+// weekly Claude quota used" clause for as long as the briefing was the only
+// place that reading appeared. The Home canvas's `.claudeStatus` card now
+// shows all five quota figures - session, week, Fable week, extra usage and
+// the spend cap - with its own Refresh, on the same page and a few hundred
+// points to the right of this card, so the clause was restating one number
+// from a card that shows five (captain's call; see
+// `docs/history/07-fleet-and-notifications.md`). `MorningBriefing.fetchQuota`
+// stays, because `FleetController` still runs it for that card - the briefing
+// is simply no longer one of its readers.
 //
 // ## What the model is not allowed to decide
 //
@@ -95,6 +102,15 @@ enum BriefingTarget: String, Codable {
     /// anything else (Console's own toolbar trigger for it was removed
     /// along with the herdr-attached tab it lived on, by
     /// `fm/grand-line-remove-firstmate-mirror`).
+    ///
+    /// **Nothing generates this any more** - the quota clause was removed
+    /// when the Home canvas's Claude card took over that reading (see this
+    /// file's header). The case is kept because this enum is also the
+    /// *persisted* form: a record written by an earlier build is still in
+    /// `UserDefaults`, and dropping the case would make it undecodable (GL-01
+    /// in miniature). `MorningBriefing.withoutQuotaClauses` is what stops such
+    /// a record from still rendering the old sentence, and the two together
+    /// are why the removal is visible immediately rather than tomorrow.
     case quota
     /// Overview's own "In flight" section - scrolled into view, since the
     /// fleet tasks a clause is talking about are rows on this very page.
@@ -206,19 +222,13 @@ struct BriefingInputs: Equatable {
     var toolUpdateCount: Int?
     var setupDriftCount: Int?
 
-    // Claude quota - `QuotaSource.fetch()`
-    var quotaWeeklyPercentUsed: Double?
-    var quotaWeeklyPace: String?
-    var quotaSessionPercentUsed: Double?
-
-    /// Which of the five inputs actually contributed, in the order the
+    /// Which of the four inputs actually contributed, in the order the
     /// mockup's subtitle names them.
     var contributingSources: [String] {
         var out: [String] = ["the fleet snapshot"]
         if prReadyCount != nil { out.append("PR queue") }
         if dueTaskCount + dueFollowUpCount > 0 || singleDueTaskID != nil { out.append("tasks") }
         if forkDriftCount != nil || setupDriftCount != nil || toolUpdateCount != nil { out.append("drift") }
-        if quotaWeeklyPercentUsed != nil { out.append("quota") }
         return out
     }
 }
@@ -289,13 +299,6 @@ enum MorningBriefingLocal {
                 target: .setup))
         }
 
-        if let weekly = inputs.quotaWeeklyPercentUsed {
-            let pace = inputs.quotaWeeklyPace.map { ", \($0.lowercased())" } ?? ""
-            out.append(BriefingClause(
-                text: "\(percent(weekly)) of the weekly Claude quota used\(pace)",
-                target: .quota))
-        }
-
         if out.isEmpty {
             // Honest rather than padded: with every signal either clear or
             // genuinely unknown, there is one thing worth saying.
@@ -332,10 +335,6 @@ enum MorningBriefingLocal {
     // MARK: Small shared formatting
 
     static func plural(_ n: Int, _ word: String) -> String { n == 1 ? word : word + "s" }
-
-    /// Whole percent - a briefing is a glance, and "40%" reads where "40.4%"
-    /// does not.
-    static func percent(_ value: Double) -> String { "\(Int(value.rounded()))%" }
 }
 
 // MARK: - The AI layer
@@ -392,15 +391,6 @@ enum MorningBriefingAI {
         facts.append("- forks behind upstream: \(describe(inputs.forkDriftCount))")
         facts.append("- tools with an update available: \(describe(inputs.toolUpdateCount))")
         facts.append("- machine setup items drifted: \(describe(inputs.setupDriftCount))")
-        if let weekly = inputs.quotaWeeklyPercentUsed {
-            let pace = inputs.quotaWeeklyPace ?? "unknown"
-            facts.append("- weekly Claude quota used: \(MorningBriefingLocal.percent(weekly)) (pace: \(pace))")
-        } else {
-            facts.append("- weekly Claude quota used: unknown")
-        }
-        if let session = inputs.quotaSessionPercentUsed {
-            facts.append("- current session Claude quota used: \(MorningBriefingLocal.percent(session))")
-        }
 
         return """
         You are writing a one-paragraph morning briefing for an engineer sitting down at their \
@@ -419,8 +409,10 @@ enum MorningBriefingAI {
         - Every clause carries a "link" naming which page it came from, chosen from exactly this \
         list: "review" (pull requests), "tasks" (personal tasks and follow-ups), "fleet" (fleet \
         crew tasks needing a decision or blocked), "githubSync" (forks behind upstream), \
-        "updates" (tools with updates), "setup" (machine setup drift), "quota" (Claude quota), \
+        "updates" (tools with updates), "setup" (machine setup drift), \
         "none" (anything else). Use "none" rather than guessing.
+        - Say nothing about Claude usage, quota or token limits. That is not one of the facts \
+        below and the cockpit shows it on its own card.
 
         Reply with exactly this JSON shape:
         {"clauses": [{"text": "one short sentence", "link": "review"}]}
@@ -574,18 +566,15 @@ enum MorningBriefing {
         return (dueTaskIDs.count, followUps, dueTaskIDs.count == 1 ? dueTaskIDs[0] : nil)
     }
 
-    /// The one input this file fetches itself - see the file header for why.
+    /// The Claude quota reading, for the Home canvas's `.claudeStatus` card.
     /// Safe to call from a background queue only; `QuotaSource.fetch()` shells
     /// out to `quota-axi`.
     ///
-    /// Returns the whole `QuotaFetchResult` rather than the three scalars the
-    /// briefing's own clause needs, because it is no longer the only reader:
-    /// the Home canvas's `.claudeStatus` card renders five figures from the
-    /// same snapshot, and this app runs `quota-axi` **once per refresh
-    /// cycle** for both (`HomeCanvasController.quotaSnapshot`'s own note).
-    /// `briefingInputs(from:)` below does the narrowing this used to do
-    /// inline, so the briefing's behaviour - including "no clause and no
-    /// claimed source when the reading fails" - is unchanged.
+    /// **It lives here for history rather than for the briefing**, which no
+    /// longer reads it at all (see this file's header). `FleetController` owns
+    /// the reading, caches it behind `quotaFreshness` and publishes it through
+    /// `onQuotaChanged`; this is the one function that actually runs the tool,
+    /// so there is still exactly one `quota-axi` invocation per refresh cycle.
     static func fetchQuota() -> QuotaFetchResult {
         let result = QuotaSource.fetch()
         if case .failure(let reason) = result {
@@ -597,13 +586,25 @@ enum MorningBriefing {
         return result
     }
 
-    /// The three scalars the briefing's `.quota` clause is written against.
-    static func briefingInputs(from result: QuotaFetchResult)
-        -> (weekly: Double?, pace: String?, session: Double?) {
-        guard case .success(let snapshot) = result else { return (nil, nil, nil) }
-        return (snapshot.weekly?.percentUsed,
-                snapshot.weekly?.pace.label,
-                snapshot.session?.percentUsed)
+    /// Strips a stored record of the Claude-quota clause an earlier build
+    /// wrote, and of "quota" as a claimed source.
+    ///
+    /// Without this, a briefing generated *before* the quota clause was
+    /// removed keeps rendering it until tomorrow's first activation, because
+    /// the record is the day's briefing and is not regenerated. Returns `nil`
+    /// when nothing is left, so the next refresh simply generates a fresh
+    /// briefing rather than showing an empty card - which is also what
+    /// happens for a record whose only clause was the quota one.
+    static func withoutQuotaClauses(_ record: MorningBriefingRecord) -> MorningBriefingRecord? {
+        let kept = record.clauses.filter { $0.target != .quota }
+        if kept.isEmpty { return nil }
+        guard kept.count != record.clauses.count || record.sources.contains("quota") else {
+            return record
+        }
+        var out = record
+        out.clauses = kept
+        out.sources = record.sources.filter { $0 != "quota" }
+        return out
     }
 
     /// Assembles a record from a finished clause list. Pure - the caller
@@ -624,8 +625,8 @@ enum MorningBriefing {
             shiftTaskID: inputs.singleDueTaskID)
     }
 
-    /// "Generated 6:58 AM from the fleet snapshot, PR queue, tasks, drift, and
-    /// quota" - the mockup's own subtitle, built from what actually
+    /// "Generated 6:58 AM from the fleet snapshot, PR queue, tasks, and
+    /// drift" - the mockup's own subtitle, built from what actually
     /// contributed rather than a fixed sentence that could claim an input the
     /// briefing did not have.
     static func subtitle(for record: MorningBriefingRecord) -> String {

@@ -113,6 +113,18 @@ final class HomeCanvasController: NSViewController {
     /// (`FleetController.refreshIfNeeded()` and `ReviewController`'s own), so
     /// this page still starts no work of its own.
     var onRefresh: (() -> Void)?
+    /// The Claude status card's own Refresh - wired to `FleetController`'s
+    /// existing quota reading, forced past its freshness window.
+    ///
+    /// Separate from `onRefresh` because the hero's Refresh re-runs Overview's
+    /// whole pass, and that pass takes the *cached* quota reading when it is
+    /// under five minutes old (`FleetController.quotaFreshness`). That is
+    /// right for a page visit and wrong for a captain pointing at this card
+    /// and asking for the number again, so this one forces a fresh
+    /// `quota-axi` run. Still not a fetch of this page's own (rule 1 in this
+    /// file's header): it is a request to the controller that already owns
+    /// the reading.
+    var onRefreshQuota: (() -> Void)?
     /// The Console module's peek rows. A closure rather than a stored
     /// reference so this page never retains a console or learns about tabs.
     var consoleTabsProvider: (() -> [HelmModulePeekRow])?
@@ -147,6 +159,15 @@ final class HomeCanvasController: NSViewController {
     /// states and the card says so differently - neither is drawn as a zero.
     private var quotaSnapshot: QuotaSnapshot?
     private var quotaFailure: String?
+    /// `true` between the card's Refresh being pressed and the reading (or
+    /// the stated reason there is none) coming back. Drives the header
+    /// button's disabled in-flight state, and stops a second press stacking
+    /// another forced subprocess on top of the first.
+    ///
+    /// Cleared in `applyQuota`, which `FleetController.refreshQuota` publishes
+    /// on failure as well as on success - so this cannot wedge on a
+    /// `quota-axi` that is offline or unauthenticated.
+    private var isRefreshingQuota = false
     /// When `applyFleet` last delivered a reading - UX5's hero detail line.
     /// `nil` until the first one lands, which is the "reading now" state.
     private var fleetReadAt: Date?
@@ -505,6 +526,7 @@ final class HomeCanvasController: NSViewController {
     /// `applyFleet`: the work was already done for another surface, and this
     /// page is a second reader of it rather than a second caller.
     func applyQuota(_ result: QuotaFetchResult) {
+        isRefreshingQuota = false
         switch result {
         case .success(let snapshot):
             quotaSnapshot = snapshot
@@ -886,6 +908,23 @@ final class HomeCanvasController: NSViewController {
         render()
     }
 
+    /// The Claude card's Refresh. The subprocess itself runs on
+    /// `FleetController`'s own quota queue (GL-04/GL-12) - nothing here
+    /// blocks, and this page still starts no work it owns.
+    private func refreshQuotaTapped() {
+        guard !isRefreshingQuota else { return }
+        isRefreshingQuota = true
+        // `setNeedsRender`, not `render()`: a render rebuilds every card, and
+        // this is running *inside* the button's own target/action - tearing
+        // the button out of the view hierarchy from its own action is the
+        // shape of bug this codebase has already paid for once
+        // (`TabChipView.beginRename`, AppKit gotcha (1)). Coalesced to the
+        // next main-thread turn, which is still before the subprocess can
+        // answer, so the button is visibly disabled either way.
+        setNeedsRender()
+        onRefreshQuota?()
+    }
+
     private func applyTheme(_ theme: HelmTheme) {
         // `ThemeManager.swift`'s checklist item 2. Every layer fill below
         // tracks the theme on its own; this is what makes the *system-
@@ -1142,6 +1181,16 @@ final class HomeCanvasController: NSViewController {
     /// all - never a `0%` or a `$0`, which on a quota readout are real and
     /// alarming values rather than synonyms for "unknown".
     private func fillClaudeStatus(_ content: inout HelmModuleCard.Content, cardWidth: CGFloat) {
+        // On every state, including the two below: the one moment a captain
+        // most wants to re-take a reading is when the card is stating a gap.
+        content.headerAction = HelmModuleCard.HeaderAction(
+            symbol: "arrow.clockwise",
+            tooltip: isRefreshingQuota
+                ? "Reading the Claude quota\u{2026}"
+                : "Refresh the Claude quota",
+            isBusy: isRefreshingQuota,
+            handler: { [weak self] in self?.refreshQuotaTapped() })
+
         guard let snapshot = quotaSnapshot else {
             // Two genuinely different states, and they read differently.
             if let failure = quotaFailure {

@@ -47,6 +47,7 @@ enum MorningBriefingSelfTest {
         checkShiftDue(&ok)
         checkDegradation(&ok)
         checkCardRendering(&ok)
+        checkStoredQuotaClausesArePurged(&ok)
 
         if ok {
             print("MorningBriefingSelfTest: all checks passed")
@@ -58,9 +59,11 @@ enum MorningBriefingSelfTest {
 
     // MARK: 1 - the local layer
 
-    /// A realistic morning: two PRs green, one fleet task blocked, two forks
-    /// behind, 40% of the weekly quota gone. The same shape section 25's F12
-    /// example names.
+    /// A realistic morning: two PRs green, one fleet task needing a call, one
+    /// task due, two forks behind. The same shape section 25's F12 example
+    /// names, minus the quota - that reading moved to the Home canvas's own
+    /// Claude card and is no longer an input here at all (see
+    /// `MorningBriefingData.swift`'s header).
     private static func busyMorning() -> BriefingInputs {
         var inputs = BriefingInputs()
         inputs.workingCount = 3
@@ -76,8 +79,6 @@ enum MorningBriefingSelfTest {
         inputs.forkDriftCount = 2
         inputs.toolUpdateCount = 0
         inputs.setupDriftCount = 0
-        inputs.quotaWeeklyPercentUsed = 40
-        inputs.quotaWeeklyPace = "On pace"
         return inputs
     }
 
@@ -90,9 +91,14 @@ enum MorningBriefingSelfTest {
               "the fleet decision should lead, got \(clauses.first?.target.rawValue ?? "nothing")", &ok)
 
         let targets = clauses.map(\.target)
-        for expected in [BriefingTarget.fleet, .review, .tasks, .githubSync, .quota] {
+        for expected in [BriefingTarget.fleet, .review, .tasks, .githubSync] {
             check(targets.contains(expected), "no \(expected.rawValue) clause", &ok)
         }
+        // The removed clause, asserted as removed rather than merely absent
+        // from the list above: a fabricated weekly reading is exactly what
+        // used to produce it, so this fails if the clause ever comes back.
+        check(!targets.contains(.quota),
+              "the Claude-quota clause is back - the Home canvas's Claude card owns that reading", &ok)
         // Zero is not news: neither of these had anything to report.
         check(!targets.contains(.updates), "a zero tool-update count produced a clause", &ok)
         check(!targets.contains(.setup), "a zero setup-drift count produced a clause", &ok)
@@ -101,12 +107,12 @@ enum MorningBriefingSelfTest {
             check(false, "no PR clause to inspect", &ok); return
         }
         check(pr.text.contains("2 PRs"), "PR clause should name the real count, got \"\(pr.text)\"", &ok)
-        guard let quota = clauses.first(where: { $0.target == .quota }) else {
-            check(false, "no quota clause to inspect", &ok); return
+        // Nothing in the whole list may talk about Claude usage any more,
+        // whatever it links to.
+        for clause in clauses {
+            check(!clause.text.lowercased().contains("quota"),
+                  "a clause still mentions the quota: \"\(clause.text)\"", &ok)
         }
-        check(quota.text.contains("40%"), "quota clause should name the real percentage, got \"\(quota.text)\"", &ok)
-        check(quota.text.lowercased().contains("on pace"),
-              "quota clause should carry the pace, got \"\(quota.text)\"", &ok)
 
         // The colour is the app's, derived from where the clause points - a
         // model reply cannot change it (see `BriefingTarget.tint`).
@@ -153,7 +159,6 @@ enum MorningBriefingSelfTest {
         unknown.forkDriftCount = nil      // the poller has not run yet
         unknown.toolUpdateCount = nil
         unknown.setupDriftCount = nil
-        unknown.quotaWeeklyPercentUsed = nil
 
         let clauses = MorningBriefingLocal.clauses(from: unknown)
         guard let pr = clauses.first(where: { $0.target == .review }) else {
@@ -168,8 +173,6 @@ enum MorningBriefingSelfTest {
         // confident zero - the clause is simply absent.
         check(!clauses.contains { $0.target == .githubSync },
               "an unchecked fork-drift count invented a clause", &ok)
-        check(!clauses.contains { $0.target == .quota },
-              "an unreadable quota invented a clause", &ok)
 
         // ...and a real zero is also silent, which is the other half of the
         // distinction being meaningful.
@@ -187,7 +190,8 @@ enum MorningBriefingSelfTest {
         let line = MorningBriefingLocal.statLine(from: busyMorning())
         check(line.contains("2 PRs ready to merge"), "stat line should name the PR count, got \"\(line)\"", &ok)
         check(line.contains("2 forks behind upstream"), "stat line should name the drift, got \"\(line)\"", &ok)
-        check(line.contains("40%"), "stat line should name the quota, got \"\(line)\"", &ok)
+        check(!line.lowercased().contains("quota"),
+              "the stat line still names the quota, got \"\(line)\"", &ok)
         check(line.contains(" \u{00B7} "), "stat line should be middot-separated, got \"\(line)\"", &ok)
         check(!line.contains(" . "), "stat line should not carry sentence periods, got \"\(line)\"", &ok)
         // Built from the clauses, so the line and the links cannot drift apart.
@@ -203,9 +207,11 @@ enum MorningBriefingSelfTest {
     private static func checkSources(_ ok: inout Bool) {
         print("\n-- the subtitle names only what contributed --")
         let full = busyMorning().contributingSources
-        for expected in ["the fleet snapshot", "PR queue", "tasks", "drift", "quota"] {
+        for expected in ["the fleet snapshot", "PR queue", "tasks", "drift"] {
             check(full.contains(expected), "a full briefing should name \(expected), got \(full)", &ok)
         }
+        check(!full.contains("quota"),
+              "the quota is no longer an input and must not be claimed as a source, got \(full)", &ok)
 
         var bare = BriefingInputs()
         bare.prReadyCount = nil
@@ -218,11 +224,9 @@ enum MorningBriefingSelfTest {
                                             isDegraded: false, degradedReason: nil)
         let subtitle = MorningBriefing.subtitle(for: record)
         check(subtitle.hasPrefix("Generated "), "subtitle should lead with the time, got \"\(subtitle)\"", &ok)
-        check(subtitle.contains("quota"), "subtitle should name quota when it contributed, got \"\(subtitle)\"", &ok)
-
-        let bareRecord = MorningBriefing.record(inputs: bare, clauses: [], isDegraded: true, degradedReason: "x")
-        check(!MorningBriefing.subtitle(for: bareRecord).contains("quota"),
-              "the subtitle claimed quota as a source when there was no quota reading", &ok)
+        check(!subtitle.contains("quota"),
+              "the subtitle still claims the quota as a source, got \"\(subtitle)\"", &ok)
+        check(subtitle.contains("drift"), "subtitle should name drift when it contributed, got \"\(subtitle)\"", &ok)
         print("  OK - \(subtitle)")
     }
 
@@ -236,15 +240,23 @@ enum MorningBriefingSelfTest {
               "the prompt should hand over the exact PR count", &ok)
         check(prompt.contains("forks behind upstream: 2"),
               "the prompt should hand over the exact drift count", &ok)
-        check(prompt.contains("40%"), "the prompt should hand over the exact quota reading", &ok)
+        // The model is handed no quota reading and is told not to invent one:
+        // both halves, because the prompt's own rule is what stops it writing
+        // about Claude usage from its own knowledge of what a cockpit shows.
+        check(!prompt.lowercased().contains("quota used"),
+              "the prompt still hands the model a quota reading", &ok)
+        check(prompt.lowercased().contains("say nothing about claude usage"),
+              "the prompt must forbid the model writing about Claude usage", &ok)
         check(prompt.lowercased().contains("do not recompute"),
               "the prompt must forbid recomputing the counts it was given", &ok)
 
         // The link vocabulary has to be in the prompt, or the model has
         // nothing to choose from and every clause degrades to `.none`.
-        for target in ["review", "tasks", "githubSync", "updates", "setup", "quota", "fleet"] {
+        for target in ["review", "tasks", "githubSync", "updates", "setup", "fleet"] {
             check(prompt.contains("\"\(target)\""), "the prompt should offer the \(target) link", &ok)
         }
+        check(!prompt.contains("\"quota\""),
+              "the prompt still offers the quota link, so the model can still write that clause", &ok)
 
         // An unknown input must reach the model as "unknown", never as 0 -
         // otherwise the prose asserts an all-clear the app never established.
@@ -464,6 +476,82 @@ enum MorningBriefingSelfTest {
         }
 
         print("  OK - unlaunchable, failing, and answering all still produce a briefing")
+    }
+
+    // MARK: 11 - a briefing stored by an older build loses its quota clause
+
+    /// The removal has to be visible *today*, not tomorrow.
+    ///
+    /// A briefing is generated once a day and re-rendered from the persisted
+    /// record for the rest of it, so a record written before the quota clause
+    /// was removed would keep showing that sentence until the next morning
+    /// unless something strips it on the way out of the store. That is
+    /// `MorningBriefing.withoutQuotaClauses`, applied in
+    /// `AppSettings.morningBriefingRecord`'s getter.
+    private static func checkStoredQuotaClausesArePurged(_ ok: inout Bool) {
+        print("\n-- a stored briefing from an older build loses its quota clause --")
+
+        let stale = MorningBriefingRecord(
+            day: MorningBriefing.dayKey(for: Date()),
+            generatedAt: Date(),
+            clauses: [
+                BriefingClause(text: "Two pull requests are ready to merge.", target: .review),
+                BriefingClause(text: "Weekly Claude quota is at 70%, ahead of pace.", target: .quota),
+            ],
+            isDegraded: false, degradedReason: nil, dismissed: false,
+            sources: ["the fleet snapshot", "PR queue", "quota"], shiftTaskID: nil)
+
+        guard let purged = MorningBriefing.withoutQuotaClauses(stale) else {
+            fail("a record with a real non-quota clause was dropped entirely", &ok)
+            return
+        }
+        check(purged.clauses.count == 1,
+              "expected one clause left, got \(purged.clauses.map(\.text))", &ok)
+        check(!purged.clauses.contains { $0.target == .quota },
+              "the stored quota clause survived", &ok)
+        check(!purged.sources.contains("quota"),
+              "the subtitle still claims quota as a source, got \(purged.sources)", &ok)
+        check(purged.sources.contains("PR queue"),
+              "the purge dropped a source it had no business touching, got \(purged.sources)", &ok)
+
+        // A record whose *only* clause was the quota one is dropped, so the
+        // next refresh generates a real briefing instead of the card
+        // rendering an empty paragraph.
+        var onlyQuota = stale
+        onlyQuota.clauses = [stale.clauses[1]]
+        check(MorningBriefing.withoutQuotaClauses(onlyQuota) == nil,
+              "a briefing that was nothing but the quota clause survived as an empty one", &ok)
+
+        // The discriminating half: a record with no quota in it at all comes
+        // back untouched, so this is not quietly rewriting every briefing.
+        var clean = stale
+        clean.clauses = [stale.clauses[0]]
+        clean.sources = ["the fleet snapshot", "PR queue"]
+        check(MorningBriefing.withoutQuotaClauses(clean) == clean,
+              "a quota-free record was altered on the way out of the store", &ok)
+
+        // The function is only half of it: it has to be *applied* on the way
+        // out of the store, and that call site is in an accessor this suite
+        // must not drive - reading or writing `AppSettings.morningBriefingRecord`
+        // here would touch the real `FirstmateCockpit` UserDefaults domain,
+        // which is the hermeticity trap AGENTS.md documents. A source guard
+        // instead, with its anchor checked first.
+        if let root = SelfTestSources.appSourceDirectory(),
+           let settings = try? String(contentsOf: root.appendingPathComponent("AppSettings.swift"),
+                                      encoding: .utf8) {
+            guard settings.contains("var morningBriefingRecord: MorningBriefingRecord?") else {
+                fail("`AppSettings.morningBriefingRecord` has been renamed - this guard's anchor "
+                     + "has drifted and it is asserting nothing", &ok)
+                return
+            }
+            check(settings.contains("MorningBriefing.withoutQuotaClauses("),
+                  "the purge is never applied when a stored briefing is read, so a record from "
+                  + "an older build keeps showing its quota clause all day", &ok)
+        } else {
+            fail("could not read AppSettings.swift - this guard would pass vacuously", &ok)
+        }
+
+        print("  OK - stripped when present, dropped when that is all there was, untouched otherwise")
     }
 
     // MARK: 10 - the card actually renders what it was given
