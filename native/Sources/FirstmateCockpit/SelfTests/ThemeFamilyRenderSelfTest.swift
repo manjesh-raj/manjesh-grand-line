@@ -156,12 +156,49 @@ enum ThemeFamilyRenderSelfTest {
             // top-left quadrant of what was rendered.
             let scaleX = CGFloat(rep.pixelsWide) / root.bounds.width
             let scaleY = CGFloat(rep.pixelsHigh) / root.bounds.height
-            // The page's own bottom-left gutter: outside every card, outside
-            // the sidebar's own column, and outside any scroller track.
-            let px = Int(2 * scaleX)
+            // Page ground that is genuinely outside every card, outside the
+            // nav column's band and outside any scroller track.
+            //
+            // It used to be the bottom-*left* corner, `x = 2`, and two things
+            // in `fm/grandline-settings-sidebar-differentiation-fix` broke
+            // that. The column got a toned band of its own running the page's
+            // full height from its very left edge, so `x = 2` now samples
+            // `HelmTheme.sidePanelFill` rather than the ground (0.1059 away on
+            // `oxocarbon-light` - the band's real one-step offset, not a
+            // defect). And moving the sample a gutter right of the band put it
+            // *inside the theme grid*, where it read the **selected** theme
+            // card's accent wash - which failed on `one-dark` alone, because
+            // one-dark's own card is the one that lands at that corner when
+            // one-dark is the theme being rendered. A point that is only
+            // outside the cards for fifteen palettes out of sixteen is not a
+            // ground sample.
+            //
+            // So the point is the bare strip **above the toolbar**: the
+            // toolbar is inset `s3` from the page's top edge, nothing is
+            // mounted in that strip, it is above the scroll view (so no
+            // scroller track) and it is page ground at every window size -
+            // unlike the right-hand margin, which this window's 900pt-wide
+            // root does not actually have (the cards end 24pt from its edge).
+            // Right of the band, so it is the content region's ground.
+            let band = controller.debugSidebarPanel.frame
+            let cards = controller.debugPageContainerFrameInRoot
+            let contentX = band.maxX + HelmMetrics.s5
+            let contentY = root.bounds.maxY - HelmMetrics.s3 / 2
+            // Discriminating power, asserted rather than assumed: a sample
+            // point that has drifted inside a card or back under the band
+            // measures those, and would do it silently.
+            guard contentX < root.bounds.maxX, contentX > band.maxX,
+                  !cards.insetBy(dx: -2, dy: -2).contains(NSPoint(x: contentX, y: contentY)) else {
+                print(String(format: "  FAIL %@: the ground sample (%.1f, %.1f) is not outside the band"
+                             + " (ends %.1f) and the cards (%@) - it would be vacuous",
+                             theme.id, contentX, contentY, band.maxX, NSStringFromRect(cards)))
+                ok = false
+                return
+            }
+            let px = Int(contentX * scaleX)
             // `SettingsController`'s root is a plain unflipped `NSView`, so the
             // rep's row 0 is the view's top edge - the row is mirrored.
-            let py = Int((root.bounds.height - 2) * scaleY)
+            let py = Int((root.bounds.height - contentY) * scaleY)
             guard px >= 0, py >= 0, px < rep.pixelsWide, py < rep.pixelsHigh,
                   let sampled = rep.colorAt(x: px, y: py) else {
                 print("  FAIL \(theme.id): the sample point fell outside the rep")

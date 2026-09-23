@@ -106,11 +106,33 @@ final class HelmPageSidebar: NSView {
         case badge
     }
 
-    /// What leads a row: an SF Symbol (an action or a slice) or a filled
-    /// colour dot (an identity - a project).
+    /// What leads a row: an SF Symbol (an action or a slice), a filled colour
+    /// dot (an identity - a project), or a colour **tile** (a destination).
+    ///
+    /// **`.tile` is the same opt-in widening `Surface`, `CountStyle` and
+    /// `.dot` already are**, and every caller that does not construct one
+    /// renders byte-identically. It exists because Settings' reference gives
+    /// each of its eight pages a rounded colour square rather than a bare
+    /// monochrome glyph - which is what makes a column of eight rows
+    /// *scannable*, where eight glyphs in one muted ink are a list you have to
+    /// read. That is a real distinction from `.dot`: a dot is an identity
+    /// marker for a record the captain named (a project), a tile is a
+    /// destination's own standing colour.
+    ///
+    /// It renders through `IconTileView` - this app's one colour-tile
+    /// component, already drawing exactly this on the Updates page's tool rows
+    /// - so the tile's wash, its contrast-corrected glyph and its theme
+    /// response are the shared ones rather than a second copy.
+    ///
+    /// **A tile is wider than the 16pt `indicatorColumn`**, so a tile row's
+    /// label starts further in than a symbol or dot row's. That is deliberate
+    /// and costs nothing today (no caller mixes `.tile` with the other two in
+    /// one column); a column that did would want the wider lead applied to all
+    /// of its rows, not this case changed.
     enum RowIndicator {
         case symbol(String)
         case dot(HelmTint)
+        case tile(symbol: String, tint: HelmTint)
     }
 
     /// The group every row built through the append API belongs to, and the
@@ -187,7 +209,8 @@ final class HelmPageSidebar: NSView {
     private let document = FlippedView()
     private let stack = NSStackView()
     private var rows: [(button: HoverHighlightView, id: String, kind: RowKind, group: String,
-                        icon: NSImageView, dot: NSView, label: NSTextField, count: NSTextField,
+                        icon: NSImageView, dot: NSView, tile: IconTileView?,
+                        label: NSTextField, count: NSTextField,
                         chip: NSView?, indicator: RowIndicator)] = []
     private var headers: [NSTextField] = []
     private var selections: [String: String] = [:]
@@ -362,10 +385,26 @@ final class HelmPageSidebar: NSView {
         dot.setContentHuggingPriority(.required, for: .horizontal)
         dot.setContentCompressionResistancePriority(.required, for: .horizontal)
 
+        // The tile is the third lead, and like the other two it is built only
+        // when it is the one asked for - `nil` keeps every pre-existing caller
+        // on exactly the views it had.
+        var tile: IconTileView?
         switch spec.indicator {
         case .symbol: dot.isHidden = true
         case .dot: icon.isHidden = true
+        case let .tile(symbolName, tint):
+            dot.isHidden = true
+            icon.isHidden = true
+            let built = IconTileView(size: Metrics.tileSize, cornerRadius: Metrics.tileRadius)
+            built.configure(symbol: symbolName, tint: tint, pointSize: Metrics.tileGlyphPointSize)
+            tile = built
         }
+
+        // The lead column is as wide as whichever lead this row carries, and
+        // the label is measured from `icon`'s trailing edge either way - so a
+        // tile row's label clears its tile without a second layout branch.
+        let leadWidth: CGFloat
+        if case .tile = spec.indicator { leadWidth = Metrics.tileSize } else { leadWidth = Metrics.indicatorColumn }
 
         let title = spec.title
         let id = spec.id
@@ -417,10 +456,17 @@ final class HelmPageSidebar: NSView {
         }
 
         for child in [icon, dot, label, countHost] as [NSView] { button.addSubview(child) }
+        if let tile {
+            button.addSubview(tile)
+            NSLayoutConstraint.activate([
+                tile.centerXAnchor.constraint(equalTo: icon.centerXAnchor),
+                tile.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+            ])
+        }
         NSLayoutConstraint.activate([
             icon.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: Metrics.rowInset),
             icon.centerYAnchor.constraint(equalTo: button.centerYAnchor),
-            icon.widthAnchor.constraint(equalToConstant: Metrics.indicatorColumn),
+            icon.widthAnchor.constraint(equalToConstant: leadWidth),
             dot.centerXAnchor.constraint(equalTo: icon.centerXAnchor),
             dot.centerYAnchor.constraint(equalTo: button.centerYAnchor),
             dot.widthAnchor.constraint(equalToConstant: Metrics.dotSize),
@@ -440,7 +486,7 @@ final class HelmPageSidebar: NSView {
         button.accessibilityRoleOverride = kind == .filter ? .radioButton : .button
         button.accessibilityLabelOverride = title
         button.identifier = NSUserInterfaceItemIdentifier(id)
-        rows.append((button, id, kind, spec.group, icon, dot, label, count, chip, spec.indicator))
+        rows.append((button, id, kind, spec.group, icon, dot, tile, label, count, chip, spec.indicator))
         appendFullWidth(button)
     }
 
@@ -499,6 +545,16 @@ final class HelmPageSidebar: NSView {
         /// symbol row's does.
         static let indicatorColumn: CGFloat = 16
         static let dotSize: CGFloat = 8
+        /// A `.tile` lead. 22pt in a 34pt row leaves 6pt of breathing room
+        /// above and below, which is the proportion the reference draws; the
+        /// radius is `HelmMetrics.rChip` itself rather than a new number, so
+        /// a tile and a chip round alike and cannot drift apart.
+        static let tileSize: CGFloat = 22
+        static let tileRadius: CGFloat = HelmMetrics.rChip
+        /// Smaller than `IconTileView`'s 15pt default, because that default is
+        /// sized for the 34pt tile the Updates page draws and a 15pt glyph in
+        /// a 22pt tile leaves no margin at all.
+        static let tileGlyphPointSize: CGFloat = 11
     }
 
     // MARK: Footer
@@ -710,6 +766,14 @@ final class HelmPageSidebar: NSView {
             if case let .dot(tint) = row.indicator {
                 row.dot.layer?.backgroundColor = HelmTheme.nsColor(tint.hex(in: theme)).cgColor
             }
+            // A tile owns its own wash and its own contrast-corrected glyph,
+            // so it is handed the theme and re-derives both - the same as any
+            // other `IconTileView` on a themed page. It is deliberately NOT
+            // re-tinted for selection: the tile is the destination's standing
+            // colour, and a tile that changed hue when its row was picked
+            // would be a different section's colour for as long as it was
+            // selected.
+            row.tile?.applyTheme(theme)
             row.count.textColor = isSelected && countStyle == .badge ? selectedInk : muted
             if let chip = row.chip {
                 chip.layer?.cornerRadius = Metrics.badgeHeight / 2

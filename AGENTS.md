@@ -422,7 +422,20 @@ enough to explain itself.
   the *expected* colour into `rep.colorSpace` first matched to 0.002. A probe
   that samples a view rendered standalone (no window) will pass with the sRGB
   conversion and then mislead the moment someone renders the same view inside a
-  window, so use the rep's own space unconditionally.
+  window, so use the rep's own space unconditionally. **The same rule governs a
+  *ratio between two samples*, where the plausible-sounding exemption is
+  wrong** - "both operands take the identical transform, so the ratio is
+  safe" - and `HelmContrast.ratio`'s `NSColor` overload converts to sRGB
+  internally, so taking it is the default rather than a choice. Measured
+  (`fm/grandline-settings-sidebar-differentiation-fix`): against a separation
+  the tokens put at exactly 1.0800 in every palette, that overload reported
+  **1.0597 on Daylight and 1.1305 on Dusk** - the display profile deflating
+  every light palette below the floor and inflating every dark one above it,
+  which reads as a real colour bug in eight themes and as a comfortable margin
+  in seven. Feed the **tuple** overload the rep's raw components instead (the
+  same two then measure 1.0753 and 1.0801), leave ~0.01 for the bitmap's 8-bit
+  quantisation, and assert the true-sRGB floor separately against the *tokens*,
+  where no rep is involved.
 
 **A second rule for the same call, and it is the one that bites first:
 `bitmapImageRepForCachingDisplay` hands back a rep measured in *pixels*, not
@@ -1330,6 +1343,15 @@ noted.
   explicit stable hash over the UTF-8 bytes; `ReadingListHostHue.hue(for:)` and
   `ReadingListTags.stableIndex(of:)` are the worked examples, and both are
   asserted for stability rather than only for range.
+- **A page-scoped nav column takes `HelmTheme.sidePanelFill` / `sidePanelEdge`,
+  never a blend of the card into the page ground.** `chromeBackgroundHex ==
+  backgroundHex` in several palettes, so that blend *is* the ground in those
+  and the column renders invisible - which is exactly the defect those two
+  exist to fix. The fill steps the ground toward the register's own endpoint,
+  bisected to the smallest step clearing `sidePanelSeparation` (1.08:1, which
+  is Daylight's own card-over-paper). `SettingsController`'s band is the worked
+  example, and note it is the *page's* view: `HelmPageSidebar.Surface.panel`
+  paints the nav list as a card, which is a smaller region than the column.
 - **A new palette is one surface step, and the step is the family's own
   canonical editor background.** `backgroundHex` is simultaneously the page
   ground *and* the terminal background, so a palette whose card differs from
