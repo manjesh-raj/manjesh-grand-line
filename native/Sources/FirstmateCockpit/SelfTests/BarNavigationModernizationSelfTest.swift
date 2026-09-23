@@ -281,7 +281,7 @@ enum BarNavigationModernizationSelfTest {
         // measured as the pair `tintedSurface` produces, so a shortcut painted
         // in a neighbour's colour still fails by name.
         let expected = HelmContrast.tintedSurface(
-            tintHex: DaylightBarIconButton.tileHex(for: button.destination.domainHue, in: daylight),
+            tintHex: DaylightBarIconButton.tileHex(for: button.destination, in: daylight),
             theme: daylight,
             target: HelmContrast.nonTextTarget,
             washSteps: DaylightBarIconButton.hoverTileWashSteps)
@@ -293,7 +293,7 @@ enum BarNavigationModernizationSelfTest {
         // Active: exactly the one showing, and it survives the pointer leaving.
         bar.setActiveDestination(button.destination)
         let expectedActive = HelmContrast.tintedSurface(
-            tintHex: DaylightBarIconButton.tileHex(for: button.destination.domainHue, in: daylight),
+            tintHex: DaylightBarIconButton.tileHex(for: button.destination, in: daylight),
             theme: daylight,
             target: HelmContrast.nonTextTarget,
             washSteps: DaylightBarIconButton.activeTileWashSteps)

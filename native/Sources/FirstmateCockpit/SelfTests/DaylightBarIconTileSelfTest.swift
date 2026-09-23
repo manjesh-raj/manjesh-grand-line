@@ -66,6 +66,7 @@ enum DaylightBarIconTileSelfTest {
             ("every shortcut wears its own destination's tile", checkEveryShortcutWearsItsOwnTile),
             ("the tile is legible in all 26 palettes, in all three states", checkEveryPaletteTilesLegibly),
             ("hover and active deepen the tile the captain is looking at", checkStatesDeepenTheSameTile),
+            ("the terminal shortcut wears Settings' own Terminal tint", checkTerminalShortcutMatchesSettings),
             ("a control with no destination keeps the plain square", checkNonDestinationControlsAreExempt),
             ("the single-overflow shortcut is tiled, the ellipsis is not", checkOverflowButtonFollowsItsIdentity),
             ("the row's height and footprint are unchanged", checkRowFootprintIsUnchanged),
@@ -104,7 +105,7 @@ enum DaylightBarIconTileSelfTest {
 
             var fills: [String: NSColor] = [:]
             for button in buttons {
-                let hex = DaylightBarIconButton.tileHex(for: button.destination.domainHue, in: theme)
+                let hex = DaylightBarIconButton.tileHex(for: button.destination, in: theme)
                 let expected = HelmContrast.tintedSurface(tintHex: hex,
                                                           theme: theme,
                                                           target: HelmContrast.nonTextTarget,
@@ -162,10 +163,22 @@ enum DaylightBarIconTileSelfTest {
             ("hover", DaylightBarIconButton.hoverTileWashSteps),
             ("active", DaylightBarIconButton.activeTileWashSteps),
         ]
+        // Every §2.2 hue, plus every tint a destination borrows instead of its
+        // hue. The overrides are not reachable from `HelmDomainHue.allCases`
+        // and are exactly the risky ones: `.neutral` resolves to
+        // `chromeInkHex`, so its wash lands near full ink rather than near the
+        // surface, which is the pairing AGENTS.md's colour rules warn about.
+        let overrides = RailDestination.allCases
+            .compactMap { DaylightBarIconButton.tileTintOverride(for: $0) }
+        var sources: [(String, (HelmTheme) -> String)] = HelmDomainHue.allCases.map { hue in
+            (hue.rawValue, { DaylightBarIconButton.tileHex(for: hue, in: $0) })
+        }
+        sources += overrides.map { tint in ("override:\(tint)", { tint.hex(in: $0) }) }
+
         var measured = 0
         for theme in HelmTheme.allThemes {
-            for hue in HelmDomainHue.allCases {
-                let hex = DaylightBarIconButton.tileHex(for: hue, in: theme)
+            for (name, hexFor) in sources {
+                let hex = hexFor(theme)
                 for (state, steps) in ladders {
                     let resolved = HelmContrast.tintedSurface(tintHex: hex,
                                                               theme: theme,
@@ -175,7 +188,7 @@ enum DaylightBarIconTileSelfTest {
                                                    HelmContrast.components(resolved.fill))
                     guard ratio >= floor else {
                         return String(format: "%@/%@/%@: the glyph measures %.4f against its own tile, below the %.2f "
-                                      + "non-text floor", theme.id, hue.rawValue, state, ratio, HelmContrast.nonTextTarget)
+                                      + "non-text floor", theme.id, name, state, ratio, HelmContrast.nonTextTarget)
                     }
                     measured += 1
                 }
@@ -183,10 +196,77 @@ enum DaylightBarIconTileSelfTest {
         }
         // The sweep is only worth its runtime if it really covered the whole
         // matrix - a `allThemes` that silently shrank would pass vacuously.
-        let expected = HelmTheme.allThemes.count * HelmDomainHue.allCases.count * ladders.count
-        guard measured == expected, HelmTheme.allThemes.count >= 26 else {
-            return "swept \(measured) of \(expected) combinations over \(HelmTheme.allThemes.count) palettes - "
-                + "the matrix shrank, so this case stopped proving what it claims"
+        let expected = HelmTheme.allThemes.count * sources.count * ladders.count
+        guard measured == expected, HelmTheme.allThemes.count >= 26,
+              sources.count == HelmDomainHue.allCases.count + overrides.count, !overrides.isEmpty else {
+            return "swept \(measured) of \(expected) combinations over \(HelmTheme.allThemes.count) palettes and "
+                + "\(sources.count) tile hues (\(overrides.count) of them borrowed) - the matrix shrank, so this "
+                + "case stopped proving what it claims"
+        }
+        return nil
+    }
+
+    // MARK: The one borrowed tint
+
+    /// `fm/grandline-topbar-terminal-icon-color`: the captain asked for the
+    /// bar's terminal shortcut and Settings' own Terminal row to be the same
+    /// colour, so this asserts they are **one value**, not two that happen to
+    /// agree today.
+    ///
+    /// Three claims, because they fail for different reasons. The override is
+    /// Settings' own `tint` property (an edit to either side fails here rather
+    /// than drifting silently); it resolves unbranched across all 26 palettes,
+    /// which is the half that `HelmDomainHue.slate` would have got wrong on
+    /// the Daylight family alone; and the painted tile really is that colour,
+    /// because a resolution nothing renders is not a fix.
+    private static func checkTerminalShortcutMatchesSettings() -> String? {
+        guard DaylightBarIconButton.tileTintOverride(for: .console)
+                == SettingsController.Category.terminal.tint else {
+            return "the Console shortcut's tint override is "
+                + "\(DaylightBarIconButton.tileTintOverride(for: .console).map { "\($0)" } ?? "nil"), and Settings' "
+                + "Terminal row draws \(SettingsController.Category.terminal.tint) - the two are supposed to be "
+                + "one value"
+        }
+        // Discriminating power first: teal is what the override replaces, so a
+        // fixture in which the two already agreed would prove nothing.
+        guard RailDestination.console.domainHue == .teal,
+              SettingsController.Category.terminal.tint != HelmDomainHue.teal.fallbackTint else {
+            return "Console's domain hue is \(RailDestination.console.domainHue) and Settings' Terminal tint is "
+                + "\(SettingsController.Category.terminal.tint) - they no longer differ, so this case can no "
+                + "longer fail"
+        }
+
+        for theme in HelmTheme.allThemes {
+            let expected = SettingsController.Category.terminal.tint.hex(in: theme)
+            let resolved = DaylightBarIconButton.tileHex(for: .console, in: theme)
+            guard resolved.caseInsensitiveCompare(expected) == .orderedSame else {
+                return "\(theme.id): the terminal shortcut resolves #\(resolved) where Settings' Terminal row "
+                    + "resolves #\(expected) - the override must not take `tileHex`'s Daylight split"
+            }
+            // Every other shortcut still takes its own domain hue: an override
+            // that leaked would read here as the whole row going slate.
+            guard DaylightBarIconButton.tileHex(for: .hosts, in: theme)
+                    == DaylightBarIconButton.tileHex(for: RailDestination.hosts.domainHue, in: theme) else {
+                return "\(theme.id): Hosts no longer takes its own domain hue - the override is not Console-only"
+            }
+        }
+
+        // And it is what gets painted, on both sides of the split.
+        for id in ["daylight", "dusk"] {
+            guard let theme = theme(id) else { return "no `\(id)` theme - has the palette been renamed?" }
+            let bar = makeLaidOutBar(theme: theme)
+            guard let button = bar.debugDestinationButtons().first(where: { $0.destination == .console }) else {
+                return "the fixture row no longer pins Console, so nothing here is measured"
+            }
+            let expected = HelmContrast.tintedSurface(
+                tintHex: SettingsController.Category.terminal.tint.hex(in: theme),
+                theme: theme,
+                target: HelmContrast.nonTextTarget,
+                washSteps: HelmContrast.tileWashSteps)
+            guard let fill = layerFill(button), sameColor(fill, expected.fill) else {
+                return "\(theme.id): the terminal shortcut paints \(layerFill(button).map(describe) ?? "nil"), "
+                    + "expected Settings' own Terminal wash \(describe(expected.fill))"
+            }
         }
         return nil
     }
@@ -309,7 +389,7 @@ enum DaylightBarIconTileSelfTest {
                 + "exercises #452's branch"
         }
         let overflow = single.debugQuickAccessOverflowButton()
-        let hex = DaylightBarIconButton.tileHex(for: direct.domainHue, in: theme)
+        let hex = DaylightBarIconButton.tileHex(for: direct, in: theme)
         let expected = HelmContrast.tintedSurface(tintHex: hex,
                                                   theme: theme,
                                                   target: HelmContrast.nonTextTarget,
