@@ -1037,6 +1037,16 @@ final class DaylightBarController: NSViewController {
         let label = destinations.count == 1 ? destinations[0].title : "More destinations"
         quickAccessOverflowButton.toolTip = label
         quickAccessOverflowButton.setAccessibilityLabel(label)
+        // ...and it has to *look* like it too. A control that navigates
+        // straight to one page is an ordinary shortcut button, so it draws
+        // that destination's own icon rather than the generic ellipsis - the
+        // ellipsis is a promise of a menu, and on this branch there is none.
+        // Taken from the same `RailDestination.symbol`/`.domainHue` pair
+        // `DaylightDestinationButton` is built from, so Hosts' icon here and
+        // Hosts' icon anywhere else in the app are one rendering, not two.
+        let direct = destinations.count == 1 ? destinations[0] : nil
+        quickAccessOverflowButton.applyGlyph(symbol: direct?.symbol ?? "ellipsis",
+                                             hue: direct?.domainHue)
         // The gap belongs between two *visible* things. With the row collapsed
         // it has zero width of its own, and with no overflow button there is
         // nothing on the other side of the gap.
@@ -1771,11 +1781,17 @@ class DaylightBarIconButton: NSButton {
 
     private let iconBackground = NSView()
     private let iconImageView = NSImageView()
-    private let symbolName: String
+    /// The glyph currently drawn, and the hue it lights up in.
+    ///
+    /// `var` rather than `let` because the quick-access overflow button is one
+    /// control with two identities - a generic ellipsis when it opens a menu,
+    /// and the destination's own shortcut icon when it navigates straight to a
+    /// lone overflowing page. See `applyGlyph(symbol:hue:)`.
+    private var symbolName: String
     /// The hue this button takes on hover/active, or `nil` for a control that
     /// is not a destination shortcut (the theme toggle, Recents) and so has
     /// no domain of its own - those brighten to plain ink instead.
-    private let hue: HelmDomainHue?
+    private var hue: HelmDomainHue?
 
     private var hoverArea: NSTrackingArea?
     private var isHovering = false
@@ -1809,8 +1825,7 @@ class DaylightBarIconButton: NSButton {
         // already rendering elsewhere in the app, and
         // `DaylightModuleSelfTest.checkBarDestinationIcons` asserts each one
         // resolves.
-        iconImageView.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 14, weight: .regular))
+        loadGlyphImage()
         iconImageView.imageScaling = .scaleProportionallyDown
         addSubview(iconImageView)
 
@@ -1826,6 +1841,29 @@ class DaylightBarIconButton: NSButton {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    private func loadGlyphImage() {
+        iconImageView.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 14, weight: .regular))
+    }
+
+    /// Swap the glyph this button draws, and the hue it lights up in.
+    ///
+    /// One button with two identities, rather than two buttons swapped in and
+    /// out: the quick-access overflow control draws the generic ellipsis while
+    /// it opens a menu, and the destination's **own** shortcut icon while it
+    /// navigates straight to a lone overflowing page. Both arguments come from
+    /// the same `RailDestination.symbol` / `.domainHue` pair a real
+    /// `DaylightDestinationButton` is built from, so the two renderings of one
+    /// destination cannot drift - which is the whole reason this takes a
+    /// symbol and a hue rather than a ready-made image.
+    func applyGlyph(symbol: String, hue: HelmDomainHue?) {
+        guard symbol != symbolName || hue != self.hue else { return }
+        symbolName = symbol
+        self.hue = hue
+        loadGlyphImage()
+        restyle()
+    }
 
     // MARK: Hover (B2)
 
@@ -1920,6 +1958,7 @@ class DaylightBarIconButton: NSButton {
     var debugHasIcon: Bool { iconImageView.image != nil }
     var debugIconBackground: NSView { iconBackground }
     var debugSymbolName: String { symbolName }
+    var debugGlyphImage: NSImage? { iconImageView.image }
     var debugGlyphColor: NSColor? { iconImageView.contentTintColor }
     var debugIsHovering: Bool { isHovering }
     func debugSetHovering(_ hovering: Bool) {

@@ -33,6 +33,7 @@ enum Audit3BugFixesSelfTest {
                       checkDrillTitleHasAFloorAndYieldsLast,
                       checkQuickAccessCollapsesAndStillReachesEveryDestination,
                       checkQuickAccessOverflowHasNoDeadRowAndSkipsAOneRowMenu,
+                      checkTheLoneOverflowShortcutDrawsItsOwnIcon,
                       checkUpdatesToastStaysOnItsOwnPage,
                       checkSettingsColumnsKeepCardsAtTheirOwnHeight,
                       checkDictationChipIsContentSized,
@@ -424,6 +425,135 @@ enum Audit3BugFixesSelfTest {
               "nothing overflows, so there is nothing to navigate straight to", &ok)
         check(bar.debugQuickAccessOverflowButton().toolTip == "More destinations",
               "with no overflow the button should be back to its generic label", &ok)
+    }
+
+    // MARK: The lone overflow shortcut wears its destination's own icon
+
+    /// A control that navigates straight to one page draws that page's own
+    /// shortcut icon, not the generic ellipsis.
+    ///
+    /// The sibling case above proves the *click* goes straight to Hosts, and
+    /// it passed throughout the defect this case exists for: the button kept
+    /// rendering `ellipsis` with only its tooltip saying "Hosts", so the
+    /// shortcut row showed a bare "..." where Hosts' icon belongs. A click
+    /// target and a painted glyph are different claims, which is why this is
+    /// a real render rather than a second reading of the same property.
+    ///
+    /// Asserted against a freshly-built `DaylightDestinationButton` for the
+    /// same destination, pixel for pixel, so "identical to Hosts' icon
+    /// everywhere else" is measured rather than asserted about a symbol name a
+    /// hand-picked second glyph could match by accident.
+    private static func checkTheLoneOverflowShortcutDrawsItsOwnIcon(_ ok: inout Bool) {
+        print("\n-- A single overflowing destination draws its own icon, not the ellipsis --")
+
+        let window = OffScreenProbe.window(width: 1512, height: 200)
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 1512, height: 200))
+        window.contentView = container
+
+        let bar = DaylightBarController()
+        bar.loadView()
+        bar.view.frame = NSRect(x: 0, y: 0, width: 1512, height:
+            DaylightBarController.height + DaylightBarController.topMargin)
+        container.addSubview(bar.view)
+
+        let shipped = QuickAccessConfiguration()
+        bar.setQuickAccess(shipped)
+        container.layoutSubtreeIfNeeded()
+
+        // Discriminating power first: if the shipped row stopped overflowing
+        // exactly one destination, or that destination's own symbol were the
+        // ellipsis, every comparison below would pass vacuously.
+        guard shipped.overflow.count == 1, let only = shipped.overflow.first else {
+            fail("the shipped row overflows \(shipped.overflow.count) destinations, not 1 - "
+                 + "this case no longer measures the captain's own configuration", &ok)
+            return
+        }
+        check(only.symbol != "ellipsis",
+              "\(only.title)'s own symbol is \(only.symbol) - it must not be the generic "
+              + "ellipsis, or this case cannot tell the two apart", &ok)
+
+        let overflowButton = bar.debugQuickAccessOverflowButton()
+        check(!overflowButton.isHidden,
+              "the overflow button should be showing for a single overflow", &ok)
+        check(overflowButton.debugSymbolName == only.symbol,
+              "the overflow button draws \(overflowButton.debugSymbolName), expected "
+              + "\(only.title)'s own \(only.symbol)", &ok)
+
+        // The render. Two reference buttons mounted in the same window under
+        // the same theme: the destination's real shortcut button (what the
+        // overflow button must match) and a plain ellipsis one (what it must
+        // no longer be).
+        let theme = ThemeManager.shared.theme
+        func mount(_ button: DaylightBarIconButton, x: CGFloat) {
+            container.addSubview(button)
+            NSLayoutConstraint.activate([
+                button.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: x),
+                button.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -8),
+                button.widthAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
+                button.heightAnchor.constraint(equalToConstant: DaylightBarIconButton.side),
+            ])
+            button.applyTheme(theme)
+        }
+        let reference = DaylightDestinationButton(destination: only)
+        let ellipsis = DaylightBarIconButton(symbol: "ellipsis",
+                                             tooltip: "More destinations",
+                                             accessibilityLabel: "More destinations")
+        mount(reference, x: 20)
+        mount(ellipsis, x: 80)
+        container.layoutSubtreeIfNeeded()
+        container.display()
+
+        guard let painted = renderedPixels(of: overflowButton),
+              let wanted = renderedPixels(of: reference),
+              let generic = renderedPixels(of: ellipsis) else {
+            fail("a button rendered to no bitmap at all - the comparison below would be "
+                 + "vacuous", &ok)
+            return
+        }
+        // The fixture's own discriminating power: the two reference renders
+        // must genuinely differ, or "matches Hosts" and "is still the
+        // ellipsis" would be the same assertion.
+        check(differingBytes(wanted, generic) > 0,
+              "\(only.title)'s icon and the ellipsis rendered identically - this comparison "
+              + "cannot tell the defect from the fix", &ok)
+        check(differingBytes(painted, wanted) == 0,
+              "the overflow button's rendered icon differs from \(only.title)'s own shortcut "
+              + "button in \(differingBytes(painted, wanted)) bytes - it should be pixel "
+              + "identical", &ok)
+        check(differingBytes(painted, generic) > 0,
+              "the overflow button still renders the generic ellipsis glyph", &ok)
+
+        // And the menu case is untouched: two or more overflowing
+        // destinations keep the ellipsis, because there a menu really is what
+        // the click produces.
+        bar.setQuickAccess(QuickAccessConfiguration(pinned: [
+            .stickyBoard, .codePreview, .shift, .strawHat, .poneglyph, .console, .hosts, .tools,
+        ]))
+        container.layoutSubtreeIfNeeded()
+        check(overflowButton.debugSymbolName == "ellipsis",
+              "with more than one destination overflowing the button should be back to the "
+              + "generic ellipsis - it draws \(overflowButton.debugSymbolName)", &ok)
+
+        window.close()
+    }
+
+    /// A view's own rendered bytes, in the rep's own colour space.
+    ///
+    /// Two views of the same size rendered through the same call, so the reps
+    /// share a layout, a scale and a colour space and can be compared byte for
+    /// byte - no sampling, and none of the point-vs-pixel arithmetic the
+    /// gotcha catalogue warns about.
+    private static func renderedPixels(of view: NSView) -> Data? {
+        guard view.bounds.width > 0, view.bounds.height > 0,
+              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        guard let bytes = rep.bitmapData else { return nil }
+        return Data(bytes: bytes, count: rep.bytesPerRow * rep.pixelsHigh)
+    }
+
+    private static func differingBytes(_ a: Data, _ b: Data) -> Int {
+        guard a.count == b.count else { return max(a.count, b.count) }
+        return zip(a, b).reduce(0) { $0 + ($1.0 == $1.1 ? 0 : 1) }
     }
 
     // MARK: B8 - a toast belongs to the page that raised it
