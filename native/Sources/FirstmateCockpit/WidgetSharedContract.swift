@@ -80,6 +80,32 @@ import Foundation
 /// binary is signed by that team. `codesign -dv` on this app reports
 /// `TeamIdentifier=not set`. See `native/Widgets/README.md` for the exact
 /// list of what that gates and what it does not.
+///
+/// ## Why the App Group branch is gated rather than preferred
+///
+/// The paragraph above says the *reader* is blocked. What it did not
+/// anticipate is that the writer pays a price for reaching a directory
+/// nothing can read yet: on this macOS version
+/// `~/Library/Group Containers/<group-id>/` is TCC-protected app data
+/// (`kTCCServiceSystemPolicyAppData`), so an unentitled process touching it
+/// puts a "would like to access data from other apps" dialog on the
+/// captain's screen. `containerURL(...)` still returns the path with no
+/// entitlement check - that measurement holds - but the *first read or
+/// write under it* goes through `sandboxd` and prompts. Measured on the
+/// captain's own launches: thirteen launches in 24 hours, one prompt each,
+/// every one a fresh `type=Create` record. Full diagnostic evidence, including
+/// the causal test (a bare `/bin/ls` of that one directory reproduces the
+/// prompt), is in the scout report at
+/// `data/grandline-launch-permission-prompts-investigation/report.md` in
+/// firstmate's own repo.
+///
+/// So the App Group branch is kept and gated on `appGroupIsTeamPrefixed`
+/// rather than deleted. Until a Team ID exists the snapshot lives under
+/// Application Support, which no TCC service protects and which nothing
+/// reads today either - the extension is not even packaged. The day the
+/// Developer ID item lands, prefixing `appGroupIdentifier` with the real
+/// Team ID (one of the two edits `native/Widgets/README.md` already lists)
+/// switches this back on with no other change.
 enum GrandLineWidgetContainer {
 
     /// The App Group the app and the extension share.
@@ -90,6 +116,31 @@ enum GrandLineWidgetContainer {
     /// constant plus the entitlements file beside the extension, and
     /// `WidgetSnapshotSelfTest` asserts the two agree.
     static let appGroupIdentifier = "group.com.firstmate.cockpit.native"
+
+    /// Whether `appGroupIdentifier` carries a real Team ID prefix, and
+    /// therefore whether the App Group container is a directory this app may
+    /// usefully reach at all.
+    ///
+    /// This is the one switch behind the gate described in the type's header.
+    /// It reads the constant rather than taking a flag, so "a Team ID exists"
+    /// stays a single edit in a single place - there is no second thing to
+    /// remember to flip.
+    static var appGroupIsTeamPrefixed: Bool { isTeamPrefixed(appGroupIdentifier) }
+
+    /// An Apple Team ID is ten uppercase alphanumerics, and a prefixed App
+    /// Group identifier is one of those followed by an ordinary `group.…`
+    /// identifier. Asserting that shape rather than merely "there is
+    /// something before `group.`" is deliberate: a typo must not be able to
+    /// switch the gate on.
+    static func isTeamPrefixed(_ identifier: String) -> Bool {
+        let teamAlphabet = Set("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789")
+        let parts = identifier.split(separator: ".", maxSplits: 1)
+        guard parts.count == 2,
+              parts[0].count == 10,
+              parts[0].allSatisfy({ teamAlphabet.contains($0) })
+        else { return false }
+        return parts[1].hasPrefix("group.")
+    }
 
     /// `FM_WIDGET_DIR` - the override every store in this app honours.
     static let directoryOverrideVariable = "FM_WIDGET_DIR"
@@ -108,14 +159,19 @@ enum GrandLineWidgetContainer {
         if let override = environment[directoryOverrideVariable], !override.isEmpty {
             return URL(fileURLWithPath: override, isDirectory: true)
         }
-        if let group = fileManager.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
+        if appGroupIsTeamPrefixed,
+           let group = fileManager.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) {
             return group.appendingPathComponent("GrandLineWidgets", isDirectory: true)
         }
-        // Reached when the App Group is genuinely unavailable (a sandboxed
-        // process with no entitlement gets `nil` here). A per-process
-        // fallback is better than a crash, and the snapshot it names will
-        // simply not exist - which the digest reports as `.unavailable`
-        // rather than as an empty day.
+        // Reached in two cases now. The App Group can be genuinely
+        // unavailable (a sandboxed process with no entitlement gets `nil`
+        // above), and - today, always - the identifier can carry no Team ID,
+        // which is the gate in this type's header: reaching a container
+        // nothing can read yet costs a TCC prompt on every launch and buys
+        // nothing. A per-process fallback is better than a crash, and the
+        // snapshot it names will simply not exist for any reader that cannot
+        // see it - which the digest reports as `.unavailable` rather than as
+        // an empty day.
         let support = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? fileManager.temporaryDirectory
         return support

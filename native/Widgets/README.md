@@ -23,8 +23,11 @@ The script compiles with `-warnings-as-errors`, matching GL-07's rule for the ap
 ## What actually works today
 
 - **The extension compiles and links.** Against the real macOS SDK, targeting macOS 14, including `Button(intent:)` interactivity and the `AppIntents` entity query behind the sticky widget's configuration.
-- **The app half of the data pipeline works.** `WidgetSnapshotPublisher` writes the snapshot into `~/Library/Group Containers/group.com.firstmate.cockpit.native/GrandLineWidgets/` on every store change, and reloads the timelines.
+- **The app half of the data pipeline works.** `WidgetSnapshotPublisher` writes the snapshot on every store change and reloads the timelines.
   Measured: for an **unsandboxed** process `containerURL(forSecurityApplicationGroupIdentifier:)` returns a path with no entitlement check at all - it is close to string construction - so the app may simply write there while ad-hoc signed.
+  **It does not write there today, though.** Touching `~/Library/Group Containers/<group-id>/` is TCC-protected app data on current macOS, so it cost the captain a "would like to access data from other apps" dialog on every launch in exchange for a directory nothing can read yet.
+  `GrandLineWidgetContainer.directory()` gates that branch on the App Group identifier actually carrying a Team ID, and falls back to Application Support until one does - which is edit 1 below, so this switches itself back on.
+  `docs/history/42-widgets.md` has the measurements.
 - **Everything that decides content is under test.** `FM_RUN_WIDGET_SNAPSHOT_TESTS` covers the projection from the real `ShiftTask`/`ShiftFollowUp`/`StickyNote` types, the snapshot's round trip, the digest both widgets render, GL-14's unavailable and locked states, the reverse action channel, and four source guards over this directory.
 
 ## What is blocked, precisely

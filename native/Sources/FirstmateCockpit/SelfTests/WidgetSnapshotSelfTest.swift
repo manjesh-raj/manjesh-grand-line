@@ -74,6 +74,7 @@ enum WidgetSnapshotSelfTest {
         checkUnavailableStates(check)
         checkTheRoundTripThroughTheSharedContainer(check)
         checkTheContainerHonoursItsOverride(check)
+        checkTheAppGroupBranchIsGatedOnATeamID(check)
         checkTheActionQueueRoundTrips(check)
         checkTheDrainAppliesThroughTheRealStore(check)
         checkALockedAppHoldsQueuedActions(check)
@@ -708,6 +709,48 @@ enum WidgetSnapshotSelfTest {
         // extension half is what needs the Team ID.
         check(noOverride.path.contains("Group Containers") || noOverride.path.contains("Application Support"),
               "the default should be the App Group container, or the documented fallback (got \(noOverride.path))")
+    }
+
+    /// The App Group container is TCC-protected app data on this macOS
+    /// version, so touching it with no Team ID costs the captain a "would
+    /// like to access data from other apps" dialog on every launch and buys
+    /// nothing - the extension is not even packaged. `directory()` therefore
+    /// gates that branch on the identifier actually carrying a Team ID.
+    ///
+    /// Asserted here because the failure is silent in both directions: a gate
+    /// that stopped working reopens the prompt, and a gate that never opens
+    /// leaves the widget reading the wrong directory the day the Developer ID
+    /// item lands. See `native/Widgets/README.md` and
+    /// `docs/history/42-widgets.md`.
+    private static func checkTheAppGroupBranchIsGatedOnATeamID(_ check: (Bool, String) -> Void) {
+        // The shape test's own discriminating power first, so a rewrite that
+        // made `isTeamPrefixed` constant fails loudly rather than vacuously.
+        check(!GrandLineWidgetContainer.isTeamPrefixed("group.com.firstmate.cockpit.native"),
+              "an unprefixed App Group identifier is not Team-ID-prefixed")
+        check(GrandLineWidgetContainer.isTeamPrefixed("A1B2C3D4E5.group.com.firstmate.cockpit.native"),
+              "a ten-character Team ID prefix should be recognised")
+        check(!GrandLineWidgetContainer.isTeamPrefixed("a1b2c3d4e5.group.com.firstmate.cockpit.native"),
+              "a lowercase prefix is not a Team ID - a typo must not switch the gate on")
+        check(!GrandLineWidgetContainer.isTeamPrefixed("SHORT.group.com.firstmate.cockpit.native"),
+              "a prefix that is not ten characters is not a Team ID")
+        check(!GrandLineWidgetContainer.isTeamPrefixed("A1B2C3D4E5.notagroup.com.firstmate"),
+              "the tail still has to be a group identifier")
+
+        // And the live consequence, which is the thing the captain feels.
+        check(GrandLineWidgetContainer.appGroupIsTeamPrefixed
+                == GrandLineWidgetContainer.isTeamPrefixed(GrandLineWidgetContainer.appGroupIdentifier),
+              "the gate should read the constant, so one edit switches it")
+
+        let resolved = GrandLineWidgetContainer.directory(environment: [:])
+        if GrandLineWidgetContainer.appGroupIsTeamPrefixed {
+            check(resolved.path.contains("Group Containers"),
+                  "with a Team ID the App Group container is the right home (got \(resolved.path))")
+        } else {
+            check(!resolved.path.contains("Group Containers"),
+                  "with no Team ID nothing may resolve into the App Group container (got \(resolved.path))")
+            check(resolved.path.contains("Application Support"),
+                  "\u{2026} the documented fallback is Application Support (got \(resolved.path))")
+        }
     }
 
     // MARK: The reverse channel
