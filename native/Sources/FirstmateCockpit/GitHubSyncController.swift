@@ -586,7 +586,34 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
     /// see `UpdatesController.publishToolUpdateSignal`.
     private func publishForkDriftSignal() {
         guard isViewLoaded, !view.isHidden else { return }
-        BackgroundSignalsPoller.shared.publishForkStatuses(rows.map { $0.status })
+        // `fm/grandline-notification-center-redesign`: the forks themselves
+        // travel with the statuses so the notification row can expand into
+        // them, furthest behind first - which is also what its detail line
+        // names. The counting rule (`showsSyncButton`, applied in the poller)
+        // is untouched.
+        let pending = rows.filter { $0.status.showsSyncButton }
+            .sorted { behindCount($0.status) > behindCount($1.status) }
+        let children = pending.map { row in
+            AppNotificationChild(id: row.repo.fullName, name: row.repo.name, meta: row.detail,
+                                 actionLabel: "Sync",
+                                 perform: { [weak self, weak row] in
+                                     guard let self, let row else { return }
+                                     self.sync(row)
+                                 })
+        }
+        BackgroundSignalsPoller.shared.publishForkStatuses(
+            rows.map { $0.status },
+            children: children,
+            syncAll: pending.isEmpty ? nil : { [weak self] in self?.syncAll() }
+        )
+    }
+
+    /// How far behind a status is, for ordering the notification's children -
+    /// `0` for every status that carries no count, which keeps the sort total
+    /// without pretending a `.checkFailed` is "0 behind" anywhere else.
+    private func behindCount(_ status: GitHubSyncStatus) -> Int {
+        if case .behind(let n) = status { return n }
+        return 0
     }
 
     private func render(_ row: GitHubSyncRow) {

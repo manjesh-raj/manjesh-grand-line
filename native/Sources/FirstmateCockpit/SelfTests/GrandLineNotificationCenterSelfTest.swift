@@ -34,8 +34,10 @@ enum GrandLineNotificationCenterSelfTest {
         let center = GrandLineNotificationCenter.shared
         center.resetForTesting()
 
-        func note(_ id: String, title: String = "Title", subtext: String, kind: AppNotificationKind) -> AppNotification {
-            AppNotification(id: id, title: title, subtext: subtext, kind: kind, tint: .good, navigate: {})
+        func note(_ id: String, title: String = "Title", subtext: String,
+                  kind: AppNotificationKind, source: String = "") -> AppNotification {
+            AppNotification(id: id, title: title, subtext: subtext, source: source,
+                            kind: kind, tint: .good, navigate: {})
         }
 
         // MARK: basic add / badge count
@@ -94,27 +96,96 @@ enum GrandLineNotificationCenterSelfTest {
         check("dismiss is a no-op on an actionNeeded entry", center.entries.contains { $0.id == "d" })
         center.set(nil, id: "d")
 
-        // MARK: markAllRead clears every informational entry, leaves actionNeeded alone
+        // MARK: dismissAllInformational clears every informational entry, leaves actionNeeded alone
+        //
+        // `fm/grandline-notification-center-redesign` renamed this from
+        // `markAllRead()`, which now means what it says everywhere else in
+        // macOS - the dots go out and the rows stay (asserted further down).
 
         center.set(note("e1", subtext: "fyi one", kind: .informational), id: "e1")
         center.set(note("e2", subtext: "fyi two", kind: .informational), id: "e2")
         center.set(note("f", subtext: "still needed", kind: .actionNeeded), id: "f")
-        check("three entries present before markAllRead", center.badgeCount == 3)
-        center.markAllRead()
-        check("markAllRead clears both informational entries", !center.entries.contains { $0.id == "e1" } && !center.entries.contains { $0.id == "e2" })
-        check("markAllRead leaves the actionNeeded entry untouched", center.entries.contains { $0.id == "f" })
+        check("three entries present before dismissAllInformational", center.badgeCount == 3)
+        center.dismissAllInformational()
+        check("dismissAllInformational clears both informational entries", !center.entries.contains { $0.id == "e1" } && !center.entries.contains { $0.id == "e2" })
+        check("dismissAllInformational leaves the actionNeeded entry untouched", center.entries.contains { $0.id == "f" })
         check("badge count reflects only the surviving actionNeeded entry", center.badgeCount == 1)
 
-        // MARK: a dismissed-via-markAllRead entry obeys the same resurface-on-change rule as dismiss(id:)
+        // MARK: a dismissed-via-dismissAllInformational entry obeys the same resurface-on-change rule as dismiss(id:)
 
-        check("markAllRead-dismissed entry stays hidden on an identical re-set", {
+        check("bulk-dismissed entry stays hidden on an identical re-set", {
             center.set(note("e1", subtext: "fyi one", kind: .informational), id: "e1")
             return !center.entries.contains { $0.id == "e1" }
         }())
         center.set(note("e1", subtext: "fyi one CHANGED", kind: .informational), id: "e1")
-        check("markAllRead-dismissed entry resurfaces on a real change", center.entries.contains { $0.id == "e1" })
+        check("bulk-dismissed entry resurfaces on a real change", center.entries.contains { $0.id == "e1" })
         center.set(nil, id: "e1")
         center.set(nil, id: "f")
+
+        // MARK: read state - the blue dot, and its resurface-on-change rule
+        //
+        // Keyed by the exact subtext for the same reason `dismissedDetail` is:
+        // a row whose detail has moved on since it was read is carrying
+        // information the captain has not seen.
+
+        center.set(note("r1", subtext: "two behind", kind: .informational), id: "r1")
+        check("a fresh entry is unread", !center.isRead(center.entries[0]))
+        check("unreadCount counts it", center.unreadCount == 1)
+        center.setRead(true, id: "r1")
+        check("setRead(true) marks it read", center.isRead(center.entries[0]))
+        check("a read entry is still in the list", center.entries.contains { $0.id == "r1" })
+        check("unreadCount drops to zero", center.unreadCount == 0)
+        center.set(note("r1", subtext: "five behind", kind: .informational), id: "r1")
+        check("a read entry whose detail changes is unread again", !center.isRead(center.entries[0]))
+        center.markAllRead()
+        check("markAllRead clears the dot", center.isRead(center.entries[0]))
+        check("markAllRead does NOT remove the row", center.entries.contains { $0.id == "r1" })
+        center.setRead(false, id: "r1")
+        check("setRead(false) puts the dot back - what Undo calls", !center.isRead(center.entries[0]))
+        center.set(nil, id: "r1")
+
+        // MARK: snooze hides an entry until its own date, with no source involved
+
+        var fakeNow = Date(timeIntervalSince1970: 1_700_000_000)
+        center.clock = { fakeNow }
+        center.set(note("s1", subtext: "later", kind: .informational), id: "s1")
+        center.snooze(id: "s1", until: fakeNow.addingTimeInterval(3600))
+        check("a snoozed entry leaves the visible list", !center.entries.contains { $0.id == "s1" })
+        check("a snoozed entry is counted as hidden", center.snoozedCount == 1)
+        check("the badge does not count a snoozed entry", center.badgeCount == 0)
+        fakeNow = fakeNow.addingTimeInterval(3601)
+        check("the snooze expires on its own, with no source re-publishing",
+              center.entries.contains { $0.id == "s1" })
+        check("nothing is hidden once it has expired", center.snoozedCount == 0)
+
+        // MARK: mute is per source, and restoreHidden undoes both mechanisms
+
+        center.set(note("m1", subtext: "one", kind: .informational, source: "Updates"), id: "m1")
+        center.set(note("m2", subtext: "two", kind: .informational, source: "Updates"), id: "m2")
+        center.set(note("m3", subtext: "three", kind: .informational, source: "Tasks"), id: "m3")
+        center.mute(source: "Updates")
+        check("muting a source hides every entry from it",
+              !center.entries.contains { $0.source == "Updates" })
+        check("muting a source leaves another source alone", center.entries.contains { $0.id == "m3" })
+        check("muted entries count as hidden", center.snoozedCount == 2)
+        center.snooze(id: "s1", until: fakeNow.addingTimeInterval(3600))
+        check("snoozed and muted are counted together", center.snoozedCount == 3)
+        center.restoreHidden()
+        check("restoreHidden brings back both the muted and the snoozed", center.snoozedCount == 0)
+        check("restoreHidden un-mutes the source itself", !center.isMuted(source: "Updates"))
+        for id in ["s1", "m1", "m2", "m3"] { center.set(nil, id: id) }
+        center.clock = { Date() }
+
+        // MARK: a resolved entry starts genuinely fresh
+
+        center.set(note("f1", subtext: "x", kind: .informational), id: "f1")
+        center.setRead(true, id: "f1")
+        center.snooze(id: "f1", until: Date().addingTimeInterval(9999))
+        center.set(nil, id: "f1")
+        center.set(note("f1", subtext: "x", kind: .informational), id: "f1")
+        check("a recurring condition comes back visible", center.entries.contains { $0.id == "f1" })
+        check("a recurring condition comes back unread", !center.isRead(center.entries[0]))
+        center.set(nil, id: "f1")
 
         // MARK: observers fire on every real change, not on no-op re-sets
 

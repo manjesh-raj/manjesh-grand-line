@@ -351,6 +351,16 @@ enough to explain itself.
   discriminating power first - that the numbers really differ, that the element
   really is off-screen, that the string really was present - so a drifted
   fixture fails loudly instead of passing vacuously.
+- **A `debug*` hook must enter where the real event enters, not one call
+  inside it.** The commonest way a check quietly stops being able to fail here
+  is a test-only hook that calls the private helper the wiring reaches, rather
+  than the wiring: `NotificationRowView.debugSetHovering` called
+  `setActionVisible` directly, so deleting the row's entire `onHoverChange`
+  registration left the hover check green - it was asserting the helper, not
+  the hook. It drives `HoverHighlightView.mouseEntered`/`mouseExited` now.
+  The cheap test is the injection itself: delete the wiring, not the helper,
+  and watch the case fail. Same shape as the `debugCommit…()` warning in gotcha
+  (19).
 - **Assert what is painted, not what was computed.** A model-level assertion is
   blind to a signal that never reaches the view; re-deriving an expected value
   from the function under test asserts nothing at all.

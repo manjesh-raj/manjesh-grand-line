@@ -89,15 +89,27 @@ enum FeedbackModernizationSelfTest {
         print("\n-- G2: rows grouped by kind --")
         clearProbeSignals()
 
-        // One kind only: a header here would just restate the panel's title.
+        // One kind only.
+        //
+        // **G2 asked for no header here, and the captain's redesign reverses
+        // that deliberately** (`fm/grandline-notification-center-redesign`).
+        // G2's reasoning was that a lone header "would just restate the panel's
+        // title" - true while the headers were "Needs you" / "Updates", which
+        // is roughly what "Waiting for you" already says. The reference renames
+        // them "Needs action" / "Available", and those are a claim about *this*
+        // tier rather than about the panel: a list showing only "Available"
+        // says nothing is waiting on you, which is the single most useful thing
+        // a glance can learn and is invisible if the header is suppressed.
+        // The rest of G2 - grouping by kind at all, action-needed first -
+        // stands unchanged and is what the two-group case below still asserts.
         NotificationSources.setToolUpdates(count: 2, navigate: {})
         let single = NotificationCenterController()
         _ = single.debugPanelController.view
         single.debugPanelContent.reload()
-        if single.debugPanelContent.debugGroupHeaders.isEmpty {
-            print("  OK   one kind: no group header")
+        if single.debugPanelContent.debugGroupHeaders == ["Available"] {
+            print("  OK   one kind: the tier is still named")
         } else {
-            print("  FAIL one kind still rendered \(single.debugPanelContent.debugGroupHeaders)")
+            print("  FAIL one kind rendered \(single.debugPanelContent.debugGroupHeaders), want [Available]")
             ok = false
         }
 
@@ -142,8 +154,13 @@ enum FeedbackModernizationSelfTest {
         // The row is the compact one, not the accent card it replaced. If the
         // old type came back, `debugRows` would be empty - so the guard above
         // is half of this assertion; the dot and symbol are the other half.
-        if row.debugDotColor == nil { problems.append("no hue dot") }
-        if !row.debugHasSymbol { problems.append("no SF Symbol") }
+        // `fm/grandline-notification-center-redesign` moved these two apart:
+        // the dot now means *unread* only, and the source's hue moved onto a
+        // real icon tile beside it. G2's finding is unchanged - a row is a row,
+        // not the 76pt accent card it replaced - so the density assertion
+        // below still stands and these two now name the redesigned elements.
+        if !row.debugUnreadDotVisible { problems.append("no unread dot on a freshly-published entry") }
+        if row.debugTileImage == nil { problems.append("no source icon tile") }
         if row.debugTitle.isEmpty { problems.append("no title") }
         // G2's own reason for the change: five stacked elements in a 360pt
         // column. The accent card was ~76pt; a two-line row is well under it.
@@ -159,7 +176,9 @@ enum FeedbackModernizationSelfTest {
         }
 
         // Swapping the row type is exactly the change that drops a handler.
-        row.onActivate?()
+        // The redesign put navigation behind the row's own action button (the
+        // one revealed where the timestamp sits), so that is what this drives.
+        row.debugClickAction()
         if navigated == 1 {
             print("  OK   clicking a row still navigates (fired once)")
         } else {

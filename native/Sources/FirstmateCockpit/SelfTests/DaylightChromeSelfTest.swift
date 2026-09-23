@@ -515,13 +515,20 @@ enum DaylightChromeSelfTest {
             print("  FAIL variant is \(markAll.variant), want .quiet")
             ok = false
         }
-        let before = GrandLineNotificationCenter.shared.badgeCount
+        // `fm/grandline-notification-center-redesign` gave this button its
+        // ordinary meaning: the dots go out and every row stays. It used to
+        // dismiss every informational entry, so this used to watch the badge
+        // fall - watching the badge now would assert the opposite of the
+        // intended behaviour. The store's bulk dismiss still exists under its
+        // own name and `GrandLineNotificationCenterSelfTest` still covers it.
+        let center = GrandLineNotificationCenter.shared
+        let before = center.unreadCount
+        let rowsBefore = center.badgeCount
         markAll.performClick(nil)
-        let after = GrandLineNotificationCenter.shared.badgeCount
-        if before > 0 && after < before {
-            print("  OK   clicking it still marks all read (\(before) -> \(after))")
+        if before > 0 && center.unreadCount == 0 && center.badgeCount == rowsBefore {
+            print("  OK   clicking it clears \(before) unread and keeps all \(rowsBefore) rows")
         } else {
-            print("  FAIL badge \(before) -> \(after); the action did not run")
+            print("  FAIL unread \(before) -> \(center.unreadCount), rows \(rowsBefore) -> \(center.badgeCount)")
             ok = false
         }
         NotificationSources.setToolUpdates(count: 0, navigate: {})

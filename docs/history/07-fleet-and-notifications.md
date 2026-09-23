@@ -442,3 +442,164 @@ Neither was reported by a captain; both would have shipped.
   permission, so the evidence here is real off-screen renders and real layout
   geometry rather than a screenshot - AGENTS.md's "Verifying native UI bugs
   without a real screenshot" convention.
+
+## Rebuilding the panel to the captain's reference (`fm/grandline-notification-center-redesign`)
+
+The captain hand-picked a complete HTML/CSS/JS reference for the "Waiting for
+you" popover and asked for it to be matched closely - "keep the UI almost the
+same". It is saved at
+`data/grandline-notification-center-redesign/captain-reference/` (firstmate's
+own repo, not this one), with the real screenshot beside it.
+
+Two elements were struck out by name: the footer's **Settings…** and **Reset
+demo** buttons. Everything else was to be built.
+
+### What the reference is actually about
+
+Not the pixels. The panel it replaced listed every entry as one equal row with
+one dot and a sentence explaining how that row clears. The reference sorts by
+*what the captain has to do*, puts one real action on every row, and hides the
+explanation until it is asked for. So the rebuild is an information-architecture
+change with a visual one following it:
+
+- **Two tiers.** "Needs action" above "Available", which is the store's own
+  `AppNotificationKind` given a visible name rather than a second
+  classification the two could drift apart on.
+- **An inset hairline** between rows *inside* a tier, starting at the text
+  column the way `NSTableView`'s inset style reads - a full-width rule between
+  every row makes a popover read as a form.
+- **A per-source colour tile**, so the list is scannable by shape and colour
+  before it is read. Painted from this app's own `HelmTint` tokens against the
+  live theme, never the reference's literal hexes.
+- **The blue dot demoted** to meaning unread and nothing else.
+- **The timestamp swaps for the row's action** on hover and on selection.
+- **Rows with sub-items expand in place** - tools, forks, drifted checks - each
+  child carrying its own action, over the "clears when…" line that used to be
+  crammed into every row's subtext.
+- A segmented **All / Needs-action** filter with live counts, a right-click
+  menu (snooze 1h, snooze until tomorrow, read/unread, copy, mute source), a
+  toast-and-undo footer, and an empty state.
+
+### What was kept rather than replaced
+
+The reference's own AppKit note suggests `NSPopover` plus an `NSOutlineView`.
+Neither was adopted, and the brief allowed for that: the chrome is a
+`HelmBarPanel` for the reasons B5 already recorded, and the list stays an
+`NSStackView` of rows because it is small by design. Replacing two working
+mechanisms to arrive at the same pixels would have bought nothing.
+
+### What the store grew, and what it did not
+
+`GrandLineNotificationCenter` gained three captain-facing states, and **none of
+them is a clearing semantic**. `stored` holds everything the sources have
+published; `entries` derives what is visible from it.
+
+- **Read state** (the dot), keyed by the exact subtext on `dismissedDetail`'s
+  own precedent - a row whose detail moves on after being read goes back to
+  unread rather than hiding new information under a cleared dot.
+- **Snooze**, which expires on its own with no source involved. That only works
+  because visibility is recomputed rather than remembered, which is why
+  `entries` is a computed property.
+- **Per-source mute**, session-scoped. A mute that outlived a relaunch would be
+  a setting, and this app has a Settings page for settings.
+
+`markAllRead()` now means what it says everywhere else in macOS: the dots go
+out and every row stays. The old behaviour - dismiss every informational entry,
+with its resurface-on-change rule - is unchanged under the name
+`dismissAllInformational()`, and its contract is still the thing
+`GrandLineNotificationCenterSelfTest` covers most closely. Nothing in the UI
+reaches it today; it stays because deleting the bulk form would leave that
+contract half-tested.
+
+`AppNotification` grew `source`, `clearCondition`, `date`, `timeText`,
+`isWarning`, `children` and `primaryAction`, all defaulted so the twelve
+adapters in `NotificationSources.swift` could be moved over one at a time.
+**`date` is excluded from `==` on purpose**: every source republishes its own
+freshly-computed truth on every poll, so a date that counted towards equality
+would make each pass look like a change - re-notifying every observer,
+re-marking a read row unread, and resetting "3h ago" to "just now" every
+fifteen minutes.
+
+### Where the children come from
+
+The reference's `initialItems()` is sample content, so the expandable rows are
+wired to the real sources. `BackgroundSignalsPoller`'s three publish methods
+take an optional `children` list beside the statuses they already took:
+
+- **Updates** and **GitHub Sync** can only be supplied by their own pages,
+  which hold the names and version pairs the poller's cached reading does not.
+  Each child carries that page's own per-row action as its `perform`, so a tool
+  updates or a fork syncs without leaving the popover. `UpdatesController`
+  gained `updateAllPending()` for the row's "Update all" - serial, matching
+  `GitHubSyncController.syncAll` and `AutomationController.installAllMissing`,
+  because this app's standing rule is that two external-tool invocations never
+  race.
+- **Bootstrap**'s drifted steps name themselves out of the `[SetupStepKind:
+  Bool?]` the poller is already handed, so neither setup page changed.
+
+A source with no children renders without a disclosure triangle rather than
+with an empty one, which is the honest rendering of "this reading has no
+per-item detail".
+
+### Undo, and where it is withheld
+
+The reference offers Undo on everything. This follows GL-33 instead: Undo is
+offered where a real restore exists (mark read, mark all read) and withheld
+where it does not (an update or a sync that has already started). A pretend
+Undo beside a running `brew upgrade` is worse than none. Snooze and mute have
+no toast Undo either - the footer's own "N snoozed" is their restore, and it is
+a standing control rather than one that fades in four seconds.
+
+### Two real defects, both found only in a render
+
+Neither was visible in the code or in any passing assertion.
+
+- **A wrapper view ate the text column.** The timestamp and the action button
+  started life as two children of a `trail` container. A plain `NSView` has no
+  intrinsic size, so neither a content- nor a stack-priority API decides its
+  width (AGENTS.md gotcha (12)), and nothing tied its leading edge - so it
+  absorbed the row's slack and squeezed "Renew staging wildcard certificate"
+  down to "Renew staging wild…" with 100pt of empty space beside it. The two
+  are siblings of the row now, each pinned to the disclosure triangle, and the
+  text column is bounded by **both** so it does not reflow on hover.
+- **A capped child column truncated by accident.** `text.trailing <= button.
+  leading` let the stack's width come from whichever of its two labels Auto
+  Layout settled on: "helm" over "3.1…" in the same row where "kubectl" over
+  its full version pair fitted. An equality makes the column definite and every
+  child truncate the same way.
+
+### Verification
+
+- `NotificationCenterRedesignSelfTest`
+  (`FM_RUN_NOTIFICATION_CENTER_REDESIGN_TESTS`) is window-backed and listed in
+  `NEEDS_SESSION`: a `HoverHighlightView`'s tracking area is
+  `.activeInKeyWindow`, so the hover-reveals-the-action swap - the thing the
+  reference is built around - cannot be asserted outside a key window. Ten
+  cases: the two tiers, the hover and selection swap, expand/collapse with
+  per-child actions, the context menu per read state, the absence of the two
+  struck buttons, the inset hairline's real x against the title's real
+  alignment rect, the filter's counts and both empty states, the toast and its
+  Undo, the four key bindings, and a real rasterised render in both registers.
+- **Six regression injections, each confirmed to fail the named case**:
+  flattening the two tiers, deleting the `onHoverChange` wiring, making the
+  disclosure a no-op, making the menu always say "Mark as read", adding a
+  "Settings…" button to the footer, and un-insetting the hairline.
+- **One check could not fail and was rewritten.** `debugSetHovering` called
+  `setActionVisible` directly, so deleting the entire `onHoverChange` wiring
+  left it green - it was asserting the private helper rather than the hook that
+  reaches it. It goes through `HoverHighlightView.mouseEntered`/`mouseExited`
+  now, and the injection fails as it should. A crash found the same way
+  (`children[1]` on an empty list) is a guarded `fail(...)`, because a crash
+  reads as a broken suite rather than a broken assertion.
+- **Four existing suites failed and all four were right to.**
+  `NavigationCoherenceSelfTest` caught `source: "Overview"` - the Fleet page is
+  called Fleet, and "Overview" names the daily review page and nothing else.
+  `AuditEnergyFixesSelfTest` caught the toast timer with no tolerance.
+  `FeedbackModernizationSelfTest` and `DaylightChromeSelfTest` each encoded a
+  contract the redesign deliberately reverses (G2's "one kind needs no header",
+  and "Mark all read" meaning dismiss); both were rewritten to the new contract
+  with the reasoning recorded at the check.
+- **Not verified**: no live visual check by the captain, and none is claimed.
+  The evidence is real off-screen renders of the real panel in both registers
+  plus real layout geometry - AGENTS.md's "Verifying native UI bugs without a
+  real screenshot" convention - not a screenshot of the running app.

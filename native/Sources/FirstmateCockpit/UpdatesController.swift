@@ -104,6 +104,9 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     private enum ToolFilterMode: String { case all, needsAttention }
 
     private var rows: [UpdateRow] = DependencyCatalog.items.map(UpdateRow.init)
+    /// Guards `updateAllPending` against a second press while a serial run is
+    /// still walking the list.
+    private var isUpdatingAll = false
     private var theme: HelmTheme = ThemeManager.shared.theme
     private var scrollView: NSScrollView!
     private var cards: [HelmCard] = []
@@ -523,7 +526,50 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
     /// overwriting a fresher published number from behind another page.
     private func publishToolUpdateSignal() {
         guard isViewLoaded, !view.isHidden else { return }
-        BackgroundSignalsPoller.shared.publishToolStatuses(rows.map { $0.status })
+        // `fm/grandline-notification-center-redesign`: the notification row for
+        // this page expands into the tools themselves, so the statuses travel
+        // with the names and version pairs that only this page holds - plus the
+        // two real actions, per-tool and bulk. The counting rule above is
+        // untouched; this is extra detail hung off the same publish, never a
+        // second source of "how many need an update".
+        let pending = rows.filter { $0.status.showsUpdateButton }
+        let children = pending.map { row in
+            AppNotificationChild(id: row.item.id, name: row.item.name, meta: row.detail,
+                                 actionLabel: "Update", isMonospaced: true,
+                                 perform: { [weak self, weak row] in
+                                     guard let self, let row else { return }
+                                     self.confirmAndUpdate(row)
+                                 })
+        }
+        BackgroundSignalsPoller.shared.publishToolStatuses(
+            rows.map { $0.status },
+            children: children,
+            updateAll: pending.isEmpty ? nil : { [weak self] in self?.updateAllPending() }
+        )
+    }
+
+    /// Update every tool currently offering an Update button, one at a time.
+    ///
+    /// Serial on purpose, matching `GitHubSyncController.syncAll` and
+    /// `AutomationController.installAllMissing`: this page's standing rule is
+    /// that two external-tool invocations never race. Reached only from the
+    /// notification popover's "Update all" - the page's own rows each have
+    /// their own button, and adding a second bulk control to the page is not
+    /// what the redesign asked for.
+    private func updateAllPending() {
+        guard !isUpdatingAll else { return }
+        let targets = rows.filter { $0.status.showsUpdateButton && !$0.isBusy }
+        guard !targets.isEmpty else { return }
+        isUpdatingAll = true
+        func runNext(_ index: Int) {
+            guard index < targets.count else {
+                isUpdatingAll = false
+                publishToolUpdateSignal()
+                return
+            }
+            update(targets[index]) { runNext(index + 1) }
+        }
+        runNext(0)
     }
 
     private func relativeLastChecked() -> String {
@@ -791,8 +837,14 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         update(row)
     }
 
-    private func update(_ row: UpdateRow) {
-        guard !row.isBusy else { return }
+    /// `completion` fires once the update (and the confirming re-check it
+    /// kicks off) has been dispatched for this row - what `updateAllPending`
+    /// needs to run the next one rather than racing it.
+    private func update(_ row: UpdateRow, completion: (() -> Void)? = nil) {
+        guard !row.isBusy else {
+            completion?()
+            return
+        }
         row.isBusy = true
         row.status = .updating
         render(row)
@@ -821,6 +873,7 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
                 // refreshes the shared cache with the truth for the other
                 // two pages.
                 if outcome.ok { self.check(row, forceRefresh: true) }
+                completion?()
             }
         }
     }
