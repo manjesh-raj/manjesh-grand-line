@@ -78,6 +78,34 @@ struct QuotaWindow: Equatable {
     let pace: PaceStatus
 }
 
+extension QuotaWindow {
+    /// The one place this app turns a `resetsAt` into words.
+    ///
+    /// `QuotaUsagePopover` built this string inline in two places (the row's
+    /// own reset line and the Copy Summary text) before the Home card became
+    /// a third caller, and three copies of a date format is how two surfaces
+    /// come to describe the same instant differently. `.abbreviated` /
+    /// `.shortened` is the popover's original choice, kept exactly - it
+    /// resolves in the captain's own locale and time zone, which is the only
+    /// frame in which "resets at" means anything.
+    static func resetsAtText(_ date: Date) -> String {
+        date.formatted(date: .abbreviated, time: .shortened)
+    }
+
+    /// `Resets 5 Jan 2026 at 3:00 pm`, or `nil` for a window that carries no
+    /// reset instant at all.
+    ///
+    /// GL-14: `nil` here is a real state and not a formatting failure -
+    /// `extra_usage` is a credit pool with no cycle, so a caller must render
+    /// nothing rather than invent a boundary. Callers that have somewhere to
+    /// say so (the popover's own row) state the gap in words; callers with
+    /// only a hover affordance (the Home card's status strip) simply carry no
+    /// affordance on that column.
+    var resetsSentence: String? {
+        resetsAt.map { "Resets \(Self.resetsAtText($0))" }
+    }
+}
+
 /// `quota-axi`'s `extra_usage` window - the extra-usage credit pool, which is
 /// a different shape from the three resetting allowances above and so is a
 /// sibling type rather than a `QuotaWindow` with unused fields.

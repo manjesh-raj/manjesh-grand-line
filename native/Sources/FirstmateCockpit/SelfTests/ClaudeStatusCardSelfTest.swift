@@ -52,7 +52,9 @@ enum ClaudeStatusCardSelfTest {
                       checkTheReadingIsNotGatedOnTheBriefing,
                       checkSeverityIsNotInverted,
                       checkTheHeaderCarriesARefresh,
-                      checkTheRefreshIsWiredToAForcedReading] {
+                      checkTheRefreshIsWiredToAForcedReading,
+                      checkResetTimesAreOfferedOnlyWhereTheyExist,
+                      checkTheResetAffordanceIsReallyWiredToTheCell] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -278,6 +280,228 @@ enum ClaudeStatusCardSelfTest {
         }
 
         if ok { print("  OK - five equal columns painted and legible in both registers") }
+    }
+
+    // MARK: 3b - the reset time: offered on the three resetting windows, on nothing else
+
+    /// A fixed local day at noon, per AGENTS.md's calendar rule: a bare
+    /// `Date()` would make this suite's own expectation drift with the clock,
+    /// and a UTC-pinned fixture would put the formatted instant on the wrong
+    /// side of a day boundary for the captain's own locale - which is the one
+    /// frame "resets at" is written in.
+    private static func fixtureReset(day: Int, hour: Int) -> Date {
+        var components = DateComponents()
+        components.year = 2026
+        components.month = 9
+        components.day = day
+        components.hour = hour
+        components.minute = 30
+        return Calendar.current.date(from: components) ?? Date(timeIntervalSince1970: 0)
+    }
+
+    /// Three windows carrying real reset instants, and a credit pool that
+    /// cannot carry one - the exact split the card has to honour.
+    private static func resettingSnapshot() -> QuotaSnapshot {
+        QuotaSnapshot(
+            plan: "team",
+            session: QuotaWindow(kind: .session, percentUsed: 90,
+                                 resetsAt: fixtureReset(day: 23, hour: 18), pace: .ahead),
+            weekly: QuotaWindow(kind: .weekly, percentUsed: 69,
+                                resetsAt: fixtureReset(day: 27, hour: 9), pace: .ahead),
+            fable: QuotaWindow(kind: .fable, percentUsed: 100,
+                               resetsAt: fixtureReset(day: 28, hour: 14), pace: .ahead),
+            extraUsage: QuotaCreditWindow(percentUsed: 98, spentUsd: 137.62, limitUsd: 140),
+            latency: 1.4, log: "")
+    }
+
+    private static func checkResetTimesAreOfferedOnlyWhereTheyExist(_ ok: inout Bool) {
+        print("\n-- claude strip: the reset time rides the three resetting windows only --")
+
+        // The fixture's own discriminating power, before anything is asserted
+        // against it: three genuinely different instants, so a card that
+        // reused one column's sentence on all three cannot pass, and a
+        // formatter that collapsed them to a constant cannot either.
+        let sessionAt = fixtureReset(day: 23, hour: 18)
+        let weeklyAt = fixtureReset(day: 27, hour: 9)
+        let fableAt = fixtureReset(day: 28, hour: 14)
+        let rendered = [sessionAt, weeklyAt, fableAt].map(QuotaWindow.resetsAtText)
+        if Set(rendered).count != 3 {
+            fail("the three fixture instants rendered \(rendered) - the fixture cannot "
+                 + "discriminate between columns, so every assertion below would be vacuous", &ok)
+        }
+        // Independent of the helper: the shortened time really is in there.
+        // Re-deriving the whole expectation from `resetsAtText` would assert
+        // nothing about the format at all.
+        let timeOnly = DateFormatter()
+        timeOnly.timeStyle = .short
+        timeOnly.dateStyle = .none
+        if !rendered[0].contains(timeOnly.string(from: sessionAt)) {
+            fail("\"\(rendered[0])\" does not carry the shortened time "
+                 + "\"\(timeOnly.string(from: sessionAt))\" - the reset instant is being "
+                 + "rendered to the day only, which cannot tell a captain whether a 90% "
+                 + "session window turns over in a minute or in four hours", &ok)
+        }
+
+        let columns = HomeCanvasController.claudeStripColumns(for: resettingSnapshot())
+
+        let expected = [sessionAt, weeklyAt, fableAt].map { "Resets \(QuotaWindow.resetsAtText($0))" }
+        for (index, want) in expected.enumerated() {
+            guard columns[index].detail == want else {
+                fail("\"\(columns[index].label)\" carries detail "
+                     + "\(columns[index].detail.map { "\"\($0)\"" } ?? "nil"), expected "
+                     + "\"\(want)\"", &ok)
+                continue
+            }
+        }
+
+        // The other half, and the one a blanket "always attach something"
+        // implementation fails: the credit pool has no cycle, so neither of
+        // its columns may claim one (GL-14 - a fabricated reset time is a
+        // fabricated reading).
+        for index in 3...4 {
+            if let detail = columns[index].detail {
+                fail("\"\(columns[index].label)\" has no reset cycle but offered "
+                     + "\"\(detail)\" - the credit pool's boundary is unknown, not soon", &ok)
+            }
+        }
+
+        // The stated-gap case: a window the response did not carry at all.
+        let sparse = QuotaSnapshot(
+            plan: nil,
+            session: QuotaWindow(kind: .session, percentUsed: 12,
+                                 resetsAt: fixtureReset(day: 23, hour: 18), pace: .onPace),
+            weekly: nil, fable: nil, extraUsage: nil, latency: 0.4, log: "")
+        let sparseColumns = HomeCanvasController.claudeStripColumns(for: sparse)
+        for column in sparseColumns.dropFirst() where column.detail != nil {
+            fail("gap column \"\(column.label)\" offered a reset time - a window that was "
+                 + "never reported has no reset instant to offer", &ok)
+        }
+        // Discriminating: the one column that *does* have one still has it,
+        // so this case cannot pass against a build that dropped the feature.
+        if sparseColumns[0].detail == nil {
+            fail("the session column carried a real resetsAt and still offered nothing", &ok)
+        }
+
+        // A window present but carrying no `resetsAt` - `QuotaSource.parse`
+        // yields exactly this when the response omits the field - is a third
+        // state again: a real reading, and nothing to say about its boundary.
+        let noReset = QuotaSnapshot(
+            plan: "team",
+            session: QuotaWindow(kind: .session, percentUsed: 41, resetsAt: nil, pace: .onPace),
+            weekly: nil, fable: nil, extraUsage: nil, latency: 0.4, log: "")
+        let noResetColumns = HomeCanvasController.claudeStripColumns(for: noReset)
+        if noResetColumns[0].isGap {
+            fail("a window with a reading and no resetsAt is not a stated gap", &ok)
+        }
+        if let detail = noResetColumns[0].detail {
+            fail("a window with no resetsAt offered \"\(detail)\"", &ok)
+        }
+
+        if ok { print("  OK - \(expected[0]) | \(expected[1]) | \(expected[2]); credit columns offer nothing") }
+    }
+
+    // MARK: 3c - the affordance is on the real cell, for the pointer and for VoiceOver
+
+    /// The behavioural half of the case above. The model carrying `detail`
+    /// says nothing about whether anything was wired to it, which is exactly
+    /// the shape AGENTS.md's `debug*` convention warns about - so this reads
+    /// the tooltip and the accessibility help back off the **cell views the
+    /// card actually built**, after a real layout pass.
+    private static func checkTheResetAffordanceIsReallyWiredToTheCell(_ ok: inout Bool) {
+        print("\n-- claude strip: the reset time is on the painted cell, and is not mouse-only --")
+
+        ThemeManager.shared.setTheme(.dusk)
+        let spanTwo = HomeCanvasController.minModuleWidth * 2 + HomeCanvasController.gridSpacing
+        let window = OffScreenProbe.window(width: 900, height: 400,
+                                           styleMask: [.titled, .resizable])
+        let host = NSView(frame: window.contentLayoutRect)
+        window.contentView = host
+
+        let card = HelmModuleCard()
+        card.configure(.init(title: "Claude", subtitle: "Team", symbol: "gauge.with.needle",
+                             hue: .violet, chip: .warn("Fable 100%"),
+                             body: .statusStrip(
+                                HomeCanvasController.claudeStripColumns(for: resettingSnapshot()),
+                                perRow: HelmModuleCard.maxStripColumns)))
+        host.addSubview(card)
+        let width = card.widthAnchor.constraint(equalToConstant: spanTwo)
+        width.priority = HelmDaylightPriority.contentTie
+        NSLayoutConstraint.activate([
+            width,
+            card.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            card.topAnchor.constraint(equalTo: host.topAnchor),
+        ])
+        host.layoutSubtreeIfNeeded()
+
+        let anatomy = card.anatomyForTests
+        let affordances = anatomy.stripColumnAffordances
+        guard affordances.count == HelmModuleCard.maxStripColumns else {
+            fail("the card exposed \(affordances.count) column affordances, expected "
+                 + "\(HelmModuleCard.maxStripColumns) - the probe is not seeing the real cells", &ok)
+            return
+        }
+
+        let expected = [fixtureReset(day: 23, hour: 18),
+                        fixtureReset(day: 27, hour: 9),
+                        fixtureReset(day: 28, hour: 14)]
+            .map { "Resets \(QuotaWindow.resetsAtText($0))" }
+
+        for (index, want) in expected.enumerated() {
+            if affordances[index].toolTip != want {
+                fail("column \(index) (\(anatomy.stripColumns[index].label)) painted tooltip "
+                     + "\(affordances[index].toolTip.map { "\"\($0)\"" } ?? "nil"), expected "
+                     + "\"\(want)\"", &ok)
+            }
+            // GL-16: a reading reachable only by hovering a mouse is a
+            // reading a keyboard captain does not have.
+            if affordances[index].help != want {
+                fail("column \(index) (\(anatomy.stripColumns[index].label)) has the reset time "
+                     + "as a tooltip but not as VoiceOver help - the reading is mouse-only", &ok)
+            }
+        }
+        for index in 3...4 {
+            if affordances[index].toolTip != nil || affordances[index].help != nil {
+                fail("column \(index) (\(anatomy.stripColumns[index].label)) painted an "
+                     + "affordance for a window with no reset cycle", &ok)
+            }
+        }
+
+        // The compactness the whole tooltip decision exists to protect: the
+        // card carrying three reset times is exactly as tall as the same card
+        // carrying none. A second visible line per column would fail here,
+        // which is the point.
+        let plain = HelmModuleCard()
+        plain.configure(.init(title: "Claude", subtitle: "Team", symbol: "gauge.with.needle",
+                              hue: .violet, chip: .warn("Fable 100%"),
+                              body: .statusStrip(
+                                 HomeCanvasController.claudeStripColumns(for: liveSnapshot()),
+                                 perRow: HelmModuleCard.maxStripColumns)))
+        host.addSubview(plain)
+        let plainWidth = plain.widthAnchor.constraint(equalToConstant: spanTwo)
+        plainWidth.priority = HelmDaylightPriority.contentTie
+        NSLayoutConstraint.activate([
+            plainWidth,
+            plain.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            plain.topAnchor.constraint(equalTo: card.bottomAnchor, constant: 12),
+        ])
+        host.layoutSubtreeIfNeeded()
+
+        let withResets = anatomy.cardHeight
+        let withoutResets = plain.anatomyForTests.cardHeight
+        if withoutResets <= 0 {
+            fail("the reference card resolved to \(withoutResets)pt - the height comparison "
+                 + "below would be vacuous", &ok)
+        }
+        if abs(withResets - withoutResets) > 0.5 {
+            fail("the card with reset times is \(withResets)pt against \(withoutResets)pt "
+                 + "without - the affordance is costing the card height, which breaks the row's "
+                 + "uniform height", &ok)
+        }
+
+        if ok {
+            print("  OK - tooltip and VoiceOver help on the three resetting columns, "
+                  + "nothing on the credit pool, card still \(withResets)pt")
+        }
     }
 
     // MARK: 4 - the strip stays compact, and stays inside its card

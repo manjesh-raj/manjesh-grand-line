@@ -842,3 +842,119 @@ claiming a bulk run nothing is driving.
   task's work is upstream of it: whether those children exist in the ambient
   case. No screenshot is claimed, per AGENTS.md's "Verifying native UI bugs
   without a real screenshot" convention.
+
+## The reset time on the Claude strip (`fm/grandline-claude-strip-reset-time`)
+
+The captain's reading of the card: a percentage on its own is half an answer.
+"Session 90%" is a crisis an hour before the window turns over and a shrug a
+minute before it, and the instant that settles it was already parsed and
+already rendered elsewhere - `QuotaWindow.resetsAt`, which the Claude-usage
+popover has shown as `Resets <date> at <time>` since it was built.
+The card simply never surfaced it.
+
+### One formatter, three callers
+
+`QuotaUsagePopover` built that sentence inline in two places - the row's own
+reset line and the Copy Summary text - and the card would have been a third.
+Three copies of a date format is how two surfaces come to describe the same
+instant differently, so `QuotaWindow.resetsAtText(_:)` and
+`QuotaWindow.resetsSentence` are now the one place this app turns a reset
+instant into words, and the popover's two call sites were rewired onto them.
+The format is unchanged: `.abbreviated` / `.shortened`, resolved in the
+captain's own locale and time zone, which is the only frame "resets at" means
+anything in.
+
+`resetsSentence` is `nil` for a window carrying no instant, and that `nil` is
+a real state rather than a formatting failure (GL-14). Callers with room to
+say so state the gap in words - the popover's row still reads "Reset time
+unavailable". The card has no room, so it offers nothing at all.
+
+### Why a tooltip and not a second line
+
+A strip column is two small labels over a 4pt track, and the whole reason the
+card fits five readings at `standardHeight` is that it spends no vertical room
+on prose. A third line per column grows the card, and a card that grows breaks
+the row's uniform height (`DaylightModuleSelfTest.checkUniformCardHeight`) -
+the original implementation already had to work around that guard once.
+
+**The width is the harder half, and it is measured.** The card does sit on
+`HelmModuleCard.minimumHeight` with real slack below the tracks, so a third
+line would plausibly have fitted vertically. It does not fit *horizontally*:
+`checkRendersInBothThemes` measures each column at **98pt** at a span-2 card's
+own width, and `Resets 23 Sep 2026 at 6:30 PM` is several times that. A third
+line would have rendered as `Resets 23 Se...` on every column - a reset time
+truncated past the point of being a reading, which is worse than no line at
+all. Shortening it to a bare `6:30 PM` drops the day, and a relative
+`in 3h 12m` buys a live countdown and with it AGENTS.md's one-injectable-clock
+rule, for a card that is otherwise a static reading refreshed on demand.
+
+So `HelmModuleStripColumn` gains an optional `detail`, rendered as the
+column's hover tooltip - the same affordance `Content.HeaderAction` already
+uses for the card's own Refresh button. No visible glyph was added: the
+alternative considered was an inline SF Symbol clock in the kicker, which
+needs an `NSTextAttachment` inside the one label the probe reads
+`stringValue` off, and it would have bought discoverability at the cost of
+making every existing label assertion read a `U+FFFC` it did not expect.
+
+**AppKit already serves a view's `toolTip` to VoiceOver as its accessibility
+help**, which is what keeps this from being a mouse-only reading (GL-16).
+That is measured rather than assumed: an explicit
+`setAccessibilityHelp(column.detail)` was written beside the tooltip first,
+and deleting it changed nothing the affordance check could see - so the
+second call site was removed rather than kept as a duplicate claim. The check
+still reads the help back off the real cell, because that is what proves the
+reading is reachable at all.
+
+Only the three resetting windows get it. `extra_usage` is a credit pool with
+no cycle (`pace.reason: "missing_cycle"` - see the labelling decisions above),
+so both dollar columns carry `nil` and hover reveals nothing. A tooltip that
+appeared on every column would teach the captain that hovering is worthless,
+and a fabricated boundary on the credit pool would be a fabricated reading.
+
+### Verification
+
+- `ClaudeStatusCardSelfTest` gains two cases.
+  `checkResetTimesAreOfferedOnlyWhereTheyExist` is the model half: three
+  genuinely different fixture instants (asserted distinct first, so a card
+  reusing one column's sentence cannot pass vacuously), the credit columns
+  offering nothing, the stated-gap case, and the third state of a window that
+  has a reading but no `resetsAt`.
+  `checkTheResetAffordanceIsReallyWiredToTheCell` is the behavioural half,
+  reading tooltip and accessibility help back off the cell views the card
+  actually built after a real layout pass - the model carrying `detail` says
+  nothing about whether anything was wired to it. It also asserts the card
+  with three reset times resolves to exactly the same height as the same card
+  with none, which is the compactness the tooltip decision exists to protect.
+- The fixture dates are built from `Calendar.current` at local noon-ish, per
+  AGENTS.md's calendar rule, and the format assertion is cross-checked against
+  an independent `DateFormatter` rather than only against the helper under
+  test.
+- **Injection confirmed**: replacing `detail: window.resetsSentence` with
+  `detail: nil` failed both new cases by name, nine assertions across the two.
+- Full suite **201 passed / 0 failed / 1 skipped** before. After, one suite
+  timed out: `FM_RUN_SHIFT_BOARD_VIEW_TESTS`, which had passed in 2.0s in the
+  same baseline. It is **not this change**, and that was settled rather than
+  assumed. `sample` on the hung process put the whole main thread in
+  `ShiftProjectFilterBar.debugClickChip` -> `NSButtonCell.performClick:`,
+  which is verbatim the signature
+  [`03-navigation-and-chrome.md`](03-navigation-and-chrome.md)'s own note on
+  this suite already records: `performClick` runs a nested event loop that
+  processes real user input, so a genuine mouse drag on the machine at that
+  moment blocks it in `NSCoreDragManager._dragUntilMouseUp`. The A/B AGENTS.md
+  asks for confirmed it: with the five changed source files reverted to `HEAD`
+  and rebuilt, that suite hung **3 of 3** runs at 100s each, on a machine that
+  was in active use throughout. The suite touches no type this change went
+  near.
+- **Two pieces of collateral worth knowing about, both from the timeout
+  itself.** A killed suite leaves the shared `FirstmateCockpit` domain dirty -
+  `fm.themeID` came back `catppuccin-mocha` against a real `helm-dark` twice
+  during this task - which is the interrupted-run poisoning AGENTS.md
+  describes, and it would have failed the contrast suites next pass for
+  reasons unrelated to any code. Check and restore it by hand after any
+  timeout. And identify before you kill: several sibling lanes were running
+  out of the same treehouse pool, so every kill here went by pid after
+  `lsof -p <pid>` confirmed that pid's cwd was this worktree.
+- **Not verified**: no live visual check by the captain, and none is claimed -
+  same permission constraint as the entries above. A tooltip in particular
+  cannot be rendered by `cacheDisplay`, so the evidence for it is the real
+  view's own `toolTip` after a real layout pass rather than a picture of one.

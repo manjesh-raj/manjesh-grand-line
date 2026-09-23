@@ -119,14 +119,33 @@ struct HelmModuleStripColumn: Equatable {
     /// See the type's own note: a stated gap, rendered differently on
     /// purpose.
     let isGap: Bool
+    /// One short sentence about this column that does not fit in it - the
+    /// Claude card's `Resets 5 Jan 2026 at 3:00 pm`, for instance.
+    ///
+    /// **It is an affordance, not a second line.** A strip column is two
+    /// small labels over a 4pt track, and the whole reason the Claude card
+    /// fits five readings at `standardHeight` is that it spends no vertical
+    /// room on prose - a third line per column would grow the card and break
+    /// the row's uniform height (`DaylightModuleSelfTest.checkUniformCardHeight`).
+    /// So this renders as the column's hover tooltip - the same affordance
+    /// `Content.HeaderAction` already uses for the refresh button - which
+    /// AppKit also serves to VoiceOver as the cell's accessibility help, so
+    /// the reading is not mouse-only (GL-16).
+    ///
+    /// `nil` means this column genuinely has nothing extra to say, and a
+    /// column that has no such reading must pass `nil` rather than a
+    /// placeholder sentence (GL-14): a tooltip that appears on every column
+    /// teaches the captain that hovering is worthless.
+    let detail: String?
 
     init(label: String, value: String, fill: Double?,
-         state: HelmModuleRowState, isGap: Bool = false) {
+         state: HelmModuleRowState, isGap: Bool = false, detail: String? = nil) {
         self.label = label
         self.value = value
         self.fill = fill
         self.state = state
         self.isGap = isGap
+        self.detail = detail
     }
 }
 
@@ -468,6 +487,9 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     private var stripValues: [(label: NSTextField, isGap: Bool)] = []
     private var stripSeparators: [NSView] = []
     private var stripTracks: [(track: NSView, fill: NSView, state: HelmModuleRowState)] = []
+    /// Every strip column's own cell view, in render order - the view that
+    /// carries `HelmModuleStripColumn.detail`'s tooltip and VoiceOver help.
+    private var stripCells: [NSView] = []
     private var peekTextLabels: [NSTextField] = []
     private var peekValueLabels: [NSTextField] = []
     private var noteLabels: [NSTextField] = []
@@ -697,6 +719,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         stripValues.removeAll()
         stripSeparators.removeAll()
         stripTracks.removeAll()
+        stripCells.removeAll()
         peekTextLabels.removeAll()
         peekValueLabels.removeAll()
         noteLabels.removeAll()
@@ -1075,6 +1098,18 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         track?.widthAnchor.constraint(equalTo: cell.widthAnchor).isActive = true
         cell.edgeInsets = NSEdgeInsets(top: 0, left: isFirstInRow ? 0 : 12,
                                        bottom: 0, right: 12)
+        // One line, and it covers both routes in: AppKit derives an
+        // `NSView`'s accessibility help from its `toolTip` when nothing else
+        // sets one, so the reading VoiceOver reads out and the reading the
+        // pointer reveals are the same string by construction rather than by
+        // two call sites agreeing. Measured, not assumed - deleting an
+        // explicit `setAccessibilityHelp(column.detail)` beside this line
+        // changed nothing that `checkTheResetAffordanceIsReallyWiredToTheCell`
+        // could see, so the explicit call was removed rather than kept as a
+        // second copy of the same claim. `nil` clears both, which is what a
+        // column with no extra reading wants (GL-16).
+        cell.toolTip = column.detail
+        stripCells.append(cell)
         return cell
     }
 
@@ -1519,6 +1554,18 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         /// Enough for a suite to assert the column order, the labels and the
         /// gap treatment without reaching into the body enum.
         let stripColumns: [(label: String, value: String, isGap: Bool)]
+        /// Each `.statusStrip` column's hover affordance, in the same order -
+        /// the tooltip and the accessibility help **as the real cell view
+        /// reports them**, not as passed in the model. The help is AppKit's
+        /// own derivation from the tooltip; reading it back is what proves
+        /// the reading is not mouse-only.
+        ///
+        /// Read from the view on purpose: `detail` reaching the column struct
+        /// says nothing about whether anything was ever wired to it, and this
+        /// app has already shipped a check that asserted a helper rather than
+        /// the wiring it was supposed to prove (AGENTS.md's `debug*` hook
+        /// convention).
+        let stripColumnAffordances: [(toolTip: String?, help: String?)]
         /// Each `.statusStrip` column's track, as actually painted and laid
         /// out: the fill view's own layer colour, and how much of its bed it
         /// covers after a real layout pass.
@@ -1636,6 +1683,9 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
                 peekRowCount: peekTextLabels.count,
                 stripColumns: zip(stripLabels, stripValues).map {
                     ($0.stringValue, $1.label.stringValue, $1.isGap)
+                },
+                stripColumnAffordances: stripCells.map {
+                    ($0.toolTip, $0.accessibilityHelp())
                 },
                 stripTrackFills: stripTracks.map { entry in
                     let bed = entry.track.frame.width
