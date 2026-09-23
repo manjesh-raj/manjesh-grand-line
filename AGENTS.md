@@ -30,7 +30,7 @@ as they are rather than rewritten across 180 files.
 - [Build, run, test](#build-run-test) - the two CI lanes, the second (widget) binary, and the vendored patches a sync must re-apply
 - [Verification conventions](#verification-conventions) - how a change is proved here, and how much of the suite a PR has to run locally
 - [Writing a self-test](#writing-a-self-test)
-- [The AppKit gotcha catalogue](#the-appkit-gotcha-catalogue) - 19 measured traps
+- [The AppKit gotcha catalogue](#the-appkit-gotcha-catalogue) - 20 measured traps
 - [GL invariants](#gl-invariants) - GL-01 .. GL-38, one line each
 - [The component index](#the-component-index) - one button, one card, one row
 - [Stores, subprocesses and secrets](#stores-subprocesses-and-secrets)
@@ -380,7 +380,12 @@ enough to explain itself.
   the hook. It drives `HoverHighlightView.mouseEntered`/`mouseExited` now.
   The cheap test is the injection itself: delete the wiring, not the helper,
   and watch the case fail. Same shape as the `debugCommit…()` warning in gotcha
-  (19).
+  (19). **The same file then shipped the same mistake again in the same year**:
+  `NotificationRowView.debugClickDisclosure()` called `disclosureClicked()`
+  rather than the button whose `action` reaches it, and stayed green while an
+  ancestor recognizer swallowed every real click on that button (gotcha (20)).
+  A hook named after a *click* that does not go through the control is the
+  shape to distrust.
 - **Assert what is painted, not what was computed.** A model-level assertion is
   blind to a signal that never reaches the view; re-deriving an expected value
   from the function under test asserts nothing at all.
@@ -643,7 +648,7 @@ fails unless its entry carries a trailing marker.
 
 ## The AppKit gotcha catalogue
 
-Nineteen traps, every one measured on this app rather than read about. Each was
+Twenty traps, every one measured on this app rather than read about. Each was
 found by instrumenting a real layout or event pass; several took a full task to
 root-cause, and at least four have recurred in a new file after being fixed in
 an old one. **Read the ones that match what you are about to touch** - a tab
@@ -1266,6 +1271,49 @@ then move first responder away) and then reads the *store*.
 example, and it asserts the Return path in the same case so a future fix cannot
 trade one for the other.
 
+### (20) An ancestor's click recognizer swallows a nested control's click
+
+**AppKit defines no automatic exclusivity between a gesture recognizer on an
+ancestor view and a real control nested inside it, and the control loses.** The
+recognizer claims the click; the nested `NSButton`'s `action` never fires. There
+is no warning, nothing is logged, and the button still hit-tests correctly and
+still reports the right `target`/`action` - so reading the code, or probing
+`hitTest`, says the wiring is fine.
+
+Found three times here. `SessionStripView` first (full-app audit finding 4.7: a
+session pill's ✕ switched to the very session it was ending), `HelmModuleCard`
+next (a card's header action), and then the whole "Waiting for you" row
+(`fm/grandline-notification-rows-not-interactive`: the disclosure chevron and
+the hover-reveal action button were both dead in the real popover). The first
+two each fixed it with their own hand-rolled delegate and neither shared it,
+which is exactly why the third row to need it did not get one.
+
+**It is handled for you now**: the walk is `HelmGestureArbitration.shouldRecognize(_:with:)`,
+and `HoverHighlightView` makes itself the delegate of any recognizer handed to
+it that has none - so all ~40 recognizer-driven rows are covered by
+construction. Two things still to know:
+
+- **A recognizer on a view that is not a `HoverHighlightView` is on its own.**
+  Set `delegate` and call the shared helper; do not write a third copy.
+- **The rule declines for an *actionable* control, not for any `NSControl`.** A
+  row's own title is an `NSTextField`, which is an actionless `NSControl`, and
+  declining for it would stop most of the row's surface from activating.
+  `HelmModuleCard` carries one extra rule the shared walk cannot: AppKit does
+  not hit-test a **disabled** control, so a visibly-there-but-inert button has
+  to swallow its own clicks by frame.
+
+**The reason this shipped three times is a testing trap, not a coding one**, and
+it is the one to take away: gesture arbitration is a property of real event
+dispatch through a real window. A suite that calls the handler, or that mounts
+the view without ever dispatching an event, cannot see it - and both prior
+tasks had green coverage of exactly the interaction that was dead. A control
+nested in a recognizer-driven row wants a check that posts a real `NSEvent`;
+`NotificationRowInteractionSelfTest` is the worked example, and its header
+carries the two AppKit facts that make such a check hard to write (an
+`NSButton`'s tracking loop dequeues its own mouse-up, so the events must be
+`postEvent`ed and pumped rather than `sendEvent`ed; and a row's window
+coordinates go stale the moment a reload or a resize follows the click).
+
 ---
 
 ## GL invariants
@@ -1352,6 +1400,7 @@ noted.
 | `GrandLineServices.shared` | a second `ShiftStore()`/`NotebookStore()`/`CredentialVaultStore()` built by a non-UI entry point. `AppShellController` registers the live instances there; an App Intent, the Backup card or anything else with no view controller reads them from it, and gets `nil` (not a fresh store) before the shell is up. It is a **registry, not a factory** - the vault is its one exception, and that file's header says why |
 | `DaylightSpace.destination` | a space pill that navigates by naming its own case. A pill is a canvas *filter* by default and a page when that table says so; `filtersCanvas` is what a canvas-shaped loop (and a canvas-shaped test sweep) filters on, so adding a page-shaped tab is one property and no edit anywhere else. **A space's own page is top-level, not a drill page**: `AppShellController.show` asks `DaylightSpace.owning(destination:)` whether the bar keeps its wordmark and space pills, so such a page has no drill header and must not conform to `DaylightDrillActions`. Naming the canvas there instead shipped once, and hid the whole tab strip the moment the new tab's own pill was pressed |
 | `SettingsRow` / `SettingsGroup` / `SettingsSection` / `SettingsHero` (`SettingsForm.swift`) | a hand-rolled Settings row, group card or page header. The Settings page is ~60 rows across eight pages, and the separator inset, the `.sub` indent, the dimmed-**and-inert** dependent state and the description re-wrap are exactly what drifts when each call site spells them out. A group is a real `HelmCard` with no header, so there is still one card surface |
+| `HelmGestureArbitration.shouldRecognize(_:with:)` (and `HoverHighlightView`, which applies it for you) | a hand-rolled `gestureRecognizer(_:shouldAttemptToRecognizeWith:)` walk. Two copies of it existed and the third row that needed one shipped dead - gotcha (20) |
 | `OffScreenProbe.window(...)` | `NSWindow(contentRect:)` in a suite - source-guarded |
 | `SelfTestAssertions` | a local `check`/`fail` pair in a suite - source-guarded |
 

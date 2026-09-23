@@ -1427,6 +1427,30 @@ final class NotificationRowView: HoverHighlightView {
             eventNumber: 0, trackingNumber: 0, userData: nil) else { return }
         if hovering { mouseEntered(with: event) } else { mouseExited(with: event) }
     }
+    /// The chevron's and the action button's **real** frames, so a suite can
+    /// aim a real click at where AppKit actually put them rather than at a
+    /// guessed rectangle. `nil` when the control is not on screen, which is
+    /// what keeps such a check from passing vacuously against a hidden one.
+    var debugDisclosureFrameInRow: NSRect? {
+        disclosure.isHidden ? nil : disclosure.convert(disclosure.bounds, to: self)
+    }
+    var debugActionFrameInRow: NSRect? {
+        actionButton.isHidden ? nil : actionButton.convert(actionButton.bounds, to: self)
+    }
+    /// Whether the row's own click recognizer would decline a click landing
+    /// here - i.e. whether a nested control is genuinely arbitrated away from
+    /// the row's activation. Same shape as
+    /// `HelmModuleCard.debugCardClickWouldBeDeclined(at:)`.
+    func debugRowClickWouldBeDeclined(at pointInRow: NSPoint) -> Bool {
+        guard let window, let recognizer = gestureRecognizers.first,
+              let delegate = recognizer.delegate else { return false }
+        let inWindow = convert(pointInRow, to: nil)
+        guard let event = NSEvent.mouseEvent(
+            with: .leftMouseDown, location: inWindow, modifierFlags: [],
+            timestamp: 0, windowNumber: window.windowNumber, context: nil,
+            eventNumber: 0, clickCount: 1, pressure: 1) else { return false }
+        return delegate.gestureRecognizer?(recognizer, shouldAttemptToRecognizeWith: event) == false
+    }
     func debugClickDisclosure() { disclosureClicked() }
     func debugClickAction() { primaryActionClicked() }
     func debugActivate() { activate() }
@@ -1522,6 +1546,10 @@ final class NotificationChildRowView: NSView {
     var debugName: String { nameLabel.stringValue }
     var debugMeta: String { metaLabel.stringValue }
     var debugActionTitle: String? { actionButton.isHidden ? nil : actionButton.title }
+    /// The button's real frame, for a suite aiming a real click at it.
+    var debugActionButtonFrameInRow: NSRect? {
+        actionButton.isHidden ? nil : actionButton.convert(actionButton.bounds, to: self)
+    }
     func debugClickAction() { actionClicked() }
     #endif
 }

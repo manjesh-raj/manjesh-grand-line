@@ -620,6 +620,51 @@ extension NSColor {
     }
 }
 
+/// Whether an ancestor's click recognizer should decline a click that landed
+/// on a real control nested inside it.
+///
+/// **AppKit defines no automatic exclusivity between an ancestor's gesture
+/// recognizer and a descendant control**, and the descendant loses: the
+/// recognizer claims the click and the nested `NSButton` never fires. That is
+/// not a theory - it shipped three times here. `SessionStripView` found it
+/// first (full-app audit finding 4.7: a pill's ✕ switching to the very
+/// session it was ending), `HelmModuleCard` found it again for a card's
+/// header action, and `NotificationRowView` shipped the whole "Waiting for
+/// you" row with it (`fm/grandline-notification-rows-not-interactive`: the
+/// disclosure chevron and the hover-reveal action button were both dead in
+/// the real popover, while every self-test passed).
+///
+/// Both earlier fixes were hand-rolled copies of this same walk, which is why
+/// the third row to need it did not get it. It lives here once now, and
+/// `HoverHighlightView` adopts it for every recognizer it is handed - so a
+/// row written next year is covered the day it lands rather than the day a
+/// captain reports it dead.
+///
+/// The rule is written against `NSControl` generally rather than "is this the
+/// chevron", and `action != nil` is what separates a view that does something
+/// of its own when clicked from a control class that happens to be drawing
+/// text: a row's own title is an `NSTextField`, which is an actionless
+/// `NSControl`, and declining for it would stop most of the row's surface
+/// from activating at all.
+enum HelmGestureArbitration {
+    /// `true` to let the container's own recognizer claim this click.
+    static func shouldRecognize(_ recognizer: NSGestureRecognizer, with event: NSEvent) -> Bool {
+        guard let container = recognizer.view else { return true }
+        let point = container.convert(event.locationInWindow, from: nil)
+        guard let hit = container.hitTest(container.convert(point, to: container.superview)) else {
+            return true
+        }
+        var view: NSView? = hit
+        while let current = view, current !== container {
+            if let control = current as? NSControl, control.action != nil, control.isEnabled {
+                return false
+            }
+            view = current.superview
+        }
+        return true
+    }
+}
+
 /// The shared hover-state helper for a row or button-like control: an
 /// `NSTrackingArea` swaps `layer.backgroundColor` between `normalColor` and
 /// `hoverColor` on mouse enter/exit, animated via `NSAnimationContext` unless
@@ -627,7 +672,7 @@ extension NSColor {
 /// accessibilityDisplayShouldReduceMotion`), in which case the swap is
 /// instant. Callers own picking theme-derived colors; this view only owns the
 /// tracking + animation mechanics.
-class HoverHighlightView: NSView {
+class HoverHighlightView: NSView, NSGestureRecognizerDelegate {
     var normalColor: NSColor = .clear {
         didSet { if !isHovering { setBackground(normalColor, animated: false) } }
     }
@@ -793,6 +838,26 @@ class HoverHighlightView: NSView {
     var debugIsPressed: Bool { isPressed }
     var debugIsHovering: Bool { isHovering }
     #endif
+
+    // MARK: Gesture arbitration
+
+    /// Becomes the delegate of any recognizer that arrives without one, so
+    /// `HelmGestureArbitration` applies to every one of this app's ~40
+    /// recognizer-driven rows without each of them remembering to ask.
+    ///
+    /// Only when the recognizer has no delegate of its own: `SessionStripView`
+    /// and `HelmModuleCard` both set theirs *before* adding (the card's has an
+    /// extra rule of its own for a disabled control, which this cannot see),
+    /// and a caller that has made that decision keeps it.
+    override func addGestureRecognizer(_ recognizer: NSGestureRecognizer) {
+        if recognizer.delegate == nil { recognizer.delegate = self }
+        super.addGestureRecognizer(recognizer)
+    }
+
+    func gestureRecognizer(_ recognizer: NSGestureRecognizer,
+                           shouldAttemptToRecognizeWith event: NSEvent) -> Bool {
+        HelmGestureArbitration.shouldRecognize(recognizer, with: event)
+    }
 
     /// The one definition of "this view does something when pressed": an
     /// explicit press handler, or an enabled click recognizer someone

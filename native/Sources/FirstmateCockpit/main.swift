@@ -3431,6 +3431,15 @@ if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_CENTER_TESTS"] == "1
 // real "Waiting for you" panel in a real `OffScreenProbe` window and reads
 // back rendered geometry, real hover state and a real rasterised pixel.
 // Listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh` accordingly.
+// `fm/grandline-notification-rows-not-interactive`: window-backed, and it has
+// to be - it dispatches real `NSEvent`s through the real `HelmBarPanel` window
+// the bell opens, which is the only place gesture arbitration between the
+// row's recognizer and its nested buttons is observable. Listed in
+// `NEEDS_SESSION` in `Scripts/run-all-tests.sh` accordingly.
+if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_ROW_INTERACTION_TESTS"] == "1" {
+    exit(NotificationRowInteractionSelfTest.run() ? 0 : 1)
+}
+
 if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_CENTER_REDESIGN_TESTS"] == "1" {
     exit(NotificationCenterRedesignSelfTest.run() ? 0 : 1)
 }

@@ -1035,3 +1035,116 @@ that is otherwise a static reading refreshed on demand.
   and Dusk and wrote PNGs read back with `Read`. The three reset lines sit
   under their tracks, muted, none truncated, in both registers. The one-column
   form's `SESSION (...` key truncation is pre-existing and untouched.
+
+## The "Waiting for you" rows were not interactive at all
+
+`fm/grandline-notification-rows-not-interactive`. The captain reported that the
+real popover's rows did not respond to a mouse: the disclosure chevron on a row
+with children did not expand it, and clicking a row did nothing useful. Both
+prior tasks on this popover - the redesign (PR #451) and the ambient-children
+follow-up (PR #455) - had shipped real, passing self-test coverage for exactly
+these interactions.
+
+### The root cause
+
+`NotificationRowView` ends its initialiser with
+
+    addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(activate)))
+
+and it nests two real `NSButton`s inside itself: the disclosure chevron and the
+hover-reveal action button. **AppKit defines no automatic exclusivity between
+an ancestor's gesture recognizer and a descendant control**, and the descendant
+loses - the recognizer claims the click and the button's `action` never fires.
+
+That is not a new discovery in this repository. It has now been found three
+times:
+
+- `SessionStripView` hit it first (full-app audit finding 4.7): a session
+  pill's ✕ switched to the very session it was ending.
+- `HelmModuleCard` hit it again for a card's header action.
+- `NotificationRowView` shipped with it, in a row built after both.
+
+The first two each fixed it with a hand-rolled
+`gestureRecognizer(_:shouldAttemptToRecognizeWith:)` that walks from the
+hit-tested view up to the recognizer's own view and declines when it passes an
+*actionable* `NSControl`. Two copies, never shared - which is exactly why the
+third row to need it did not get one.
+
+Because a plain row click only selects and marks read (it never navigates), the
+two controls that actually *do* something were the two that were dead. That is
+the whole of the captain's report from one cause.
+
+### The fix
+
+The walk lives once now, as `HelmGestureArbitration.shouldRecognize(_:with:)`
+in `HelmUIComponents.swift`, and **`HoverHighlightView` adopts it for every
+recognizer it is handed** - it overrides `addGestureRecognizer` and makes
+itself the delegate of any recognizer that arrives without one. That covers all
+~40 of this app's recognizer-driven rows, so a row written next year is covered
+the day it lands rather than the day a captain reports it dead.
+
+Only when the recognizer has no delegate of its own: `SessionStripView` and
+`HelmModuleCard` both assign theirs *before* adding, and the card's carries an
+extra rule this cannot see (AppKit does not hit-test a *disabled* control, so a
+visibly-there-but-inert header action has to swallow its own clicks by frame).
+Both keep their delegate and now call the shared helper for the walk.
+
+The rule is deliberately written against *actionable* controls rather than any
+`NSControl`: a row's own title is an `NSTextField`, which is an actionless
+`NSControl`, and declining for it would stop most of the row's surface from
+activating at all.
+
+### Why the existing coverage missed it, and what replaces it
+
+`NotificationCenterRedesignSelfTest` asserted this interaction and stayed green
+throughout, for two reasons that generalise well beyond this popover:
+
+1. **`debugClickDisclosure()` called `disclosureClicked()`** - the row's own
+   private helper - rather than the button whose `action` reaches it. AGENTS.md
+   already names this shape ("a `debug*` hook must enter where the real event
+   enters, not one call inside it") and the same file had already been bitten by
+   it once, in `debugSetHovering`. The hook was asserting the handler, never the
+   wiring.
+2. **It mounts `content.view` in its own `OffScreenProbe` window and never
+   builds the real `HelmBarPanel`.** Gesture arbitration is a property of real
+   event dispatch through a real window; a suite that never dispatches an event
+   cannot observe it, wherever it mounts the view.
+
+`NotificationRowInteractionSelfTest` (`FM_RUN_NOTIFICATION_ROW_INTERACTION_TESTS`,
+listed in `NEEDS_SESSION`) closes both. Every check opens the **real**
+`HelmBarPanel` under the real bell and posts real `NSEvent`s to the app's own
+event queue, reading the result off the store or the controller rather than off
+the view it clicked. It covers the chevron (expand *and* collapse), the
+hover-reveal action button, a child row's own action, and - the other direction,
+which is what keeps the arbitration honest - that a click on the row *body*
+still activates the row.
+
+Two things it cost to get right, both recorded in the file itself because they
+read exactly like a half-working feature:
+
+- **An `NSButton`'s own tracking loop (`NSCell.trackMouse`) dequeues its
+  matching mouse-up from the app's event queue**, so a `window.sendEvent`
+  mouse-down/up *pair* never fires the button - the events have to be
+  `postEvent`ed and pumped. And the first `nextEvent(matching:)` of a process
+  yields nothing useful, so without an explicit prime the *first* real click of
+  a run is silently dropped and every later one works.
+- **Every interaction here ends in `reload()`**, which rebuilds the row views,
+  and an expansion also resizes the panel - which moves every row in *window*
+  coordinates, because a window's origin is its bottom-left. A point captured
+  before a click is aimed at the wrong place afterwards. The suite re-reads the
+  live row before every click.
+
+### Verification
+
+- **Reproduced first**, against the real panel window rather than from the
+  code: a temporary probe (reverted before commit) opened the real
+  `HelmBarPanel`, confirmed `hitTest` at the chevron returns the right
+  `NSButton` with the right `target`/`action`, and then showed a real click
+  doing nothing - while the same click at the row's centre activated the row.
+  Removing the row's recognizer made the chevron work immediately.
+- **Injection confirmed**: deleting the one line that installs the delegate
+  failed six checks by name, including "a real click on the chevron expands the
+  row", "a real click on the action button runs the entry's primary action" and
+  "that recognizer has a delegate". The row-body check correctly kept passing,
+  which is the discriminating power the other direction needs.
+- The full suite was run before and after.
