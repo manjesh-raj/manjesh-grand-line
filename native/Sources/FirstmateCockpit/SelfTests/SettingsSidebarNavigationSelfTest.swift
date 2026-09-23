@@ -69,7 +69,11 @@ enum SettingsSidebarNavigationSelfTest {
                       checkTheSelectedRowIsVisiblyDifferent,
                       checkTheDrillHeaderNamesTheCategory,
                       checkEveryCategorysControlsStillWork,
-                      checkNoPaneCapsTheWindow] {
+                      checkNoPaneCapsTheWindow,
+                      checkEveryThemeSeparatesTheBandFromTheGround,
+                      checkTheBandIsPaintedApartFromTheContent,
+                      checkTheDividerIsPainted,
+                      checkEveryRowCarriesItsOwnColouredTile] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -508,6 +512,357 @@ enum SettingsSidebarNavigationSelfTest {
         }
         if ok { print("  ok   every pane holds 820pt and 1600pt, with the card column capped") }
     }
+
+    // MARK: 7. The nav column reads as its own region
+
+    /// The token half, swept over **every** palette rather than a sample.
+    ///
+    /// Cheap enough to be exhaustive, and exhaustive is what matters here:
+    /// the defect this guards is "the band and the ground are the same
+    /// colour", and a palette-derived tone can collapse in one family while
+    /// every other family stays fine. The pixel check below proves the tone
+    /// actually reaches the screen; this one proves there is a tone to reach
+    /// it in all twenty-six.
+    private static func checkEveryThemeSeparatesTheBandFromTheGround(_ ok: inout Bool) {
+        print("\n-- every palette's side-panel tone is a real step off its own page ground --")
+        var worst = (id: "", ratio: Double.greatestFiniteMagnitude)
+        for theme in HelmTheme.allThemes {
+            let ground = HelmTheme.nsColor(theme.backgroundHex)
+            let band = HelmTheme.sidePanelFill(theme)
+            let ratio = HelmContrast.ratio(band, ground)
+            if ratio < worst.ratio { worst = (theme.id, ratio) }
+            // A hair under the floor, because the bisection lands *on* it and
+            // the last step is a float.
+            if ratio < HelmTheme.sidePanelSeparation - 0.001 {
+                print(String(format: "  FAIL %@: the band measures %.4f against its own ground - below the %.2f floor",
+                             theme.id, ratio, HelmTheme.sidePanelSeparation))
+                ok = false
+            }
+            // The other direction, and the one a naive "blend the card into
+            // the ground" derivation would fail: the tone must not simply be
+            // the card either, or a palette where `chromeBackgroundHex ==
+            // backgroundHex` renders the band invisible again.
+            if HelmContrast.ratio(band, HelmTheme.nsColor(theme.chromeBackgroundHex)) < 1.001,
+               theme.chromeBackgroundHex == theme.backgroundHex {
+                print("  FAIL \(theme.id): the band resolved to the card, which in this palette is the ground")
+                ok = false
+            }
+        }
+        print(String(format: "  ok   %d palettes; the closest is %@ at %.4f (floor %.2f)",
+                     HelmTheme.allThemes.count, worst.id, worst.ratio, HelmTheme.sidePanelSeparation))
+    }
+
+    /// The painted half: a real Settings page rendered off-screen, with the
+    /// band's own pixels and the content region's own pixels read back out of
+    /// the bitmap.
+    ///
+    /// **Assert what is painted, not what was computed.** A check that only
+    /// read `HelmTheme.sidePanelFill` would pass with the band view deleted,
+    /// never added to the page, left transparent, or covered by the scroll
+    /// view - which is the whole defect being fixed. So this samples the
+    /// render, and its vacuity guards assert that each sample really landed
+    /// in the region it claims.
+    private static func checkTheBandIsPaintedApartFromTheContent(_ ok: inout Bool) {
+        print("\n-- the nav column's band and the content region are painted different colours --")
+        let restore = ThemeManager.shared.theme
+        defer { ThemeManager.shared.setTheme(restore) }
+
+        // One dark and one light out of several families, plus Daylight and
+        // Dusk, so a fix that only works in one register or one family fails
+        // here. Not all twenty-six: each entry is a full page render, and the
+        // token sweep above already covers every palette.
+        let sampled = ["daylight", "dusk", "helm-dark", "helm-light",
+                       "nord-polar", "nord-snow", "dracula", "alucard",
+                       "one-dark", "one-light", "oxocarbon-dark", "oxocarbon-light",
+                       "gruvbox-light", "tokyo-night-dark", "tokyo-night-light"]
+        var measured = 0
+        for id in sampled {
+            guard let theme = HelmTheme.theme(id: id) else {
+                print("  FAIL no such theme: \(id)")
+                ok = false
+                continue
+            }
+            // Mandatory around a repeated AppKit construct/teardown loop in a
+            // headless suite: nothing turns the run loop, so removed views are
+            // never drained.
+            autoreleasepool {
+                ThemeManager.shared.setTheme(theme)
+                let settings = makeSettings()
+                let window = mount(settings)
+                defer { window.contentView = nil }
+                let root = settings.view
+                root.layoutSubtreeIfNeeded()
+
+                guard root.bounds.width > 10, root.bounds.height > 10 else {
+                    print("  FAIL \(id): the page never laid out (\(root.bounds)) - the sample would be vacuous")
+                    ok = false
+                    return
+                }
+                guard let rep = root.bitmapImageRepForCachingDisplay(in: root.bounds) else {
+                    print("  FAIL \(id): could not build a bitmap rep")
+                    ok = false
+                    return
+                }
+                root.cacheDisplay(in: root.bounds, to: rep)
+
+                // The rep is measured in **pixels**, not points - a factor of
+                // two on a retina machine, so sampling point coordinates
+                // without this lands in the top-left quadrant of the render.
+                let scaleX = CGFloat(rep.pixelsWide) / root.bounds.width
+                let scaleY = CGFloat(rep.pixelsHigh) / root.bounds.height
+                let band = settings.debugSidebarPanel.frame
+                let cards = settings.debugPageContainerFrameInRoot
+
+                // Both samples share one y: the bare strip above the toolbar,
+                // which is page ground on the content side at every window
+                // size and is inside the band on the column side, because the
+                // band runs the page's full height. One y means the comparison
+                // cannot be an artefact of two different rows.
+                let y = root.bounds.maxY - HelmMetrics.s3 / 2
+                let bandX = band.midX
+                let contentX = band.maxX + HelmMetrics.s5
+
+                // `SettingsController`'s root is a plain unflipped `NSView`,
+                // so the rep's row 0 is the view's top edge - the row mirrors.
+                func sample(_ x: CGFloat) -> NSColor? {
+                    let px = Int(x * scaleX)
+                    let py = Int((root.bounds.height - y) * scaleY)
+                    guard px >= 0, py >= 0, px < rep.pixelsWide, py < rep.pixelsHigh else { return nil }
+                    return rep.colorAt(x: px, y: py)
+                }
+
+                // Discriminating power, before any colour is compared.
+                guard band.width > 40, band.height > root.bounds.height - 1,
+                      contentX < root.bounds.maxX,
+                      !cards.insetBy(dx: -2, dy: -2).contains(NSPoint(x: contentX, y: y)) else {
+                    print(String(format: "  FAIL %@: the sample points are not in the regions they claim"
+                                 + " (band %@, content x %.1f, cards %@)",
+                                 id, NSStringFromRect(band), contentX, NSStringFromRect(cards)))
+                    ok = false
+                    return
+                }
+                guard let bandPixel = sample(bandX), let contentPixel = sample(contentX) else {
+                    print("  FAIL \(id): a sample point fell outside the rep")
+                    ok = false
+                    return
+                }
+
+                // Compared in **`rep.colorSpace`**, never by converting the
+                // samples into sRGB: `bitmapImageRepForCachingDisplay` returns
+                // a rep in the display's own profile inside a real window, and
+                // the sRGB conversion is only correct outside one.
+                guard let expectedBand = HelmTheme.sidePanelFill(theme).usingColorSpace(rep.colorSpace),
+                      let expectedGround = HelmTheme.nsColor(theme.backgroundHex).usingColorSpace(rep.colorSpace) else {
+                    print("  FAIL \(id): could not express the expected colours in the rep's space")
+                    ok = false
+                    return
+                }
+
+                // 1. The content side really is the page ground, so "they
+                //    differ" below is a claim about the band and not about
+                //    having sampled some card.
+                if distance(contentPixel, expectedGround) >= 0.06 {
+                    print(String(format: "  FAIL %@: the content sample is %.4f off the palette's ground - not ground",
+                                 id, distance(contentPixel, expectedGround)))
+                    ok = false
+                    return
+                }
+                // 2. The band side really is the derived tone - i.e. the view
+                //    exists, is in the tree, is opaque and is on top of the
+                //    ground rather than under the scroll view.
+                if distance(bandPixel, expectedBand) >= 0.06 {
+                    print(String(format: "  FAIL %@: the band sample is %.4f off `sidePanelFill` -"
+                                 + " the band is not being painted", id, distance(bandPixel, expectedBand)))
+                    ok = false
+                    return
+                }
+                // 3. And the two are a real, measurable distance apart. This
+                //    is the captain's own report: "there is literally nothing
+                //    ... which differentiate".
+                //
+                //    **Measured on the rep's own raw components, never via
+                //    `usingColorSpace(.sRGB)`** - AGENTS.md's rule, and it
+                //    bites here rather than theoretically. `HelmContrast`'s
+                //    `NSColor` overload converts to sRGB internally, so the
+                //    tuple overload is what keeps this in the rep's space. An
+                //    earlier revision of this check used the `NSColor` one and
+                //    reported 1.0597 for Daylight and 1.1305 for Dusk against
+                //    a token separation of exactly 1.0800 in both - i.e. the
+                //    display profile deflating every light palette below the
+                //    floor and inflating every dark one above it, which reads
+                //    as a real colour bug in eight themes and as a suspiciously
+                //    generous margin in seven. On raw components the same two
+                //    measure 1.0753 and 1.0801.
+                //
+                //    The floor carries a 0.01 allowance for the bitmap's 8-bit
+                //    quantisation, which is the whole of the remaining gap
+                //    (worst measured: Daylight at 1.0753). The *perceptual*
+                //    1.08 in true sRGB is not weakened by that - it is
+                //    asserted exhaustively, on all twenty-six palettes, by
+                //    `checkEveryThemeSeparatesTheBandFromTheGround` above.
+                //    This check's job is that the render actually paints it.
+                func raw(_ color: NSColor) -> (Double, Double, Double) {
+                    (Double(color.redComponent), Double(color.greenComponent), Double(color.blueComponent))
+                }
+                let ratio = HelmContrast.ratio(raw(bandPixel), raw(contentPixel))
+                if ratio < HelmTheme.sidePanelSeparation - 0.01 {
+                    print(String(format: "  FAIL %@: the painted band and the painted content measure %.4f apart,"
+                                 + " below the %.2f floor - they read as one flat surface",
+                                 id, ratio, HelmTheme.sidePanelSeparation))
+                    ok = false
+                    return
+                }
+                measured += 1
+                print(String(format: "  ok   %@: band/content %.4f apart", id, ratio))
+            }
+        }
+        // The loop itself must not be able to measure nothing.
+        if measured < sampled.count {
+            print("  FAIL only \(measured) of \(sampled.count) palettes were actually measured")
+            ok = false
+        }
+    }
+
+    /// The hairline, which is what carries the boundary in a palette that
+    /// lands near the separation floor.
+    private static func checkTheDividerIsPainted(_ ok: inout Bool) {
+        print("\n-- a hairline closes the band, and is its own colour --")
+        let restore = ThemeManager.shared.theme
+        defer { ThemeManager.shared.setTheme(restore) }
+
+        for id in ["dusk", "daylight", "helm-dark", "helm-light"] {
+            guard let theme = HelmTheme.theme(id: id) else { continue }
+            autoreleasepool {
+                ThemeManager.shared.setTheme(theme)
+                let settings = makeSettings()
+                let window = mount(settings)
+                defer { window.contentView = nil }
+                settings.view.layoutSubtreeIfNeeded()
+
+                let edge = settings.debugSidebarEdge
+                let band = settings.debugSidebarPanel
+                // It exists, it is in the page, it is a real hairline and it
+                // sits exactly on the band's trailing edge.
+                guard edge.superview != nil, !edge.isHidden,
+                      edge.frame.width >= 1, edge.frame.height > 100,
+                      abs(edge.frame.minX - band.frame.maxX) < 0.6 else {
+                    print("  FAIL \(id): the divider is missing or misplaced"
+                          + " (edge \(NSStringFromRect(edge.frame)), band \(NSStringFromRect(band.frame)))")
+                    ok = false
+                    return
+                }
+                guard let painted = edge.layer?.backgroundColor, painted.alpha > 0.2 else {
+                    print("  FAIL \(id): the divider has no fill")
+                    ok = false
+                    return
+                }
+                // And it is not simply the band repainted, which would leave
+                // no boundary at all.
+                let edgeColor = NSColor(cgColor: painted)?.usingColorSpace(.sRGB)
+                let bandColor = HelmTheme.sidePanelFill(theme).usingColorSpace(.sRGB)
+                if let a = edgeColor, let b = bandColor, distance(a, b) < 0.03 {
+                    print("  FAIL \(id): the divider is painted the same colour as the band")
+                    ok = false
+                    return
+                }
+                print("  ok   \(id): divider at x \(fmt(edge.frame.minX)), alpha \(fmt(painted.alpha))")
+            }
+        }
+    }
+
+    // MARK: 8. The rows carry colour
+
+    /// Every nav row is led by a colour tile, and the tiles are not all one
+    /// colour - which is the difference between a column you scan and a list
+    /// you read.
+    private static func checkEveryRowCarriesItsOwnColouredTile(_ ok: inout Bool) {
+        print("\n-- every category's row is led by an `IconTileView` in that page's own hue --")
+        let restore = ThemeManager.shared.theme
+        defer { ThemeManager.shared.setTheme(restore) }
+
+        for id in ["dusk", "daylight"] {
+            guard let theme = HelmTheme.theme(id: id) else { continue }
+            autoreleasepool {
+                ThemeManager.shared.setTheme(theme)
+                let settings = makeSettings()
+                let window = mount(settings)
+                defer { window.contentView = nil }
+                settings.view.layoutSubtreeIfNeeded()
+
+                var fills: [(id: String, color: NSColor)] = []
+                for category in SettingsController.Category.allCases {
+                    guard let rowView = row(for: category, in: settings) else {
+                        print("  FAIL \(id): no row for \(category.rawValue)")
+                        ok = false
+                        continue
+                    }
+                    let tiles = rowView.subviews.compactMap { $0 as? IconTileView }
+                    guard tiles.count == 1, let tile = tiles.first else {
+                        print("  FAIL \(id): \(category.rawValue)'s row carries \(tiles.count) tiles, wanted 1")
+                        ok = false
+                        continue
+                    }
+                    // The glyph really was built - a tile with no image is a
+                    // coloured square, not an icon.
+                    if tile.debugRenderedImage == nil {
+                        print("  FAIL \(id): \(category.rawValue)'s tile rendered no symbol")
+                        ok = false
+                    }
+                    guard let fill = tile.layer?.backgroundColor,
+                          let color = NSColor(cgColor: fill)?.usingColorSpace(.sRGB) else {
+                        print("  FAIL \(id): \(category.rawValue)'s tile has no fill")
+                        ok = false
+                        continue
+                    }
+                    fills.append((category.rawValue, color))
+                }
+
+                guard fills.count == SettingsController.Category.allCases.count else { return }
+                // Seven tints across eight pages, so seven distinct fills is
+                // the expected answer and anything less means two pages
+                // collapsed onto one hue (or the tint stopped being read).
+                var distinct: [NSColor] = []
+                for entry in fills where !distinct.contains(where: { distance($0, entry.color) < 0.04 }) {
+                    distinct.append(entry.color)
+                }
+                if distinct.count < 6 {
+                    print("  FAIL \(id): the eight rows paint only \(distinct.count) distinct tiles")
+                    ok = false
+                    return
+                }
+
+                // **The assertion that actually encodes the requirement.**
+                // Eight pages share seven tints and two of those tints are the
+                // same hue in some palettes, so a distinct *count* is not the
+                // goal - a column the eye can scan is, and that only breaks
+                // when two rows read together are one colour. `allCases` is
+                // the sidebar's own order (its sections are built by walking
+                // `NavGroup` over it), so consecutive entries are consecutive
+                // rows.
+                var adjacentClash: String?
+                for pair in zip(fills, fills.dropFirst())
+                where distance(pair.0.color, pair.1.color) < 0.04 {
+                    adjacentClash = "\(pair.0.id) and \(pair.1.id)"
+                    break
+                }
+                if let adjacentClash {
+                    print("  FAIL \(id): adjacent rows \(adjacentClash) paint the same tile -"
+                          + " the column stops being scannable exactly there")
+                    ok = false
+                    return
+                }
+                print("  ok   \(id): \(fills.count) tiles, \(distinct.count) distinct hues,"
+                      + " no two adjacent rows alike")
+            }
+        }
+    }
+
+    private static func distance(_ a: NSColor, _ b: NSColor) -> CGFloat {
+        abs(a.redComponent - b.redComponent)
+            + abs(a.greenComponent - b.greenComponent)
+            + abs(a.blueComponent - b.blueComponent)
+    }
+
 }
 
 #endif

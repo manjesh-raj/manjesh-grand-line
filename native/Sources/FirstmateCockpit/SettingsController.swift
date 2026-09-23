@@ -119,17 +119,60 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             }
         }
 
-        /// The hero tile's hue. A `HelmTint`, never one of the reference's
-        /// literal hexes - those are illustrative, and a hardcoded colour
-        /// would be off-palette in twenty-five of the twenty-six themes.
+        /// The hue this page carries - the hero tile's, and (since
+        /// `fm/grandline-settings-sidebar-differentiation-fix`) its sidebar
+        /// row's tile too, so a row and the page it opens are one colour as
+        /// well as one symbol.
+        ///
+        /// A `HelmTint`, never one of the reference's literal hexes - those
+        /// are illustrative, and a hardcoded colour would be off-palette in
+        /// twenty-five of the twenty-six themes.
+        ///
+        /// **Eight pages, seven tints, so hues repeat - and what matters is
+        /// *where*.** A count of distinct colours is not the goal; a column
+        /// you can scan is, and that only breaks when two rows the eye takes
+        /// in together are the same colour. So every repeat is placed across
+        /// a group boundary, with rows in between:
+        ///
+        ///   - `.violet` is Appearance (first row of Personalize) and
+        ///     Security (second row of System), three rows and two headers
+        ///     apart.
+        ///   - `.accent` and `.info` are **the same hue in some palettes**
+        ///     (measured: Dusk resolves both to `182/207/290`, its accent
+        ///     being its own ANSI blue), so the two pages carrying them - Menu
+        ///     Bar and App Intents - are likewise in different groups with
+        ///     Briefings and Google Accounts between them. This is why
+        ///     Terminal is not `.accent`: Terminal sits directly under Menu
+        ///     Bar, and in Dusk the two tiles would have been identical.
+        ///
+        /// `checkEveryRowCarriesItsOwnColouredTile` asserts the placement
+        /// rule (no two *adjacent* rows paint the same tile) rather than a
+        /// distinct count, because the placement rule is the real
+        /// requirement.
+        ///
+        /// A `HelmTint`, never one of the reference's literal hexes - those
+        /// are illustrative, and a hardcoded colour would be off-palette in
+        /// twenty-five of the twenty-six themes. The rest map onto the
+        /// reference's own identity: Menu Bar blue, Briefings orange, Google
+        /// Accounts red, Backup teal-green, Terminal slate.
+        ///
+        /// **`.terminal` is deliberately `.neutral`**, which AGENTS.md's
+        /// colour rules otherwise warn off: washed as a tinted surface
+        /// `.neutral` resolves to `chromeInkHex` and so lands a few percent
+        /// off full ink rather than off the surface, which renders heavy.
+        /// That warning is about `.neutral` as the *identity-less default* -
+        /// the commonest chip on a page becoming its heaviest. Here it is one
+        /// deliberate row of eight, drawing the reference's own dark slate
+        /// Terminal tile, and `IconTileView` still corrects the glyph on it to
+        /// the 3:1 icon floor.
         var tint: HelmTint {
             switch self {
             case .appearance: return .violet
-            case .terminal: return .warn
+            case .terminal: return .neutral
             case .menuBar: return .info
-            case .briefings: return .accent
-            case .gmail: return .violet
-            case .intents: return .info
+            case .briefings: return .warn
+            case .gmail: return .critical
+            case .intents: return .accent
             case .security: return .violet
             case .backup: return .good
             }
@@ -303,6 +346,25 @@ final class SettingsController: NSViewController, DaylightDrillActions {
 
     /// The nav column: a search field, an identity row, the grouped page list
     /// and a footer - the reference's sidebar, in that order.
+    /// The toned band behind the nav column, and the hairline closing it.
+    ///
+    /// `fm/grandline-settings-sidebar-differentiation-fix`: the captain's
+    /// report was that the column and the content read as "literally nothing,
+    /// no proper blocks at all which differentiate". They did:
+    /// `HelmPageSidebar` is `.plain` here, which paints no fill of its own, so
+    /// both regions were the page ground and the boundary was whatever the
+    /// rows' own left edges implied.
+    ///
+    /// **Why this is the page's view and not `HelmPageSidebar.Surface.panel`.**
+    /// That case exists and would have been one word, but it paints the *nav
+    /// list* as a card - and the region the reference tones is the whole
+    /// column, the search field and the identity row above the list and the
+    /// version footer below it included. A `.panel` sidebar would have drawn a
+    /// card around the middle third of the band and left the rest on the page
+    /// ground, which is a different (and worse) shape than the one being
+    /// asked for. The band is the page's own composition, so the page owns it.
+    private let sidebarPanel = NSView()
+    private let sidebarEdge = NSView()
     private let sidebarColumn = NSStackView()
     private let searchField = HelmSearchField(placeholder: "Search settings")
     private let sidebar = HelmPageSidebar()
@@ -492,11 +554,44 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         scroll.translatesAutoresizingMaskIntoConstraints = false
         scrollView = scroll
 
+        // Added first, so they sit under the column rather than over it.
+        // Gotcha (11): both are bare `NSView()`s given manual constraints, so
+        // both have to clear `translatesAutoresizingMaskIntoConstraints`
+        // before those constraints go on - an omission here synthesises a
+        // required 0x0 frame and fights the fills below.
+        sidebarPanel.wantsLayer = true
+        sidebarPanel.translatesAutoresizingMaskIntoConstraints = false
+        sidebarEdge.wantsLayer = true
+        sidebarEdge.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(sidebarPanel)
+        root.addSubview(sidebarEdge)
         root.addSubview(sidebarColumn)
         root.addSubview(toolbar)
         root.addSubview(scroll)
 
         NSLayoutConstraint.activate([
+            // The band runs the page's full height and from its very edge, so
+            // it reads as a region of the window rather than as a card that
+            // happens to be tall. Its trailing edge lands a `pageGutter` past
+            // the column, which is exactly where the content's own cards and
+            // toolbar begin (both are inset `pageGutter + width + s5`) - so
+            // the divider sits on the content's visual left edge and the
+            // column keeps symmetric 24pt padding inside the band.
+            //
+            // Nothing here is a width floor: every constraint ties to `root`
+            // or to the column's own already-fixed width, so gotcha (13)'s
+            // "a required content constraint over priority 500 resizes the
+            // window" does not apply.
+            sidebarPanel.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            sidebarPanel.topAnchor.constraint(equalTo: root.topAnchor),
+            sidebarPanel.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            sidebarPanel.trailingAnchor.constraint(equalTo: sidebarColumn.trailingAnchor,
+                                                   constant: HelmMetrics.pageGutter),
+            sidebarEdge.leadingAnchor.constraint(equalTo: sidebarPanel.trailingAnchor),
+            sidebarEdge.widthAnchor.constraint(equalToConstant: 1),
+            sidebarEdge.topAnchor.constraint(equalTo: root.topAnchor),
+            sidebarEdge.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+
             // **The nav column sits outside the scroll view**, so scrolling a
             // long page (Terminal is nine recorders) never carries the page
             // list off the top with it.
@@ -651,7 +746,12 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             }
             guard !matches.isEmpty else { continue }
             sections.append(HelmPageSidebar.Section(header: group.title, rows: matches.map {
-                HelmPageSidebar.Row(id: $0.rawValue, indicator: .symbol($0.symbol),
+                // `.tile`, not `.symbol`: eight monochrome glyphs in one muted
+                // ink are a list you have to read, and a column you can scan
+                // is the reference's whole point. The hue is the page's own
+                // `tint`, so a row and the hero it opens match.
+                HelmPageSidebar.Row(id: $0.rawValue,
+                                    indicator: .tile(symbol: $0.symbol, tint: $0.tint),
                                     title: $0.title, showsCount: false)
             }))
         }
@@ -2320,6 +2420,14 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let line = HelmTheme.nsColor(theme.chromeLineHex)
 
+        // The band and its edge. `sidePanelFill` is derived from the page
+        // ground rather than blended out of the card, because
+        // `chromeBackgroundHex == backgroundHex` in several palettes and a
+        // card/ground blend is the ground in those - see that method's own
+        // note. Fill only: nothing here is drawn as text.
+        sidebarPanel.layer?.backgroundColor = HelmTheme.sidePanelFill(theme).cgColor
+        sidebarEdge.layer?.backgroundColor = HelmTheme.sidePanelEdge(theme).cgColor
+
         sidebar.applyTheme(theme)
         searchField.applyTheme(theme)
         identityAvatar.layer?.cornerRadius = HelmMetrics.tileBase / 2
@@ -2369,6 +2477,17 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// The left navigation column, so a suite can read its selection and
     /// drive a real row press rather than only calling `select(_:)`.
     var debugSidebar: HelmPageSidebar { sidebar }
+    /// The toned band behind the nav column and the hairline closing it, so a
+    /// suite can find where to sample a real render rather than guessing at
+    /// the page's own geometry.
+    var debugSidebarPanel: NSView { sidebarPanel }
+    /// The detail column's own content stack, in the page root's coordinates -
+    /// what a render probe needs in order to sample page ground that is
+    /// genuinely outside every card.
+    var debugPageContainerFrameInRoot: NSRect {
+        pageContainer.convert(pageContainer.bounds, to: view)
+    }
+    var debugSidebarEdge: NSView { sidebarEdge }
     var debugSearchField: HelmSearchField { searchField }
     var debugSelectedCategory: Category { selectedCategory }
     /// Which categories the sidebar currently offers, in its own order -

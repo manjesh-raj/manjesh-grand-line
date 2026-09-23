@@ -186,6 +186,113 @@ struct HelmTheme {
     /// floor the next time a palette is added or a token retuned.
     static let baseMutedAlpha: CGFloat = 0.7
 
+    // MARK: - The side-panel tone
+
+    /// How far apart a page's nav column and the page ground have to measure
+    /// before the two read as two regions rather than one flat surface.
+    ///
+    /// **1.08:1, and it is this app's own existing step rather than a number
+    /// picked here.** Daylight's `card` over its `paper` (`FFFFFF` over
+    /// `F5F2EA`) measures 1.08:1 and Dusk's measures 1.12:1 - that pair is
+    /// what already carries "cards float on a ground" in the two palettes
+    /// this design system was actually specified against, so a nav column
+    /// separated by the same step sits on the scale the rest of the app
+    /// already uses instead of introducing a second, louder one.
+    static let sidePanelSeparation: Double = 1.08
+
+    /// The fill a **page-scoped nav column** paints behind itself, so the
+    /// column and the content beside it read as two regions.
+    ///
+    /// **Why this is derived rather than a token.** The obvious spelling is
+    /// "blend the card into the page ground", which is what the captain's
+    /// reference does (`--side: color-mix(in srgb, var(--panel) 55%,
+    /// var(--bg))`). That spelling cannot work here:
+    /// `chromeBackgroundHex == backgroundHex` in several of the palettes -
+    /// `HelmCard.borderAlpha`'s own comment names `gruvbox-light`,
+    /// `tokyo-night-dark` and `tokyo-night-light`, and `helm-dark` matched
+    /// the two deliberately when the terminal background was aligned to the
+    /// chrome - so in those themes a card/ground blend is the ground, at any
+    /// mix fraction, and the column stays invisible. That is precisely the
+    /// defect this exists to fix, so the derivation must not be able to
+    /// reproduce it in any palette.
+    ///
+    /// So the tone is derived from the page ground alone, stepped toward
+    /// whichever of black/white reads as "a surface above this one" for the
+    /// theme's own register - lighten on a dark palette, darken on a light
+    /// one, the same direction `NSColor.hoverShifted(by:forMode:)` already
+    /// picks for a hover shade. The fraction is **bisected to the smallest
+    /// one that clears `sidePanelSeparation`** rather than fixed, for the
+    /// same reason `mutedAlpha(for:)` bisects instead of shipping a flat
+    /// 0.7: a fixed fraction against a near-white paper and against a
+    /// near-black one do not land on the same perceptual step, so a constant
+    /// that looks right in one register is either invisible or heavy-handed
+    /// in the other.
+    ///
+    /// The result is a *fill*, never text. Anything drawn on it goes through
+    /// `HelmContrast` like any other surface (AGENTS.md's colour rules).
+    static func sidePanelFill(_ theme: HelmTheme) -> NSColor {
+        if let cached = sidePanelCache.value(for: theme.id) { return cached }
+        let resolved = computeSidePanelFill(theme)
+        sidePanelCache.store(resolved, for: theme.id)
+        return resolved
+    }
+
+    private static let sidePanelCache = SidePanelFillCache()
+
+    /// The largest step this is ever allowed to take. A palette whose ground
+    /// is already a hair from its endpoint (pure white paper, pure black
+    /// ground) still resolves - the endpoint itself clears the floor - so
+    /// this cap is a guard against a pathological palette rather than a
+    /// value any real theme reaches.
+    private static let maxSidePanelStep: CGFloat = 0.5
+
+    private static func computeSidePanelFill(_ theme: HelmTheme) -> NSColor {
+        let ground = nsColor(theme.backgroundHex)
+        let groundComponents = HelmContrast.components(ground)
+        let endpoint: (Double, Double, Double) = theme.mode == .dark ? (1, 1, 1) : (0, 0, 0)
+
+        // `HelmContrast.mix(a, b, t)` weights its **first** argument by `t`,
+        // so the endpoint goes first and `fraction` is how much of it shows.
+        // Spelling this the other way round inverts the bisection below -
+        // measured, it resolved every palette to the pure endpoint (a white
+        // band on Nord Polar, a black one on Nord Snow) and the render check
+        // in `ThemeFamilyRenderSelfTest` is what caught it.
+        func stepped(_ fraction: CGFloat) -> (Double, Double, Double) {
+            HelmContrast.mix(endpoint, groundComponents, Double(fraction))
+        }
+        func clears(_ fraction: CGFloat) -> Bool {
+            HelmContrast.ratio(stepped(fraction), groundComponents) >= sidePanelSeparation
+        }
+
+        // Contrast against the ground rises monotonically with the step - more
+        // of the endpoint showing means further from where we started - so a
+        // plain bisection finds the minimum directly, exactly as
+        // `computeMutedAlpha` does for its own alpha.
+        guard clears(maxSidePanelStep) else { return HelmContrast.color(stepped(maxSidePanelStep)) }
+        var low: CGFloat = 0
+        var high = maxSidePanelStep
+        for _ in 0..<24 {
+            let mid = (low + high) / 2
+            if clears(mid) { high = mid } else { low = mid }
+        }
+        return HelmContrast.color(stepped(high))
+    }
+
+    /// The edge between a nav column and the content beside it.
+    ///
+    /// The colour difference alone carries the boundary in most palettes, but
+    /// `sidePanelSeparation` is deliberately a *minimum* - in a theme that
+    /// lands near it the two tones are a step apart and little more, which is
+    /// the case a hairline exists for. Same tone and the same damping every
+    /// other 1px edge in this app draws, through `HelmCard`'s own constants
+    /// rather than a second copy of them, so the column's edge and a card's
+    /// edge are one idiom and cannot drift apart.
+    static func sidePanelEdge(_ theme: HelmTheme) -> NSColor {
+        theme.isDaylight
+            ? nsColor(theme.daylightTokens.hair)
+            : nsColor(theme.chromeLineHex).withAlphaComponent(HelmCard.borderAlpha)
+    }
+
     private static let mutedAlphaCache = MutedAlphaCache()
 
     static func mutedInk(_ theme: HelmTheme) -> NSColor {
@@ -239,6 +346,22 @@ struct HelmTheme {
     /// Tiny thread-safe memo - `mutedInk` is called for effectively every
     /// muted label on every re-theme, and the bisection above, while cheap,
     /// has no reason to run more than once per palette.
+    /// Same shape as `MutedAlphaCache` below and for the same reason: the
+    /// derivation bisects, and a fill is asked for on every repaint of every
+    /// themed column.
+    private final class SidePanelFillCache {
+        private var storage: [String: NSColor] = [:]
+        private let lock = NSLock()
+        func value(for id: String) -> NSColor? {
+            lock.lock(); defer { lock.unlock() }
+            return storage[id]
+        }
+        func store(_ value: NSColor, for id: String) {
+            lock.lock(); defer { lock.unlock() }
+            storage[id] = value
+        }
+    }
+
     private final class MutedAlphaCache {
         private var storage: [String: CGFloat] = [:]
         private let lock = NSLock()

@@ -510,3 +510,83 @@ Each injection was made by copying the file aside and editing it, never `git sta
 
 The live half. This machine's agent shell has neither Screen Recording nor Accessibility permission, so there is no screenshot of the captain's own running instance - the renders behind the layout claims above are `cacheDisplay` captures of a real `NSWindow`, read back as PNGs, which is this repository's documented substitute.
 The system's own light/dark switch was not triggered: the follower's decision is asserted directly and its observer registration is asserted by construction, but "macOS switched at sunset and the app followed" is a captain-side check.
+
+## Settings: the nav column had no edge, and its rows had no colour
+
+`fm/grandline-settings-sidebar-differentiation-fix`, following PR #457.
+
+The captain's report was that the sidebar and the content column had "literally nothing, no proper blocks at all which differentiate", against a reference that separates them with "a very minute color change".
+Both halves of that were true and neither was a layout bug.
+
+Settings mounts the shared `HelmPageSidebar` at its default `Surface.plain`, which paints no fill of its own.
+Every other page that uses the component wants exactly that, so the column sat transparent on the page ground - and the content column is that same ground.
+Two regions, one colour, no edge.
+
+### The tone is derived, because the obvious blend cannot work here
+
+The reference states the relationship in its own CSS: `--side: color-mix(in srgb, var(--panel) 55%, var(--bg))`, a tone between the panel and the page.
+Spelled that way here it resolves to nothing at all.
+`chromeBackgroundHex == backgroundHex` in several palettes - `HelmCard.borderAlpha`'s own comment names `gruvbox-light`, `tokyo-night-dark` and `tokyo-night-light`, and `helm-dark` matched the two deliberately when the terminal background was aligned to the chrome - so in those themes a card/ground blend *is* the ground, at any mix fraction.
+A derivation that can reproduce the defect in four palettes is not a fix.
+
+`HelmTheme.sidePanelFill` therefore derives from the page ground alone, stepping it toward whichever of black/white reads as "a surface above this one" for that theme's register - lighten on dark, darken on light, the direction `NSColor.hoverShifted(by:forMode:)` already picks for a hover shade.
+The step is **bisected to the smallest fraction clearing `sidePanelSeparation` (1.08:1)** rather than fixed, the same shape and for the same reason as `HelmTheme.mutedAlpha(for:)`: a flat fraction against near-white paper and against a near-black ground do not land on the same perceptual step.
+
+1.08 is not a new number.
+Daylight's `card` over its `paper` measures 1.08:1 and Dusk's measures 1.12:1, and that pair is what already carries "cards float on a ground" in the two palettes this design system was specified against.
+`HelmTheme.sidePanelEdge` closes the band with the same hairline tone and the same damping `HelmCard.applyCardSurface` uses, because the separation is a *minimum* and a palette landing on it needs the edge to carry the boundary.
+
+The band is the page's own view, not `HelmPageSidebar.Surface.panel`.
+That case exists and would have been one word, but it paints the nav *list* as a card, and the region the reference tones is the whole column - the search field and identity row above the list and the version footer below it included.
+
+### The rows
+
+`HelmPageSidebar.RowIndicator` gained `.tile(symbol:tint:)`, rendering through `IconTileView` - this app's one colour-tile component, already drawing exactly this on the Updates page's tool rows.
+This is the same opt-in widening `Surface`, `CountStyle` and `.dot` already are, and the file's header records that shape deliberately; the other six callers construct no tiles and render byte-identically.
+A `.dot` is an identity marker for a record the captain named; a `.tile` is a destination's own standing colour.
+
+Eight pages share seven `HelmTint` cases, so hues repeat, and **where** they repeat is the whole of the design.
+A distinct count is not the goal - a column you can scan is, and that only breaks when two rows the eye takes in together are one colour.
+Both repeats are therefore placed across a group boundary with rows between them.
+That is also why Terminal is `.neutral` rather than `.accent`: `.accent` and `.info` are the *same hue* in some palettes (Dusk resolves both to `182/207/290`, its accent being its own ANSI blue), and Terminal sits directly under Menu Bar.
+Measured, not reasoned - the first mapping shipped `.accent` there and the suite reported six distinct tiles where seven were expected.
+
+`.neutral` on Terminal is a deliberate exception to AGENTS.md's warning about washing it as a tinted surface.
+That warning is about `.neutral` as the identity-*less* default, where the commonest chip on a page becomes its heaviest; here it is one row of eight drawing the reference's own dark slate, and `IconTileView` still corrects the glyph to the 3:1 icon floor.
+
+### Two measurement traps, both of which read as real colour bugs
+
+**A `bitmapImageRepForCachingDisplay` sample must be measured on the rep's own raw components, and `HelmContrast.ratio`'s `NSColor` overload converts to sRGB internally.**
+AGENTS.md already says not to compare a sample via `usingColorSpace(.sRGB)`; what was new here is that the rule applies to a ratio between *two samples*, not only to an equality against an expected colour - the plausible-sounding argument that both operands take the identical transform is wrong.
+Measured: against a token separation of exactly 1.0800 in every palette, the `NSColor` overload reported **1.0597 for Daylight and 1.1305 for Dusk** - the display profile deflating every light palette below the floor and inflating every dark one above it.
+On the tuple overload, fed the rep's raw components, the same two measure 1.0753 and 1.0801.
+So the check uses the tuple overload with a 0.01 allowance for the bitmap's 8-bit quantisation, and the perceptual 1.08 in true sRGB is asserted separately and exhaustively over all twenty-six palettes.
+
+**`HelmContrast.mix(a, b, t)` weights its *first* argument by `t`.**
+Written the intuitive way round, the bisection inverts and converges on the pure endpoint - a white band on Nord Polar, a black one on Nord Snow.
+It built clean and `swift build` had nothing to say; `ThemeFamilyRenderSelfTest` is what caught it.
+
+### One existing suite had to move its sample point
+
+`ThemeFamilyRenderSelfTest` sampled the Settings page's bottom-*left* corner as page ground, which is now inside the band.
+Moving it a gutter to the right put it **inside the theme grid**, where it read the *selected* theme card's accent wash - which failed on `one-dark` alone, because one-dark's own card is the one that lands at that corner when one-dark is the theme being rendered.
+A point that is outside the cards for fifteen palettes out of sixteen is not a ground sample.
+It now samples the bare strip above the toolbar, derived from the band's and the content stack's own frames, with both bounds asserted rather than assumed.
+
+### Confirmed to catch a regression, not merely to pass
+
+Each injection was made by copying the file aside and editing it, never `git stash` and never `git checkout -- <file>`.
+
+| Injection | Fails |
+|---|---|
+| the band is painted `theme.backgroundHex` (the pre-fix appearance) | the painted-band case, on "the band sample is off `sidePanelFill`" and on "1.0000 apart - they read as one flat surface" |
+| the band and the divider are never added to the page | the painted-band case's vacuity guard (band frame `0x0`) and every divider case |
+| the rows revert to `.symbol` | the tile case, on all eight rows ("carries 0 tiles, wanted 1") |
+| Terminal returns `.accent` again | the tile case, at five distinct tiles against six |
+| Menu Bar joins Terminal on `.neutral` (six distinct, but adjacent) | the tile case, on the adjacency line alone - which is the assertion that encodes the requirement |
+
+### What was not verified
+
+The live half, as ever: no Screen Recording permission, so the renders behind every claim above are `cacheDisplay` captures of a real off-screen `NSWindow`, read back as PNGs.
+The band was reviewed that way in Daylight and Dusk and measured in fifteen palettes; the captain's own running instance is his check.
+The tiles render at `IconTileView`'s own wash, which is lighter than the reference's flat saturated squares - that is the shared component's contract and changing it would restyle the Updates page too, so it was left alone rather than forked.
