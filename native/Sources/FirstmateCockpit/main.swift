@@ -13,6 +13,10 @@ import SwiftTerm
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     var window: NSWindow!
+    /// Fills the menu-bar strip macOS reserves above a full-screen window, so
+    /// the app's ground - not a black band - runs to the top of the display.
+    /// See `FullScreenMenuBarFill.swift`'s header for the measurement.
+    private var fullScreenMenuBarFill: FullScreenMenuBarFill?
     // Phase 1: saved SSH hosts + the panel that lists and connects them. The
     // panel hands a `ssh` argv to the console, which opens it as a new tab.
     let hostStore = HostStore()
@@ -699,6 +703,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // proxy menu all read it.
         window.title = Self.windowTitle(context: appShell.currentContextTitle)
         WindowChromeFusion.apply(to: window)
+        fullScreenMenuBarFill = FullScreenMenuBarFill(window: window)
         // **`contentViewController` first, then the frame.** Assigning a
         // content view controller makes AppKit re-derive the window's frame
         // from that content's Auto Layout fitting size (AGENTS.md's
@@ -2797,6 +2802,16 @@ if ProcessInfo.processInfo.environment["FM_RUN_DRILL_HEADER_TITLE_TESTS"] == "1"
 // scroll offset. See WindowChromeFusionSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_WINDOW_CHROME_FUSION_TESTS"] == "1" {
     exit(WindowChromeFusionSelfTest.run() ? 0 : 1)
+}
+
+// The other half of that fusion, which A1 deferred to AppKit and AppKit does
+// not do: the 33pt menu-bar strip macOS reserves above a full-screen window,
+// which renders as the captain-reported solid black band. Window-backed - it
+// mounts a real window and builds the real panel. See
+// FullScreenMenuBarFillSelfTest.swift's header for what it can and cannot
+// assert.
+if ProcessInfo.processInfo.environment["FM_RUN_FULL_SCREEN_MENU_BAR_FILL_TESTS"] == "1" {
+    exit(FullScreenMenuBarFillSelfTest.run() ? 0 : 1)
 }
 
 // The UI modernization audit's B1-B5: the bar's material, its icon row, the

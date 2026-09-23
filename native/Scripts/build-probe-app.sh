@@ -179,6 +179,12 @@ ENV_ARGS=(
   --env "FM_STICKY_BOARD_DIR=$SCRATCH/sticky-board"
   --env "FM_CODE_PREVIEW_DIR=$SCRATCH/code-snippets"
   --env "FM_WHISPER_MODEL_DIR=$SCRATCH/whisper"
+  # Not a path override, and the one piece of probe state that is not a file:
+  # the clipboard history's key lives in the captain's login Keychain under the
+  # real app's own service name, so a probe would read - and on a failed read
+  # *overwrite* - theirs. Each probe build is a fresh ad-hoc signature, so that
+  # read is also where a probe hangs on an invisible Keychain ACL prompt.
+  --env "FM_CLIPBOARD_HISTORY_EPHEMERAL=1"
 )
 
 echo ""
