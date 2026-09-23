@@ -28,7 +28,7 @@ as they are rather than rewritten across 180 files.
 
 - [Working in this repository](#working-in-this-repository) - worktrees, the shared stash, the shared working tree
 - [Build, run, test](#build-run-test) - the two CI lanes, the second (widget) binary, and the vendored patches a sync must re-apply
-- [Verification conventions](#verification-conventions) - how a change is proved here
+- [Verification conventions](#verification-conventions) - how a change is proved here, and how much of the suite a PR has to run locally
 - [Writing a self-test](#writing-a-self-test)
 - [The AppKit gotcha catalogue](#the-appkit-gotcha-catalogue) - 19 measured traps
 - [GL invariants](#gl-invariants) - GL-01 .. GL-38, one line each
@@ -269,6 +269,10 @@ carries the complete `FM_*` environment-variable index.
 no sibling `run-all-tests.sh` running, and `fm.themeID` at a known value
 (`dusk` is the documented one). All three are described above.
 
+**Whether a given change owes a full local run at all** is
+["How much of the suite to run before opening a PR"](#how-much-of-the-suite-to-run-before-opening-a-pr),
+under Verification conventions. CI's own full run is unconditional either way.
+
 ### Toolchain
 
 Local development is on **Swift 6.x**; CI pins `macos-15` and asserts the same
@@ -393,6 +397,42 @@ enough to explain itself.
 - **State what was not verified.** "Verified by `swift build` only", "not
   reproducible in this sandbox", "the live half is the captain's own check" are
   all acceptable; implying a check that did not happen is not.
+
+### How much of the suite to run before opening a PR
+
+`./Scripts/run-all-tests.sh` is 205 suites and takes 10-15 minutes, and CI then
+runs the same suites again on the pushed branch. Paying that twice for a change
+whose blast radius is one literal is redundant. So the **local** run before a PR
+is scoped by blast radius, and CI's run is not.
+
+- **A narrow, single-purpose, low-blast-radius change may run only the suites
+  that cover what it touched.** A literal icon swap on one row, a single colour
+  or string constant on one page, a doc-only edit. Run those suites by their own
+  `FM_RUN_*` variable against `.build/debug/FirstmateCockpit`, and say in the PR
+  which ones you ran and why that was the whole relevant set. The full-run
+  pre-flight above still applies to whatever you do run: a dirty shared tree and
+  a leaked `fm.themeID` break one suite exactly as happily as ninety.
+- **Anything cross-cutting runs the full local suite first.** A shared `Helm*`
+  or `Daylight*` component, a page's layout or Auto Layout constraints, a store,
+  a theme token, `main.swift`, the runner itself, or any behaviour that more
+  than one page reads. This is where the full run has already earned its time:
+  Settings' category-navigation rebuild was a shared-structure change, and the
+  full run is what failed `IntentsBackupSettingsViewSelfTest`,
+  `CompactModeViewSelfTest` and `WindowChromeFusionSelfTest` - three suites
+  measuring a card or a document height in a view tree that now holds one pane's
+  cards instead of all of them
+  ([`09-setup-updates-bootstrap.md`](docs/history/09-setup-updates-bootstrap.md)).
+  Nobody would have picked those three as "the directly relevant suites" for a
+  navigation change. The shared-worktree and theme-leak failures in "Working in
+  this repository" are the same shape, and so is most of the gotcha catalogue: a
+  change that looked narrower than it was.
+- **When the judgment call is close, run the full suite.** The scope decision is
+  yours, and fifteen minutes is cheaper than a captain-reported regression.
+- **None of this changes CI.** Both lanes still run their full split on every
+  push and every PR, unconditionally, for a one-line change and a rewrite alike
+  (see "The two CI lanes"). Scoping the local run only decides which failures
+  you find before the PR rather than after it; it never decides what gates the
+  merge.
 
 ### Verifying native UI bugs without a real screenshot
 
