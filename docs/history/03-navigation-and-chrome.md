@@ -209,3 +209,80 @@ The captain's follow-up was one line: "Keep the host icon as it is in the shortc
 - **`DaylightBarIconButton` gained `applyGlyph(symbol:hue:)`** for this, which made `symbolName`/`hue` `var` rather than `let`. One control with two identities is cheaper than two buttons swapped in and out, and it keeps the hover/active/theme machinery in one place.
 - **Nothing else from the change above moved**: no menu popup on the single-overflow branch, the same direct-navigation click, and the same tooltip/accessibility-label branch.
 - **Verified** by `swift build` (clean, zero warnings), the full `./Scripts/run-all-tests.sh` run before and after, and a new `Audit3BugFixesSelfTest` case that mounts the real bar in a real `OffScreenProbe` window and compares the overflow button's **rendered bytes** against a freshly built `DaylightDestinationButton(destination: .hosts)` - pixel identical - while also proving those two references genuinely differ from a plain ellipsis button, so the comparison cannot pass vacuously. A click-target assertion could not have caught this: the sibling case passed throughout the defect. **The regression was injected and reproduced by name**: with the `applyGlyph` call removed, the render assertion failed at 1823 differing bytes, alongside the symbol-name and ellipsis checks.
+
+## The shortcut row wears coloured icon tiles (`fm/grandline-topbar-icon-tiles`)
+
+**The captain's ask**: give the top bar's quick-access row the coloured icon tiles #458 had just given the Settings sidebar, instead of the plain monochrome glyphs it had.
+The screenshot behind it is `data/grandline-topbar-icon-tiles/captain-screenshots/129-current-monochrome-topbar.png`.
+
+This reverses half of B2 above, so the half it reverses is worth stating precisely.
+B2's finding was that the row carried **three icon languages at once**: grey SF Symbol squares, five saturated raster app icons with their own dark backgrounds, and a gradient disc.
+That is still fixed and is not what changed.
+There is one geometry, one radius, one recipe, and the raster artwork still lives only on the destination pages.
+What changed is that the single language is coloured rather than grey, for the reason `HelmPageSidebar.RowIndicator.tile` already records for a column of eight rows: a row of same-coloured glyphs is something you read, and a row of coloured tiles is something you scan.
+
+### The colours are not new, and that was the first thing checked
+
+`RailDestination.domainHue` is already this app's per-destination identity table (Daylight §2.2's "Owns" column), and it is what the tiles use.
+Blue for the reading destinations, teal for the running systems, rose for Tasks and Dictation, violet for the AI surfaces, amber for Setup and Sticky Board, green for the merge queue and the Reading List, slate for Settings and Tools.
+Inventing a second table on the bar is exactly how a bar icon and the page it opens come to disagree about a colour, which is the defect `RailDestination.symbol` was put on these buttons to prevent in the first place.
+
+Two candidates were rejected.
+`RailDestination.flyoutTint` is the rail's legacy `HelmTint` and is `.accent` for every destination but five, so it differentiates nothing.
+A fresh literal table would be a second source of truth for a question the app already answers.
+
+**A consequence worth knowing before someone reports it as a bug**: the hue belongs to the *area*, not to the page, so Console and Hosts are both teal and Sticky Board and Poneglyph are both amber in the shipped row.
+That is the same decision that gives the four Setup pages one hue, and the glyph is what distinguishes within an area.
+
+### The per-palette split is load-bearing, and it costs something
+
+`DaylightBarIconButton.tileHex(for:in:)` resolves the §2.2 identity hue on the Daylight family and the palette's own corresponding `HelmTint` slot (`fallbackTint`) on the other 24.
+That split matches `UnifiedSearch`'s destination tile exactly, which is the app's other place that draws a `RailDestination` as a colour tile.
+
+It is not a convenience.
+`identityHex` alone resolves to `HelmTint.neutral` off Daylight, and neutral *is* `chromeInkHex`, so washing it as a tinted surface produces the near-black chip AGENTS.md warns about, eleven times in a row, on 24 of the 26 palettes.
+That was injected and the suite reported it as "the row's 6 shortcuts render only 1 distinct tile colours".
+
+The cost is recorded rather than hidden.
+`fallbackTint` maps rose onto `.critical` and amber onto `.warn`, which are *semantic* slots, and `RecentDestinationsPopover.makeRow` names routing an identity through it as a defect.
+That objection is about an accent **bar**, where one red edge among grey ones on a benign list reads as an alarm.
+It does not transfer to this row, where every shortcut carries a tile and the set therefore reads as a categorical palette.
+Nothing here is the one coloured thing among neutral siblings, which is the mechanism by which a hue comes to be read as a signal.
+Measured on `gruvbox-dark`, Console and Hosts render orange because that palette's own accent is orange, and the row still reads as seven distinct identities rather than as seven warnings.
+
+### State became the wash's depth, and the geometry did not move
+
+Every state is `HelmContrast.tintedSurface` over the button's own hue, which is the one recipe `IconTileView` uses, so the fill and the glyph on it are corrected to the 3:1 non-text floor by the shared helper rather than by a second copy of the maths.
+State is then the *depth* of that wash: resting at the shared `tileWashSteps`, hover at `hoverTileWashSteps`, active at `activeTileWashSteps`, each independently corrected, with the ring's alpha strictly increasing across the three.
+
+The rejected alternative was one fill lightened on hover.
+It cannot promise the floor, because lightening a fill moves it toward the glyph on a dark palette and away from it on a light one.
+
+**Nothing about the row's geometry changed**, which was the explicit risk in the brief.
+No constraint was touched, `DaylightBarIconButton.side` is the 34pt it was, and the tile is the same `iconBackground` subview at the same 9pt radius that was already there.
+`checkRowFootprintIsUnchanged` asserts the numbers as **literals** rather than re-deriving them from the code under test, because a guard that reads `DaylightBarIconButton.side` for its own expectation cannot fail when that constant moves.
+
+### Which buttons got a tile, and which did not
+
+The rule falls out of the data rather than out of a list: a button gets a tile when it carries a `HelmDomainHue`, and keeps the plain chrome square when it does not.
+
+- **Tiled**: the six quick-access shortcuts, and the overflow button while it is drawing a single overflowing destination's own icon (the branch `fm/grandline-hosts-shortcut-icon-fix` added, which already hands it that destination's symbol and hue).
+- **Not tiled**: the theme toggle, Recents, the clipboard history, and the overflow button while it is drawing the generic ellipsis. None of them opens a destination, so there is no hue that honestly identifies them, and a colour there would be claiming an identity the control does not have. Keeping them plain is also what lets the tiles beside them read as "these are places you can go".
+- **Untouched**: the notification bell and the avatar, which are not `DaylightBarIconButton`s at all. The bell owns its badge geometry and the avatar is a gradient disc, both deliberately separate before this change.
+
+`restyleAsPlainSquare` is the pre-tile rendering kept verbatim for that second group, so the exempt controls are byte-identical to what shipped.
+
+### Verification
+
+- **`DaylightBarIconTileSelfTest` (`FM_RUN_BAR_ICON_TILE_TESTS`) is new, and is pure logic rather than window-backed**: it reads layer colours and frames off a hand-laid-out `DaylightBarController` and drives hover through `debugSetHovering`, so it guards the **blocking** CI lane and is deliberately not in `NEEDS_SESSION`. Six cases: the per-destination colour, a 26-palette x 7-hue x 3-state legibility sweep, the state ladder, the exempt controls, both of the overflow button's identities, and the footprint guard.
+- **Five injections were each confirmed to fail by name**: the pre-fix rendering restored (three cases failed), every tile painted one hue, the per-palette split dropped for a bare `identityHex` (which is the near-black-chip defect), the theme toggle given a hue, and `DaylightBarIconButton.side` widened by 6pt.
+- **`BarNavigationModernizationSelfTest`'s B2 hover case was narrowed rather than deleted.** It used to demand the hovered glyph be the *raw* `identityHex`, which was true while the glyph sat on the plain chrome square. The glyph now sits on a wash of its own hue, so asserting the raw hue would be asserting the exact pairing `HelmContrast` exists to forbid. What survives is the claim B2 actually makes, that the glyph is a rendering of this destination's own hue rather than of ink, measured as the pair `tintedSurface` produces.
+- **Real off-screen renders** of the real row at 1512pt on `dusk`, `daylight`, `helm-dark`, `catppuccin-latte`, `gruvbox-dark` and `nord-polar`, read back as PNGs. The probe was reverted before commit and never touched `ThemeManager.setTheme`, so it could not poison `fm.themeID`.
+- **Full `./Scripts/run-all-tests.sh` before and after**: 204 passed / 0 failed / 1 documented skip at the baseline, and the same plus the new suite afterwards.
+
+**One trap this cost real time on, for anyone writing a fixture against this bar.**
+`DaylightBarController.setQuickAccess` rebuilds the row and ends by re-applying `ThemeManager.shared.theme` to every square.
+A fixture that themed the bar *first* therefore had its choice silently replaced by whatever theme is ambient in the test process, and measured the overflow button's tile in a palette nobody asked for.
+It reads as a colour bug in the button.
+Apply the theme last.
+The same fixture pins its own `QuickAccessConfiguration` rather than inheriting `AppSettings.shared.quickAccess`, which is the captain's real stored list and would make "the row shows at least three distinct hues" a claim about their pins rather than about this fix.

@@ -1742,21 +1742,25 @@ final class DaylightSearchPill: HoverHighlightView {
 /// languages side by side (grey SF Symbol squares, five saturated raster app
 /// icons carrying their own dark backgrounds, a gradient disc), reading "like
 /// a browser extension row". Its preferred fix, option (a), is what this
-/// implements: every shortcut is a **monochrome SF Symbol** at rest, and the
-/// full-colour artwork is reserved for the destination pages themselves,
-/// where it still renders on the drill header's tile and on the Overview
-/// canvas card (`RailDestination.drillHeaderArtwork`, untouched).
+/// implements: **one** language for every square, and the full-colour raster
+/// artwork reserved for the destination pages themselves, where it still
+/// renders on the drill header's tile and on the Overview canvas card
+/// (`RailDestination.drillHeaderArtwork`, untouched).
 ///
-/// **The hue is `HelmDomainHue.identityHex(in:)`, not `baseColor(in:)`**, and
-/// that choice is this app's own existing rule rather than a new one. On the
-/// Daylight family the two agree. On the twelve legacy palettes `baseColor`
-/// resolves through `fallbackTint`, which is a *semantic* slot - so hovering
-/// the Tasks icon (`.rose` -> `.critical`) would turn it red, and the icon
-/// would be making a claim about Tasks rather than identifying it. That is
-/// exactly the defect `identityHex` was written for. The cost is that hue
-/// differentiation lands only where the design language it belongs to lives;
-/// the twelve still get a real state response (muted at rest, full ink on
-/// hover/active), which is the half B2 is actually about.
+/// **`fm/grandline-topbar-icon-tiles` changed what that one language is.**
+/// B2 made it a monochrome symbol at rest; the captain asked for the coloured
+/// tile #458 had just given Settings' nav rows, for the same reason that fix
+/// records - a column (or a row) of same-coloured glyphs is something you
+/// read, and one of coloured tiles is something you scan. That is a change of
+/// *colour*, not of language: still one geometry, one radius, one recipe, no
+/// raster artwork. `restyleAsTile` carries it and its own comment carries the
+/// reasoning; `restyleAsPlainSquare` is the pre-tile rendering, kept for the
+/// controls that have no destination and so no honest hue.
+///
+/// **Which hue, and how it resolves per palette, is `tileHex(for:in:)`** -
+/// including why the resolution differs between the Daylight family and the
+/// other 24 palettes, and what that costs. Read that before changing a
+/// colour here.
 class DaylightBarIconButton: NSButton {
     /// Matches `NotificationBellButton.iconSize` exactly - B2's "the History
     /// and theme buttons should match the bell's square" is true by
@@ -1768,16 +1772,51 @@ class DaylightBarIconButton: NSButton {
     /// the captain is either pointing at it or on the page it opens.
     static let restingGlyphAlpha: CGFloat = 0.7
 
-    /// How much of the active shortcut's own hue is washed into its tile.
+    /// The hover ladder, one step deeper than the shared resting
+    /// `HelmContrast.tileWashSteps` ([0.16, 0.13, 0.11, 0.09, 0.07, 0.05]),
+    /// and the active ladder one deeper again. Same shape as the shared one -
+    /// a descending list of wash fractions, taken from the front, the first
+    /// that clears the 3:1 floor winning - so a hue with no headroom lands on
+    /// the same faint wash in all three states rather than on an illegible
+    /// one. Every value was checked against all 26 palettes x 7 hues by
+    /// `DaylightBarIconTileSelfTest.checkEveryPaletteTilesLegibly`.
+    static let hoverTileWashSteps: [CGFloat] = [0.26, 0.22, 0.18, 0.14, 0.11, 0.08]
+    static let activeTileWashSteps: [CGFloat] = [0.38, 0.32, 0.26, 0.20, 0.16, 0.12]
+
+    /// The hue a destination shortcut's tile is washed in.
     ///
-    /// Flattened with `HelmContrast.mix` rather than set as a translucent
-    /// layer colour, and that is deliberate: `mix` is a straight sRGB blend,
-    /// which is what alpha compositing over an opaque backdrop actually does,
-    /// whereas `NSColor.blended(withFraction:of:)` converts both operands into
-    /// a *calibrated* space first and drifts from it. This codebase has been
-    /// bitten by that difference before (see the segmented-tabs correction in
-    /// AGENTS.md).
-    static let activeWashFraction: Double = 0.16
+    /// **The mapping is not new** - `RailDestination.domainHue` is this app's
+    /// existing per-destination identity table (Daylight §2.2's "Owns"
+    /// column), and this is only its resolution against a palette. Blue for
+    /// the reading destinations (Docs, Notebook, Runbooks, Fleet), teal for
+    /// the running systems (Console, Hosts, Log Analyzer, Kubernetes, the
+    /// Kanban), rose for Tasks and Dictation, violet for the AI surfaces
+    /// (Straw Hat Pirates, Poneglyph, Whiteboard, Schedules), amber for Setup
+    /// and Sticky Board, green for the merge queue and the Reading List,
+    /// slate for Settings and Tools. Inventing a second table here is exactly
+    /// how a bar icon and the page it opens come to disagree about a colour.
+    ///
+    /// **The per-family split matches `UnifiedSearch`'s destination tile
+    /// exactly**, which is the app's other place that draws a `RailDestination`
+    /// as a colour tile: the §2.2 identity hue on the Daylight family, the
+    /// palette's own corresponding `HelmTint` slot on the other 24. That split
+    /// is load-bearing, not a convenience. `identityHex` alone resolves to
+    /// `HelmTint.neutral` off Daylight, and neutral *is* `chromeInkHex` - so
+    /// washing it as a tinted surface produces the near-black chip AGENTS.md
+    /// warns about, eleven times in a row, on 24 of the 26 palettes.
+    ///
+    /// The cost is recorded rather than hidden: `fallbackTint` maps rose onto
+    /// `.critical` and amber onto `.warn`, which is a *semantic* slot, and
+    /// `RecentDestinationsPopover.makeRow` names routing an identity through
+    /// it as a defect. That objection is about an accent **bar** - one red
+    /// edge among grey ones on a benign list reads as an alarm. It does not
+    /// transfer to this row, where every shortcut carries a tile and the set
+    /// therefore reads as a categorical palette: nothing here is the one
+    /// coloured thing among neutral siblings, which is the whole mechanism by
+    /// which a hue comes to be read as a signal.
+    static func tileHex(for hue: HelmDomainHue, in theme: HelmTheme) -> String {
+        theme.isDaylight ? hue.identityHex(in: theme) : hue.fallbackTint.hex(in: theme)
+    }
 
     private let iconBackground = NSView()
     private let iconImageView = NSImageView()
@@ -1926,6 +1965,22 @@ class DaylightBarIconButton: NSButton {
     }
 
     private func restyle() {
+        guard let hue else {
+            restyleAsPlainSquare()
+            return
+        }
+        restyleAsTile(hue: hue)
+    }
+
+    /// The pre-tile rendering, kept verbatim for a control that is **not** a
+    /// destination shortcut: the theme toggle, Recents, the clipboard history
+    /// and the overflow button while it is drawing its generic ellipsis.
+    ///
+    /// None of those has a domain of its own, so there is no honest colour to
+    /// put behind them - see `tileHex(for:in:)`. They stay the quiet chrome
+    /// square they always were, which is also what keeps the coloured tiles
+    /// beside them reading as "these are places you can go".
+    private func restyleAsPlainSquare() {
         let ink = HelmTheme.nsColor(theme.chromeInkHex)
         let muted = HelmTheme.mutedInk(theme)
         let line = HelmTheme.nsColor(theme.chromeLineHex)
@@ -1933,25 +1988,68 @@ class DaylightBarIconButton: NSButton {
             ? HelmTheme.nsColor(theme.daylightTokens.inset)
             : HelmTheme.nsColor(theme.chromeBackgroundHex)
 
-        let lit = isHovering || isActiveDestination
-        let accent = hue.map { HelmTheme.nsColor($0.identityHex(in: theme)) } ?? ink
-        let glyph = lit ? accent : muted.withAlphaComponent(Self.restingGlyphAlpha)
-
-        // The active shortcut also carries a faint wash of its own hue, so
-        // "this is the page you are on" survives the captain's cursor leaving
-        // the bar. Hover alone is a glyph change only - a background that
-        // appeared under the pointer would make the whole row twitch as it
-        // crosses.
-        let fill = isActiveDestination
-            ? HelmContrast.color(HelmContrast.mix(HelmContrast.components(accent),
-                                                  HelmContrast.components(surface),
-                                                  Self.activeWashFraction))
-            : surface
-
-        iconImageView.contentTintColor = glyph
-        iconBackground.layer?.backgroundColor = fill.cgColor
+        iconImageView.contentTintColor = (isHovering || isActiveDestination)
+            ? ink
+            : muted.withAlphaComponent(Self.restingGlyphAlpha)
+        iconBackground.layer?.backgroundColor = surface.cgColor
         iconBackground.layer?.borderWidth = 1
-        iconBackground.layer?.borderColor = (isActiveDestination ? accent.withAlphaComponent(0.5) : line.withAlphaComponent(0.5)).cgColor
+        iconBackground.layer?.borderColor = line.withAlphaComponent(0.5).cgColor
+    }
+
+    /// `fm/grandline-topbar-icon-tiles`: a destination shortcut is a coloured
+    /// **tile** at rest, the same treatment #458 gave Settings' nav rows.
+    ///
+    /// **This reverses half of B2 on the captain's own instruction, and the
+    /// half it reverses is narrower than it looks.** B2's finding was that the
+    /// row carried *three icon languages* at once - grey symbol squares, five
+    /// saturated raster app icons with their own dark backgrounds, and a
+    /// gradient disc - "like a browser extension row". That is still fixed:
+    /// there is exactly one language here, one geometry, one radius, one
+    /// recipe, and the raster artwork stays on the destination pages. What
+    /// changes is that the single language is now coloured rather than grey,
+    /// which is what makes eleven squares *scannable* instead of a row you
+    /// have to read - the identical argument `HelmPageSidebar.RowIndicator`'s
+    /// `.tile` case records for a column of eight.
+    ///
+    /// **The wash, and why there are three ladders.** Every state is
+    /// `HelmContrast.tintedSurface` over this button's own hue, which is the
+    /// one recipe `IconTileView` uses - so the fill and the glyph on it are
+    /// contrast-corrected to the 3:1 non-text floor by the shared helper
+    /// rather than by a second copy of the maths. State is then the *depth* of
+    /// that wash: resting at the shared `tileWashSteps`, hover and active at
+    /// progressively stronger ladders, each independently corrected. The
+    /// alternative - one fill, lightened on hover - cannot promise the floor,
+    /// because lightening a fill moves it toward the glyph on a dark palette
+    /// and away from it on a light one.
+    ///
+    /// Note the fill now moves under the pointer, which the pre-tile comment
+    /// here deliberately avoided ("a background that appeared under the
+    /// pointer would make the whole row twitch"). That reasoning applied to a
+    /// background *appearing*; a tile that is already there deepening by one
+    /// step is the ordinary hover response every other tinted surface in this
+    /// app gives.
+    private func restyleAsTile(hue: HelmDomainHue) {
+        let hex = Self.tileHex(for: hue, in: theme)
+        let steps: [CGFloat]
+        let borderAlpha: CGFloat
+        if isActiveDestination {
+            steps = Self.activeTileWashSteps
+            borderAlpha = 0.75
+        } else if isHovering {
+            steps = Self.hoverTileWashSteps
+            borderAlpha = 0.45
+        } else {
+            steps = HelmContrast.tileWashSteps
+            borderAlpha = 0.2
+        }
+        let resolved = HelmContrast.tintedSurface(tintHex: hex,
+                                                  theme: theme,
+                                                  target: HelmContrast.nonTextTarget,
+                                                  washSteps: steps)
+        iconImageView.contentTintColor = resolved.foreground
+        iconBackground.layer?.backgroundColor = resolved.fill.cgColor
+        iconBackground.layer?.borderWidth = 1
+        iconBackground.layer?.borderColor = HelmTheme.nsColor(hex).withAlphaComponent(borderAlpha).cgColor
     }
 
     #if FM_SELFTESTS

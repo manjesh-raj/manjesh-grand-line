@@ -247,8 +247,8 @@ enum BarNavigationModernizationSelfTest {
     private static func test_b2ShortcutHoverAndActiveState() -> String? {
         // Daylight, because that is the family whose domain hues are real
         // (`identityHex` is uniformly neutral on the twelve - see
-        // `DaylightBarIconButton`'s header for why that is the honest
-        // fallback rather than a gap).
+        // `DaylightBarIconButton.tileHex(for:in:)` for why, and for what the
+        // other 24 palettes get instead).
         guard let daylight = HelmTheme.allThemes.first(where: { $0.id == "daylight" }) else {
             return "no `daylight` theme - has the palette been renamed?"
         }
@@ -264,16 +264,40 @@ enum BarNavigationModernizationSelfTest {
         guard let resting, let hovered else { return "the shortcut has no glyph colour at all" }
         guard !sameColor(resting, hovered) else {
             return "\(button.destination.title): the glyph is the same colour hovered as at rest - "
-                + "B2's whole point is that the row is quiet until you point at it"
+                + "a shortcut still has to respond to the pointer"
         }
-        let hue = HelmTheme.nsColor(button.destination.domainHue.identityHex(in: daylight))
-        guard sameColor(hovered, hue) else {
-            return "\(button.destination.title): hovered glyph is \(describe(hovered)), expected its own domain hue \(describe(hue))"
+
+        // **`fm/grandline-topbar-icon-tiles` narrowed this assertion, and the
+        // narrowing is the point rather than a concession.** This used to
+        // demand the hovered glyph be the *raw* `identityHex`, which was true
+        // while the glyph sat on the plain chrome square. It now sits on a
+        // wash of its own hue, so `HelmContrast.tintedSurface` corrects it to
+        // clear the 3:1 non-text floor against that wash - and the raw hue on
+        // a wash of itself is exactly the pairing `HelmContrast` exists to
+        // forbid. Asserting the raw hue here would be asserting the defect.
+        //
+        // What survives is the claim B2 actually makes: the glyph is a
+        // rendering of *this destination's own* hue rather than of ink. It is
+        // measured as the pair `tintedSurface` produces, so a shortcut painted
+        // in a neighbour's colour still fails by name.
+        let expected = HelmContrast.tintedSurface(
+            tintHex: DaylightBarIconButton.tileHex(for: button.destination.domainHue, in: daylight),
+            theme: daylight,
+            target: HelmContrast.nonTextTarget,
+            washSteps: DaylightBarIconButton.hoverTileWashSteps)
+        guard sameColor(hovered, expected.foreground) else {
+            return "\(button.destination.title): hovered glyph is \(describe(hovered)), expected its own domain hue "
+                + "corrected against its tile, \(describe(expected.foreground))"
         }
 
         // Active: exactly the one showing, and it survives the pointer leaving.
         bar.setActiveDestination(button.destination)
-        guard let active = button.debugGlyphColor, sameColor(active, hue) else {
+        let expectedActive = HelmContrast.tintedSurface(
+            tintHex: DaylightBarIconButton.tileHex(for: button.destination.domainHue, in: daylight),
+            theme: daylight,
+            target: HelmContrast.nonTextTarget,
+            washSteps: DaylightBarIconButton.activeTileWashSteps)
+        guard let active = button.debugGlyphColor, sameColor(active, expectedActive.foreground) else {
             return "\(button.destination.title): its shortcut does not light while its own page is showing"
         }
         for other in bar.debugDestinationButtons() where other !== button {
