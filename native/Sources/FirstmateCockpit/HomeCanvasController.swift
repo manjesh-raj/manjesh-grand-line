@@ -1226,7 +1226,8 @@ final class HomeCanvasController: NSViewController {
     /// The five columns, in the captain's picked order. `static` so a suite
     /// can assert the mapping from a fabricated snapshot without mounting a
     /// canvas.
-    static func claudeStripColumns(for snapshot: QuotaSnapshot) -> [HelmModuleStripColumn] {
+    static func claudeStripColumns(for snapshot: QuotaSnapshot,
+                                   now: Date = Date()) -> [HelmModuleStripColumn] {
         func window(_ label: String, _ window: QuotaWindow?) -> HelmModuleStripColumn {
             guard let window else { return gapColumn(label) }
             return HelmModuleStripColumn(
@@ -1234,14 +1235,21 @@ final class HomeCanvasController: NSViewController {
                 value: Self.percentText(window.percentUsed),
                 fill: max(0, min(1, window.percentUsed / 100)),
                 state: QuotaSeverity(percentUsed: window.percentUsed).moduleRowState,
-                // The reading the strip cannot spend a line on. A percentage
-                // is only half an answer - "96% used" is a crisis an hour
-                // before the window turns over and a shrug a minute before
-                // it - and the instant that settles it is already parsed.
-                // `resetsSentence` is `nil` when the window carries no reset
-                // instant, which passes straight through as no affordance
-                // rather than as a fabricated one.
-                detail: window.resetsSentence)
+                // The other half of the reading. A percentage on its own is
+                // only half an answer - "96% used" is a crisis an hour before
+                // the window turns over and a shrug a minute before it - and
+                // the instant that settles it is already parsed.
+                //
+                // Both forms, deliberately: the short one is painted under
+                // the column (the captain asked for it visible rather than
+                // hidden behind a hover), and the long one stays on the
+                // tooltip and the accessibility label, so the full date is
+                // still one hover away. Both are `nil` when the window
+                // carries no reset instant, which passes straight through as
+                // no line and no affordance rather than a fabricated one
+                // (GL-14).
+                detail: window.resetsSentence,
+                caption: window.resetsCompact(now: now))
         }
 
         var columns: [HelmModuleStripColumn] = [

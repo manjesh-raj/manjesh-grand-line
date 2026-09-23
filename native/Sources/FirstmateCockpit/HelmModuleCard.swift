@@ -122,15 +122,13 @@ struct HelmModuleStripColumn: Equatable {
     /// One short sentence about this column that does not fit in it - the
     /// Claude card's `Resets 5 Jan 2026 at 3:00 pm`, for instance.
     ///
-    /// **It is an affordance, not a second line.** A strip column is two
-    /// small labels over a 4pt track, and the whole reason the Claude card
-    /// fits five readings at `standardHeight` is that it spends no vertical
-    /// room on prose - a third line per column would grow the card and break
-    /// the row's uniform height (`DaylightModuleSelfTest.checkUniformCardHeight`).
-    /// So this renders as the column's hover tooltip - the same affordance
-    /// `Content.HeaderAction` already uses for the refresh button - which
-    /// AppKit also serves to VoiceOver as the cell's accessibility help, so
-    /// the reading is not mouse-only (GL-16).
+    /// This is the **long** form, and it renders as the column's hover
+    /// tooltip - the same affordance `Content.HeaderAction` already uses for
+    /// the refresh button - which AppKit also serves to VoiceOver as the
+    /// cell's accessibility help. It is no longer the only way to read the
+    /// reading: see `caption`, which is the visible half, and which is what
+    /// the captain asked for after the first version of this shipped as a
+    /// tooltip alone.
     ///
     /// `nil` means this column genuinely has nothing extra to say, and a
     /// column that has no such reading must pass `nil` rather than a
@@ -138,14 +136,40 @@ struct HelmModuleStripColumn: Equatable {
     /// teaches the captain that hovering is worthless.
     let detail: String?
 
+    /// The same reading as `detail`, short enough to be **painted** as a
+    /// third line under the column's figure and track.
+    ///
+    /// **Why two strings rather than one.** A strip column is about 74pt
+    /// wide at the Claude card's real span-2 width, and the long sentence
+    /// needs well over twice that - so a column that painted `detail`
+    /// verbatim would render `Resets 5 Jan 20...`, which is worse than no
+    /// line at all. The caller shortens it (`QuotaWindow.resetsCompactText`)
+    /// and keeps the full sentence on the hover, so nothing is lost.
+    ///
+    /// A column that passes this **grows the card by one caption line**, and
+    /// that is now the intended behaviour rather than a hazard: the card has
+    /// sized to its content above a floor since full review #3's PF2, and
+    /// `HelmResponsiveGrid`'s `equalHeights` makes a *row* uniform rather
+    /// than the whole canvas. `ClaudeStatusCardSelfTest` measures the growth
+    /// and asserts it is exactly one line, and
+    /// `DaylightModuleSelfTest.checkUniformCardHeight` measures the strip
+    /// carrying captions against the real body area.
+    ///
+    /// `nil` on a column with nothing to say, for `detail`'s own reasons -
+    /// and a column may legitimately carry `detail` without this, though no
+    /// caller does today.
+    let caption: String?
+
     init(label: String, value: String, fill: Double?,
-         state: HelmModuleRowState, isGap: Bool = false, detail: String? = nil) {
+         state: HelmModuleRowState, isGap: Bool = false,
+         detail: String? = nil, caption: String? = nil) {
         self.label = label
         self.value = value
         self.fill = fill
         self.state = state
         self.isGap = isGap
         self.detail = detail
+        self.caption = caption
     }
 }
 
@@ -490,6 +514,10 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
     /// Every strip column's own cell view, in render order - the view that
     /// carries `HelmModuleStripColumn.detail`'s tooltip and VoiceOver help.
     private var stripCells: [NSView] = []
+    /// One entry per strip column, in render order, `nil` for a column that
+    /// carries no `caption`. Kept per column rather than as a dense list so
+    /// the anatomy can line captions up with the columns they belong to.
+    private var stripCaptions: [NSTextField?] = []
     private var peekTextLabels: [NSTextField] = []
     private var peekValueLabels: [NSTextField] = []
     private var noteLabels: [NSTextField] = []
@@ -720,6 +748,7 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         stripSeparators.removeAll()
         stripTracks.removeAll()
         stripCells.removeAll()
+        stripCaptions.removeAll()
         peekTextLabels.removeAll()
         peekValueLabels.removeAll()
         noteLabels.removeAll()
@@ -1091,11 +1120,39 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             track = bed
         }
 
+        // The visible reset line. It goes *under* the track rather than
+        // between the figure and the track: the bar is a picture of the
+        // figure directly above it, and a line wedged between them reads as
+        // a caption on the wrong thing.
+        var captionLabel: NSTextField?
+        if let caption = column.caption {
+            let line = NSTextField(labelWithString: caption)
+            line.font = HelmType.captionSmall()
+            line.lineBreakMode = .byTruncatingTail
+            line.translatesAutoresizingMaskIntoConstraints = false
+            line.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            // GL-16, and the reason the short form costs nothing: what the
+            // pointer reveals and what VoiceOver reads are the *full*
+            // sentence, so the abbreviation is a painting decision rather
+            // than a loss of information. `detail` is the long form; a
+            // caption with no long form reads as itself.
+            line.setAccessibilityLabel(column.detail ?? caption)
+            stripCaptions.append(line)
+            captionLabel = line
+            stacked.append(line)
+        } else {
+            stripCaptions.append(nil)
+        }
+
         let cell = verticalStack(stacked, spacing: 6)
         cell.alignment = .leading
         // `verticalStack` aligns `.leading`, so without this the track would
         // hug its own (zero) content width instead of spanning the column.
         track?.widthAnchor.constraint(equalTo: cell.widthAnchor).isActive = true
+        // Same reason the track needs it: `verticalStack` aligns `.leading`,
+        // so a label left to hug its own content would not report truncation
+        // against the width the column really gives it.
+        captionLabel?.widthAnchor.constraint(equalTo: cell.widthAnchor).isActive = true
         cell.edgeInsets = NSEdgeInsets(top: 0, left: isFirstInRow ? 0 : 12,
                                        bottom: 0, right: 12)
         // One line, and it covers both routes in: AppKit derives an
@@ -1467,6 +1524,15 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
             // as text". The track below the figure carries the colour.
             label.textColor = isGap ? muted : ink
         }
+        for caption in stripCaptions.compactMap({ $0 }) {
+            caption.font = HelmType.captionSmall()
+            // The smallest role Daylight has, painted `mutedInk` - a
+            // secondary reading under a figure, the same treatment a peek
+            // row's value and a module's note already take. Never the
+            // column's state hue: `HelmModuleRowState.color` is a fill hue
+            // and AGENTS.md's colour rules forbid it as text.
+            caption.textColor = muted
+        }
         for separator in stripSeparators {
             separator.layer?.backgroundColor = line.withAlphaComponent(theme.isDaylight ? 1.0 : 0.5).cgColor
         }
@@ -1566,6 +1632,17 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
         /// the wiring it was supposed to prove (AGENTS.md's `debug*` hook
         /// convention).
         let stripColumnAffordances: [(toolTip: String?, help: String?)]
+        /// Each `.statusStrip` column's **visible** reset line, in the same
+        /// order: the string the label really carries, whether that label is
+        /// in the view hierarchy and not hidden, and whether it truncated at
+        /// the width the column actually gave it.
+        ///
+        /// All three read off the real label after a real layout pass, for
+        /// the reason `stripColumnAffordances` gives: `caption` reaching the
+        /// column struct says nothing about whether anything painted it, and
+        /// a line that renders as `Resets 5 Jan 20...` is a defect the string
+        /// alone cannot show.
+        let stripColumnCaptions: [(text: String?, isPainted: Bool, isTruncated: Bool)]
         /// Each `.statusStrip` column's track, as actually painted and laid
         /// out: the fill view's own layer colour, and how much of its bed it
         /// covers after a real layout pass.
@@ -1686,6 +1763,12 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
                 },
                 stripColumnAffordances: stripCells.map {
                     ($0.toolTip, $0.accessibilityHelp())
+                },
+                stripColumnCaptions: stripCaptions.map { label in
+                    guard let label else { return (nil, false, false) }
+                    let painted = label.window != nil && !label.isHiddenOrHasHiddenAncestor
+                    return (label.stringValue, painted,
+                            label.fittingSize.width > label.frame.width + 0.5)
                 },
                 stripTrackFills: stripTracks.map { entry in
                     let bed = entry.track.frame.width

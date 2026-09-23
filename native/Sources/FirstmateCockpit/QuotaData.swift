@@ -104,6 +104,43 @@ extension QuotaWindow {
     var resetsSentence: String? {
         resetsAt.map { "Resets \(Self.resetsAtText($0))" }
     }
+
+    /// The same instant in the few characters a status-strip column can
+    /// actually paint: `6:00 pm` for a reset later today, `Sat 9:00 am` for
+    /// one on another day.
+    ///
+    /// **Why a second formatter rather than `resetsAtText` again.** A strip
+    /// column is about 74pt wide at the card's real span-2 width, and
+    /// `Resets 5 Jan 2026 at 3:00 pm` needs well over twice that - which is
+    /// the measurement that made the first version of this reading a hover
+    /// tooltip. The captain asked for it visible, so the *string* is what
+    /// had to shrink. Nothing is invented and nothing is rounded away: the
+    /// day is dropped only when the instant is today, and the three windows
+    /// this renders for all turn over inside a week, so an abbreviated
+    /// weekday is unambiguous for every one of them.
+    ///
+    /// The full sentence is still carried as the column's tooltip and its
+    /// accessibility label, so the year and the full date remain one hover
+    /// (or one VoiceOver stop) away.
+    ///
+    /// `Calendar.current` on purpose, and injectable for a suite: "today"
+    /// means today where the captain is, which is the same reason
+    /// AGENTS.md gives for `ShiftDateFormatting`'s local-midnight rule.
+    static func resetsCompactText(_ date: Date,
+                                  now: Date = Date(),
+                                  calendar: Calendar = .current) -> String {
+        let time = date.formatted(date: .omitted, time: .shortened)
+        if calendar.isDate(date, inSameDayAs: now) { return time }
+        let weekday = date.formatted(.dateTime.weekday(.abbreviated))
+        return "\(weekday) \(time)"
+    }
+
+    /// `resetsCompactText` for a window that carries a reset instant, `nil`
+    /// for one that does not - the same GL-14 split `resetsSentence` makes,
+    /// so a column with no cycle paints no line rather than a blank one.
+    func resetsCompact(now: Date = Date(), calendar: Calendar = .current) -> String? {
+        resetsAt.map { Self.resetsCompactText($0, now: now, calendar: calendar) }
+    }
 }
 
 /// `quota-axi`'s `extra_usage` window - the extra-usage credit pool, which is
