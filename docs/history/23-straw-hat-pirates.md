@@ -196,6 +196,46 @@ Nothing was launched (the captain's packaged instance shares one bundle identity
 - **One deliberate divergence from "match the search bar", flagged rather than silently taken: the focus *hue*.** The composer lit with `RailDestination.overview.domainHue` - stale from when this chat was a tab on `FleetController`'s page - and now lights with `.strawHat`'s own violet. §6.9 gives a page's well that page's hue (which is why `SRELeadChatView` uses Console's teal), and `RailDestination.domainHue`'s own comment already names violet as "what the page's focus ring and primary button take". The ⌘K panel takes the bare theme accent because a floating panel is not a page. **The same stale `.overview` reference is still on this file's `HelmEmptyState(hue:)` one screen up** - left alone as outside an input-control restyle, so that page currently shows a blue plate above a violet ring on the Daylight family.
 - **Verified** by `swift build`, the full suite, and real off-screen renders (`cacheDisplay`) of the real mounted page beside a real `HelmSearchField(.prominent)` across `helm-dark`/`helm-light`/`daylight`, resting and focused - **without launching the app**, per the README's worktree rule (the captain's packaged instance was running throughout). `StrawHatViewSelfTest.checkComposerMatchesTheSearchBar` reads **every** expectation off a real `HelmSearchField`, never a literal: the defect was never "the composer is 18pt", it was "the two disagree", and a literal would pass just as happily with the reference changed. **Six injected regressions each reproduced by name.**
 
+### The card moved off Home, onto Command (`fm/grandline-home-card-reorg`)
+
+**The captain's third placement ask for this card, and the first one that gives it a space of its own.**
+He reviewed the live Home page and asked for the crew card on the Command page instead.
+The two earlier asks recorded above were both Overview-only orderings - beside the briefing and the fleet board, then last in the Overview grid.
+This one is a different kind of move: the card is not being reordered on Home, it is leaving Home.
+
+- **The mechanism is two lines in `DaylightSpace.swift`, and neither is new.**
+  `DaylightModule.strawHat.space` goes from `nil` to `.command`, and `.strawHat` joins the `appearsOnOverview` exclude list.
+  That is the same pair `.tasks`, `.hosts` and every other spaced module already carries - a module with a real space stops being an Overview-only card, and `isVisible(in:)` needs no change at all.
+  The card itself, its destination, its artwork and its subtitle are untouched.
+
+- **The declaration moved with it, to the end of the Command group.**
+  `canvasOrder` is `allCases`, so declaration order is render order.
+  Leaving `case strawHat` at the very end of the enum would have rendered identically *today* - it is last either way - but only by accident, and the next module appended below it would have silently pushed the crew card ahead of its own.
+  Appending it to the group is the precedent `.commandLibrary` and `.poneglyph` both already set in this file, and it keeps the Command canvas reading Tasks / Merge queue / Console / DevOps Commands / Straw Hat Pirates.
+
+- **The ordering assertion moved rather than being deleted.**
+  `DaylightModuleSelfTest` used to assert `visibleModulesForTests.last == .strawHat` on Overview; it now asserts the same property on Command.
+  Worth knowing about its limits, because this is exactly the "a check that cannot fail" shape: reverting the declaration to the end of the enum does **not** fail it, since last-in-group and last-in-enum coincide right now.
+  Moving the declaration into the *middle* of the group does fail it, by name, which is what was actually measured - so the check discriminates real placement, it just cannot distinguish deliberate placement from a coincidence that happens to agree.
+
+- **`StrawHatViewSelfTest`'s placement assertions were inverted a second time, by the same rule the file already records.**
+  They had become a record of the old behaviour.
+  `checkOwnCardAndDestination` now asserts the card does *not* render on Home and *does* render on Command, and the two real-canvas render cases select `.command` before reading the cards.
+  `checkOverviewSubtitleIsFixed` was renamed `checkCanvasSubtitleIsFixed`, since its name was the last thing still claiming Overview.
+
+- **Console and Schedules came off Home in the same pass, and their `space` was deliberately not touched.**
+  Both were part of the original trim's "operational pulse" set; the captain has since found both redundant, because each already carries a card one pill away (Console on Command, Schedules on Operations).
+  This is the presentation-only opt-out `appearsOnOverview` exists for - both still render on their own space's canvas, and the trim check's own "every trimmed module is still reachable on its own space" loop proves it.
+  Home is five cards now: Morning briefing, Claude, Fleet, Merge queue, Health.
+
+- **Verified** by the full `./Scripts/run-all-tests.sh` before (205 passed, 0 failed, 1 documented skip) and after, plus real off-screen renders of the real `HomeCanvasController` on Home, Command and Operations across `daylight` and `dusk` - the probe was env-gated, saved and restored `fm.themeID`, and was reverted before commit, per this repo's own conventions.
+  The renders are what confirmed the Command page reflows cleanly to five cards and that Schedules still draws on Operations.
+  **Four injected regressions each reproduced by name**: `.strawHat` put back on Overview, `.console`/`.schedules` put back on Overview, the declaration moved mid-group, and `.strawHat`'s space reverted to `nil`.
+  A fifth injection (the declaration back at the end of the enum) deliberately does *not* fail, and the bullet above says why rather than implying coverage that is not there.
+  **The app was never launched**, per the README's worktree rule.
+
+  One thing worth recording for any lane doing theme work here: `fm.themeID` was observed being swept to `nord-snow` mid-task by a concurrently-running sibling worktree, exactly the cross-lane hazard `AGENTS.md` describes. The verification run below was started only after re-pinning it.
+
 ### Still to come, in the plan's order
 
 The parallel voice track (`AVSpeechSynthesizer` is the one genuinely missing component; the app already has two STT engines). **Chat history is still not on disk** - the plan's M1.4 remains deferred, so a conversation lives as long as the app session, there is no `FM_STRAW_HAT_DIR` and no `main.swift` redirect entry; **whoever adds persistence must add both**. **Sanji's role (M3.4) remains an open captain decision** held on `plan-straw-hat-pirates-ai-assistant-for-b7` - do not infer one. Phase 4's compound-request fan-out and the direct-API path are untouched, and the plan's own cost section says cost is never the reason to build them.
