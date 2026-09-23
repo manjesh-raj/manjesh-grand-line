@@ -175,6 +175,22 @@ second one left `fm.themeID = dusk` against a real `helm-dark`, and
 save/restore is per-pass and cannot defend against a sibling pass; run them one
 at a time.
 
+**And `fm.themeID` is not the only shared thing two concurrent passes fight
+over - a *named* `NSPasteboard` is machine-global too.**
+`WhiteboardCaptureViewSelfTest` writes to `NSPasteboard(name:
+"fm.selftest.capture.lock")` to prove `copyImageTapped` does not reach a
+pasteboard while the app is locked. That name is one board per machine, not per
+process, so a sibling worktree's pass running the same suite is writing to the
+identical board - and the check reads as a real app-lock leak rather than as
+two suites sharing a board. Measured in
+`fm/grandline-notification-ambient-expand-fix`: exactly that check failed in a
+full run that overlapped a sibling pass throughout, and the same suite passed
+4/4 standalone on the same tree moments later, with the branch's own diff
+nowhere near the whiteboard, the pasteboard or `AppLockGate`. The rule above is
+the fix (one pass at a time); the reason to know this one separately is that
+the *symptom* names a security guarantee, which is the last thing anyone wants
+to write off as flake. Check `pgrep -fl run-all-tests` before believing it.
+
 **The same applies to a temporary *probe*, which the source guard cannot see**:
 `fm/grand-line-shell-selection-investigate-fix` hit this a fifth time - a
 reverted probe that swept themes through the real

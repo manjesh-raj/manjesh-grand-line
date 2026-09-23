@@ -3878,6 +3878,28 @@ final class AppShellController: NSViewController {
     @objc func logAnalyzerInvestigateFurther() { showThenRun { $0.menuInvestigateFurther() } }
     @objc func logAnalyzerCreateRCA() { showThenRun { $0.menuCreateRCA() } }
 
+    // MARK: The notification popover's expanded rows
+    //
+    // `fm/grandline-notification-ambient-expand-fix`. The popover can be open
+    // before either page has ever been mounted - that is the normal case at
+    // launch - so a child row's Update/Sync arrives here as an id rather than
+    // as a closure over a row that does not exist yet. Same shape as
+    // `showLogAnalyzer`/`showThenRun` above: show the destination, which
+    // mounts it on a first visit, then hand the page the work. The page owns
+    // the confirmation, the busy state and the log; see
+    // `BackgroundSignalsPoller.onUpdateTool` for why none of that is done
+    // here.
+
+    func updateToolFromNotification(_ toolID: String) {
+        show(.updates)
+        updates.requestUpdateFromNotification(toolID: toolID)
+    }
+
+    func syncForkFromNotification(_ repoFullName: String) {
+        show(.githubSync)
+        githubSync.requestSyncFromNotification(repoFullName: repoFullName)
+    }
+
     private func showThenRun(_ body: (LogAnalyzerController) -> Void) {
         show(.logAnalyzer)
         body(logAnalyzer)

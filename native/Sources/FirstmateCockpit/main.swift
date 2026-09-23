@@ -384,6 +384,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // the cadence tradeoff.
         BackgroundSignalsPoller.shared.onNavigateToUpdates = { [weak self] in self?.appShell.show(.updates) }
         BackgroundSignalsPoller.shared.onNavigateToGitHubSync = { [weak self] in self?.appShell.show(.githubSync) }
+        // The per-tool / per-repo halves of the two above, for the
+        // notification popover's expanded child rows.
+        BackgroundSignalsPoller.shared.onUpdateTool = { [weak self] id in
+            self?.appShell.updateToolFromNotification(id)
+        }
+        BackgroundSignalsPoller.shared.onSyncFork = { [weak self] id in
+            self?.appShell.syncForkFromNotification(id)
+        }
         BackgroundSignalsPoller.shared.onNavigateToVault = { [weak self] in self?.appShell.show(.vault) }
         BackgroundSignalsPoller.shared.onNavigateToBootstrap = { [weak self] in self?.appShell.show(.bootstrap) }
         BackgroundSignalsPoller.shared.start()
@@ -3400,6 +3408,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_CENTER_TESTS"] == "1
 // Listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh` accordingly.
 if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_CENTER_REDESIGN_TESTS"] == "1" {
     exit(NotificationCenterRedesignSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-notification-ambient-expand-fix`: pure logic - it drives the
+// poller's own ambient pass and reads the published entry back, with no window
+// anywhere. Deliberately *not* in `NEEDS_SESSION`: whether a row has children
+// at all is what this guards, and it belongs in the blocking lane.
+if ProcessInfo.processInfo.environment["FM_RUN_AMBIENT_SIGNAL_CHILDREN_TESTS"] == "1" {
+    exit(AmbientSignalChildrenSelfTest.run() ? 0 : 1)
 }
 
 // The trickiest of the nine signals - SRE Lead replying on a tab you're not

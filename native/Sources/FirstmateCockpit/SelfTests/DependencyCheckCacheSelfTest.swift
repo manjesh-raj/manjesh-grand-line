@@ -310,8 +310,8 @@ enum DependencyCheckCacheSelfTest {
         if checker.totalCount != items.count {
             fail("expected \(items.count) real checks total (the poller reusing the page's), got \(checker.totalCount)", &ok)
         }
-        if sweep.statuses.count != items.count {
-            fail("the poller must still get a status for every item, got \(sweep.statuses.count)", &ok)
+        if sweep.samples.count != items.count {
+            fail("the poller must still get a status for every item, got \(sweep.samples.count)", &ok)
         }
         // The count alone is not enough, and this is the half that catches the
         // real regression: a poller that went back to calling
@@ -319,7 +319,7 @@ enum DependencyCheckCacheSelfTest {
         // stays at the page's own 13 and the case passes while the bypass is
         // fully reinstated. Asserting the sweep returned *this cache's*
         // outcomes is what distinguishes "reused" from "did its own thing".
-        if !sweep.statuses.allSatisfy({ $0 == fakeOutcome(for: "x").status }) {
+        if !sweep.samples.allSatisfy({ $0.outcome.status == fakeOutcome(for: "x").status }) {
             fail("the poller's statuses did not come from the shared cache - it answered from somewhere else entirely", &ok)
         }
     }

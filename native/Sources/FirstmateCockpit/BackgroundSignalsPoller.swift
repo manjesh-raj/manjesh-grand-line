@@ -263,6 +263,22 @@ final class BackgroundSignalsPoller {
     var onNavigateToVault: (() -> Void)?
     var onNavigateToBootstrap: (() -> Void)?
 
+    /// `fm/grandline-notification-ambient-expand-fix`: the per-tool and
+    /// per-repo halves of the two navigation hooks above, for the popover's
+    /// expanded child rows.
+    ///
+    /// They take an id rather than doing the work here on purpose. An update
+    /// and a sync are the pages' own mutating actions, and each page owns the
+    /// per-row busy state that keeps two external-tool invocations from
+    /// racing (`UpdatesController.update`'s `isBusy` guard, and the same in
+    /// `GitHubSyncController.sync`). A poller that shelled out to `brew` on
+    /// its own would run beside whatever that page was already doing, with no
+    /// row to report into. So the shell shows the page - mounting it if this
+    /// is its first visit - and hands it the id, and the page runs its real
+    /// action with its real confirmation, log, toast and post-update re-check.
+    var onUpdateTool: ((String) -> Void)?
+    var onSyncFork: ((String) -> Void)?
+
     private init() {}
 
     /// Safe to call every launch. Runs one check shortly after starting (so
@@ -361,8 +377,9 @@ final class BackgroundSignalsPoller {
             // Software checklist step reads the exact same per-item outcomes)
             // rather than shelling out to `brew`/`npm` twice for the same
             // catalog in one poll pass. See `sweepSoftware`.
-            let (softwareStatuses, softwareGatheredAt) = Self.sweepSoftware()
-            self.checkToolUpdates(statuses: softwareStatuses, gatheredAt: softwareGatheredAt)
+            let (softwareSamples, softwareGatheredAt) = Self.sweepSoftware()
+            let softwareStatuses = softwareSamples.map { $0.outcome.status }
+            self.checkToolUpdates(samples: softwareSamples, gatheredAt: softwareGatheredAt)
             self.checkGitHubSync()
             self.checkVault()
             // The software half of setup drift is the sweep above, so this
@@ -406,34 +423,90 @@ final class BackgroundSignalsPoller {
     ///    reading may displace a page's own - so claiming the whole set is as
     ///    new as its newest half would be the exact overwrite-a-fresher-number
     ///    bug PR #395 closed, reintroduced through this cache.
+    /// 3. It returns the **whole** `CheckOutcome` per item, paired with the
+    ///    item it came from, rather than only `.status`
+    ///    (`fm/grandline-notification-ambient-expand-fix`). The name and the
+    ///    version-pair detail are what the notification popover's expanded
+    ///    row is made of, and this sweep already had both in hand - throwing
+    ///    them away here is what made the ambient row unexpandable while the
+    ///    Updates page's own publish of the identical data expanded fine.
     static func sweepSoftware(cache: DependencyCheckCache = .shared,
                               items: [DependencyItem] = DependencyCatalog.items)
-        -> (statuses: [DependencyStatus], gatheredAt: Date) {
+        -> (samples: [SoftwareSample], gatheredAt: Date) {
         let sampled = items.map {
-            cache.checkDated($0, forceRefresh: false, maxAge: sharedCheckMaxAge)
+            ($0, cache.checkDated($0, forceRefresh: false, maxAge: sharedCheckMaxAge))
         }
         // `min()` is nil only for an empty catalog, which never happens;
         // `Date()` is the honest answer for "nothing contributed" anyway.
-        return (sampled.map { $0.outcome.status },
-                sampled.map { $0.gatheredAt }.min() ?? Date())
+        return (sampled.map { SoftwareSample(item: $0.0, outcome: $0.1.outcome) },
+                sampled.map { $0.1.gatheredAt }.min() ?? Date())
+    }
+
+    /// One catalog item and what the sweep above learned about it.
+    struct SoftwareSample {
+        let item: DependencyItem
+        let outcome: CheckOutcome
     }
 
     // MARK: #3 - tool updates
 
-    private func checkToolUpdates(statuses: [DependencyStatus], gatheredAt: Date) {
+    private func checkToolUpdates(samples: [SoftwareSample], gatheredAt: Date) {
         DispatchQueue.main.async { [weak self] in
-            self?.publishToolStatuses(statuses, gatheredAt: gatheredAt)
+            self?.applyToolSweep(samples: samples, gatheredAt: gatheredAt)
         }
+    }
+
+    /// The main-thread half of the tool pass, split out so a suite can drive
+    /// the real composition (children included) without a run loop - see
+    /// `debugRunAmbientToolPass`.
+    private func applyToolSweep(samples: [SoftwareSample], gatheredAt: Date) {
+        publishToolStatuses(samples.map { $0.outcome.status },
+                            children: toolChildren(from: samples),
+                            gatheredAt: gatheredAt)
+    }
+
+    /// The ambient pass's own expandable children, built through the one
+    /// shared mapping the Updates page also uses.
+    private func toolChildren(from samples: [SoftwareSample]) -> [AppNotificationChild] {
+        NotificationSignalChildren.tools(
+            samples.map {
+                .init(id: $0.item.id, name: $0.item.name,
+                      status: $0.outcome.status, detail: $0.outcome.detail)
+            },
+            perform: { [weak self] id in self?.onUpdateTool?(id) })
     }
 
     // MARK: #4 - GitHub Sync
 
     private func checkGitHubSync() {
         let gatheredAt = Date()
-        let statuses = GitHubSyncCatalog.repos.map { GitHubSyncSource.check($0).status }
+        let repos = GitHubSyncCatalog.repos
+        // The whole outcome, not just `.status` - same reason as the software
+        // sweep above: `.detail` is the "12 commits behind kunchenguid/gh-axi"
+        // line the expanded row shows, and this is the only place that ran the
+        // check before the GitHub Sync page has ever been opened.
+        let outcomes = repos.map { GitHubSyncSource.check($0) }
         DispatchQueue.main.async { [weak self] in
-            self?.publishForkStatuses(statuses, gatheredAt: gatheredAt)
+            self?.applyForkSweep(repos: repos, outcomes: outcomes, gatheredAt: gatheredAt)
         }
+    }
+
+    /// The main-thread half of the fork pass - see `applyToolSweep`.
+    private func applyForkSweep(repos: [GitHubSyncRepoConfig],
+                                outcomes: [GitHubSyncCheckOutcome],
+                                gatheredAt: Date) {
+        publishForkStatuses(outcomes.map { $0.status },
+                            children: forkChildren(repos: repos, outcomes: outcomes),
+                            gatheredAt: gatheredAt)
+    }
+
+    private func forkChildren(repos: [GitHubSyncRepoConfig],
+                              outcomes: [GitHubSyncCheckOutcome]) -> [AppNotificationChild] {
+        NotificationSignalChildren.forks(
+            zip(repos, outcomes).map {
+                .init(id: $0.fullName, name: $0.name, status: $1.status, detail: $1.detail)
+            },
+            perform: { [weak self] id in self?.onSyncFork?(id) })
     }
 
     // MARK: #5 - Vault attention
@@ -620,10 +693,25 @@ extension BackgroundSignalsPoller {
     ///
     /// `children`/`updateAll` are the redesigned popover's expandable half -
     /// the tools by name with their version pairs, and the page's own serial
-    /// bulk update. Only the Updates page can supply them (the poller's own
-    /// pass reads cached statuses, not names), so they default to nothing and
-    /// the row simply renders unexpandable when they are absent, which is the
-    /// honest rendering of "this reading has no per-tool detail".
+    /// bulk update.
+    ///
+    /// **Both producers supply `children`**
+    /// (`fm/grandline-notification-ambient-expand-fix`). They used to default
+    /// to nothing for this poller's own pass, on the reasoning that the pass
+    /// "reads cached statuses, not names" - which was simply wrong: the sweep
+    /// holds a full `CheckOutcome` per catalog item and was discarding
+    /// everything but `.status`. The captain saw the consequence and reported
+    /// it as a bug: at launch, before Updates has ever been opened, the only
+    /// producer is this one and "2 tools have updates" had no chevron at all.
+    /// `sweepSoftware` now returns the outcomes and `toolChildren` builds the
+    /// same children the page builds.
+    ///
+    /// `updateAll` is still the page's alone, and that one *is* honest: the
+    /// bulk update is a serial loop over the page's own rows and their busy
+    /// state (`UpdatesController.updateAllPending`), so with no page mounted
+    /// the row's primary action stays "Open Updates" rather than claiming a
+    /// bulk run nothing is driving. Each child's own Update is live either
+    /// way - see `onUpdateTool`.
     func publishToolStatuses(_ statuses: [DependencyStatus],
                              children: [AppNotificationChild] = [],
                              updateAll: (() -> Void)? = nil,
@@ -637,7 +725,8 @@ extension BackgroundSignalsPoller {
         }
     }
 
-    /// Publish freshly-learned fork statuses.
+    /// Publish freshly-learned fork statuses. `children`/`syncAll` divide the
+    /// same way `publishToolStatuses`' do, and for the same reasons.
     func publishForkStatuses(_ statuses: [GitHubSyncStatus],
                              children: [AppNotificationChild] = [],
                              syncAll: (() -> Void)? = nil,
@@ -723,5 +812,23 @@ extension BackgroundSignalsPoller {
     /// marks left by an earlier case would make a later one's publish look
     /// stale and be refused.
     func debugResetReadingClock() { newestReading = [:] }
+
+    /// Run the ambient pass's tool half synchronously: the **real**
+    /// `sweepSoftware` against an injected cache and item list, then the real
+    /// main-thread apply - so a suite sees the real children composition
+    /// rather than a re-implementation of it. Only the subprocess is faked,
+    /// through `DependencyCheckCache.checkOverrideForTests`.
+    func debugRunAmbientToolPass(cache: DependencyCheckCache, items: [DependencyItem]) {
+        let sweep = Self.sweepSoftware(cache: cache, items: items)
+        applyToolSweep(samples: sweep.samples, gatheredAt: sweep.gatheredAt)
+    }
+
+    /// The same for the fork half, one seam further in: `GitHubSyncSource.check`
+    /// is a live `gh api` call with no override of its own, so the outcomes are
+    /// the fixture and everything downstream of them is real.
+    func debugRunAmbientForkPass(repos: [GitHubSyncRepoConfig],
+                                 outcomes: [GitHubSyncCheckOutcome]) {
+        applyForkSweep(repos: repos, outcomes: outcomes, gatheredAt: Date())
+    }
 }
 #endif

@@ -388,6 +388,9 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
             ? "Checked \(rows.count) tools, \(updateCount) update\(updateCount == 1 ? "" : "s") available"
             : "Checked \(rows.count) tools - all up to date"
         showToastIfOnScreen(message)
+        // Anything the notification popover asked for while this sweep was
+        // running now has a real, current status to act on.
+        runPendingNotificationUpdates()
     }
 
     /// A toast, but only while this page is the one being looked at.
@@ -532,15 +535,16 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
         // two real actions, per-tool and bulk. The counting rule above is
         // untouched; this is extra detail hung off the same publish, never a
         // second source of "how many need an update".
+        //
+        // `fm/grandline-notification-ambient-expand-fix`: built through
+        // `NotificationSignalChildren`, which the poller's own ambient pass
+        // also uses - the captain sees that one first (it is what populates
+        // the popover at launch), and two mappings are how the same row comes
+        // to read one way before this page is opened and another way after.
         let pending = rows.filter { $0.status.showsUpdateButton }
-        let children = pending.map { row in
-            AppNotificationChild(id: row.item.id, name: row.item.name, meta: row.detail,
-                                 actionLabel: "Update", isMonospaced: true,
-                                 perform: { [weak self, weak row] in
-                                     guard let self, let row else { return }
-                                     self.confirmAndUpdate(row)
-                                 })
-        }
+        let children = NotificationSignalChildren.tools(
+            rows.map { .init(id: $0.item.id, name: $0.item.name, status: $0.status, detail: $0.detail) },
+            perform: { [weak self] id in self?.requestUpdateFromNotification(toolID: id) })
         BackgroundSignalsPoller.shared.publishToolStatuses(
             rows.map { $0.status },
             children: children,
@@ -814,6 +818,49 @@ final class UpdatesController: NSViewController, DaylightDrillActions {
 
     @objc private func installInBootstrapTapped(_ sender: NSButton) {
         onNavigateToBootstrap?()
+    }
+
+    /// Run one tool's real update, asked for from the notification popover's
+    /// expanded row (`fm/grandline-notification-ambient-expand-fix`).
+    ///
+    /// Reached two ways, and deliberately the same way for both: this page's
+    /// own publish routes its children here, and so does
+    /// `AppShellController.updateToolFromNotification` for a press that
+    /// happened before this page had ever been mounted. Everything below the
+    /// entry point is the page's ordinary path - the same confirmation, the
+    /// same busy state, the same log, toast and post-update re-check.
+    ///
+    /// The one wrinkle is timing. A first visit mounts this page and
+    /// `viewWillAppear` immediately starts a 13-item sweep, so the request
+    /// usually arrives mid-sweep - and `update(_:)` would read a row whose
+    /// status is `.checking`. So a request that lands during a sweep is
+    /// queued and run when the sweep settles, against the row's real,
+    /// just-learned status: a tool that turned out to be up to date after all
+    /// is quietly dropped rather than updated on the strength of a reading
+    /// the popover took minutes ago.
+    func requestUpdateFromNotification(toolID: String) {
+        guard isViewLoaded else { return }
+        guard !isCheckingAll else {
+            if !pendingNotificationUpdates.contains(toolID) {
+                pendingNotificationUpdates.append(toolID)
+            }
+            return
+        }
+        guard let row = rows.first(where: { $0.item.id == toolID }) else { return }
+        confirmAndUpdate(row)
+    }
+
+    /// Tool ids whose Update was pressed while a check sweep was in flight.
+    private var pendingNotificationUpdates: [String] = []
+
+    private func runPendingNotificationUpdates() {
+        let requested = pendingNotificationUpdates
+        pendingNotificationUpdates = []
+        for id in requested {
+            guard let row = rows.first(where: { $0.item.id == id }),
+                  row.status.showsUpdateButton else { continue }
+            confirmAndUpdate(row)
+        }
     }
 
     /// Firstmate's row gets an explicit before-acting summary (commit count +
