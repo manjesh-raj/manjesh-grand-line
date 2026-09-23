@@ -286,3 +286,23 @@ A fixture that themed the bar *first* therefore had its choice silently replaced
 It reads as a colour bug in the button.
 Apply the theme last.
 The same fixture pins its own `QuickAccessConfiguration` rather than inheriting `AppSettings.shared.quickAccess`, which is the captain's real stored list and would make "the row shows at least three distinct hues" a claim about their pins rather than about this fix.
+
+## The terminal shortcut borrows Settings' own Terminal tint (`fm/grandline-topbar-terminal-icon-color`)
+
+**The captain's ask**, a one-line follow-up to the row above: the top bar's Console shortcut should be the same colour as the Terminal row on the Settings sidebar.
+The screenshots are `data/grandline-topbar-terminal-icon-color/captain-screenshots/134-topbar-current.png` and `135-settings-terminal-color-wanted.png`.
+
+Console's tile was teal, because `RailDestination.domainHue` gives teal to the running-systems area as a whole - the consequence the entry above wrote out in advance.
+`DaylightBarIconButton.tileTintOverride(for:)` is the exception to it, and it is deliberately one entry rather than a second table: it returns `SettingsController.Category.terminal.tint` itself, so the two tiles are one value and an edit to either side cannot drift them apart.
+`RailDestination.domainHue` is untouched, so Console's page, its drill header and its canvas card are all still teal - this is the bar's tile alone.
+
+**The override resolves unbranched, and that is the whole of the fix.**
+A tint is `HelmTint.neutral.hex(in:)` on all 26 palettes, which is exactly how `IconTileView` resolves Settings' own tile.
+It deliberately does not take `tileHex`'s Daylight/non-Daylight split: that split exists so a §2.2 *identity* hue survives on a palette with no such table, and this is a borrowed tint rather than an identity.
+Expressing the same idea as `HelmDomainHue.slate` was the obvious-looking alternative and is wrong in the one family that matters here - it agrees with Settings on the 24 fallback palettes (`slate.fallbackTint` is `.neutral`) and diverges on Daylight itself, where it resolves to `8B8677`, a warm slate, against Settings' cool `2A2B33`.
+The captain's screenshot is a Daylight-family palette.
+
+**Verification.** `DaylightBarIconTileSelfTest` gained one case asserting three separate claims - that the override *is* Settings' tint, that it resolves identically in all 26 palettes while every other shortcut still takes its own domain hue, and that the tile really paints that colour on both sides of the split - plus its own discriminating-power guard, so a future world in which Console's domain hue simply became neutral fails the case rather than passing it vacuously.
+The 26-palette legibility sweep now covers borrowed tints as well as the seven domain hues, which is the half that needed it: `.neutral` is `chromeInkHex`, so its wash is the pairing AGENTS.md's colour rules warn about.
+Two injections were each confirmed to fail by name - the override removed (the tint check and the sweep's own vacuity guard), and the override routed through `HelmDomainHue.slate` (`daylight: the terminal shortcut resolves #8B8677 where Settings' Terminal row resolves #2A2B33`).
+**Scoped local run, per this repo's own convention**: `swift build` clean plus `FM_RUN_BAR_ICON_TILE_TESTS` and `FM_RUN_BAR_NAV_MODERNIZATION_TESTS`, which are the two suites that assert this button's tile at all. CI's full run is unchanged and still gates the merge.

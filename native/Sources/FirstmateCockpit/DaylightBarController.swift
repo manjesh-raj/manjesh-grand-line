@@ -1046,7 +1046,8 @@ final class DaylightBarController: NSViewController {
         // Hosts' icon anywhere else in the app are one rendering, not two.
         let direct = destinations.count == 1 ? destinations[0] : nil
         quickAccessOverflowButton.applyGlyph(symbol: direct?.symbol ?? "ellipsis",
-                                             hue: direct?.domainHue)
+                                             hue: direct?.domainHue,
+                                             tileTint: direct.flatMap(DaylightBarIconButton.tileTintOverride))
         // The gap belongs between two *visible* things. With the row collapsed
         // it has zero width of its own, and with no overflow button there is
         // nothing on the other side of the gap.
@@ -1796,6 +1797,11 @@ class DaylightBarIconButton: NSButton {
     /// slate for Settings and Tools. Inventing a second table here is exactly
     /// how a bar icon and the page it opens come to disagree about a colour.
     ///
+    /// One destination does not take its domain hue here, and it is a
+    /// deliberate exception rather than a second table:
+    /// `tileTintOverride(for:)` gives Console the tint Settings' own Terminal
+    /// row carries. That function's comment is the reasoning.
+    ///
     /// **The per-family split matches `UnifiedSearch`'s destination tile
     /// exactly**, which is the app's other place that draws a `RailDestination`
     /// as a colour tile: the §2.2 identity hue on the Daylight family, the
@@ -1818,6 +1824,48 @@ class DaylightBarIconButton: NSButton {
         theme.isDaylight ? hue.identityHex(in: theme) : hue.fallbackTint.hex(in: theme)
     }
 
+    /// The one destination whose bar tile is **not** a wash of its own
+    /// `domainHue`.
+    ///
+    /// `fm/grandline-topbar-terminal-icon-color`: Console owns teal, because
+    /// §2.2 gives that hue to the running-systems area as a whole (Console,
+    /// Hosts, Log Analyzer, Kubernetes). The captain asked for the top bar's
+    /// terminal shortcut to carry the same dark-slate tile Settings' own
+    /// Terminal row draws, so the app's two "this is the terminal" tiles read
+    /// as one thing rather than as two unrelated colours.
+    ///
+    /// It returns `SettingsController.Category.terminal`'s **own** tint rather
+    /// than a second copy of it: that is where the choice and its reasoning
+    /// live (`.neutral` deliberately, against AGENTS.md's general warning off
+    /// it), and a literal hex here would be off-palette in twenty-five of the
+    /// twenty-six themes. `DaylightBarIconTileSelfTest` asserts the two are
+    /// the same value, so a future edit to either side fails by name instead
+    /// of silently reopening the gap this closed.
+    ///
+    /// **The override resolves unbranched**, which is the point: a tint is
+    /// `HelmTint.neutral.hex(in:)` on all 26 palettes, exactly as
+    /// `IconTileView` resolves Settings' tile. That is deliberately not
+    /// `tileHex`'s Daylight/non-Daylight split - the split exists so a §2.2
+    /// *identity* hue survives on a palette that has no such table, and this
+    /// is a borrowed tint rather than an identity. Expressing it as
+    /// `HelmDomainHue.slate` instead would agree with Settings on the 24
+    /// fallback palettes and diverge on the Daylight family itself
+    /// (`8B8677`, a warm slate against Settings' cool one) - which is the
+    /// family the captain is looking at.
+    static func tileTintOverride(for destination: RailDestination) -> HelmTint? {
+        destination == .console ? SettingsController.Category.terminal.tint : nil
+    }
+
+    /// The hue a destination's bar tile is washed in, override included.
+    ///
+    /// The entry point every caller that *has* a `RailDestination` should
+    /// reach for - the hue-only overload above is the resolution step alone,
+    /// and cannot see an override keyed on the destination.
+    static func tileHex(for destination: RailDestination, in theme: HelmTheme) -> String {
+        if let tint = tileTintOverride(for: destination) { return tint.hex(in: theme) }
+        return tileHex(for: destination.domainHue, in: theme)
+    }
+
     private let iconBackground = NSView()
     private let iconImageView = NSImageView()
     /// The glyph currently drawn, and the hue it lights up in.
@@ -1831,6 +1879,11 @@ class DaylightBarIconButton: NSButton {
     /// is not a destination shortcut (the theme toggle, Recents) and so has
     /// no domain of its own - those brighten to plain ink instead.
     private var hue: HelmDomainHue?
+    /// A tint that replaces `hue` for this button's tile, or `nil` to wash the
+    /// domain hue as usual. See `tileTintOverride(for:)` - `hue` is left
+    /// intact either way, because it is still this destination's identity
+    /// everywhere else in the app.
+    private var tileTint: HelmTint?
 
     private var hoverArea: NSTrackingArea?
     private var isHovering = false
@@ -1838,9 +1891,11 @@ class DaylightBarIconButton: NSButton {
     private(set) var isActiveDestination = false
     private var theme: HelmTheme = ThemeManager.shared.theme
 
-    init(symbol: String, tooltip: String, accessibilityLabel: String, hue: HelmDomainHue? = nil) {
+    init(symbol: String, tooltip: String, accessibilityLabel: String, hue: HelmDomainHue? = nil,
+         tileTint: HelmTint? = nil) {
         self.symbolName = symbol
         self.hue = hue
+        self.tileTint = tileTint
         super.init(frame: .zero)
         title = ""
         isBordered = false
@@ -1895,11 +1950,14 @@ class DaylightBarIconButton: NSButton {
     /// the same `RailDestination.symbol` / `.domainHue` pair a real
     /// `DaylightDestinationButton` is built from, so the two renderings of one
     /// destination cannot drift - which is the whole reason this takes a
-    /// symbol and a hue rather than a ready-made image.
-    func applyGlyph(symbol: String, hue: HelmDomainHue?) {
-        guard symbol != symbolName || hue != self.hue else { return }
+    /// symbol and a hue rather than a ready-made image. `tileTint` travels
+    /// with them for the same reason - it is the destination's own
+    /// `tileTintOverride(for:)`, not a colour this call site chose.
+    func applyGlyph(symbol: String, hue: HelmDomainHue?, tileTint: HelmTint? = nil) {
+        guard symbol != symbolName || hue != self.hue || tileTint != self.tileTint else { return }
         symbolName = symbol
         self.hue = hue
+        self.tileTint = tileTint
         loadGlyphImage()
         restyle()
     }
@@ -2029,7 +2087,7 @@ class DaylightBarIconButton: NSButton {
     /// step is the ordinary hover response every other tinted surface in this
     /// app gives.
     private func restyleAsTile(hue: HelmDomainHue) {
-        let hex = Self.tileHex(for: hue, in: theme)
+        let hex = tileTint?.hex(in: theme) ?? Self.tileHex(for: hue, in: theme)
         let steps: [CGFloat]
         let borderAlpha: CGFloat
         if isActiveDestination {
@@ -2112,7 +2170,8 @@ final class DaylightDestinationButton: DaylightBarIconButton {
         super.init(symbol: destination.symbol,
                    tooltip: "Open \(destination.title)",
                    accessibilityLabel: destination.title,
-                   hue: destination.domainHue)
+                   hue: destination.domainHue,
+                   tileTint: DaylightBarIconButton.tileTintOverride(for: destination))
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
