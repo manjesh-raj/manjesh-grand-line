@@ -221,6 +221,9 @@ NEEDS_SESSION=(
   # chrome, a real laid-out bar, and a real scroll offset. None of the three
   # is answerable without a window.
   "FM_RUN_WINDOW_CHROME_FUSION_TESTS"
+  # The fill for the menu-bar strip macOS reserves above a full-screen window:
+  # it mounts a real window and orders the real panel it builds.
+  "FM_RUN_FULL_SCREEN_MENU_BAR_FILL_TESTS"
   # The same audit's B1-B5: a real window's initial first responder, a real
   # panel anchored under a real control, and a real navigation transition.
   "FM_RUN_BAR_NAV_MODERNIZATION_TESTS"

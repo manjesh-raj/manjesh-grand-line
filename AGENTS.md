@@ -436,6 +436,26 @@ is scoped by blast radius, and CI's run is not.
 
 ### Verifying native UI bugs without a real screenshot
 
+**`screencapture` works from an agent shell now, and the bullet below (which
+says it does not) is the older state of this machine.** Screen Recording has
+since been granted to the shell: `screencapture -x <file>` captures the whole
+screen and `screencapture -x -o -l <windowID>` captures **one window, alpha
+preserved** - which is how `fm/grandline-settings-black-band-real-fix` proved
+that a black band two prior rounds had chased belonged to the Window Server's
+menu bar rather than to this app. `CGWindowListCopyWindowInfo` is the other
+half: it names every window in the strip you are looking at, its owner and its
+layer. Accessibility is still *not* granted (no synthetic clicks; a real
+`performClick` is still the substitute, and `CGWarpMouseCursorPosition` moves
+the pointer without it). Nothing below is retired - env-gated instrumentation
+is still the right tool for geometry and for anything that has to be read out
+of a layout pass - but **do not conclude a pixel is or is not app-painted from
+an off-screen render when a real capture is available.** An off-screen render
+has no full-screen Space, no title bar and no menu bar window, so it
+structurally cannot reproduce a defect in that region and a clean diff there
+proves nothing;
+[`24-window-and-layout.md`](docs/history/24-window-and-layout.md) records the
+round that cost.
+
 - **Verifying native UI bugs without a real screenshot.** This machine has a
   real console session, but the agent's shell process (`claude` under WezTerm)
   has neither Screen Recording nor Accessibility permission granted, and there
