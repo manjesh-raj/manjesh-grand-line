@@ -617,21 +617,38 @@ extension BackgroundSignalsPoller {
 
     /// Publish freshly-learned tool statuses. Safe to call from any producer;
     /// a set that is still settling is ignored rather than published.
-    func publishToolStatuses(_ statuses: [DependencyStatus], gatheredAt: Date = Date()) {
+    ///
+    /// `children`/`updateAll` are the redesigned popover's expandable half -
+    /// the tools by name with their version pairs, and the page's own serial
+    /// bulk update. Only the Updates page can supply them (the poller's own
+    /// pass reads cached statuses, not names), so they default to nothing and
+    /// the row simply renders unexpandable when they are absent, which is the
+    /// honest rendering of "this reading has no per-tool detail".
+    func publishToolStatuses(_ statuses: [DependencyStatus],
+                             children: [AppNotificationChild] = [],
+                             updateAll: (() -> Void)? = nil,
+                             gatheredAt: Date = Date()) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let count = Self.toolUpdateCount(from: statuses) else { return }
         guard acceptsReading(.tools, gatheredAt: gatheredAt) else { return }
         lastCounts.toolUpdates = count
-        NotificationSources.setToolUpdates(count: count) { [weak self] in self?.onNavigateToUpdates?() }
+        NotificationSources.setToolUpdates(count: count, children: children, updateAll: updateAll) {
+            [weak self] in self?.onNavigateToUpdates?()
+        }
     }
 
     /// Publish freshly-learned fork statuses.
-    func publishForkStatuses(_ statuses: [GitHubSyncStatus], gatheredAt: Date = Date()) {
+    func publishForkStatuses(_ statuses: [GitHubSyncStatus],
+                             children: [AppNotificationChild] = [],
+                             syncAll: (() -> Void)? = nil,
+                             gatheredAt: Date = Date()) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let count = Self.forkDriftCount(from: statuses) else { return }
         guard acceptsReading(.forks, gatheredAt: gatheredAt) else { return }
         lastCounts.forkDrift = count
-        NotificationSources.setGitHubSync(count: count) { [weak self] in self?.onNavigateToGitHubSync?() }
+        NotificationSources.setGitHubSync(count: count, children: children, syncAll: syncAll) {
+            [weak self] in self?.onNavigateToGitHubSync?()
+        }
     }
 
     /// Publish freshly-learned setup-step results.
@@ -640,7 +657,14 @@ extension BackgroundSignalsPoller {
         guard let count = Self.setupDriftCount(from: results) else { return }
         guard acceptsReading(.setup, gatheredAt: gatheredAt) else { return }
         lastCounts.setupDrift = count
-        NotificationSources.setSetupDrift(count: count) { [weak self] in self?.onNavigateToBootstrap?() }
+        // The drifted steps name themselves - `results` is keyed by
+        // `SetupStepKind`, so no page has to hand them over separately.
+        let children = SetupStepKind.allCases
+            .filter { results[$0] == .some(false) }
+            .map { AppNotificationChild(id: "\($0)", name: $0.title, meta: "Not satisfied") }
+        NotificationSources.setSetupDrift(count: count, children: children) {
+            [weak self] in self?.onNavigateToBootstrap?()
+        }
     }
 
     /// Publish a freshly-loaded Automic Vault read.

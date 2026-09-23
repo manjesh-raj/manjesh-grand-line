@@ -30,7 +30,15 @@ final class ShiftNotificationScheduler {
     /// dedup, this reflects the live count every poll (`nil`/0 clears it),
     /// since the in-app entry's own clear rule is "clears when completed,"
     /// not "clears once you've been told."
-    var onDueCountsChanged: ((Int, Int) -> Void)?
+    /// `(due tasks, due follow-ups, how many of those are already overdue)`.
+    ///
+    /// The third is what puts the Notification Center row in "Needs action"
+    /// rather than "Available" (`fm/grandline-notification-center-redesign`):
+    /// something due in the next hour is an FYI, something that was due
+    /// yesterday is not. `due <= now` is the same comparison this poll already
+    /// makes to choose between "due now" and "due soon" in the banner's own
+    /// title, so there is one definition of overdue rather than two.
+    var onDueCountsChanged: ((Int, Int, Int) -> Void)?
 
     /// Each due item is notified once per distinct due `Date` - if a task's
     /// due date/time changes (edited, or pushed back), the new value is a
@@ -106,6 +114,7 @@ final class ShiftNotificationScheduler {
         let horizon = now.addingTimeInterval(lookahead)
 
         var dueTaskCount = 0
+        var overdueCount = 0
         for task in store.activeTasks {
             guard let due = ShiftDateFormatting.dateTime(from: task.dueDate, time: task.dueTime) else { continue }
             // F5's "remind me N minutes before": the per-task offset replaces
@@ -114,6 +123,7 @@ final class ShiftNotificationScheduler {
             // offset keeps the exact behaviour it had.
             guard due <= Self.horizon(for: task, now: now, default: horizon) else { continue }
             dueTaskCount += 1
+            if due <= now { overdueCount += 1 }
             guard notifiedTaskDueAt[task.id] != due else { continue }
             notifiedTaskDueAt[task.id] = due
             notify(
@@ -133,6 +143,7 @@ final class ShiftNotificationScheduler {
             guard let due = ShiftDateFormatting.dateTime(from: followUp.followUpAt, time: followUp.followUpTime) else { continue }
             guard due <= horizon else { continue }
             dueFollowUpCount += 1
+            if due <= now { overdueCount += 1 }
             guard notifiedFollowUpDueAt[followUp.id] != due else { continue }
             notifiedFollowUpDueAt[followUp.id] = due
             notify(
@@ -149,7 +160,7 @@ final class ShiftNotificationScheduler {
             )
         }
 
-        onDueCountsChanged?(dueTaskCount, dueFollowUpCount)
+        onDueCountsChanged?(dueTaskCount, dueFollowUpCount, overdueCount)
     }
 
     /// How far ahead of `task`'s due time this poll is willing to fire.

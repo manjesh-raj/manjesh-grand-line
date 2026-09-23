@@ -487,8 +487,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // `poll()` already computes for the OS banner into the in-app
         // Notification Center too, rather than only firing a one-shot
         // banner with no record afterward.
-        shiftNotifications.onDueCountsChanged = { [weak self] taskCount, followUpCount in
-            NotificationSources.setShiftDue(taskCount: taskCount, followUpCount: followUpCount) {
+        shiftNotifications.onDueCountsChanged = { [weak self] taskCount, followUpCount, overdueCount in
+            NotificationSources.setShiftDue(taskCount: taskCount, followUpCount: followUpCount,
+                                            overdueCount: overdueCount) {
                 self?.appShell.showShiftDestination()
             }
         }
@@ -3391,6 +3392,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_CLAUDE_STATUS_CARD_TESTS"] == "1"
 // dedup/badge count) - see GrandLineNotificationCenterSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_CENTER_TESTS"] == "1" {
     exit(GrandLineNotificationCenterSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-notification-center-redesign`: window-backed - it mounts the
+// real "Waiting for you" panel in a real `OffScreenProbe` window and reads
+// back rendered geometry, real hover state and a real rasterised pixel.
+// Listed in `NEEDS_SESSION` in `Scripts/run-all-tests.sh` accordingly.
+if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_CENTER_REDESIGN_TESTS"] == "1" {
+    exit(NotificationCenterRedesignSelfTest.run() ? 0 : 1)
 }
 
 // The trickiest of the nine signals - SRE Lead replying on a tab you're not

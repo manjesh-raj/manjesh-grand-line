@@ -177,6 +177,12 @@ SKIP_FLAGS=(
 # deliberately a per-entry marker with a stated reason rather than a blanket
 # allowlist, the same shape as `OffScreenProbe-exempt:` above.
 NEEDS_SESSION=(
+  # The redesigned "Waiting for you" popover: the real panel mounted in a real
+  # key window, because a `HoverHighlightView`'s tracking area is
+  # `.activeInKeyWindow` and the hover-reveals-the-action swap is the whole
+  # point. Its pure half (the store's read/snooze/mute contract) is
+  # deliberately NOT here - that is FM_RUN_NOTIFICATION_CENTER_TESTS.
+  "FM_RUN_NOTIFICATION_CENTER_REDESIGN_TESTS"
   # The six new theme families: a real Settings page mounted in a real window,
   # painted with `cacheDisplay`, and sampled once per palette. Its pure half
   # (`FM_RUN_THEME_FAMILY_TESTS` - the family pairing and the palette shape) is
