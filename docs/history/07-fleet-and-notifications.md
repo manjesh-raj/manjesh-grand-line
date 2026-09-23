@@ -724,3 +724,121 @@ caller, so composing a briefing no longer waits on a 1-2s subprocess.
   evidence is real off-screen renders, real layout geometry and real
   target/action presses, per AGENTS.md's "Verifying native UI bugs without a
   real screenshot" convention.
+
+## The ambient rows would not expand (`fm/grandline-notification-ambient-expand-fix`)
+
+The captain opened the app, pressed the bell, and found "2 tools have updates"
+with no disclosure chevron at all - the row the redesign above had just shipped
+as expandable.
+Screenshots: `data/grandline-notification-ambient-expand-fix/captain-screenshots/96-real-app-not-expandable.png`
+against the reference's expanded state in `97-expected-expanded-reference.png`.
+
+### Why it looked like a missing feature and was not
+
+Nothing about the expand mechanism was broken.
+A row with no `AppNotificationChild` children has nothing to expand into, so it
+renders without a chevron - which is the honest rendering, and is exactly what
+the section above describes.
+
+What was wrong was the claim underneath it.
+"Updates and GitHub Sync can only be supplied by their own pages, which hold
+the names and version pairs the poller's cached reading does not" was written
+into `BackgroundSignalsPoller`'s own source as well, and it was simply false.
+`sweepSoftware` calls `DependencyCheckCache.checkDated` per catalog item and
+gets a whole `CheckOutcome` back - installed label, latest label, the
+ready-to-render `detail` line - and kept `.status` alone.
+`checkGitHubSync` did the same to `GitHubSyncCheckOutcome`.
+The names were never missing either: `DependencyCatalog.items` and
+`GitHubSyncCatalog.repos` are static tables that exist before any check runs.
+
+The reason the captain hit it every time is that the ambient pass is the *only*
+producer at launch.
+Neither page has been mounted, so the popover the captain opens first is always
+the one built from the poller's reading - the page-supplied children were real,
+and were only ever visible to a captain who had already opened Updates in that
+session.
+
+### What changed
+
+- `sweepSoftware` returns `[SoftwareSample]` (the catalog item paired with its
+  full `CheckOutcome`) rather than bare statuses, and `checkGitHubSync` keeps
+  the whole per-repo outcome.
+  Neither runs anything extra - this is data both already had and discarded.
+- `NotificationSignalChildren` is the one mapping from "a pending tool / a fork
+  that is behind" to a child row, used by all three producers.
+  It filters on the same `showsUpdateButton` / `showsSyncButton` predicates
+  `toolUpdateCount` / `forkDriftCount` count with, so the expanded list can
+  never disagree with the title's number, and it owns the forks'
+  furthest-behind-first order that the notification's own detail line
+  ("Furthest behind: …") names.
+- The poller's per-child action hands a tool id or a repo full name to
+  `onUpdateTool` / `onSyncFork`, wired in `main.swift` to
+  `AppShellController.updateToolFromNotification` /
+  `syncForkFromNotification`, which show the destination (mounting it on a
+  first visit) and call the page's own `requestUpdateFromNotification` /
+  `requestSyncFromNotification`.
+- The stale source comment on `publishToolStatuses` is gone, replaced by what
+  is now true.
+
+### Why the action routes through the page instead of running the update here
+
+This was the one real decision in the task, and the spec explicitly allowed a
+lesser fallback for it.
+
+Running `UpdatesSource.update(item)` straight from the poller would be a real
+update, and would also be the first path in this app to run an external tool
+with no row owning it.
+Each page holds the per-row `isBusy` state that enforces this app's standing
+rule that two external-tool invocations never race, and it owns the
+confirmation (firstmate's row has its own `HelmConfirm` before a push), the log,
+the toast and the post-update re-check that makes Check the source of truth for
+status.
+A second, page-less invocation path would have none of that, and would run
+beside whatever a mounted page was already doing.
+
+So the child's Update is live, and it is the page's real update - the page is
+just brought up first.
+It is not a navigate-and-stop fallback: the update runs.
+
+One wrinkle had to be handled for it to be true.
+A first visit mounts the page and `viewWillAppear` immediately starts a 13-item
+sweep, so the request usually lands mid-sweep, where `update(_:)` would act on a
+row whose status is `.checking`.
+A request that arrives during a sweep is queued and drained in `finishCheckAll`
+against the row's real, just-learned status - and a tool that turns out to be up
+to date after all is dropped rather than updated on the strength of a reading
+the popover took minutes ago.
+
+The row's *bulk* action is deliberately still the page's alone.
+"Update all" is a serial loop over the page's own rows and their busy state, so
+with no page mounted the primary action stays "Open Updates" rather than
+claiming a bulk run nothing is driving.
+
+### Verification
+
+- Full suite green before (201 passed, 0 failed, 1 skipped) and after, plus the
+  new suite.
+- `AmbientSignalChildrenSelfTest` (`FM_RUN_AMBIENT_SIGNAL_CHILDREN_TESTS`) is
+  pure logic and deliberately **not** in `NEEDS_SESSION` - whether a row has
+  children at all belongs in the blocking lane.
+  It drives the real `sweepSoftware` against a disposable cache with only the
+  subprocess faked (`DependencyCheckCache.checkOverrideForTests`), then the
+  real main-thread apply, and reads the published entry back out of
+  `GrandLineNotificationCenter`.
+  The fork half fakes one seam further in, because `GitHubSyncSource.check` is a
+  live `gh api` call with no override of its own.
+- Each case carries its discriminating half: three up-to-date tools and an
+  `.inSync` plus a `.diverged` repo that must **not** appear, so a builder that
+  forgot to filter fails rather than passes.
+- **Regression injections, each confirmed to fail the named case**: dropping
+  `children:` from the poller's two ambient publishes (seven failures across
+  three cases, every one naming the empty list), and deleting `main.swift`'s
+  `onUpdateTool` wiring (the source guard, which is the half no headless
+  behavioural check can see).
+- **Not verified**: the captain's own visual confirmation that the chevron is
+  now drawn. The popover's *rendering* of children - the chevron, the keyboard
+  expand, the child row's button - is asserted by
+  `NotificationCenterRedesignSelfTest` against fabricated children, and this
+  task's work is upstream of it: whether those children exist in the ambient
+  case. No screenshot is claimed, per AGENTS.md's "Verifying native UI bugs
+  without a real screenshot" convention.

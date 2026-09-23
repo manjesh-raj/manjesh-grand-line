@@ -437,6 +437,9 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         isCheckingAll = false
         refreshPill.isHidden = false
         refreshProgressLabel.isHidden = true
+        // Anything the notification popover asked for while this sweep was
+        // running now has a real, current status to act on.
+        runPendingNotificationSyncs()
     }
 
     private func check(_ row: GitHubSyncRow, completion: (() -> Void)? = nil) {
@@ -591,16 +594,15 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         // them, furthest behind first - which is also what its detail line
         // names. The counting rule (`showsSyncButton`, applied in the poller)
         // is untouched.
+        //
+        // `fm/grandline-notification-ambient-expand-fix`: built through
+        // `NotificationSignalChildren`, shared with the poller's own ambient
+        // pass - see `UpdatesController.publishToolUpdateSignal` for why the
+        // two producers must not each own a mapping.
         let pending = rows.filter { $0.status.showsSyncButton }
-            .sorted { behindCount($0.status) > behindCount($1.status) }
-        let children = pending.map { row in
-            AppNotificationChild(id: row.repo.fullName, name: row.repo.name, meta: row.detail,
-                                 actionLabel: "Sync",
-                                 perform: { [weak self, weak row] in
-                                     guard let self, let row else { return }
-                                     self.sync(row)
-                                 })
-        }
+        let children = NotificationSignalChildren.forks(
+            rows.map { .init(id: $0.repo.fullName, name: $0.repo.name, status: $0.status, detail: $0.detail) },
+            perform: { [weak self] id in self?.requestSyncFromNotification(repoFullName: id) })
         BackgroundSignalsPoller.shared.publishForkStatuses(
             rows.map { $0.status },
             children: children,
@@ -608,12 +610,36 @@ final class GitHubSyncController: NSViewController, DaylightDrillActions {
         )
     }
 
-    /// How far behind a status is, for ordering the notification's children -
-    /// `0` for every status that carries no count, which keeps the sort total
-    /// without pretending a `.checkFailed` is "0 behind" anywhere else.
-    private func behindCount(_ status: GitHubSyncStatus) -> Int {
-        if case .behind(let n) = status { return n }
-        return 0
+    /// Run one repo's real sync, asked for from the notification popover's
+    /// expanded row - the mirror of
+    /// `UpdatesController.requestUpdateFromNotification`, including its
+    /// queue-while-a-sweep-is-running rule and why it exists. Reached both
+    /// from this page's own children and, for a press that happened before
+    /// this page was ever mounted, from
+    /// `AppShellController.syncForkFromNotification`.
+    func requestSyncFromNotification(repoFullName: String) {
+        guard isViewLoaded else { return }
+        guard !isCheckingAll else {
+            if !pendingNotificationSyncs.contains(repoFullName) {
+                pendingNotificationSyncs.append(repoFullName)
+            }
+            return
+        }
+        guard let row = rows.first(where: { $0.repo.fullName == repoFullName }) else { return }
+        sync(row)
+    }
+
+    /// Repos whose Sync was pressed while a check sweep was in flight.
+    private var pendingNotificationSyncs: [String] = []
+
+    private func runPendingNotificationSyncs() {
+        let requested = pendingNotificationSyncs
+        pendingNotificationSyncs = []
+        for fullName in requested {
+            guard let row = rows.first(where: { $0.repo.fullName == fullName }),
+                  row.status.showsSyncButton else { continue }
+            sync(row)
+        }
     }
 
     private func render(_ row: GitHubSyncRow) {
