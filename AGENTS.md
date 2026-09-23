@@ -435,7 +435,18 @@ enough to explain itself.
   in seven. Feed the **tuple** overload the rep's raw components instead (the
   same two then measure 1.0753 and 1.0801), leave ~0.01 for the bitmap's 8-bit
   quantisation, and assert the true-sRGB floor separately against the *tokens*,
-  where no rep is involved.
+  where no rep is involved. **And the converse half, which is what makes the
+  rule easy to over-apply: convert the *expected* colour and leave the
+  *sample* alone.** `NSBitmapImageRep.colorAt(x:y:)` hands back the rep's own
+  raw components in an `NSColor` that is *tagged* `Generic RGB` whatever the
+  rep's real space is - "Color LCD" for a view inside a real window - so
+  `sampled.usingColorSpace(rep.colorSpace)` re-interprets numbers that were
+  already right. Measured
+  (`fm/grandline-settings-alignment-regression-fix`): one ground pixel read
+  `(0.055, 0.063, 0.086)` raw and `(0.067, 0.078, 0.110)` converted, against
+  an expected `(0.053, 0.062, 0.088)` - a clean pass turned into a 0.022 miss
+  that reads exactly like the unpainted-layer defect the check existed to
+  catch.
 
 **A second rule for the same call, and it is the one that bites first:
 `bitmapImageRepForCachingDisplay` hands back a rep measured in *pixels*, not

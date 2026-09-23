@@ -202,6 +202,7 @@ enum AppShellBodyWidthSelfTest {
             ("plainStackViewArrangedSubviewRemovalDoesNotLeak", test_stackViewArrangedSubviewRemovalLeaksOneGeneration),
             ("onlyTheShowingDestinationIsInTheWindowsConstraintGraph", test_hiddenDestinationsLeaveTheConstraintGraph),
             ("aRevisitedDestinationIsPutBackIntoTheGraph", test_revisitingReattachesTheDestination),
+            ("theWindowsTopStripIsPaintedByTheTheme", test_topStripIsPaintedByTheTheme),
         ]
         var failures = 0
         for (name, testCase) in cases {
@@ -1471,6 +1472,123 @@ enum AppShellBodyWidthSelfTest {
             + "(baseline \(baseline)) - so the mechanism is NSStackView's own arranged-subview "
             + "removal bookkeeping, not anything specific to this app's module cards"
     }
+
+    // MARK: Cases - the window's own top edge
+
+    /// `fm/grandline-settings-alignment-regression-fix`. The captain reported
+    /// a solid black band across the very top of the window, above the
+    /// floating bar - the shape a raw, unpainted `CALayer` makes when a
+    /// layer-backed view is given `wantsLayer` and no
+    /// `layer.backgroundColor`, which AGENTS.md's theming checklist exists to
+    /// prevent and which this app has shipped four times in other forms.
+    ///
+    /// That band could not be reproduced: the strip above the bar is the
+    /// shell root's own fill, and it measured the active theme's
+    /// `backgroundHex` in every palette tried. **Nothing asserted it,
+    /// though**, which is the gap this closes - the shell root is the one
+    /// surface in the app with no page-level suite of its own, and
+    /// `.fullSizeContentView` means it is what the window's title-bar region
+    /// shows. A future `wantsLayer` without a paired fill, or a theme
+    /// observer that stops reaching the root, lands here first.
+    ///
+    /// Sampled rather than read off `layer.backgroundColor`, because the
+    /// property being right is a different claim from the pixel being right
+    /// ("assert what is painted, not what was computed"): a subview mounted
+    /// over the strip with its own unpainted layer would satisfy the property
+    /// and fail the pixel.
+    ///
+    /// Four palettes across four families and both registers, so a fill that
+    /// is black by coincidence in a dark theme cannot pass and a family whose
+    /// ground is not the Helm default is covered too.
+    ///
+    /// **What the injection showed, and the limit it puts on this case.** The
+    /// strip is painted *twice* - the shell root fills the whole window and
+    /// `DaylightBarController`'s own view fills the top 64pt over it, both
+    /// from `theme.backgroundHex` - so deleting either one alone leaves the
+    /// pixel correct and this case green. It fails when the composited result
+    /// is wrong, which is the thing the captain would see: painting that bar
+    /// `NSColor.black` reproduced the report exactly and failed here by name
+    /// ("paints (0.000, 0.000, 0.000) against the theme's own ground").
+    private static func test_topStripIsPaintedByTheTheme() -> String? {
+        withScratchEnv {
+            var failure: String?
+            for id in ["ayu-dark", "daylight", "dusk", "nord-snow"] {
+                autoreleasepool {
+                    guard failure == nil else { return }
+                    guard let theme = HelmTheme.theme(id: id) else {
+                        failure = "\(id) is not a registered palette"
+                        return
+                    }
+                    ThemeManager.shared.setTheme(theme)
+                    let (window, shell) = makeMountedShell()
+                    defer { window.close() }
+                    window.setContentSize(NSSize(width: 1512, height: 950))
+                    shell.show(.settings)
+                    window.layoutIfNeeded()
+                    shell.view.layoutSubtreeIfNeeded()
+
+                    let root = shell.view
+                    guard root.bounds.width > 0, root.bounds.height > 0,
+                          let rep = root.bitmapImageRepForCachingDisplay(in: root.bounds) else {
+                        failure = "\(id): the shell never laid out - the sample would be vacuous"
+                        return
+                    }
+                    root.cacheDisplay(in: root.bounds, to: rep)
+                    // `bitmapImageRepForCachingDisplay` measures in *pixels*,
+                    // not points (gotcha: a factor of two on a retina
+                    // machine), and the rep's row 0 is an unflipped view's
+                    // top edge - which is exactly the strip being sampled.
+                    let scaleX = CGFloat(rep.pixelsWide) / root.bounds.width
+                    // Compared in `rep.colorSpace`, never via
+                    // `usingColorSpace(.sRGB)`: inside a real window the rep
+                    // comes back in the display's own profile, and the sRGB
+                    // conversion then reports a wrong colour that reads like
+                    // a real defect. Convert the **expected** colour, and
+                    // leave the sample alone - `colorAt(x:y:)` hands back the
+                    // rep's own raw components in a colour that is *tagged*
+                    // `Generic RGB` whatever the rep's real space is, so
+                    // converting the sample re-interprets numbers that were
+                    // already right. Measured here: the shell's ground read
+                    // (0.055, 0.063, 0.086) raw and (0.067, 0.078, 0.110)
+                    // once converted, against an expected (0.053, 0.062,
+                    // 0.088) - a clean pass turned into a 0.022 miss that
+                    // reads exactly like the unpainted layer this case
+                    // exists to catch.
+                    let expected = HelmTheme.nsColor(theme.backgroundHex)
+                        .usingColorSpace(rep.colorSpace)
+                    guard let expected else {
+                        failure = "\(id): the theme's ground has no representation in \(rep.colorSpace)"
+                        return
+                    }
+                    for xPoint in [CGFloat(2), root.bounds.midX, root.bounds.maxX - 2] {
+                        let px = min(rep.pixelsWide - 1, max(0, Int(xPoint * scaleX)))
+                        guard let sampled = rep.colorAt(x: px, y: 0) else {
+                            failure = "\(id): no pixel at the window's top edge, x \(px)"
+                            return
+                        }
+                        let dr = abs(sampled.redComponent - expected.redComponent)
+                        let dg = abs(sampled.greenComponent - expected.greenComponent)
+                        let db = abs(sampled.blueComponent - expected.blueComponent)
+                        // ~0.01 for the bitmap's own 8-bit quantisation.
+                        if max(dr, max(dg, db)) > 0.02 {
+                            failure = String(format: "%@: the window's top strip at x %d paints "
+                                             + "(%.3f, %.3f, %.3f) against the theme's own ground "
+                                             + "(%.3f, %.3f, %.3f) - an unpainted layer shows here as "
+                                             + "a black band across the top of the window",
+                                             id, px,
+                                             sampled.redComponent, sampled.greenComponent,
+                                             sampled.blueComponent,
+                                             expected.redComponent, expected.greenComponent,
+                                             expected.blueComponent)
+                            return
+                        }
+                    }
+                }
+            }
+            return failure
+        }
+    }
+
 }
 
 #endif

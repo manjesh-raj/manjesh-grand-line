@@ -388,6 +388,10 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// The detail pane's own column, holding exactly the selected page.
     private let pageContainer = LayoutReportingStack()
     private var pageWidthCap: NSLayoutConstraint!
+    /// The toolbar's own copy of `pageWidthCap`, so the page header and the
+    /// content column it heads share one right edge at every window width and
+    /// on every category. Updated in the same place, for the same reason.
+    private var toolbarWidthCap: NSLayoutConstraint!
     private var scrollView: NSScrollView!
 
     /// The container width the page's wrapping labels were last laid out
@@ -619,7 +623,35 @@ final class SettingsController: NSViewController, DaylightDrillActions {
                                              constant: HelmMetrics.pageGutter + HelmPageSidebar.width
                                                  + HelmMetrics.s5 - HelmMetrics.pageGutter
                                                  + HelmMetrics.pageGutter),
-            toolbar.trailingAnchor.constraint(equalTo: root.trailingAnchor,
+            // **The toolbar ends where the content column ends, not where
+            // the page does.** The toolbar is this page's header - the
+            // breadcrumb on its left, "Saved on this Mac" on its right - and
+            // the thing it heads is the capped content column below it, not
+            // the window. Pinned to `root.trailingAnchor` it spanned the
+            // whole page while the column stopped at its cap, so on a wide
+            // window the trailing item sat hundreds of points right of
+            // everything it labels: measured 1488 against the column's own
+            // 936 at a 1512pt window, a 552pt overhang. The captain's
+            // reference puts the two on one right edge, which is also what
+            // System Settings itself does.
+            //
+            // The shape is deliberately the *same* one `pageContainer` uses a
+            // few lines up, so the two edges cannot drift: a required `<=`
+            // against the clip view, a required width cap that moves with the
+            // category, and a `contentTie` (499) equality that takes up any
+            // remaining slack. Gotcha (13) does not apply - both required
+            // constraints are maxima, which can never be a window-width
+            // floor, and the only equality sits below
+            // `NSLayoutPriorityWindowSizeStayPut`.
+            //
+            // Measured against the *clip* view rather than `root` (gotcha
+            // (4)): with "Show scroll bars: Always" a non-overlay scroller
+            // reserves a real ~15pt track that narrows the clip without
+            // narrowing `scroll`, and the column is laid out inside that
+            // narrower width. At a window narrow enough that the cap does not
+            // bind, pinning the toolbar to `root` instead would leave it
+            // exactly that track's width past the column.
+            toolbar.trailingAnchor.constraint(lessThanOrEqualTo: scroll.contentView.trailingAnchor,
                                               constant: -HelmMetrics.pageGutter),
             toolbar.topAnchor.constraint(equalTo: root.topAnchor, constant: HelmMetrics.s3),
             toolbar.heightAnchor.constraint(equalToConstant: 30),
@@ -637,6 +669,18 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             // `scroll`'s own frame.
             content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
         ])
+
+        // See the toolbar's trailing constraint above: the same three-part
+        // shape as the content column, so the header cannot drift off the
+        // column it heads.
+        toolbarWidthCap = toolbar.widthAnchor
+            .constraint(lessThanOrEqualToConstant: selectedCategory.contentMaxWidth)
+        toolbarWidthCap.isActive = true
+        let toolbarWidthGrow = toolbar.trailingAnchor
+            .constraint(equalTo: scroll.contentView.trailingAnchor,
+                        constant: -HelmMetrics.pageGutter)
+        toolbarWidthGrow.priority = HelmDaylightPriority.contentTie
+        toolbarWidthGrow.isActive = true
 
         mountPage(selectedCategory)
 
@@ -908,6 +952,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         pageContainer.addArrangedSubview(page.container)
         page.container.widthAnchor.constraint(equalTo: pageContainer.widthAnchor).isActive = true
         pageWidthCap.constant = category.contentMaxWidth
+        toolbarWidthCap.constant = category.contentMaxWidth
         // A cap that moved changes what the descriptions have to wrap
         // against, and the staleness check below would otherwise skip the
         // re-wrap because the *container* width did not move.
@@ -2486,6 +2531,13 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// genuinely outside every card.
     var debugPageContainerFrameInRoot: NSRect {
         pageContainer.convert(pageContainer.bounds, to: view)
+    }
+    /// The page header (the breadcrumb row and "Saved on this Mac"), in the
+    /// page root's coordinates. Paired with `debugPageContainerFrameInRoot`
+    /// this is the alignment `fm/grandline-settings-alignment-regression-fix`
+    /// exists to hold: the header ends where the column it heads ends.
+    var debugToolbarFrameInRoot: NSRect {
+        toolbar.convert(toolbar.bounds, to: view)
     }
     var debugSidebarEdge: NSView { sidebarEdge }
     var debugSearchField: HelmSearchField { searchField }

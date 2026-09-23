@@ -590,3 +590,107 @@ Each injection was made by copying the file aside and editing it, never `git sta
 The live half, as ever: no Screen Recording permission, so the renders behind every claim above are `cacheDisplay` captures of a real off-screen `NSWindow`, read back as PNGs.
 The band was reviewed that way in Daylight and Dusk and measured in fifteen palettes; the captain's own running instance is his check.
 The tiles render at `IconTileView`'s own wash, which is lighter than the reference's flat saturated squares - that is the shared component's contract and changing it would restyle the Updates page too, so it was left alone rather than forked.
+
+## Settings: the page header spanned the window, its content did not
+
+`fm/grandline-settings-alignment-regression-fix`, following PR #458.
+
+The captain reported the Settings page's alignment as broken after #458, with
+"a solid black horizontal band spanning the full width at the very top of the
+window, above/around the toolbar".
+
+### The black band is not painted by this app
+
+Root-caused before anything was changed, per the "Verifying native UI bugs"
+convention, and the reported mechanism did not survive it.
+
+The whole shell was mounted off screen at the captain's own 1512x950, built
+through main.swift's exact window path (`.fullSizeContentView`,
+`WindowChromeFusion.apply`, `followHelmTheme()`), navigated to Settings and
+rendered. Three things came out of it:
+
+- **The window's top strip is the theme's own ground, not black.** Sampled at
+  the rep's row 0 - which is an unflipped view's top edge - across the full
+  width, it measured Ayu Dark's `0d1017` at every x. The strip is painted
+  twice over, by the shell root and by `DaylightBarController`'s own view.
+- **#458 changed nothing outside the nav column.** Reverting its five files to
+  `fe07aec` and rendering the same page produced an image whose difference
+  bounding box against the current one is `(0, 152, 514, 1900)` in rep pixels -
+  x up to 257pt, which is the band and its hairline exactly. No pixel outside
+  the column moved.
+- **#458 introduced no window-size floor or cap** (gotcha (13), which is what
+  put black bars down the sides of a full-screen window once before). Squeezed,
+  the window bottoms out at 564x225 with Settings showing; grown, it took
+  1512x982, 1512x1200, 2000x1400 and 1728x1117 unchanged. Identical numbers on
+  both sides of #458.
+
+Measured against the captain's screenshot, the app's content begins 15 image
+pixels down, and the band above it is about 11pt at that screenshot's own scale
+(fixed by the nav band's known 256pt width landing at x 338, so 1.32 px/pt).
+The window itself is 1512x950 in the same image. The band is the region above
+the window, not a region of it.
+
+### What *was* wrong, and is in the captain's screenshot
+
+The page toolbar - the breadcrumb on its left, "Saved on this Mac" on its
+right - was pinned to `root.trailingAnchor`, so it spanned the whole page.
+The content column below it is deliberately capped at
+`Category.contentMaxWidth` (680pt, or 980 for the one wide page). At the
+captain's window those two ended at **1488 and 936**: a 552pt overhang, with
+the header's trailing item floating over empty ground a third of a window away
+from everything it labels. The captain's own reference puts the two on one
+right edge, which is also what System Settings itself does.
+
+The fix gives the toolbar the same three-part shape `pageContainer` already
+uses a few lines above it, so the two edges cannot drift: a required `<=`
+against the clip view, a required width cap that moves with the category, and a
+`contentTie` (499) equality that takes up the slack. Gotcha (13) does not apply -
+both required constraints are maxima, which can never be a window-width floor,
+and the only equality sits below `NSLayoutPriorityWindowSizeStayPut`.
+
+Measured against the **clip** view rather than `root` (gotcha (4)): with "Show
+scroll bars: Always" a non-overlay scroller takes a real ~15pt bite out of the
+clip without narrowing `scroll`, and the column is laid out inside that
+narrower width. At a window too narrow for the cap to bind, pinning the header
+to `root` would leave it exactly that track's width past the column.
+
+### A third measurement trap for a pixel probe
+
+`NSBitmapImageRep.colorAt(x:y:)` hands back the rep's own raw components in an
+`NSColor` that is **tagged `Generic RGB` whatever the rep's real space is** -
+"Color LCD" here, for a view inside a real window. So AGENTS.md's existing rule
+(compare in `rep.colorSpace`, convert the *expected* colour) has a second half:
+do not convert the *sample*, because its numbers are already right and only its
+label is wrong. Measured on the new shell guard: the same ground pixel read
+`(0.055, 0.063, 0.086)` raw and `(0.067, 0.078, 0.110)` after
+`usingColorSpace(rep.colorSpace)`, against an expected `(0.053, 0.062, 0.088)` -
+a clean pass turned into a 0.022 miss that reads exactly like the unpainted
+layer the guard exists to catch.
+
+### Confirmed to catch a regression, not merely to pass
+
+- `SettingsSidebarNavigationSelfTest.checkTheHeaderEndsWhereItsColumnEnds`
+  drives every category at 1512 and at 900 and compares both the header's and
+  the column's real resolved edges. Restoring the old `root.trailingAnchor`
+  pin failed it on **all eight categories** at the wide window, each naming its
+  own gap (552.0pt for the seven ordinary pages, 252.0 for the wide one). It
+  asserts its own discriminating power first: at the wide window it fails
+  loudly unless the column is genuinely capped at least 100pt inside the page's
+  gutter, so a future `contentMaxWidth` that grew past the window could not
+  make the comparison vacuous.
+- `AppShellBodyWidthSelfTest.theWindowsTopStripIsPaintedByTheTheme` samples the
+  window's own top edge in a dark and a light palette. It guards the symptom
+  that was reported rather than a defect that was found - nothing asserted this
+  surface before, and `.fullSizeContentView` makes the shell root what the
+  title-bar region shows. Because the strip is painted twice, deleting either
+  paint alone leaves it green; painting `DaylightBarController`'s view
+  `NSColor.black` reproduced the report and failed it by name.
+
+### What was not verified
+
+The captain's live window was not reproduced - this agent has no Screen
+Recording or Accessibility permission, so the black band could only be
+tested against a real off-screen render and against the screenshot's own
+geometry, both of which say it is not the app. If it recurs on the captain's
+machine with the window's own top strip demonstrably inside the capture, the
+new shell guard is where to start.
