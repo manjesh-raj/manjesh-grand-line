@@ -281,7 +281,12 @@ final class AppSettings {
                   let decoded = try? JSONDecoder().decode(MorningBriefingRecord.self, from: data) else {
                 return nil
             }
-            return decoded
+            // Applied on read rather than in a migration: the record is the
+            // day's briefing and is not regenerated until tomorrow, so a
+            // record written before the quota clause was removed would
+            // otherwise keep rendering it for the rest of today. See
+            // `MorningBriefing.withoutQuotaClauses`.
+            return MorningBriefing.withoutQuotaClauses(decoded)
         }
         set {
             guard let newValue else {

@@ -49,7 +49,10 @@ enum ClaudeStatusCardSelfTest {
 
         for check in [checkColumnsAndLabels, checkStatedGaps,
                       checkRendersInBothThemes, checkStaysCompact,
-                      checkTheReadingIsNotGatedOnTheBriefing] {
+                      checkTheReadingIsNotGatedOnTheBriefing,
+                      checkSeverityIsNotInverted,
+                      checkTheHeaderCarriesARefresh,
+                      checkTheRefreshIsWiredToAForcedReading] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -446,7 +449,347 @@ enum ClaudeStatusCardSelfTest {
         if ok { print("  OK - the reading is taken by the refresh pass, behind a freshness window") }
     }
 
+    // MARK: 6 - the severity colours, as painted
+
+    /// **The captain's reported "the colours look inverted".**
+    ///
+    /// `QuotaSeverity` is `> 90` critical / `>= 80` warning / else
+    /// comfortable, over *percent used* - so a window with none of its
+    /// allowance spent is comfortable and one with all of it spent is
+    /// critical. That reads correctly in the source, and reading the source is
+    /// exactly what this case exists not to rely on: the decision only becomes
+    /// a colour when `HelmModuleRowState.color(in:)` writes a track's layer,
+    /// and it only becomes a *direction* when the fill view is laid out
+    /// against its bed. Both are asserted here, on a real card after a real
+    /// layout pass, in both registers.
+    ///
+    /// The discriminating half comes first: if the two fabricated snapshots
+    /// ever resolve to the same colour, every assertion below would pass
+    /// vacuously against a card that had stopped distinguishing them at all.
+    private static func checkSeverityIsNotInverted(_ ok: inout Bool) {
+        print("\n-- claude strip: 0% used is green and empty, 100% used is red and full --")
+
+        func snapshot(percentUsed: Double) -> QuotaSnapshot {
+            QuotaSnapshot(
+                plan: "team",
+                session: QuotaWindow(kind: .session, percentUsed: percentUsed, resetsAt: nil, pace: .onPace),
+                weekly: QuotaWindow(kind: .weekly, percentUsed: percentUsed, resetsAt: nil, pace: .onPace),
+                fable: QuotaWindow(kind: .fable, percentUsed: percentUsed, resetsAt: nil, pace: .onPace),
+                extraUsage: nil, latency: 1.0, log: "")
+        }
+
+        // The model-level decision, stated once so a drifted threshold fails
+        // by name rather than as a colour mismatch nobody can read.
+        check(QuotaSeverity(percentUsed: 0) == .comfortable,
+              "0% used is not comfortable", &ok)
+        check(QuotaSeverity(percentUsed: 79.9) == .comfortable,
+              "79.9% used is not comfortable", &ok)
+        check(QuotaSeverity(percentUsed: 80) == .warning, "80% used is not a warning", &ok)
+        check(QuotaSeverity(percentUsed: 90) == .warning, "90% used is not a warning", &ok)
+        check(QuotaSeverity(percentUsed: 90.1) == .critical, "90.1% used is not critical", &ok)
+        check(QuotaSeverity(percentUsed: 100) == .critical, "100% used is not critical", &ok)
+
+        let spanTwo = HomeCanvasController.minModuleWidth * 2 + HomeCanvasController.gridSpacing
+
+        for theme in [HelmTheme.daylight, HelmTheme.dusk] {
+            ThemeManager.shared.setTheme(theme)
+
+            let green = HelmModuleRowState.ok.color(in: theme)
+            let red = HelmModuleRowState.bad.color(in: theme)
+            if componentsMatch(green, red) {
+                fail("\(theme.id): this palette paints .ok and .bad the same colour - every "
+                     + "assertion below would be vacuous", &ok)
+                continue
+            }
+
+            for (percentUsed, expected, name) in [(0.0, green, "green"), (100.0, red, "red")] {
+                let window = OffScreenProbe.window(width: 900, height: 400,
+                                                   styleMask: [.titled, .resizable])
+                let host = NSView(frame: window.contentLayoutRect)
+                window.contentView = host
+
+                let card = HelmModuleCard()
+                card.configure(.init(title: "Claude", subtitle: "Team",
+                                     symbol: "gauge.with.needle", hue: .violet, chip: nil,
+                                     body: .statusStrip(
+                                        HomeCanvasController.claudeStripColumns(for: snapshot(percentUsed: percentUsed)),
+                                        perRow: HelmModuleCard.maxStripColumns)))
+                host.addSubview(card)
+                let width = card.widthAnchor.constraint(equalToConstant: spanTwo)
+                width.priority = HelmDaylightPriority.contentTie
+                NSLayoutConstraint.activate([
+                    width,
+                    card.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+                    card.topAnchor.constraint(equalTo: host.topAnchor),
+                ])
+                host.layoutSubtreeIfNeeded()
+
+                // The three real windows - session, week, Fable week. The two
+                // dollar columns are absent from this fixture on purpose:
+                // `extraUsage` is `nil`, so they render as stated gaps with no
+                // track at all, and a track they do not have cannot be
+                // asserted.
+                let tracks = card.anatomyForTests.stripTrackFills
+                if tracks.count != 3 {
+                    fail("\(theme.id) @ \(percentUsed)%: found \(tracks.count) painted tracks, "
+                         + "expected the three quota windows - the fixture has drifted", &ok)
+                    card.removeFromSuperview()
+                    continue
+                }
+
+                for (index, track) in tracks.enumerated() {
+                    guard let painted = track.color else {
+                        fail("\(theme.id) @ \(percentUsed)%: track \(index) painted nothing", &ok)
+                        continue
+                    }
+                    if !componentsMatch(painted, expected) {
+                        fail("\(theme.id) @ \(percentUsed)% used: track \(index) is painted "
+                             + "\(describe(painted)), expected \(name) \(describe(expected)) - "
+                             + "the severity mapping is inverted", &ok)
+                    }
+                    // And the bar itself runs the right way: none of the bed
+                    // at 0% used, all of it at 100%.
+                    let wanted = CGFloat(percentUsed / 100)
+                    if abs(track.fraction - wanted) > 0.02 {
+                        fail("\(theme.id) @ \(percentUsed)% used: track \(index) covers "
+                             + String(format: "%.2f", track.fraction)
+                             + " of its bed, expected \(wanted) - the fill is inverted", &ok)
+                    }
+                }
+                card.removeFromSuperview()
+            }
+            print("     \(theme.id): 0% used green and empty, 100% used red and full")
+        }
+
+        if ok { print("  OK - the severity mapping is not inverted, in colour or in direction") }
+    }
+
+    // MARK: 7 - the header's Refresh
+
+    /// The card-level half of the captain's Refresh: the control is really
+    /// built, really fires, really goes disabled while a reading is in
+    /// flight, and - the part that is easy to get wrong - a click on it does
+    /// **not** also fire the card's own "open my page" recognizer.
+    ///
+    /// Window-backed because all four of those are properties of a real view
+    /// tree: the hit test the gesture arbitration runs needs a real window,
+    /// and a disabled control is a rendered state rather than a model one.
+    /// `HomeCanvasController.fillClaudeStatus` is what *supplies* this action,
+    /// and it cannot be reached without mounting a canvas full of stores -
+    /// `checkTheRefreshIsWiredToAForcedReading` is the source guard that
+    /// covers that half instead, and says so.
+    private static func checkTheHeaderCarriesARefresh(_ ok: inout Bool) {
+        print("\n-- claude card: the header's Refresh --")
+
+        ThemeManager.shared.setTheme(.dusk)
+        let spanTwo = HomeCanvasController.minModuleWidth * 2 + HomeCanvasController.gridSpacing
+
+        for busy in [false, true] {
+            let window = OffScreenProbe.window(width: 900, height: 400,
+                                               styleMask: [.titled, .resizable])
+            let host = NSView(frame: window.contentLayoutRect)
+            window.contentView = host
+
+            var pressed = 0
+            var opened = 0
+            let card = HelmModuleCard()
+            var content = HelmModuleCard.Content(
+                title: "Claude", subtitle: "Team", symbol: "gauge.with.needle",
+                hue: .violet, chip: .warn("Fable 100%"),
+                body: .statusStrip(
+                    HomeCanvasController.claudeStripColumns(for: liveSnapshot()),
+                    perRow: HelmModuleCard.maxStripColumns))
+            content.headerAction = HelmModuleCard.HeaderAction(
+                symbol: "arrow.clockwise", tooltip: "Refresh the Claude quota",
+                isBusy: busy, handler: { pressed += 1 })
+            card.configure(content)
+            card.onOpen = { opened += 1 }
+            host.addSubview(card)
+            let width = card.widthAnchor.constraint(equalToConstant: spanTwo)
+            width.priority = HelmDaylightPriority.contentTie
+            NSLayoutConstraint.activate([
+                width,
+                card.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+                card.topAnchor.constraint(equalTo: host.topAnchor),
+            ])
+            host.layoutSubtreeIfNeeded()
+
+            guard let action = card.anatomyForTests.headerAction else {
+                fail("busy=\(busy): the card built no header control at all", &ok)
+                continue
+            }
+            check(action.symbol == "arrow.clockwise",
+                  "busy=\(busy): the control's glyph is \(action.symbol ?? "nothing")", &ok)
+            // GL-16: an icon-only button announces its tooltip, never the raw
+            // symbol name. Read back from the control, not from the content.
+            check(action.announcedLabel == "Refresh the Claude quota",
+                  "busy=\(busy): VoiceOver would announce "
+                  + "\(action.announcedLabel ?? "nothing")", &ok)
+            check(action.isEnabled == !busy,
+                  "busy=\(busy): the control's enabled state is \(action.isEnabled) - the "
+                  + "in-flight state is not reaching the button", &ok)
+
+            // It really landed somewhere on screen, and inside the card.
+            guard let frame = card.debugHeaderActionFrameInCard else {
+                fail("busy=\(busy): the control has no frame in the card", &ok)
+                continue
+            }
+            if frame.width < 20 || frame.height < 20 {
+                fail("busy=\(busy): the control laid out \(frame.size) - too small to aim at", &ok)
+            }
+            if !card.bounds.insetBy(dx: -1, dy: -1).contains(frame) {
+                fail("busy=\(busy): the control is at \(frame), outside the card's own "
+                     + "\(card.bounds)", &ok)
+            }
+
+            // A click on it must not *also* open the card.
+            if !card.debugCardClickWouldBeDeclined(at: NSPoint(x: frame.midX, y: frame.midY)) {
+                fail("busy=\(busy): a click on the Refresh control would also fire the card's "
+                     + "own navigation", &ok)
+            }
+            // The discriminating half: a click on the card's own title is
+            // still a click on the card. Without this, an arbitration that
+            // declined everything would pass the assertion above.
+            if card.debugCardClickWouldBeDeclined(at: NSPoint(x: frame.minX - 60, y: frame.midY)) {
+                fail("busy=\(busy): the arbitration declines an ordinary click on the card too - "
+                     + "the whole card has stopped navigating", &ok)
+            }
+
+            let fired = card.debugActivateHeaderAction()
+            check(fired == !busy,
+                  "busy=\(busy): pressing the control reported \(fired)", &ok)
+            check(pressed == (busy ? 0 : 1),
+                  "busy=\(busy): the handler ran \(pressed) time(s)", &ok)
+            check(opened == 0,
+                  "busy=\(busy): pressing Refresh opened the card's destination \(opened) time(s)", &ok)
+
+            card.removeFromSuperview()
+        }
+
+        // And a card with no action still builds none, so this is opt-in
+        // rather than something every module now carries.
+        let plain = HelmModuleCard()
+        plain.configure(.init(title: "Health", subtitle: "background services",
+                              symbol: "heart", hue: .green, chip: nil, body: .note("fine")))
+        check(plain.anatomyForTests.headerAction == nil,
+              "a card with no header action built one anyway", &ok)
+
+        if ok { print("  OK - built, labelled, disabled while busy, fires once, never navigates") }
+    }
+
+    // MARK: 8 - the Refresh reaches a forced reading
+
+    /// The source-guard half of the case above, and it is a source guard on
+    /// purpose: `HomeCanvasController.fillClaudeStatus` is private on a
+    /// controller whose construction reaches a dozen stores this suite has no
+    /// business building (`checkCanvasConstructsNoStores` is the rule), so the
+    /// wiring from the card's press to a real `quota-axi` run cannot be driven
+    /// behaviourally from here. What is asserted is the chain, link by link,
+    /// with every anchor checked for drift first so a renamed symbol fails
+    /// loudly instead of passing vacuously.
+    ///
+    /// The `force` half is the whole point. `FleetController.refreshQuota`
+    /// serves a cached reading for `quotaFreshness` (5 minutes), which is
+    /// right for a page visit and wrong for a captain pressing Refresh - an
+    /// unforced press would hand back the very reading they are asking to
+    /// replace, which looks exactly like a button that does nothing.
+    private static func checkTheRefreshIsWiredToAForcedReading(_ ok: inout Bool) {
+        print("\n-- claude card: Refresh reaches a forced quota-axi run --")
+
+        guard let root = SelfTestSources.appSourceDirectory() else {
+            fail("could not resolve the app source directory - this guard would pass vacuously", &ok)
+            return
+        }
+        func read(_ name: String) -> String? {
+            try? String(contentsOf: root.appendingPathComponent(name), encoding: .utf8)
+        }
+        guard let canvas = read("HomeCanvasController.swift"),
+              let shell = read("AppShellController.swift"),
+              let fleet = read("FleetController.swift") else {
+            fail("could not read the three files this guard is written against", &ok)
+            return
+        }
+
+        // Anchors first.
+        guard canvas.contains("private func fillClaudeStatus"),
+              canvas.contains("var onRefreshQuota"),
+              fleet.contains("func refreshQuotaNow()") else {
+            fail("`fillClaudeStatus`, `onRefreshQuota` or `refreshQuotaNow` no longer exists - "
+                 + "this guard's anchors have drifted and it is asserting nothing", &ok)
+            return
+        }
+
+        // 1. The card offers the action, and offers it *before* the
+        //    no-snapshot early return - the loading and failure states are
+        //    exactly when a captain reaches for Refresh.
+        guard let fill = canvas.range(of: "private func fillClaudeStatus"),
+              let earlyReturn = canvas.range(of: "guard let snapshot = quotaSnapshot else {",
+                                             range: fill.upperBound..<canvas.endIndex) else {
+            fail("`fillClaudeStatus` no longer has its no-snapshot guard - anchor drift", &ok)
+            return
+        }
+        let beforeTheGuard = String(canvas[fill.upperBound..<earlyReturn.lowerBound])
+        if !beforeTheGuard.contains("content.headerAction") {
+            fail("the Claude card's header action is set after the no-snapshot early return, so "
+                 + "the loading and failure states - the two a captain most wants to re-read - "
+                 + "have no Refresh", &ok)
+        }
+
+        // 2. Pressing it asks the shell rather than fetching here.
+        if !canvas.contains("onRefreshQuota?()") {
+            fail("the canvas's Refresh no longer calls `onRefreshQuota` - either it does nothing "
+                 + "or this page has started fetching for itself", &ok)
+        }
+        // Comment lines stripped first: this file's own doc comments name
+        // `QuotaSource.fetch()` when explaining why the canvas does not call
+        // it, and a guard that matched those would fail on the very sentence
+        // saying the rule is being followed.
+        let canvasCode = canvas
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+        if canvasCode.contains("QuotaSource.fetch") {
+            fail("the canvas is calling `QuotaSource.fetch` directly - the reading is pushed in, "
+                 + "never fetched here (GL-04/GL-12)", &ok)
+        }
+
+        // 3. The shell forwards it to Overview's own reading.
+        if !shell.contains("homeCanvas.onRefreshQuota") || !shell.contains("refreshQuotaNow()") {
+            fail("`onRefreshQuota` is not wired to `FleetController.refreshQuotaNow()` in the "
+                 + "shell - the button is inert", &ok)
+        }
+
+        // 4. And that reading is forced past the freshness window.
+        guard let now = fleet.range(of: "func refreshQuotaNow()") else {
+            fail("`refreshQuotaNow` vanished between two reads of the same file", &ok)
+            return
+        }
+        let body = String(fleet[now.lowerBound...].prefix(200))
+        if !body.contains("refreshQuota(force: true)") {
+            fail("`refreshQuotaNow` does not force the reading, so a press inside the five-minute "
+                 + "freshness window hands back the cached number the captain is asking to "
+                 + "replace", &ok)
+        }
+
+        if ok { print("  OK - offered in every state, forwarded, and forced past the cache") }
+    }
+
     // MARK: Probe helpers
+
+    /// Element-wise, never `HelmContrast.ratio` - that compares relative
+    /// luminance, so two different hues of similar brightness compare equal
+    /// (AGENTS.md's own note).
+    private static func componentsMatch(_ a: NSColor, _ b: NSColor) -> Bool {
+        let lhs = HelmContrast.components(a)
+        let rhs = HelmContrast.components(b)
+        return abs(lhs.0 - rhs.0) < 0.01 && abs(lhs.1 - rhs.1) < 0.01 && abs(lhs.2 - rhs.2) < 0.01
+    }
+
+    private static func describe(_ color: NSColor) -> String {
+        let c = HelmContrast.components(color)
+        return String(format: "(%.3f, %.3f, %.3f)", c.0, c.1, c.2)
+    }
+
 
     /// The laid-out widths of the strip's column stacks, found by walking the
     /// card's real view tree rather than by re-deriving them from the width

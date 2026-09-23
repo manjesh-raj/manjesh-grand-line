@@ -132,7 +132,7 @@ struct HelmModuleStripColumn: Equatable {
 
 // MARK: - The card
 
-final class HelmModuleCard: NSView {
+final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
 
     /// §6.1's body kinds. `.note` is the one-line form (the table asks for it
     /// by name on Log Analyzer, Tools and Settings) and `.paragraph` is the
@@ -263,6 +263,39 @@ final class HelmModuleCard: NSView {
     /// text scale.
     static let maxNarrowBriefingClauses = 2
 
+    /// An optional control in the header's trailing edge, right of the chip.
+    ///
+    /// **A module card is one click target** - `onOpen` fires from a
+    /// recognizer on the whole surface - so a second, smaller target inside it
+    /// needs gesture arbitration, and that is handled here rather than at each
+    /// call site: AppKit defines no automatic exclusivity between an ancestor
+    /// recognizer and a descendant control (the trap `SessionStripView`'s own
+    /// arbitration already documents), so a click on this button would
+    /// otherwise *also* open the card's destination. See
+    /// `gestureRecognizer(_:shouldAttemptToRecognizeWith:)` below, which needs
+    /// two rules rather than one.
+    ///
+    /// `nil` on every card but the Claude status strip, whose reading is a
+    /// `quota-axi` subprocess the captain may want re-taken on demand rather
+    /// than at the next refresh cycle - see
+    /// `docs/history/07-fleet-and-notifications.md`.
+    struct HeaderAction {
+        let symbol: String
+        /// The hover text, **and** what VoiceOver announces for the control.
+        /// `HelmButton.accessibilityLabel()` returns an icon-only button's
+        /// tooltip by design (GL-16 - the alternative is AppKit reading out
+        /// the raw SF Symbol name), so there is deliberately no separate
+        /// label here: a second string would lose to this one and read as
+        /// wired when it was not. Write it as a label, not as a hint.
+        let tooltip: String
+        /// `true` while the work this control started is still in flight. The
+        /// button is *disabled* rather than swapped for a spinner, which is
+        /// the in-flight language Overview's own Refresh and
+        /// `MorningBriefingCard`'s clock already speak.
+        let isBusy: Bool
+        let handler: () -> Void
+    }
+
     struct Content {
         var title: String
         var subtitle: String
@@ -288,6 +321,9 @@ final class HelmModuleCard: NSView {
         /// body is worth keeping somewhere. `nil` everywhere else, which is
         /// exactly what the card had before.
         var toolTip: String? = nil
+        /// See `HeaderAction`. `nil` on every card that is only a link to its
+        /// own page, which is all but one of them.
+        var headerAction: HeaderAction? = nil
     }
 
     // Geometry (§2.7, §2.6).
@@ -405,6 +441,13 @@ final class HelmModuleCard: NSView {
     private let chipView = NSView()
     private let chipLabel = NSTextField(labelWithString: "")
     private let bodyContainer = NSView()
+    /// `Content.headerAction`'s control. Built once with the rest of the
+    /// chrome and hidden when the content carries no action, exactly like
+    /// `chipView` - the header row's shape is stable and only its contents
+    /// change.
+    private let actionButton = HelmPageToolbar.iconButton(
+        symbol: "arrow.clockwise", tooltip: "", target: nil, action: nil)
+    private var headerActionHandler: (() -> Void)?
 
     private var content: Content?
     private var themeToken: ThemeObservation?
@@ -483,7 +526,13 @@ final class HelmModuleCard: NSView {
         card.wantsLayer = true
         card.layer?.masksToBounds = true
         card.layer?.borderWidth = 1
-        card.addGestureRecognizer(NSClickGestureRecognizer(target: self, action: #selector(cardClicked)))
+        let cardClick = NSClickGestureRecognizer(target: self, action: #selector(cardClicked))
+        // Gesture arbitration for `Content.headerAction` - see that type. The
+        // delegate declines a click that landed on a real control inside the
+        // card, which is the only thing standing between a header button press
+        // and the card's own navigation.
+        cardClick.delegate = self
+        card.addGestureRecognizer(cardClick)
         // C2: a module card is the canonical "press me" surface on the hub,
         // so it opts into the shared press compression. `HoverHighlightView`
         // composes it with the hover lift this class hands it through
@@ -528,7 +577,13 @@ final class HelmModuleCard: NSView {
         chipView.setContentHuggingPriority(.required, for: .horizontal)
         chipView.setContentCompressionResistancePriority(.required, for: .horizontal)
 
-        let headerRow = NSStackView(views: [tile, textStack, chipView])
+        actionButton.target = self
+        actionButton.action = #selector(headerActionTapped)
+        actionButton.isHidden = true
+        actionButton.setContentHuggingPriority(.required, for: .horizontal)
+        actionButton.setContentCompressionResistancePriority(.required, for: .horizontal)
+
+        let headerRow = NSStackView(views: [tile, textStack, chipView, actionButton])
         headerRow.orientation = .horizontal
         headerRow.alignment = .centerY
         headerRow.spacing = HelmMetrics.s3
@@ -603,6 +658,17 @@ final class HelmModuleCard: NSView {
         } else {
             chipView.isHidden = true
             chipLabel.stringValue = ""
+        }
+
+        if let action = content.headerAction {
+            actionButton.isHidden = false
+            actionButton.symbolName = action.symbol
+            actionButton.toolTip = action.tooltip
+            actionButton.isEnabled = !action.isBusy
+            headerActionHandler = action.handler
+        } else {
+            actionButton.isHidden = true
+            headerActionHandler = nil
         }
 
         rebuildBody(content.body)
@@ -1384,6 +1450,49 @@ final class HelmModuleCard: NSView {
 
     @objc private func cardClicked() { onOpen?() }
 
+    @objc private func headerActionTapped() { headerActionHandler?() }
+
+    // MARK: Gesture arbitration
+
+    /// Declines a card click that landed on a real control inside the card -
+    /// today, `Content.headerAction`'s button.
+    ///
+    /// Two rules, because one of them is not enough and the gap is a real
+    /// defect rather than a theoretical one.
+    ///
+    /// The **hit-test** rule is `SessionStripView`'s, and for its reasons:
+    /// written against `NSControl` generally rather than "is this the action
+    /// button", so a future control added to a card is covered the day it
+    /// lands, and `action != nil` is what separates a view that does
+    /// something of its own when clicked from a control class that happens to
+    /// be drawing text (the card's own title and subtitle are `NSTextField`s,
+    /// which are actionless `NSControl`s - declining for those would stop most
+    /// of the card's surface from navigating).
+    ///
+    /// The **frame** rule covers what the first one cannot see: AppKit does
+    /// not hit-test a *disabled* control, so while the header action is in its
+    /// in-flight state the hit lands on the card behind it and the press
+    /// navigates away - measured, not reasoned. A control that is visibly
+    /// there and deliberately inert must swallow its own clicks.
+    func gestureRecognizer(_ recognizer: NSGestureRecognizer,
+                           shouldAttemptToRecognizeWith event: NSEvent) -> Bool {
+        guard let container = recognizer.view else { return true }
+        let point = container.convert(event.locationInWindow, from: nil)
+        if !actionButton.isHidden,
+           actionButton.convert(actionButton.bounds, to: container).contains(point) {
+            return false
+        }
+        guard let hit = container.hitTest(container.convert(point, to: container.superview)) else { return true }
+        var view: NSView? = hit
+        while let current = view, current !== container {
+            if let control = current as? NSControl, control.action != nil, control.isEnabled {
+                return false
+            }
+            view = current.superview
+        }
+        return true
+    }
+
     // MARK: Probe / self-test surface
 
     struct Anatomy {
@@ -1410,6 +1519,18 @@ final class HelmModuleCard: NSView {
         /// Enough for a suite to assert the column order, the labels and the
         /// gap treatment without reaching into the body enum.
         let stripColumns: [(label: String, value: String, isGap: Bool)]
+        /// Each `.statusStrip` column's track, as actually painted and laid
+        /// out: the fill view's own layer colour, and how much of its bed it
+        /// covers after a real layout pass.
+        ///
+        /// Both halves are what a colour assertion needs and neither is
+        /// visible from the model. `HelmModuleRowState` is a *state*, so the
+        /// only place the state-to-hue decision becomes a colour is
+        /// `state.color(in:)` writing this layer - and the fraction is the
+        /// other direction of the same question, since a bar painted the
+        /// right colour and filled the wrong way round would still read as
+        /// inverted.
+        let stripTrackFills: [(color: NSColor?, fraction: CGFloat)]
         /// Every `note`-styled line the body rendered, in order. Enough to
         /// tell a loading state from real content without exposing the body
         /// enum itself.
@@ -1445,6 +1566,12 @@ final class HelmModuleCard: NSView {
         /// The card's hover text - where UI10 moved the "what is being
         /// checked" sentence the body used to carry.
         let toolTip: String?
+        /// `Content.headerAction`'s control as built, or `nil` when the
+        /// content carried none.
+        /// `announcedLabel` is read back from the control rather than from
+        /// the content, so a suite sees what VoiceOver would actually get.
+        let headerAction: (symbol: String?, tooltip: String?,
+                           announcedLabel: String?, isEnabled: Bool)?
     }
 
     /// C2/C3: the inner `HoverHighlightView` (which owns the transform) and
@@ -1510,6 +1637,11 @@ final class HelmModuleCard: NSView {
                 stripColumns: zip(stripLabels, stripValues).map {
                     ($0.stringValue, $1.label.stringValue, $1.isGap)
                 },
+                stripTrackFills: stripTracks.map { entry in
+                    let bed = entry.track.frame.width
+                    return (entry.fill.layer?.backgroundColor.map { NSColor(cgColor: $0) } ?? nil,
+                            bed > 0 ? entry.fill.frame.width / bed : 0)
+                },
                 noteTexts: noteLabels.map(\.stringValue),
                 noteRenderedLineCounts: noteLabels.map(Self.renderedLineCount(of:)),
                 metricTexts: metricLabels.map(\.stringValue),
@@ -1517,13 +1649,48 @@ final class HelmModuleCard: NSView {
                 bodyAreaHeight: bodyContainer.frame.height,
                 bodyContentHeight: bodyViews.first?.fittingSize.height ?? 0,
                 showsSkeleton: skeletonList != nil,
-                toolTip: toolTip)
+                toolTip: toolTip,
+                headerAction: actionButton.isHidden ? nil
+                    : (actionButton.symbolName, actionButton.toolTip,
+                       actionButton.accessibilityLabel(), actionButton.isEnabled))
     }
 
     /// Fires the card's real click path, exactly as a mouse click or a
     /// VoiceOver press would.
     @discardableResult
     func debugActivate() -> Bool { card.performPrimaryAction() }
+
+    /// Fires `Content.headerAction`'s control through its real target/action
+    /// path, exactly as a click would. `false` when there is no such control
+    /// or it is disabled, so a suite cannot assert against a press that never
+    /// happened.
+    @discardableResult
+    func debugActivateHeaderAction() -> Bool {
+        guard !actionButton.isHidden, actionButton.isEnabled else { return false }
+        actionButton.performClick(nil)
+        return true
+    }
+
+    /// Whether the card's own click recognizer would decline a click landing
+    /// at this point in the card's coordinate space - i.e. whether the header
+    /// action is genuinely arbitrated away from `onOpen`.
+    func debugCardClickWouldBeDeclined(at pointInCard: NSPoint) -> Bool {
+        guard let window = card.window,
+              let recognizer = card.gestureRecognizers.first else { return false }
+        let inWindow = card.convert(pointInCard, to: nil)
+        guard let event = NSEvent.mouseEvent(
+            with: .leftMouseDown, location: inWindow, modifierFlags: [],
+            timestamp: 0, windowNumber: window.windowNumber, context: nil,
+            eventNumber: 0, clickCount: 1, pressure: 1) else { return false }
+        return !gestureRecognizer(recognizer, shouldAttemptToRecognizeWith: event)
+    }
+
+    /// Where the header action's control actually landed, in the card's own
+    /// coordinate space - so a suite can aim the check above at the real
+    /// button rather than at a guessed rectangle.
+    var debugHeaderActionFrameInCard: NSRect? {
+        actionButton.isHidden ? nil : actionButton.convert(actionButton.bounds, to: card)
+    }
 }
 
 // MARK: - Priorities

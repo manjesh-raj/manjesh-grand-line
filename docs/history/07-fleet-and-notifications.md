@@ -603,3 +603,124 @@ Neither was visible in the code or in any passing assertion.
   The evidence is real off-screen renders of the real panel in both registers
   plus real layout geometry - AGENTS.md's "Verifying native UI bugs without a
   real screenshot" convention - not a screenshot of the running app.
+
+## A Refresh on the Claude card, and the briefing's quota clause removed (`fm/grandline-claude-card-refresh-and-color-fix`)
+
+**Two captain requests against the same reading, one of which turned out not to
+be a bug.**
+
+### The reported colour bug was not one
+
+The captain's first screenshot showed "Fable week 100%" painted red and read it
+as inverted - 100% of the allowance still *available*, shown as an alarm. He
+retracted it himself a few minutes later: a second screenshot, after he
+refreshed the page, showed the same window green at 0%.
+
+The logic was checked end to end anyway rather than taken on the retraction.
+`QuotaSeverity.init(percentUsed:)` is `> 90` critical / `>= 80` warning / else
+comfortable, over **percent used** - `QuotaSource.parse` converts
+`quota-axi`'s `percentRemaining` to "used" once, at the parse boundary - and
+every call site in `HomeCanvasController.claudeStripColumns` reads it that way,
+with `fill: percentUsed / 100` running the bar in the same direction. So a
+window with none of its allowance spent is comfortable and green, and one with
+all of it spent is critical and red. **Nothing was changed.**
+
+What the captain actually saw was a stale first paint: the card renders from
+whatever reading `FleetController` last published, that reading is cached for
+five minutes (`quotaFreshness`), and until this task there was no way to ask
+for a new one from the card. The Fable window really had been at 100% used when
+the reading was taken.
+
+The confirmation is permanent rather than a note here.
+`ClaudeStatusCardSelfTest.checkSeverityIsNotInverted` asserts the six threshold
+boundaries and then renders a fabricated 0%-used and 100%-used snapshot in a
+real window, in both Daylight and Dusk, and reads the **painted** track back -
+the layer colour and the fraction of its bed the fill actually covers. Both
+halves matter: a bar painted the right colour and filled the wrong way round
+would still read as inverted. It checks that `.ok` and `.bad` resolve to
+different colours in the palette first, so a theme that painted both the same
+fails loudly instead of passing vacuously. `HelmModuleCard.Anatomy.
+stripTrackFills` is what exposes the painted layer; the model-level severity
+could already be asserted and could not see any of this.
+
+### The Refresh button
+
+`HelmModuleCard.Content.headerAction` is a new, opt-in control at the header's
+trailing edge, right of the chip - `HelmPageToolbar.iconButton`'s bordered
+28pt square, the same recipe `MorningBriefingCard`'s own header actions use.
+`nil` on every card but this one.
+
+Three things it needed that a page could have got wrong on its own, so they
+live in the component:
+
+- **Gesture arbitration.** A module card is one click target; AppKit defines no
+  exclusivity between an ancestor's recognizer and a descendant control, so
+  without this a Refresh press would *also* open the card's destination. The
+  hit-test rule is `SessionStripView`'s, verbatim and for its reasons.
+- **A second, frame-based rule, and it is not redundant.** AppKit does not
+  hit-test a **disabled** control, so while the button is in its in-flight
+  state the click lands on the card behind it and navigates away. Measured -
+  the suite caught it on its first run, with the hit-test rule alone in place.
+- **No separate accessibility label.** `HelmButton.accessibilityLabel()`
+  already returns an icon-only button's tooltip (GL-16, so VoiceOver never
+  reads out a raw SF Symbol name), so a second string would silently lose to
+  it. `HeaderAction` carries one string and the suite reads the announced
+  label back off the control.
+
+The press does not fetch. `HomeCanvasController.onRefreshQuota` reaches
+`FleetController.refreshQuotaNow()`, which is `refreshQuota(force: true)` -
+the existing reading, on its existing `quotaQueue` (GL-04/GL-12), forced past
+the freshness window. **The force is the whole point**: an unforced press
+inside those five minutes hands back the very number the captain is asking to
+replace, which looks exactly like a button that does nothing. The card's
+`isRefreshingQuota` flag disables the button between the press and the reading,
+and is cleared in `applyQuota` - which `refreshQuota` publishes on failure as
+well as on success, so it cannot wedge on a `quota-axi` that is offline.
+
+The action is set **before** `fillClaudeStatus`'s no-snapshot early return, so
+the loading and failure states carry it too - those are the two states a
+captain most wants to re-read from.
+
+### The briefing's Claude-quota clause, removed
+
+Same task, captain's call: the Morning briefing card sat a few hundred points
+left of a card showing five quota figures and restated one of them ("Weekly
+Claude quota is at 70%, ahead of pace"). The quota is no longer an input to the
+briefing at all - `BriefingInputs`' three quota fields, the local clause, the
+prompt's two facts, the `"quota"` link in the model's vocabulary and "quota" as
+a claimed source are all gone, and the prompt now tells the model explicitly to
+say nothing about Claude usage (it knows what a cockpit shows, and the facts
+list is not the only thing it could write from).
+
+Two consequences worth knowing:
+
+- **`BriefingTarget.quota` stays in the enum.** It is the persisted form as
+  well as the vocabulary, and dropping the case would make a record written by
+  an earlier build undecodable - GL-01 in miniature.
+- **The removal is visible today, not tomorrow.** A briefing is generated once
+  a day and re-rendered from the stored record for the rest of it, so
+  `MorningBriefing.withoutQuotaClauses` strips the old clause (and "quota" from
+  `sources`) in `AppSettings.morningBriefingRecord`'s getter, and returns `nil`
+  when that leaves nothing - so the next refresh generates a real briefing
+  rather than the card rendering an empty paragraph.
+
+`FleetController.withQuotaReading` went with it: the briefing was its only
+caller, so composing a briefing no longer waits on a 1-2s subprocess.
+`refreshQuota` is untouched and still runs on every refresh pass for the card.
+
+### Verification
+
+- Full suite green before (200 passed, 0 failed, 1 skipped) and after.
+- **Six regression injections, each confirmed to fail the named case**:
+  inverting `QuotaSeverity`'s two outer arms (the boundary checks plus every
+  painted-track check, in both themes); moving the header action after
+  `fillClaudeStatus`'s early return; dropping `force: true` from
+  `refreshQuotaNow`; removing the frame-based arbitration rule (the busy-state
+  navigation check - this one was a real defect found this way, not a
+  simulation); re-adding the local quota clause and its prompt link; and
+  skipping the purge in `AppSettings`.
+- **Not verified**: no live visual check by the captain, and none is claimed -
+  same permission constraint as the card's own original entry above. The
+  evidence is real off-screen renders, real layout geometry and real
+  target/action presses, per AGENTS.md's "Verifying native UI bugs without a
+  real screenshot" convention.
