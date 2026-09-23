@@ -2808,6 +2808,15 @@ if ProcessInfo.processInfo.environment["FM_RUN_BAR_NAV_MODERNIZATION_TESTS"] == 
     exit(BarNavigationModernizationSelfTest.run() ? 0 : 1)
 }
 
+// `fm/grandline-topbar-icon-tiles`: the same row's shortcuts as coloured
+// tiles - the per-destination hue, its legibility in all 26 palettes, the
+// three states, the controls deliberately left plain, and the guard that the
+// row's footprint did not move. Pure logic: layer colours and frames off a
+// hand-laid-out bar, no window.
+if ProcessInfo.processInfo.environment["FM_RUN_BAR_ICON_TILE_TESTS"] == "1" {
+    exit(DaylightBarIconTileSelfTest.run() ? 0 : 1)
+}
+
 // The same audit's C, D and E - the canvas and its cards, row/list density,
 // and the reusable controls. Window-backed: hover, press, focus and a real
 // scroll offset all need a real window.

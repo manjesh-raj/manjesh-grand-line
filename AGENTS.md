@@ -1335,7 +1335,13 @@ noted.
   not from the code.
 - `HelmDomainHue.identityHex` is for identity (it resolves to `.neutral` off the
   Daylight family); `fallbackTint` resolves a *semantic* slot and will paint an
-  alert bar on a benign row.
+  alert bar on a benign row. **The one sanctioned use of `fallbackTint` is a
+  destination's own colour *tile***, where `identityHex` alone would wash page
+  ink into a near-black chip on 24 of the 26 palettes - `UnifiedSearch`'s
+  palette row and `DaylightBarIconButton.tileHex(for:in:)` are the two, and
+  they resolve identically. It is safe there and not on a bar because every
+  member of those sets carries a tile, so no one hue is the coloured thing
+  among neutral siblings.
 - **An identity colour derived from text must not come from
   `String.hashValue`.** Swift seeds it per *process*, so the same host, tag or
   project gets a different colour on every launch - and the defect is invisible
