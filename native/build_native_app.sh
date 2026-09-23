@@ -65,9 +65,21 @@ SIGNING_IDENTITY="Firstmate Cockpit Local Dev"
 APPINTENTS_PROCESSOR="$(xcrun --find appintentsmetadataprocessor 2>/dev/null || true)"
 APPINTENTS_WORK="$(mktemp -d)"
 trap 'rm -rf "$APPINTENTS_WORK"' EXIT
+# The protocol list is the one App Intents input that goes on the *compiler's*
+# command line, so unlike the two file lists below it must live at a **stable**
+# path. It used to sit in `$APPINTENTS_WORK`, a fresh `mktemp -d` per run, and
+# a changing `-const-gather-protocols-file` argument makes SwiftPM recompile one
+# file on every build - which moves that object's mtime, which moves the `OSO`
+# debug-map stab the linker writes into the binary, which moves the bundle's
+# CDHash even though nothing was edited. Same class of defect as the App Intents
+# metadata below (see `stabilize_appintents_metadata`), and the same cost to the
+# captain: a Keychain ACL binds to the CDHash. Measured: with the path pinned,
+# two consecutive builds relink to byte-identical binaries.
+APPINTENTS_PROTOCOLS="$PWD/.build/appintents-protocols.json"
 SWIFT_BUILD_EXTRA=()
 if [ -n "$APPINTENTS_PROCESSOR" ] && [ -x "$APPINTENTS_PROCESSOR" ]; then
-  cat > "$APPINTENTS_WORK/protocols.json" <<'PROTOCOLS'
+  mkdir -p "$(dirname "$APPINTENTS_PROTOCOLS")"
+  cat > "$APPINTENTS_PROTOCOLS" <<'PROTOCOLS'
 ["AppEntity","AppEnum","AppIntent","AppShortcutsProvider","DynamicOptionsProvider","EntityIdentifierConvertible","EntityPropertyQuery","EntityQuery","EntityStringQuery","IndexedEntity","PersistentAppEntity","TransientAppEntity","URLRepresentableEntity","URLRepresentableEnum","URLRepresentableIntent"]
 PROTOCOLS
   # Each -Xfrontend forwards exactly one following argument, which is why the
@@ -76,7 +88,7 @@ PROTOCOLS
   # "unexpected input file" error.
   SWIFT_BUILD_EXTRA=(-Xswiftc -emit-const-values
                      -Xswiftc -Xfrontend -Xswiftc -const-gather-protocols-file
-                     -Xswiftc -Xfrontend -Xswiftc "$APPINTENTS_WORK/protocols.json")
+                     -Xswiftc -Xfrontend -Xswiftc "$APPINTENTS_PROTOCOLS")
 else
   echo "⚠️  No appintentsmetadataprocessor (it ships with Xcode, not Command Line Tools)."
   echo "    The app will build and run normally, but its five Shortcuts/Siri actions"
@@ -88,6 +100,16 @@ swift build -c release "${SWIFT_BUILD_EXTRA[@]}"
 
 BIN="./.build/release/$EXECUTABLE_NAME"
 [ -x "$BIN" ] || { echo "build did not produce $BIN"; exit 1; }
+
+# R2: keep the previous bundle's App Intents metadata before the bundle is
+# thrown away, so the step after the processor runs can compare against it.
+# See the long comment beside `stabilize_appintents_metadata` for what this
+# buys and why it is done this way rather than the obvious way.
+PREVIOUS_APPINTENTS=""
+if [ -d "$APP_DIR/Contents/Resources/Metadata.appintents" ]; then
+  PREVIOUS_APPINTENTS="$APPINTENTS_WORK/previous-Metadata.appintents"
+  cp -R "$APP_DIR/Contents/Resources/Metadata.appintents" "$PREVIOUS_APPINTENTS"
+fi
 
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
@@ -135,6 +157,78 @@ else
   echo "    \"no bundle\" empty state. Run Scripts/build-monaco-web.sh to build it."
 fi
 
+# R2: `appintentsmetadataprocessor` writes semantically-identical JSON in a
+# different order on every run - array order in `extract.actionsdata`, and
+# object-key order in the `version.json` beside it. Those files are sealed into
+# `_CodeSignature/CodeResources`, which is hashed into the CodeDirectory, so the
+# bundle's CDHash moved on every build even when nothing had changed. A classic
+# file-keychain ACL binds to the CDHash, which is why the captain got a Keychain
+# password dialog on every launch after every rebuild. The measurements, and the
+# causal experiment that pinned it to this directory, are in the scout report at
+# `data/grandline-launch-permission-prompts-investigation/report.md` (firstmate's
+# own repo).
+#
+# The fix is deliberately the conservative one. We do NOT canonicalise these
+# files in place: parameter order in a Shortcuts action plausibly matters to the
+# App Intents runtime and that was never verified. Instead each newly produced
+# file is compared against the previous bundle's copy by deep-sorted canonical
+# form - recursively sort object keys and every array - and when the two are
+# semantically identical the previous file's exact bytes are kept. What ships is
+# then always a file the processor itself produced, and it only changes when its
+# content genuinely changed.
+#
+# Every file in the directory is considered rather than `extract.actionsdata`
+# alone, because both files in it drift and a future toolchain may add a third.
+# A file with no previous counterpart, or one that is not JSON, is simply left
+# as produced.
+#
+# Best effort, like everything else in this block: no python3 and no previous
+# bundle both just leave the new files in place.
+stabilize_appintents_metadata() {
+  local new_dir="$APP_DIR/Contents/Resources/Metadata.appintents"
+  [ -n "$PREVIOUS_APPINTENTS" ] || return 0
+  [ -d "$PREVIOUS_APPINTENTS" ] || return 0
+  [ -d "$new_dir" ] || return 0
+  command -v python3 >/dev/null 2>&1 || return 0
+
+  local kept=0 name previous
+  for produced in "$new_dir"/*; do
+    [ -f "$produced" ] || continue
+    name="$(basename "$produced")"
+    previous="$PREVIOUS_APPINTENTS/$name"
+    [ -f "$previous" ] || continue
+    if python3 - "$previous" "$produced" <<'CANON'
+import json, sys
+
+def deepsort(value):
+    if isinstance(value, dict):
+        return {k: deepsort(value[k]) for k in sorted(value)}
+    if isinstance(value, list):
+        return sorted((deepsort(v) for v in value),
+                      key=lambda v: json.dumps(v, sort_keys=True))
+    return value
+
+try:
+    with open(sys.argv[1], "rb") as f:
+        previous = json.load(f)
+    with open(sys.argv[2], "rb") as f:
+        produced = json.load(f)
+except Exception:
+    sys.exit(1)
+
+sys.exit(0 if deepsort(previous) == deepsort(produced) else 1)
+CANON
+    then
+      cp "$previous" "$produced"
+      kept=$((kept + 1))
+    fi
+  done
+
+  if [ "$kept" -gt 0 ]; then
+    echo "App Intents metadata is unchanged - kept the previous bytes for $kept file(s) (stable CDHash)."
+  fi
+}
+
 # F21: the metadata bundle, from the const values the release build just
 # emitted. Best effort by design - a failure here prints and carries on rather
 # than failing the package, since everything else about the app is fine
@@ -158,6 +252,7 @@ if [ -n "$APPINTENTS_PROCESSOR" ] && [ -x "$APPINTENTS_PROCESSOR" ]; then
         --force >/dev/null 2>&1 \
        && [ -d "$APP_DIR/Contents/Resources/Metadata.appintents" ]; then
       echo "App Intents metadata written - Shortcuts/Siri actions will register."
+      stabilize_appintents_metadata
     else
       echo "⚠️  appintentsmetadataprocessor did not produce Metadata.appintents."
       echo "    The app is fine; it just has no Shortcuts/Siri actions this build."

@@ -284,3 +284,86 @@ reasonable follow-up - it is left out here because it is a new `AppSettings`
 key and a new restore path, which is a different change from the navigation
 one, and because opening on a known pane is the less surprising default while
 the shape is new.
+
+## The packaged bundle's CDHash stopped drifting between builds
+
+The captain was getting a Keychain password dialog on every launch, thirteen
+times in twenty-four hours.
+A scout investigation root-caused it and its sibling prompt; the full
+diagnostic evidence, including the unified-log transcripts and the controlled
+experiment that pinned the keychain ACL to the CDHash, is in
+`data/grandline-launch-permission-prompts-investigation/report.md` in
+firstmate's own repo.
+This section records only what changed here and what it measured.
+
+The mechanism is short.
+A classic file-keychain ACL binds to the **CDHash** of the binary that created
+the item, not to its designated requirement.
+The signing identity and the designated requirement were both perfectly stable
+across rebuilds - the CDHash was not, so the ACL stopped matching after every
+`build_native_app.sh` run and the captain was asked for his password again.
+
+Two independent things were moving the CDHash, and both had to be fixed.
+Each was confirmed by disabling only that half and watching two consecutive
+builds diverge again.
+
+**The App Intents metadata.**
+`appintentsmetadataprocessor` writes semantically-identical JSON in a different
+order on every run.
+`extract.actionsdata` reorders its arrays, and the `version.json` beside it
+reorders its object keys.
+Both are sealed into `_CodeSignature/CodeResources`, which is hashed into the
+CodeDirectory, so the bundle CDHash moved even when nothing had been edited.
+`build_native_app.sh` now keeps the previous bundle's `Metadata.appintents`
+before the bundle is thrown away, and after the processor runs it compares each
+new file against its previous counterpart by **deep-sorted canonical form**
+(recursively sort object keys and every array).
+Where the two are semantically identical, the previous file's exact bytes are
+kept.
+
+The file that ships is therefore always one the processor itself produced.
+The alternative - canonicalising the files in place - was **deliberately not
+taken**: parameter order in a Shortcuts action plausibly matters to the App
+Intents runtime, and nobody has verified that it does not.
+This approach never has to care, because it only ever restores bytes the tool
+wrote.
+
+The scout's report names `extract.actionsdata` alone.
+`version.json` drifts the same way and was found here, by diffing two whole
+bundles rather than the one file, which is why the fix walks the directory
+instead of naming a file.
+
+**An always-dirty recompile, which nothing had noticed.**
+The App Intents protocol list is the one input that goes on the *compiler's*
+command line, and it used to be written into a fresh `mktemp -d` on every run.
+A changing `-const-gather-protocols-file` argument makes SwiftPM recompile one
+file per build.
+That moves the object's mtime, which moves the `OSO` debug-map stab the linker
+writes into the binary, which moves the CDHash.
+Measured: two builds' binaries differed in exactly eighteen bytes, sixteen of
+them `LC_UUID` and two of them a Unix timestamp inside one `OSO` entry naming
+`StrawHatTranscriptStore.swift.o`.
+Pinning the protocol list at `.build/appintents-protocols.json` ends it.
+
+### What was measured
+
+Four consecutive runs of `build_native_app.sh`, no code changes in between,
+using a copy of the script with the `/Applications` install redirected to a
+scratch directory so the captain's installed copy was never replaced:
+
+| | CDHash |
+|---|---|
+| before, two builds | `4dffa765…` then `26c3d97f…` |
+| pinned protocol list only, two builds | `32019777…` then `09eab441…` |
+| both fixes, four builds | `c9b513ad…` four times |
+
+The bundle still passes `codesign --verify --deep --strict`, still satisfies
+its designated requirement, and still ships all five App Intents actions.
+
+Not verified here: that the captain's Keychain dialog is actually gone.
+That needs a relaunch of his own installed copy and is a captain-side check.
+What is proved is the property the ACL needs, which is a CDHash that does not
+move.
+It also only holds while the local signing certificate is not regenerated -
+`native/README.md` already records that the certificate is created once per
+machine and persists.

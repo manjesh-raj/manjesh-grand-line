@@ -110,3 +110,73 @@ Worth recording because it is the kind of thing that reads fine and is wrong on 
 - **No second store for widget state.** The snapshot is derived, disposable and rewritten whole; there is nothing in it that is not already in a real store.
 - **No `xcodebuild`, no Xcode project.** The project's standing rule, and the hand-assembled bundle keeps `swift build` the only thing a contributor needs.
 - **The app bundle was not re-signed as a Developer ID app**, and notarization was not attempted. That is the captain-owned item, tracked in `native/MANUAL-CHECKS.md` §17.
+
+## The App Group container is gated on a Team ID now, and why
+
+The captain was getting a "would like to access data from other apps" dialog on
+every launch.
+It was the app touching its own App Group container.
+On this macOS version `~/Library/Group Containers/<group-id>/` is TCC-protected
+app data (`kTCCServiceSystemPolicyAppData`), so an unentitled process reading or
+writing under it goes through `sandboxd` and prompts.
+A scout investigation confirmed this causally - a bare `/bin/ls` of that one
+directory reproduces the prompt - and the full evidence is in
+`data/grandline-launch-permission-prompts-investigation/report.md` in
+firstmate's own repo.
+
+The measurement this file already records is still correct, and is worth
+keeping separate from the new one.
+`containerURL(forSecurityApplicationGroupIdentifier:)` really does return a path
+with no entitlement check, for an unsandboxed process.
+What nobody had measured is that the *first read or write under that path* is a
+different question from resolving it, and that one prompts.
+
+So the cost was a dialog on every launch, thirteen launches in twenty-four
+hours, each one a fresh TCC `type=Create` record because no grant survived to
+the next launch.
+The benefit was nothing at all: the extension is not packaged into the shipped
+bundle (there is no `Contents/PlugIns/`), and it could not read that directory
+if it were, for the Team ID reason this file's "What is blocked, precisely"
+section already sets out.
+
+`GrandLineWidgetContainer.directory()` now gates its App Group branch on
+`appGroupIsTeamPrefixed` rather than taking it unconditionally.
+Until a Team ID exists the snapshot lives in the Application Support fallback
+that function already had, which no TCC service protects.
+`FM_WIDGET_DIR` still wins over both.
+
+The gate reads `appGroupIdentifier` itself rather than taking a separate flag,
+which keeps `native/Widgets/README.md`'s "two edits that unblock it" true
+unchanged: prefixing that constant with a real Team ID switches the branch back
+on, with nothing else to remember.
+`isTeamPrefixed` asserts the shape (ten uppercase alphanumerics, then an
+ordinary `group.…` identifier) rather than merely "something before `group.`",
+so a typo cannot switch the gate on.
+
+The branch was **not** deleted, because the extension will need it the day the
+Developer ID item lands.
+
+### How this was verified
+
+Static and mechanical, deliberately.
+Triggering a live TCC prompt on the captain's machine to prove the fix would
+have put another dialog on his screen, which is what the scout had already done
+once by accident.
+
+- `GrandLineWidgetContainer.directory()` is the **only** place in either binary
+  that calls `containerURL(forSecurityApplicationGroupIdentifier:)`, and every
+  app-side and extension-side caller resolves through it.
+  A grep over `Sources/` and `Widgets/` is the whole proof, and it is short.
+- `WidgetSnapshotSelfTest.checkTheAppGroupBranchIsGatedOnATeamID` asserts the
+  resolved path at runtime, in-process: with no Team ID nothing may resolve into
+  `Group Containers`, and the documented Application Support fallback is what
+  comes back.
+  It also asserts `isTeamPrefixed`'s own discriminating power first, so a
+  rewrite that made it constant fails loudly rather than passing vacuously.
+- Confirmed to catch the regression, not merely to pass.
+  Removing the `appGroupIsTeamPrefixed` condition from `directory()` failed that
+  case by name, reporting the real Group Containers path it had resolved to.
+
+The existing App-Group-versus-entitlement assertion
+(`checkTheExtensionAndTheContractAgree`) is untouched and still passes: the
+constant did not change, only whether `directory()` acts on it.
