@@ -299,6 +299,21 @@ enum ClaudeStatusCardSelfTest {
         return Calendar.current.date(from: components) ?? Date(timeIntervalSince1970: 0)
     }
 
+    /// The instant these cases pretend it is: the morning of the same day
+    /// the session window turns over.
+    ///
+    /// Pinned rather than `Date()` because the visible line's *shape*
+    /// depends on it - `QuotaWindow.resetsCompactText` drops the day for a
+    /// reset later today and keeps an abbreviated weekday otherwise - so a
+    /// real clock would make these cases assert a different string every
+    /// day, and would exercise only whichever branch today happened to pick.
+    /// This one instant puts the session column on the first branch and the
+    /// two weekly columns on the second, so both are measured every run.
+    ///
+    /// `Calendar.current`, per AGENTS.md: the fixture pins the *day*, and
+    /// "today" has to mean today where the captain is.
+    private static func fixtureNow() -> Date { fixtureReset(day: 23, hour: 9) }
+
     /// Three windows carrying real reset instants, and a credit pool that
     /// cannot carry one - the exact split the card has to honour.
     private static func resettingSnapshot() -> QuotaSnapshot {
@@ -342,7 +357,8 @@ enum ClaudeStatusCardSelfTest {
                  + "session window turns over in a minute or in four hours", &ok)
         }
 
-        let columns = HomeCanvasController.claudeStripColumns(for: resettingSnapshot())
+        let now = fixtureNow()
+        let columns = HomeCanvasController.claudeStripColumns(for: resettingSnapshot(), now: now)
 
         let expected = [sessionAt, weeklyAt, fableAt].map { "Resets \(QuotaWindow.resetsAtText($0))" }
         for (index, want) in expected.enumerated() {
@@ -354,6 +370,37 @@ enum ClaudeStatusCardSelfTest {
             }
         }
 
+        // The short form each column also carries, which is the half that
+        // gets painted. Both branches of the formatter are in here: the
+        // session window turns over later on the fixture's own day and so
+        // drops the day entirely, the two weekly ones keep an abbreviated
+        // weekday.
+        let wantCaptions = [sessionAt, weeklyAt, fableAt]
+            .map { QuotaWindow.resetsCompactText($0, now: now) }
+        if wantCaptions[0].contains(" ") && wantCaptions[0].split(separator: " ").count > 2 {
+            fail("the same-day caption rendered \"\(wantCaptions[0])\" - it is supposed to be "
+                 + "the time alone, and a longer string is what will not fit the column", &ok)
+        }
+        if wantCaptions[0] == wantCaptions[1] || !wantCaptions[1].hasPrefix(
+            weeklyAt.formatted(.dateTime.weekday(.abbreviated))) {
+            fail("the fixture's two branches rendered \(wantCaptions) - a caption for another "
+                 + "day must carry its weekday, or a captain reads Saturday's reset as tonight's", &ok)
+        }
+        for (index, want) in wantCaptions.enumerated() where columns[index].caption != want {
+            fail("\"\(columns[index].label)\" carries caption "
+                 + "\(columns[index].caption.map { "\"\($0)\"" } ?? "nil"), expected "
+                 + "\"\(want)\"", &ok)
+        }
+        // And the caption is genuinely shorter than the sentence - if the
+        // two were the same string, the column would be painting the long
+        // form and the truncation check in the case below would be the only
+        // thing standing between the captain and `Resets 5 Jan 20...`.
+        for (index, sentence) in expected.enumerated()
+        where (columns[index].caption?.count ?? 0) >= sentence.count {
+            fail("column \(index)'s caption is no shorter than its sentence - the visible line "
+                 + "is not the short form", &ok)
+        }
+
         // The other half, and the one a blanket "always attach something"
         // implementation fails: the credit pool has no cycle, so neither of
         // its columns may claim one (GL-14 - a fabricated reset time is a
@@ -363,6 +410,10 @@ enum ClaudeStatusCardSelfTest {
                 fail("\"\(columns[index].label)\" has no reset cycle but offered "
                      + "\"\(detail)\" - the credit pool's boundary is unknown, not soon", &ok)
             }
+            if let caption = columns[index].caption {
+                fail("\"\(columns[index].label)\" has no reset cycle but painted "
+                     + "\"\(caption)\" - a fabricated boundary is worse visible than hidden", &ok)
+            }
         }
 
         // The stated-gap case: a window the response did not carry at all.
@@ -371,14 +422,15 @@ enum ClaudeStatusCardSelfTest {
             session: QuotaWindow(kind: .session, percentUsed: 12,
                                  resetsAt: fixtureReset(day: 23, hour: 18), pace: .onPace),
             weekly: nil, fable: nil, extraUsage: nil, latency: 0.4, log: "")
-        let sparseColumns = HomeCanvasController.claudeStripColumns(for: sparse)
-        for column in sparseColumns.dropFirst() where column.detail != nil {
+        let sparseColumns = HomeCanvasController.claudeStripColumns(for: sparse, now: now)
+        for column in sparseColumns.dropFirst()
+        where column.detail != nil || column.caption != nil {
             fail("gap column \"\(column.label)\" offered a reset time - a window that was "
                  + "never reported has no reset instant to offer", &ok)
         }
         // Discriminating: the one column that *does* have one still has it,
         // so this case cannot pass against a build that dropped the feature.
-        if sparseColumns[0].detail == nil {
+        if sparseColumns[0].detail == nil || sparseColumns[0].caption == nil {
             fail("the session column carried a real resetsAt and still offered nothing", &ok)
         }
 
@@ -389,26 +441,42 @@ enum ClaudeStatusCardSelfTest {
             plan: "team",
             session: QuotaWindow(kind: .session, percentUsed: 41, resetsAt: nil, pace: .onPace),
             weekly: nil, fable: nil, extraUsage: nil, latency: 0.4, log: "")
-        let noResetColumns = HomeCanvasController.claudeStripColumns(for: noReset)
+        let noResetColumns = HomeCanvasController.claudeStripColumns(for: noReset, now: now)
         if noResetColumns[0].isGap {
             fail("a window with a reading and no resetsAt is not a stated gap", &ok)
         }
         if let detail = noResetColumns[0].detail {
             fail("a window with no resetsAt offered \"\(detail)\"", &ok)
         }
+        if let caption = noResetColumns[0].caption {
+            fail("a window with no resetsAt painted \"\(caption)\"", &ok)
+        }
 
-        if ok { print("  OK - \(expected[0]) | \(expected[1]) | \(expected[2]); credit columns offer nothing") }
+        if ok {
+            print("  OK - \(expected[0]) | \(expected[1]) | \(expected[2]); painted as "
+                  + "\(wantCaptions.joined(separator: " | ")); credit columns offer nothing")
+        }
     }
 
     // MARK: 3c - the affordance is on the real cell, for the pointer and for VoiceOver
 
     /// The behavioural half of the case above. The model carrying `detail`
-    /// says nothing about whether anything was wired to it, which is exactly
-    /// the shape AGENTS.md's `debug*` convention warns about - so this reads
-    /// the tooltip and the accessibility help back off the **cell views the
-    /// card actually built**, after a real layout pass.
+    /// and `caption` says nothing about whether anything was wired to
+    /// either, which is exactly the shape AGENTS.md's `debug*` convention
+    /// warns about - so this reads the painted line, the tooltip and the
+    /// accessibility help back off the **cell views the card actually
+    /// built**, after a real layout pass.
+    ///
+    /// **This case used to assert the opposite of what it asserts now**, and
+    /// the flip is the whole of this follow-up. The first version of the
+    /// feature rendered the reset time as a tooltip alone and this case
+    /// pinned the card to exactly the height of a card carrying none. The
+    /// captain reported that as the defect: a reading you have to hover each
+    /// of three columns to collect is a reading he does not have. So the
+    /// line is painted, the card is allowed to grow, and the growth is what
+    /// is now measured - one caption line, not two, and nothing clipped.
     private static func checkTheResetAffordanceIsReallyWiredToTheCell(_ ok: inout Bool) {
-        print("\n-- claude strip: the reset time is on the painted cell, and is not mouse-only --")
+        print("\n-- claude strip: the reset time is painted on the cell, not hidden behind a hover --")
 
         ThemeManager.shared.setTheme(.dusk)
         let spanTwo = HomeCanvasController.minModuleWidth * 2 + HomeCanvasController.gridSpacing
@@ -421,7 +489,8 @@ enum ClaudeStatusCardSelfTest {
         card.configure(.init(title: "Claude", subtitle: "Team", symbol: "gauge.with.needle",
                              hue: .violet, chip: .warn("Fable 100%"),
                              body: .statusStrip(
-                                HomeCanvasController.claudeStripColumns(for: resettingSnapshot()),
+                                HomeCanvasController.claudeStripColumns(for: resettingSnapshot(),
+                                                                        now: fixtureNow()),
                                 perRow: HelmModuleCard.maxStripColumns)))
         host.addSubview(card)
         let width = card.widthAnchor.constraint(equalToConstant: spanTwo)
@@ -466,10 +535,57 @@ enum ClaudeStatusCardSelfTest {
             }
         }
 
-        // The compactness the whole tooltip decision exists to protect: the
-        // card carrying three reset times is exactly as tall as the same card
-        // carrying none. A second visible line per column would fail here,
-        // which is the point.
+        // **The captain's actual ask**: the reading is on the card, in real
+        // painted text, with no pointer involved. Read off the label the
+        // card built - `caption` reaching the model proves nothing about
+        // whether a label was ever added to the cell.
+        let captions = anatomy.stripColumnCaptions
+        guard captions.count == HelmModuleCard.maxStripColumns else {
+            fail("the card exposed \(captions.count) column captions, expected "
+                 + "\(HelmModuleCard.maxStripColumns)", &ok)
+            return
+        }
+        let wantCaptions = [fixtureReset(day: 23, hour: 18),
+                            fixtureReset(day: 27, hour: 9),
+                            fixtureReset(day: 28, hour: 14)]
+            .map { QuotaWindow.resetsCompactText($0, now: fixtureNow()) }
+        for (index, want) in wantCaptions.enumerated() {
+            if captions[index].text != want {
+                fail("column \(index) (\(anatomy.stripColumns[index].label)) painted "
+                     + "\(captions[index].text.map { "\"\($0)\"" } ?? "no line") under its "
+                     + "figure, expected \"\(want)\" - the reset time is back to being "
+                     + "hover-only", &ok)
+            }
+            if !captions[index].isPainted {
+                fail("column \(index)'s reset line exists but is not in the window or is "
+                     + "hidden - it is not a visible reading", &ok)
+            }
+            // The reason the line is the short form and not the sentence.
+            // A column is about 74pt wide here, and a truncated reset time
+            // is worse than none: `Resets 5 Jan 20...` answers nothing.
+            if captions[index].isTruncated {
+                fail("column \(index) painted \"\(want)\" truncated at the width the column "
+                     + "gives it - shorten the caption, do not ship an ellipsis where the "
+                     + "answer goes", &ok)
+            }
+        }
+        for index in 3...4 where captions[index].text != nil {
+            fail("column \(index) (\(anatomy.stripColumns[index].label)) painted a reset line "
+                 + "for a window with no reset cycle", &ok)
+        }
+
+        // The height the painted line costs, measured against the same card
+        // built from a snapshot whose windows carry no reset instant at all
+        // - so the only difference between the two is the line.
+        //
+        // Asserted in both directions, because each catches a different
+        // defect. It must be **taller**, or the line is not being painted
+        // (and every check above could still pass against a label added to
+        // no stack). And it must be taller by no more than one caption line
+        // plus the strip's own 6pt stack spacing, or the column has gained
+        // something other than the one line this feature is allowed - a
+        // wrapped sentence, say, which is exactly what the long form would
+        // do if a future caller passed it here.
         let plain = HelmModuleCard()
         plain.configure(.init(title: "Claude", subtitle: "Team", symbol: "gauge.with.needle",
                               hue: .violet, chip: .warn("Fable 100%"),
@@ -486,21 +602,41 @@ enum ClaudeStatusCardSelfTest {
         ])
         host.layoutSubtreeIfNeeded()
 
+        let plainAnatomy = plain.anatomyForTests
         let withResets = anatomy.cardHeight
-        let withoutResets = plain.anatomyForTests.cardHeight
+        let withoutResets = plainAnatomy.cardHeight
         if withoutResets <= 0 {
             fail("the reference card resolved to \(withoutResets)pt - the height comparison "
                  + "below would be vacuous", &ok)
         }
-        if abs(withResets - withoutResets) > 0.5 {
+        // The reference really is the no-caption case, or the comparison is
+        // measuring the same card twice.
+        if plainAnatomy.stripColumnCaptions.contains(where: { $0.text != nil }) {
+            fail("the reference card painted a reset line - its snapshot is supposed to carry "
+                 + "no reset instants at all, so this comparison would be vacuous", &ok)
+        }
+        let oneLine = HelmType.captionSmall().boundingRectForFont.height + 6
+        let grew = withResets - withoutResets
+        if grew <= 0.5 {
             fail("the card with reset times is \(withResets)pt against \(withoutResets)pt "
-                 + "without - the affordance is costing the card height, which breaks the row's "
-                 + "uniform height", &ok)
+                 + "without - it did not grow at all, so the line is not being laid out", &ok)
+        }
+        if grew > oneLine + 2 {
+            fail("the reset line cost the card \(grew)pt, more than the one caption line "
+                 + "(\(oneLine)pt) it is allowed - a column is carrying more than a single "
+                 + "short line, or the line is wrapping", &ok)
+        }
+        if anatomy.bodyContentHeight > anatomy.bodyAreaHeight + 0.5 {
+            fail("the strip with reset lines needs \(anatomy.bodyContentHeight)pt of "
+                 + "\(anatomy.bodyAreaHeight)pt - it would be clipped", &ok)
         }
 
         if ok {
-            print("  OK - tooltip and VoiceOver help on the three resetting columns, "
-                  + "nothing on the credit pool, card still \(withResets)pt")
+            print(String(format: "  OK - three reset lines painted (%@), full sentence still on "
+                         + "the tooltip and VoiceOver help, nothing on the credit pool; "
+                         + "card %.0fpt against %.0fpt without (+%.0f, one caption line)",
+                         wantCaptions.joined(separator: " | ") as NSString,
+                         withResets, withoutResets, grew))
         }
     }
 

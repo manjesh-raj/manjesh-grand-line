@@ -958,3 +958,80 @@ and a fabricated boundary on the credit pool would be a fabricated reading.
   same permission constraint as the entries above. A tooltip in particular
   cannot be rendered by `cacheDisplay`, so the evidence for it is the real
   view's own `toolTip` after a real layout pass rather than a picture of one.
+
+## Making that reset time visible (`fm/grandline-claude-strip-reset-time-visible`)
+
+The captain's verdict on the entry above, with a screenshot: a reading you
+have to hover each of three columns to collect is a reading he does not have.
+He wants the reset time on the card by default.
+
+So the line is painted now, and the tooltip stays where it was.
+
+### The width was the real constraint, and the string is what gave way
+
+The entry above rejected a visible line on two grounds, and only one of them
+survived contact.
+
+The **height** ground does not. `HelmModuleCard` has sized to its content
+above a floor since full review #3's PF2, and `HelmResponsiveGrid`'s
+`equalHeights` makes a *row* uniform rather than the whole canvas -
+`checkUniformCardHeight` asserts nothing is clipped and that the floor holds,
+not that every card is one height. A strip that grows is a strip that grows;
+the guard was never the obstacle it was read as. Measured: the card goes from
+the 124pt floor to **141pt**, one caption line plus the strip's own 6pt stack
+spacing, and its body still fits its area exactly at all three of GL-32's
+chrome text scales.
+
+The **width** ground is real and unchanged. A column is about 74pt wide at
+the card's span-2 width and `Resets 23 Sep 2026 at 6:30 PM` needs several
+times that. The fix is to shorten the *string* rather than to hide it:
+`QuotaWindow.resetsCompactText` renders `6:30 PM` for a reset later today and
+`Sun 9:30 AM` for one on another day. Nothing is invented and nothing is
+rounded away - the day is dropped only when the instant is today, and all
+three windows this renders for turn over inside a week, so an abbreviated
+weekday is unambiguous for every one of them. `Calendar.current`, injectable
+for a suite, per AGENTS.md's calendar rule: "today" has to mean today where
+the captain is.
+
+`HelmModuleStripColumn` therefore carries **both** strings.
+`detail` is the long sentence and still rides the tooltip and the
+accessibility label; `caption` is the short one, painted in
+`HelmType.captionSmall()` (the smallest Daylight role) in `mutedInk`, under
+the track rather than between the figure and the track - the bar is a picture
+of the figure directly above it, and a line wedged between them captions the
+wrong thing. The credit columns pass `nil` for both, for the reasons the
+entry above gives.
+
+The relative `in 3h 12m` form is still rejected, and for its original reason:
+a live countdown drags in AGENTS.md's one-injectable-clock rule for a card
+that is otherwise a static reading refreshed on demand.
+
+### Verification
+
+- `checkTheResetAffordanceIsReallyWiredToTheCell` now asserts the **opposite**
+  of what it asserted before. It reads each column's caption label back off
+  the card after a real layout pass - the string, that the label is really in
+  the window and not hidden, and that it did **not** truncate at the width the
+  column gave it - and it measures the height growth in both directions:
+  taller than a card built from a snapshot with no reset instants (or nothing
+  is being laid out) and taller by no more than one caption line (or a column
+  has gained something other than the single short line this is allowed).
+- `checkResetTimesAreOfferedOnlyWhereTheyExist` gained the caption half,
+  including that the caption is genuinely shorter than the sentence. Its
+  fixture pins `now` to the morning of the session window's own reset day, so
+  both branches of the formatter - time-only and weekday-plus-time - are
+  exercised on every run rather than whichever one today happens to pick.
+- `checkUniformCardHeight`'s strip fixture now carries captions, because a
+  fixture without them measures a card the app never builds. It fails loudly
+  if they are ever dropped from it.
+- **Injections confirmed**, each restored afterwards: rendering the caption
+  label but never adding it to the cell (the tooltip-only revert) failed seven
+  assertions by name, including "the reset time is back to being hover-only"
+  and "it did not grow at all"; passing `resetsSentence` as the caption fired
+  the truncation check on all three columns.
+- **Rendered and looked at**, per AGENTS.md's "Verifying native UI bugs
+  without a real screenshot": a temporary probe (reverted before commit) drew
+  the card at both the span-2 and the wrapped one-column widths in Daylight
+  and Dusk and wrote PNGs read back with `Read`. The three reset lines sit
+  under their tracks, muted, none truncated, in both registers. The one-column
+  form's `SESSION (...` key truncation is pre-existing and untouched.

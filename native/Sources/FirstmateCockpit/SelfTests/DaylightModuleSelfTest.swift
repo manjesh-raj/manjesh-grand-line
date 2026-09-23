@@ -629,15 +629,25 @@ enum DaylightModuleSelfTest {
         let spanTwo = narrow * 2 + HomeCanvasController.gridSpacing
 
         // The real five, at their most demanding: the longest key this card
-        // ever draws ("Session (5h)" uppercases to 12 characters) and the
-        // longest figure ("$137.62").
+        // ever draws ("Session (5h)" uppercases to 12 characters), the
+        // longest figure ("$137.62"), and - on the three windows that have
+        // one - the painted reset line, which is the tallest state the strip
+        // has. A fixture without the captions would measure a card the app
+        // never builds.
         let stripColumns: [HelmModuleStripColumn] = [
-            .init(label: "Session (5h)", value: "96%", fill: 0.96, state: .bad),
-            .init(label: "Week", value: "70%", fill: 0.70, state: .ok),
-            .init(label: "Fable week", value: "100%", fill: 1, state: .bad),
+            .init(label: "Session (5h)", value: "96%", fill: 0.96, state: .bad,
+                  detail: "Resets 23 Sep 2026 at 6:30 pm", caption: "Sun 6:30 pm"),
+            .init(label: "Week", value: "70%", fill: 0.70, state: .ok,
+                  detail: "Resets 27 Sep 2026 at 9:30 am", caption: "Sun 9:30 am"),
+            .init(label: "Fable week", value: "100%", fill: 1, state: .bad,
+                  detail: "Resets 28 Sep 2026 at 2:30 pm", caption: "Mon 2:30 pm"),
             .init(label: "Extra usage", value: "$137.62", fill: 0.98, state: .bad),
             .init(label: "Spend cap", value: "$140", fill: 1, state: .idle),
         ]
+        if stripColumns.allSatisfy({ $0.caption == nil }) {
+            fail("the strip fixture carries no reset lines - it would measure a state the "
+                 + "Claude card never renders", &ok)
+        }
 
         // Swept across GL-32's chrome text scale, because that is what makes
         // one fixed height a real claim rather than one true at the default
