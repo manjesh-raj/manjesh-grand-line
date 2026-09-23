@@ -3360,6 +3360,14 @@ if ProcessInfo.processInfo.environment["FM_RUN_QUOTA_DATA_TESTS"] == "1" {
     exit(QuotaDataSelfTest.run() ? 0 : 1)
 }
 
+// `fm/grandline-claude-status-card-implement`: window-backed - it builds a
+// real `HelmModuleCard` in a real probe window and reads back rendered
+// geometry plus a real rasterised pixel. Listed in `NEEDS_SESSION` in
+// `Scripts/run-all-tests.sh` accordingly.
+if ProcessInfo.processInfo.environment["FM_RUN_CLAUDE_STATUS_CARD_TESTS"] == "1" {
+    exit(ClaudeStatusCardSelfTest.run() ? 0 : 1)
+}
+
 // `fm/grandline-notification-center`: pure store logic (add/clear/dismiss/
 // dedup/badge count) - see GrandLineNotificationCenterSelfTest.swift's header.
 if ProcessInfo.processInfo.environment["FM_RUN_NOTIFICATION_CENTER_TESTS"] == "1" {

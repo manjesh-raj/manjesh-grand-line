@@ -30,14 +30,21 @@ import Foundation
 /// this popover shows (the real JSON key is `percentRemaining`; `percentUsed`
 /// here is `100 - percentRemaining`, converted once at the parse boundary -
 /// see `QuotaSource.parse`'s comment - since the popover's own UI is written
-/// in terms of "used", plus `resetsAt`, `pace.status`). Anything else in the
-/// raw JSON (per-model windows like `"id": "model:fable"`, credits like
-/// `"id": "extra_usage"`) is ignored by `parse`'s `switch id` falling
-/// through its `default: continue`.
+/// in terms of "used", plus `resetsAt`, `pace.status`).
+///
+/// Three of `quota-axi`'s four windows have this shape: `five_hour`,
+/// `seven_day` and `model:fable`. The fourth, `extra_usage`, is measured in
+/// dollars rather than in a resetting allowance and has no `resetsAt` at
+/// all - it is `QuotaCreditWindow` below. Any *other* id still falls through
+/// `parse`'s `default: continue`.
 struct QuotaWindow: Equatable {
     enum Kind: Equatable {
         case session
         case weekly
+        /// `quota-axi`'s `model:fable` window - a per-model weekly allowance
+        /// that runs alongside `seven_day` rather than inside it, so it can
+        /// be exhausted while the plain weekly window still has room.
+        case fable
     }
 
     enum PaceStatus: Equatable {
@@ -71,10 +78,42 @@ struct QuotaWindow: Equatable {
     let pace: PaceStatus
 }
 
+/// `quota-axi`'s `extra_usage` window - the extra-usage credit pool, which is
+/// a different shape from the three resetting allowances above and so is a
+/// sibling type rather than a `QuotaWindow` with unused fields.
+///
+/// **What it is not.** This is *not* organisation month-to-date spend as the
+/// Anthropic Console's Usage & Cost page reports it. The window's own `kind`
+/// is `credits`, and `quota-axi` returns `pace: {status: "unknown", reason:
+/// "missing_cycle"}` for it - it does not know the billing cycle's
+/// boundaries, so nothing here may honestly be called "month to date". The
+/// Home card labels it **"Extra usage"** and **"Spend cap"** for exactly that
+/// reason; see `docs/history/07-fleet-and-notifications.md`.
+///
+/// Both dollar figures are optional and independently so (GL-14): a plan or
+/// account configuration that reports the window without them must render a
+/// stated gap, never a `$0`.
+struct QuotaCreditWindow: Equatable {
+    /// **Optional, unlike every other window's.** The real output carries
+    /// `extra_usage` with `pace.reason: "missing_usage"` and no
+    /// `percentRemaining` at all - a shape the popover's own live fixture
+    /// already contained, and which cost this parse a rewrite when the fixture
+    /// was finally read rather than skipped. The dollars are the reading here;
+    /// the percentage is a convenience the response may simply not have.
+    let percentUsed: Double?
+    let spentUsd: Double?
+    let limitUsd: Double?
+}
+
 struct QuotaSnapshot {
     let plan: String?
     let session: QuotaWindow?
     let weekly: QuotaWindow?
+    /// The `model:fable` window. `nil` when this account's response carries
+    /// no per-model window - a stated gap on the card, never a zero.
+    let fable: QuotaWindow?
+    /// The `extra_usage` credit pool. `nil` for the same reason `fable` is.
+    let extraUsage: QuotaCreditWindow?
     /// Wall-clock time the underlying `quota-axi` call took - shown in the
     /// popover's footer ("quota-axi · 1.4s"), matching this app's convention
     /// of surfacing the real data source/latency rather than hiding it.
@@ -82,6 +121,44 @@ struct QuotaSnapshot {
     /// Raw command output for whatever failed, if anything - mirrors
     /// `VaultSnapshot.log`'s "show the real command output" principle.
     let log: String
+}
+
+/// How alarming a quota reading is.
+///
+/// **One copy of the 80/90 decision.** The thresholds were specified in the
+/// Claude-usage popover's own review (`.good` below 80% used, `.warn` at
+/// 80-90%, `.critical` above 90%) and lived only inside
+/// `QuotaUsageWindowRow.tint(for:)`. The Home page's status strip needs the
+/// same verdict in a different vocabulary (`HelmModuleRowState`, which is a
+/// dot/track state rather than a `HelmTint`), and two surfaces reading the
+/// same number must not be able to disagree about whether it is a warning -
+/// so the decision moved here and both sides map from it.
+enum QuotaSeverity: Equatable {
+    case comfortable
+    case warning
+    case critical
+
+    init(percentUsed: Double) {
+        if percentUsed > 90 { self = .critical }
+        else if percentUsed >= 80 { self = .warning }
+        else { self = .comfortable }
+    }
+
+    var tint: HelmTint {
+        switch self {
+        case .comfortable: return .good
+        case .warning: return .warn
+        case .critical: return .critical
+        }
+    }
+
+    var moduleRowState: HelmModuleRowState {
+        switch self {
+        case .comfortable: return .ok
+        case .warning: return .warn
+        case .critical: return .bad
+        }
+    }
 }
 
 enum QuotaFetchResult {
@@ -178,6 +255,8 @@ enum QuotaSource {
 
         var session: QuotaWindow?
         var weekly: QuotaWindow?
+        var fable: QuotaWindow?
+        var extraUsage: QuotaCreditWindow?
         for entry in windows {
             // The real `quota-axi` output carries `percentRemaining`, not
             // `percentUsed` - confirmed live: a `windows[]` entry looks like
@@ -188,8 +267,27 @@ enum QuotaSource {
             // right here at the parse boundary, rather than threading a
             // "remaining" semantic through code that assumes "used"
             // everywhere else.
-            guard let id = entry["id"] as? String,
-                  let percentRemaining = entry["percentRemaining"] as? Double
+            guard let id = entry["id"] as? String else { continue }
+
+            // `extra_usage` is handled before the `percentRemaining` guard
+            // below, because it is the one window that can legitimately
+            // arrive without it (see `QuotaCreditWindow.percentUsed`) - and
+            // requiring it here is what silently dropped this window on a
+            // real payload.
+            if id == "extra_usage" {
+                // Every field read with `as? Double` and left `nil` when
+                // absent rather than defaulted (GL-14) - the card states the
+                // gap instead of rendering a fabricated `$0` or `0%`, both of
+                // which are real and alarming values on a spend readout.
+                let percentRemaining = entry["percentRemaining"] as? Double
+                extraUsage = QuotaCreditWindow(
+                    percentUsed: percentRemaining.map { 100 - $0 },
+                    spentUsd: entry["spentUsd"] as? Double,
+                    limitUsd: entry["limitUsd"] as? Double)
+                continue
+            }
+
+            guard let percentRemaining = entry["percentRemaining"] as? Double
             else { continue }
             let percentUsed = 100 - percentRemaining
             let resetsAt = (entry["resetsAt"] as? String).flatMap { parseResetsAt($0) }
@@ -199,6 +297,8 @@ enum QuotaSource {
                 session = QuotaWindow(kind: .session, percentUsed: percentUsed, resetsAt: resetsAt, pace: paceStatus)
             case "seven_day":
                 weekly = QuotaWindow(kind: .weekly, percentUsed: percentUsed, resetsAt: resetsAt, pace: paceStatus)
+            case "model:fable":
+                fable = QuotaWindow(kind: .fable, percentUsed: percentUsed, resetsAt: resetsAt, pace: paceStatus)
             default:
                 continue
             }
@@ -207,7 +307,9 @@ enum QuotaSource {
         // At least one of the two windows this popover cares about must be
         // present, or there's nothing worth showing.
         guard session != nil || weekly != nil else { return nil }
-        return QuotaSnapshot(plan: plan, session: session, weekly: weekly, latency: latency, log: log)
+        return QuotaSnapshot(plan: plan, session: session, weekly: weekly,
+                             fable: fable, extraUsage: extraUsage,
+                             latency: latency, log: log)
     }
 
     // MARK: Process plumbing

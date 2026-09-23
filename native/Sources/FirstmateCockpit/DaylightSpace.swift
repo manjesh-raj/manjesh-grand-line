@@ -210,6 +210,13 @@ enum DaylightSpace: String, CaseIterable {
 /// `opens.domainHue` because the hue belongs to the *area*, not the page.
 enum DaylightModule: String, CaseIterable {
     case briefing
+    // `fm/grandline-claude-status-card-implement`: the captain's picked
+    // "Status strip" readout of Claude's five quota figures. Declared here,
+    // directly after `.briefing`, because `canvasOrder` is `allCases`
+    // (declaration order) and this is a status line the captain wants at the
+    // top of the launch landing - the same reasoning `.poneglyph` and
+    // `.commandLibrary` record for their own placements below.
+    case claudeStatus
     case fleet
     case tasks
     case mergeQueue
@@ -292,7 +299,13 @@ enum DaylightModule: String, CaseIterable {
         // Command surface, an Operations one, a Store or a Setup page - and
         // the captain asked for it on Overview specifically, which is exactly
         // the "no other home" property the other two have.
-        case .briefing, .fleet, .strawHat: return nil
+        // `.claudeStatus` joins the same "no other home" set: Claude's quota
+        // is not a Command surface, an Operations one, a Store or a Setup
+        // page, and the captain asked for this card on the launch landing
+        // specifically. `DaylightModuleSelfTest.overviewOnly` is updated with
+        // it, per this file's own "change it here and in that test together"
+        // rule.
+        case .briefing, .claudeStatus, .fleet, .strawHat: return nil
         // `fm/grandline-devops-space-and-diagram-tool` moved `.commandLibrary`
         // here out of `.stores` below. `fm/grandline-tasks-kanban-devops-split`
         // had promoted it out of `ShiftController`'s own tab switcher into its
@@ -408,6 +421,17 @@ enum DaylightModule: String, CaseIterable {
     var gridSpan: Int {
         switch self {
         case .briefing: return 2
+        // Two for the strip as well, and for a reason of the same kind as the
+        // briefing's: five columns need measure. At one column (255pt) the
+        // five keys truncate to initials; at a real span-2 width (526pt) each
+        // column gets ~85pt, which is enough for "EXTRA USAGE" over "$137.62"
+        // - measured by `ClaudeStatusCardSelfTest`, not assumed.
+        //
+        // `HelmResponsiveGrid.packRows` degrades a span-2 card to span 1 in a
+        // single-column grid, so `HomeCanvasController.claudeStripColumnCap`
+        // splits the strip's columns to match rather than letting them
+        // truncate - the same shape as `briefingClauseCap`.
+        case .claudeStatus: return 2
         default: return 1
         }
     }
@@ -416,6 +440,11 @@ enum DaylightModule: String, CaseIterable {
     var opens: RailDestination {
         switch self {
         case .briefing, .fleet: return .overview
+        // The Claude-usage control lives on Console - the same destination
+        // `HomeCanvasController.follow` already resolves a `.quota` briefing
+        // clause to, and for the same stated reason: open the page that owns
+        // the thing the card is about rather than invent a destination.
+        case .claudeStatus: return .console
         case .strawHat: return .strawHat
         case .tasks: return .shift
         case .mergeQueue: return .review
@@ -459,7 +488,20 @@ enum DaylightModule: String, CaseIterable {
         // opens it - so this table is consulted first. Same one mapping rule:
         // `DaylightSpace.destination` is read, never restated.
         if let space = DaylightSpace.allCases.first(where: { $0.destination == dest }) { return space }
-        return allCases.first { $0.opens == dest }?.space
+        // **More than one module can open the same destination**, and the one
+        // that *owns* it is the one that lives on a space. An Overview-only
+        // module that merely deep-links elsewhere is not that destination's
+        // home - `.claudeStatus` opens `.console` the way the briefing's
+        // `.quota` clause does, and it has no space of its own.
+        //
+        // Preferring a module with a real space rather than taking the first
+        // match makes this independent of declaration order, which `allCases`
+        // otherwise makes load-bearing here. It was not: declaring
+        // `.claudeStatus` before `.console` made Console's own Recents kicker
+        // read "Home" (`RecentDestinationsSelfTest.
+        // kindPropertiesForRailAndHost` caught it by name).
+        let openers = allCases.filter { $0.opens == dest }
+        return openers.first { $0.space != nil }?.space ?? openers.first?.space
     }
 
     /// §4's SF Symbol for this module's gradient tile. Every one of these is
@@ -469,6 +511,7 @@ enum DaylightModule: String, CaseIterable {
     var symbol: String {
         switch self {
         case .briefing: return "cup.and.saucer.fill"
+        case .claudeStatus: return "gauge.with.needle"
         case .fleet: return "sailboat.fill"
         // Only the fallback: `HomeCanvasController.fillStrawHat` gives this
         // card `StrawHatFlag.image`, the crew's own Jolly Roger. Kept in sync
@@ -526,6 +569,10 @@ enum DaylightModule: String, CaseIterable {
         switch self {
         case .briefing: return .amber
         case .fleet: return .blue
+        // Identity, not a verdict: the card's hue must not move with the
+        // reading, or a comfortable week and an exhausted one would be two
+        // different cards. The severity lives in the strip's own tracks.
+        case .claudeStatus: return .violet
         default: return opens.domainHue
         }
     }
@@ -534,6 +581,7 @@ enum DaylightModule: String, CaseIterable {
     var title: String {
         switch self {
         case .briefing: return "Morning briefing"
+        case .claudeStatus: return "Claude"
         case .fleet: return "Fleet"
         case .strawHat: return "Straw Hat Pirates"
         case .tasks: return "Tasks"

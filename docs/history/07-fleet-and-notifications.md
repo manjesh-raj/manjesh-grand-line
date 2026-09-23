@@ -263,3 +263,182 @@ page it came from. `MorningBriefingData.swift` owns what it says,
 - **A source guard covers the wiring the behavioural cases cannot**: `sweepSoftware` could be perfect while `checkNow` swept some other way. Confirmed by injection - a `checkNow` rewritten to call `DependencyCheckCache.shared.check` at the pages' default TTL (i.e. correct-looking, cache-using, and cadence-halving) is caught only by that guard. It strips whole-line `//` comments first, since the file names `UpdatesSource.check` in order to explain that it no longer calls it.
 - **Two adjacent direct callers were deliberately left alone, and widening to them would be wrong rather than merely out of scope.** `ScheduleRunner`'s `toolUpdateCheck`/`toolUpdateInstall` are captain-scheduled "check now" actions, semantically a forced refresh - and the install arm mutates the toolchain, so its own check results are stale the instant it finishes. `VaultData.checkInstall` is one item on a different page.
 - **Verified** by `swift build` (clean debug and release, zero warnings in this app's sources), the release binary confirmed to carry no `FM_RUN_*` strings or the new symbols, and the full `./Scripts/run-all-tests.sh` run (147 passed / 0 failed / 1 documented skip, `fm.themeID`/`fm.fontSize` unchanged) under the documented `dusk` pre-flight - **without launching the app**, per the README's worktree rule. **Four injected regressions each reproduced by name** (scripted file copies, never `git stash`): the original direct-`UpdatesSource.check` bypass, the window widened to `defaultTTL`, `gatheredAt` stamped `Date()`, and `checkNow` unwired from `sweepSoftware`.
+
+## The Claude status strip on Home (`fm/grandline-claude-status-card-implement`)
+
+A Claude quota readout as a real card on the Home canvas, and the second
+reader of the `quota-axi` call this page's Morning briefing was already
+paying for.
+
+**Where it came from.** `data/grandline-claude-status-widget-lavish/` is the
+design exploration: five style mockups, built in real Daylight/Dusk token
+values, rendered in real Home-canvas chrome.
+The captain reviewed them and picked style 3, "Status strip" - one dense row
+of five hairline-separated columns - with "we can start implementing this".
+That report also did the data investigation, and its headline finding held up:
+every one of the five figures is already in the output of a command this app
+runs today, so no Anthropic Admin API, no new credential class and no second
+integration were needed.
+
+**One correction to the report, measured rather than assumed.** It recorded
+the command as `quota-axi --json --full --provider claude`.
+All four windows come back **without** `--full`, which is what
+`QuotaSource.fetch()` already runs - so the argv is unchanged and this feature
+added no new subprocess work at all.
+
+### The two labelling decisions
+
+Both were implicit in the mockup the captain picked, and both are decisions
+about what the data does *not* say.
+They are asserted as prohibitions in `ClaudeStatusCardSelfTest`, not only as
+expected strings, because a future edit that "tidies" a label would
+reintroduce exactly the claim they exist to avoid.
+
+- **"Session (5h)", never "Daily".** Claude's quota has no daily window and
+  `quota-axi` reports none. The window is `five_hour`, which the tool itself
+  labels `session`. "Daily" would name a reset cadence that does not exist.
+- **"Extra usage" / "Spend cap", never "MTD spend".** The window's id is
+  `extra_usage` and its kind is `credits` - an extra-usage credit pool against
+  its own cap, not organisation month-to-date spend. `quota-axi` returns
+  `pace: {status: "unknown", reason: "missing_cycle"}` for it, so it does not
+  know the billing cycle's boundaries and nothing derived from it may honestly
+  say "month to date". True org MTD spend would need the Admin/Usage API and
+  an Admin key.
+
+### The data layer
+
+`QuotaSource.parse`'s `switch id` used to drop `model:fable` and `extra_usage`
+through `default: continue`; its own doc comment named them as the things it
+ignored. Both are parsed now.
+
+- `QuotaWindow.Kind` gains `.fable`. The Fable window has the same shape as
+  the other two, so it is the same type.
+- `extra_usage` is a **sibling type** (`QuotaCreditWindow`), not a
+  `QuotaWindow` with unused fields: it is measured in dollars, has no
+  `resetsAt` in the real output, and its pace is permanently `unknown`.
+- **A real shape variant the live output alone would not have shown.** The
+  popover's own long-standing live fixture in `QuotaDataSelfTest` carries an
+  `extra_usage` with `spentUsd` and **no** `percentRemaining` and **no**
+  `limitUsd` (`pace.reason: "missing_usage"`). The first parse required
+  `percentRemaining` for every window and silently dropped this one. So
+  `QuotaCreditWindow.percentUsed` and both dollar figures are independently
+  optional, and `extra_usage` is handled before that guard. The account this
+  was developed against happened to send all three, which is exactly why the
+  fixture rather than the live call is what caught it.
+- **`QuotaSeverity` is new, and is the one copy of the 80/90 decision.** Those
+  thresholds were specified in the Claude-usage popover's own review and lived
+  only inside `QuotaUsageWindowRow.tint(for:)`. The strip needs the same
+  verdict in a different vocabulary (`HelmModuleRowState` rather than
+  `HelmTint`), and two surfaces reading one number must not be able to
+  disagree about whether it is a warning. Both map from the enum now.
+
+GL-14 runs through all of it: every column is independently optional, and an
+absent window renders "Not reported" in the muted face with no track - never a
+`0%` or a `$0`, which on a quota readout are real and alarming values rather
+than synonyms for "unknown". The Fable window's own live reading is
+genuinely `0%` used, which is the clearest possible reason the two must look
+different.
+
+### The card
+
+`HelmModuleCard.Body` gains `.statusStrip([HelmModuleStripColumn], perRow:)`,
+and `DaylightModule` gains `.claudeStatus` - Overview-only (it has the same
+"no other home" property as the briefing, the fleet board and the Straw Hat
+card), span 2, opening `.console` where the Claude-usage popover lives.
+
+- **`maxStripColumns` (5) is `maxPeekRows`' horizontal twin**, capped for the
+  same reason and enforced the same way.
+- **Equal columns are a declaration, not a hope** (AGENTS.md gotcha (10)). The
+  column stacks are tied to one another explicitly at `contentTie` (499).
+  Removing those ties was one of this task's regression injections and
+  reproduced the trap exactly: columns ranged **33pt to 239.5pt** against a
+  uniform 98pt, with the long dollar figure taking the slack.
+  `.fillEqually` is not usable on the strip itself because the 1pt hairlines
+  are arranged subviews too and would be divided equally along with the
+  columns.
+- **Cross-row ties need the container to exist first.** The wrapped form
+  activates width constraints between columns in *different* row stacks, which
+  throws "no common ancestor" unless the vertical stack is built first. Caught
+  by `DaylightModuleSelfTest.checkUniformCardHeight`'s own new
+  `statusStrip-1col` case, as a crash rather than a failure, on the first run
+  after it was added.
+
+### The height caveat, which turned out not to be one
+
+The design report flagged style 3 as ~104pt - shorter than a module card - and
+expected it to need a grid restructure to keep
+`DaylightModuleSelfTest.checkUniformCardHeight` passing (a dedicated
+non-uniform-height allowance, a filler element, or similar).
+
+**It needed none, and the reason is that the report was reading a rule that
+had already been replaced.** Full review #3's PF2 had removed the fixed card
+height: `HelmModuleCard` now sizes to its content above a `minimumHeight`
+floor (124pt base), and `HelmResponsiveGrid`'s `equalHeights` makes a *row*
+uniform rather than the whole canvas. So the strip simply sits on the floor,
+exactly as the `.note` body every other one-line card uses already does, and
+reads as deliberately compact rather than as a card that was cut off.
+Measured: 124.0pt, body needing 46.0pt of 49.0pt.
+
+The only guard that genuinely had to change was
+`checkUniformCardSizing`'s `wide == [.briefing]` literal, which is a
+deliberate two-place table edit of exactly the kind that literal exists to
+force.
+
+**What the two wide cards do differently when the grid narrows.**
+`HelmResponsiveGrid.packRows` degrades a span-2 card to one column, where five
+keys in 255pt would each truncate to an initial. The briefing *cuts clauses*
+there (`briefingClauseCap`). The strip instead **wraps** into aligned rows
+(`claudeStripColumnsPerRow`), so a narrow window costs the card height and
+never costs it a reading - measured at 179pt with all five columns intact.
+
+### Two bugs this task's own verification found
+
+Neither was reported by a captain; both would have shipped.
+
+- **The card's reading was gated on a feature that is off by default.** It was
+  first fed from the quota fetch the Morning briefing already paid for. That
+  fetch happens *inside* `considerMorningBriefing`, which returns early when
+  the briefing is disabled (it is off by default) **and** again when one has
+  already been generated today. So the card would have shown its loading
+  skeleton forever on a machine with the briefing off, and on every launch
+  after the day's first briefing - which is most launches.
+  The reading is `FleetController`'s own now (`refreshQuota`, taken by the
+  refresh pass, behind a five-minute freshness window so `viewWillAppear`
+  cannot spawn `quota-axi` per visit), and the briefing is one of its two
+  readers rather than its owner.
+  `ClaudeStatusCardSelfTest.checkTheReadingIsNotGatedOnTheBriefing` is a
+  source guard, because the behaviour needs a mounted Fleet page and the
+  failure is a call site moving rather than a function misbehaving.
+- **Two modules opening one destination made Console's Recents kicker read
+  "Home".** `DaylightModule.space(forDestination:)` took
+  `allCases.first { $0.opens == dest }`, and `allCases` is declaration order -
+  so `.claudeStatus`, declared before `.console` and also opening it,
+  shadowed Console's own space. Caught by
+  `RecentDestinationsSelfTest.kindPropertiesForRailAndHost` in the full run.
+  The lookup now prefers the module with a real `space` (an Overview-only
+  module that merely deep-links elsewhere does not own that destination),
+  which makes it independent of declaration order rather than dependent on
+  where the new case happened to be put.
+
+### Verification
+
+- `ClaudeStatusCardSelfTest` (`FM_RUN_CLAUDE_STATUS_CARD_TESTS`) is
+  window-backed and listed in `NEEDS_SESSION`. The column mapping alone is
+  pure logic, but "the five columns are actually painted, equally wide and
+  legibly, in both registers" is not. It renders in real Daylight and Dusk and
+  reads a real rasterised pixel back, following both of AGENTS.md's
+  `bitmapImageRepForCachingDisplay` rules (sample in `rep.colorSpace`; scale
+  points into pixels).
+- `QuotaDataSelfTest` grew the two new windows, the absent-window case and the
+  `QuotaSeverity` boundaries.
+- **Five regression injections, each confirmed to fail the named case**:
+  removing the `model:fable` parse arm (3 parse checks), rendering a stated gap
+  as `0%` (the GL-14 case, by name), renaming the labels back to "Daily" /
+  "MTD spend" (the prohibition case), removing the equal-column ties (the
+  geometry case, with the 33pt/239.5pt spread above), and moving
+  `refreshQuota()` back under the briefing gate (the ownership guard).
+- **Not verified**: no live visual check by the captain, and none was claimed.
+  This machine's agent shell has neither Screen Recording nor Accessibility
+  permission, so the evidence here is real off-screen renders and real layout
+  geometry rather than a screenshot - AGENTS.md's "Verifying native UI bugs
+  without a real screenshot" convention.

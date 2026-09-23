@@ -115,7 +115,14 @@ enum DaylightModuleSelfTest {
     /// card, and it has no natural space of its own (not Command, not
     /// Operations, not a Store, not a Setup page) - which is exactly the "no
     /// other home" property the briefing and the fleet board have.
-    private static let overviewOnly: Set<DaylightModule> = [.briefing, .fleet, .strawHat]
+    ///
+    /// `fm/grandline-claude-status-card-implement` makes this four.
+    /// `.claudeStatus` has the same "no other home" property as the other
+    /// three - Claude's quota is not a Command surface, an Operations one, a
+    /// Store or a Setup page - and the captain asked for the status strip on
+    /// the launch landing specifically.
+    private static let overviewOnly: Set<DaylightModule> =
+        [.briefing, .claudeStatus, .fleet, .strawHat]
 
     /// `fm/grandline-overview-canvas-trim`'s own captain decision, restated
     /// as literal data for the same reason `lockedMembership` above is: a
@@ -129,8 +136,15 @@ enum DaylightModuleSelfTest {
     /// card "like the Console card" rather than a tab inside Fleet's page.
     /// Raising the count is exactly the deliberate two-place edit this
     /// literal exists to force.
+    ///
+    /// It is **eight** now. `fm/grandline-claude-status-card-implement` is the
+    /// captain picking a design for a Claude quota readout on the Home page
+    /// and saying "we can start implementing this" - which, like the Straw
+    /// Hat card before it, is him asking for a card on the landing rather
+    /// than a surface he has to navigate to. Raising the count is exactly the
+    /// deliberate two-place edit this literal exists to force.
     private static let overviewVisibleModules: Set<DaylightModule> =
-        [.briefing, .fleet, .strawHat, .mergeQueue, .console, .health, .schedules]
+        [.briefing, .claudeStatus, .fleet, .strawHat, .mergeQueue, .console, .health, .schedules]
 
     private static func checkSpaceTable(_ ok: inout Bool) {
         print("\n-- space filter: the table matches the locked captain decision --")
@@ -330,12 +344,22 @@ enum DaylightModuleSelfTest {
 
         // Exactly one module is wide, and it is the briefing. A second one
         // claiming span 2 is the misreading this case exists to catch.
+        // Two wide modules now, and the literal stays a literal for the
+        // reason it always did: a *third* card quietly claiming span 2 is the
+        // misreading this case exists to catch.
+        //
+        // `fm/grandline-claude-status-card-implement` added `.claudeStatus`.
+        // It is wide for a reason of the same kind as the briefing's - five
+        // hairline-separated columns need measure, and at one column each key
+        // truncates to an initial - but it degrades differently: the briefing
+        // *cuts clauses* at one column, where the strip *wraps* and drops
+        // nothing (`HomeCanvasController.claudeStripColumnsPerRow`).
         let wide = DaylightModule.allCases.filter { $0.gridSpan != 1 }
-        if wide != [.briefing] {
-            fail("the wide modules should be exactly [briefing], got \(wide.map(\.rawValue))", &ok)
+        if wide != [.briefing, .claudeStatus] {
+            fail("the wide modules should be exactly [briefing, claudeStatus], got \(wide.map(\.rawValue))", &ok)
         }
-        if DaylightModule.briefing.gridSpan != 2 {
-            fail("the briefing should span 2 columns, got \(DaylightModule.briefing.gridSpan)", &ok)
+        for module in [DaylightModule.briefing, .claudeStatus] where module.gridSpan != 2 {
+            fail("\(module.rawValue) should span 2 columns, got \(module.gridSpan)", &ok)
         }
 
         // The real grid, at several real widths, for every space - including
@@ -534,6 +558,12 @@ enum DaylightModuleSelfTest {
             ("note", .note(longNote)),
         ]
 
+        // The strip is measured at its real span-2 width below rather than
+        // here, because five columns in one `minModuleWidth` column is the
+        // one state it is never built in - `claudeStripColumnsPerRow` wraps
+        // it instead. Measuring it at a width it never gets would assert
+        // something about a card that does not exist.
+
         // The narrowest column the grid ever hands a card: one column at the
         // minimum column width. Anything wider only makes the text shorter.
         let narrow = HomeCanvasController.minModuleWidth
@@ -598,6 +628,17 @@ enum DaylightModuleSelfTest {
         capped.append(BriefingClause(text: "+3 more on Fleet.", target: .none))
         let spanTwo = narrow * 2 + HomeCanvasController.gridSpacing
 
+        // The real five, at their most demanding: the longest key this card
+        // ever draws ("Session (5h)" uppercases to 12 characters) and the
+        // longest figure ("$137.62").
+        let stripColumns: [HelmModuleStripColumn] = [
+            .init(label: "Session (5h)", value: "96%", fill: 0.96, state: .bad),
+            .init(label: "Week", value: "70%", fill: 0.70, state: .ok),
+            .init(label: "Fable week", value: "100%", fill: 1, state: .bad),
+            .init(label: "Extra usage", value: "$137.62", fill: 0.98, state: .bad),
+            .init(label: "Spend cap", value: "$140", fill: 1, state: .idle),
+        ]
+
         // Swept across GL-32's chrome text scale, because that is what makes
         // one fixed height a real claim rather than one true at the default
         // setting: at x1.3 every font in the card grows, so `standardHeight`
@@ -615,6 +656,17 @@ enum DaylightModuleSelfTest {
             print("   \(title) (x\(scale)), card \(HelmModuleCard.standardHeight)pt:")
             for (name, body) in bodies { measure(name, body, width: narrow) }
             measure("paragraph", .paragraph(capped), width: spanTwo)
+            // The Claude status strip, at the span-2 width it is really
+            // built for and carrying the widest realistic figures - a
+            // six-character dollar amount under an eleven-character key.
+            measure("statusStrip", .statusStrip(stripColumns, perRow: HelmModuleCard.maxStripColumns),
+                    width: spanTwo)
+            // And the same five columns on a card `packRows` degraded to one
+            // column, which wraps them into two rows rather than truncating.
+            measure("statusStrip-1col",
+                    .statusStrip(stripColumns,
+                                 perRow: HomeCanvasController.claudeStripColumnsPerRow(forCardWidth: narrow)),
+                    width: narrow)
             // And the same paragraph on a briefing `packRows` has degraded to
             // one column, which takes the narrower cap.
             measure("paragraph-1col",

@@ -1232,6 +1232,7 @@ noted.
 | `HelmCard` + `HelmCard.applyCardSurface` | a hand-rolled rounded background view |
 | `HelmAccentRow` | a hand-rolled alert/record row (accent bar, badge, kicker, body, chip) |
 | `ToolRowLayout` | a hand-rolled dense checklist row (fixed columns, actions, chevron, expandable log) |
+| `HelmModuleCard.Body.statusStrip` | a hand-rolled row of small figures on a canvas card. Equal columns are an explicit tie at `contentTie`, never `.fillEqually` (the hairlines are arranged subviews too) and never a hugging priority (gotcha (10)/(12)) - [`07-fleet-and-notifications.md`](docs/history/07-fleet-and-notifications.md) has the 33pt-vs-239.5pt measurement |
 | `HelmStatTile`, `HelmEmptyState`, `HelmSegmentedTabs`, `HelmPlateCard`, `HelmModuleCard` | four, two, three and two prior copies respectively |
 | `HelmRingGauge` (`configure(value:total:)` for a count, `configure(fraction:text:)` for anything else) | a hand-rolled arc. It is a fixed 66pt with a centre label, so a *chip-sized* ring is legitimately its own small view - F7's is - but a card-sized one is this |
 | `HelmField` / `HelmTextField` / `HelmTextView` / `HelmSearchField` / `HelmChipInput` / `HelmDateField` / `HelmToggle` | a raw `NSTextField()`, `NSSearchField()`, `NSDatePicker` or `NSSwitch` - source-guarded |
