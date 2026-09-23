@@ -231,6 +231,29 @@ enum DaylightModule: String, CaseIterable {
     // order the captain asked for each entry, and appending is what stops a
     // move shuffling a card he already knows the position of.
     case commandLibrary
+    // `fm/grandline-home-card-reorg`: the captain's third placement ask for
+    // this card, and the first one that gives it a space of its own. Its two
+    // earlier positions were both Overview-only orderings -
+    // `fm/polish-straw-hat-overview-card-and-voice-c8d3` declared it right
+    // after `.fleet` so the crew sat "beside the briefing and the fleet board
+    // at the top of Overview", and `fm/straw-hat-voice-order-composer-polish-8dd2`
+    // moved it to the very end of the enum so it rendered LAST on Overview
+    // instead. The captain has now asked for it on the **Command** page
+    // rather than on Home, so its `space` is `.command` below and
+    // `appearsOnOverview` is false.
+    //
+    // The declaration moves here with it, appended to the end of the
+    // Command-space group, for exactly the reason `.commandLibrary` above and
+    // `.poneglyph` below both record: `canvasOrder` is `allCases`
+    // (declaration order), so a group's members render in the order they are
+    // declared. Leaving the case at the very end of the enum would have
+    // rendered the same way *today* - it is last either way - but only by
+    // accident, and the next module appended after it would have silently
+    // pushed the crew card ahead of its own. Appending to the group rather
+    // than slotting it in by topic keeps the Command canvas reading
+    // Tasks / Merge queue / Console / DevOps Commands / Straw Hat Pirates,
+    // which is the existing order plus one card at the end.
+    case strawHat
     case health
     case hosts
     case updates
@@ -268,44 +291,33 @@ enum DaylightModule: String, CaseIterable {
     case stickyBoard
     case codePreview
     case settings
-    // `fm/straw-hat-voice-order-composer-polish-8dd2`: the captain's second
-    // correction. `fm/polish-straw-hat-overview-card-and-voice-c8d3` had
-    // declared this case right after `.fleet` specifically so the crew's
-    // card would sit "beside the briefing and the fleet board at the top of
-    // Overview" - the captain then used the shipped page and asked for the
-    // opposite: the crew chat card should be LAST in the Overview grid,
-    // after every other visible card. `canvasOrder` below is `allCases`
-    // (declaration order), so the case moves here, after `.settings`, rather
-    // than the ordering being expressed some other way - the same mechanism
-    // `.poneglyph`'s own history above already used to move a card without
-    // touching its `space`. This module's `space` stays `nil` (Overview-only,
-    // see `space` below), so moving its *declaration* to the very end of the
-    // whole enum affects only where it renders among Overview's own visible
-    // subset - every other space's canvas order is unaffected, since a
-    // module with `space == nil` never appears there regardless of where its
-    // case sits.
-    case strawHat
 
-    /// Which space this module belongs to, or `nil` for the two that appear
+    /// Which space this module belongs to, or `nil` for the three that appear
     /// **only** on Overview (locked decision 5: "The Morning briefing and
-    /// Fleet cards appear ONLY on Overview").
+    /// Fleet cards appear ONLY on Overview", plus `.claudeStatus`, which has
+    /// the same "no other home" property).
     ///
-    /// Overview shows every module regardless; the other four spaces show
-    /// exactly the modules whose space matches.
+    /// The other four spaces show exactly the modules whose space matches;
+    /// Overview's own subset is `appearsOnOverview` below rather than "every
+    /// module", and a `nil` here is no longer the only way onto it.
     var space: DaylightSpace? {
         switch self {
-        // `fm/polish-straw-hat-overview-card-and-voice-c8d3` makes this three.
-        // The crew chat has no natural space of its own - it is not a
-        // Command surface, an Operations one, a Store or a Setup page - and
-        // the captain asked for it on Overview specifically, which is exactly
-        // the "no other home" property the other two have.
         // `.claudeStatus` joins the same "no other home" set: Claude's quota
         // is not a Command surface, an Operations one, a Store or a Setup
         // page, and the captain asked for this card on the launch landing
         // specifically. `DaylightModuleSelfTest.overviewOnly` is updated with
         // it, per this file's own "change it here and in that test together"
         // rule.
-        case .briefing, .claudeStatus, .fleet, .strawHat: return nil
+        //
+        // `.strawHat` used to be a fourth member of this set
+        // (`fm/polish-straw-hat-overview-card-and-voice-c8d3` filed the crew
+        // chat here on the reading that it had no natural space of its own).
+        // `fm/grandline-home-card-reorg` is the captain's own correction after
+        // using the shipped page: the crew is something he *commands*, so the
+        // card belongs on Command beside the Console and the task queue rather
+        // than on Home. It has a real space now, so it is in the `.command`
+        // line below and out of this one.
+        case .briefing, .claudeStatus, .fleet: return nil
         // `fm/grandline-devops-space-and-diagram-tool` moved `.commandLibrary`
         // here out of `.stores` below. `fm/grandline-tasks-kanban-devops-split`
         // had promoted it out of `ShiftController`'s own tab switcher into its
@@ -319,7 +331,13 @@ enum DaylightModule: String, CaseIterable {
         // here than it did in Stores. See `DaylightModuleSelfTest`'s
         // `lockedMembership`, updated alongside this per this file's own
         // "change it here and in that test together" rule.
-        case .console, .tasks, .mergeQueue, .commandLibrary: return .command
+        //
+        // `fm/grandline-home-card-reorg` added `.strawHat` here, out of the
+        // Overview-only set above - the captain's own ask after using the
+        // shipped Home page. See `DaylightModuleSelfTest`'s `lockedMembership`
+        // and `overviewOnly`, both updated alongside this per this file's own
+        // "change it here and in that test together" rule.
+        case .console, .tasks, .mergeQueue, .commandLibrary, .strawHat: return .command
         case .hosts, .logAnalyzer, .kubernetes, .health, .schedules: return .operations
         // `fm/grandline-docs-split-runbooks-postmortems` added Runbooks and
         // Postmortems here, promoted out of `DocsController`'s own tabs into
@@ -346,23 +364,28 @@ enum DaylightModule: String, CaseIterable {
     /// Whether this module's card renders on the Overview canvas
     /// specifically (`fm/grandline-overview-canvas-trim`).
     ///
-    /// True by default; false for the twelve modules the captain asked
-    /// removed from Overview after reviewing a live screenshot - the canvas
-    /// had grown to eighteen cards, most of which duplicated a page already
-    /// one click away via its own space (Command/Operations/Stores/
-    /// Engineering), the nav, or `⌘K`. What Overview keeps is the three with
-    /// no other home (`.briefing`/`.fleet`/`.strawHat`, `space == nil`) plus
-    /// the small "operational pulse" set the captain wants visible at a
-    /// glance without switching spaces: `.mergeQueue`, `.console`,
-    /// `.health`, `.schedules`.
+    /// True by default; false for the modules the captain asked removed from
+    /// Overview after reviewing a live screenshot - the canvas had grown to
+    /// eighteen cards, most of which duplicated a page already one click away
+    /// via its own space (Command/Operations/Stores/Engineering), the nav, or
+    /// `⌘K`.
     ///
-    /// **That is seven cards, not the six
-    /// `fm/grandline-overview-canvas-trim` locked.** The seventh is
-    /// `.strawHat`, and it is the captain's own explicit later ask
-    /// (`fm/polish-straw-hat-overview-card-and-voice-c8d3`): he wanted the
-    /// crew chat to be its own Overview card rather than a tab inside
-    /// Fleet's page. `DaylightModuleSelfTest.overviewVisibleModules` is
-    /// typed out as a literal precisely so raising that count has to be a
+    /// **What Overview keeps is five cards** (`fm/grandline-home-card-reorg`):
+    /// the three with no other home (`.briefing`, `.claudeStatus`, `.fleet` -
+    /// `space == nil`) plus what is left of the original trim's "operational
+    /// pulse" set, `.mergeQueue` and `.health`.
+    ///
+    /// The count has moved four times, and every move was a captain ask after
+    /// using the shipped page - which is why the history is worth keeping
+    /// rather than overwriting. `fm/grandline-overview-canvas-trim` locked
+    /// **six**. `fm/polish-straw-hat-overview-card-and-voice-c8d3` made it
+    /// **seven**, giving the crew chat its own card.
+    /// `fm/grandline-claude-status-card-implement` made it **eight** with the
+    /// quota strip. `fm/grandline-home-card-reorg` took it to **five**: the
+    /// crew card moved to the Command space, and `.console` and `.schedules`
+    /// came off Home because each already carries a card on its own space's
+    /// canvas one pill away. `DaylightModuleSelfTest.overviewVisibleModules`
+    /// is typed out as a literal precisely so changing that count has to be a
     /// deliberate edit in two places.
     ///
     /// **This is presentation-only, exactly like `space`/`isVisible` above -
@@ -387,6 +410,23 @@ enum DaylightModule: String, CaseIterable {
              // module has to opt out explicitly, because `default` returns
              // `true` and Overview's card count is a locked captain decision.
              .commandLibrary,
+             // `fm/grandline-home-card-reorg`: the captain reviewed the live
+             // Home page and asked for these three off it. `.console` and
+             // `.schedules` were two of the four "operational pulse" cards the
+             // original trim deliberately kept - he has since found both
+             // redundant, because each already has its own card one pill away
+             // (Console on Command, Schedules on Operations) and a card that
+             // repeats a page the captain can reach in one click is exactly
+             // the duplication the trim existed to remove. Their `space` is
+             // deliberately unchanged: this is the presentation-only opt-out
+             // this property is for, so both still render on their own space's
+             // canvas via `isVisible(in:)` - nothing was deleted.
+             //
+             // `.strawHat` is here for the other reason a module lands on this
+             // list: it now has a real space (`.command`, above), so it stops
+             // being an Overview-only card for the same reason `.tasks` and
+             // `.hosts` already are - its space's canvas is where it lives.
+             .console, .schedules, .strawHat,
              .settings:
             return false
         default:

@@ -55,7 +55,7 @@ enum StrawHatViewSelfTest {
         checkChatFillsThePage(&ok)
         checkChatIsNotBuiltUntilMounted(&ok)
         checkCanvasCardSummary(&ok)
-        checkOverviewSubtitleIsFixed(&ok)
+        checkCanvasSubtitleIsFixed(&ok)
         checkTurnRoundTrip(&ok)
         checkMarkdownRenders(&ok)
         checkNewConversation(&ok)
@@ -144,20 +144,37 @@ enum StrawHatViewSelfTest {
     /// `SessionRestoreSelfTest` and §1 found in
     /// `checkSettingsTwoColumnLayout`.
     ///
-    /// What is asserted, and why each half matters: the card exists on
-    /// Overview (the ask), it opens *its own* destination rather than Fleet's
-    /// (the substance of the ask - a card that opened Overview would look
-    /// right and change nothing), and Fleet's own tab strip no longer offers
-    /// it (a duplicate entry point would be its own confusion).
+    /// `fm/grandline-home-card-reorg` is the captain's next correction on the
+    /// same card, and the assertions are inverted a second time by the same
+    /// rule: he reviewed the live Home page and asked for the crew card on the
+    /// **Command** space instead. What the card *is* did not change - only
+    /// which canvas draws it.
+    ///
+    /// What is asserted, and why each half matters: the card renders on
+    /// Command and not on Home (the current ask), it opens *its own*
+    /// destination rather than Fleet's (the substance of the original ask - a
+    /// card that opened Overview would look right and change nothing), and
+    /// Fleet's own tab strip still does not offer it (a duplicate entry point
+    /// would be its own confusion).
     private static func checkOwnCardAndDestination(_ ok: inout Bool) {
         check(DaylightModule.allCases.contains(.strawHat),
               "there is a Straw Hat Pirates module - the captain asked for its own card", &ok)
-        check(DaylightModule.strawHat.appearsOnOverview,
-              "...and it renders on the Overview canvas", &ok)
-        check(DaylightModule.strawHat.isVisible(in: .overview),
+        // `fm/grandline-home-card-reorg` **inverts these three** rather than
+        // deleting them, for the same reason the doc comment above records
+        // about the previous inversion: they had become a record of the old
+        // behaviour. The captain reviewed the live Home page and asked for the
+        // crew card on **Command** instead - the card is unchanged, only where
+        // it renders is. So the assertions still pin a real placement, just
+        // the current one.
+        check(!DaylightModule.strawHat.appearsOnOverview,
+              "...and it no longer renders on the Home canvas - the captain moved it to Command", &ok)
+        check(!DaylightModule.strawHat.isVisible(in: .overview),
               "...which is what the canvas filter actually reads", &ok)
-        check(DaylightModule.strawHat.space == nil,
-              "...and nowhere else - it has no space of its own, like the briefing and Fleet", &ok)
+        check(DaylightModule.strawHat.space == .command,
+              "...it lives on the Command space now, beside the Console and the task queue - "
+              + "got \(DaylightModule.strawHat.space.map(\.rawValue) ?? "nil")", &ok)
+        check(DaylightModule.strawHat.isVisible(in: .command),
+              "...and the Command canvas's own filter really shows it", &ok)
         check(DaylightModule.strawHat.opens == .strawHat,
               "the card opens its own page, not Fleet's - got \(DaylightModule.strawHat.opens.rawValue)", &ok)
         check(DaylightModule.strawHat.title == "Straw Hat Pirates",
@@ -204,11 +221,17 @@ enum StrawHatViewSelfTest {
         let canvasWindow = OffScreenProbe.window(width: 1400, height: 900, styleMask: [.titled, .resizable])
         canvasWindow.contentViewController = canvas
         canvas.view.layoutSubtreeIfNeeded()
+        // `fm/grandline-home-card-reorg`: the canvas defaults to `.overview`,
+        // and the crew card does not render there any more - the captain moved
+        // it to Command. Selecting the space is what makes this a real render
+        // check of where the card actually lives rather than of where it used
+        // to.
+        canvas.select(space: .command)
         canvas.debugRenderNow()
         canvas.view.layoutSubtreeIfNeeded()
         let crewCard = canvas.moduleCardsForTests.first { $0.anatomyForTests.title == "Straw Hat Pirates" }
         guard let crewCard else {
-            check(false, "the Overview canvas must render a Straw Hat Pirates card, got "
+            check(false, "the Command canvas must render a Straw Hat Pirates card, got "
                     + "\(canvas.moduleCardsForTests.map { $0.anatomyForTests.title })", &ok)
             return
         }
@@ -368,7 +391,7 @@ enum StrawHatViewSelfTest {
     /// across every state a live conversation moves through - proving the
     /// line is genuinely fixed, not merely correct on a card nobody has
     /// talked to yet (which `checkOwnCardAndDestination` already covers).
-    private static func checkOverviewSubtitleIsFixed(_ ok: inout Bool) {
+    private static func checkCanvasSubtitleIsFixed(_ ok: inout Bool) {
         let expected = "I'm gonna be King of the Pirates!"
         let canvas = HomeCanvasController(sources: .init(
             shiftStore: ShiftStore(),
@@ -383,6 +406,9 @@ enum StrawHatViewSelfTest {
         let window = OffScreenProbe.window(width: 1400, height: 900, styleMask: [.titled, .resizable])
         window.contentViewController = canvas
         canvas.view.layoutSubtreeIfNeeded()
+        // The card renders on Command since `fm/grandline-home-card-reorg`;
+        // see `checkOwnCardAndDestination` for the move itself.
+        canvas.select(space: .command)
 
         func subtitle() -> String? {
             canvas.debugRenderNow()

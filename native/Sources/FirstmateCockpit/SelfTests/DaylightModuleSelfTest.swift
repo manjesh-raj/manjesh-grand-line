@@ -76,7 +76,13 @@ enum DaylightModuleSelfTest {
         // using the page `fm/grandline-tasks-kanban-devops-split` shipped. It
         // is the deliberate table change `DaylightSpace.swift`'s own doc
         // comment says to make together with `DaylightModule.space`.
-        .command: [.console, .tasks, .mergeQueue, .commandLibrary],
+        // `fm/grandline-home-card-reorg` added `.strawHat` here, out of the
+        // Overview-only set below - the captain's own ask after reviewing the
+        // live Home page: the crew is something he commands, so the card
+        // belongs beside the Console and the task queue. The deliberate table
+        // change `DaylightSpace.swift`'s own doc comment says to make together
+        // with `DaylightModule.space`.
+        .command: [.console, .tasks, .mergeQueue, .commandLibrary, .strawHat],
         // `fm/grandline-k8s-cluster-tail` added `.kubernetes` here - the
         // deliberate table change this file's own doc comment says to make
         // together with `DaylightModule.space`. The scout report's own
@@ -121,8 +127,13 @@ enum DaylightModuleSelfTest {
     /// three - Claude's quota is not a Command surface, an Operations one, a
     /// Store or a Setup page - and the captain asked for the status strip on
     /// the launch landing specifically.
+    ///
+    /// `fm/grandline-home-card-reorg` takes it back to three. `.strawHat`
+    /// left this set the moment it gained a real space: the captain asked for
+    /// the crew card on Command rather than on Home, so it is in
+    /// `lockedMembership[.command]` above instead.
     private static let overviewOnly: Set<DaylightModule> =
-        [.briefing, .claudeStatus, .fleet, .strawHat]
+        [.briefing, .claudeStatus, .fleet]
 
     /// `fm/grandline-overview-canvas-trim`'s own captain decision, restated
     /// as literal data for the same reason `lockedMembership` above is: a
@@ -143,8 +154,18 @@ enum DaylightModuleSelfTest {
     /// Hat card before it, is him asking for a card on the landing rather
     /// than a surface he has to navigate to. Raising the count is exactly the
     /// deliberate two-place edit this literal exists to force.
+    ///
+    /// It is **five** now, and this is the first edit to shrink it.
+    /// `fm/grandline-home-card-reorg` is the captain reviewing the live Home
+    /// page and naming three cards to take off it: Straw Hat Pirates (moved to
+    /// the Command space, so it is in `lockedMembership` above now), Console
+    /// and Schedules. Console and Schedules keep their `space` untouched -
+    /// each already renders a card on Command and Operations respectively, and
+    /// repeating it on Home is exactly the duplication the original trim
+    /// existed to remove. Lowering the count is the same deliberate two-place
+    /// edit this literal exists to force as raising it.
     private static let overviewVisibleModules: Set<DaylightModule> =
-        [.briefing, .claudeStatus, .fleet, .strawHat, .mergeQueue, .console, .health, .schedules]
+        [.briefing, .claudeStatus, .fleet, .mergeQueue, .health]
 
     private static func checkSpaceTable(_ ok: inout Bool) {
         print("\n-- space filter: the table matches the locked captain decision --")
@@ -161,8 +182,9 @@ enum DaylightModuleSelfTest {
             fail("Overview-only set should be \(overviewOnly.map(\.rawValue).sorted()), got \(actualOverviewOnly.map(\.rawValue).sorted())", &ok)
         }
 
-        // Overview shows exactly the trimmed six; each other space shows
-        // only its own.
+        // Overview shows exactly the trimmed set (five since
+        // `fm/grandline-home-card-reorg`); each other space shows only its
+        // own.
         let onOverview = Set(DaylightModule.allCases.filter { $0.isVisible(in: .overview) })
         if onOverview != overviewVisibleModules {
             fail("Overview should show exactly \(overviewVisibleModules.map(\.rawValue).sorted()), "
@@ -221,8 +243,13 @@ enum DaylightModuleSelfTest {
         // List (F4 of the same section) on the same reasoning: a link inbox is
         // a Stores surface you open when you have something to file or
         // something to read, not one you check in on each morning.
-        if trimmed.count != 22 {
-            fail("expected exactly 22 modules trimmed from Overview, got \(trimmed.count): "
+        // 22 -> 25: `fm/grandline-home-card-reorg` took `.strawHat`, `.console`
+        // and `.schedules` off Home on the captain's own review of the live
+        // page. All three have a real space, so all three are still reachable
+        // on their own canvas - which is exactly what the loop below this
+        // asserts, and is why "trimmed" has never meant "removed".
+        if trimmed.count != 25 {
+            fail("expected exactly 25 modules trimmed from Overview, got \(trimmed.count): "
                  + "\(trimmed.map(\.rawValue).sorted())", &ok)
         }
         for module in trimmed {
@@ -1421,18 +1448,26 @@ enum DaylightModuleSelfTest {
                 fail("Overview built \(canvas.moduleCardsForTests.count) cards for "
                      + "\(overviewVisibleModules.count) modules", &ok)
             }
-            // `fm/straw-hat-voice-order-composer-polish-8dd2`: the captain's
-            // second ordering ask - Straw Hat Pirates should render LAST on
-            // Overview, after every other visible card, reversing the earlier
-            // "beside the briefing and the fleet board" placement. `canvasOrder`
-            // is `allCases` (declaration order), so this is checked as a real
-            // ordering property of the rendered list, not just membership -
-            // `visibleModulesForTests` preserves `canvasOrder`'s own order
-            // among whichever modules pass `isVisible(in: .overview)`.
+            // `fm/grandline-home-card-reorg` moved this ordering assertion
+            // from Overview to Command, because the card itself moved.
+            // `fm/straw-hat-voice-order-composer-polish-8dd2` had asserted
+            // Straw Hat Pirates rendered LAST on Overview; the captain has
+            // since asked for the card on the Command page instead, where the
+            // same ordering property still has to hold - the crew card is
+            // appended to the Command group, after Tasks / Merge queue /
+            // Console / DevOps Commands. It stays a real ordering check rather
+            // than membership alone: `canvasOrder` is `allCases` (declaration
+            // order), `visibleModulesForTests` preserves that order among
+            // whichever modules pass `isVisible(in:)`, and the declaration
+            // sitting last in the *whole* enum would satisfy it by accident
+            // rather than by placement - which is exactly what this catches
+            // the day a new module is appended below it.
+            shell.selectSpace(.command)
             if canvas.visibleModulesForTests.last != .strawHat {
-                fail("Straw Hat Pirates must be the LAST card on Overview, got "
+                fail("Straw Hat Pirates must be the LAST card on Command, got "
                      + "\(canvas.visibleModulesForTests.map(\.rawValue))", &ok)
             }
+            shell.selectSpace(.overview)
             // A space that owns a destination is a page, not a canvas filter -
             // it is driven in its own case below rather than swept here.
             for space in DaylightSpace.allCases where space != .overview && space.filtersCanvas {
