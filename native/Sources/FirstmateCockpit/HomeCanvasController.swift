@@ -1233,7 +1233,15 @@ final class HomeCanvasController: NSViewController {
                 label: label,
                 value: Self.percentText(window.percentUsed),
                 fill: max(0, min(1, window.percentUsed / 100)),
-                state: QuotaSeverity(percentUsed: window.percentUsed).moduleRowState)
+                state: QuotaSeverity(percentUsed: window.percentUsed).moduleRowState,
+                // The reading the strip cannot spend a line on. A percentage
+                // is only half an answer - "96% used" is a crisis an hour
+                // before the window turns over and a shrug a minute before
+                // it - and the instant that settles it is already parsed.
+                // `resetsSentence` is `nil` when the window carries no reset
+                // instant, which passes straight through as no affordance
+                // rather than as a fabricated one.
+                detail: window.resetsSentence)
         }
 
         var columns: [HelmModuleStripColumn] = [

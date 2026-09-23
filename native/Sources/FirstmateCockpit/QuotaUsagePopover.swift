@@ -395,7 +395,7 @@ private final class QuotaUsageViewController: NSViewController {
             guard let window else { continue }
             var line = "\(label): \(Int(window.percentUsed.rounded()))% used, pace \(window.pace.label.lowercased())"
             if let resetsAt = window.resetsAt {
-                line += ", resets \(resetsAt.formatted(date: .abbreviated, time: .shortened))"
+                line += ", resets \(QuotaWindow.resetsAtText(resetsAt))"
             }
             lines.append(line)
         }
@@ -522,11 +522,7 @@ private final class QuotaWindowRowView: NSView {
         }
         let percent = max(0, min(100, window.percentUsed))
         percentLabel.stringValue = "\(Int(percent.rounded()))%"
-        if let resetsAt = window.resetsAt {
-            resetLabel.stringValue = "Resets \(resetsAt.formatted(date: .abbreviated, time: .shortened))"
-        } else {
-            resetLabel.stringValue = "Reset time unavailable"
-        }
+        resetLabel.stringValue = window.resetsSentence ?? "Reset time unavailable"
         paceChip.isHidden = false
         paceChipLabel.stringValue = window.pace.label
         currentTint = Self.tint(for: window.percentUsed)
