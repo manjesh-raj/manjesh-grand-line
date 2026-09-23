@@ -720,10 +720,6 @@ final class AppShellController: NSViewController {
         // F7: the chip is the feature's "it follows you off the Tasks page"
         // half, so the bar gets the timer as soon as both exist.
         bar.attachFocusTimer(focusTimer)
-        // UX1: the overflow menu's "All Destinations…" row, forwarded to
-        // whoever owns the overlay (the app delegate), exactly like the search
-        // pill forwards ⌘K rather than owning the palette.
-        bar.onShowAllDestinations = { [weak self] in self?.onShowAllDestinations?() }
 
         // GL-37: the destination table. One line per body view replaces the
         // six hand-maintained per-destination edit sites this used to need
@@ -2503,6 +2499,18 @@ final class AppShellController: NSViewController {
     /// Raised when something asks for the all-destinations overlay. Owned by
     /// the app delegate, which owns the overlay itself - the same shape as
     /// `onSearchTapped`.
+    ///
+    /// **Assigned in `main.swift`, beside `onSearchTapped`, and it must stay
+    /// assigned**: its one caller is ⌘K's "All Destinations…" verb, and an
+    /// unassigned optional closure here is a palette row that silently does
+    /// nothing. That is exactly what shipped - the assignment was missing
+    /// from the first, and the bar's overflow menu carried a second row with
+    /// the same defect until
+    /// `fm/grandline-remove-dead-all-destinations-overflow` removed it.
+    /// `NavigationCoherenceSelfTest.checkTheMapIsActuallyReachable` guards the
+    /// assignment itself (a source guard - the behaviour needs a real
+    /// `AppDelegate`, and `NSApp` is nil in a headless suite), because nothing
+    /// about a dead closure is visible in a diff or on screen.
     var onShowAllDestinations: (() -> Void)?
 
     /// Pin or unpin `destination` on the floating bar's shortcut row, persist

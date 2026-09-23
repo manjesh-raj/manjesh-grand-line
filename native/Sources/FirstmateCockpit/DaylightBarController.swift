@@ -323,10 +323,6 @@ final class DaylightBarController: NSViewController {
     /// Forwarded, never owned - the bar has no idea what a destination *is*,
     /// exactly as it has no idea what a space means (`onSelectSpace`).
     var onSelectDestination: ((RailDestination) -> Void)?
-    /// UX1: the overflow menu's own way into the all-destinations map, so the
-    /// row that the map configures carries a route to it. Forwarded, never
-    /// owned - the bar has no idea what an overlay is.
-    var onShowAllDestinations: (() -> Void)?
     private let avatar = HoverTrackingButton()
     private let avatarGradient = CAGradientLayer()
     /// B5: a borderless `HelmBarPanel`, like the bell's and Recents' - see
@@ -1029,9 +1025,18 @@ final class DaylightBarController: NSViewController {
     /// impossible.
     private func applyQuickAccessVisibility() {
         for button in quickAccessRowButtons { button.isHidden = quickAccessCollapsed }
-        let showsOverflow = !overflowDestinations.isEmpty
+        let destinations = overflowDestinations
+        let showsOverflow = !destinations.isEmpty
         quickAccessOverflowButton.isHidden = !showsOverflow
         quickAccessOverflowWidth.constant = showsOverflow ? DaylightBarIconButton.side : 0
+        // GL-16: the button navigates straight to a lone overflowing
+        // destination (see `quickAccessOverflowClicked`), so it has to say so.
+        // "More destinations" on a control that opens exactly one page is a
+        // label that describes the mechanism rather than the outcome, and it
+        // is the only thing VoiceOver has to go on.
+        let label = destinations.count == 1 ? destinations[0].title : "More destinations"
+        quickAccessOverflowButton.toolTip = label
+        quickAccessOverflowButton.setAccessibilityLabel(label)
         // The gap belongs between two *visible* things. With the row collapsed
         // it has zero width of its own, and with no overflow button there is
         // nothing on the other side of the gap.
@@ -1051,17 +1056,49 @@ final class DaylightBarController: NSViewController {
         applyQuickAccessVisibility()
     }
 
-    /// The overflow menu - the destinations the bar is not drawing as icons,
-    /// in the captain's own order, reaching the same `onSelectDestination`.
+    /// The overflow button's click - a menu of the destinations the bar is not
+    /// drawing as icons, in the captain's own order, reaching the same
+    /// `onSelectDestination` a real icon does.
     ///
     /// A shortcut that changed what it did depending on the window's width
     /// would be worse than no shortcut, which is why a collapsed bar lists the
     /// *whole* pinned row here rather than only its overflow tail.
+    ///
+    /// **One overflowing destination navigates straight to it, with no menu.**
+    /// A menu whose only row is the thing the captain already pointed at
+    /// charges two clicks for one decision, and it is the common case rather
+    /// than an edge one: the default row pins seven against UX2's cap of six,
+    /// so a captain who never opens the overlay meets a one-row menu every
+    /// time. The branch reads the count at *click* time rather than assuming
+    /// what overflows - a narrow window collapses the whole pinned row into
+    /// here, and that genuinely is a menu.
     @objc private func quickAccessOverflowClicked() {
+        if let only = quickAccessOverflowDirectDestination {
+            onSelectDestination?(only)
+            return
+        }
         let menu = quickAccessMenu()
         menu.popUp(positioning: nil,
                    at: NSPoint(x: 0, y: quickAccessOverflowButton.bounds.height + 4),
                    in: quickAccessOverflowButton)
+    }
+
+    /// The destination a click would navigate straight to, or `nil` when it
+    /// would put a menu up instead.
+    ///
+    /// One property rather than the test asking the same question a second
+    /// way, because a check that re-derived "is there exactly one?" for itself
+    /// would assert nothing about what the click actually does.
+    ///
+    /// A suite drives the real `performClick` on the single-destination
+    /// branch, which is the stronger evidence and covers the button's wiring
+    /// too. It cannot on the other one: that branch calls `NSMenu.popUp`,
+    /// which blocks on a tracking loop nothing headless can dismiss - so the
+    /// menu branch is asserted through this property plus the menu's own
+    /// contents.
+    private var quickAccessOverflowDirectDestination: RailDestination? {
+        let destinations = overflowDestinations
+        return destinations.count == 1 ? destinations[0] : nil
     }
 
     private func quickAccessMenu() -> NSMenu {
@@ -1075,15 +1112,6 @@ final class DaylightBarController: NSViewController {
             item.representedObject = destination.rawValue
             menu.addItem(item)
         }
-        if !menu.items.isEmpty { menu.addItem(NSMenuItem.separator()) }
-        // The way into UX1's map from the row the map configures - so a
-        // captain who wants a different shortcut can get there without first
-        // knowing the ⌘⇧D chord.
-        let all = NSMenuItem(title: "All Destinations\u{2026}",
-                             action: #selector(allDestinationsPicked), keyEquivalent: "")
-        all.target = self
-        all.image = HelmSymbol.image("square.grid.3x3", pointSize: 13, weight: .medium)
-        menu.addItem(all)
         return menu
     }
 
@@ -1092,8 +1120,6 @@ final class DaylightBarController: NSViewController {
               let destination = RailDestination(rawValue: raw) else { return }
         onSelectDestination?(destination)
     }
-
-    @objc private func allDestinationsPicked() { onShowAllDestinations?() }
 
     /// B2's "active": light the shortcut for the destination the captain is
     /// actually looking at, and only that one.
@@ -1451,6 +1477,17 @@ final class DaylightBarController: NSViewController {
     func debugDrillTitleWidth() -> CGFloat { drillNav.debugTitleWidth }
     func debugQuickAccessOverflowButton() -> DaylightBarIconButton { quickAccessOverflowButton }
     func debugQuickAccessOverflowMenu() -> NSMenu { quickAccessMenu() }
+    /// The branch the overflow button's click will take - the destination it
+    /// navigates straight to, or `nil` when it pops the menu.
+    ///
+    /// Reads the *same* property `quickAccessOverflowClicked` branches on, so
+    /// this cannot agree with a test while disagreeing with the click.
+    /// `debugQuickAccessOverflowMenu` alone cannot cover this: it builds the
+    /// menu unconditionally, and so passes just as happily when no click ever
+    /// pops one.
+    func debugQuickAccessOverflowClickTarget() -> RailDestination? {
+        quickAccessOverflowDirectDestination
+    }
     /// The row itself, so a suite can measure the width UX2's collapse
     /// reclaims - the buttons are arranged subviews now, so their own frames
     /// are not where that shows up.
