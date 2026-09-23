@@ -440,26 +440,12 @@ final class SessionStripView: NSView, NSGestureRecognizerDelegate {
     /// switch to the very session it was ending. Written against `NSControl`
     /// generally rather than "is this the ✕", so a future control added to a
     /// pill is covered the day it lands rather than the day someone notices.
+    /// The walk itself is `HelmGestureArbitration`'s now - this was one of the
+    /// two hand-rolled copies, and the third row that needed it did not get
+    /// one. See that type for why "actionable control" rather than "the ✕".
     func gestureRecognizer(_ recognizer: NSGestureRecognizer,
                            shouldAttemptToRecognizeWith event: NSEvent) -> Bool {
-        guard let container = recognizer.view else { return true }
-        let point = container.convert(event.locationInWindow, from: nil)
-        guard let hit = container.hitTest(container.convert(point, to: container.superview)) else { return true }
-        var view: NSView? = hit
-        while let current = view, current !== container {
-            // An *actionable* control, not merely any `NSControl`: a pill's
-            // own label is an `NSTextField`, which is an `NSControl` with no
-            // action, and declining for it would stop the label - most of the
-            // pill's own surface - from switching sessions. `action != nil`
-            // is what separates "this view does something of its own when
-            // clicked" from "this view is a control class that happens to be
-            // drawing text".
-            if let control = current as? NSControl, control.action != nil, control.isEnabled {
-                return false
-            }
-            view = current.superview
-        }
-        return true
+        HelmGestureArbitration.shouldRecognize(recognizer, with: event)
     }
 
     // MARK: Probe / self-test surface

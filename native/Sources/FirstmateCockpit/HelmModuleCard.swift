@@ -1583,15 +1583,9 @@ final class HelmModuleCard: NSView, NSGestureRecognizerDelegate {
            actionButton.convert(actionButton.bounds, to: container).contains(point) {
             return false
         }
-        guard let hit = container.hitTest(container.convert(point, to: container.superview)) else { return true }
-        var view: NSView? = hit
-        while let current = view, current !== container {
-            if let control = current as? NSControl, control.action != nil, control.isEnabled {
-                return false
-            }
-            view = current.superview
-        }
-        return true
+        // The hit-test half is `HelmGestureArbitration`'s - this file held one
+        // of the two hand-rolled copies of it.
+        return HelmGestureArbitration.shouldRecognize(recognizer, with: event)
     }
 
     // MARK: Probe / self-test surface
