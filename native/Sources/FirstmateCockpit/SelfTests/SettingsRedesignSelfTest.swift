@@ -559,6 +559,22 @@ enum SettingsRedesignSelfTest {
                 print("  FAIL resize \(index + 1) to \(Int(width))pt shows \(got) columns, want \(want)")
                 ok = false
             }
+            // **Review #3's B9, at every width.** `Audit3BugFixesSelfTest`
+            // asserts "a card is as tall as its own content" at one width;
+            // this page's wide arrangement regressed it at a width only a
+            // GitHub runner produced (the right-hand card resolved to 271pt
+            // against 134pt of content), so the property is checked here
+            // across the whole resize sequence too - the place a two-column
+            // page can lose it.
+            for card in settings.debugMountedGroupCards {
+                let slack = card.frame.height - card.fittingSize.height
+                if slack > 1 {
+                    print("  FAIL at \(Int(width))pt a card is \(card.frame.height)pt tall "
+                          + "against \(card.fittingSize.height)pt of content - B9 is back")
+                    ok = false
+                    break
+                }
+            }
             // A conflict resolves by breaking something, and a broken column
             // reads as a zero-width or overflowing card rather than as a
             // logged warning - so measure the cards themselves.

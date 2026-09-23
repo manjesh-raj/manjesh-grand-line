@@ -471,6 +471,19 @@ One thing that is easy to get wrong and is written out in that file: the ring, t
   `WindowChromeFusionSelfTest`'s A3 case had picked Settings precisely because it was tall *and* top-anchored, and it now uses Bootstrap - whose scroll view is pinned to `root.topAnchor` and whose stepper is reliably taller than a 600pt window with nothing fetched.
   The rule was not bent to keep the old page: the observer's own documented definition is what decided which side of it Settings now falls on.
 
+- **Review #3's B9 regressed through the wide page's two columns, and only CI could see it.**
+  B9 is "a detail pane does not stretch a card past its own content".
+  A horizontal `NSStackView` holding two columns of unequal height has to decide how tall the short one is, and `alignment = .top` says only where it sits, not that it keeps its own height.
+  On a GitHub runner the solver took the other option: the App Intents page's right-hand card resolved to **271pt against 134pt of content**, matching the left column exactly.
+  It did not reproduce on this machine at any of five widths or across a five-step resize sequence, so the fix removes the choice instead of re-tuning an alignment that happened to work here - the two columns are a plain container with two complete constraint sets, exactly one active, where each column is pinned to the top and only *capped* at the bottom and the container hugs the taller through one low-priority zero height. No constraint says the columns are the same height, so none can be resolved into saying it.
+
+  Two fixes were tried first, and both are recorded because both look right and neither works.
+  A `.required` **stack** hugging priority - gotcha (12)'s correct API for a view with no intrinsic size - is not honoured by `NSStackView`: with it set the section column still measured 342pt against 203pt, and on an *unpressured* page it introduced a stretch that had not been there before.
+  Making the card's own bottom pin an inequality moved the problem rather than fixing it, because a `HelmCard`'s body is pinned to all four of its edges and that body is itself a stack with the same weakness.
+
+  Reproduced locally by injecting the equal-heights constraint the runner's solver had settled on, at `.defaultHigh`: without the fix that gives 273pt against 134pt, which is the runner's own number. With the fix it gives 134 against 134.
+  `SettingsRedesignSelfTest` now checks the same property across its whole resize sequence, and that is deliberately stronger than `Audit3BugFixesSelfTest`'s single-width sweep: under the injection the new guard fails at 1500pt while Audit3's own fixture still passes on this machine, which is exactly the gap that let this reach CI.
+
 - **A suite pressed the wrong switch, because it addressed toggles by index.**
   `SettingsSidebarNavigationSelfTest` and `DaylightDrillPageSlice6SelfTest` both read `debugToggles[0]`, which was Reconnect automatically and became Follow system appearance the moment the Appearance page grew a switch at the top.
   Both now reach every toggle by name. `debugToggles` survives only as a count.
@@ -491,6 +504,7 @@ Each injection was made by copying the file aside and editing it, never `git sta
 | `buildSidebarSections` ignores its `filter` argument | the search case, on every one of the four searches |
 | `resolvedTheme` returns the stored id without checking its mode | `SystemAppearanceFollowerSelfTest`'s miscast-pair case |
 | the wide page's collapse adds a fresh width tie instead of toggling the held pair | the collapse case, on resizes 2, 4 and 6 - the page never returns to two columns |
+| the two columns are tied to one height (what the runner's solver settled on) | the collapse case's B9 check, at 273pt against 134pt of content |
 
 ### What was not verified
 

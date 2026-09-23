@@ -198,16 +198,17 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         /// The wide page's two-column stack and the constraint that splits
         /// it, so the page can collapse to one column when it is too narrow
         /// to hold two. `nil` for every ordinary page.
-        var columns: NSStackView?
-        var columnSplit: NSLayoutConstraint?
-        /// The two "be as wide as the stack" ties the columns need **only**
-        /// while they are stacked vertically. Held rather than created on
-        /// demand: a collapse that built them each time would leave the
-        /// previous pair active, and once the page widened again those stale
-        /// required ties would hold both columns at the full page width
-        /// inside a horizontal stack - a real conflict, and one that only
-        /// appears after a resize back and forth.
-        var columnFullWidthTies: [NSLayoutConstraint] = []
+        /// The wide page's two-column arrangement, as two complete sets of
+        /// constraints - exactly one active at a time. Held rather than
+        /// rebuilt on each change: a collapse that built constraints each
+        /// time would leave the previous set active, and once the page
+        /// widened again those stale ties would fight the new ones - a real
+        /// conflict, and one that only appears after a resize back and forth.
+        var sideBySide: [NSLayoutConstraint] = []
+        var stacked: [NSLayoutConstraint] = []
+        /// Whether the page is currently laid out side by side. `nil` for
+        /// every ordinary page.
+        var isSideBySide: Bool?
     }
 
     // MARK: - Injected dependencies
@@ -849,7 +850,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         page.hero.relayoutDescription(pageWidth: width)
         // A wide page that is still two columns gives each section only about
         // 60% of the page; collapsed, it gives them all of it.
-        let twoColumns = page.columns != nil && width >= Self.wideColumnBreakpoint
+        let twoColumns = page.isSideBySide != nil && width >= Self.wideColumnBreakpoint
         let sectionWidth = twoColumns ? (width - HelmMetrics.s5) * 0.6 : width
         for section in page.sections { section.relayoutDescriptions(cardWidth: sectionWidth) }
         // Two groups build their rows outside a `SettingsSection`'s own list
@@ -909,11 +910,8 @@ final class SettingsController: NSViewController, DaylightDrillActions {
                         hero: hero, sections: sections)
         }
         let wide = Self.wideColumns(sections: sections, hero: hero)
-        let ties = wide.columns.arrangedSubviews.map {
-            $0.widthAnchor.constraint(equalTo: wide.columns.widthAnchor)
-        }
         return Page(category: category, container: wide.container, hero: hero, sections: sections,
-                    columns: wide.columns, columnSplit: wide.split, columnFullWidthTies: ties)
+                    sideBySide: wide.sideBySide, stacked: wide.stacked, isSideBySide: true)
     }
 
     /// The ordinary page: hero, then every section stacked.
@@ -934,14 +932,40 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// The reference's `.page.wide` two-column grid: every section but the
     /// last on the left, the last one in a narrower right-hand column.
     ///
-    /// `minmax(0,1fr) 320px` in the reference. Here the split is a
-    /// proportional `0.6` on the left rather than a fixed 320 on the right,
-    /// because a *fixed* column width on a page that the window can narrow is
-    /// gotcha (13)'s window-width floor - and a proportion cannot be one.
+    /// **A plain container with explicit constraints, not a horizontal
+    /// `NSStackView`** - and that is review #3's B9, which regressed here and
+    /// was caught by CI rather than locally.
+    ///
+    /// B9 is "a detail pane does not stretch a card past its own content". A
+    /// horizontal stack holding two columns of unequal height has to decide
+    /// how tall the short one is, and `alignment = .top` only says where it
+    /// sits, not that it keeps its own height. On a GitHub runner the solver
+    /// took the other option: the App Intents page's right-hand card resolved
+    /// to **271pt against 134pt of content**, matching the left column. It
+    /// did not reproduce on this machine at any width or across any resize
+    /// sequence, so the fix is to remove the choice rather than re-tune an
+    /// alignment that happened to work here.
+    ///
+    /// Two things were tried first and are recorded because both look
+    /// plausible and neither works. A `.required` **stack** hugging priority
+    /// (gotcha (12)'s correct API for a view with no intrinsic size) is not
+    /// honoured by `NSStackView` - with it set, the section column still
+    /// measured 342pt against 203pt of content, and on an *unpressured* page
+    /// it introduced a stretch that had not been there. Making the card's own
+    /// bottom pin an inequality moved the problem rather than fixing it,
+    /// because a `HelmCard`'s body is pinned to all four of its edges and the
+    /// body is itself a stack with the same weakness.
+    ///
+    /// So: each column's height is its own content's, each is pinned to the
+    /// container's top and only *capped* at its bottom, and the container
+    /// hugs the taller of the two through one low-priority zero height. No
+    /// constraint anywhere says the columns are the same height, so none can
+    /// be resolved into saying it.
     private static func wideColumns(sections: [SettingsSection],
                                     hero: SettingsHero) -> (container: NSView,
-                                                            columns: NSStackView,
-                                                            split: NSLayoutConstraint) {
+                                                            columns: NSView,
+                                                            sideBySide: [NSLayoutConstraint],
+                                                            stacked: [NSLayoutConstraint]) {
         let trailing = sections[sections.count - 1]
         let leading = Array(sections.dropLast())
 
@@ -959,30 +983,49 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         rightColumn.translatesAutoresizingMaskIntoConstraints = false
         trailing.widthAnchor.constraint(equalTo: rightColumn.widthAnchor).isActive = true
 
-        let columns = NSStackView(views: [leftColumn, rightColumn])
-        columns.orientation = .horizontal
-        columns.alignment = .top
-        columns.spacing = HelmMetrics.s5
-        // Gotcha (10): a horizontal stack needs a distribution before any
-        // priority on its children decides anything.
-        columns.distribution = .fill
+        let columns = NSView()
         columns.translatesAutoresizingMaskIntoConstraints = false
+        columns.addSubview(leftColumn)
+        columns.addSubview(rightColumn)
+
+        // True in both arrangements: each column starts at the container's
+        // leading edge or is capped by its bottom, and the container collapses
+        // onto whatever is tallest.
+        let hug = columns.heightAnchor.constraint(equalToConstant: 0)
+        hug.priority = .defaultLow
+        NSLayoutConstraint.activate([
+            leftColumn.bottomAnchor.constraint(lessThanOrEqualTo: columns.bottomAnchor),
+            rightColumn.bottomAnchor.constraint(lessThanOrEqualTo: columns.bottomAnchor),
+            hug,
+        ])
+
+        // 0.6 of the row, below `NSLayoutPriorityWindowSizeStayPut` (500) so a
+        // page that narrows past what two columns can hold never becomes a
+        // floor on the window's own width (gotcha (13)). The page collapses
+        // below `wideColumnBreakpoint` rather than leaning on this.
         let split = leftColumn.widthAnchor.constraint(equalTo: columns.widthAnchor, multiplier: 0.6,
                                                       constant: -HelmMetrics.s5 / 2)
-        // Below 500, so a page that narrows past what two columns can hold
-        // never becomes a floor on the window's own width (gotcha (13)).
-        //
-        // Which is exactly why the page has to *collapse* rather than lean on
-        // this constraint at every width. Below 500 it loses to the rows' own
-        // content minima - and those minima are theme-dependent, because
-        // `HelmButton`'s insets differ under Daylight. Measured before the
-        // collapse below existed: at an 820pt window the two columns resolved
-        // to 268.0/250.5 under Daylight and 273.5/242.5 under Helm Dark, from
-        // one identical page. `SettingsThemeLayoutParitySelfTest` caught it,
-        // and AGENTS.md's colour rules are explicit that a Daylight branch
-        // may move a *recipe* and never a structure.
         split.priority = HelmDaylightPriority.contentTie
-        split.isActive = true
+
+        let sideBySide = [
+            leftColumn.leadingAnchor.constraint(equalTo: columns.leadingAnchor),
+            leftColumn.topAnchor.constraint(equalTo: columns.topAnchor),
+            rightColumn.leadingAnchor.constraint(equalTo: leftColumn.trailingAnchor,
+                                                 constant: HelmMetrics.s5),
+            rightColumn.trailingAnchor.constraint(equalTo: columns.trailingAnchor),
+            rightColumn.topAnchor.constraint(equalTo: columns.topAnchor),
+            split,
+        ]
+
+        let stacked = [
+            leftColumn.leadingAnchor.constraint(equalTo: columns.leadingAnchor),
+            leftColumn.trailingAnchor.constraint(equalTo: columns.trailingAnchor),
+            leftColumn.topAnchor.constraint(equalTo: columns.topAnchor),
+            rightColumn.leadingAnchor.constraint(equalTo: columns.leadingAnchor),
+            rightColumn.trailingAnchor.constraint(equalTo: columns.trailingAnchor),
+            rightColumn.topAnchor.constraint(equalTo: leftColumn.bottomAnchor, constant: 20),
+        ]
+        NSLayoutConstraint.activate(sideBySide)
 
         let stack = NSStackView(views: [hero, columns])
         stack.orientation = .vertical
@@ -992,7 +1035,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         for view in [hero, columns] as [NSView] {
             view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
         }
-        return (stack, columns, split)
+        return (stack, columns, sideBySide, stacked)
     }
 
     /// The width below which the wide page stops being two columns.
@@ -1005,21 +1048,18 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     private static let wideColumnBreakpoint: CGFloat = 720
 
     /// One column or two, decided by the width the page actually has.
+    ///
+    /// Exactly one constraint set is active at a time, and the swap
+    /// deactivates before it activates - two sets that overlap for even one
+    /// pass are a conflict, and the page would resolve it by breaking
+    /// something.
     private func applyWideLayout(to page: Page, width: CGFloat) {
-        guard let columns = page.columns, let split = page.columnSplit else { return }
+        guard let isSideBySide = page.isSideBySide else { return }
         let wantsTwo = width >= Self.wideColumnBreakpoint
-        guard columns.orientation != (wantsTwo ? .horizontal : .vertical) || split.isActive != wantsTwo else {
-            return
-        }
-        columns.orientation = wantsTwo ? .horizontal : .vertical
-        columns.alignment = wantsTwo ? .top : .leading
-        // Exactly one of the two arrangements is constrained at a time. The
-        // split only means anything while the columns sit side by side - left
-        // active in a vertical stack it would hold the first section at 60%
-        // of the page and leave a ragged gap beside it - and the full-width
-        // ties only mean anything stacked, where each column is a row.
-        split.isActive = wantsTwo
-        for tie in page.columnFullWidthTies { tie.isActive = !wantsTwo }
+        guard wantsTwo != isSideBySide else { return }
+        NSLayoutConstraint.deactivate(wantsTwo ? page.stacked : page.sideBySide)
+        NSLayoutConstraint.activate(wantsTwo ? page.sideBySide : page.stacked)
+        pages[page.category]?.isSideBySide = wantsTwo
     }
 
     // MARK: - Appearance
