@@ -218,6 +218,11 @@ final class FleetController: NSViewController {
     /// here, once on the hub the captain returns to constantly - would be a
     /// straight doubling of the app's own cost for numbers it already had.
     var onSnapshotChanged: ((FleetSnapshot, [MergedPR]?, String?) -> Void)?
+    /// Fired when this controller's own briefing pass has a Claude quota
+    /// reading - the Home canvas's `.claudeStatus` card is a second reader of
+    /// the fetch the briefing already pays for, never a second caller of it
+    /// (`HomeCanvasController`'s file header, rule 1).
+    var onQuotaChanged: ((QuotaFetchResult) -> Void)?
 
     /// fm/grandline-overview-drop-duplicate-pr-list: fired when the captain
     /// clicks the "ready to merge" stat tile - `AppShellController` wires
@@ -709,6 +714,81 @@ final class FleetController: NSViewController {
         refresh(forceBriefing: false, forceRefresh: forceRefresh)
     }
 
+    // MARK: The shared Claude quota reading
+
+    /// The last `quota-axi` reading, and when it was taken.
+    ///
+    /// **Why this is cached here rather than fetched per reader.** There are
+    /// two readers now - the Morning briefing's `.quota` clause and the Home
+    /// canvas's `.claudeStatus` card - and `QuotaSource.fetch()` is a 1-2s
+    /// subprocess. This controller refreshes on every `viewWillAppear`, so an
+    /// uncached fetch would spawn `quota-axi` on every visit to Overview
+    /// (GL-12/GL-13), and two uncoordinated fetches would spawn it twice.
+    private var lastQuota: QuotaFetchResult?
+    private var lastQuotaAt: Date?
+
+    /// How long a reading is reused before another is taken. A quota window
+    /// moves over hours, and the five-hour window's own percentage is the
+    /// fastest-moving figure on the card, so minutes of staleness costs the
+    /// captain nothing and a fetch per navigation costs a subprocess.
+    private static let quotaFreshness: TimeInterval = 5 * 60
+
+    /// Serialises quota work so two overlapping refreshes cannot both fetch.
+    ///
+    /// GL-03's latch problem is avoided rather than guarded: there is no
+    /// boolean to wedge. A second call queued behind a first simply finds the
+    /// reading fresh and returns it, and `Subprocess`'s own bound (GL-02)
+    /// means a hung `quota-axi` cannot hold the queue indefinitely.
+    private static let quotaQueue = DispatchQueue(label: "com.firstmate.cockpit.quota")
+
+    /// Takes a reading if the cached one has aged out, then publishes it.
+    ///
+    /// **This is why the card works at all when the briefing does not.** The
+    /// briefing fetches quota only when it actually generates - which is once
+    /// a day, and only when Morning briefing is enabled (it is off by
+    /// default). Riding that pass alone left the status card showing its
+    /// loading skeleton forever on a machine with the briefing off, and on
+    /// every launch after the day's first briefing. The reading is this
+    /// controller's now, and the briefing is one of its two readers.
+    private func refreshQuota(force: Bool = false) {
+        if !force, let taken = lastQuotaAt, let cached = lastQuota,
+           Date().timeIntervalSince(taken) < Self.quotaFreshness {
+            onQuotaChanged?(cached)
+            return
+        }
+        Self.quotaQueue.async { [weak self] in
+            let result = MorningBriefing.fetchQuota()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.lastQuota = result
+                self.lastQuotaAt = Date()
+                // Published on failure too, or the card keeps its skeleton
+                // where it should be stating the gap (GL-14).
+                self.onQuotaChanged?(result)
+            }
+        }
+    }
+
+    /// The briefing's own access to the same reading - cached if fresh, taken
+    /// if not, and never a second concurrent fetch.
+    private func withQuotaReading(_ completion: @escaping (QuotaFetchResult) -> Void) {
+        if let taken = lastQuotaAt, let cached = lastQuota,
+           Date().timeIntervalSince(taken) < Self.quotaFreshness {
+            completion(cached)
+            return
+        }
+        Self.quotaQueue.async { [weak self] in
+            let result = MorningBriefing.fetchQuota()
+            DispatchQueue.main.async {
+                guard let self else { return completion(result) }
+                self.lastQuota = result
+                self.lastQuotaAt = Date()
+                self.onQuotaChanged?(result)
+                completion(result)
+            }
+        }
+    }
+
     /// `forceBriefing` is the briefing card's own clock affordance: regenerate
     /// from a fresh scan rather than waiting for tomorrow's first activation.
     ///
@@ -747,6 +827,9 @@ final class FleetController: NSViewController {
                 // F12: only from here, never from the first (PR-less) render -
                 // a briefing built while the PR scan is still in flight would
                 // report "0 PRs ready" as a fact.
+                // Independent of the briefing's own once-a-day gate and of
+                // whether it is enabled at all - see `refreshQuota`.
+                self.refreshQuota()
                 self.considerMorningBriefing(snapshot: snapshot,
                                              prReadyCount: fetched.failureSummary == nil
                                                  ? FleetDataSource.readyToMergeCount(merged) : nil,
@@ -1051,15 +1134,13 @@ final class FleetController: NSViewController {
         inputs.toolUpdateCount = counts.toolUpdates
         inputs.setupDriftCount = counts.setupDrift
 
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            let quota = MorningBriefing.fetchQuota()
-            DispatchQueue.main.async {
-                guard let self else { return }
-                inputs.quotaWeeklyPercentUsed = quota.weekly
-                inputs.quotaWeeklyPace = quota.pace
-                inputs.quotaSessionPercentUsed = quota.session
-                self.finishBriefing(inputs: inputs)
-            }
+        withQuotaReading { [weak self] quota in
+            guard let self else { return }
+            let briefingQuota = MorningBriefing.briefingInputs(from: quota)
+            inputs.quotaWeeklyPercentUsed = briefingQuota.weekly
+            inputs.quotaWeeklyPace = briefingQuota.pace
+            inputs.quotaSessionPercentUsed = briefingQuota.session
+            self.finishBriefing(inputs: inputs)
         }
     }
 

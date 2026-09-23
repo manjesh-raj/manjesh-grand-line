@@ -133,6 +133,20 @@ final class HomeCanvasController: NSViewController {
     // MARK: State pushed in from elsewhere
 
     private var fleetSnapshot: FleetSnapshot?
+    /// The Claude quota reading behind the `.claudeStatus` card.
+    ///
+    /// Pushed in, never fetched (rule 1 in this file's header):
+    /// `QuotaSource.fetch()` shells out to `quota-axi` for 1-2s, and this
+    /// page is re-rendered on every return from a drill page. `FleetController`
+    /// already runs that fetch once per refresh cycle for the Morning
+    /// briefing's `.quota` clause, so this card rides that same pass rather
+    /// than adding a second one.
+    ///
+    /// `nil` means no reading has arrived yet; `quotaFailure` non-nil means
+    /// one was attempted and could not be taken. GL-14: those are different
+    /// states and the card says so differently - neither is drawn as a zero.
+    private var quotaSnapshot: QuotaSnapshot?
+    private var quotaFailure: String?
     /// When `applyFleet` last delivered a reading - UX5's hero detail line.
     /// `nil` until the first one lands, which is the "reading now" state.
     private var fleetReadAt: Date?
@@ -483,6 +497,28 @@ final class HomeCanvasController: NSViewController {
         // completes at most once per refresh cycle, so there is nothing to
         // coalesce, and rendering immediately keeps this page's numbers
         // observably in step with the page that produced them.
+        render()
+    }
+
+    /// Called by `AppShellController` when `FleetController`'s refresh has a
+    /// Claude quota reading (or a stated reason it has none). Same contract as
+    /// `applyFleet`: the work was already done for another surface, and this
+    /// page is a second reader of it rather than a second caller.
+    func applyQuota(_ result: QuotaFetchResult) {
+        switch result {
+        case .success(let snapshot):
+            quotaSnapshot = snapshot
+            quotaFailure = nil
+        case .failure(let reason):
+            // The last good reading is deliberately *not* cleared - a
+            // transient failure should not blank a card that was correct a
+            // minute ago. `fillClaudeStatus` prefers the snapshot and uses
+            // the failure only when there has never been one, which is the
+            // honest ordering: stale-but-real beats nothing, and nothing
+            // beats a fabricated zero.
+            quotaFailure = reason
+        }
+        guard isViewLoaded else { return }
         render()
     }
 
@@ -990,6 +1026,7 @@ final class HomeCanvasController: NSViewController {
 
         switch module {
         case .briefing: fillBriefing(&content, cardWidth: cardWidth)
+        case .claudeStatus: fillClaudeStatus(&content, cardWidth: cardWidth)
         case .fleet: fillFleet(&content)
         case .strawHat: fillStrawHat(&content)
         case .tasks: fillTasks(&content)
@@ -1076,6 +1113,162 @@ final class HomeCanvasController: NSViewController {
         return width + 0.5 >= spanTwo
             ? HelmModuleCard.maxBriefingClauses
             : HelmModuleCard.maxNarrowBriefingClauses
+    }
+
+    // MARK: The Claude status strip
+
+    /// The captain's picked "Status strip": five hairline-separated columns
+    /// reading Session (5h), Week, Fable week, Extra usage and Spend cap.
+    ///
+    /// **The two labelling decisions this card is built on**, both carried
+    /// forward from the design exploration the captain picked a mockup from
+    /// (`docs/history/07-fleet-and-notifications.md` records the reasoning):
+    ///
+    ///  - The five-hour window is **"Session (5h)"**, never "Daily". Claude's
+    ///    quota has no daily window and `quota-axi` reports none - the window
+    ///    is `five_hour`, which the tool itself labels `session`. Naming it
+    ///    "Daily" would be a claim about a reset cadence that does not exist.
+    ///  - The credit pool is **"Extra usage"** against a **"Spend cap"**,
+    ///    never "MTD spend". Its window id is `extra_usage` and its kind is
+    ///    `credits`; `quota-axi` returns `pace: {status: "unknown", reason:
+    ///    "missing_cycle"}` for it, so it does not know the billing cycle's
+    ///    boundaries and nothing derived from it may honestly say "month to
+    ///    date". True organisation month-to-date spend would need Anthropic's
+    ///    Admin/Usage API and an Admin key, which this app does not have.
+    ///
+    /// GL-14 runs through the whole function: every one of the five columns
+    /// is independently optional, and a window this account's response does
+    /// not carry renders "Not reported" in the muted face with no track at
+    /// all - never a `0%` or a `$0`, which on a quota readout are real and
+    /// alarming values rather than synonyms for "unknown".
+    private func fillClaudeStatus(_ content: inout HelmModuleCard.Content, cardWidth: CGFloat) {
+        guard let snapshot = quotaSnapshot else {
+            // Two genuinely different states, and they read differently.
+            if let failure = quotaFailure {
+                content.subtitle = "no reading"
+                content.chip = .warn("unavailable")
+                content.body = .note(failure)
+            } else {
+                content.subtitle = "reading"
+                content.body = .skeleton(rows: 2)
+            }
+            return
+        }
+
+        content.subtitle = Self.claudeSubtitle(for: snapshot)
+        content.chip = Self.claudeChip(for: snapshot)
+        content.body = .statusStrip(Self.claudeStripColumns(for: snapshot),
+                                    perRow: Self.claudeStripColumnsPerRow(forCardWidth: cardWidth))
+    }
+
+    /// How many of the strip's columns fit side by side on a card of this
+    /// width.
+    ///
+    /// The same shape as `briefingClauseCap`, and for the same reason: a
+    /// span-2 card degrades to one column in a single-column grid
+    /// (`HelmResponsiveGrid.packRows`), and five columns in 255pt would
+    /// truncate every key to an initial. The strip **wraps** instead, so a
+    /// narrow window costs the card some height and never costs it a reading.
+    static func claudeStripColumnsPerRow(forCardWidth width: CGFloat) -> Int {
+        let spanTwo = minModuleWidth * 2 + gridSpacing
+        return width + 0.5 >= spanTwo ? HelmModuleCard.maxStripColumns : 3
+    }
+
+    /// The five columns, in the captain's picked order. `static` so a suite
+    /// can assert the mapping from a fabricated snapshot without mounting a
+    /// canvas.
+    static func claudeStripColumns(for snapshot: QuotaSnapshot) -> [HelmModuleStripColumn] {
+        func window(_ label: String, _ window: QuotaWindow?) -> HelmModuleStripColumn {
+            guard let window else { return gapColumn(label) }
+            return HelmModuleStripColumn(
+                label: label,
+                value: Self.percentText(window.percentUsed),
+                fill: max(0, min(1, window.percentUsed / 100)),
+                state: QuotaSeverity(percentUsed: window.percentUsed).moduleRowState)
+        }
+
+        var columns: [HelmModuleStripColumn] = [
+            window("Session (5h)", snapshot.session),
+            window("Week", snapshot.weekly),
+            window("Fable week", snapshot.fable),
+        ]
+
+        // The two dollar columns are independently optional: `extra_usage`
+        // can be absent entirely, and it can be present while carrying
+        // neither figure.
+        if let credits = snapshot.extraUsage, let spent = credits.spentUsd {
+            // The percentage is itself optional here (see
+            // `QuotaCreditWindow.percentUsed`): a response that reports the
+            // dollars without it gets the figure and no track, rather than a
+            // track drawn from a number nobody sent.
+            columns.append(HelmModuleStripColumn(
+                label: "Extra usage",
+                value: Self.dollarText(spent),
+                fill: credits.percentUsed.map { max(0, min(1, $0 / 100)) },
+                state: credits.percentUsed
+                    .map { QuotaSeverity(percentUsed: $0).moduleRowState } ?? .idle))
+        } else {
+            columns.append(gapColumn("Extra usage"))
+        }
+
+        if let limit = snapshot.extraUsage?.limitUsd {
+            // A full neutral bar, not a severity one: this column is the
+            // ceiling itself, so colouring it by "100% used" would read as an
+            // alarm about the cap rather than as the cap.
+            columns.append(HelmModuleStripColumn(
+                label: "Spend cap", value: Self.dollarText(limit),
+                fill: 1, state: .idle))
+        } else {
+            columns.append(gapColumn("Spend cap"))
+        }
+
+        return columns
+    }
+
+    /// GL-14's stated gap, in the one shape every column uses for it.
+    private static func gapColumn(_ label: String) -> HelmModuleStripColumn {
+        HelmModuleStripColumn(label: label, value: "Not reported",
+                              fill: nil, state: .idle, isGap: true)
+    }
+
+    /// `96%`. No decimal: `quota-axi` reports whole `percentRemaining`
+    /// integers, so a `.1f` here would invent precision the source does not
+    /// have.
+    static func percentText(_ percentUsed: Double) -> String {
+        "\(Int(percentUsed.rounded()))%"
+    }
+
+    /// `$140` for a whole number of dollars, `$137.62` otherwise - the cap is
+    /// always round and the spend rarely is, and `$140.00` beside `$137.62`
+    /// reads as false precision on a card this dense.
+    static func dollarText(_ amount: Double) -> String {
+        amount == amount.rounded()
+            ? String(format: "$%.0f", amount)
+            : String(format: "$%.2f", amount)
+    }
+
+    /// The plan and organisation, when the response carried them.
+    static func claudeSubtitle(for snapshot: QuotaSnapshot) -> String {
+        guard let plan = snapshot.plan, !plan.isEmpty else { return "quota-axi" }
+        return plan.capitalized
+    }
+
+    /// The chip states the *binding* window - the one that runs out first -
+    /// rather than restating a column. A reading below the warning threshold
+    /// on every window gets the all-clear instead.
+    static func claudeChip(for snapshot: QuotaSnapshot) -> HelmModuleChip? {
+        let windows: [(String, QuotaWindow)] = [
+            ("Session", snapshot.session), ("Week", snapshot.weekly), ("Fable", snapshot.fable),
+        ].compactMap { name, window in window.map { (name, $0) } }
+        guard let worst = windows.max(by: { $0.1.percentUsed < $1.1.percentUsed }) else {
+            return nil
+        }
+        switch QuotaSeverity(percentUsed: worst.1.percentUsed) {
+        case .critical, .warning:
+            return .warn("\(worst.0) \(percentText(worst.1.percentUsed))")
+        case .comfortable:
+            return .ok("Comfortable")
+        }
     }
 
     private func fillFleet(_ content: inout HelmModuleCard.Content) {

@@ -251,6 +251,11 @@ NEEDS_SESSION=(
   # the real Updates/GitHub Sync pages and reads the real hub cards.
   "FM_RUN_SUMMARY_FRESHNESS_TESTS"
   "FM_RUN_DAYLIGHT_MODULE_TESTS"
+  # `fm/grandline-claude-status-card-implement`: builds a real
+  # `HelmModuleCard` in a real window, runs a real layout pass and reads a
+  # real rasterised pixel back. The column-mapping half is pure logic, but
+  # "the five columns are actually painted, equally wide and legibly" is not.
+  "FM_RUN_CLAUDE_STATUS_CARD_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_SLICE2_TESTS"
   "FM_RUN_DAYLIGHT_DRILL_SLICE3_TESTS"

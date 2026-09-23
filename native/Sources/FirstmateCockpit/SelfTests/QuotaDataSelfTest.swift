@@ -100,6 +100,31 @@ enum QuotaDataSelfTest {
             check("real payload: weekly percentUsed converted from percentRemaining", snapshot.weekly?.percentUsed == 21)
             check("real payload: weekly kind is .weekly", snapshot.weekly?.kind == .weekly)
             check("real payload: session kind is .session", snapshot.session?.kind == .session)
+
+            // `fm/grandline-claude-status-card-implement`: the two windows
+            // this parser used to drop through `default: continue`. This
+            // fixture already carried both - they were simply never read -
+            // so these assertions run against payload text that predates the
+            // feature rather than against a shape invented alongside it.
+            check("real payload: fable window present", snapshot.fable != nil)
+            check("real payload: fable kind is .fable", snapshot.fable?.kind == .fable)
+            // percentRemaining: 100 -> percentUsed: 0. Deliberately asserted:
+            // `0` here is a *real* reading meaning "none of the Fable
+            // allowance used", which is exactly why a missing window must
+            // never also render as zero.
+            check("real payload: fable percentUsed converted from percentRemaining",
+                  snapshot.fable?.percentUsed == 0)
+            check("real payload: fable tolerates a missing resetsAt", snapshot.fable?.resetsAt == nil)
+
+            check("real payload: extra usage present", snapshot.extraUsage != nil)
+            check("real payload: extra usage spentUsd parsed", snapshot.extraUsage?.spentUsd == 260.28)
+            // GL-14, and the reason this case matters: this fixture's
+            // `extra_usage` carries `spentUsd` and **no** `limitUsd`. The
+            // parse must leave it `nil` so the card states the gap, rather
+            // than defaulting it to 0 - which would render a "$0" spend cap
+            // that looks like a real and very alarming limit.
+            check("real payload: a missing limitUsd stays nil, not 0",
+                  snapshot.extraUsage?.limitUsd == nil)
         } else {
             failures.append("real payload failed to parse at all")
         }
@@ -132,6 +157,56 @@ enum QuotaDataSelfTest {
         } else {
             failures.append("weekly-only payload failed to parse")
         }
+
+        // MARK: the new windows, absent entirely - a stated gap, never a zero
+
+        // Neither `model:fable` nor `extra_usage` present. Both must be
+        // `nil`, and - the discriminating half - the two windows that *are*
+        // present must be unaffected, or this case would pass just as well
+        // against a parser that gave up on the whole payload.
+        let noExtras = """
+        {"providers":[{"provider":"claude","plan":"pro","windows":[
+          {"id":"five_hour","percentRemaining":40,"pace":{"status":"ahead"}},
+          {"id":"seven_day","percentRemaining":60,"pace":{"status":"on_pace"}}
+        ]}]}
+        """
+        if let snapshot = QuotaSource.parse(noExtras, latency: 0.5, log: "") {
+            check("no extras: fable absent", snapshot.fable == nil)
+            check("no extras: extra usage absent", snapshot.extraUsage == nil)
+            check("no extras: session still parsed", snapshot.session?.percentUsed == 60)
+            check("no extras: weekly still parsed", snapshot.weekly?.percentUsed == 40)
+        } else {
+            failures.append("payload with no fable/extra_usage failed to parse")
+        }
+
+        // Both dollar figures present, which is the live shape on the
+        // captain's own account.
+        let bothDollars = """
+        {"providers":[{"provider":"claude","plan":"team","windows":[
+          {"id":"five_hour","percentRemaining":10,"pace":{"status":"ahead"}},
+          {"id":"extra_usage","kind":"credits","spentUsd":137.62,"limitUsd":140,
+           "percentRemaining":2,"pace":{"status":"unknown","reason":"missing_cycle"}}
+        ]}]}
+        """
+        if let snapshot = QuotaSource.parse(bothDollars, latency: 0.5, log: "") {
+            check("both dollars: spentUsd parsed", snapshot.extraUsage?.spentUsd == 137.62)
+            check("both dollars: limitUsd parsed", snapshot.extraUsage?.limitUsd == 140)
+            check("both dollars: percentUsed converted", snapshot.extraUsage?.percentUsed == 98)
+        } else {
+            failures.append("payload with both dollar figures failed to parse")
+        }
+
+        // MARK: the 80/90 severity thresholds, which two surfaces now share
+
+        // `QuotaSeverity` is the single copy of the decision the popover's
+        // review specified. Asserted at the boundaries, because "80" and
+        // "90" being `>=` and `>` respectively is exactly the kind of detail
+        // a second copy would have got subtly wrong.
+        check("severity: 79.9 is comfortable", QuotaSeverity(percentUsed: 79.9) == .comfortable)
+        check("severity: 80 is a warning", QuotaSeverity(percentUsed: 80) == .warning)
+        check("severity: 90 is still a warning", QuotaSeverity(percentUsed: 90) == .warning)
+        check("severity: 90.1 is critical", QuotaSeverity(percentUsed: 90.1) == .critical)
+        check("severity: 0 is comfortable", QuotaSeverity(percentUsed: 0) == .comfortable)
 
         // MARK: genuinely unparseable payloads must return nil, not crash
 

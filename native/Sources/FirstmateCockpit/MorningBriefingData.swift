@@ -577,19 +577,33 @@ enum MorningBriefing {
     /// The one input this file fetches itself - see the file header for why.
     /// Safe to call from a background queue only; `QuotaSource.fetch()` shells
     /// out to `quota-axi`.
-    static func fetchQuota() -> (weekly: Double?, pace: String?, session: Double?) {
-        switch QuotaSource.fetch() {
-        case .failure(let reason):
+    ///
+    /// Returns the whole `QuotaFetchResult` rather than the three scalars the
+    /// briefing's own clause needs, because it is no longer the only reader:
+    /// the Home canvas's `.claudeStatus` card renders five figures from the
+    /// same snapshot, and this app runs `quota-axi` **once per refresh
+    /// cycle** for both (`HomeCanvasController.quotaSnapshot`'s own note).
+    /// `briefingInputs(from:)` below does the narrowing this used to do
+    /// inline, so the briefing's behaviour - including "no clause and no
+    /// claimed source when the reading fails" - is unchanged.
+    static func fetchQuota() -> QuotaFetchResult {
+        let result = QuotaSource.fetch()
+        if case .failure(let reason) = result {
             // Not an error worth surfacing on its own: the quota clause simply
             // does not appear, and the subtitle stops claiming quota as a
             // source. Logged so a captain wondering where it went can find out.
             AppLog.ai.info("morning briefing: no quota reading (\(reason, privacy: .public))")
-            return (nil, nil, nil)
-        case .success(let snapshot):
-            return (snapshot.weekly?.percentUsed,
-                    snapshot.weekly?.pace.label,
-                    snapshot.session?.percentUsed)
         }
+        return result
+    }
+
+    /// The three scalars the briefing's `.quota` clause is written against.
+    static func briefingInputs(from result: QuotaFetchResult)
+        -> (weekly: Double?, pace: String?, session: Double?) {
+        guard case .success(let snapshot) = result else { return (nil, nil, nil) }
+        return (snapshot.weekly?.percentUsed,
+                snapshot.weekly?.pace.label,
+                snapshot.session?.percentUsed)
     }
 
     /// Assembles a record from a finished clause list. Pure - the caller

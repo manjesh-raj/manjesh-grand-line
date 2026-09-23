@@ -502,11 +502,11 @@ private final class QuotaWindowRowView: NSView {
     }
 
     /// Thresholds exactly as specified in review: `.good` below 80% used,
-    /// `.warn` at 80-90%, `.critical` above 90%.
+    /// `.warn` at 80-90%, `.critical` above 90% - now owned by
+    /// `QuotaSeverity`, so this popover and the Home page's status strip
+    /// cannot drift apart about what counts as a warning.
     private static func tint(for percentUsed: Double) -> HelmTint {
-        if percentUsed > 90 { return .critical }
-        if percentUsed >= 80 { return .warn }
-        return .good
+        QuotaSeverity(percentUsed: percentUsed).tint
     }
 
     func configure(title: String, window: QuotaWindow?, theme: HelmTheme) {

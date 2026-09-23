@@ -1045,6 +1045,9 @@ final class AppShellController: NSViewController {
         // The canvas's Fleet and Merge queue modules, fed from Overview's own
         // refresh rather than a fetch of their own - see
         // `FleetController.onSnapshotChanged`.
+        overview.onQuotaChanged = { [weak self] result in
+            self?.homeCanvas.applyQuota(result)
+        }
         overview.onSnapshotChanged = { [weak self] snapshot, prs, failure in
             self?.homeCanvas.applyFleet(snapshot: snapshot, mergedPRs: prs, prFetchFailure: failure)
         }
