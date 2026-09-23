@@ -620,7 +620,7 @@ enum Audit3BugFixesSelfTest {
                 // Vacuity guard: a pane that mounted nothing, or mounted
                 // cards that never laid out, would pass while measuring
                 // nothing at all.
-                let mounted = settings.debugMountedCards
+                let mounted = settings.debugMountedGroupCards
                 guard !mounted.isEmpty, mounted.allSatisfy({ $0.frame.height > 1 }) else {
                     fail("\(category.rawValue) mounted \(mounted.count) laid-out cards - this check is vacuous", &ok)
                     return

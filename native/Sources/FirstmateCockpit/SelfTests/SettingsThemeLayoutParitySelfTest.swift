@@ -198,7 +198,7 @@ enum SettingsThemeLayoutParitySelfTest {
         for category in SettingsController.Category.allCases {
             settings.select(category)
             settings.view.layoutSubtreeIfNeeded()
-            let mounted = settings.debugMountedCards
+            let mounted = settings.debugMountedGroupCards
             paneSizes.append(mounted.count)
             for card in mounted {
                 widths.append(rounded(card.frame.width))
@@ -208,7 +208,7 @@ enum SettingsThemeLayoutParitySelfTest {
             if category == .appearance { gridColumns = settings.debugAppearanceGridColumnCounts }
         }
         return LayoutFingerprint(
-            cardCount: settings.debugCards.count,
+            cardCount: settings.debugGroupCards.count,
             paneSizes: paneSizes,
             cardWidths: widths,
             cardXPositions: xs,
@@ -409,8 +409,8 @@ enum SettingsThemeLayoutParitySelfTest {
         // a page - so the honest response to a card genuinely being added is
         // to move the literal and say which change moved it, not to relax it
         // into a `>=`.
-        guard daylightFP.cardCount == 11 else {
-            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 11")
+        guard daylightFP.cardCount == 22 else {
+            print("  FAIL Daylight built \(daylightFP.cardCount) cards, want 22")
             ok = false
             return
         }

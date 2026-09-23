@@ -660,14 +660,20 @@ enum CompactModeViewSelfTest {
 
             let labels = allSubviews(of: settings.view).compactMap { $0 as? NSTextField }
                 .map { $0.stringValue }
+            // The copy is the captain's own reference's now
+            // (`fm/grandline-settings-page-redesign`), which renamed two of
+            // these three rows. "Compact mode" is a section heading beside the
+            // group rather than a card header title, and it is still a real
+            // rendered label on the page - which is what this case has always
+            // asserted.
             check(labels.contains("Compact mode"),
-                  "Settings carries a real \"Compact mode\" card - the mode's discoverable home")
-            check(labels.contains("Compact (menu bar) mode"),
+                  "Settings carries a real \"Compact mode\" section - the mode's discoverable home")
+            check(labels.contains("Live in the menu bar"),
                   "with the master switch's own row")
             check(labels.contains("Hide the Dock icon"),
                   "the Dock-icon row")
-            check(labels.contains("Badge the status item with the overdue count"),
-                  "and the badge row - the mockup's own three")
+            check(labels.contains("Show the overdue count on the icon"),
+                  "and the badge row - the reference's own three")
             check(settings.debugToggles.count >= 6,
                   "and three more `HelmToggle`s than the page had before - got "
                       + "\(settings.debugToggles.count)")

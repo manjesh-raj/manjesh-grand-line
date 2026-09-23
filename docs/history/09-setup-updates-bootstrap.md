@@ -367,3 +367,146 @@ move.
 It also only holds while the local signing certificate is not regenerated -
 `native/README.md` already records that the certificate is created once per
 machine and persists.
+
+## Settings, rebuilt to the captain's own HTML reference
+
+`fm/grandline-settings-page-redesign`.
+The captain hand-built a complete, runnable HTML/CSS/JS mock of the page he wanted and pasted it verbatim, saved at firstmate's `data/grandline-settings-page-redesign/captain-reference/settings-reference.html`.
+His words were "make changes of the UI in Settings Page, here is an HTML code of how I want the UI to look", so this is a rebuild against a reference rather than a design exploration.
+
+The reference was opened in a real browser and driven before any Swift was touched - the sidebar search, the back/forward buttons, the All/Dark/Light theme filter, the shortcut recorders, the account connect/disconnect and the secure-field reveals.
+Four things about it turned out to be structural rather than cosmetic, and those are what changed.
+
+### 1. The sidebar is searchable and grouped
+
+The previous redesign (above) gave the page a `HelmPageSidebar` of eight categories under one "Settings" header.
+The reference puts a search field and a persistent identity row above that list, splits it under three headings - Personalize, Your day, System - and shows a sentence when a search matches nothing.
+
+The search filters the *page list*, not the rows, which is what the reference does and is also the useful behaviour: a captain searches for the setting ("sudo", "oauth", "font") and wants the page that holds it.
+So every `Category` carries a `searchKeywords` string beside its title, and both are matched case-insensitively.
+
+The identity row reads `NSFullUserName()`, falling back to `NSUserName()` for an account with no full name set - never a literal.
+The footer states the version from the bundle (GL-18), and says "development build" rather than inventing a number when there is no `Info.plist` at all, which is what a plain `swift build` binary has.
+
+### 2. Back and forward, with the page title in a toolbar
+
+Settings cross-references itself now: the daily review's Google Calendar row carries a button that jumps to Google Accounts.
+A cross-reference you cannot come back from is a dead end, so the detail pane grew a toolbar - back, forward, the page title, and a "Saved on this Mac" caption.
+
+The history is a real browser history rather than a stack of two.
+`select(_:)` truncates the forward entries before appending, so navigating somewhere new from the middle discards what was ahead instead of leaving Forward pointing at a branch the captain left.
+Both buttons and the title are driven from one `show(_:)`, so a history move repaints exactly what a click does - including the sidebar's own selection, which a nav column still highlighting the page you just left would get wrong.
+
+### 3. A page is a hero, then sections of grouped rows
+
+This is the biggest change, and it is a new vocabulary rather than a restyle: `SettingsForm.swift` carries `SettingsHero`, `SettingsSection`, `SettingsGroup` and `SettingsRow`, matching the reference's `.hero` / `.section` / `.group` / `.row`.
+A group is a real `HelmCard` with no header and a zero-inset body, so there is still exactly one card surface in the app (the component index's own rule); the rows carry their own padding and hairline separators, inset to where each row's label starts.
+
+The page went from eleven topic cards to twenty-one sections, and the count is the point: "Terminal" used to be one card called "Font size and behavior" holding four unrelated rows plus a nine-row shortcut card, and it is now Connection / Text / Tabs / Split the terminal / Split panes / Global shortcut.
+
+Two gotchas decide the row's own layout, and both are in `SettingsRow`'s header rather than at sixty call sites.
+The trailing control sits at the row's trailing edge unconditionally (gotcha (10)) - the previous page made that opt-in per row, and with sixty rows of wildly different description lengths the opt-out is what reads as broken.
+The text column yields through the **stack**-priority APIs, not the content ones, because a stack has no intrinsic content size and the content APIs are no-ops on it (gotcha (12)).
+
+### 4. Dependent rows are dimmed and inert
+
+The reference's `data-dep`: a sub-row is indented and greyed out while the switch it follows is off.
+Four dependencies are real here - the light/dark pair under Follow system appearance, the two compact-mode sub-rows, and the daily review's two calendar rows.
+
+Dimming alone is the dangerous half-fix.
+A row that says a setting does not apply and then applies it is worse than no dimming at all, so `SettingsRow.isRowEnabled` disables every `NSControl` in the row's control column recursively - `HelmToggle`'s own click path is guarded on `isEnabled`, so the row is genuinely inert.
+`SettingsRedesignSelfTest` presses a disabled switch and asserts the store did not move, and then presses it again with the parent on and asserts it did - so the inert claim cannot pass vacuously.
+
+### Follow system appearance is a real new feature
+
+The one thing the reference asked for that this app had no behaviour behind.
+`ThemeManager` held exactly one selected theme, and ⌘⌥T flipped it to its own `pairId` counterpart by hand.
+
+`SystemAppearanceFollower.swift` reads `AppleInterfaceStyle` from the global domain and listens for `AppleInterfaceThemeChangedNotification` on `DistributedNotificationCenter`, rather than reading `NSApp.effectiveAppearance`.
+Two reasons, and the second is load-bearing: every themed view in this app forces its own `appearance` to its theme's mode, so reading an appearance back out of the view tree reads this app's answer rather than the system's question - and `NSApp` is nil in a headless suite, so anything touching it would crash a suite rather than fail one.
+
+It is **off by default**, and that is not caution.
+A captain who has picked one of the twenty-six palettes has expressed a preference for that palette, not for a mode, and turning this on by default would silently discard their stored `fm.themeID` the first time the sun set.
+
+The decision itself is a pure static function over a Bool and two theme ids, which is what lets `SystemAppearanceFollowerSelfTest` be pure logic and therefore guard the **blocking** CI job.
+What it guards is the fallbacks rather than the happy path: a stored id naming a retired palette must not resolve to `nil` (following would silently stop) or to a theme of the other mode (which reads as an inverted observer).
+
+### What the reference asked for and this page deliberately does not draw
+
+Every one of these would be a control that changes nothing, and GL-14's spirit applies to controls as much as to numbers.
+
+- **Per-intent enable switches.** An App Intent is published by the app bundle's metadata; a switch here would either do nothing or - worse - read as a security boundary while the real ones sit elsewhere.
+- **A "Reduce transparency" switch, a Spotlight suggestions switch, a Raycast "Linked" pill.** No settings behind any of them.
+- **Vault auto-lock, clipboard-clear and Touch ID popups.** Those settings live *sealed inside* the encrypted vault file, so the page genuinely cannot read them without unlocking it - and AGENTS.md is explicit that anything reaching the vault from outside the vault page goes through the vault's own unlock. The Security page states that and offers a button to Poneglyph instead.
+- **App lock idle/session pickers.** Those thresholds are `FM_APP_LOCK_*` environment overrides with no UI behind them, so the rows state the values actually in force (through a new `AppLockController.configuredThresholds()`, reading the same `envThreshold` the initialiser reads) and name the variable.
+- **A "Run" button on the Try it flow.** Nothing in this app can invoke an App Intent on the captain's behalf. The card is an example built from the real catalogue's own titles, says so, and offers "Open Shortcuts" - which is real.
+
+The reference's illustrative data is replaced everywhere by the real source: `HelmTheme.allThemes` for the grid and both pair popups, `GrandLineIntentCatalog.entries` for the actions, `GoogleOAuthClientStore` for the OAuth fields, the measured `BackupStoreSection` walk for the inventory, and `CompactModeHotkey.displayChord` for the global shortcut.
+
+### The theme grid draws the app, not a colour strip
+
+The card was three equal swatches (`backgroundHex` / `chromeBackgroundHex` / `accentHex`), which says what colours a palette contains but not what the app looks like in it - and two palettes with the same three hues in different roles are indistinguishable that way.
+
+`SettingsThemeCard.swift` draws a miniature of this app instead: a sidebar column with a selected row, two content lines, and a card carrying an accent chip, in five of the previewed palette's own tokens.
+The grid also gained the reference's All/Dark/Light filter.
+
+One thing that is easy to get wrong and is written out in that file: the ring, the resting fill and the name are painted in the palette the grid is currently *in*, while everything inside the preview is painted in the palette being previewed.
+
+### What was measured
+
+- **The wide page's two columns overflowed at narrow widths, and the overflow was theme-dependent.**
+  The App Intents page is the reference's one `.page.wide`, and its split constraint sits below `NSLayoutPriorityWindowSizeStayPut` (500) so it can never be a window-width floor (gotcha (13)) - which means it loses to the rows' own content minima, and those minima differ under Daylight because `HelmButton`'s insets do.
+  Measured at an 820pt window: 268.0/250.5 under Daylight against 273.5/242.5 under Helm Dark, from one identical page.
+  `SettingsThemeLayoutParitySelfTest` caught it, which is exactly what that suite exists for.
+  The fix is the reference's own answer (`@media (max-width: 980px)`): below 720pt the page collapses to one column and the split is deactivated. At 820pt every card then measures 540pt on both themes; at 1400pt the wide page is 576/380 and every other page is 680.
+
+- **The first version of that collapse accumulated constraints, and one collapse could not see it.**
+  It built a fresh `width == columns.width` tie per column on every collapse and never deactivated any of them, so the page came back from its *first* widening and then never again - the stale required ties held both columns at the full page width inside a horizontal stack.
+  Found by reading the code rather than by a render, because every render this branch took collapsed at most once.
+  The ties are created once with the page and toggled against the split now, and `SettingsRedesignSelfTest` drives six resizes in both directions - the second widening is where the defect first shows.
+
+- **Settings stopped being a "page scroll", and that is correct rather than a defect.**
+  `ScrollEdgeObserver` discovers a page's scroll view geometrically - a scroll view pinned to the destination's *own* top edge, whose content therefore passes under the bar - and its header is explicit that a page whose top is a static strip (it names Console, Tools and Docs) "has nothing sliding under the bar, and correctly gets no edge".
+  The new toolbar is exactly such a strip, so Settings joined that family and the bar no longer elevates when it scrolls.
+  `WindowChromeFusionSelfTest`'s A3 case had picked Settings precisely because it was tall *and* top-anchored, and it now uses Bootstrap - whose scroll view is pinned to `root.topAnchor` and whose stepper is reliably taller than a 600pt window with nothing fetched.
+  The rule was not bent to keep the old page: the observer's own documented definition is what decided which side of it Settings now falls on.
+
+- **Review #3's B9 regressed through the wide page's two columns, and only CI could see it.**
+  B9 is "a detail pane does not stretch a card past its own content".
+  A horizontal `NSStackView` holding two columns of unequal height has to decide how tall the short one is, and `alignment = .top` says only where it sits, not that it keeps its own height.
+  On a GitHub runner the solver took the other option: the App Intents page's right-hand card resolved to **271pt against 134pt of content**, matching the left column exactly.
+  It did not reproduce on this machine at any of five widths or across a five-step resize sequence, so the fix removes the choice instead of re-tuning an alignment that happened to work here - the two columns are a plain container with two complete constraint sets, exactly one active, where each column is pinned to the top and only *capped* at the bottom and the container hugs the taller through one low-priority zero height. No constraint says the columns are the same height, so none can be resolved into saying it.
+
+  Two fixes were tried first, and both are recorded because both look right and neither works.
+  A `.required` **stack** hugging priority - gotcha (12)'s correct API for a view with no intrinsic size - is not honoured by `NSStackView`: with it set the section column still measured 342pt against 203pt, and on an *unpressured* page it introduced a stretch that had not been there before.
+  Making the card's own bottom pin an inequality moved the problem rather than fixing it, because a `HelmCard`'s body is pinned to all four of its edges and that body is itself a stack with the same weakness.
+
+  Reproduced locally by injecting the equal-heights constraint the runner's solver had settled on, at `.defaultHigh`: without the fix that gives 273pt against 134pt, which is the runner's own number. With the fix it gives 134 against 134.
+  `SettingsRedesignSelfTest` now checks the same property across its whole resize sequence, and that is deliberately stronger than `Audit3BugFixesSelfTest`'s single-width sweep: under the injection the new guard fails at 1500pt while Audit3's own fixture still passes on this machine, which is exactly the gap that let this reach CI.
+
+- **A suite pressed the wrong switch, because it addressed toggles by index.**
+  `SettingsSidebarNavigationSelfTest` and `DaylightDrillPageSlice6SelfTest` both read `debugToggles[0]`, which was Reconnect automatically and became Follow system appearance the moment the Appearance page grew a switch at the top.
+  Both now reach every toggle by name. `debugToggles` survives only as a count.
+
+- **"No setting became unreachable" is asserted against rows now, not cards.**
+  The reach check still partitions the page's sections across the eight categories, and the detachment half was rewritten: detachment happens one level up (the whole page leaves the detail pane), so an unmounted card still has a superview and always did.
+  What gotcha (15) is actually about is whether the window's constraint solve can reach it, so the check asks `window == nil` directly.
+
+### Confirmed to catch a regression, not merely to pass
+
+Each injection was made by copying the file aside and editing it, never `git stash` and never `git checkout -- <file>`.
+
+| Injection | Fails |
+|---|---|
+| `syncDependentRows` returns early | `SettingsRedesignSelfTest`'s dependent-row case, on both the dimming and the inert half |
+| `SettingsRow.isRowEnabled` sets `alphaValue` but skips `setEnabled` | the same case, on the "pressing a disabled switch wrote through" line alone |
+| `select(_:)` appends without truncating the forward entries | the history case, on forward truncation |
+| `buildSidebarSections` ignores its `filter` argument | the search case, on every one of the four searches |
+| `resolvedTheme` returns the stored id without checking its mode | `SystemAppearanceFollowerSelfTest`'s miscast-pair case |
+| the wide page's collapse adds a fresh width tie instead of toggling the held pair | the collapse case, on resizes 2, 4 and 6 - the page never returns to two columns |
+| the two columns are tied to one height (what the runner's solver settled on) | the collapse case's B9 check, at 273pt against 134pt of content |
+
+### What was not verified
+
+The live half. This machine's agent shell has neither Screen Recording nor Accessibility permission, so there is no screenshot of the captain's own running instance - the renders behind the layout claims above are `cacheDisplay` captures of a real `NSWindow`, read back as PNGs, which is this repository's documented substitute.
+The system's own light/dark switch was not triggered: the follower's decision is asserted directly and its observer registration is asserted by construction, but "macOS switched at sunset and the app followed" is a captain-side check.

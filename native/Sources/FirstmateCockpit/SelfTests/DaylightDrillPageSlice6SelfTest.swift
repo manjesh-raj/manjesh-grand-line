@@ -89,7 +89,7 @@ enum DaylightDrillPageSlice6SelfTest {
     /// before, because F20 and F22 landed a day apart and each had to find and
     /// move all of them - the second of the two then hit a merge conflict in
     /// every copy.
-    private static let expectedCardCount = 11
+    private static let expectedCardCount = 22
 
 
     static func run() -> Bool {
@@ -584,8 +584,8 @@ enum DaylightDrillPageSlice6SelfTest {
 
         // See `expectedCardCount` for the number and why it is a literal.
         // Every other card count in this file derives from this one.
-        guard settings.debugCards.count == expectedCardCount else {
-            print("  FAIL Settings has \(settings.debugCards.count) cards, "
+        guard settings.debugGroupCards.count == expectedCardCount else {
+            print("  FAIL Settings has \(settings.debugGroupCards.count) cards, "
                   + "want \(expectedCardCount)")
             ok = false
             return
@@ -593,9 +593,9 @@ enum DaylightDrillPageSlice6SelfTest {
         // Every card belongs to exactly one category, so the seven panes
         // partition the ten cards. A card added without a category would be
         // unreachable, which is the one thing this redesign must never do.
-        let mapped = SettingsController.Category.allCases.flatMap { settings.debugCards(in: $0) }
-        if mapped.count != settings.debugCards.count {
-            print("  FAIL \(mapped.count) of \(settings.debugCards.count) cards are reachable from a category")
+        let mapped = SettingsController.Category.allCases.flatMap { settings.debugGroupCards(in: $0) }
+        if mapped.count != settings.debugGroupCards.count {
+            print("  FAIL \(mapped.count) of \(settings.debugGroupCards.count) cards are reachable from a category")
             ok = false
         }
 
@@ -605,27 +605,34 @@ enum DaylightDrillPageSlice6SelfTest {
             SettingsController.Category.allCases.map { category in
                 page.select(category)
                 page.view.layoutSubtreeIfNeeded()
-                let widths = page.debugMountedCards.map { ($0.frame.width * 10).rounded() / 10 }
-                let xs = Set(page.debugMountedCards.compactMap { card in
+                let widths = page.debugMountedGroupCards.map { ($0.frame.width * 10).rounded() / 10 }
+                let xs = Set(page.debugMountedGroupCards.compactMap { card in
                     card.superview.map { ((($0.convert(card.frame.origin, to: page.view)).x) * 10).rounded() / 10 }
                 })
-                return "\(category.rawValue):\(page.debugMountedCards.count) w=\(widths) x=\(xs.sorted())"
+                return "\(category.rawValue):\(page.debugMountedGroupCards.count) w=\(widths) x=\(xs.sorted())"
             }
         }
 
         let daylightPrint = fingerprint(settings)
-        // One column means one distinct leading edge per pane, always.
+        // A pane has exactly as many distinct leading edges as it has
+        // columns: one for every ordinary page, two for the one the captain's
+        // reference draws wide (`.page.wide`, App Intents & Shortcuts). This
+        // window is 1500pt, which is well over the breakpoint below which
+        // that page collapses back to one column - so the wide page really
+        // should be showing two here, and a single edge would mean the
+        // collapse fired when it should not have.
         for category in SettingsController.Category.allCases {
             settings.select(category)
             settings.view.layoutSubtreeIfNeeded()
-            let xs = Set(settings.debugMountedCards.compactMap { card in
+            let xs = Set(settings.debugMountedGroupCards.compactMap { card in
                 card.superview.map { ((($0.convert(card.frame.origin, to: settings.view)).x) * 10).rounded() / 10 }
             })
-            if xs.count != 1 {
-                print("  FAIL \(category.rawValue) laid its cards at \(xs.count) distinct x positions, want 1: \(xs.sorted())")
+            let wantColumns = category.isWide ? 2 : 1
+            if xs.count != wantColumns {
+                print("  FAIL \(category.rawValue) laid its cards at \(xs.count) distinct x positions, want \(wantColumns): \(xs.sorted())")
                 ok = false
             }
-            for card in settings.debugMountedCards where card.window == nil {
+            for card in settings.debugMountedGroupCards where card.window == nil {
                 print("  FAIL \(category.rawValue) orphaned a card on selection")
                 ok = false
             }
@@ -741,15 +748,21 @@ enum DaylightDrillPageSlice6SelfTest {
         let settings = makeSettings()
         let window = mount(settings)
         defer { _ = settings.view.window.map { _ in () }; _ = window }
-        if settings.debugToggles.count != 8 {
-            print("  FAIL Settings exposes \(settings.debugToggles.count) toggles, want 8")
+        if settings.debugToggles.count != 10 {
+            print("  FAIL Settings exposes \(settings.debugToggles.count) toggles, want 10")
             ok = false
         }
+        // Reached by **name**, never by an index into `debugToggles`: that
+        // array's order is the page's own reading order, so an index starts
+        // pointing at a different switch the moment a row moves - which is
+        // what happened when `fm/grandline-settings-page-redesign` put
+        // "Follow system appearance" at the top of the page.
+        let reconnect = settings.debugAutoReconnectSwitch
         let before = AppSettings.shared.autoReconnect
         defer { AppSettings.shared.autoReconnect = before }
-        settings.debugToggles[0].isOn = !before
-        _ = settings.debugToggles[0].accessibilityPerformPress()
-        _ = settings.debugToggles[0].accessibilityPerformPress()
+        reconnect.isOn = !before
+        _ = reconnect.accessibilityPerformPress()
+        _ = reconnect.accessibilityPerformPress()
         if AppSettings.shared.autoReconnect != !before {
             print("  FAIL the reconnect toggle no longer writes through to AppSettings")
             ok = false
@@ -867,8 +880,8 @@ enum DaylightDrillPageSlice6SelfTest {
         let window = mount(settings)
         defer { _ = window }
 
-        guard settings.debugCards.count == expectedCardCount else {
-            print("  FAIL Settings built \(settings.debugCards.count) cards, "
+        guard settings.debugGroupCards.count == expectedCardCount else {
+            print("  FAIL Settings built \(settings.debugGroupCards.count) cards, "
                   + "want \(expectedCardCount)")
             ok = false
             return
@@ -877,8 +890,8 @@ enum DaylightDrillPageSlice6SelfTest {
         // the expected number is that category's own - not all ten. The
         // regression this guards is unchanged: the page building every card
         // and putting none of them on screen.
-        let want = settings.debugCards(in: settings.debugSelectedCategory).count
-        let inTree = settings.debugCardsInTree
+        let want = settings.debugGroupCards(in: settings.debugSelectedCategory).count
+        let inTree = settings.debugGroupCardsInTree
         guard want > 0, inTree == want else {
             print("  FAIL Settings' \(settings.debugSelectedCategory.rawValue) pane put \(inTree) "
                   + "of its \(want) cards on screen - the rest are orphaned")

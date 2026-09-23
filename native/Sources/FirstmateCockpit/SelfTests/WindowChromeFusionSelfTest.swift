@@ -615,24 +615,35 @@ enum WindowChromeFusionSelfTest {
             defer { window.close() }
             window.setFrame(NSRect(x: -20_000, y: 0, width: 1100, height: 600), display: true)
 
-            // Settings is the page most reliably taller than a 600pt window -
-            // and since `fm/grandline-settings-page-sidebar-redesign` made it
-            // master/detail, *which pane* decides that. Terminal is the tall
-            // one: three cards, nine shortcut rows among them. The default
-            // Appearance pane is a single card and does not reliably overflow
-            // 600pt, which is what this case started failing on.
-            shell.show(.settings)
-            shell.settingsForTests.debugSidebar
-                .debugClickRow(id: SettingsController.Category.terminal.rawValue)
+            // **Bootstrap, not Settings.** This case needs a page that is
+            // both taller than a 600pt window and a real *page scroll* by
+            // `ScrollEdgeObserver`'s own definition - a scroll view pinned to
+            // the destination's own top edge, so its content passes under the
+            // bar.
+            //
+            // Settings used to be both and is now only the first.
+            // `fm/grandline-settings-page-redesign` gave it a static toolbar
+            // strip (back, forward, the page title), which puts its scroll
+            // view about 50pt down - and `ScrollEdge.swift`'s header is
+            // explicit that a page whose top is a static strip "has nothing
+            // sliding under the bar, and correctly gets no edge", naming
+            // Console, Tools and Docs as the existing family. Settings joined
+            // it, so this case moved rather than the rule bending.
+            //
+            // Bootstrap is the replacement for the same reason Settings was
+            // picked originally: its scroll view is pinned to `root.topAnchor`
+            // and its provisioning stepper is reliably taller than 600pt with
+            // no data loaded and nothing fetched.
+            shell.show(.bootstrap)
             window.contentView?.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.1))
 
             guard let scroll = shell.scrollEdgeWatchedForTests.first else {
-                return "the observer found no page scroll view on Settings"
+                return "the observer found no page scroll view on Bootstrap"
             }
             guard let document = scroll.documentView,
                   document.bounds.height > scroll.contentView.bounds.height + 50 else {
-                return "Settings' content is not taller than the window, so it cannot be scrolled"
+                return "Bootstrap's content is not taller than the window, so it cannot be scrolled"
             }
             if shell.scrollEdgeActiveForTests { return "the bar claims a scroll edge while resting at the top" }
 
@@ -663,7 +674,7 @@ enum WindowChromeFusionSelfTest {
             window.contentView?.layoutSubtreeIfNeeded()
             RunLoop.main.run(until: Date().addingTimeInterval(0.05))
             if shell.scrollEdgeActiveForTests {
-                return "Console (which has no page scroll) kept Settings' scroll edge"
+                return "Console (which has no page scroll) kept Bootstrap's scroll edge"
             }
             return nil
         }

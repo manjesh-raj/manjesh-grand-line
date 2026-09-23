@@ -634,6 +634,17 @@ adding `row.distribution = .fill` plus `.required` hugging/compression
 resistance on `leftColumn` and `.defaultLow` on `bodyStack`, the same shape as
 the Updates-page fix above.
 
+**And a fourth time, one level further in** (`fm/grandline-settings-page-
+redesign`). Fixing the *row* is not enough when the row's trailing control is
+itself a stack of two or three buttons: that inner stack is left at
+`.gravityAreas` too, so the **first** member absorbs all its slack. Measured on
+Settings' font-size presets, where "12" rendered about 300pt wide beside three
+compact siblings, in a row whose own distribution was already correct.
+`SettingsRow` now applies `.fill` plus `.required` content priorities to any
+control column still at the default, centrally rather than at each call site -
+which is the shape to copy for any component that accepts a caller-built
+control stack.
+
 ### (1) `selectText(nil)` alone starts an edit session - never pair it with `makeFirstResponder`
 
 `TabChipView.beginRename()` (fixes4) used to call
@@ -1276,6 +1287,7 @@ noted.
 | a menu-bar surface's **existing** content controller, at an injected width with `showsOwnHeader: false` | a lookalike pane for the same thing. F22's compact popover hosts `PoneglyphMenuBarPopoverController` and `StrawHatMenuBarPopoverController` themselves as two of its four tabs, so the countdown rings, the copy flash and the crew's reply states have exactly one implementation. Both take `init(width:showsOwnHeader:)` defaulting to their standalone behaviour - a required fixed width inside a narrower popover is a constraint conflict, and gotcha (13)'s window-size cap |
 | `GrandLineServices.shared` | a second `ShiftStore()`/`NotebookStore()`/`CredentialVaultStore()` built by a non-UI entry point. `AppShellController` registers the live instances there; an App Intent, the Backup card or anything else with no view controller reads them from it, and gets `nil` (not a fresh store) before the shell is up. It is a **registry, not a factory** - the vault is its one exception, and that file's header says why |
 | `DaylightSpace.destination` | a space pill that navigates by naming its own case. A pill is a canvas *filter* by default and a page when that table says so; `filtersCanvas` is what a canvas-shaped loop (and a canvas-shaped test sweep) filters on, so adding a page-shaped tab is one property and no edit anywhere else. **A space's own page is top-level, not a drill page**: `AppShellController.show` asks `DaylightSpace.owning(destination:)` whether the bar keeps its wordmark and space pills, so such a page has no drill header and must not conform to `DaylightDrillActions`. Naming the canvas there instead shipped once, and hid the whole tab strip the moment the new tab's own pill was pressed |
+| `SettingsRow` / `SettingsGroup` / `SettingsSection` / `SettingsHero` (`SettingsForm.swift`) | a hand-rolled Settings row, group card or page header. The Settings page is ~60 rows across eight pages, and the separator inset, the `.sub` indent, the dimmed-**and-inert** dependent state and the description re-wrap are exactly what drifts when each call site spells them out. A group is a real `HelmCard` with no header, so there is still one card surface |
 | `OffScreenProbe.window(...)` | `NSWindow(contentRect:)` in a suite - source-guarded |
 | `SelfTestAssertions` | a local `check`/`fail` pair in a suite - source-guarded |
 

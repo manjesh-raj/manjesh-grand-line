@@ -125,21 +125,37 @@ enum IntentsBackupSettingsViewSelfTest {
         return found
     }
 
-    /// The `HelmCard` whose header title is `title`, found in the live tree.
-    private static func card(titled title: String, in view: NSView) -> HelmCard? {
-        if let card = view as? HelmCard, labels(in: card).contains(where: { $0 == title }) { return card }
-        for subview in view.subviews {
-            if let found = card(titled: title, in: subview) { return found }
-        }
-        return nil
+    /// The group card of the section headed `heading` on `category`'s page.
+    ///
+    /// **Was `card(titled:)`, a tree walk for a `HelmCard` carrying a header
+    /// label.** `fm/grandline-settings-page-redesign` rebuilt the page to the
+    /// captain's reference, where a page is a hero plus N sections and a
+    /// section is a *heading beside* one header-less group card - so there is
+    /// no titled card to find any more. The claims below are unchanged; only
+    /// the way the card is reached is.
+    private static func groupCard(_ controller: SettingsController,
+                                  on category: SettingsController.Category,
+                                  headed heading: String) -> HelmCard? {
+        controller.debugSections(in: category)
+            .first { $0.headingLabel?.stringValue == heading }?.group.card
+    }
+
+    /// The `SettingsRow`s of that same section, for a case that measures rows
+    /// rather than reading their text.
+    private static func rows(_ controller: SettingsController,
+                             on category: SettingsController.Category,
+                             headed heading: String) -> [SettingsRow] {
+        controller.debugSections(in: category)
+            .first { $0.headingLabel?.stringValue == heading }?.group.rows ?? []
     }
 
     // MARK: F21 - the intents card
 
     private static func checkIntentsCardRendersEveryAction(_ check: (Bool, String) -> Void) {
         withMountedSettings(.intents) { controller, _ in
-            guard let card = card(titled: "Shortcuts & Siri", in: controller.view) else {
-                check(false, "the Shortcuts & Siri card is mounted on the Settings page")
+            guard let card = groupCard(controller, on: .intents,
+                                       headed: "Actions exposed to the system") else {
+                check(false, "the intent list's group card is mounted on the Settings page")
                 return
             }
             let text = labels(in: card)
@@ -152,15 +168,22 @@ enum IntentsBackupSettingsViewSelfTest {
             // GL-14: the card must say whether this copy actually publishes
             // its actions. An unbundled `swift build` binary - which is what a
             // suite runs - publishes none, so this is the branch under test.
-            check(text.contains(where: { $0.contains("unbundled") || $0.contains("Metadata.appintents") || $0.contains("Registered with the system") }),
+            // The registration line is the section's own `foot` now, which
+            // sits *below* the group card rather than inside it - so it is
+            // read off the section rather than off `labels(in: card)`. The
+            // claim is unchanged: this copy states what it really publishes.
+            let sectionFoot = controller.debugSections(in: .intents)
+                .compactMap { $0.footLabel?.stringValue }
+            check(sectionFoot.contains(where: { $0.contains("unbundled") || $0.contains("Metadata.appintents") || $0.contains("Registered with the system") }),
                   "the card states this copy's real registration status rather than implying five live actions")
         }
     }
 
     private static func checkGuardedChipIsOnCopyCredentialOnly(_ check: (Bool, String) -> Void) {
         withMountedSettings(.intents) { controller, _ in
-            guard let card = card(titled: "Shortcuts & Siri", in: controller.view) else {
-                check(false, "the Shortcuts & Siri card is mounted")
+            guard let card = groupCard(controller, on: .intents,
+                                       headed: "Actions exposed to the system") else {
+                check(false, "the intent list's group card is mounted")
                 return
             }
             let text = labels(in: card)
@@ -184,45 +207,40 @@ enum IntentsBackupSettingsViewSelfTest {
     /// is the only way to see that it did.
     private static func checkIntentRowsShareOneTrailingColumn(_ check: (Bool, String) -> Void) {
         withMountedSettings(.intents) { controller, _ in
-            guard let card = card(titled: "Shortcuts & Siri", in: controller.view) else {
-                check(false, "the Shortcuts & Siri card is mounted")
+            guard let card = groupCard(controller, on: .intents,
+                                       headed: "Actions exposed to the system") else {
+                check(false, "the intent list's group card is mounted")
                 return
             }
             controller.view.layoutSubtreeIfNeeded()
 
-            // A row is a `HoverHighlightView` wrapping one horizontal stack -
-            // which is what `descRow` builds, and what distinguishes a real row
-            // from the card's own header stack. Scoping to that matters: the
-            // header is also a two-subview horizontal stack, and including it
-            // made this measure a 12pt "spread" that was nothing to do with the
-            // rows.
-            var rightEdges: [CGFloat] = []
-            func walk(_ view: NSView) {
-                if view is HoverHighlightView,
-                   let stack = view.subviews.compactMap({ $0 as? NSStackView })
-                       .first(where: { $0.orientation == .horizontal && $0.arrangedSubviews.count == 2 }),
-                   let trailing = stack.arrangedSubviews.last, trailing.frame.width > 0 {
-                    let frame = trailing.convert(trailing.bounds, to: card)
-                    rightEdges.append((frame.maxX * 10).rounded() / 10)
-                }
-                view.subviews.forEach(walk)
+            // **Measured off the rows themselves now, not off a tree walk.**
+            // The walk this replaces looked for a `HoverHighlightView`
+            // wrapping a two-subview horizontal stack, which is what the old
+            // `descRow` built; a `SettingsRow` is a plain view whose row stack
+            // holds two or three arranged subviews depending on whether it
+            // carries a leading tile. Asking the row for its own `control` is
+            // both simpler and immune to that shape changing again.
+            let intentRows = rows(controller, on: .intents, headed: "Actions exposed to the system")
+            let rightEdges = intentRows.compactMap { row -> CGFloat? in
+                guard row.control.frame.width > 0 else { return nil }
+                let frame = row.control.convert(row.control.bounds, to: card)
+                return (frame.maxX * 10).rounded() / 10
             }
-            walk(card)
 
             check(rightEdges.count == GrandLineIntentCatalog.entries.count,
                   "found one trailing control per intent row (got \(rightEdges.count) for \(GrandLineIntentCatalog.entries.count) rows)")
             guard let first = rightEdges.first else { return }
             let spread = (rightEdges.max() ?? first) - (rightEdges.min() ?? first)
-            // Measured at 2.0pt: the four `NSTextField` trailings land on the
-            // row's edge exactly, and the one layer-backed pill container sits
-            // 2pt inside it - its width comes from its own label's intrinsic
-            // size plus fixed padding, which rounds differently from a bare
-            // label's. Four points is therefore a real tolerance rather than a
-            // fudge: it accepts that 2pt and nothing structural. What gotcha
-            // (10) actually produces here is a spread of *hundreds* of points,
-            // because each trailing control sits wherever its own description
-            // text happened to end - and these five descriptions range from
-            // four words to two lines.
+            // Four points is a real tolerance rather than a fudge: the four
+            // `NSTextField` trailings land on the row's edge exactly, and the
+            // one layer-backed pill container sits about 2pt inside it - its
+            // width comes from its own label's intrinsic size plus fixed
+            // padding, which rounds differently from a bare label's. What
+            // gotcha (10) actually produces here is a spread of *hundreds* of
+            // points, because each trailing control sits wherever its own
+            // description text happened to end - and these five descriptions
+            // range from four words to two lines.
             check(spread < 4.0,
                   "every row's trailing control shares one right edge - spread \(spread)pt (gotcha (10) makes this hundreds)")
         }
@@ -232,8 +250,8 @@ enum IntentsBackupSettingsViewSelfTest {
 
     private static func checkBackupCardListsEveryStore(_ check: (Bool, String) -> Void) {
         withMountedSettings(.backup) { controller, _ in
-            guard let card = card(titled: "Backup & Restore", in: controller.view) else {
-                check(false, "the Backup & Restore card is mounted")
+            guard let card = groupCard(controller, on: .backup, headed: "What's in a backup") else {
+                check(false, "the backup inventory's group card is mounted")
                 return
             }
             let text = labels(in: card)
@@ -244,7 +262,7 @@ enum IntentsBackupSettingsViewSelfTest {
             check(text.contains("Poneglyph vault"), "and the vault")
             check(text.contains("Hosts, SSH keys, jump hosts"), "and the sections that were always in the bundle")
 
-            check(text.contains("sealed"), "the vault is chipped as sealed rather than as ordinary content")
+            check(text.contains("Sealed"), "the vault is chipped as sealed rather than as ordinary content")
 
             // The vault row's detail is generated from a live measurement, and
             // this suite mounts Settings on its own - no `AppShellController`,
@@ -272,14 +290,14 @@ enum IntentsBackupSettingsViewSelfTest {
     /// not an omission.
     private static func checkBackupCardNamesTheExclusion(_ check: (Bool, String) -> Void) {
         withMountedSettings(.backup) { controller, _ in
-            guard let card = card(titled: "Backup & Restore", in: controller.view) else {
-                check(false, "the Backup & Restore card is mounted")
+            guard let card = groupCard(controller, on: .backup, headed: "What's in a backup") else {
+                check(false, "the backup inventory's group card is mounted")
                 return
             }
             let text = labels(in: card)
             check(text.contains("Terminal scrollback & session state"),
                   "the deliberately-excluded store is a visible row, not a silent omission")
-            check(text.contains("excluded"), "and is labelled as excluded")
+            check(text.contains("Excluded"), "and is labelled as excluded")
             check(text.contains(where: { $0.contains("Deliberately left out") }),
                   "and says it is deliberate, with the reason")
         }
