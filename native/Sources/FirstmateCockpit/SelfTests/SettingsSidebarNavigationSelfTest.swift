@@ -73,7 +73,8 @@ enum SettingsSidebarNavigationSelfTest {
                       checkEveryThemeSeparatesTheBandFromTheGround,
                       checkTheBandIsPaintedApartFromTheContent,
                       checkTheDividerIsPainted,
-                      checkEveryRowCarriesItsOwnColouredTile] {
+                      checkEveryRowCarriesItsOwnColouredTile,
+                      checkTheHeaderEndsWhereItsColumnEnds] {
             var ok = true
             check(&ok)
             allOK = allOK && ok
@@ -861,6 +862,76 @@ enum SettingsSidebarNavigationSelfTest {
         abs(a.redComponent - b.redComponent)
             + abs(a.greenComponent - b.greenComponent)
             + abs(a.blueComponent - b.blueComponent)
+    }
+
+
+    // MARK: 11. The header and the column it heads share one right edge
+
+    /// `fm/grandline-settings-alignment-regression-fix`. The page toolbar -
+    /// the breadcrumb on its left, "Saved on this Mac" on its right - is the
+    /// header for the **capped** content column below it, not for the window.
+    /// It was pinned to `root.trailingAnchor`, so on a wide window it spanned
+    /// the whole page while the column stopped at `contentMaxWidth`: measured
+    /// at a 1512pt window, the toolbar ended at 1488 against the column's own
+    /// 936, and "Saved on this Mac" sat 552pt right of everything it labels.
+    ///
+    /// **Why this needs a window and not a fitting-size calculation.** The
+    /// column's right edge is where Auto Layout actually resolved it against
+    /// a real clip view - the cap binds or it does not depending on the
+    /// window's width, and with "Show scroll bars: Always" a non-overlay
+    /// scroller takes a real ~15pt bite out of that clip (gotcha (4)). Both
+    /// widths are checked for that reason: 1512 is where the cap binds and
+    /// the old bug was visible, 900 is where it does not and the clip view is
+    /// what decides.
+    ///
+    /// **Discriminating power, asserted first.** At the wide window the two
+    /// edges agreeing is only meaningful if the column is genuinely capped
+    /// short of the page - if a future `contentMaxWidth` grew past the
+    /// window, every category would trivially pass with the old constraint
+    /// restored. So the wide pass fails loudly unless the column ends at
+    /// least 100pt inside the page's own trailing gutter.
+    private static func checkTheHeaderEndsWhereItsColumnEnds(_ ok: inout Bool) {
+        print("-- the page header ends where its content column ends --")
+        for (width, capMustBind) in [(CGFloat(1512), true), (CGFloat(900), false)] {
+            autoreleasepool {
+                let settings = makeSettings()
+                let window = mount(settings, width: width, height: 950)
+                defer { window.close() }
+                for category in SettingsController.Category.allCases {
+                    guard click(category, in: settings) else {
+                        fail("\(category.rawValue) has no sidebar row to click", &ok)
+                        continue
+                    }
+                    settings.view.layoutSubtreeIfNeeded()
+                    let header = settings.debugToolbarFrameInRoot
+                    let column = settings.debugPageContainerFrameInRoot
+                    let pageEdge = settings.view.bounds.maxX - HelmMetrics.pageGutter
+
+                    if capMustBind, column.maxX > pageEdge - 100 {
+                        fail("\(category.rawValue) at \(fmt(width)): the column ends at "
+                             + "\(fmt(column.maxX)) against a page edge of \(fmt(pageEdge)) - it is "
+                             + "not capped short of the page here, so this comparison is vacuous", &ok)
+                        continue
+                    }
+                    let delta = abs(header.maxX - column.maxX)
+                    check(delta <= 0.5,
+                          "\(category.rawValue) at \(fmt(width)): the header ends at "
+                          + "\(fmt(header.maxX)) and its content column at \(fmt(column.maxX)) - "
+                          + "\(fmt(delta))pt apart, so the header is not over the column it heads", &ok)
+                    // The two also start together, which the leading
+                    // constants already say - asserted so a future edit to
+                    // either one cannot silently align only one end.
+                    let leadDelta = abs(header.minX - column.minX)
+                    check(leadDelta <= 0.5,
+                          "\(category.rawValue) at \(fmt(width)): the header starts at "
+                          + "\(fmt(header.minX)) and its column at \(fmt(column.minX))", &ok)
+                    guard delta <= 0.5, leadDelta <= 0.5 else { continue }
+                    print("  ok   \(category.rawValue) at \(fmt(width)): header "
+                          + "\(fmt(header.minX))..\(fmt(header.maxX)), column "
+                          + "\(fmt(column.minX))..\(fmt(column.maxX)), page edge \(fmt(pageEdge))")
+                }
+            }
+        }
     }
 
 }
