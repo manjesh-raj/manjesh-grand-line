@@ -55,7 +55,7 @@ enum SettingsSidebarNavigationSelfTest {
     /// `DaylightDrillPageSlice6SelfTest` keeps one: "every card is reachable"
     /// is vacuous if the page built none, and a card genuinely appearing
     /// should have to come here and say so.
-    private static let expectedCardCount = 11
+    private static let expectedCardCount = 22
 
     static func run() -> Bool {
         // A suite that changes the active theme MUST put it back - see
@@ -152,7 +152,7 @@ enum SettingsSidebarNavigationSelfTest {
         let window = mount(settings)
         defer { _ = window }
 
-        let all = settings.debugCards
+        let all = settings.debugGroupCards
         guard all.count == expectedCardCount else {
             print("  FAIL Settings built \(all.count) cards, want \(expectedCardCount) - "
                   + "move this literal and say what added or removed one")
@@ -162,7 +162,7 @@ enum SettingsSidebarNavigationSelfTest {
 
         var seen: [ObjectIdentifier: [String]] = [:]
         for category in SettingsController.Category.allCases {
-            let cards = settings.debugCards(in: category)
+            let cards = settings.debugGroupCards(in: category)
             if cards.isEmpty {
                 print("  FAIL category \(category.rawValue) shows no cards at all")
                 ok = false
@@ -217,20 +217,28 @@ enum SettingsSidebarNavigationSelfTest {
                       + "after clicking \(category.rawValue)")
                 ok = false
             }
-            let mounted = settings.debugMountedCards
-            let want = settings.debugCards(in: category)
+            let mounted = settings.debugMountedGroupCards
+            let want = settings.debugGroupCards(in: category)
             if mounted.map(ObjectIdentifier.init) != want.map(ObjectIdentifier.init) {
                 print("  FAIL \(category.rawValue)'s pane holds \(mounted.count) cards, want \(want.count) "
                       + "in the same order")
                 ok = false
             }
-            // The other categories' cards must be genuinely detached, not
-            // hidden - gotcha (15): a hidden view is still solved by the
-            // window's own full-screen minimum-size derivation, so hiding
-            // would keep all ten constraint chains live.
-            for card in settings.debugCards where !want.contains(where: { $0 === card }) {
-                if card.superview != nil {
-                    print("  FAIL a card from another category is still in the tree on \(category.rawValue)")
+            // The other pages must be genuinely detached, not hidden -
+            // gotcha (15): a hidden view is still walked by the window's own
+            // full-screen minimum-size derivation, so hiding would keep every
+            // page's constraint chains live.
+            //
+            // **Asserted as "no path to the window", not "no superview".**
+            // Detachment happens one level up now: a page keeps its own
+            // section/card subtree assembled and it is the *page* that is
+            // pulled out of the detail pane, so an unmounted card still has a
+            // superview and always did. What gotcha (15) is actually about is
+            // whether the window's constraint solve can reach it, and
+            // `window == nil` is that question asked directly.
+            for card in settings.debugGroupCards where !want.contains(where: { $0 === card }) {
+                if card.window != nil {
+                    print("  FAIL a card from another category still reaches the window on \(category.rawValue)")
                     ok = false
                     break
                 }
@@ -355,18 +363,39 @@ enum SettingsSidebarNavigationSelfTest {
         defer { _ = window }
 
         // (category, a human name, read, the toggle that drives it)
+        //
+        // Each toggle is reached by **name**, never by an index into
+        // `debugToggles`: that array's order is the page's reading order, so
+        // an index silently starts pointing at a different switch the moment
+        // a row moves - which is how this case came to press "Follow system
+        // appearance" and report that Reconnect automatically was broken.
         let cases: [(SettingsController.Category, String, () -> Bool, HelmToggle)] = [
             (.terminal, "Reconnect automatically",
-             { AppSettings.shared.autoReconnect }, settings.debugToggles[0]),
+             { AppSettings.shared.autoReconnect }, settings.debugAutoReconnectSwitch),
             (.terminal, "Bell & notifications",
-             { AppSettings.shared.notifyOnNeedsDecision }, settings.debugToggles[1]),
+             { AppSettings.shared.notifyOnNeedsDecision }, settings.debugNotifySwitch),
             (.briefings, "Show a morning briefing on Fleet",
-             { AppSettings.shared.morningBriefingEnabled }, settings.debugToggles[2]),
+             { AppSettings.shared.morningBriefingEnabled }, settings.debugMorningBriefingSwitch),
             (.briefings, "Show the daily review on Fleet",
-             { AppSettings.shared.dailyReviewEnabled }, settings.debugToggles[3]),
+             { AppSettings.shared.dailyReviewEnabled }, settings.debugDailyReviewSwitch),
             (.menuBar, "Badge the status item",
              { AppSettings.shared.compactModeBadgesOverdueCount }, settings.debugCompactBadgeSwitch),
         ]
+
+        // The badge row is a *dependent* row of "Live in the menu bar" now
+        // (`fm/grandline-settings-page-redesign`), so it is deliberately
+        // inert while that switch is off - which is exactly the state a fresh
+        // domain is in. Turning the parent on is what makes the case measure
+        // the wiring rather than the dimming; the dimming itself has its own
+        // case in `SettingsRedesignSelfTest`.
+        let compactBefore = AppSettings.shared.compactModeEnabled
+        defer {
+            AppSettings.shared.compactModeEnabled = compactBefore
+            settings.debugCompactModeSwitch.isOn = compactBefore
+        }
+        if !compactBefore {
+            _ = settings.debugCompactModeSwitch.accessibilityPerformPress()
+        }
 
         for (category, name, read, toggle) in cases {
             guard click(category, in: settings) else {
@@ -465,7 +494,7 @@ enum SettingsSidebarNavigationSelfTest {
                 }
                 // And the detail column really is capped rather than tracking
                 // the window forever, which is the other half of the change.
-                let widest = settings.debugMountedCards.map(\.frame.width).max() ?? 0
+                let widest = settings.debugMountedGroupCards.map(\.frame.width).max() ?? 0
                 if widest > 940 {
                     print("  FAIL \(category.rawValue)'s cards render \(fmt(widest))pt wide at a "
                           + "\(fmt(width))pt window - the column cap is not holding")

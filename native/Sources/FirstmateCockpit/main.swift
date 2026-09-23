@@ -343,6 +343,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         settingsController.onFontSizeStep = { [weak self] delta in
             self?.console.stepFontSize(by: delta)
         }
+        // Settings > Security points at the vault rather than drawing the
+        // vault's own controls: they live sealed inside the encrypted file,
+        // and AGENTS.md is explicit that anything reaching the vault from
+        // outside the vault page goes through the vault's own unlock.
+        settingsController.onNavigate = { [weak self] destination in
+            self?.appShell.show(destination)
+        }
+
+        // `fm/grandline-settings-page-redesign`: Settings > Appearance's
+        // "Follow system appearance". Started unconditionally - the observer
+        // costs nothing while the setting is off, and registering it here is
+        // what makes switching it on take effect without a relaunch. It also
+        // applies the system's current mode immediately, which is what puts a
+        // captain who follows the system on the right half of their pair
+        // after an overnight switch.
+        SystemAppearanceFollower.shared.start()
 
         // Settings > Terminal's "Bell & notifications" toggle (Fix 3): this
         // only ever gates whether a macOS banner is ALSO posted for a
@@ -3666,6 +3682,23 @@ if ProcessInfo.processInfo.environment["FM_RUN_SETTINGS_THEME_LAYOUT_PARITY_TEST
 // pane, and a representative control per category writing through.
 if ProcessInfo.processInfo.environment["FM_RUN_SETTINGS_SIDEBAR_TESTS"] == "1" {
     exit(SettingsSidebarNavigationSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-settings-page-redesign`: the page was rebuilt to the
+// captain's own HTML reference, and this covers the five behaviours that
+// rebuild introduced - sidebar search, back/forward history, the theme grid's
+// filter and selection, dependent-row dimming, and the OAuth fields' reveal.
+// See SettingsRedesignSelfTest.swift's header for why each one can break
+// silently.
+if ProcessInfo.processInfo.environment["FM_RUN_SETTINGS_REDESIGN_TESTS"] == "1" {
+    exit(SettingsRedesignSelfTest.run() ? 0 : 1)
+}
+
+// `fm/grandline-settings-page-redesign`: "Follow system appearance" and its
+// light/dark pair. Pure logic, so it guards the blocking CI job - see that
+// file's header for why the fallbacks are the part worth guarding.
+if ProcessInfo.processInfo.environment["FM_RUN_SYSTEM_APPEARANCE_TESTS"] == "1" {
+    exit(SystemAppearanceFollowerSelfTest.run() ? 0 : 1)
 }
 
 // `fm/grand-line-console-claude-usage-button`: the "Claude usage" toolbar

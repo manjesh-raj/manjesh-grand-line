@@ -462,6 +462,10 @@ NEEDS_SESSION=(
   # in a real window and drives its sidebar, reading rendered geometry and
   # painted row fills back out of it.
   "FM_RUN_SETTINGS_SIDEBAR_TESTS"
+  # `fm/grandline-settings-page-redesign`: drives real sidebar-row and
+  # theme-card presses and reads rendered geometry and dimming back out, in a
+  # real window.
+  "FM_RUN_SETTINGS_REDESIGN_TESTS"
   "FM_RUN_UPDATES_REFRESH_BUTTON_THEME_TESTS"
   "FM_RUN_CONSOLE_CLAUDE_USAGE_TESTS"
   "FM_RUN_TAB_FORWARD_DRAGS_TOGGLE_TESTS"

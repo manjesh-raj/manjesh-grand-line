@@ -46,6 +46,9 @@ final class AppSettings {
         static let compactModeEnabled = "fm.compactModeEnabled"
         static let compactModeHidesDockIcon = "fm.compactModeHidesDockIcon"
         static let compactModeBadgesOverdueCount = "fm.compactModeBadgesOverdueCount"
+        static let followSystemAppearance = "fm.followSystemAppearance"
+        static let systemLightThemeID = "fm.systemLightThemeID"
+        static let systemDarkThemeID = "fm.systemDarkThemeID"
     }
 
     /// GL-P3 (audit §6.10): the defaults store is injectable.
@@ -239,6 +242,44 @@ final class AppSettings {
     var compactModeBadgesOverdueCount: Bool {
         get { defaults.bool(forKey: Keys.compactModeBadgesOverdueCount) }
         set { defaults.set(newValue, forKey: Keys.compactModeBadgesOverdueCount) }
+    }
+
+    /// `fm/grandline-settings-page-redesign`: whether the app switches
+    /// between `systemLightThemeID` and `systemDarkThemeID` when macOS
+    /// switches between light and dark.
+    ///
+    /// **Off by default, and that is not caution.** A captain who has picked
+    /// one of the twenty-six palettes has expressed a preference for that
+    /// palette, not for a mode - turning this on by default would silently
+    /// discard the stored `fm.themeID` the first time the sun set, which is
+    /// the same "overriding a stored preference" defect `ThemeManager.
+    /// fallbackTheme`'s own note refuses to commit in the other direction.
+    /// Switching it on is what asks for a pair to be honoured instead.
+    ///
+    /// `SystemAppearanceFollower` is the only reader.
+    var followSystemAppearance: Bool {
+        get { defaults.bool(forKey: Keys.followSystemAppearance) }
+        set { defaults.set(newValue, forKey: Keys.followSystemAppearance) }
+    }
+
+    /// The light half of the pair `followSystemAppearance` switches between.
+    ///
+    /// Defaults to the app's own light theme rather than to the *active*
+    /// theme, so the stored pair is a real pair from the first read - a
+    /// default of "whatever is selected right now" would let a captain who
+    /// switched this on while in Dusk end up with a dark theme in the light
+    /// slot, which `SystemAppearanceFollower.resolvedTheme` would then have
+    /// to correct behind their back.
+    var systemLightThemeID: String {
+        get { defaults.string(forKey: Keys.systemLightThemeID) ?? HelmTheme.light.id }
+        set { defaults.set(newValue, forKey: Keys.systemLightThemeID) }
+    }
+
+    /// The dark half. Defaults to `ThemeManager.fallbackTheme`, which is the
+    /// palette a fresh install already opens on.
+    var systemDarkThemeID: String {
+        get { defaults.string(forKey: Keys.systemDarkThemeID) ?? ThemeManager.fallbackTheme.id }
+        set { defaults.set(newValue, forKey: Keys.systemDarkThemeID) }
     }
 
     /// Dictation's "Use local Whisper engine" toggle

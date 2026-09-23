@@ -142,6 +142,25 @@ final class AppLockController {
         self.systemIdleSeconds = systemIdleSeconds
     }
 
+    /// The two thresholds this app is configured with, for a page that wants
+    /// to *state* them rather than change them.
+    ///
+    /// `fm/grandline-settings-page-redesign`: the Settings page's App lock
+    /// section shows both, and it has to show the values actually in force -
+    /// which are the `FM_APP_LOCK_*` environment overrides where they are
+    /// set, and the defaults otherwise. Reading the same `envThreshold` the
+    /// initialiser reads is what keeps the page from claiming an hour while
+    /// the controller runs on five minutes.
+    ///
+    /// Deliberately not a read of the live controller: the app builds exactly
+    /// one and Settings has no reference to it, and a page that could reach
+    /// it could also change it - which these are not (there is no UI for
+    /// setting them, on purpose; see the section's own copy).
+    static func configuredThresholds() -> (idle: TimeInterval, session: TimeInterval) {
+        (idle: envThreshold("FM_APP_LOCK_IDLE_SECONDS", default: 3600),
+         session: envThreshold("FM_APP_LOCK_SESSION_SECONDS", default: 12 * 3600))
+    }
+
     private static func envThreshold(_ key: String, default def: TimeInterval) -> TimeInterval {
         guard let raw = ProcessInfo.processInfo.environment[key], let value = TimeInterval(raw) else { return def }
         return value

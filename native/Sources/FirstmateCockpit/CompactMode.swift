@@ -173,7 +173,31 @@ final class CompactModeHotkey {
     /// footer advertises, instead of a second copy of this predicate.
     static func matches(_ event: NSEvent) -> Bool {
         guard event.keyCode == gKeyCode else { return false }
-        return event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.control, .option]
+        return event.modifierFlags.intersection(.deviceIndependentFlagsMask) == modifiers
+    }
+
+    /// The chord `matches` accepts, as one value rather than a literal inside
+    /// the predicate.
+    ///
+    /// `fm/grandline-settings-page-redesign`: the Settings page states this
+    /// chord, and a second copy of it there is how a page comes to advertise
+    /// a shortcut the app no longer listens for. Both the predicate above and
+    /// `displayChord` below derive from these two, so there is one definition.
+    static let modifiers: NSEvent.ModifierFlags = [.control, .option]
+
+    /// "\u{2303}\u{2325}G" - what the Settings page and the popover's own
+    /// footer print.
+    static var displayChord: String {
+        var chord = ""
+        if modifiers.contains(.control) { chord += "\u{2303}" }
+        if modifiers.contains(.option) { chord += "\u{2325}" }
+        if modifiers.contains(.shift) { chord += "\u{21E7}" }
+        if modifiers.contains(.command) { chord += "\u{2318}" }
+        // The one key this hotkey has, named rather than reverse-mapped from
+        // its Carbon keycode: there is no public keycode-to-character table
+        // that does not go through the current keyboard layout, and this
+        // chord is layout-independent by construction.
+        return chord + "G"
     }
 }
 

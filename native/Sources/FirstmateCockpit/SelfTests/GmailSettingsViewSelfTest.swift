@@ -102,12 +102,24 @@ enum GmailSettingsViewSelfTest {
     private static func checkTheCategoryExistsAndCarriesTheCard(_ check: (Bool, String) -> Void) {
         check(SettingsController.Category.allCases.contains(.gmail),
               "Gmail should be a settings category")
-        check(SettingsController.Category.gmail.title == "Gmail",
-              "and titled the way the captain named it")
+        // "Google Accounts", not "Gmail": the captain's own Settings
+        // reference (`fm/grandline-settings-page-redesign`) names the page
+        // that, and the page really is about the account rather than about
+        // mail - the one consumer of a connected account is the daily
+        // review's calendar column.
+        check(SettingsController.Category.gmail.title == "Google Accounts",
+              "and titled the way the captain's reference names it, got "
+              + "\"\(SettingsController.Category.gmail.title)\"")
         withMountedSettings { settings, _, _ in
             check(settings.debugSelectedCategory == .gmail, "selecting it should move the pane")
-            check(settings.debugCardsInTree == 1,
-                  "exactly the Gmail card should be mounted, got \(settings.debugCardsInTree)")
+            // Three sections now - Accounts, Calendar, OAuth client - each
+            // one group card, which is the shape the redesign gave every
+            // page. The claim is unchanged: the selected page's cards, and
+            // only those, are on screen.
+            check(settings.debugGroupCardsInTree == settings.debugSections(in: .gmail).count,
+                  "exactly the Google Accounts page's cards should be mounted, got "
+                  + "\(settings.debugGroupCardsInTree) of "
+                  + "\(settings.debugSections(in: .gmail).count)")
             let rows = settings.debugGmailRows
             check(rows.count == 2, "two slots - work and personal, got \(rows.count)")
             check(rows.map(\.slot) == [.work, .personal], "in that order")
