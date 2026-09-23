@@ -32,6 +32,7 @@ enum Audit3BugFixesSelfTest {
                       checkEmptyStateWatermarkIsNeverASlab,
                       checkDrillTitleHasAFloorAndYieldsLast,
                       checkQuickAccessCollapsesAndStillReachesEveryDestination,
+                      checkQuickAccessOverflowHasNoDeadRowAndSkipsAOneRowMenu,
                       checkUpdatesToastStaysOnItsOwnPage,
                       checkSettingsColumnsKeepCardsAtTheirOwnHeight,
                       checkDictationChipIsContentSized,
@@ -312,6 +313,117 @@ enum Audit3BugFixesSelfTest {
         }
         check(picked == pinned,
               "the collapsed menu should reach \(pinned.map(\.title)) (reached \(picked.map(\.title)))", &ok)
+
+        // **The collapsed row is the multi-destination branch**, and it has to
+        // stay a menu - the direct-navigation shortcut below must never eat a
+        // case where the captain genuinely has a choice to make.
+        check(pinned.count > 1,
+              "the collapsed row carries \(pinned.count) destination(s) - the "
+              + "\"still a menu\" check below would be vacuous", &ok)
+        check(bar.debugQuickAccessOverflowClickTarget() == nil,
+              "a collapsed row of \(pinned.count) should still pop a menu, not navigate "
+              + "straight to \(String(describing: bar.debugQuickAccessOverflowClickTarget()))", &ok)
+    }
+
+    // MARK: The overflow button carries no dead row, and skips a one-row menu
+
+    /// The captain's own report: the overflow "…" menu's "All Destinations…"
+    /// row "is not required (nothing is happening even now)", and with it gone
+    /// a menu whose only other row is Hosts is not required either.
+    ///
+    /// Both halves are asserted against the **real** bar rather than the
+    /// captain's particular window: the dead row is gone from every
+    /// configuration, and the direct-navigation branch is driven at both
+    /// counts rather than assumed to be the one the default row produces.
+    private static func checkQuickAccessOverflowHasNoDeadRowAndSkipsAOneRowMenu(_ ok: inout Bool) {
+        print("\n-- The overflow menu drops its dead row, and a lone destination skips the menu --")
+
+        let bar = DaylightBarController()
+        bar.loadView()
+        bar.view.frame = NSRect(x: 0, y: 0, width: 1512, height:
+            DaylightBarController.height + DaylightBarController.topMargin)
+        bar.view.layoutSubtreeIfNeeded()
+
+        // 1. The dead row is gone - from a menu that still has real rows in
+        //    it, so this is not passing merely because the menu is empty.
+        let multi = QuickAccessConfiguration(pinned: [
+            .stickyBoard, .codePreview, .shift, .strawHat, .poneglyph, .console, .hosts, .tools,
+        ])
+        bar.setQuickAccess(multi)
+        bar.view.layoutSubtreeIfNeeded()
+        let overflowed = multi.overflow
+        check(overflowed.count > 1,
+              "this fixture overflows \(overflowed.count) destination(s) - the menu checks "
+              + "below would be vacuous", &ok)
+        let titles = bar.debugQuickAccessOverflowMenu().items.map(\.title)
+        check(titles == overflowed.map(\.title),
+              "the overflow menu should be exactly \(overflowed.map(\.title)), and nothing "
+              + "else - it is \(titles)", &ok)
+        check(!titles.contains { $0.hasPrefix("All Destinations") },
+              "the overflow menu should carry no \"All Destinations\u{2026}\" row - it is \(titles)", &ok)
+        check(!bar.debugQuickAccessOverflowMenu().items.contains { $0.isSeparatorItem },
+              "the overflow menu should carry no separator either - the only row it ever "
+              + "divided off was the dead one", &ok)
+
+        // 2. Two overflowing destinations still pop a menu, and every row of
+        //    it still navigates - the mechanism review #3's B6 built is
+        //    untouched.
+        var picked: [RailDestination] = []
+        bar.onSelectDestination = { picked.append($0) }
+        check(bar.debugQuickAccessOverflowClickTarget() == nil,
+              "\(overflowed.count) overflowing destinations should pop a menu, not navigate", &ok)
+        for item in bar.debugQuickAccessOverflowMenu().items where item.action != nil {
+            _ = item.target?.perform(item.action, with: item)
+        }
+        check(picked == overflowed,
+              "the overflow menu should reach \(overflowed.map(\.title)) (reached \(picked.map(\.title)))", &ok)
+
+        // 3. One overflowing destination navigates straight to it. This is the
+        //    captain's own configuration - the shipped default pins seven
+        //    against UX2's cap of six - so it is asserted on the default row
+        //    rather than only on a fixture.
+        let shipped = QuickAccessConfiguration()
+        bar.setQuickAccess(shipped)
+        bar.view.layoutSubtreeIfNeeded()
+        check(shipped.overflow.count == 1,
+              "the shipped row should overflow exactly one destination (it overflows "
+              + "\(shipped.overflow.count)) - otherwise this case no longer measures the "
+              + "captain's own configuration", &ok)
+        check(!bar.debugQuickAccessOverflowButton().isHidden,
+              "the overflow button should still be showing for a single overflow", &ok)
+        check(bar.debugQuickAccessOverflowClickTarget() == shipped.overflow.first,
+              "a single overflowing destination should navigate straight to "
+              + "\(String(describing: shipped.overflow.first)) - the click target is "
+              + "\(String(describing: bar.debugQuickAccessOverflowClickTarget()))", &ok)
+        // **And the real target/action path, not just the decision.** A
+        // `performClick` runs exactly what a mouse runs, so this covers the
+        // button's own wiring too - an unwired button decides the same thing
+        // and still does nothing. It is safe only on this branch: the
+        // multi-destination one calls `NSMenu.popUp`, which would block here.
+        picked = []
+        bar.debugQuickAccessOverflowButton().performClick(nil)
+        check(picked == [shipped.overflow.first].compactMap { $0 },
+              "clicking the overflow button should have navigated to "
+              + "\(String(describing: shipped.overflow.first)) - it reached \(picked.map(\.title))", &ok)
+        // The button says where it goes. "More destinations" on a control that
+        // opens exactly one page is the only thing VoiceOver would have.
+        let button = bar.debugQuickAccessOverflowButton()
+        check(button.toolTip == shipped.overflow.first?.title,
+              "the button's tooltip is \(String(describing: button.toolTip)), expected "
+              + "\(String(describing: shipped.overflow.first?.title))", &ok)
+        check(button.accessibilityLabel() == shipped.overflow.first?.title,
+              "the button's accessibility label is \(String(describing: button.accessibilityLabel()))", &ok)
+
+        // 4. Six or fewer pins: no overflow at all, so the button is gone
+        //    rather than navigating somewhere of its own invention.
+        bar.setQuickAccess(QuickAccessConfiguration(pinned: [.console, .hosts]))
+        bar.view.layoutSubtreeIfNeeded()
+        check(bar.debugQuickAccessOverflowButton().isHidden,
+              "nothing overflows, so the overflow button should be hidden", &ok)
+        check(bar.debugQuickAccessOverflowClickTarget() == nil,
+              "nothing overflows, so there is nothing to navigate straight to", &ok)
+        check(bar.debugQuickAccessOverflowButton().toolTip == "More destinations",
+              "with no overflow the button should be back to its generic label", &ok)
     }
 
     // MARK: B8 - a toast belongs to the page that raised it

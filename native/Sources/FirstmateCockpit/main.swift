@@ -453,6 +453,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // below) wires that control to call back through this property, and
         // would silently clobber a direct assignment made before that point.
         appShell.onSearchTapped = { [weak self] in self?.unifiedSearch.present() }
+        // ⌘K's own "All Destinations…" verb, forwarded the same way the
+        // Search pill's click is - and for the same reason the line above
+        // gives: `loadView()` has not run yet, so this has to be the shell's
+        // property rather than anything reached through `appShell.bar`.
+        //
+        // **This assignment was missing, and that made the verb dead.** The
+        // property existed and `UnifiedSearchProviders` called it, but nothing
+        // in the app ever set it, so ⌘K → "All Destinations…" silently did
+        // nothing - the same defect, in a second entry point, that
+        // `fm/grandline-remove-dead-all-destinations-overflow` removed from
+        // the bar's overflow menu. The overlay itself was never broken; only
+        // the routes into it were, and ⌘⇧D/Go went through `showAllDestinations`
+        // directly and so always worked.
+        appShell.onShowAllDestinations = { [weak self] in self?.showAllDestinations() }
         // F2: the toast names where it went, because the router has five
         // answers now and "Task captured" would be wrong for four of them.
         shiftQuickCapture.onCaptured = { [weak self] destination in
@@ -1330,8 +1344,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: Command palette (phase 4 "Knowledge and speed"; expanded by F5)
 
-    /// The Go menu's "All Destinations…" (⌘⇧D) and the quick-access overflow
-    /// menu's own row into it - UX1.
+    /// The Go menu's "All Destinations…" (⌘⇧D) and ⌘K's verb of the same
+    /// name - UX1.
+    ///
+    /// The bar's quick-access overflow menu used to carry a third row into
+    /// here. It is gone: it was wired to a closure nothing ever assigned, so
+    /// it did nothing at all, and the captain asked for it removed rather than
+    /// repaired - see `docs/history/03-navigation-and-chrome.md`.
     @objc func showAllDestinations() {
         allDestinations.toggle()
     }

@@ -43,6 +43,7 @@ enum NavigationCoherenceSelfTest {
     static func run() -> Bool {
         var ok = true
         ok = checkEveryDestinationIsOnTheMap() && ok
+        ok = checkTheMapIsActuallyReachable() && ok
         ok = checkQuickAccessCapAndOrder() && ok
         ok = checkQuickAccessRoundTrips() && ok
         ok = checkContextualNewRouting() && ok
@@ -251,6 +252,48 @@ enum NavigationCoherenceSelfTest {
         check(missing.isEmpty, "UX1: the all-destinations map is missing \(missing) - a destination nobody can find", &ok)
         check(listed.count == listedSet.count,
               "UX1: the map lists \(listed.count - listedSet.count) destination(s) twice", &ok)
+        return ok
+    }
+
+    /// UX1's other half: a complete map nobody can open is still a map nobody
+    /// can open.
+    ///
+    /// **This is a source guard because the defect it catches is invisible
+    /// every other way.** `AppShellController.onShowAllDestinations` is an
+    /// optional closure, ⌘K's "All Destinations…" verb is its only caller,
+    /// and `main.swift` never assigned it - so the row rendered correctly,
+    /// matched the captain's search correctly, highlighted correctly, and did
+    /// nothing when invoked. Nothing failed: not a build, not a test, not a
+    /// visual check. The bar's overflow menu carried a second row with the
+    /// same defect, which is the one the captain reported
+    /// (`fm/grandline-remove-dead-all-destinations-overflow`) and which was
+    /// removed rather than repaired.
+    ///
+    /// Asserting the *assignment* rather than the behaviour is deliberate: the
+    /// behaviour needs a real `AppDelegate`, which needs `NSApplication.shared`
+    /// - and `NSApp` is nil in a headless suite, where reading it crashes
+    /// rather than fails (AGENTS.md). The overlay's own behaviour is already
+    /// covered above; what has no other witness is the wire.
+    private static func checkTheMapIsActuallyReachable() -> Bool {
+        var ok = true
+        guard let dir = SelfTestSources.appSourceDirectory() else {
+            fail("UX1: could not locate the app sources - this check would silently pass", &ok)
+            return ok
+        }
+        let mainPath = dir.appendingPathComponent("main.swift")
+        guard let main = try? String(contentsOf: mainPath, encoding: .utf8) else {
+            fail("UX1: could not read main.swift - this check would silently pass", &ok)
+            return ok
+        }
+        // The sentinel first: a grep that matches nothing because the file
+        // moved passes just as happily as one that matches because the wire
+        // is there.
+        check(main.contains("appShell.onSearchTapped ="),
+              "UX1: main.swift no longer wires `onSearchTapped` either - this check has lost "
+              + "its bearings and would pass vacuously", &ok)
+        check(main.contains("appShell.onShowAllDestinations ="),
+              "UX1: nothing in main.swift assigns `appShell.onShowAllDestinations`, so ⌘K's "
+              + "\"All Destinations…\" is a dead row - it renders, matches and does nothing", &ok)
         return ok
     }
 
