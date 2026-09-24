@@ -1376,6 +1376,23 @@ how the trust story was eliminated here rather than assumed. Swift expression
 evaluation does not work against the packaged build (no debug info), but plain
 ObjC/C calls do.
 
+**A privacy-pane toggle shown ON is not proof `AXIsProcessTrusted()` (or any
+other live TCC check) reads true for the process actually running** -
+confirmed a second time, independently, on Dictation's silent-auto-paste
+failure (`fm/grandline-dictation-autopaste-not-firing`): the exact same
+read-only `lldb -p` attach above, run against the captain's real running
+instance, read `AXIsProcessTrusted() == 0` while System Settings > Privacy &
+Security > Accessibility showed a "Grand Line" row toggled on in the same
+minute. The captain had already tried the obvious fix (toggle off, toggle on,
+fully quit and relaunch) with no change - that is expected, not evidence
+against this diagnosis, since a re-toggle is not guaranteed to force a fresh
+`tccd` re-validation for every prior grant shape. The only reliable recovery is
+removing the row entirely and re-adding it, a captain-only action (no
+interactive TCC dialog, no password, and `TCC.db` is SIP-protected even to
+root). Never conclude "Accessibility must be denied" - or accept a captain's
+"it looks granted" - from the Settings UI alone; read the live process. See
+[`16-dictation.md`](docs/history/16-dictation.md) for the full investigation.
+
 
 ---
 

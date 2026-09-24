@@ -69,6 +69,17 @@ enum DictationStatus: Equatable {
     /// `DictationEngine`'s `systemDictationDisabledErrorDomain`/`Code` for the
     /// exact live-confirmed shape - never inferred from silence/timing.
     case systemDictationDisabled
+    /// A dictation finished and the transcript reached the pasteboard, but
+    /// the automatic ⌘V was never actually posted - either
+    /// `AXIsProcessTrusted()` read false at that exact moment (the common
+    /// case: Accessibility looks granted in System Settings but the running
+    /// process isn't currently trusted - see `pasteAtCursor`'s doc comment)
+    /// or the synthetic `CGEvent` itself failed to construct. Distinct from
+    /// `.needsAccessibility`, which also covers the case where Dictation was
+    /// never even used yet - this one only ever follows a real attempt, so
+    /// its copy can say plainly what already happened ("copied to your
+    /// clipboard") instead of only what's missing.
+    case copiedOnly
 
     var title: String {
         switch self {
@@ -81,6 +92,7 @@ enum DictationStatus: Equatable {
         case .cleaningUp: return "Cleaning up…"
         case .didNotCatchThat: return "Didn't catch that"
         case .systemDictationDisabled: return "System Dictation is disabled"
+        case .copiedOnly: return "Copied, not pasted"
         }
     }
 
@@ -99,6 +111,7 @@ enum DictationStatus: Equatable {
         case .cleaningUp: return "Rewriting your transcript into a clean sentence…"
         case .didNotCatchThat: return "No speech was recognized that time - hold \(shortcutDisplay) and try again."
         case .systemDictationDisabled: return "macOS's own Dictation setting is off, so Grand Line can't transcribe speech. Turn it on in System Settings > Keyboard > Dictation, then try again."
+        case .copiedOnly: return "Grand Line couldn't paste automatically that time, so the transcript is on your clipboard instead - press \u{2318}V to paste it. If Accessibility already looks granted in System Settings, remove Grand Line from that list and re-add it - a real trust check just came back denied."
         }
     }
 
@@ -113,13 +126,14 @@ enum DictationStatus: Equatable {
         case .cleaningUp: return "sparkles"
         case .didNotCatchThat: return "questionmark.circle.fill"
         case .systemDictationDisabled: return "gear.badge.xmark"
+        case .copiedOnly: return "doc.on.clipboard.fill"
         }
     }
 
     var tint: HelmTint {
         switch self {
         case .ready: return .good
-        case .needsMicrophone, .needsSpeechRecognition, .needsAccessibility, .didNotCatchThat, .systemDictationDisabled: return .warn
+        case .needsMicrophone, .needsSpeechRecognition, .needsAccessibility, .didNotCatchThat, .systemDictationDisabled, .copiedOnly: return .warn
         case .recording, .transcribing, .cleaningUp: return .accent
         }
     }
@@ -879,9 +893,61 @@ final class DictationEngine {
     /// place both paths above converge, so paste and history always agree on
     /// which text was actually used.
     private func deliver(_ text: String, duration: TimeInterval) {
-        Self.pasteAtCursor(text)
+        let outcome = Self.pasteAtCursor(text)
         onTranscript?(text, duration)
-        report(DictationPermissions.currentStatus())
+        // `DictationPermissions.currentStatus()` already reads
+        // `AXIsProcessTrusted()` fresh, so it naturally resolves to
+        // `.needsAccessibility` on the same `.skippedNoTrust` path
+        // `pasteAtCursor` just took - the two calls can't disagree, since
+        // both read the identical live trust state. The one outcome that
+        // call can't distinguish on its own is `.eventCreationFailed`
+        // (trust genuinely true, but `CGEvent(keyboardEventSource:...)`
+        // itself returned `nil`) - vanishingly rare in practice, but still
+        // real degradation the status must not paper over as `.ready`.
+        switch outcome {
+        case .posted:
+            report(DictationPermissions.currentStatus())
+        case .skippedNoTrust:
+            report(.copiedOnly)
+        case .eventCreationFailed:
+            report(.copiedOnly)
+        }
+    }
+
+    /// What actually happened the moment `pasteAtCursor` ran - the piece the
+    /// old `Void` return type couldn't say, which is exactly how a real
+    /// captain-reported bug (`fm/grandline-dictation-autopaste-not-firing`)
+    /// stayed silent: the pasteboard write always succeeds, so a trust
+    /// check that read false at that exact instant produced no error, no
+    /// log, and a status that still resolved to something that read as
+    /// success. See `deliver(_:duration:)`, the one caller.
+    enum PasteOutcome: Equatable {
+        /// The synthetic ⌘V was actually posted to the HID event tap.
+        /// `CGEvent.post` itself returns no success/failure signal (Apple's
+        /// API has none), so this only ever means "trust was true and both
+        /// events were constructed" - not a delivery guarantee.
+        case posted
+        /// `AXIsProcessTrustedWithOptions`'s live, un-prompted read
+        /// (`isAccessibilityTrustedForPaste`) came back false at the moment
+        /// of paste. Live-confirmed on this task (`AGENTS.md`'s "Verifying
+        /// native UI bugs" convention, via a read-only `lldb -p` attach to
+        /// the captain's own running instance): this is a real, reachable
+        /// state even while System Settings > Privacy & Security >
+        /// Accessibility shows a "Grand Line" row toggled on - the toggle
+        /// reflects whichever grant `tccd` has on record, and a locally
+        /// self-signed dev build (`TeamIdentifier=not set`) is exactly the
+        /// case Apple's TCC is least willing to carry a grant across
+        /// without re-confirmation (this repo's own rename history,
+        /// `docs/history/45-rename-to-grand-line.md`, already documents the
+        /// identical mechanism for the Keychain ACL). Toggling the row off
+        /// and back on does not reliably fix this - removing it and
+        /// re-adding it does.
+        case skippedNoTrust
+        /// Trust was true, but `CGEvent(keyboardEventSource:virtualKey:keyDown:)`
+        /// returned `nil` for one or both events - undocumented when this can
+        /// happen and not reproduced live, but real degradation all the same,
+        /// so it is never silently folded into `.posted`.
+        case eventCreationFailed
     }
 
     /// Pastes `text` at the current cursor position in whichever app
@@ -905,24 +971,42 @@ final class DictationEngine {
     /// clobbering their clipboard. Never set in the shipping app.
     static var pasteSinkForTests: ((String) -> Void)?
 
-    static func pasteAtCursor(_ text: String) {
+    @discardableResult
+    static func pasteAtCursor(_ text: String) -> PasteOutcome {
         if let sink = pasteSinkForTests {
             sink(text)
-            return
+            return .posted
         }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         pasteboard.setString(text, forType: .string)
-        guard isAccessibilityTrustedForPaste() else { return }
+        // GL-11: this used to `return` here with no log at all on a false
+        // read - the one place a real captain report (clipboard updated,
+        // nothing ever typed, status still read as success) went completely
+        // dark. Every branch below logs, so `log show --predicate
+        // 'subsystem == "com.manjesh.grandline.native" && category ==
+        // "dictation"'` can now answer "did the trust check actually pass"
+        // after the fact, not just "is it granted in Settings right now."
+        guard isAccessibilityTrustedForPaste() else {
+            AppLog.dictation.notice("paste skipped: AXIsProcessTrusted() read false - transcript left on the pasteboard only")
+            return .skippedNoTrust
+        }
         // Virtual keycode 9 = 'v' (kVK_ANSI_V).
         let vKeyCode: CGKeyCode = 9
         let source = CGEventSource(stateID: .hidSystemState)
         let keyDown = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: true)
         let keyUp = CGEvent(keyboardEventSource: source, virtualKey: vKeyCode, keyDown: false)
-        keyDown?.flags = .maskCommand
-        keyUp?.flags = .maskCommand
-        keyDown?.post(tap: .cghidEventTap)
-        keyUp?.post(tap: .cghidEventTap)
+        guard let keyDown, let keyUp else {
+            AppLog.dictation.error("paste skipped: CGEvent construction for the synthetic \u{2318}V returned nil despite AXIsProcessTrusted() == true")
+            return .eventCreationFailed
+        }
+        keyDown.flags = .maskCommand
+        keyUp.flags = .maskCommand
+        let frontmost = NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "unknown"
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
+        AppLog.dictation.notice("posted synthetic \u{2318}V (frontmost app at post time: \(frontmost, privacy: .public))")
+        return .posted
     }
 
     // MARK: Probe / self-test surface (GL-29)
@@ -983,11 +1067,30 @@ final class DictationEngine {
         hardCeilingDuration(forCapturedAudioSeconds: capturedAudioSeconds)
     }
 
+    #if FM_SELFTESTS
+    /// `fm/grandline-dictation-autopaste-not-firing`: this file's own doc
+    /// comment on `isAccessibilityTrustedForPaste()` already said "so a test
+    /// can stub it," but no stub ever existed - a self-test could only ever
+    /// observe whichever way `AXIsProcessTrusted()` happened to read on
+    /// *this* machine, which is exactly how a regression here could ship
+    /// unnoticed on a CI runner that has never been Accessibility-trusted at
+    /// all (every case would silently exercise only the untrusted branch).
+    /// Overrides the live system read when set, restored to `nil` by every
+    /// caller so a real `AXIsProcessTrusted()` read is what every other
+    /// suite still sees.
+    static var accessibilityTrustOverrideForTests: Bool?
+    #endif
+
     /// Split out from `pasteAtCursor` so a test can stub it - posting a
     /// synthetic keystroke without Accessibility trust would either silently
     /// no-op or, on some macOS versions, do nothing observable at all, so
     /// gating it explicitly here keeps the pasteboard write (still useful
     /// on its own - a captain can always paste manually) separate from the
     /// synthetic-keystroke half that truly needs the permission.
-    static func isAccessibilityTrustedForPaste() -> Bool { AXIsProcessTrusted() }
+    static func isAccessibilityTrustedForPaste() -> Bool {
+        #if FM_SELFTESTS
+        if let override = accessibilityTrustOverrideForTests { return override }
+        #endif
+        return AXIsProcessTrusted()
+    }
 }

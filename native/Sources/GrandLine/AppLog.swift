@@ -84,4 +84,10 @@ enum AppLog {
 
     /// App lifecycle: launch, lock/unlock, single-instance, shutdown.
     static let lifecycle = Logger(subsystem: subsystem, category: "lifecycle")
+
+    /// `DictationEngine.pasteAtCursor` - specifically the Accessibility-trust
+    /// gate and the synthetic ⌘V post, which used to fail silently (no log,
+    /// no error) whenever `AXIsProcessTrusted()` read false at the moment of
+    /// paste. GL-11: log before degrading.
+    static let dictation = Logger(subsystem: subsystem, category: "dictation")
 }

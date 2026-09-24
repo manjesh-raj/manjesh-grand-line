@@ -3282,6 +3282,13 @@ if ProcessInfo.processInfo.environment["FM_RUN_DICTATION_CLEANUP_TESTS"] == "1" 
     exit(DictationCleanupSelfTest.run() ? 0 : 1)
 }
 
+// `fm/grandline-dictation-autopaste-not-firing`: the floating HUD's own
+// misleading-status regression - window-backed, since it asserts a real
+// painted label. See `DictationAutopasteHUDSelfTest.swift`'s header.
+if ProcessInfo.processInfo.environment["FM_RUN_DICTATION_AUTOPASTE_HUD_TESTS"] == "1" {
+    exit(DictationAutopasteHUDSelfTest.run() ? 0 : 1)
+}
+
 // `fm/grandline-dictation-whisper-engine`: same convention, for the vendored
 // whisper.cpp wrapper's model validation, audio resampling, and (when a real
 // model path is provided) real load/transcribe - see

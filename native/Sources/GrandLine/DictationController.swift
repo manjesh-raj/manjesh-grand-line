@@ -786,6 +786,14 @@ final class DictationController: NSViewController, DaylightDrillActions {
             statusActionButton.title = "Request Accessibility Access"
             statusActionButton.isHidden = false
             statusChip.isHidden = true
+        case .copiedOnly:
+            // Same offer as `.needsAccessibility` - a real trust check just
+            // came back false, so re-requesting (or, per the detail copy
+            // above, removing and re-adding the System Settings row) is the
+            // same actionable next step either way.
+            statusActionButton.title = "Request Accessibility Access"
+            statusActionButton.isHidden = false
+            statusChip.isHidden = true
         case .ready:
             // The reviewed prototype's "On device" chip - shown only once
             // ready, since `.cleaningUp` genuinely does reach the network
@@ -1043,7 +1051,7 @@ final class DictationController: NSViewController, DaylightDrillActions {
             DictationPermissions.requestMicrophone { [weak self] _ in self?.refresh() }
         case .needsSpeechRecognition:
             DictationPermissions.requestSpeechRecognition { [weak self] _ in self?.refresh() }
-        case .needsAccessibility:
+        case .needsAccessibility, .copiedOnly:
             DictationPermissions.requestAccessibility()
             // No completion callback exists for the Accessibility prompt -
             // the captain has to grant it in System Settings and come back;
