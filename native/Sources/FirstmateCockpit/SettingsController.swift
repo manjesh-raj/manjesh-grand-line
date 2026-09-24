@@ -2603,7 +2603,14 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         for row in backupRows { row.applyTheme(theme) }
         sudoRowHost?.applyTheme(theme)
         for card in themeCards { card.applyTheme(theme) }
-        for recorder in shortcutRecorders.values { recorder.applyTheme(theme) }
+        // Every recorder on this page, Capture's included - a
+        // `KeyChordRecorderView` paints its own fill, border and ink from the
+        // theme and renders as an unfilled rectangle with default ink until
+        // this runs. Missed once while Capture's page was being added, and
+        // nothing failed: the control worked perfectly and looked wrong.
+        for recorder in shortcutRecorders.values + [captureShortcutRecorder].compactMap({ $0 }) {
+            recorder.applyTheme(theme)
+        }
         for toggle in [autoReconnectSwitch, notifySwitch, morningBriefingSwitch,
                        dailyReviewSwitch, dailyReviewCalendarSwitch, followSystemSwitch,
                        compactModeSwitch, compactDockSwitch, compactBadgeSwitch,

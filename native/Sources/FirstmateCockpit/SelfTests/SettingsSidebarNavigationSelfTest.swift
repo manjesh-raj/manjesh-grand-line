@@ -55,7 +55,10 @@ enum SettingsSidebarNavigationSelfTest {
     /// `DaylightDrillPageSlice6SelfTest` keeps one: "every card is reachable"
     /// is vacuous if the page built none, and a card genuinely appearing
     /// should have to come here and say so.
-    private static let expectedCardCount = 22
+    ///
+    /// Twenty-four since `fm/grandline-capture-global-hotkey-configurable`
+    /// added the Capture page's two (Shortcut, System-wide access).
+    private static let expectedCardCount = 24
 
     static func run() -> Bool {
         // A suite that changes the active theme MUST put it back - see

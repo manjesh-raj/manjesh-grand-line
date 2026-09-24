@@ -126,9 +126,12 @@ enum SettingsRedesignSelfTest {
         let cases: [(String, Set<SettingsController.Category>)] = [
             // A word only one page's keywords carry.
             ("sudo", [.security]),
-            // A word two pages share, matched through keywords rather than
-            // titles - neither page is called "shortcut".
-            ("shortcut", [.terminal, .menuBar, .intents]),
+            // A word several pages share, matched through keywords rather
+            // than titles - none of these pages is called "shortcut".
+            // Capture joined them in
+            // `fm/grandline-capture-global-hotkey-configurable`, which is the
+            // page a captain searching that word most often wants.
+            ("shortcut", [.terminal, .capture, .menuBar, .intents]),
             // A title match, and one that is not a prefix of the title.
             ("backup", [.backup]),
             // Case-insensitive, and matching a title word.
