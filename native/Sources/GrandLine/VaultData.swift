@@ -127,6 +127,56 @@ enum VaultSource {
         return VaultSnapshot(availability: availability, secrets: secrets, tools: tools, log: log)
     }
 
+    // MARK: The approval-prompt split - which `av` reads may run unattended
+    //
+    // `fm/grand-line-vault-background-poll-approval-prompt`. Automic Vault
+    // raises its own approval dialog when an `av` invocation it does not
+    // already trust asks for secret *access*, and that dialog is modal, it is
+    // drawn by Automic Vault rather than by this app, and it appears wherever
+    // the captain happens to be looking. So an `av` call this app makes on a
+    // timer - with nothing the captain did to provoke it - can put a security
+    // prompt on screen out of nowhere. That is the captain-reported irritation
+    // this split exists to make structurally impossible.
+    //
+    // Which `av` subcommands go through the approval service is not a guess.
+    // Measured on a real machine (av 3.16.0) by counting rows in Automic
+    // Vault's own authorization log,
+    // `~/Library/Application Support/com.automicvault/AuthorizationHistory/
+    // History-v1.sqlite3`, before and after each call:
+    //
+    //   av list             +1 row, first call blocked 45s on a visible
+    //                       approval dialog, ~1.3-3.3s once approved
+    //   av doctor --json    +0 rows, ~0.2-0.6s, three consecutive runs
+    //   av hardeners --json +0 rows
+    //   av --version        +0 rows
+    //
+    // So `av list` is the one read here that can prompt, and it is also the
+    // only one this app runs that returns secret *names*. `av doctor --json`
+    // - the read that actually produces the Notification Center's "vault
+    // attention" count - never touches the approval service at all.
+    //
+    // The rule that follows, and the reason this is a separate entry point
+    // rather than a flag on `loadSnapshot`: **nothing unattended may call
+    // `av list`.** A background poller, a scheduled action or a retry loop
+    // takes `loadToolStatus()` below. `loadSnapshot()` stays exactly as it
+    // was and is reached only from something the captain just did - opening
+    // the Vault page, pressing its Refresh button, pressing Export Recipe.
+
+    /// The `av doctor --json` half of `loadSnapshot()`, on its own.
+    ///
+    /// Measured never to reach Automic Vault's approval service (see the
+    /// comment block above), so this is the one vault read that is safe to
+    /// run on a timer while the captain is doing something else entirely.
+    ///
+    /// `nil` carries the same meaning it does in `VaultSnapshot.tools`: the
+    /// read failed, which is not the same statement as "no launcher needs
+    /// attention" (GL-14). `av doctor` exits non-zero whenever it has issues
+    /// to report, so the parse is the test here too, never the exit code.
+    static func loadToolStatus() -> [VaultTool]? {
+        guard let av = resolveExecutable("av") else { return nil }
+        return parseDoctorTools(run(av, ["doctor", "--json"]).stdout)
+    }
+
     /// B1: the `av list` half of the same nil-vs-empty distinction, extracted
     /// so both branches are directly testable - `loadSnapshot` shells out to a
     /// real `av`, so a test cannot otherwise reach the failure branch, which is

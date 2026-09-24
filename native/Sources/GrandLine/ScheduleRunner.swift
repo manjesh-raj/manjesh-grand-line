@@ -507,6 +507,19 @@ enum ScheduleActions {
     }
 
     // MARK: Vault recipe export - a commit + push, secret names only
+    //
+    // This is the **one sanctioned unattended `av list`** in the app, and it is
+    // an exception to the rule `VaultData.swift`'s "approval-prompt split"
+    // block states, so it is written down here rather than left to be
+    // rediscovered. `av list` can raise Automic Vault's own approval dialog,
+    // which is why nothing on a timer may call it - but this action's entire
+    // content *is* the list of secret names, so there is no approval-free read
+    // that could produce it, and dropping the call would delete the feature
+    // rather than fix anything. What makes it defensible where the poller's
+    // was not: this runs only for a schedule the captain created and enabled
+    // themselves, at a cadence they chose, and it is listed on the Schedules
+    // page with its next run time - so a prompt from it is attributable, which
+    // is exactly what the poller's was not.
 
     private static func vaultRecipeExport() -> ScheduleActionResult {
         guard let repoPath = VaultRecipeGit.resolveRepoPath() else {

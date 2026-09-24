@@ -34,6 +34,14 @@
 // "never race two package-manager invocations against each other" caution,
 // generalized here since `brew`/`npm`/`av` can all be invoked across the
 // four checks.
+//
+// One hard constraint on what this file may call, added by
+// `fm/grand-line-vault-background-poll-approval-prompt`: **a timer-driven
+// check may never invoke `av list`.** It is the only `av` read this app makes
+// that goes through Automic Vault's approval service, so on a timer it can put
+// Automic Vault's own modal approval dialog on screen with nothing the captain
+// did to provoke it. `VaultData.swift`'s "approval-prompt split" comment block
+// has the measurements and `checkVault` below is the call site.
 
 import Foundation
 
@@ -170,9 +178,15 @@ final class BackgroundSignalsPoller {
         /// Daylight Phase 2's Vault module renders this rather than calling
         /// `VaultSource.loadSnapshot()` itself - the migration spec is explicit
         /// that the canvas "renders the LAST snapshot, it does not shell out on
-        /// canvas load". `checkVault` below already loads that snapshot for the
-        /// attention count, so recording one more number off it costs nothing
-        /// and adds no `av` invocation anywhere.
+        /// canvas load".
+        ///
+        /// **This poller no longer produces it.** It comes from `av list`,
+        /// which is the one `av` read that can raise Automic Vault's approval
+        /// dialog, so nothing unattended calls it any more - see `checkVault`.
+        /// The Vault page's own load and Refresh still publish it, and until
+        /// the first such visit this stays `nil`, which the canvas already
+        /// renders as "hasn't been checked yet this session" rather than as a
+        /// confident zero (GL-14).
         var vaultSecrets: Int?
     }
 
@@ -511,20 +525,47 @@ final class BackgroundSignalsPoller {
 
     // MARK: #5 - Vault attention
 
+    /// **`av doctor --json` only - never `av list`.**
+    ///
+    /// This used to call `VaultSource.loadSnapshot()`, which also runs
+    /// `av list`, and `av list` is the one `av` read that goes through Automic
+    /// Vault's approval service - measured, see the "approval-prompt split"
+    /// comment block in `VaultData.swift`. A 15-minute timer calling it meant
+    /// Automic Vault could raise its own modal approval dialog over whatever
+    /// the captain was doing, with nothing they did to provoke it. That is the
+    /// bug `fm/grand-line-vault-background-poll-approval-prompt` fixes, and
+    /// the fix is structural: the unattended path physically cannot reach the
+    /// prompting subcommand any more.
+    ///
+    /// Note this is not gated on `AppActivityState` and deliberately so. The
+    /// captain's report was of a prompt appearing *while they were actively
+    /// using the app*, where `isBackgrounded` is `false` and every such gate
+    /// is open - so "poll less while backgrounded" was never going to be the
+    /// fix. Dropping the prompting call is.
+    ///
+    /// What this costs, stated rather than hidden: the **secrets count**
+    /// (`SignalCounts.vaultSecrets`, a figure on the Daylight Vault module)
+    /// is no longer refreshed by this poller, because `av list` is the only
+    /// thing that produces it. It still updates on every Vault-page load and
+    /// Refresh, which is where `publishVaultRead` is called from. Until the
+    /// first such visit it stays `nil`, which the canvas already renders as
+    /// "hasn't been checked yet this session" rather than as a zero (GL-14).
+    /// The **attention** count - the actual Notification Center signal - is
+    /// unaffected and still refreshes on this poller's full cadence.
     private func checkVault() {
         let gatheredAt = Date()
-        let snapshot = VaultSource.loadSnapshot()
-        // B1: an `av` read that failed is not "nothing needs attention" and
-        // not "no secrets". `publishVaultRead` leaves both counts as they
-        // were in that case - `SignalCounts`' own `Int?` fields already mean
-        // "not established", which is what the Vault canvas card renders
-        // honestly. Logged here rather than there because only this caller
-        // knows the read was a scheduled pass rather than a page's own load.
-        if snapshot.isDegraded {
-            AppLog.poller.info("vault check skipped: av read failed, leaving counts unchanged")
+        let tools = VaultSource.loadToolStatus()
+        // B1: an `av` read that failed is not "nothing needs attention".
+        // `publishVaultTools` leaves the count as it was in that case -
+        // `SignalCounts`' own `Int?` field already means "not established",
+        // which is what the Vault canvas card renders honestly. Logged here
+        // rather than there because only this caller knows the read was a
+        // scheduled pass rather than a page's own load.
+        if tools == nil {
+            AppLog.poller.info("vault check skipped: av doctor read failed, leaving the count unchanged")
         }
         DispatchQueue.main.async { [weak self] in
-            self?.publishVaultRead(secrets: snapshot.secrets, tools: snapshot.tools, gatheredAt: gatheredAt)
+            self?.publishVaultTools(tools, gatheredAt: gatheredAt)
         }
     }
 
@@ -768,6 +809,28 @@ extension BackgroundSignalsPoller {
     func publishVaultRead(secrets: [VaultSecret]?, tools: [VaultTool]?, gatheredAt: Date = Date()) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let tools, let secrets else { return }
+        publish(tools: tools, secretCount: secrets.count, gatheredAt: gatheredAt)
+    }
+
+    /// The attention half on its own, for a reader that has `av doctor --json`
+    /// and deliberately does not have `av list` - which today is every
+    /// unattended caller, because `av list` is the read that can raise Automic
+    /// Vault's approval dialog (see `checkVault`).
+    ///
+    /// B1 again, one field narrower: `nil` tools say nothing about how many
+    /// launchers need attention, so the count is left exactly as it was. The
+    /// secrets count is *always* left as it was here - this caller never had a
+    /// reading for it, and writing a zero would be the same lie in a different
+    /// field.
+    func publishVaultTools(_ tools: [VaultTool]?, gatheredAt: Date = Date()) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let tools else { return }
+        publish(tools: tools, secretCount: nil, gatheredAt: gatheredAt)
+    }
+
+    /// `secretCount == nil` means "this reader had no `av list` result",
+    /// never "there are no secrets".
+    private func publish(tools: [VaultTool], secretCount: Int?, gatheredAt: Date) {
         guard acceptsReading(.vault, gatheredAt: gatheredAt) else { return }
         let attention = tools.filter {
             if case .needsAttention = $0.status { return true }
@@ -777,7 +840,7 @@ extension BackgroundSignalsPoller {
         // and two writes would rebuild the canvas twice for one snapshot.
         var counts = lastCounts
         counts.vaultAttention = attention
-        counts.vaultSecrets = secrets.count
+        if let secretCount { counts.vaultSecrets = secretCount }
         lastCounts = counts
         NotificationSources.setVaultAttention(count: attention) { [weak self] in self?.onNavigateToVault?() }
     }

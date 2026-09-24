@@ -167,3 +167,79 @@ Column layouts were taken from real exports rather than guessed - 1Password 8 (`
 - **Three injected regressions, each reproduced by name** (scripted file copies and restores, never `git stash` - see this file's own warning): `offset = 0` in the dynamic truncation failed all eight RFC vectors; deriving the recovery KEK from a constant let a *wrong* recovery key unlock the vault, failing "a wrong recovery key must be refused"; and giving a secure-note row a Reveal and a Copy closure failed four checks in the windowed suite.
 - `CredentialVaultViewSelfTest`'s sidebar cases were updated for the new Kinds axis, and a 2FA-seed fixture added so the "2FA codes" row is proven to filter rather than only to count zero.
 - **Not verified:** no screenshot of the running app (the worktree rule - the captain's own instance was running throughout), and the print *panel* itself was never driven to a physical printer. The card is asserted as pixels and as PDF bytes; `NSPrintOperation.runModal(for:...)` is the one line in this feature that only a human can confirm.
+
+## Automic Vault's approval prompt, and the unattended `av` calls that could raise it
+
+`fm/grand-line-vault-background-poll-approval-prompt`. The captain reported an Automic Vault permission dialog appearing over Grand Line out of nowhere, with nothing they had just done to provoke it.
+
+### What actually goes through the approval service
+
+The useful thing this branch established is that "an `av` call" is not one category.
+Automic Vault keeps its own authorization log at `~/Library/Application Support/com.automicvault/AuthorizationHistory/History-v1.sqlite3`, and counting its rows either side of a call says whether that call reached the approval service at all.
+Measured against a real `av 3.16.0` on the captain's machine:
+
+| command | rows added | wall clock |
+| --- | --- | --- |
+| `av list` | **+1** | 45s on the first call, blocked on a visible approval dialog; 1.3-3.3s once approved |
+| `av doctor --json` | 0 | 0.2-0.6s, three consecutive runs |
+| `av hardeners --json` | 0 | sub-second |
+| `av --version` | 0 | sub-second |
+
+So `av list` is the one read this app makes that can put Automic Vault's own modal dialog on screen, and it is also the only one that returns secret *names*.
+Everything else the app reads - including `av doctor --json`, which is what actually produces the Notification Center's "vault attention" count - never touches the approval service.
+
+That is the whole basis for the rule now written into `VaultData.swift`: **nothing unattended may call `av list`.**
+
+### What was calling it unattended
+
+`BackgroundSignalsPoller.checkVault()` called `VaultSource.loadSnapshot()`, which runs `av --version`, `av list` and `av doctor --json`, on a 15-minute timer.
+
+The tempting fix - and the one the task was originally framed around - was to lean harder on `AppActivityState`, since the poller already gates its timer on `BackgroundedPollGate(skipsPerRun: 1)`.
+That would not have fixed anything.
+`isBackgrounded` is `false` whenever the app is frontmost, and the captain's report was of a prompt appearing *while they were actively using Grand Line* - which is exactly the state where every such gate is open and the full pass runs.
+The cadence was never the problem; the subcommand was.
+
+The fix is structural rather than a cadence tweak. `VaultSource.loadToolStatus()` is the `av doctor --json` half on its own, the poller takes that, and `BackgroundSignalsPoller.publishVaultTools` publishes an attention count without a secrets count. The unattended path can no longer reach the prompting subcommand at all.
+
+**What that costs, stated rather than hidden:** `SignalCounts.vaultSecrets` - the secrets figure on the Daylight Vault module - is no longer refreshed by the poller, because `av list` is the only thing that produces it.
+It still updates on every Vault-page load and every press of that page's Refresh, which is where `publishVaultRead` is called from.
+Until the first such visit it stays `nil`, which the canvas already renders as "hasn't been checked yet this session" rather than as a confident zero (GL-14).
+The attention count - the actual Notification Center signal, and the only one of the two that is a *signal* rather than a figure - is unaffected and still refreshes on the poller's full cadence.
+
+### The second offender: the lock screen's retry loop
+
+`AppShellController.scheduleAppPasswordAvailabilityRetry` retried `VaultSource.checkAppPasswordConfigured()` every 1.5 seconds, indefinitely, for as long as the lock screen was up and the vault service reported `.serviceNotRunning` or `.transientFailure`.
+Its own comment defended this as "a cheap subprocess call, not a real cost".
+
+That reasoning was wrong in a way nothing at that call site could see: the call is `av list`, so every attempt is an approval-service round trip that writes a row to Automic Vault's authorization log and is entitled to raise its dialog.
+A lock screen left up against an unresponsive approval helper was asking it roughly 2,400 times an hour.
+
+It now backs off 1.5s -> 3 -> 6 -> 12 -> 15s and holds at 15s.
+The first four attempts still land inside the first 22 seconds, which is the window the flat cadence actually existed for, and the counter resets on any settled outcome and on every fresh lock.
+It deliberately does not give up: the captain cannot get past the lock screen any other way.
+
+### The one sanctioned exception
+
+`ScheduleRunner.vaultRecipeExport` still calls `loadSnapshot()`, and therefore `av list`, unattended.
+Its entire content *is* the list of secret names, so no approval-free read could produce it and dropping the call would delete the feature rather than fix anything.
+What makes it defensible where the poller's was not: it runs only for a schedule the captain created and enabled themselves, at a cadence they chose, listed on the Schedules page with its next run time - so a prompt from it is attributable.
+That exception is written into `ScheduleRunner.swift` beside the call rather than left to be rediscovered.
+
+### The AI-crew lead, ruled out
+
+A mid-task steer pointed at Grand Line's own `claude -p` subprocesses, on the strength of a screenshotted dialog whose Execution Chain read `zsh -> av` with the Claude Code CLI binary as the Verified Launcher and `/private/tmp` as the working directory.
+Read from the code, that cannot be Grand Line:
+
+- `Subprocess` sets `executableURL` directly and never goes through a shell, so no Grand Line `av` call has a `zsh` in its chain, and none runs from `/private/tmp`.
+- Every `ClaudeOneShot.run` caller is fail-closed on the built-in tool set (GL-26). `SRELeadRunner` is the only one that names any built-in tools at all, and names `Task,TodoWrite`. No caller has `Bash`, so no Grand Line-spawned `claude -p` can run `av`.
+- The crew's MCP surface is pinned by `--strict-mcp-config` plus `--allowedTools` to four read-only tools from this app's own stores server.
+
+The screenshot was in fact this task's own investigation: an `av list` run by hand from `/tmp` inside a Claude Code session minutes before the screenshot's timestamp, which blocked 45 seconds on the dialog.
+Worth recording because the *diagnostic* is reusable - the dialog names its execution chain and verified launcher, which is enough to attribute a prompt to a process - and because it is a clean example of an investigation producing the symptom it was investigating.
+
+### Verified
+
+- `swift build` clean, zero warnings.
+- The `av` measurements above are real, taken against a live `av 3.16.0` and Automic Vault's own authorization log.
+- `FM_RUN_BACKGROUND_SIGNALS_TESTS` grew three cases, **each confirmed to catch a regression by name** via scripted file copy/restore (never `git stash`): pointing the poller back at `VaultSource.loadSnapshot` failed the source guard; making the tools-only publish write `secretCount ?? 0` failed both "the secrets count is left alone" cases; and flattening `appPasswordRetryDelay` back to a constant failed both backoff cases.
+- **Not verified:** the live Automic Vault dialog was never reproduced *from Grand Line itself*. The app was not launched from this worktree (the standing rule), so the poller's new `av doctor --json`-only path was not watched running in the real app - it is asserted by the source guard and by the measurements above, not by a running instance.
