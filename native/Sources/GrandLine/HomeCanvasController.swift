@@ -159,6 +159,11 @@ final class HomeCanvasController: NSViewController {
     /// states and the card says so differently - neither is drawn as a zero.
     private var quotaSnapshot: QuotaSnapshot?
     private var quotaFailure: String?
+    /// When `quotaSnapshot` arrived - see `applyQuota`. `nil` until the first
+    /// successful reading, which is exactly when the card has no freshness to
+    /// state and so shows no caption at all rather than "Updated just now"
+    /// about nothing.
+    private var quotaFetchedAt: Date?
     /// `true` between the card's Refresh being pressed and the reading (or
     /// the stated reason there is none) coming back. Drives the header
     /// button's disabled in-flight state, and stops a second press stacking
@@ -531,6 +536,13 @@ final class HomeCanvasController: NSViewController {
         case .success(let snapshot):
             quotaSnapshot = snapshot
             quotaFailure = nil
+            // When this reading actually landed, for the card's "Updated N
+            // ago". `QuotaSnapshot` carries the call's *latency* but not the
+            // instant, and the instant is the thing a captain needs to judge
+            // whether the figures are worth acting on - a card that silently
+            // shows a reading from two hours ago is the same class of
+            // dishonesty GL-14 is about.
+            quotaFetchedAt = Date()
         case .failure(let reason):
             // The last good reading is deliberately *not* cleared - a
             // transient failure should not blank a card that was correct a
@@ -1154,10 +1166,18 @@ final class HomeCanvasController: NSViewController {
             : HelmModuleCard.maxNarrowBriefingClauses
     }
 
-    // MARK: The Claude status strip
+    // MARK: The Claude usage report
 
-    /// The captain's picked "Status strip": five hairline-separated columns
-    /// reading Session (5h), Week, Fable week, Extra usage and Spend cap.
+    /// The captain's picked usage report: a header carrying the plan, one
+    /// overall verdict and the reading's age, then a "Plan limits" section
+    /// with one full-width bar per window, then an "Extra usage" section
+    /// showing the spend against its cap.
+    ///
+    /// It replaced a five-column "Status strip"
+    /// (`docs/history/07-fleet-and-notifications.md` has that shape's own
+    /// history). The card is taller than the strip was, deliberately and on
+    /// the captain's own instruction - `HelmModuleCard.minimumHeight` is a
+    /// floor rather than a fixed height, so it simply grows.
     ///
     /// **The two labelling decisions this card is built on**, both carried
     /// forward from the design exploration the captain picked a mockup from
@@ -1175,11 +1195,11 @@ final class HomeCanvasController: NSViewController {
     ///    date". True organisation month-to-date spend would need Anthropic's
     ///    Admin/Usage API and an Admin key, which this app does not have.
     ///
-    /// GL-14 runs through the whole function: every one of the five columns
-    /// is independently optional, and a window this account's response does
-    /// not carry renders "Not reported" in the muted face with no track at
-    /// all - never a `0%` or a `$0`, which on a quota readout are real and
-    /// alarming values rather than synonyms for "unknown".
+    /// GL-14 runs through the whole card: every window is independently
+    /// optional, and one this account's response does not carry renders
+    /// "Not reported" in the muted face with no bar at all - never a `0%` or
+    /// a `$0`, which on a quota readout are real and alarming values rather
+    /// than synonyms for "unknown".
     private func fillClaudeStatus(_ content: inout HelmModuleCard.Content, cardWidth: CGFloat) {
         // On every state, including the two below: the one moment a captain
         // most wants to re-take a reading is when the card is stating a gap.
@@ -1204,96 +1224,204 @@ final class HomeCanvasController: NSViewController {
             return
         }
 
+        let compact = Self.claudeUsageIsCompact(forCardWidth: cardWidth)
         content.subtitle = Self.claudeSubtitle(for: snapshot)
-        content.chip = Self.claudeChip(for: snapshot)
-        content.body = .statusStrip(Self.claudeStripColumns(for: snapshot),
-                                    perRow: Self.claudeStripColumnsPerRow(forCardWidth: cardWidth))
+        // **A compact card's header is identity and Refresh, nothing else**,
+        // and that is a design call rather than a shrug at a layout problem.
+        // Measured at a one-column card's 255pt: the tile, a "Near spend
+        // cap" pill, the freshness caption and the Refresh leave the
+        // identity column about 60pt, which renders the plan as "Team p...".
+        // Two things have to go, and these are the two that are said twice:
+        // both section verdicts ("Comfortable", "Near cap") are painted in
+        // full a few points below the pill, and the freshness moves to the
+        // card's own hover text, which AppKit also serves to VoiceOver as
+        // the card's accessibility help (GL-16). The plan name is said
+        // nowhere else at all, which is why it is what survives.
+        let updated = quotaFetchedAt.map { Self.claudeUpdatedText(fetchedAt: $0) }
+        content.chip = compact ? nil : Self.claudeChip(for: snapshot)
+        content.headerCaption = compact ? nil : updated
+        if compact { content.toolTip = updated }
+        content.body = .usageReport(Self.claudeUsageSections(for: snapshot), compact: compact)
     }
 
-    /// How many of the strip's columns fit side by side on a card of this
-    /// width.
+    /// Whether this card is narrow enough to need the report's stacked
+    /// reflow rather than its aligned four-column grid.
     ///
-    /// The same shape as `briefingClauseCap`, and for the same reason: a
-    /// span-2 card degrades to one column in a single-column grid
-    /// (`HelmResponsiveGrid.packRows`), and five columns in 255pt would
-    /// truncate every key to an initial. The strip **wraps** instead, so a
-    /// narrow window costs the card some height and never costs it a reading.
-    static func claudeStripColumnsPerRow(forCardWidth width: CGFloat) -> Int {
+    /// The same threshold `claudeStripColumnsPerRow` used, and for the same
+    /// reason: `HelmResponsiveGrid.packRows` degrades a span-2 card to one
+    /// column in a single-column grid, and at that width the grid's three
+    /// content columns leave the bar a stub. This is the direct analogue of
+    /// the mockup's own `@media (max-width: 560px)` rule, which reflows the
+    /// same four fields the same way - title and figure on one line, the bar
+    /// full width beneath, the reset caption under that.
+    ///
+    /// The card pays height, never a reading. Nothing is dropped in either
+    /// layout, which is the property the strip already had when it wrapped.
+    static func claudeUsageIsCompact(forCardWidth width: CGFloat) -> Bool {
         let spanTwo = minModuleWidth * 2 + gridSpacing
-        return width + 0.5 >= spanTwo ? HelmModuleCard.maxStripColumns : 3
+        return width + 0.5 < spanTwo
     }
 
-    /// The five columns, in the captain's picked order. `static` so a suite
+    /// The report's two sections, in the mockup's order. `static` so a suite
     /// can assert the mapping from a fabricated snapshot without mounting a
     /// canvas.
-    static func claudeStripColumns(for snapshot: QuotaSnapshot,
-                                   now: Date = Date()) -> [HelmModuleStripColumn] {
-        func window(_ label: String, _ window: QuotaWindow?) -> HelmModuleStripColumn {
-            guard let window else { return gapColumn(label) }
-            return HelmModuleStripColumn(
-                label: label,
-                value: Self.percentText(window.percentUsed),
+    ///
+    /// GL-14 runs through the whole function exactly as it ran through
+    /// `claudeStripColumns` before it: every window is independently
+    /// optional, and one this account's response does not carry renders
+    /// "Not reported" in the muted caption face with no bar at all - never a
+    /// `0%` or a `$0`, which on a quota readout are real and alarming values
+    /// rather than synonyms for "unknown".
+    static func claudeUsageSections(for snapshot: QuotaSnapshot,
+                                    now: Date = Date()) -> [HelmModuleUsageSection] {
+        func row(_ title: String, _ window: QuotaWindow?) -> HelmModuleUsageRow {
+            guard let window else {
+                return HelmModuleUsageRow(title: title, value: "Not reported",
+                                          fill: nil, state: .idle, isGap: true)
+            }
+            return HelmModuleUsageRow(
+                title: title,
+                value: percentText(window.percentUsed),
                 fill: max(0, min(1, window.percentUsed / 100)),
                 state: QuotaSeverity(percentUsed: window.percentUsed).moduleRowState,
-                // The other half of the reading. A percentage on its own is
-                // only half an answer - "96% used" is a crisis an hour before
-                // the window turns over and a shrug a minute before it - and
-                // the instant that settles it is already parsed.
+                // Both forms, deliberately: the short one is painted beside
+                // the bar and the long one stays on the hover and the
+                // accessibility label, so the full date is still one hover
+                // away. Both are `nil` for a window carrying no reset
+                // instant, which passes through as no caption and no
+                // affordance rather than a fabricated one.
                 //
-                // Both forms, deliberately: the short one is painted under
-                // the column (the captain asked for it visible rather than
-                // hidden behind a hover), and the long one stays on the
-                // tooltip and the accessibility label, so the full date is
-                // still one hover away. Both are `nil` when the window
-                // carries no reset instant, which passes straight through as
-                // no line and no affordance rather than a fabricated one
-                // (GL-14).
-                detail: window.resetsSentence,
-                caption: window.resetsCompact(now: now))
+                // **The `Resets` prefix is the redesign's own addition**, and
+                // it is the mockup's wording. In the strip the compact time
+                // sat directly under a column headed SESSION (5H), which
+                // said what it was; here it sits at the card's right edge
+                // with a bar between it and its row's title, and a bare
+                // "10:30 PM" out there could be anything. The mockup also
+                // carries a live countdown ("in 2h 14m") which this card
+                // deliberately does not: a counting figure needs one
+                // injectable clock on a controller that ticks it (AGENTS.md),
+                // and nothing on this canvas ticks - a countdown rendered
+                // once at build time and then left to go stale would be
+                // worse than the instant it replaced.
+                caption: window.resetsCompact(now: now).map { "Resets \($0)" },
+                detail: window.resetsSentence)
         }
 
-        var columns: [HelmModuleStripColumn] = [
-            window("Session (5h)", snapshot.session),
-            window("Week", snapshot.weekly),
-            window("Fable week", snapshot.fable),
+        let rows = [
+            row("Session (5h)", snapshot.session),
+            row("Week", snapshot.weekly),
+            row("Fable week", snapshot.fable),
         ]
 
-        // The two dollar columns are independently optional: `extra_usage`
-        // can be absent entirely, and it can be present while carrying
-        // neither figure.
-        if let credits = snapshot.extraUsage, let spent = credits.spentUsd {
-            // The percentage is itself optional here (see
-            // `QuotaCreditWindow.percentUsed`): a response that reports the
-            // dollars without it gets the figure and no track, rather than a
-            // track drawn from a number nobody sent.
-            columns.append(HelmModuleStripColumn(
-                label: "Extra usage",
-                value: Self.dollarText(spent),
-                fill: credits.percentUsed.map { max(0, min(1, $0 / 100)) },
-                state: credits.percentUsed
-                    .map { QuotaSeverity(percentUsed: $0).moduleRowState } ?? .idle))
-        } else {
-            columns.append(gapColumn("Extra usage"))
-        }
-
-        if let limit = snapshot.extraUsage?.limitUsd {
-            // A full neutral bar, not a severity one: this column is the
-            // ceiling itself, so colouring it by "100% used" would read as an
-            // alarm about the cap rather than as the cap.
-            columns.append(HelmModuleStripColumn(
-                label: "Spend cap", value: Self.dollarText(limit),
-                fill: 1, state: .idle))
-        } else {
-            columns.append(gapColumn("Spend cap"))
-        }
-
-        return columns
+        var sections: [HelmModuleUsageSection] = [
+            HelmModuleUsageSection(title: "Plan limits",
+                                   status: claudePlanLimitsStatus(for: snapshot),
+                                   content: .limits(rows)),
+        ]
+        sections.append(HelmModuleUsageSection(title: "Extra usage",
+                                               status: claudeSpendStatus(for: snapshot),
+                                               content: claudeSpendContent(for: snapshot)))
+        return sections
     }
 
-    /// GL-14's stated gap, in the one shape every column uses for it.
-    private static func gapColumn(_ label: String) -> HelmModuleStripColumn {
-        HelmModuleStripColumn(label: label, value: "Not reported",
-                              fill: nil, state: .idle, isGap: true)
+    /// The extra-usage section's body. Three genuinely different states, and
+    /// they read differently (GL-14): no window at all, a window carrying
+    /// dollars but no cap, and the full reading.
+    static func claudeSpendContent(for snapshot: QuotaSnapshot) -> HelmModuleUsageSection.Content {
+        guard let credits = snapshot.extraUsage, let spent = credits.spentUsd else {
+            return .note("Not reported.")
+        }
+        guard let limit = credits.limitUsd, limit > 0 else {
+            // No ceiling, so no bar and no percentage: a track drawn against
+            // a cap nobody sent would be a picture of a number that does not
+            // exist.
+            return .spend(HelmModuleUsageSpend(
+                amount: dollarText(spent), against: "spent, no cap set",
+                value: nil, fill: nil, state: .idle, footnote: nil))
+        }
+        let fraction = max(0, min(1, spent / limit))
+        // The percentage the *card* states is derived from the two dollar
+        // figures it is already showing, rather than from `percentUsed` -
+        // which is independently optional on this window and, when both are
+        // present, is the same quantity. A figure the captain can check
+        // against the two numbers beside it is worth more than one they
+        // cannot.
+        let state = QuotaSeverity(percentUsed: fraction * 100).moduleRowState
+        let remaining = max(0, limit - spent)
+        return .spend(HelmModuleUsageSpend(
+            amount: dollarText(spent),
+            against: "of \(dollarText(limit)) cap",
+            value: percentText(fraction * 100),
+            fill: fraction,
+            state: state,
+            footnote: remaining > 0
+                ? "\(dollarText(remaining)) left before the cap"
+                : "Cap reached, extra usage is paused"))
+    }
+
+    /// The Plan limits section's verdict - the binding window, named.
+    static func claudePlanLimitsStatus(for snapshot: QuotaSnapshot) -> HelmModuleUsageStatus? {
+        guard let worst = claudeWorstWindow(for: snapshot) else {
+            return HelmModuleUsageStatus(text: "No limits reported", state: .idle)
+        }
+        if worst.window.percentUsed >= 100 {
+            return HelmModuleUsageStatus(text: "\(worst.name) limit reached", state: .bad)
+        }
+        switch QuotaSeverity(percentUsed: worst.window.percentUsed) {
+        case .critical: return HelmModuleUsageStatus(text: "\(worst.name) nearly used", state: .bad)
+        case .warning: return HelmModuleUsageStatus(text: "\(worst.name) getting close", state: .warn)
+        case .comfortable: return HelmModuleUsageStatus(text: "Comfortable", state: .ok)
+        }
+    }
+
+    /// The Extra usage section's verdict.
+    static func claudeSpendStatus(for snapshot: QuotaSnapshot) -> HelmModuleUsageStatus? {
+        guard let fraction = claudeSpendFraction(for: snapshot) else {
+            return HelmModuleUsageStatus(text: "No cap", state: .idle)
+        }
+        if fraction >= 1 { return HelmModuleUsageStatus(text: "Cap reached", state: .bad) }
+        switch QuotaSeverity(percentUsed: fraction * 100) {
+        case .critical: return HelmModuleUsageStatus(text: "Near cap", state: .bad)
+        case .warning: return HelmModuleUsageStatus(text: "Approaching cap", state: .warn)
+        case .comfortable: return HelmModuleUsageStatus(text: "Within cap", state: .ok)
+        }
+    }
+
+    /// `spent / limit`, or `nil` when the response did not carry both - the
+    /// one place the card decides whether it has a spend reading at all.
+    static func claudeSpendFraction(for snapshot: QuotaSnapshot) -> Double? {
+        guard let credits = snapshot.extraUsage,
+              let spent = credits.spentUsd,
+              let limit = credits.limitUsd, limit > 0 else { return nil }
+        return max(0, spent / limit)
+    }
+
+    /// The window that runs out first, with the name the header pill uses
+    /// for it. `nil` when the response carried no resetting window at all.
+    static func claudeWorstWindow(for snapshot: QuotaSnapshot) -> (name: String, window: QuotaWindow)? {
+        let windows: [(String, QuotaWindow)] = [
+            ("Session", snapshot.session), ("Week", snapshot.weekly), ("Fable", snapshot.fable),
+        ].compactMap { name, window in window.map { (name, $0) } }
+        return windows.max(by: { $0.1.percentUsed < $1.1.percentUsed }).map { ($0.0, $0.1) }
+    }
+
+    /// `Updated 2 min ago`. Relative, not absolute, because the question the
+    /// caption answers is "are these figures worth acting on" rather than
+    /// "what time was it" - and a wall-clock stamp makes the captain do the
+    /// subtraction themselves.
+    ///
+    /// `now` is injectable for the same reason every other date helper here
+    /// is: a suite that drove a fabricated instant and then measured the real
+    /// elapsed time would be testing two clocks rather than the feature
+    /// (AGENTS.md's one-injectable-clock rule).
+    static func claudeUpdatedText(fetchedAt: Date, now: Date = Date()) -> String {
+        let seconds = now.timeIntervalSince(fetchedAt)
+        if seconds < 60 { return "Updated just now" }
+        let minutes = Int((seconds / 60).rounded(.down))
+        if minutes < 60 { return "Updated \(minutes) min ago" }
+        let hours = Int((seconds / 3600).rounded(.down))
+        if hours < 24 { return "Updated \(hours)h ago" }
+        return "Updated \(Int((seconds / 86400).rounded(.down)))d ago"
     }
 
     /// `96%`. No decimal: `quota-axi` reports whole `percentRemaining`
@@ -1312,27 +1440,66 @@ final class HomeCanvasController: NSViewController {
             : String(format: "$%.2f", amount)
     }
 
-    /// The plan and organisation, when the response carried them.
+    /// The plan, named as a plan - the mockup's `Team plan` rather than the
+    /// bare `Team` the strip carried.
+    ///
+    /// The extra word is worth its width: "Team" beside a gauge tile reads as
+    /// a label for something on the card, where "Team plan" is unambiguously
+    /// the account's own tier, which is what the header is for. Falls back to
+    /// naming the *source* when the response carried no plan at all, which is
+    /// a stated gap rather than a guess (GL-14).
     static func claudeSubtitle(for snapshot: QuotaSnapshot) -> String {
         guard let plan = snapshot.plan, !plan.isEmpty else { return "quota-axi" }
-        return plan.capitalized
+        return "\(plan.capitalized) plan"
     }
 
-    /// The chip states the *binding* window - the one that runs out first -
-    /// rather than restating a column. A reading below the warning threshold
-    /// on every window gets the all-clear instead.
+    /// The header pill: **one** verdict for the whole card.
+    ///
+    /// It has to weigh two independent things now, which is what the
+    /// redesign changed. The strip's chip only ever looked at the three
+    /// resetting windows, so a card whose spend was a dollar off its cap
+    /// could read "Comfortable" - the captain's own mockup names that case
+    /// ("Near spend cap") and shows it winning over three comfortable
+    /// windows, which is the right call: the windows refill on a clock and
+    /// the cap does not.
+    ///
+    /// The tie-break is the mockup's: spend wins when it is at least as
+    /// alarming as the worst window. Below the warning threshold on both,
+    /// the card says so in one word rather than restating a row.
     static func claudeChip(for snapshot: QuotaSnapshot) -> HelmModuleChip? {
-        let windows: [(String, QuotaWindow)] = [
-            ("Session", snapshot.session), ("Week", snapshot.weekly), ("Fable", snapshot.fable),
-        ].compactMap { name, window in window.map { (name, $0) } }
-        guard let worst = windows.max(by: { $0.1.percentUsed < $1.1.percentUsed }) else {
-            return nil
+        let worst = claudeWorstWindow(for: snapshot)
+        let windowSeverity = worst.map { QuotaSeverity(percentUsed: $0.window.percentUsed) }
+        let spendFraction = claudeSpendFraction(for: snapshot)
+        let spendSeverity = spendFraction.map { QuotaSeverity(percentUsed: $0 * 100) }
+
+        if let spendSeverity, spendSeverity != .comfortable,
+           claudeSeverityRank(spendSeverity) >= claudeSeverityRank(windowSeverity ?? .comfortable) {
+            if (spendFraction ?? 0) >= 1 { return .bad("Spend cap reached") }
+            return spendSeverity == .critical
+                ? .bad("Near spend cap")
+                : .warn("Extra usage climbing")
         }
-        switch QuotaSeverity(percentUsed: worst.1.percentUsed) {
+
+        guard let worst, let windowSeverity else { return nil }
+        switch windowSeverity {
         case .critical, .warning:
-            return .warn("\(worst.0) \(percentText(worst.1.percentUsed))")
+            let text = worst.window.percentUsed >= 100
+                ? "\(worst.name) limit reached"
+                : "\(worst.name) limit close"
+            return windowSeverity == .critical ? .bad(text) : .warn(text)
         case .comfortable:
             return .ok("Comfortable")
+        }
+    }
+
+    /// How alarming one severity is against another. `QuotaSeverity` is
+    /// deliberately not `Comparable` - it is a verdict, not a scale, and the
+    /// only place this app needs to order two of them is the pill above.
+    private static func claudeSeverityRank(_ severity: QuotaSeverity) -> Int {
+        switch severity {
+        case .comfortable: return 0
+        case .warning: return 1
+        case .critical: return 2
         }
     }
 
