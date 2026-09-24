@@ -163,6 +163,7 @@ grep -rhoE '"FM_[A-Z0-9_]+"' native/Sources/GrandLine/*.swift | tr -d '"' | grep
 | `FM_STRAW_HAT_DIR` | The Straw Hat crew's saved conversations (redacted). Falls back to `FM_SHIFT_DIR`, then the synced clone |
 | `FM_SHIFT_GIT_CLONE_PATH` | Where the `manjesh-config` clone lives |
 | `FM_SHIFT_REMOTE_URL` | The remote Shift clones/pulls/pushes (point at a disposable local bare repo for tests) |
+| `FM_DOTFILES_AUTOSYNC_PATH` | The dotfiles checkout Bootstrap's auto-commit watches, commits and pushes (`DotfilesAutoSync`). Defaults to `~/.dotfiles`' resolved target; point it at a disposable clone for tests, and note that a path with no `.git` makes the service inert rather than failing |
 | `FM_DICTATION_DIR` | Dictation history + vocabulary |
 | `FM_DOCS_DIR` | The synced DevOps Playbook copy |
 | `FM_DOCS_RUNBOOKS_DIR` | Runbooks/postmortems (bypasses git) |
