@@ -45,6 +45,9 @@ enum BackgroundSignalsSelfTest {
         checkPassAdmission(&ok)
         checkLatchRelease(&ok)
         checkHealthVerdicts(&ok)
+        checkNoUnattendedAvList(&ok)
+        checkVaultToolsPublish(&ok)
+        checkAppPasswordRetryBackoff(&ok)
         print(ok ? "BackgroundSignalsSelfTest: all checks passed" : "BackgroundSignalsSelfTest: FAILED")
         return ok
     }
@@ -165,6 +168,157 @@ enum BackgroundSignalsSelfTest {
         }
         print("  OK - unknown -> running -> healthy -> degraded -> failing, and a success resets it")
     }
+
+    // MARK: The approval-prompt rule - no unattended `av list`
+    //
+    // `av list` is the only `av` read this app makes that goes through Automic
+    // Vault's approval service, so on a timer it can raise Automic Vault's own
+    // modal dialog over whatever the captain is doing, unprovoked. That is a
+    // property of *which function the poller calls*, and nothing behavioural
+    // can see it: the poller's vault check spawns a real subprocess, so a
+    // suite can neither run it nor observe which subcommand it chose.
+    //
+    // A source guard is therefore the only check that can fail here, and it is
+    // the right shape anyway - the regression this catches is somebody
+    // reaching for `loadSnapshot()` again because it is the obvious call.
+
+    private static func checkNoUnattendedAvList(_ ok: inout Bool) {
+        print("\n-- no unattended `av list` (the approval-prompt rule) --")
+        guard let root = SelfTestSources.appSourceDirectory() else {
+            fail("source root not found - this check cannot run", &ok)
+            return
+        }
+        let file = root.appendingPathComponent("BackgroundSignalsPoller.swift")
+        guard let source = try? String(contentsOf: file, encoding: .utf8) else {
+            fail("BackgroundSignalsPoller.swift could not be read", &ok)
+            return
+        }
+        // Discriminating power first: if the fixture ever stops being the file
+        // this check thinks it is, every assertion below passes vacuously.
+        check(source.contains("private func checkVault()"),
+              "the poller's vault check is not in this file any more - this guard is pointing at the wrong place",
+              &ok)
+
+        // `loadSnapshot` runs `av list`. Comments are stripped first, for the
+        // same reason `FM_RUN_VENDORED_PATCHES_TESTS` strips them: the call
+        // site is discussed at length in the comments right above it, and this
+        // has to fail on the *code* coming back, not on the prose staying.
+        let code = strippingComments(source)
+        check(!code.contains("VaultSource.loadSnapshot"),
+              "the poller calls VaultSource.loadSnapshot, which runs `av list` - that is an unattended call to the one `av` read that can raise Automic Vault's approval dialog. Use VaultSource.loadToolStatus().",
+              &ok)
+        check(code.contains("VaultSource.loadToolStatus"),
+              "the poller no longer calls VaultSource.loadToolStatus - if the vault check was removed outright, remove this guard too and say so",
+              &ok)
+    }
+
+    /// Drops `//` line comments and `/* */` blocks so a source guard matches
+    /// code rather than the paragraph explaining the code. Deliberately naive
+    /// about string literals containing `//` - nothing in the guarded file has
+    /// one, and a false *failure* here is loud rather than silent.
+    private static func strippingComments(_ source: String) -> String {
+        var out = ""
+        var inBlock = false
+        for line in source.split(separator: "\n", omittingEmptySubsequences: false) {
+            var text = String(line)
+            if inBlock {
+                guard let end = text.range(of: "*/") else { continue }
+                text = String(text[end.upperBound...])
+                inBlock = false
+            }
+            if let start = text.range(of: "/*") {
+                if let end = text.range(of: "*/", range: start.upperBound..<text.endIndex) {
+                    text = String(text[..<start.lowerBound]) + String(text[end.upperBound...])
+                } else {
+                    text = String(text[..<start.lowerBound])
+                    inBlock = true
+                }
+            }
+            if let slashes = text.range(of: "//") {
+                text = String(text[..<slashes.lowerBound])
+            }
+            out += text + "\n"
+        }
+        return out
+    }
+
+    // MARK: A tools-only reading must not invent a secrets count
+    //
+    // The poller has `av doctor --json` and deliberately does not have
+    // `av list`, so it can say how many launchers need attention and can say
+    // nothing at all about how many secrets exist. GL-14: writing a zero there
+    // would be the same lie the B1 fix removed from the other field.
+
+    private static func checkVaultToolsPublish(_ ok: inout Bool) {
+        print("\n-- publishVaultTools: attention updates, the secrets count is left alone --")
+        let poller = BackgroundSignalsPoller.shared
+
+        // Seed both fields from a full reading, the way a Vault-page visit
+        // does, so the check below has a real previous value to preserve
+        // rather than a `nil` that would make it vacuous.
+        let seededAt = Date()
+        poller.publishVaultRead(secrets: [VaultSecret(name: "A"), VaultSecret(name: "B")],
+                                tools: [VaultTool(name: "brew", commands: ["brew"], status: .hardened)],
+                                gatheredAt: seededAt)
+        check(poller.lastCounts.vaultSecrets == 2,
+              "seed: expected 2 secrets, got \(String(describing: poller.lastCounts.vaultSecrets))", &ok)
+        check(poller.lastCounts.vaultAttention == 0,
+              "seed: expected 0 needing attention, got \(String(describing: poller.lastCounts.vaultAttention))", &ok)
+
+        // A tools-only reading moves the attention count...
+        poller.publishVaultTools([
+            VaultTool(name: "brew", commands: ["brew"], status: .needsAttention(issueCount: 2)),
+            VaultTool(name: "gh", commands: ["gh"], status: .hardened),
+        ], gatheredAt: seededAt.addingTimeInterval(1))
+        check(poller.lastCounts.vaultAttention == 1,
+              "tools-only publish: expected 1 needing attention, got \(String(describing: poller.lastCounts.vaultAttention))", &ok)
+        // ...and leaves the one it has no reading for exactly as it was.
+        check(poller.lastCounts.vaultSecrets == 2,
+              "tools-only publish overwrote the secrets count with \(String(describing: poller.lastCounts.vaultSecrets)) - it had no `av list` result to write", &ok)
+
+        // A failed `av doctor` read is not "nothing needs attention" (B1).
+        poller.publishVaultTools(nil, gatheredAt: seededAt.addingTimeInterval(2))
+        check(poller.lastCounts.vaultAttention == 1,
+              "a failed tools read changed the attention count to \(String(describing: poller.lastCounts.vaultAttention)) - a read that failed says nothing", &ok)
+        check(poller.lastCounts.vaultSecrets == 2,
+              "a failed tools read changed the secrets count to \(String(describing: poller.lastCounts.vaultSecrets))", &ok)
+    }
+
+    // MARK: The lock screen's `av list` retry backs off
+    //
+    // Every retry is an `av list`, i.e. an approval-service round trip. The
+    // flat 1.5s-forever cadence it replaced asked an unresponsive approval
+    // helper ~2,400 times an hour for as long as the lock screen was up.
+
+    private static func checkAppPasswordRetryBackoff(_ ok: inout Bool) {
+        print("\n-- lock screen `av list` retry backs off --")
+        let base = AppShellController.appPasswordRetryBaseDelay
+        let ceiling = AppShellController.appPasswordRetryCeiling
+
+        // The fixture has to be able to tell the two apart, or "starts at base"
+        // and "stops at ceiling" are the same assertion.
+        check(ceiling > base, "fixture: the ceiling (\(ceiling)) is not above the base (\(base))", &ok)
+
+        check(AppShellController.appPasswordRetryDelay(attempt: 0) == base,
+              "first retry is \(AppShellController.appPasswordRetryDelay(attempt: 0))s, expected \(base)s - the common 'the helper is still starting' case must still recover fast", &ok)
+
+        var previous = AppShellController.appPasswordRetryDelay(attempt: 0)
+        var reachedCeiling = false
+        for attempt in 1...12 {
+            let delay = AppShellController.appPasswordRetryDelay(attempt: attempt)
+            check(delay >= previous, "retry \(attempt) got faster (\(previous)s -> \(delay)s)", &ok)
+            check(delay <= ceiling, "retry \(attempt) is \(delay)s, above the \(ceiling)s ceiling", &ok)
+            if delay == ceiling { reachedCeiling = true }
+            previous = delay
+        }
+        check(reachedCeiling, "the backoff never reaches its \(ceiling)s ceiling within 12 retries", &ok)
+
+        // The whole point is that it is not flat: a schedule that never grows
+        // would satisfy every assertion above.
+        check(AppShellController.appPasswordRetryDelay(attempt: 3) > base,
+              "the retry delay never grows past \(base)s - this is still the flat cadence the fix replaced", &ok)
+    }
+
 }
 
 #endif

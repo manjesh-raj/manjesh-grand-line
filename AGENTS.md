@@ -1644,6 +1644,23 @@ noted.
   which is this app's one "get an image off a pasteboard" function. Both halves
   consult `AppLockGate`: the system crosshair draws *over* this app's lock
   overlay.
+- **`av list` is the one Automic Vault read that can raise an approval prompt,
+  and nothing unattended may call it.** Measured against a real `av` by counting
+  rows in Automic Vault's own authorization log: `av list` adds a row and
+  blocked 45s on a visible approval dialog on its first call, while
+  `av doctor --json`, `av hardeners --json` and `av --version` add none and
+  answer in well under a second. So a timer, a retry loop or any other
+  unattended caller takes `VaultSource.loadToolStatus()` (the `av doctor --json`
+  half, which produces the vault-attention signal); `VaultSource.loadSnapshot()`
+  is reached only from something the captain just did. Note this is not an
+  `AppActivityState` question - the captain's report was a prompt appearing
+  while the app was **frontmost**, where every backgrounded gate is open.
+  `VaultData.swift`'s "approval-prompt split" block has the numbers,
+  `BackgroundSignalsSelfTest` source-guards the poller, and the one sanctioned
+  exception (`ScheduleRunner.vaultRecipeExport`, whose content *is* the secret
+  names, and which only runs for a schedule the captain enabled) is documented
+  at its own call site.
+
 - **One calendar path, and it is read-only: `DailyReviewCalendar.swift`.** It
   is the only file in the app that imports `EventKit`, it never calls `save`,
   `remove`, `commit`, `saveCalendar` or `removeCalendar`, and it hands out

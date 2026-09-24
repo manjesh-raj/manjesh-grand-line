@@ -1352,6 +1352,9 @@ final class AppShellController: NSViewController {
         DispatchQueue.global(qos: .userInitiated).async {
             VaultSource.ensureServiceRunning()
         }
+        // A new lock screen always gets the fast first retry, whatever the
+        // previous one ended on.
+        appPasswordRetryAttempt = 0
         checkAppPasswordAvailability(reason: reason)
     }
 
@@ -1374,15 +1377,20 @@ final class AppShellController: NSViewController {
     private func applyPasswordAvailability(_ availability: VaultSource.AppPasswordAvailability, reason: AppLockReason) {
         switch availability {
         case .configured:
+            // A settled outcome ends the retry sequence, so the next lock that
+            // does need one starts back at `appPasswordRetryBaseDelay`.
+            appPasswordRetryAttempt = 0
             let subtitle = reason == .sessionExpired
                 ? "Your session expired - please log in again."
                 : "Grand Line is locked."
             lockScreen.apply(.locked(subtitle: subtitle))
             lockScreen.focusPasswordField()
         case .notConfigured:
+            appPasswordRetryAttempt = 0
             lockScreen.apply(.noPasswordConfigured)
             lockScreen.focusPasswordField()
         case .avUnavailable:
+            appPasswordRetryAttempt = 0
             lockScreen.apply(.avUnavailable)
         case .serviceNotRunning:
             lockScreen.apply(.serviceNotRunning)
@@ -1402,15 +1410,60 @@ final class AppShellController: NSViewController {
         }
     }
 
-    /// Retry every 1.5s indefinitely while the lock screen is up - there's
-    /// nothing else useful to show, and the retry itself is a cheap
-    /// subprocess call, not a real cost. Shared by `.serviceNotRunning` and
-    /// `.transientFailure` above.
+    /// Retries while the lock screen is up, on a **backoff** - fast at first
+    /// so the ordinary "Automic Vault is still starting" case recovers within
+    /// a couple of seconds, then slower so a genuinely wedged approval service
+    /// is not hammered for the rest of the session.
+    ///
+    /// This used to be a flat 1.5s forever, on the reasoning that the retry is
+    /// "a cheap subprocess call, not a real cost". That reasoning was wrong in
+    /// a way nothing here could see: the call is `av list`, and `av list` is
+    /// the one `av` read that goes through Automic Vault's approval service -
+    /// every attempt is an approval-service round trip, and one that is
+    /// entitled to raise Automic Vault's own modal dialog. Measured, each `av
+    /// list` writes a row to Automic Vault's authorization log, so a lock
+    /// screen left up against an unresponsive helper was asking it ~2,400
+    /// times an hour. `VaultData.swift`'s "approval-prompt split" comment
+    /// block has the measurements.
+    ///
+    /// The backoff is deliberately not a give-up: the lock screen has nothing
+    /// else useful to show and the captain cannot get past it any other way,
+    /// so it keeps asking - just at `appPasswordRetryCeiling` rather than at 1.5s.
     private func scheduleAppPasswordAvailabilityRetry(reason: AppLockReason) {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+        let delay = Self.appPasswordRetryDelay(attempt: appPasswordRetryAttempt)
+        appPasswordRetryAttempt += 1
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self, !self.lockScreen.view.isHidden else { return }
             self.checkAppPasswordAvailability(reason: reason)
         }
+    }
+
+    /// How many consecutive retries the current lock screen has scheduled.
+    /// Reset by `applyPasswordAvailability` on any outcome that is not a
+    /// retryable one, and by `showLock`, so a fresh lock always starts fast.
+    private var appPasswordRetryAttempt = 0
+
+    /// The first delay, and the one the ordinary "the helper is still coming
+    /// up" case is answered at.
+    static let appPasswordRetryBaseDelay: TimeInterval = 1.5
+
+    /// The slowest this ever gets. Chosen so a captain who starts Automic
+    /// Vault by hand while staring at the lock screen still sees it clear
+    /// within a few seconds of doing so, rather than a minute later.
+    static let appPasswordRetryCeiling: TimeInterval = 15
+
+    /// Doubles from `appPasswordRetryBaseDelay` and stops at
+    /// `appPasswordRetryCeiling`: 1.5, 3, 6, 12, 15, 15, ... - so the first
+    /// four retries fire at 1.5s, 4.5s, 10.5s and 22.5s, i.e. all inside the
+    /// first 23 seconds, which is the window the flat 1.5s cadence actually
+    /// existed for.
+    ///
+    /// `static` and pure so a suite can assert the schedule without a window,
+    /// a lock screen or an `av` on PATH.
+    static func appPasswordRetryDelay(attempt: Int) -> TimeInterval {
+        guard attempt > 0 else { return appPasswordRetryBaseDelay }
+        let scaled = appPasswordRetryBaseDelay * pow(2, Double(min(attempt, 16)))
+        return min(scaled, appPasswordRetryCeiling)
     }
 
     private func hideLock() {
