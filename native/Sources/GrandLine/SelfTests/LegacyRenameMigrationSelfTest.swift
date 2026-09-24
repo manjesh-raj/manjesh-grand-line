@@ -40,6 +40,8 @@ enum LegacyRenameMigrationSelfTest {
         checkFolderMigrationNeverMerges(&ok)
         checkKeychainItemIsCopied(&ok)
         checkKeychainCopyNeverOverwrites(&ok)
+        checkKeychainMigrationGateSkipsOnceComplete(&ok)
+        checkKeychainMigrationGateRetriesAFailure(&ok)
         checkDefaultsAreCarriedOver(&ok)
 
         if ok { print("[LegacyRenameMigrationSelfTest] all checks passed") }
@@ -232,6 +234,98 @@ enum LegacyRenameMigrationSelfTest {
             check(read(service: service, account: account) == Data("current".utf8),
                   "the newer item's value survives the migration", &ok)
         } && ok
+    }
+
+    /// The bug this suite exists to catch: before `migrateKeychainIfNeeded`,
+    /// `runAtLaunch()` re-issued the full per-item Keychain read on *every*
+    /// launch, forever, which is what turned one relaunch into another
+    /// barrage of "wants to access your confidential information" dialogs.
+    /// This proves a second, already-complete pass does not touch the
+    /// Keychain at all - not "touches it and finds nothing to do", but
+    /// genuinely skips the query - against a real (scratch-named) Keychain
+    /// service, not a mock.
+    private static func checkKeychainMigrationGateSkipsOnceComplete(_ ok: inout Bool) {
+        ok = withScratchKeychain { legacyService, service, ok in
+            let account = "gate-item"
+            try seed(service: legacyService, account: account, data: Data("secret".utf8))
+
+            let run = UUID().uuidString
+            let domain = "com.manjesh.grandline.selftest.rename.gate.\(run)"
+            guard let defaults = UserDefaults(suiteName: domain) else {
+                fail("could not open the scratch defaults suite", &ok)
+                return
+            }
+            defer { defaults.removePersistentDomain(forName: domain) }
+
+            let migrate: ([String]) -> LegacyNameMigration.KeychainOutcome = { _ in
+                LegacyNameMigration.migrateKeychainService(from: legacyService, to: service)
+            }
+
+            let first = LegacyNameMigration.migrateKeychainIfNeeded(
+                into: defaults, services: [service], migrate: migrate)
+            guard case .ran(let outcome) = first else {
+                fail("the first-ever launch must actually run the migration, not skip it", &ok)
+                return
+            }
+            check(outcome.copied == ["\(service)/\(account)"],
+                  "the first launch copied the seeded item (got \(outcome.copied))", &ok)
+            check(defaults.bool(forKey: LegacyNameMigration.keychainMigrationCompleteKey),
+                  "a clean pass marks the migration complete", &ok)
+
+            // A legacy item that shows up *after* completion is the proof: if
+            // the gate only meant "nothing left to copy" rather than "do not
+            // even look", this would be copied by the second call.
+            try seed(service: legacyService, account: "should-not-be-swept-up", data: Data("late".utf8))
+            let second = LegacyNameMigration.migrateKeychainIfNeeded(
+                into: defaults, services: [service], migrate: migrate)
+            check(second == .alreadyDone,
+                  "a second, already-complete launch skips the Keychain entirely (got \(second))", &ok)
+            check(!LegacyNameMigration.contains(service: service, account: "should-not-be-swept-up"),
+                  "and genuinely never queried - the late item was not copied", &ok)
+        } && ok
+    }
+
+    /// The other half of the same trade-off: a captain who denies one prompt
+    /// (or a transient `SecItemAdd` failure) must not have the gate mark the
+    /// whole pass "done" regardless - the item has to stay retryable.
+    private static func checkKeychainMigrationGateRetriesAFailure(_ ok: inout Bool) {
+        let run = UUID().uuidString
+        let domain = "com.manjesh.grandline.selftest.rename.gate.fail.\(run)"
+        guard let defaults = UserDefaults(suiteName: domain) else {
+            fail("could not open the scratch defaults suite", &ok)
+            return
+        }
+        defer { defaults.removePersistentDomain(forName: domain) }
+
+        var calls = 0
+        var nextOutcome = LegacyNameMigration.KeychainOutcome(
+            copied: [], alreadyPresent: 0,
+            failures: ["legacy/denied-account: the item carried no data"])
+        let migrate: ([String]) -> LegacyNameMigration.KeychainOutcome = { _ in
+            calls += 1
+            return nextOutcome
+        }
+
+        _ = LegacyNameMigration.migrateKeychainIfNeeded(into: defaults, migrate: migrate)
+        check(calls == 1, "the first launch ran", &ok)
+        check(!defaults.bool(forKey: LegacyNameMigration.keychainMigrationCompleteKey),
+              "a pass with a failure is not marked complete", &ok)
+
+        _ = LegacyNameMigration.migrateKeychainIfNeeded(into: defaults, migrate: migrate)
+        check(calls == 2,
+              "a second launch retries the still-failing item rather than abandoning it", &ok)
+
+        // The captain allows it (or the item resolves on its own) - the very
+        // next launch should both run one more time and then latch.
+        nextOutcome = LegacyNameMigration.KeychainOutcome(copied: ["x/y"], alreadyPresent: 0, failures: [])
+        _ = LegacyNameMigration.migrateKeychainIfNeeded(into: defaults, migrate: migrate)
+        check(calls == 3, "the third launch ran and this time succeeded", &ok)
+        check(defaults.bool(forKey: LegacyNameMigration.keychainMigrationCompleteKey),
+              "a clean pass latches the gate", &ok)
+
+        let fourth = LegacyNameMigration.migrateKeychainIfNeeded(into: defaults, migrate: migrate)
+        check(calls == 3, "and every later launch skips the migration entirely (got \(calls) calls)", &ok)
+        check(fourth == .alreadyDone, "reporting exactly that (got \(fourth))", &ok)
     }
 
     // MARK: - The preference domain

@@ -43,6 +43,28 @@
 // the new folder exists, an item already present under the new service name is
 // left alone rather than overwritten, and the preference copy writes a marker
 // so a setting the captain deliberately clears afterwards is not handed back.
+//
+// **The Keychain half also needs a once-only gate, and it is not the same
+// shape as the other two.** `migrateApplicationSupportFolder` is naturally
+// idempotent (a no-op once the folder has moved) and `migrateDefaults` is
+// gated unconditionally after its one pass. Reading a Keychain item's secret
+// data is different: every account under every legacy service is read via its
+// own `kSecReturnData` query (see `migrateKeychainService`'s own comment), and
+// a query for confidential data the requesting app has not been granted
+// before is exactly what makes macOS show the "wants to access your
+// confidential information" dialog - one dialog per item, not per launch.
+// Before this gate existed, `runAtLaunch()` re-issued that same barrage of
+// per-item reads on *every single launch*, forever, regardless of whether the
+// item had already been copied across - which is what turned one captain's
+// relaunch into another ten-dialog barrage instead of zero. `migrateKeychainIfNeeded`
+// is the fix: once a pass finishes with no failures, it sets a persisted flag
+// and every later launch skips the Keychain entirely - no query, no dialog.
+// A pass that fails partway (a captain who genuinely clicks Deny, or a
+// transient `SecItemAdd` error) does *not* set the flag, so a later launch
+// retries - the item stays copyable rather than being silently abandoned, at
+// the cost of repeating the read for whatever is still outstanding until it
+// clears. See `docs/history/45-rename-to-grand-line.md` for the measurement
+// behind this.
 
 import Foundation
 import Security
@@ -269,6 +291,39 @@ enum LegacyNameMigration {
         return combined
     }
 
+    /// Set once a Keychain migration pass finishes with **no** failures -
+    /// deliberately not after every pass, unlike `defaultsMigratedKey`. See
+    /// the header comment above for why the two need different shapes.
+    static let keychainMigrationCompleteKey = "fm.keychainMigratedFromFirstmateCockpit"
+
+    enum KeychainMigrationOutcome: Equatable {
+        /// The flag was already set - nothing was queried, and nothing was
+        /// read. This is the case that used to not exist at all.
+        case alreadyDone
+        case ran(KeychainOutcome)
+    }
+
+    /// The gated entry point `runAtLaunch()` calls. `migrate` is a seam for
+    /// the self-test suite - production always passes `migrateKeychain`.
+    @discardableResult
+    static func migrateKeychainIfNeeded(
+        into defaults: UserDefaults = .standard,
+        services: [String] = keychainServices,
+        migrate: ([String]) -> KeychainOutcome = migrateKeychain
+    ) -> KeychainMigrationOutcome {
+        if defaults.bool(forKey: keychainMigrationCompleteKey) { return .alreadyDone }
+        let outcome = migrate(services)
+        // Only a clean pass earns the flag - a captain who denies one prompt,
+        // or a transient SecItemAdd failure, must be retried later rather
+        // than silently abandoned. See `data(service:account:)`, whose own
+        // `nil` return (a denied or otherwise unreadable read) already
+        // surfaces as a `failures` entry here.
+        if outcome.failures.isEmpty {
+            defaults.set(true, forKey: keychainMigrationCompleteKey)
+        }
+        return .ran(outcome)
+    }
+
     /// One item's blob, or `nil` when it is missing or unreadable.
     private static func data(service: String, account: String) -> Data? {
         let query: [String: Any] = [
@@ -334,15 +389,25 @@ enum LegacyNameMigration {
             AppLog.store.notice("Rename: carried \(keys, privacy: .public) preference(s) over from the old domain \(legacyDefaultsDomain(), privacy: .public).")
         }
 
-        let keychain = migrateKeychain()
-        if keychain.didSomething {
-            AppLog.keychain.notice("""
-                Rename: copied \(keychain.copied.count, privacy: .public) Keychain item(s) \
-                onto the new service names. The originals were left in place on purpose.
-                """)
-        }
-        for failure in keychain.failures {
-            AppLog.keychain.error("Rename: Keychain copy failed - \(failure, privacy: .public)")
+        switch migrateKeychainIfNeeded() {
+        case .alreadyDone:
+            break
+        case .ran(let keychain):
+            if keychain.didSomething {
+                AppLog.keychain.notice("""
+                    Rename: copied \(keychain.copied.count, privacy: .public) Keychain item(s) \
+                    onto the new service names. The originals were left in place on purpose.
+                    """)
+            }
+            for failure in keychain.failures {
+                AppLog.keychain.error("Rename: Keychain copy failed - \(failure, privacy: .public)")
+            }
+            if !keychain.failures.isEmpty {
+                AppLog.keychain.notice("""
+                    Rename: the Keychain migration pass had \(keychain.failures.count, privacy: .public) \
+                    failure(s), so it is not marked complete - a later launch will retry.
+                    """)
+            }
         }
     }
 }
