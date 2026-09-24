@@ -1,4 +1,4 @@
-// Manjesh Grand Line - the WidgetKit extension.
+// Grand Line - the WidgetKit extension.
 //
 // The pieces both widgets share: the identity tile in the header, the type
 // scale, and the two states that are not "here is your data" - GL-14's

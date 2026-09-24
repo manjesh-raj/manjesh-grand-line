@@ -27,7 +27,7 @@ so `git log` is the tiebreaker.
 
 ## The files
 
-39 files.
+45 files.
 
 
 | File | Covers | Size |
@@ -76,3 +76,4 @@ so `git log` is the tiebreaker.
 | [`42-widgets.md`](42-widgets.md) | WidgetKit extension (F23): the Tasks-due and Sticky-note widgets and the Developer ID dependency | 13KB |
 | [`43-google-accounts.md`](43-google-accounts.md) | Gmail sign-in, the OAuth/PKCE flow, and Google Calendar as a second read-only source for the daily review | 9KB |
 | [`44-new-theme-families.md`](44-new-theme-families.md) | Six new theme families: the picker from 14 palettes to 26 (Nord, Dracula, One, Ayu, Night Owl, Oxocarbon) | 11KB |
+| [`45-rename-to-grand-line.md`](45-rename-to-grand-line.md) | The rename to "Grand Line": the new bundle identifier, the Keychain and data-folder migrations, and the System Settings re-grant it costs | 9KB |

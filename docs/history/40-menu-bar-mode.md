@@ -428,7 +428,7 @@ their code. All eight pass. CI is the authority on the rest.
 One operational note for whoever runs this next. The first post-change run
 overlapped a sibling worktree's own pass, which AGENTS.md forbids for exactly
 the reason it then demonstrated: `SelfTestDefaultsGuard` reported the shared
-`FirstmateCockpit` domain dirty twice, naming themes neither lane had selected.
+`GrandLine` domain dirty twice, naming themes neither lane had selected.
 The clean run was taken after that pass finished, from `fm.themeID = dusk`, with
 `git status --porcelain` empty. Checking `pgrep -fl run-all-tests` first is the
 cheap half of that pre-flight - and note that a naive `until ! pgrep -f

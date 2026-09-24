@@ -12,7 +12,7 @@ It says what is built, what is verified, what is *not* verified, and exactly whi
 cd native
 ./Scripts/build-widget-extension.sh --check     # compile + link only
 ./Scripts/build-widget-extension.sh             # assemble and sign .build/widgets/GrandLineWidgets.appex
-./Scripts/build-widget-extension.sh --embed     # also drop it into dist/Manjesh Grand Line.app/Contents/PlugIns
+./Scripts/build-widget-extension.sh --embed     # also drop it into dist/Grand Line.app/Contents/PlugIns
 ./Scripts/render-widget-previews.sh             # render every state to PNG under .build/widget-previews/
 ```
 
@@ -38,14 +38,14 @@ Reading that same directory therefore needs `com.apple.security.application-grou
 On this machine, today:
 
 ```
-$ codesign -dv "dist/Manjesh Grand Line.app"
-Identifier=com.firstmate.cockpit.native
+$ codesign -dv "dist/Grand Line.app"
+Identifier=com.manjesh.grandline.native
 TeamIdentifier=not set
-$ spctl -a -vv "dist/Manjesh Grand Line.app"
+$ spctl -a -vv "dist/Grand Line.app"
 rejected
-origin=Firstmate Cockpit Local Dev
+origin=Grand Line Local Dev
 $ security find-identity -v -p codesigning
-1) ... "Firstmate Cockpit Local Dev"     # self-signed, no team
+1) ... "Grand Line Local Dev"     # self-signed, no team
 ```
 
 So the consequence is specific rather than vague:
@@ -64,7 +64,7 @@ A widget that loaded without the entitlement would render its `Not available` st
 
 Once a Developer ID / Team ID exists, this is the whole change:
 
-1. `GrandLineWidgetContainer.appGroupIdentifier` in `Sources/FirstmateCockpit/WidgetSharedContract.swift` becomes `"<TeamID>.group.com.firstmate.cockpit.native"`.
+1. `GrandLineWidgetContainer.appGroupIdentifier` in `Sources/GrandLine/WidgetSharedContract.swift` becomes `"<TeamID>.group.com.manjesh.grandline.native"`.
 2. The same value in `GrandLineWidgets/GrandLineWidgets.entitlements`.
 
 `WidgetSnapshotSelfTest.checkTheExtensionAndTheContractAgree` fails if the two ever disagree, so they cannot be half-changed.

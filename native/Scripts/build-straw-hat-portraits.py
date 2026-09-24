@@ -152,7 +152,7 @@ def render(b64: str, name: str) -> bytes:
 
 def swift_source(payloads: dict) -> str:
     lines = [
-        "// Manjesh Grand Line - native macOS app.",
+        "// Grand Line - native macOS app.",
         "//",
         "// GENERATED FILE - do not hand-edit. Produced by",
         "// `native/Scripts/build-straw-hat-portraits.py` from the crew portraits in",
@@ -232,7 +232,7 @@ def main() -> None:
     source = swift_source(payloads)
 
     here = os.path.dirname(os.path.abspath(__file__))
-    target = os.path.join(here, "..", "Sources", "FirstmateCockpit", "StrawHatPortraits.swift")
+    target = os.path.join(here, "..", "Sources", "GrandLine", "StrawHatPortraits.swift")
     target = os.path.normpath(target)
 
     if args.check:

@@ -1,0 +1,209 @@
+// Grand Line - native macOS app.
+//
+// The app's one Reduce Motion gate - Phase 6 of the Daylight UI migration
+// (`data/grandline-ui-modernization-review/daylight-ui-design.md`, §8's
+// "Reduce Motion audit of the hover translate and any ribbon animation").
+//
+// **What the audit actually found, so the next reader does not have to redo
+// it.** Phases 1-5 introduced three classes of motion, and only one of them
+// was a bug:
+//
+// 1. **Explicit, deliberate animation** - `HoverHighlightView`'s hover fill,
+//    `HelmModuleCard`'s 3pt hover lift, `HelmToggle`'s knob slide, `Toast`'s
+//    fade. Each already read `NSWorkspace.accessibilityDisplayShouldReduceMotion`
+//    at its own call site, except `Toast`, which this phase gated. They are
+//    now all routed through `HelmMotion.isReduced` so there is one definition
+//    of the question rather than six copies of it - which is what
+//    `DaylightMotionSelfTest`'s source guard enforces.
+//
+// 2. **Implicit animation on the seven Daylight gradient layers** - the real
+//    finding, and invisible in a diff. A `CAGradientLayer` added as a *sublayer*
+//    (which every ribbon, tile and gradient fill in this design is) is not
+//    view-backed, so Core Animation gives it the default ~0.25s implicit
+//    animation for any property change. `colors` is reassigned on every theme
+//    change and on every `configure(...)`, so a re-used module card cross-faded
+//    from the previous row's hue to the new one, and a theme switch cross-faded
+//    every ribbon in the window - motion nobody designed, nobody asked for, and
+//    nothing gated. `HelmMotion.withoutImplicitAnimation` is the fix and is
+//    applied at all seven sites.
+//
+// 3. **Out of scope, deliberately** - `LockScreenController`'s scene and
+//    `DictationHUD`'s pulse. Both are on the migration's own "must NOT change"
+//    list and both already gate their looping animations; they read the gate
+//    through this type now purely so the app has one definition, with no
+//    behavioural change. `ConsoleController`'s SRE Lead pane slide is
+//    pre-Daylight and is not a hover translate or a gradient animation, so this
+//    phase left its timing alone rather than quietly re-tuning a surface whose
+//    own history warns against touching its geometry.
+//
+// The rule this file encodes: **Reduce Motion means the end state, instantly -
+// never the same motion, slower.** A halved duration is still motion.
+
+import AppKit
+
+enum HelmMotion {
+    /// Does the captain have "Reduce motion" on?
+    ///
+    /// The one place this question is asked. Read fresh every time rather than
+    /// cached: the setting is a live System Settings toggle, and the two
+    /// surfaces that need to *react* to it changing (a module card's hover
+    /// state, the dictation HUD's pulse) already observe
+    /// `NSWorkspace.accessibilityDisplayOptionsDidChangeNotification` and
+    /// re-ask.
+    static var isReduced: Bool {
+        #if FM_SELFTESTS
+        if let forced = reducedOverrideForTests { return forced }
+        #endif
+        return NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+
+    #if FM_SELFTESTS
+    /// Forces the answer, so a self-test can drive the *real* hover, ribbon
+    /// and toast code paths in both states.
+    ///
+    /// There is no API to set the system setting, and asserting only "the
+    /// call site mentions the gate" is the weaker check - it passes for a gate
+    /// that is read and then ignored. Every user of it restores `nil`.
+    static var reducedOverrideForTests: Bool?
+    #endif
+
+    /// Runs `body` with Core Animation's implicit animations suppressed when
+    /// Reduce Motion is on, and unchanged otherwise.
+    ///
+    /// For a standalone (non-view-backed) `CALayer` - every Daylight gradient
+    /// ribbon, tile and fill - assigning `colors`, `frame` or `cornerRadius`
+    /// animates by default. Wrapping the assignment is the only way to make
+    /// that instant; there is no per-layer "don't animate" flag.
+    ///
+    /// Deliberately gated rather than always-off: with Reduce Motion off, the
+    /// existing cross-fade is what every render and every screenshot of this
+    /// app has shown since Phase 1, and this phase is hardening, not a
+    /// retune.
+    static func withoutImplicitAnimation(_ body: () -> Void) {
+        guard isReduced else {
+            body()
+            return
+        }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        body()
+        CATransaction.commit()
+    }
+
+    /// The app's one spring curve.
+    ///
+    /// The audit's motion spec is explicit that there are "two curves total -
+    /// one spring, one ease-out - all through the existing Reduce Motion
+    /// gate", and the captain-approved visual gives the spring's own control
+    /// points. It overshoots slightly (the 1.4), which is what makes a
+    /// sliding selection read as a physical thing arriving rather than as a
+    /// rectangle being repositioned.
+    static func spring() -> CAMediaTimingFunction {
+        CAMediaTimingFunction(controlPoints: 0.3, 1.4, 0.45, 1)
+    }
+
+    /// The spring's duration, from the same spec ("spring 250ms").
+    static let springDuration: TimeInterval = 0.25
+
+    /// Fades a view to `target`, animating only when it should.
+    ///
+    /// **Do not reach for `view.animator().alphaValue` outside an animation
+    /// context.** Measured, not assumed: the animator proxy routes the write
+    /// through AppKit's animation machinery whether or not a context is open,
+    /// so a caller that sets it "unanimated" and then reads `alphaValue` back
+    /// gets the *old* value - which is how D1's hover-reveal shipped its
+    /// first draft looking entirely correct in code and doing nothing at all
+    /// in a real list. The proxy is used only on the branch that genuinely
+    /// animates; every other path assigns the property directly.
+    static func fade(_ view: NSView, to target: CGFloat, duration: TimeInterval, animated: Bool) {
+        guard view.alphaValue != target else { return }
+        guard animated, !isReduced else {
+            view.alphaValue = target
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = duration
+            // L's headline complaint is "No springs anywhere. **No timing
+            // curves set (default ease).**" Earlier rounds answered the first
+            // half and set a curve at each *new* call site, but the two
+            // shared primitives - this and `animate` - still took AppKit's
+            // default ease-in-ease-out, which is what most of the app's motion
+            // actually runs through. This is the spec's one ease-out, so the
+            // statement "two curves total" is now true of the primitives
+            // rather than only of the call sites that remembered.
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            view.animator().alphaValue = target
+        }
+    }
+
+    /// The ease-out curve's duration - the audit's motion spec states two
+    /// curves and two durations ("spring 250ms", "120ms eased state changes"),
+    /// and this is the second of them: a state change the eye should register
+    /// as *having happened* rather than as a thing travelling.
+    static let stateDuration: TimeInterval = 0.12
+
+    /// Runs `body` inside an animation context that animates **layer**
+    /// properties - `borderWidth`, `borderColor`, `shadowOpacity`,
+    /// `backgroundColor` - not just the view properties `animate` covers.
+    ///
+    /// **Why this is a separate primitive rather than a flag on `animate`.**
+    /// A *view-backed* layer is the opposite of the standalone-sublayer case
+    /// `withoutImplicitAnimation` exists for: AppKit makes the view the
+    /// layer's delegate and that delegate returns `NSNull` for every action
+    /// unless `allowsImplicitAnimation` is set, so a layer property assigned
+    /// on a `wantsLayer` view *pops* by default. That is exactly the F1
+    /// finding - "the glow currently pops in" - and no amount of wrapping in
+    /// `animate` fixes it, because `animate` never sets that flag.
+    ///
+    /// The flag applies to everything inside the block, which is what the
+    /// callers want: a focus transition changes four layer properties at once
+    /// and they must move together.
+    static func animateLayers(_ animated: Bool = true,
+                              duration: TimeInterval,
+                              _ body: () -> Void) {
+        guard animated, !isReduced else {
+            // Reduce Motion means the end state, instantly - and "instantly"
+            // for a layer property means suppressing whatever implicit
+            // animation a *standalone* sublayer in the same block would
+            // otherwise take. A view-backed layer needs no suppression, but a
+            // caller may touch both kinds, so this is the safe shape.
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            body()
+            CATransaction.commit()
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = duration
+            context.allowsImplicitAnimation = true
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            body()
+        }
+    }
+
+    /// `NSAnimationContext.runAnimationGroup` that collapses to an immediate
+    /// state change under Reduce Motion.
+    ///
+    /// The `animated` parameter is the caller's own "should this be animated
+    /// at all" (a first paint, a programmatic selection) and is ANDed with the
+    /// accessibility setting, so a call site never has to remember both.
+    static func animate(_ animated: Bool = true,
+                        duration: TimeInterval,
+                        _ body: () -> Void) {
+        guard animated, !isReduced else {
+            body()
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = duration
+            // The same ease-out `fade` and `animateLayers` take - see the note
+            // in `fade`. None of this method's callers sets its own timing
+            // function, and all of them (a press scale, a hover lift, a
+            // drawer slide) are ease-out shapes; a caller that genuinely
+            // wants the spring sets `HelmMotion.spring()` inside the body,
+            // which runs after this line and therefore wins.
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            body()
+        }
+    }
+}

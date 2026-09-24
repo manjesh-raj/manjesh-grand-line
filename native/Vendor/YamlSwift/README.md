@@ -22,7 +22,7 @@ Validate and as the parse step of Beautify - `loadMultiple` is what makes multi-
 manifests (documents separated by `---`) work correctly, not just a single top-level object.
 
 There is no `save`/`dump` API upstream for producing YAML text back out of a parsed `Yaml` value -
-`YamlBeautify.swift` (`native/Sources/FirstmateCockpit/`) has its own small serializer for that,
+`YamlBeautify.swift` (`native/Sources/GrandLine/`) has its own small serializer for that,
 which is serialization of an already-correctly-parsed tree, not YAML parsing, so it doesn't
 reintroduce the "hand-rolled parser" problem this vendoring was meant to avoid.
 

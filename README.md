@@ -1,4 +1,4 @@
-# firstmate-cockpit
+# Grand Line
 
 A native macOS cockpit to **observe and lightly control** a [firstmate](https://github.com/kunchenguid/firstmate) fleet.
 
@@ -10,9 +10,18 @@ An earlier version of this project was a Python/FastAPI backend wrapped in a WKW
 
 ## Build and run
 
-See `native/README.md` for full instructions, including `swift build`/`swift run` for development and `native/build_native_app.sh` to package a double-clickable `dist/Manjesh Grand Line.app`.
+See `native/README.md` for full instructions, including `swift build`/`swift run` for development and `native/build_native_app.sh` to package a double-clickable `dist/Grand Line.app`.
 
 The app's version is derived from `git describe`, so a release is cut by tagging (`git tag -a v0.2.0 -m ...`) rather than by editing a constant.
+
+### Upgrading from a build older than the "Grand Line" rename
+
+The rename changed the bundle identifier to `com.manjesh.grandline.native`.
+The app carries its own state across on first launch: the Keychain items are copied onto the new service names (the originals are left in place for you to delete once you are happy), `~/Library/Application Support/FirstmateCockpit/` is renamed to `.../GrandLine/`, and your preferences - the theme, the text scale, the window frame - are copied onto the new domain.
+
+**macOS privacy grants are the one thing it cannot carry across**, because they are keyed to the bundle identifier and granting them is a manual consent step.
+After the first rebuild, open System Settings > Privacy & Security > Accessibility, remove any stale "Firstmate Cockpit" / "Manjesh Grand Line" entry, and re-grant to **Grand Line** - then do the same under Automation and any other permission the app had.
+`native/MANUAL-CHECKS.md` section 18 is the checklist, and `docs/history/45-rename-to-grand-line.md` is the full account.
 
 ## Releasing
 
@@ -33,7 +42,7 @@ no in-app self-update mechanism (an earlier one was removed once the Updates pag
 
 ## ⚠️ Never launch a built copy from a worktree
 
-Every build of this app - a `swift run` binary, `.build/debug/FirstmateCockpit`, and the packaged `dist/Manjesh Grand Line.app` - shares one bundle identity (`com.firstmate.cockpit.native`).
+Every build of this app - a `swift run` binary, `.build/debug/GrandLine`, and the packaged `dist/Grand Line.app` - shares one bundle identity (`com.manjesh.grandline.native`).
 There is no OS-level process isolation between them.
 
 So launching a copy you just built in a git worktree can replace, disturb, or be replaced by the instance already running on the machine, and both then write to the same JSON stores and the same Shift git working tree.
@@ -66,7 +75,7 @@ home directory happens to contain.
 
 There is no XCTest target. The app carries 50+ permanent self-test suites, each gated behind its own environment variable and each exiting the process with 0 or 1 before `NSApplication` is ever touched - so they run headless and are safe to run while the real app is open.
 
-They live in `native/Sources/FirstmateCockpit/SelfTests/` and are compiled into **debug builds only** - `Package.swift` defines `FM_SELFTESTS` for the debug configuration. So `swift build` (and CI, and the runner below) has every suite, while `swift build -c release` - what `native/build_native_app.sh` assembles the shipped `.app` from - contains none of the ~10,500 lines of test code. A release binary silently runs zero suites and exits 0, which looks exactly like a clean run: always test against `.build/debug/FirstmateCockpit`.
+They live in `native/Sources/GrandLine/SelfTests/` and are compiled into **debug builds only** - `Package.swift` defines `FM_SELFTESTS` for the debug configuration. So `swift build` (and CI, and the runner below) has every suite, while `swift build -c release` - what `native/build_native_app.sh` assembles the shipped `.app` from - contains none of the ~10,500 lines of test code. A release binary silently runs zero suites and exits 0, which looks exactly like a clean run: always test against `.build/debug/GrandLine`.
 
 Run all of them:
 
@@ -84,7 +93,7 @@ Run one directly:
 
 ```
 cd native
-swift build && FM_RUN_SHIFT_STORE_TESTS=1 .build/debug/FirstmateCockpit
+swift build && FM_RUN_SHIFT_STORE_TESTS=1 .build/debug/GrandLine
 ```
 
 ### Writing a new suite
@@ -125,7 +134,7 @@ Behaviour overrides. Everything here is optional; the app has working defaults f
 This table is **complete** as of the end-to-end review's L8 fix: every `FM_*` variable the app reads is listed, and nothing listed is unread. The two that were unread - `FM_MIRROR_TARGET` and `FM_BACKEND` - documented the removed mirror/backend-detection feature and were dropped rather than left promising an override that does nothing. To re-check after adding one, diff the code against this file:
 
 ```bash
-grep -rhoE '"FM_[A-Z0-9_]+"' native/Sources/FirstmateCockpit/*.swift | tr -d '"' | grep -v '^FM_RUN_' | sort -u
+grep -rhoE '"FM_[A-Z0-9_]+"' native/Sources/GrandLine/*.swift | tr -d '"' | grep -v '^FM_RUN_' | sort -u
 ```
 
 ### Data locations (point these at scratch paths in tests)
@@ -146,7 +155,7 @@ grep -rhoE '"FM_[A-Z0-9_]+"' native/Sources/FirstmateCockpit/*.swift | tr -d '"'
 | `FM_NOTEBOOK_DIR` | The Notebook's page tree (`GrandLineDocs/notebook/`). Falls back to `FM_SHIFT_DIR`, then the synced clone |
 | `FM_READING_LIST_DIR` | The Reading List's `links.yaml` and its per-host favicon cache (`GrandLineDocs/reading-list/`). Falls back to `FM_SHIFT_DIR`, then the synced clone |
 | `FM_SCRATCHPAD_FILE` | `scratchpad.json` (the Tools > Scratchpad tabs' saved pads, keyed by tab name) |
-| `FM_WIDGET_DIR` | Where the app publishes `widget-snapshot.json` and reads the widgets' queued taps from. Defaults to the App Group container the WidgetKit extension reads (`~/Library/Group Containers/group.com.firstmate.cockpit.native/GrandLineWidgets/`) - see `native/Widgets/README.md` |
+| `FM_WIDGET_DIR` | Where the app publishes `widget-snapshot.json` and reads the widgets' queued taps from. Defaults to the App Group container the WidgetKit extension reads (`~/Library/Group Containers/group.com.manjesh.grandline.native/GrandLineWidgets/`) - see `native/Widgets/README.md` |
 | `FM_CLIPBOARD_HISTORY_FILE` | The encrypted clipboard history (`clipboard-history.sealed`) |
 | `FM_GOOGLE_OAUTH_CLIENT_ID` | The Google OAuth client ID the Gmail settings sign-in uses, overriding the one stored in the Keychain. There is no built-in default - a client ID comes from your own Google Cloud project (see `docs/history/43-google-accounts.md`) |
 | `FM_GOOGLE_OAUTH_CLIENT_SECRET` | The matching client secret, when the Google Cloud client has one. Only read alongside `FM_GOOGLE_OAUTH_CLIENT_ID` |
@@ -190,7 +199,7 @@ grep -rhoE '"FM_[A-Z0-9_]+"' native/Sources/FirstmateCockpit/*.swift | tr -d '"'
 
 ```
 native/            the cockpit app (Swift, AppKit, SwiftTerm)
-native/Sources/FirstmateCockpit/SelfTests/   the self-test suites (debug builds only)
+native/Sources/GrandLine/SelfTests/   the self-test suites (debug builds only)
 native/Scripts/    the test runner and build-time helper scripts
 native/Vendor/     vendored dependencies (SwiftTerm, YamlSwift, whisper.cpp) - no remote SPM packages
 assets/            shared app icon source files
@@ -203,8 +212,8 @@ non-zero exit, launch failure and timeout is logged there. Logging is `os.Logger
 one subsystem:
 
 ```
-log stream --predicate 'subsystem == "com.firstmate.cockpit.native"' --level debug
-log show  --predicate 'subsystem == "com.firstmate.cockpit.native"' --last 30m
+log stream --predicate 'subsystem == "com.manjesh.grandline.native"' --level debug
+log show  --predicate 'subsystem == "com.manjesh.grandline.native"' --last 30m
 ```
 
 Categories: `subprocess`, `poller`, `git-sync`, `keychain`, `store`, `network`, `ai`,

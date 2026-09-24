@@ -1,0 +1,994 @@
+// Grand Line - native macOS app.
+//
+// GL-37 regression coverage: the destination table and
+// lazy-mount-with-permanent-retention (`DestinationRegistry.swift`).
+//
+// Two halves, because the property has two halves worth protecting.
+//
+// The **table** cases are pure logic: every `RailDestination` resolves to a
+// registered slot, the four Setup pages share one, and the top bar's title
+// is the destination's own name everywhere except that group. A future
+// destination added to the enum without a slot fails here immediately
+// rather than silently rendering nothing at runtime.
+//
+// The **mounting** cases drive a real `AppShellController` in a real
+// `NSWindow` - the same harness shape `AppShellBodyWidthSelfTest` already
+// uses - and assert the three things GL-37 actually claims: only the eager
+// slots exist at launch, a first visit builds exactly the one slot asked
+// for, and a revisit reuses that same view rather than rebuilding it. The
+// eager set is asserted by name rather than by count, because each of the
+// three has its own invariant behind it (a live PTY, two launch-seeded rail
+// badges) and a future change quietly moving one of them out of eager
+// mounting should have to say so here.
+//
+// Confirmed, per this project's convention, to catch a real regression
+// rather than merely to pass: reverting `show(_:)` to eagerly mount every
+// slot at launch (the pre-GL-37 shape) fails
+// `onlyEagerSlotsAreMountedAtLaunch`, `firstVisitMountsExactlyOneSlot` and
+// `mounterIsLazyAndBuildsEachSlotOnce`; making `mountIfNeeded` unconditional
+// (dropping its `isMounted` guard, i.e. re-mounting on every visit) fails
+// `mounterIsLazyAndBuildsEachSlotOnce`, which counts real `mount` calls.
+// Note which case does *not* catch that second one, and why:
+// `revisitReusesTheSameView` cannot, because `NSViewController` caches its
+// own `view` - a second `addChild`/`embed` of the same controller would
+// duplicate constraints and warn, but would not hand back a different view.
+// Counting the mount calls is the only way to see it.
+//
+// Run with:
+//   swift build && FM_RUN_DESTINATION_MOUNTING_TESTS=1 .build/debug/GrandLine; echo $?
+//
+// GL-27: compiled into debug builds only. Do not remove this guard -
+// `Phase3PolishSelfTest` asserts every file in this directory carries it.
+#if FM_SELFTESTS
+
+import AppKit
+
+enum DestinationMountingSelfTest {
+
+    /// The three slots that cannot wait for a first visit. Kept here as an
+    /// explicit expectation rather than read back off the mounter, so this
+    /// test disagrees with the app when the app changes.
+    private static let expectedEagerSlots: Set<DestinationSlotID> = [.console, .overview, .review]
+
+    static func run() -> Bool {
+        let cases: [(String, () -> String?)] = [
+            ("everyRailDestinationResolvesToARegisteredSlot", test_everyDestinationHasASlot),
+            ("setupGroupHasFourSeparateSlotsAndFourTitles", test_setupGroupHasFourSeparateSlots),
+            ("setupDestinationsShowTheirOwnDrillHeader", test_setupDestinationsShowTheirOwnDrillHeader),
+            ("onlyEagerSlotsAreMountedAtLaunch", test_onlyEagerSlotsMountedAtLaunch),
+            ("firstVisitMountsExactlyOneSlot", test_firstVisitMountsOneSlot),
+            ("revisitReusesTheSameView", test_revisitReusesSameView),
+            ("everySlotIsReachableAndMountsCleanly", test_everySlotMounts),
+            ("schedulesHasItsOwnSlotAndAutomationNoLongerRendersIt", test_schedulesIsSeparateFromAutomation),
+            ("healthHasItsOwnSlotAndSettingsNoLongerRendersIt", test_healthIsSeparateFromSettings),
+            ("runbooksAndPostmortemsHaveTheirOwnSlotsAndDocsNoLongerRendersThem", test_runbooksAndPostmortemsAreSeparateFromDocs),
+            ("poneglyphHasItsOwnSlotAndSetupNoLongerRendersIt", test_poneglyphIsSeparateFromSetup),
+            ("commandLibraryHasItsOwnSlotAndTasksNoLongerRendersIt", test_commandLibraryIsSeparateFromTasks),
+            ("mounterIsLazyAndBuildsEachSlotOnce", test_mounterUnitBehaviour),
+            ("everyDestinationRendersRealContentOnFirstLoad", test_everyDestinationRendersRealContentOnFirstLoad),
+            ("everyDestinationForcesItsOwnAppearance", test_everyDestinationForcesItsOwnAppearance),
+            ("windowTitleFollowsTheShowingDestination", test_windowTitleFollowsTheShowingDestination),
+        ]
+        var failures = 0
+        for (name, testCase) in cases {
+            if let failure = testCase() {
+                print("FAIL \(name): \(failure)")
+                failures += 1
+            } else {
+                print("PASS \(name)")
+            }
+        }
+        print(failures == 0
+            ? "DestinationMountingSelfTest: all \(cases.count) cases passed"
+            : "DestinationMountingSelfTest: \(failures)/\(cases.count) cases FAILED")
+        return failures == 0
+    }
+
+
+    // MARK: Review #3 §7 - the window title follows navigation
+
+    /// Every navigation renames the window.
+    ///
+    /// The title used to be `CFBundleDisplayName` and nothing else, so Mission
+    /// Control, the Window menu and the proxy menu named the app rather than
+    /// the page - for twenty-seven destinations plus a page per saved host.
+    /// `AppShellController.onCurrentDestinationChanged` fires from
+    /// `updateRecentDestinations`, the one funnel every navigation path passes
+    /// through, and `main.swift` composes the real title from it.
+    ///
+    /// This is the live half. `NavigationCoherenceSelfTest
+    /// .checkWindowTitleComposition` asserts the composition itself, which
+    /// needs no window at all.
+    ///
+    /// **Confirmed to catch a regression, not merely to pass**: removing the
+    /// `onCurrentDestinationChanged?(kind.title)` line from
+    /// `updateRecentDestinations` leaves `seen` empty and fails the first
+    /// check below by name.
+    private static func test_windowTitleFollowsTheShowingDestination() -> String? {
+        withScratchEnv {
+            let (window, shell) = makeMountedShell()
+            // Wired exactly as `main.swift` does it.
+            var seen: [String] = []
+            shell.onCurrentDestinationChanged = { context in
+                window.title = AppDelegate.windowTitle(context: context)
+                seen.append(window.title)
+            }
+            shell.view.layoutSubtreeIfNeeded()
+
+            // Three real navigations, chosen so no two share a title.
+            let visited: [RailDestination] = [.hosts, .console, .settings]
+            for dest in visited {
+                shell.show(dest)
+                shell.view.layoutSubtreeIfNeeded()
+            }
+
+            guard seen.count >= visited.count else {
+                return "expected a title per navigation, got \(seen)"
+            }
+            let bare = AppDelegate.windowTitle()
+            for dest in visited where !seen.contains("\(bare) - \(dest.title)") {
+                return "no title named \(dest.title) - got \(seen)"
+            }
+            // The window really is left holding the last one, not just told.
+            guard window.title == "\(bare) - \(RailDestination.settings.title)" else {
+                return "the window should still be titled for the page it is showing, got \(window.title)"
+            }
+            // And `currentContextTitle` is the same answer, since the two must
+            // not be able to disagree.
+            guard shell.currentContextTitle == RailDestination.settings.title else {
+                return "currentContextTitle disagrees with the title bar: \(shell.currentContextTitle ?? "nil")"
+            }
+            return nil
+        }
+    }
+
+    // MARK: Table (pure logic, no view hierarchy)
+
+    private static func test_everyDestinationHasASlot() -> String? {
+        var seen: Set<DestinationSlotID> = []
+        for dest in RailDestination.allCases { seen.insert(dest.slot) }
+        let missing = Set(DestinationSlotID.allCases).subtracting(seen)
+        guard missing.isEmpty else {
+            return "slots with no rail destination pointing at them: \(missing.map(\.rawValue).sorted())"
+        }
+        return nil
+    }
+
+    /// **Inverted by `fm/grandline-separate-setup-destinations`**, not
+    /// deleted - it used to be `setupGroupSharesOneSlotAndOneTitle`, asserting
+    /// that all four of these mapped to one `.setup` slot and that every one
+    /// of them reported the body title "Setup". That was a faithful record of
+    /// the shape `fm/grandline-design-fidelity-fixes` shipped, and the captain
+    /// reversed it after using the Engineering canvas: "we have 4 cards,
+    /// however when we go inside it says setup and everything is lumped up."
+    /// So the assertion now says the opposite, and a re-merge has to come here
+    /// and read why it went.
+    ///
+    /// The four are listed explicitly rather than derived from the table for
+    /// this file's own standing reason - a test that reads the table it is
+    /// checking asserts nothing.
+    private static func test_setupGroupHasFourSeparateSlots() -> String? {
+        let setupGroup: [(RailDestination, DestinationSlotID, String)] = [
+            (.updates, .updates, "Updates"),
+            (.bootstrap, .bootstrap, "Bootstrap"),
+            (.automation, .automation, "Automation"),
+            (.githubSync, .githubSync, "GitHub Sync"),
+        ]
+        var slots: Set<DestinationSlotID> = []
+        for (dest, slot, title) in setupGroup {
+            guard dest.slot == slot else {
+                return "\(dest) should own the \(slot.rawValue) slot, got \(dest.slot.rawValue)"
+            }
+            guard dest.title == title else {
+                return "\(dest).title should be \"\(title)\", got \"\(dest.title)\""
+            }
+            slots.insert(dest.slot)
+        }
+        guard slots.count == setupGroup.count else {
+            return "the four Engineering setup pages share a slot again: \(slots.map(\.rawValue).sorted())"
+        }
+        // And no other destination was quietly folded in behind them.
+        let group = Set(setupGroup.map(\.0))
+        for dest in RailDestination.allCases where !group.contains(dest) {
+            guard !slots.contains(dest.slot) else {
+                return "\(dest) shares a slot with an Engineering setup page"
+            }
+        }
+        return nil
+    }
+
+    // MARK: Mounting (real shell, real window)
+
+    private static func test_onlyEagerSlotsMountedAtLaunch() -> String? {
+        withScratchEnv {
+            let (_, shell) = makeMountedShell()
+            // `loadView` ends with a `show(...)` of its own (Console, or
+            // Setup on an unconfigured machine), so the launch set is the
+            // eager slots plus at most that one.
+            let mounted = Set(shell.mountedDestinationSlotsForTests)
+            guard expectedEagerSlots.isSubset(of: mounted) else {
+                return "eager slots missing at launch: \(expectedEagerSlots.subtracting(mounted).map(\.rawValue).sorted())"
+            }
+            let extra = mounted.subtracting(expectedEagerSlots)
+            guard extra.count <= 1 else {
+                return "expected at most the launch destination beyond the eager set, also mounted: \(extra.map(\.rawValue).sorted())"
+            }
+            // The expensive ones must not be among them under any launch path.
+            // `.whiteboard` belongs here for a stronger reason than the rest:
+            // mounting it eagerly would start a WebKit content process at
+            // launch for a page the captain may never open
+            // (`fm/grand-line-whiteboard-excalidraw`).
+            let mustBeLazy: Set<DestinationSlotID> = [.docs, .runbooks, .postmortems, .tools, .whiteboard, .codePreview, .stickyBoard, .commandLibrary, .logAnalyzer, .vault, .poneglyph, .dictation, .schedules, .health, .hosts, .shift, .settings]
+            let eagerlyBuilt = mounted.intersection(mustBeLazy)
+            guard eagerlyBuilt.isEmpty else {
+                return "these should not be built at launch: \(eagerlyBuilt.map(\.rawValue).sorted())"
+            }
+            return nil
+        }
+    }
+
+    private static func test_firstVisitMountsOneSlot() -> String? {
+        withScratchEnv {
+            let (_, shell) = makeMountedShell()
+            let before = Set(shell.mountedDestinationSlotsForTests)
+            guard !before.contains(.docs) else { return "docs was already mounted before its first visit" }
+
+            shell.show(.docs)
+            let after = Set(shell.mountedDestinationSlotsForTests)
+            guard after.contains(.docs) else { return "show(.docs) did not mount the docs slot" }
+            let added = after.subtracting(before)
+            guard added == [.docs] else {
+                return "show(.docs) mounted \(added.map(\.rawValue).sorted()), expected exactly [docs]"
+            }
+            guard shell.destinationViewIfMountedForTests(.docs)?.isHidden == false else {
+                return "the docs view should be visible right after show(.docs)"
+            }
+            // A sibling that was never asked for is still unbuilt.
+            guard shell.destinationViewIfMountedForTests(.tools) == nil else {
+                return "tools was built as a side effect of showing docs"
+            }
+            return nil
+        }
+    }
+
+    private static func test_revisitReusesSameView() -> String? {
+        withScratchEnv {
+            let (_, shell) = makeMountedShell()
+            shell.show(.tools)
+            guard let first = shell.destinationViewIfMountedForTests(.tools) else {
+                return "tools did not mount on its first visit"
+            }
+            let firstID = ObjectIdentifier(first)
+
+            shell.show(.console)
+            guard shell.destinationViewIfMountedForTests(.tools)?.isHidden == true else {
+                return "navigating away from tools should hide its view, not drop it"
+            }
+
+            shell.show(.tools)
+            guard let second = shell.destinationViewIfMountedForTests(.tools) else {
+                return "tools lost its view across a navigate-away-and-back cycle"
+            }
+            guard ObjectIdentifier(second) == firstID else {
+                return "tools was rebuilt on revisit - permanent retention is what stops in-progress page state being thrown away"
+            }
+            guard second.isHidden == false else { return "tools should be visible again after the second show" }
+            return nil
+        }
+    }
+
+    private static func test_everySlotMounts() -> String? {
+        withScratchEnv {
+            let (_, shell) = makeMountedShell()
+            // Visit every rail destination once, in enum order, exactly as a
+            // captain clicking down the rail would.
+            for dest in RailDestination.allCases {
+                shell.show(dest)
+                guard let view = shell.destinationViewIfMountedForTests(dest.slot) else {
+                    return "show(\(dest)) left slot \(dest.slot.rawValue) unmounted"
+                }
+                guard view.isHidden == false else { return "show(\(dest)) did not reveal slot \(dest.slot.rawValue)" }
+                // Exactly one body view visible at a time.
+                let visible = DestinationSlotID.allCases.filter {
+                    shell.destinationViewIfMountedForTests($0)?.isHidden == false
+                }
+                guard visible == [dest.slot] else {
+                    return "after show(\(dest)) the visible slots were \(visible.map(\.rawValue)), expected [\(dest.slot.rawValue)]"
+                }
+            }
+            guard Set(shell.mountedDestinationSlotsForTests) == Set(DestinationSlotID.allCases) else {
+                return "visiting every destination should end with every slot mounted"
+            }
+            return nil
+        }
+    }
+
+    /// The gap `everySlotIsReachableAndMountsCleanly` leaves open, and the
+    /// gap that let PR #278's Settings-page-completely-blank regression ship
+    /// undetected even though this whole suite already existed and already
+    /// visited `.settings` on every run: that case only proves a slot
+    /// *mounted* and *isHidden == false* - it says nothing about whether the
+    /// view actually painted any real content below the (always-present)
+    /// drill header. `SettingsController.rebuildCardLayout()`'s bug produced
+    /// exactly that shape - mounted, visible, drill header correct, body a
+    /// solid blank rectangle - and it would have sailed through the mounting
+    /// test above with every assertion in it passing.
+    ///
+    /// This closes that gap generically, for every destination, rather than
+    /// only for the one page a captain happened to report against
+    /// (`SettingsController.debugCardsInTree`/`checkSettingsRendersOnFirstLoad`,
+    /// in `DaylightDrillPageSlice6SelfTest.swift`, is the controller-specific
+    /// version of the same idea - kept as-is, since it asserts something this
+    /// generic check cannot: that all *six* cards specifically reached the
+    /// tree, not just "some text").
+    ///
+    /// The threshold (`minNonEmptyLabels`) is picked from a real, empirical
+    /// sweep of every destination's own non-empty label count on a fresh
+    /// scratch profile, not guessed: `review` is the tightest real page at 8
+    /// (its drill header's own "Refresh" action is a `HelmButton`, not an
+    /// `NSTextField`, so it doesn't even count here), `console` and `docs`
+    /// sit at 10, and every other destination measures well into the teens,
+    /// dozens, or - for the four Setup pages, which all share one built-once
+    /// container - 291. `4` sits comfortably below that real floor (leaving
+    /// margin for a legitimately sparser future page) and comfortably above
+    /// what the actual bug class produces: a poisoned cache guard like the
+    /// one PR #278 fixed skips populating the container entirely, so the
+    /// body renders 0 labels, not a handful.
+    ///
+    /// A `swift-build`-only, no-app-launch pass, per this project's worktree
+    /// rule: this drives the real `AppShellController`/real destination
+    /// controllers in a real (never shown) `NSWindow`, exactly like every
+    /// other case in this file, never the assembled `.app`.
+    ///
+    /// Confirmed to catch a real regression, not just to pass: reverting
+    /// `SettingsController.rebuildCardLayout()`'s fix (dropping the
+    /// `guard !cardsInOrder.isEmpty else { return }` line PR #278 added)
+    /// reproduces the exact failure this case is built to catch - `.settings`
+    /// renders 0 non-empty labels in its own body view instead of 59.
+    private static let minNonEmptyLabels = 4
+
+    /// Two genuinely, honestly minimal destinations that fall short of the
+    /// general floor above without inventing UI they don't have -
+    /// `fm/grandline-docs-split-runbooks-postmortems`. Neither page carries a
+    /// create/edit control of its own on a truly empty first load (Docs is
+    /// Playbook-only now - a title, a body sentence and its "Sync Now" button
+    /// is genuinely everything an unsynced first-ever visit has to say;
+    /// Postmortems has no creation UI at all - generation lives in SRE Lead
+    /// and the Log Analyzer - so an empty list is just its one empty-state
+    /// sentence). Both are still measured well above zero, the actual
+    /// bug-class signature this whole case exists to catch - a named,
+    /// documented exception rather than a global weakening of the floor for
+    /// every other, richer destination. (Runbooks needs no entry here: its
+    /// always-built, hidden editor's Save/Cancel/Delete buttons plus its
+    /// empty-state sentence clear the general floor on their own.)
+    ///
+    /// `.whiteboard` (`fm/grand-line-whiteboard-excalidraw`) is a third, for a
+    /// different and equally honest reason: its body is one `WKWebView`
+    /// holding the Excalidraw canvas, and its page-level actions live in the
+    /// shell's drill header rather than in the body (§6.4). The only native
+    /// labels it can have are its overlay's - a title and a sentence, whether
+    /// that overlay is "starting the canvas" or "no bundle on this machine" -
+    /// so 2 is the real floor in *both* states, and still well above the zero
+    /// this case exists to catch. Adding body chrome purely to clear a floor
+    /// would be worse than a documented exception.
+    private static let minNonEmptyLabelsOverride: [RailDestination: Int] = [
+        .docs: 3,
+        .postmortems: 1,
+        .whiteboard: 2,
+        // `fm/grandline-sticky-board`: a genuinely empty board's own body is
+        // an empty-state title + body sentence plus a "0 notes" footer count
+        // - the same honest "no create/edit control inline; the page action
+        // lives in the shell's drill header" shape `.whiteboard` already
+        // established, just one label richer for the footer.
+        .stickyBoard: 3,
+        // Pr1 pointed `FM_SCHEDULES_FILE` at a scratch path for the whole of a
+        // self-test process, so this page now renders its genuine empty state
+        // (card header, subtitle, one empty-state line) instead of the
+        // captain's real schedules. This case passed before *because* it was
+        // reading real data through the leak Pr1 closed - so the honest floor
+        // is the empty state's own, not the one a populated page happened to
+        // clear. Its own suite covers the populated shape.
+        .schedules: 3,
+    ]
+
+    private static func test_everyDestinationRendersRealContentOnFirstLoad() -> String? {
+        withScratchEnv {
+            let (_, shell) = makeMountedShell()
+            for dest in RailDestination.allCases {
+                shell.show(dest)
+                guard let view = shell.destinationViewIfMountedForTests(dest.slot) else {
+                    return "show(\(dest)) left slot \(dest.slot.rawValue) unmounted"
+                }
+                let labels = collectTextFieldValues(in: view).filter { !$0.isEmpty }
+                let floor = Self.minNonEmptyLabelsOverride[dest] ?? Self.minNonEmptyLabels
+                guard labels.count >= floor else {
+                    return "\(dest) (slot \(dest.slot.rawValue)) rendered only \(labels.count) " +
+                        "non-empty text label(s) on its very first load - this is the exact " +
+                        "\"mounted, visible, but the body is blank\" shape PR #278 fixed for " +
+                        "Settings; want at least \(floor)"
+                }
+            }
+            return nil
+        }
+    }
+
+    /// `fm/grandline-schedules-sidebar-move`: F11's Schedules card used to be
+    /// nested inside `.automation` (itself only reachable via the Setup
+    /// flyout - a hover/click, then a scroll past the pipeline stepper). The
+    /// captain's own correction was that Schedules needed its own rail icon,
+    /// directly visible, and that the card must actually leave the Automation
+    /// page rather than just gaining a second entry point. Both halves are
+    /// checked here: `.schedules` mounts to a slot of its own, and the real
+    /// `AutomationController` root that `.automation` shows no longer
+    /// contains a "Schedules" card header anywhere in its view tree.
+    /// (`.automation` used to share a `SetupContainerController` slot with
+    /// three sibling pages, which parented all four up front; since
+    /// `fm/grandline-separate-setup-destinations` it is its own slot, so this
+    /// now walks Automation's own view tree and nothing else's - a strictly
+    /// narrower, more honest check than it was.)
+    ///
+    /// Confirmed to catch a real regression, not just to pass: temporarily
+    /// re-adding `SchedulesCardView`'s card to `AutomationController`'s own
+    /// stack (the pre-move shape) makes this fail on the second assertion,
+    /// naming the leftover "Schedules" label, while every other case in this
+    /// file keeps passing.
+    private static func test_schedulesIsSeparateFromAutomation() -> String? {
+        withScratchEnv {
+            let (_, shell) = makeMountedShell()
+
+            guard RailDestination.schedules.slot != RailDestination.automation.slot else {
+                return "schedules must not share a slot with automation"
+            }
+
+            shell.show(.schedules)
+            guard let schedulesView = shell.destinationViewIfMountedForTests(.schedules) else {
+                return "show(.schedules) did not mount the schedules slot"
+            }
+            guard schedulesView.isHidden == false else {
+                return "the schedules view should be visible right after show(.schedules)"
+            }
+
+            // Visiting Schedules must not have built the Automation page as a
+            // side effect - it is a fully independent destination now.
+            guard shell.destinationViewIfMountedForTests(.automation) == nil else {
+                return "show(.schedules) unexpectedly mounted the automation slot too"
+            }
+
+            shell.show(.automation)
+            guard let automationView = shell.destinationViewIfMountedForTests(.automation) else {
+                return "show(.automation) did not mount the automation slot"
+            }
+            let labels = collectTextFieldValues(in: automationView)
+            guard !labels.contains("Schedules") else {
+                return "the Automation page still renders a \"Schedules\" card header - it should have moved to its own destination"
+            }
+            guard !labels.contains(where: { $0.localizedCaseInsensitiveContains("new schedule") }) else {
+                return "the Automation page still renders a schedule-creation control"
+            }
+            return nil
+        }
+    }
+
+    /// `fm/grandline-health-sidebar-move`: F1/GL-11's Health card used to be
+    /// the last card on the Settings page - a diagnostic surface scrolled to
+    /// past Connection/Appearance/Terminal/Security/Backup. The captain's own
+    /// correction was the same one `.schedules` already got: its own rail
+    /// icon, directly visible, and the card must actually leave the Settings
+    /// page rather than just gaining a second entry point. Both halves are
+    /// checked here, mirroring `test_schedulesIsSeparateFromAutomation`
+    /// exactly: `.health` mounts to a slot of its own (not `.settings`), and
+    /// the real `SettingsController` root no longer contains a "Health" card
+    /// header anywhere in its view tree.
+    ///
+    /// Confirmed to catch a real regression, not just to pass: temporarily
+    /// re-adding a `HealthCardView`'s card to `SettingsController`'s own
+    /// stack (the pre-move shape) makes this fail on the second assertion,
+    /// naming the leftover "Health" label, while every other case in this
+    /// file keeps passing.
+    private static func test_healthIsSeparateFromSettings() -> String? {
+        withScratchEnv {
+            let (_, shell) = makeMountedShell()
+
+            guard RailDestination.health.slot != RailDestination.settings.slot else {
+                return "health must not share a slot with settings"
+            }
+
+            shell.show(.health)
+            guard let healthView = shell.destinationViewIfMountedForTests(.health) else {
+                return "show(.health) did not mount the health slot"
+            }
+            guard healthView.isHidden == false else {
+                return "the health view should be visible right after show(.health)"
+            }
+
+            // Visiting Health must not have built the Settings slot as a side
+            // effect - it is a fully independent destination now.
+            guard shell.destinationViewIfMountedForTests(.settings) == nil else {
+                return "show(.health) unexpectedly mounted the settings slot too"
+            }
+
+            shell.show(.settings)
+            guard let settingsView = shell.destinationViewIfMountedForTests(.settings) else {
+                return "show(.settings) did not mount the settings slot"
+            }
+            let labels = collectTextFieldValues(in: settingsView)
+            guard !labels.contains("Health") else {
+                return "the Settings page still renders a \"Health\" card header - it should have moved to its own destination"
+            }
+            guard !labels.contains(where: { $0.localizedCaseInsensitiveContains("copy diagnostics") }) else {
+                return "the Settings page still renders the Health card's diagnostics control"
+            }
+            return nil
+        }
+    }
+
+    /// `fm/grandline-docs-split-runbooks-postmortems`: Runbooks and
+    /// Postmortems used to be two tabs of `DocsController` - a "Runbooks"/
+    /// "Postmortems" segmented pill, "+ New Runbook" and a runbook editor all
+    /// lived inside the Docs body view. They are their own destinations now,
+    /// mirroring `test_schedulesIsSeparateFromAutomation`/
+    /// `test_healthIsSeparateFromSettings` exactly: each mounts to a slot of
+    /// its own (not `.docs`), and the real `DocsController` root no longer
+    /// renders either tab's chrome anywhere in its view tree.
+    ///
+    /// Confirmed to catch a real regression, not just to pass: temporarily
+    /// re-adding the old tab strip and "+ New Runbook" button to
+    /// `DocsController`'s own stack (the pre-split shape) makes this fail on
+    /// the label-scan assertion, naming the leftover "Runbooks"/"New Runbook"
+    /// text, while every other case in this file keeps passing.
+    private static func test_runbooksAndPostmortemsAreSeparateFromDocs() -> String? {
+        withScratchEnv {
+            let (_, shell) = makeMountedShell()
+
+            guard RailDestination.runbooks.slot != RailDestination.docs.slot else {
+                return "runbooks must not share a slot with docs"
+            }
+            guard RailDestination.postmortems.slot != RailDestination.docs.slot else {
+                return "postmortems must not share a slot with docs"
+            }
+            guard RailDestination.runbooks.slot != RailDestination.postmortems.slot else {
+                return "runbooks and postmortems must not share a slot with each other"
+            }
+
+            shell.show(.runbooks)
+            guard let runbooksView = shell.destinationViewIfMountedForTests(.runbooks) else {
+                return "show(.runbooks) did not mount the runbooks slot"
+            }
+            guard runbooksView.isHidden == false else {
+                return "the runbooks view should be visible right after show(.runbooks)"
+            }
+            guard shell.destinationViewIfMountedForTests(.docs) == nil else {
+                return "show(.runbooks) unexpectedly mounted the docs slot too"
+            }
+            guard shell.destinationViewIfMountedForTests(.postmortems) == nil else {
+                return "show(.runbooks) unexpectedly mounted the postmortems slot too"
+            }
+
+            shell.show(.postmortems)
+            guard let postmortemsView = shell.destinationViewIfMountedForTests(.postmortems) else {
+                return "show(.postmortems) did not mount the postmortems slot"
+            }
+            guard postmortemsView.isHidden == false else {
+                return "the postmortems view should be visible right after show(.postmortems)"
+            }
+
+            shell.show(.docs)
+            guard let docsView = shell.destinationViewIfMountedForTests(.docs) else {
+                return "show(.docs) did not mount the docs slot"
+            }
+            let labels = collectTextFieldValues(in: docsView)
+            guard !labels.contains("Runbooks") else {
+                return "the Docs page still renders a \"Runbooks\" tab pill - it should have moved to its own destination"
+            }
+            guard !labels.contains("Postmortems") else {
+                return "the Docs page still renders a \"Postmortems\" tab pill - it should have moved to its own destination"
+            }
+            guard !labels.contains(where: { $0.localizedCaseInsensitiveContains("new runbook") }) else {
+                return "the Docs page still renders a runbook-creation control"
+            }
+            return nil
+        }
+    }
+
+    /// `fm/poneglyph-own-destination-and-strawhat-toolbar-shortcut`:
+    /// Poneglyph (the captain's own credential vault) used to be a fifth tab
+    /// of the shared Setup slot alongside Updates/Bootstrap/Automation/
+    /// GitHub Sync - opening it from its Stores card showed a page titled
+    /// "Setup" with all four of those pages' tab strip above it, which read
+    /// as though the vault were part of Engineering's setup pipeline rather
+    /// than the fully separate feature it is. Mirrors
+    /// `test_schedulesIsSeparateFromAutomation`/`test_healthIsSeparateFromSettings`
+    /// exactly: `.poneglyph` mounts to a slot of its own, and the page the
+    /// first of the four remaining Engineering setup destinations shows no
+    /// longer contains a "Poneglyph" tab pill anywhere in its view tree.
+    /// (Those four have since been un-merged too -
+    /// `fm/grandline-separate-setup-destinations` - so this walks
+    /// `UpdatesController`'s own view tree rather than a shared container's.)
+    ///
+    /// Confirmed to catch a real regression, not just to pass: temporarily
+    /// re-adding `.poneglyph` to `SetupTab`/`SetupContainerController` (the
+    /// pre-move shape, both since deleted) made this fail on the second
+    /// assertion, naming the leftover "Poneglyph" tab pill label, while every
+    /// other case in this file kept passing.
+    /// `fm/grandline-tasks-kanban-devops-split`: the Command Library used to
+    /// be the third tab of the Tasks page, so the only way to reach a saved
+    /// command was to first open a page about something else. Mirrors
+    /// `test_poneglyphIsSeparateFromSetup` above exactly - and like it, the
+    /// half that matters is the *leftover label* check: a half-done split
+    /// that gave the library its own destination while leaving the old tab
+    /// pill behind would mount cleanly and look almost right.
+    private static func test_commandLibraryIsSeparateFromTasks() -> String? {
+        withScratchEnv {
+            let (_, shell) = makeMountedShell()
+
+            guard RailDestination.commandLibrary.slot != RailDestination.shift.slot else {
+                return "DevOps Commands must not share a slot with Tasks"
+            }
+
+            shell.show(.commandLibrary)
+            guard let libraryView = shell.destinationViewIfMountedForTests(.commandLibrary) else {
+                return "show(.commandLibrary) did not mount the commandLibrary slot"
+            }
+            guard libraryView.isHidden == false else {
+                return "the DevOps Commands view should be visible right after show(.commandLibrary)"
+            }
+            guard shell.destinationViewIfMountedForTests(.shift) == nil else {
+                return "show(.commandLibrary) unexpectedly mounted the Tasks slot too"
+            }
+
+            shell.show(.shift)
+            guard let tasksView = shell.destinationViewIfMountedForTests(.shift) else {
+                return "show(.shift) did not mount the Tasks slot"
+            }
+            let labels = collectTextFieldValues(in: tasksView)
+            guard !labels.contains("DevOps Commands") else {
+                return "the Tasks page still renders a \"DevOps Commands\" tab pill - it should have "
+                    + "moved to its own destination"
+            }
+            return nil
+        }
+    }
+
+    /// `fm/grandline-separate-setup-destinations`, end to end: opening any one
+    /// of the four Engineering setup destinations lands on a page titled for
+    /// *that* page, carrying *that* page's own live line.
+    ///
+    /// **This is the case the captain's own report maps onto.** Four
+    /// distinct cards on the Engineering canvas funnelled into one body view
+    /// whose drill header always said "Setup", with a segmented tab strip
+    /// naming the sub-page underneath: "we have 4 cards, however when we go
+    /// inside it says setup and everything is lumped up." Three independent
+    /// things had to hold for that to stop, and each fails differently:
+    ///
+    ///   - a slot of its own (a shared one cannot show four titles),
+    ///   - the title being the destination's own (the old `bodyTitle`
+    ///     hardcoded "Setup" for all four, which looked like a design choice),
+    ///   - and the subtitle being the page's own live line rather than
+    ///     `drillSubtitle`'s static per-area fallback, which is what a lost
+    ///     `DaylightDrillActions` conformance or a lost
+    ///     `onDrillSubtitleChanged` wiring silently degrades to.
+    ///
+    /// `DaylightModuleSelfTest` sweeps the title half across every
+    /// destination; this is the local, three-part check for the four that were
+    /// merged.
+    private static func test_setupDestinationsShowTheirOwnDrillHeader() -> String? {
+        withScratchEnv {
+            let (_, shell) = makeMountedShell()
+            let group: [RailDestination] = [.updates, .bootstrap, .automation, .githubSync]
+            var subtitles: [String] = []
+
+            for dest in group {
+                shell.show(dest)
+
+                let title = shell.drillHeaderForTests.titleForTests
+                guard title == dest.title else {
+                    return "opening \(dest) shows a page titled \"\(title)\", expected \"\(dest.title)\""
+                }
+                guard title != "Setup" else {
+                    return "\(dest) still lands on a page titled \"Setup\""
+                }
+
+                let subtitle = shell.drillHeaderForTests.subtitleForTests
+                guard !subtitle.isEmpty else { return "\(dest)'s drill header has no subtitle" }
+                guard subtitle != dest.drillSubtitle else {
+                    return "\(dest)'s header shows the static per-area fallback (\"\(subtitle)\") rather than "
+                        + "the page's own live line - its DaylightDrillActions conformance or its "
+                        + "onDrillSubtitleChanged wiring is missing"
+                }
+                subtitles.append(subtitle)
+
+                // Opening the *first* of the four must not build the other
+                // three as a side effect - which is exactly what happened
+                // while they shared a container, since it parented all four
+                // up front regardless of which tab was active. Checked on the
+                // first pass only: by the second, the earlier page is
+                // legitimately mounted and retained.
+                if dest == group[0] {
+                    for other in group.dropFirst() {
+                        guard shell.destinationViewIfMountedForTests(other.slot) == nil else {
+                            return "show(\(dest)) unexpectedly mounted \(other) too"
+                        }
+                    }
+                }
+            }
+
+            guard Set(subtitles).count == subtitles.count else {
+                return "two of the four setup pages render the identical header line: \(subtitles)"
+            }
+            return nil
+        }
+    }
+
+    private static func test_poneglyphIsSeparateFromSetup() -> String? {
+        withScratchEnv {
+            let (_, shell) = makeMountedShell()
+
+            guard RailDestination.poneglyph.slot != RailDestination.updates.slot else {
+                return "poneglyph must not share a slot with the Setup group"
+            }
+
+            shell.show(.poneglyph)
+            guard let poneglyphView = shell.destinationViewIfMountedForTests(.poneglyph) else {
+                return "show(.poneglyph) did not mount the poneglyph slot"
+            }
+            guard poneglyphView.isHidden == false else {
+                return "the poneglyph view should be visible right after show(.poneglyph)"
+            }
+
+            // Visiting Poneglyph must not have built Updates as a side effect
+            // - it is a fully independent destination now.
+            guard shell.destinationViewIfMountedForTests(.updates) == nil else {
+                return "show(.poneglyph) unexpectedly mounted the updates slot too"
+            }
+
+            shell.show(.updates)
+            guard let updatesView = shell.destinationViewIfMountedForTests(.updates) else {
+                return "show(.updates) did not mount the updates slot"
+            }
+            let labels = collectTextFieldValues(in: updatesView)
+            guard !labels.contains("Poneglyph") else {
+                return "the Updates page still renders a \"Poneglyph\" tab pill - it should have moved to its own destination"
+            }
+            return nil
+        }
+    }
+
+    /// A plain recursive walk - this file's only need for one, so it stays
+    /// local rather than becoming a shared utility.
+    private static func collectTextFieldValues(in view: NSView) -> [String] {
+        var result: [String] = []
+        if let field = view as? NSTextField { result.append(field.stringValue) }
+        for sub in view.subviews { result.append(contentsOf: collectTextFieldValues(in: sub)) }
+        return result
+    }
+
+    // MARK: The mounter itself, with stub controllers
+
+    /// Counts its own `loadView` so "was this built?" is measured rather
+    /// than inferred from a flag the mounter itself sets.
+    private final class CountingViewController: NSViewController {
+        private(set) var loadViewCount = 0
+        override func loadView() {
+            loadViewCount += 1
+            view = NSView(frame: NSRect(x: 0, y: 0, width: 10, height: 10))
+        }
+    }
+
+    private static func test_mounterUnitBehaviour() -> String? {
+        var mountCalls: [ObjectIdentifier] = []
+        let mounter = DestinationMounter { controller in
+            mountCalls.append(ObjectIdentifier(controller))
+            // Touch the view the way the real `embed` does.
+            _ = controller.view
+        }
+        let eager = CountingViewController()
+        let lazyOne = CountingViewController()
+        mounter.register(DestinationSlot(id: .console, title: "Console", mountsEagerly: true, controller: eager))
+        mounter.register(DestinationSlot(id: .docs, title: "Docs", mountsEagerly: false, controller: lazyOne))
+
+        mounter.mountEagerSlots()
+        guard eager.loadViewCount == 1 else { return "eager slot should have loaded exactly once, got \(eager.loadViewCount)" }
+        guard lazyOne.loadViewCount == 0 else { return "lazy slot must not load during mountEagerSlots" }
+        guard eager.view.isHidden else { return "an eagerly mounted slot should start hidden" }
+
+        // hideAll must not touch an unmounted slot's view.
+        mounter.hideAll()
+        guard lazyOne.loadViewCount == 0 else { return "hideAll built an unmounted slot's view" }
+
+        guard mounter.show(.docs) != nil else { return "show(.docs) returned no slot" }
+        guard lazyOne.loadViewCount == 1 else { return "first show should build the lazy slot exactly once" }
+        guard lazyOne.view.isHidden == false else { return "first show should reveal the slot" }
+
+        mounter.hideAll()
+        guard mounter.show(.docs) != nil else { return "second show(.docs) returned no slot" }
+        guard lazyOne.loadViewCount == 1 else { return "a revisit rebuilt the slot (loadView ran \(lazyOne.loadViewCount) times)" }
+        guard mountCalls.count == 2 else { return "mount should have run once per slot, ran \(mountCalls.count) times" }
+
+        guard mounter.show(.vault) == nil else { return "an unregistered slot should return nil rather than mounting something" }
+        return nil
+    }
+
+    /// Audit §2 item 6: the structural guard that retires the "half-themed
+    /// surface" bug class.
+    ///
+    /// **What it asserts.** Every `RailDestination`'s own body view resolves
+    /// its `effectiveAppearance` to the active Helm theme's light/dark mode -
+    /// i.e. every destination obeys `ThemeManager.swift`'s checklist item 2
+    /// and forces `view.appearance` itself, rather than relying on inheriting
+    /// it from somewhere.
+    ///
+    /// **Why the host window's appearance is deliberately set to the OPPOSITE
+    /// mode, and why that is the whole test.** In the real app the main window
+    /// calls `followHelmTheme()` (`main.swift`), so `window.appearance` already
+    /// tracks the theme and *every* view inside it inherits a correct
+    /// `effectiveAppearance` whether or not it sets one. A guard hosted in a
+    /// correctly-themed window therefore passes for a destination that does
+    /// nothing at all - it would have shipped green through all four of the
+    /// historical half-themed bugs it exists to catch. Forcing the host window
+    /// to the opposite mode makes inheritance produce the *wrong* answer, so
+    /// only a destination that genuinely sets its own appearance can pass.
+    ///
+    /// That is not a contrived configuration either: it is exactly the
+    /// OS-mode-diverges-from-Helm-mode setup the captain demonstrably runs,
+    /// and the reason the ShiftMenuBar popover (anchored to AppKit's own
+    /// status-bar window, which no `followHelmTheme()` ever reaches) rendered
+    /// mutedInk-on-light. A destination that only ever inherits is one re-host
+    /// - a sheet, a panel, a popover, a second window - away from the same
+    /// failure.
+    ///
+    /// **Both directions are swept**, because the two are different code
+    /// paths: a page mounted *while* a theme is active gets its appearance
+    /// from `ThemeManager.observe`'s synchronous fire at registration, and a
+    /// page already on screen when the theme *changes* gets it from the same
+    /// closure firing again. Historically the bugs were in the second (an
+    /// `applyTheme` that repainted every layer and never touched
+    /// `appearance`), so a mount-only sweep would be the weaker half.
+    ///
+    /// Confirmed, per this project's convention, to catch a real regression
+    /// rather than merely to pass: reverting any one of the historical fixes
+    /// (`StickyBoardController`/`CodePreviewController`/`WhiteboardController`'s
+    /// `view.appearance = ...` line) fails this case by name.
+    private static func test_everyDestinationForcesItsOwnAppearance() -> String? {
+        withScratchEnv {
+            guard let light = HelmTheme.allThemes.first(where: { $0.id == "helm-light" }),
+                  let dark = HelmTheme.allThemes.first(where: { $0.id == "helm-dark" }) else {
+                return "expected both helm-light and helm-dark in HelmTheme.allThemes"
+            }
+
+            // Hermeticity: `setTheme` writes through to the real
+            // `UserDefaults`, so the captain's own selection is captured and
+            // restored - the rule `Phase3PolishSelfTest.checkSuitesRestoreThe
+            // Theme` enforces as a source guard, after four suites leaked a
+            // theme and turned unrelated suites red on a clean tree.
+            let savedTheme = ThemeManager.shared.theme
+            defer { ThemeManager.shared.setTheme(savedTheme) }
+
+            var problems: [String] = []
+
+            /// Visits every destination and checks the one thing this case is
+            /// about. `label` names which sweep found a failure, since the
+            /// mount-time and theme-change paths are different bugs.
+            func sweep(_ shell: AppShellController, theme: HelmTheme, label: String) {
+                let expected: NSAppearance.Name = theme.mode == .dark ? .darkAqua : .aqua
+                var reported: Set<DestinationSlotID> = []
+                for dest in RailDestination.allCases {
+                    shell.show(dest)
+                    guard let body = shell.destinationViewIfMountedForTests(dest.slot) else {
+                        problems.append("\(label): \(dest) did not mount")
+                        continue
+                    }
+                    // One report per slot - the four Setup destinations share
+                    // one body view, and four identical lines would read as
+                    // four separate defects.
+                    guard !reported.contains(dest.slot) else { continue }
+                    let match = body.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
+                    if match != expected {
+                        reported.insert(dest.slot)
+                        problems.append("""
+                            \(label): \(dest.slot) resolved \(match?.rawValue ?? "nil") under \
+                            theme \(theme.id) (expected \(expected.rawValue)) - it does not force \
+                            its own view.appearance, so it renders system-semantic colours \
+                            against the OS's light/dark setting rather than the Helm theme
+                            """)
+                    }
+                }
+            }
+
+            // Sweep 1 + 2: build under light, assert; then switch the live
+            // theme to dark on the same, already-mounted shell and assert
+            // again. The second half is the theme-change path.
+            ThemeManager.shared.setTheme(light)
+            do {
+                let (window, shell) = makeMountedShell()
+                // The discriminating step - see this case's own doc comment.
+                window.appearance = NSAppearance(named: .darkAqua)
+                sweep(shell, theme: light, label: "mounted under helm-light")
+
+                ThemeManager.shared.setTheme(dark)
+                window.appearance = NSAppearance(named: .aqua)
+                sweep(shell, theme: dark, label: "switched live to helm-dark")
+                window.contentViewController = nil
+            }
+
+            // Sweep 3: a shell built from scratch with dark already active,
+            // so a destination whose appearance is only ever set on a *change*
+            // (and not on the observer's synchronous first fire) is caught too.
+            ThemeManager.shared.setTheme(dark)
+            do {
+                let (window, shell) = makeMountedShell()
+                window.appearance = NSAppearance(named: .aqua)
+                sweep(shell, theme: dark, label: "mounted under helm-dark")
+                window.contentViewController = nil
+            }
+
+            return problems.isEmpty ? nil : problems.joined(separator: "\n      ")
+        }
+    }
+
+    // MARK: Harness
+
+    /// A fresh scratch directory per call so every store this test touches
+    /// reads and writes disposable files - never the captain's real saved
+    /// hosts/keys/snippets/tasks/dictation data. Same shape as
+    /// `AppShellBodyWidthSelfTest.withScratchEnv`.
+    ///
+    /// `FM_DOCS_RUNBOOKS_DIR` was added by `fm/grandline-docs-split-runbooks-
+    /// postmortems`: `RunbooksController`/`PostmortemsController` each
+    /// construct their own `DocsRunbookStore()`, and with no override that
+    /// store falls through to `DocsRunbookGitSync.shared` - a real clone of
+    /// the captain's actual `manjesh-config` repo - the same hazard
+    /// `CommandLibraryStore`'s own `FM_SHIFT_DIR` fallback exists to avoid
+    /// (see AGENTS.md). `.docs` itself carried this same exposure before this
+    /// split (it built its own `DocsRunbookStore()` for its Runbooks/
+    /// Postmortems tabs), so this closes a pre-existing gap in this harness,
+    /// not just a new one.
+    private static func withScratchEnv<T>(_ body: () -> T) -> T {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("grandline-destination-mounting-test-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let overrides: [String: String] = [
+            "FM_HOSTS_FILE": dir.appendingPathComponent("hosts.json").path,
+            "FM_KEYS_FILE": dir.appendingPathComponent("keys.json").path,
+            "FM_SNIPPETS_FILE": dir.appendingPathComponent("snippets.json").path,
+            "FM_SHIFT_DIR": dir.appendingPathComponent("shift").path,
+            "FM_DICTATION_DIR": dir.appendingPathComponent("dictation").path,
+            "FM_DOCS_DIR": dir.appendingPathComponent("docs").path,
+            "FM_DOCS_RUNBOOKS_DIR": dir.appendingPathComponent("docsRunbooks").path,
+            "FM_LOG_ANALYZER_DIR": dir.appendingPathComponent("loganalyzer").path,
+        ]
+        var previous: [String: String?] = [:]
+        for (key, value) in overrides {
+            previous[key] = ProcessInfo.processInfo.environment[key]
+            setenv(key, value, 1)
+        }
+        defer {
+            for (key, value) in previous {
+                if let value { setenv(key, value, 1) } else { unsetenv(key) }
+            }
+        }
+        return body()
+    }
+
+    private static func makeMountedShell() -> (window: NSWindow, shell: AppShellController) {
+        let window = OffScreenProbe.window(width: 1220, height: 720, styleMask: [.titled, .resizable])
+        let hostStore = HostStore()
+        let keyStore = SSHKeyStore()
+        let snippetStore = SnippetStore()
+        let shiftStore = ShiftStore()
+        let dictationStore = DictationStore()
+        let shell = AppShellController(
+            hostsPanel: HostsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore),
+            console: ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false),
+            settings: SettingsController(hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, dictationStore: dictationStore),
+            hostStore: hostStore, keyStore: keyStore, snippetStore: snippetStore, shiftStore: shiftStore,
+            dictationStore: dictationStore, commandLibraryStore: CommandLibraryStore(), scheduleStore: ScheduleStore(),
+            makeHostConsole: { ConsoleController(keyStore: keyStore, snippetStore: snippetStore, isFirstmateConsole: false) }
+        )
+        window.contentViewController = shell
+        return (window, shell)
+    }
+}
+
+#endif

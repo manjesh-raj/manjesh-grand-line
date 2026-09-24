@@ -1,4 +1,4 @@
-// Manjesh Grand Line - the Code Preview's editor worker entry point.
+// Grand Line - the Code Preview's editor worker entry point.
 //
 // Built into its own bundle by `native/Scripts/build-monaco-web.sh`, which then
 // inlines the result into `code-preview.js` as text (see that file's "The

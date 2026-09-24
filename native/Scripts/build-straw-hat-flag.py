@@ -135,7 +135,7 @@ def swift_source(payload: bytes) -> str:
     encoded = base64.b64encode(payload).decode("ascii")
     chunks = [encoded[i : i + CHUNK] for i in range(0, len(encoded), CHUNK)]
     lines = [
-        "// Manjesh Grand Line - native macOS app.",
+        "// Grand Line - native macOS app.",
         "//",
         "// GENERATED FILE - do not hand-edit. Produced by",
         "// `native/Scripts/build-straw-hat-flag.py` from the captain's v2 Jolly",
@@ -223,7 +223,7 @@ def main() -> None:
 
     here = os.path.dirname(os.path.abspath(__file__))
     target = os.path.normpath(
-        os.path.join(here, "..", "Sources", "FirstmateCockpit", "StrawHatFlag.swift")
+        os.path.join(here, "..", "Sources", "GrandLine", "StrawHatFlag.swift")
     )
 
     if args.check:

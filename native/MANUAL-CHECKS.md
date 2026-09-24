@@ -306,14 +306,14 @@ it is the one open item F23 was scoped around.
 - [ ] **The App Group id agrees in both files.** Set
       `GrandLineWidgetContainer.appGroupIdentifier` and
       `GrandLineWidgets/GrandLineWidgets.entitlements` to
-      `<TeamID>.group.com.firstmate.cockpit.native`.
+      `<TeamID>.group.com.manjesh.grandline.native`.
       `FM_RUN_WIDGET_SNAPSHOT_TESTS` fails if they diverge, so this cannot be
       half-done.
 - [ ] **Build, embed, launch.** `./build_native_app.sh` then
       `Scripts/build-widget-extension.sh --embed`, then launch the installed
       copy once so Launch Services registers the extension.
 - [ ] **The two widgets appear in the widget gallery** (right-click the
-      desktop > Edit Widgets), under "Manjesh Grand Line".
+      desktop > Edit Widgets), under "Grand Line".
 - [ ] **They render real data**, not `Not available`. If they say
       `Not available`, the App Group entitlement is not being honoured - that
       is the expected failure, not a code bug.
@@ -326,6 +326,39 @@ it is the one open item F23 was scoped around.
       while locked - nothing is applied; unlock, and it applies then.
 - [ ] **Both registers.** Switch the app between a Daylight and a Dusk theme;
       the widgets follow the *app's* register, not the system appearance.
+
+## 18. After the rename: the macOS privacy grants (one-time)
+
+macOS keys Accessibility, Automation and every other privacy grant to the
+**bundle identifier**, and
+[`docs/history/45-rename-to-grand-line.md`](../docs/history/45-rename-to-grand-line.md)
+changed it from `com.firstmate.cockpit.native` to `com.manjesh.grandline.native`.
+The rebuilt app is therefore a brand-new app as far as TCC is concerned. This
+cannot be scripted and nothing in the codebase tries - granting is a user
+consent action by design.
+
+Do this once, after the first `./build_native_app.sh` on the renamed build.
+
+- [ ] **Accessibility.** System Settings > Privacy & Security > Accessibility.
+      Remove any stale "Firstmate Cockpit" / "Manjesh Grand Line" entry, then
+      add and enable **Grand Line**.
+- [ ] **Automation**, and whichever of **Screen Recording**, **Microphone**,
+      **Speech Recognition** and **Calendars** the app had before. Same shape:
+      drop the stale entry, grant the new one.
+- [ ] **The three global hotkeys work from another app**: the capture chord,
+      compact mode (`^ ⌥ G`) and dictation. Until Accessibility is granted
+      they have no global monitor. `ShiftGlobalHotkey.reassertIfTrustChanged()`
+      picks the grant up on the next app activation, so no relaunch is needed.
+- [ ] **The saved SSH keys still unlock**, and the credential vault still
+      opens. Those items were **copied** onto the new Keychain service names at
+      first launch, not moved. Once both are confirmed, the old
+      `com.firstmate.cockpit.*` items in Keychain Access can be deleted by hand.
+- [ ] **Your own settings came with you**: the app opens in the theme you had,
+      at the text scale you had, at the window size and position you left it.
+      That copy runs once, so if you clear a setting afterwards it stays clear.
+- [ ] **The data folder moved.** `~/Library/Application Support/GrandLine/`
+      exists and `.../FirstmateCockpit/` does not. If both are there, the app
+      is reading the new one and left the old one alone - reconcile by hand.
 
 ## When something here fails
 

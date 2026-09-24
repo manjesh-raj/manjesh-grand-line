@@ -23,7 +23,7 @@ follows that shape.
 
 Three pieces, in the order they depend on each other.
 
-**`ShiftRecurrence`** (`native/Sources/FirstmateCockpit/ShiftRecurrence.swift`)
+**`ShiftRecurrence`** (`native/Sources/GrandLine/ShiftRecurrence.swift`)
 is the rule: three frequencies (daily/weekly/monthly), an interval, a weekday
 set, and `UNTIL`/`COUNT` to stop. It serialises to an RFC 5545-shaped scalar -
 `FREQ=WEEKLY;INTERVAL=1;BYDAY=MO,TU,WE,TH,FR` - under one `recurrence` key on

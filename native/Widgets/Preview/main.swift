@@ -1,4 +1,4 @@
-// Manjesh Grand Line - the widget render probe.
+// Grand Line - the widget render probe.
 //
 // This repo's standing rule for a UI change is "assert what is painted, not
 // what was computed", and its screenshot substitute is an off-screen

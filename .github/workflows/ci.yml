@@ -118,11 +118,11 @@ jobs:
 
       - name: Fail on a warning in this app's own sources
         run: |
-          if grep -E "Sources/FirstmateCockpit/.*warning:" build.log; then
+          if grep -E "Sources/GrandLine/.*warning:" build.log; then
             echo "::error::the app's own sources must build warning-clean"
             exit 1
           fi
-          echo "no warnings in Sources/FirstmateCockpit"
+          echo "no warnings in Sources/GrandLine"
 
       # GL-27: the self-test suites are compiled into debug builds only, which
       # means the release configuration is a genuinely different compilation
@@ -135,7 +135,7 @@ jobs:
 
       - name: Prove the release binary carries no test code
         run: |
-          BIN=.build/release/FirstmateCockpit
+          BIN=.build/release/GrandLine
           if strings -a "$BIN" | grep -q 'FM_RUN_'; then
             echo "::error::the release binary still contains FM_RUN_* self-test flags"
             strings -a "$BIN" | grep 'FM_RUN_' | head

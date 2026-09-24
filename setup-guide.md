@@ -1,6 +1,6 @@
 # Setup guide
 
-Getting a local build of Manjesh Grand Line running, from a clean checkout to an open app.
+Getting a local build of Grand Line running, from a clean checkout to an open app.
 
 ## Build
 
@@ -19,10 +19,10 @@ signing setup" section if you haven't set that identity up yet, and for day-to-d
 
 ## Launch
 
-The build lands at `dist/Manjesh Grand Line.app`, one level up from `native/`:
+The build lands at `dist/Grand Line.app`, one level up from `native/`:
 
 ```
-open "../dist/Manjesh Grand Line.app"
+open "../dist/Grand Line.app"
 ```
 
 (or just double-click it in Finder).

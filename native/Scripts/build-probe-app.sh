@@ -7,7 +7,7 @@
 # ---------------------------------------------------------------------------
 # This repo's hard rule is: never launch a built copy of the app from an agent
 # worktree (see native/README.md and AGENTS.md). The reason is bundle identity,
-# not the build - every copy declares `com.firstmate.cockpit.native`, and
+# not the build - every copy declares `com.manjesh.grandline.native`, and
 # `LSMultipleInstancesProhibited` plus `SingleInstanceGuard` are both keyed to
 # it. Launching one therefore *activates or disturbs the captain's own running
 # instance* rather than starting something separate, and the two would share
@@ -59,11 +59,11 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-PROBE_BUNDLE_ID="com.firstmate.cockpit.native.probe"
+PROBE_BUNDLE_ID="com.manjesh.grandline.native.probe"
 APP_NAME="Grand Line Probe.app"
 DIST_DIR="../dist"
 APP_DIR="$DIST_DIR/$APP_NAME"
-EXECUTABLE_NAME="FirstmateCockpit"
+EXECUTABLE_NAME="GrandLine"
 SCRATCH="${FM_PROBE_SCRATCH:-${TMPDIR:-/tmp}/grand-line-probe}"
 
 LAUNCH=0
@@ -81,7 +81,7 @@ done
 
 # A guard, not a courtesy: if this ever produced the real bundle id it would
 # be the exact hazard the file exists to prevent.
-if [ "$PROBE_BUNDLE_ID" = "com.firstmate.cockpit.native" ]; then
+if [ "$PROBE_BUNDLE_ID" = "com.manjesh.grandline.native" ]; then
   echo "error: the probe must not share the real app's bundle identifier." >&2
   exit 1
 fi
@@ -189,7 +189,7 @@ ENV_ARGS=(
 
 echo ""
 echo "Probe built: $APP_DIR"
-echo "  bundle id: $PROBE_BUNDLE_ID   (real app: com.firstmate.cockpit.native)"
+echo "  bundle id: $PROBE_BUNDLE_ID   (real app: com.manjesh.grandline.native)"
 echo "  scratch:   $SCRATCH"
 
 if [ "$LAUNCH" -eq 1 ]; then

@@ -1,0 +1,251 @@
+// Grand Line - native macOS app.
+//
+// Data model for "Shift" (cockpit-shift-foundation, phase 1 of a multi-phase
+// build - see AGENTS.md's "Shift" section for the file-splitting scheme and
+// which phases are still pending). These are plain Swift structs, not
+// `Codable` against JSON - persistence goes through `ShiftYaml.swift`'s
+// explicit `Yaml` conversions, since the source of truth is a captain-owned
+// YAML file tree, not a database.
+//
+// The core distinction the captain was explicit about: a **task** is
+// something to do; a **follow-up** is something to check on later. They are
+// modeled as two separate types with different fields, not a shared "item"
+// type with a "kind" flag - see `ShiftTask` vs `ShiftFollowUp` below.
+
+import Foundation
+
+enum ShiftTaskStatus: String, CaseIterable {
+    case todo, inProgress = "in_progress", completed, cancelled
+}
+
+enum ShiftPriority: String, CaseIterable {
+    case low, normal, high
+}
+
+/// A checklist item nested under a task. Subtasks are only ever rendered in
+/// a project-scoped context (never as flat rows in the main My Tasks list) -
+/// see `ShiftController`'s project section, not the task list.
+struct ShiftSubtask: Equatable {
+    var id: String
+    var title: String
+    var done: Bool
+}
+
+/// `Equatable` (added for cockpit-shift-conflict-handling) is structural
+/// value equality only, used by `ShiftThreeWayMerge` to tell "unchanged"
+/// from "edited" when comparing a record across the merge-base/local/remote
+/// revisions - not used for identity (that's always `id`).
+struct ShiftTask: Equatable {
+    var id: String
+    var title: String
+    var description: String
+    var status: ShiftTaskStatus
+    var priority: ShiftPriority
+    var dueDate: String?    // "YYYY-MM-DD"
+    var dueTime: String?    // "HH:MM"
+    var projectID: String?
+    var tags: [String]
+    var createdAt: String   // ISO 8601
+    var updatedAt: String
+    var completedAt: String?
+    var notes: String?
+    var subtasks: [ShiftSubtask]
+    /// Whether this task has an attached image, saved separately as a real
+    /// file under `attachments/<id>.png` in the same git-synced root (see
+    /// `ShiftStore`'s attachment methods) - this flag is what lets the task
+    /// list show a paperclip glyph without hitting the filesystem on every
+    /// render. `false` for every task file written before this field
+    /// existed - `ShiftYaml.task(from:)` defaults a missing `has_attachment`
+    /// key to `false` rather than failing to decode, since this isn't a
+    /// `Codable` type with a `CodingKeys` list (see the `fm/cockpit-fix-
+    /// host-decode-regression` gotcha in AGENTS.md for why that distinction
+    /// matters), but the same "a new field needs an explicit default on
+    /// read, not just a Swift-side one" lesson still applies here.
+    var hasAttachment: Bool
+
+    /// The RRULE-lite repeat rule, or `nil` for a task that happens once
+    /// (F5). Held as a parsed value rather than the raw string so nothing
+    /// outside `ShiftYaml` re-parses it, and defaulted here so the
+    /// synthesised memberwise initialiser stays source-compatible with the
+    /// call sites that predate it - the same treatment
+    /// `reminderMinutesBefore` gets below.
+    ///
+    /// A rule is a **pattern, not a series**: the anchor it expands from is
+    /// this task's own `dueDate`/`dueTime`, so pushing a due date moves the
+    /// whole future series without rewriting the rule. A task with a rule
+    /// and no due date never recurs, which is why the editor's Repeat card
+    /// disables itself until a due date is set.
+    var recurrence: ShiftRecurrence? = nil
+
+    /// Minutes before the due time to fire the reminder, or `nil` for this
+    /// app's own default lookahead (see `ShiftNotificationScheduler`). `0`
+    /// is a real value meaning "at the due time" and is deliberately not
+    /// the same as `nil`.
+    var reminderMinutesBefore: Int? = nil
+
+    /// A blank task ready for `ShiftStore.addTask` - the New Task editor
+    /// (phase 2) fills fields into this rather than hand-assembling every
+    /// property inline.
+    static func fresh(now: Date = Date()) -> ShiftTask {
+        let iso = ShiftStore.iso8601(now)
+        return ShiftTask(
+            id: UUID().uuidString, title: "", description: "", status: .todo, priority: .normal,
+            dueDate: nil, dueTime: nil, projectID: nil, tags: [], createdAt: iso, updatedAt: iso,
+            completedAt: nil, notes: nil, subtasks: [], hasAttachment: false,
+            recurrence: nil, reminderMinutesBefore: nil
+        )
+    }
+}
+
+/// A captain's decision about a task's image attachment, made in the task
+/// editor sheet and applied by `ShiftStore.addTask`/`updateTask`
+/// (grandline-shift-task-image-attachments) - `.unchanged` for every save
+/// that never touched the attachment well, so an ordinary title/priority
+/// edit never rewrites the image file for nothing.
+enum ShiftAttachmentChange {
+    case unchanged
+    case set(Data)
+    case removed
+}
+
+enum ShiftFollowUpStatus: String, CaseIterable {
+    case pending, done
+}
+
+/// Deliberately its own type, not "a task with a reminder" - a follow-up is
+/// something to check on later, with no completion checklist or description
+/// field, and its own `followUpAt` date rather than a due date.
+struct ShiftFollowUp: Equatable {
+    var id: String
+    var title: String
+    var status: ShiftFollowUpStatus
+    var priority: ShiftPriority
+    var followUpAt: String?  // "YYYY-MM-DD"
+    var followUpTime: String?  // "HH:MM", mirrors ShiftTask.dueTime
+    var relatedTaskID: String?
+    var projectID: String?
+    var notes: String?
+
+    /// A blank follow-up ready for `ShiftStore.addFollowUp`.
+    static func fresh() -> ShiftFollowUp {
+        ShiftFollowUp(
+            id: UUID().uuidString, title: "", status: .pending, priority: .normal,
+            followUpAt: nil, followUpTime: nil, relatedTaskID: nil, projectID: nil, notes: nil
+        )
+    }
+}
+
+/// `active`/`archived` (phase 1's placeholder pair) became this 5-state set
+/// in phase 3 (cockpit-shift-projects), matching the real status dropdown on
+/// a project's card - not just an "is this archived" flag.
+enum ShiftProjectStatus: String, CaseIterable {
+    case notStarted = "not_started"
+    case inProgress = "in_progress"
+    case onHold = "on_hold"
+    case completed
+    case archived
+
+    var displayName: String {
+        switch self {
+        case .notStarted: return "Not Started"
+        case .inProgress: return "In Progress"
+        case .onHold: return "On Hold"
+        case .completed: return "Completed"
+        case .archived: return "Archived"
+        }
+    }
+}
+
+/// A real project (cockpit-shift-projects, phase 3): a status control
+/// clicking through to a dropdown that actually persists, a task list scoped
+/// to the project (with nested subtasks - see `ShiftSubtask`'s doc comment),
+/// and an editable field set (name/description/status/start date/due date).
+struct ShiftProject: Equatable {
+    var id: String
+    var name: String
+    var description: String
+    var status: ShiftProjectStatus
+    var startDate: String?  // "YYYY-MM-DD"
+    var dueDate: String?    // "YYYY-MM-DD"
+    var createdAt: String
+
+    /// A blank project ready for `ShiftStore.addProject` (cockpit-fix-shift-
+    /// new-project) - the New Project editor fills fields into this rather
+    /// than hand-assembling every property inline, mirroring `ShiftTask.fresh`/
+    /// `ShiftFollowUp.fresh` above.
+    static func fresh(now: Date = Date()) -> ShiftProject {
+        ShiftProject(
+            id: UUID().uuidString, name: "", description: "", status: .notStarted,
+            startDate: nil, dueDate: nil, createdAt: ShiftStore.iso8601(now)
+        )
+    }
+}
+
+struct ShiftNote {
+    var id: String
+    var title: String
+    var body: String
+    var createdAt: String
+}
+
+/// One history-log entry (the `activity/<YYYY-MM>.yaml` files) - proves out
+/// the same month-split scheme `completed/<YYYY-MM>.yaml` uses, on the
+/// second folder the brief's file layout calls for.
+///
+/// `targetID` (phase 5, cockpit-shift-power-features) is the id of the task
+/// or follow-up the entry is about, added so Weekly Review can count real
+/// "pushed back repeatedly" occurrences (`follow_up_snoozed`/
+/// `task_due_date_changed` entries grouped by this id) instead of parsing the
+/// human-readable `summary` string. `nil` for entries logged before this
+/// field existed, or for kinds that aren't about a single task/follow-up -
+/// reading an old activity file without the field is a no-op, not an error.
+struct ShiftActivityEntry {
+    var id: String
+    var timestamp: String
+    var kind: String   // e.g. "task_completed", "task_created"
+    var summary: String
+    var targetID: String?
+
+    /// How long the thing this entry records actually took, in seconds, for
+    /// the kinds where that is a real measurement (F7's
+    /// `task_focus_logged`). `nil` everywhere else, and `nil` on an entry
+    /// written before this field existed - `ShiftYaml.activity(from:)`
+    /// defaults a missing `duration_seconds` key rather than failing to
+    /// decode, the same treatment `target_id` got when it was added.
+    ///
+    /// Deliberately *not* parsed back out of `summary`: Weekly Review's
+    /// "time on tasks" tile sums this field, and a tile whose number comes
+    /// from scraping a human-readable sentence breaks the first time the
+    /// wording is improved. Defaulted so the synthesised memberwise
+    /// initialiser stays source-compatible with every existing call site.
+    var durationSeconds: Int? = nil
+}
+
+/// Weekly Review's computed summary (phase 5) - `ShiftStore.weeklySummary`
+/// derives this entirely from data phases 1-4 already track (completed
+/// tasks/follow-ups, and activity log entries), never a fabricated or
+/// hand-entered figure.
+struct ShiftWeeklySummary {
+    var weekLabel: String
+    var completedCount: Int
+    var pushedBack: [ShiftPushedBackItem]
+    var upcomingCount: Int
+}
+
+/// One task or follow-up that has been snoozed/pushed-back 2+ times within
+/// the lookback window `weeklySummary` scans - see that method's header for
+/// exactly which activity kinds count.
+struct ShiftPushedBackItem {
+    var id: String
+    var title: String
+    var count: Int
+    var projectName: String?
+}
+
+/// `settings.yaml` - deliberately tiny in this phase. `syncStatus` is a
+/// placeholder always reporting "Synced" (see AGENTS.md) - real Git sync is
+/// a later phase; the field exists now so that phase has a seam to fill in
+/// rather than inventing new state.
+struct ShiftSettings {
+    var syncStatus: String = "Synced"
+}

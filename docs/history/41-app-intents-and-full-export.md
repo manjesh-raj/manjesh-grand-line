@@ -364,7 +364,7 @@ sibling run in flight.
   and inspected - all five intents and their phrases are in
   `extract.actionsdata` - but nothing here drove an intent from the Shortcuts
   app, and this sandbox cannot. The captain's own check is to build the app on
-  this machine and look for "Manjesh Grand Line" in Shortcuts.
+  this machine and look for "Grand Line" in Shortcuts.
 - **No real Touch ID.** Every biometric path is driven through
   `IntentBiometricChallenge`'s injected seam. `LAContextFactory` is the
   production value and is the same one `CredentialVaultController` already uses.

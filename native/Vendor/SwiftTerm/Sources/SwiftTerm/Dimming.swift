@@ -2,7 +2,7 @@
 //  Dimming.swift
 //  SwiftTerm
 //
-//  Added locally (Firstmate Cockpit vendor patch) to fix SGR-2 (dim/faint)
+//  Added locally (Grand Line vendor patch) to fix SGR-2 (dim/faint)
 //  text contrast on light backgrounds. See MacExtensions.swift's
 //  `dimmedColor(towards:)` doc comment and Vendor/SwiftTerm/README.md for the
 //  full writeup. Shared by both the AppKit (MacExtensions.swift) and UIKit

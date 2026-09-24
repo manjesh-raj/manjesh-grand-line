@@ -1,4 +1,4 @@
-// Manjesh Grand Line - the WidgetKit extension.
+// Grand Line - the WidgetKit extension.
 //
 // The extension's entry point. `@main` on a `WidgetBundle` is what
 // `_NSExtensionMain` resolves to, which is why

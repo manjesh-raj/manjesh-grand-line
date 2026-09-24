@@ -1,0 +1,1403 @@
+// Grand Line - native macOS app.
+//
+// **Vault** - Automic Vault's hardening panel, moved back to the `.vault`
+// Stores destination and back to plain "Vault" by the captain's own
+// correction (`fm/swap-vault-poneglyph-naming-in-grand-lin-1f`): *"the atomic
+// vault, let us move it back to stores and keep that as vault again."*
+//
+// **History, so the naming doesn't read as arbitrary.** This page (and this
+// class) used to be called `VaultController` and lived at `.vault`. PR #344
+// (`fm/implement-grand-line-secrets-vault-poneg-ad`) then built a genuinely
+// new personal credential vault, gave it the `.vault` slot, and moved this
+// panel under Setup as a fifth tab named "Poneglyph" - two different things
+// that happened to both answer to "Vault". After seeing the two live, the
+// captain judged that backwards: this is the vault he already relies on
+// daily, so it reclaims the name and the destination. The credential vault
+// (`CredentialVaultController.swift`) now carries the "Poneglyph" label
+// instead, under Setup - see that file's own header. Nothing about what
+// *this* panel does changed across either move: the same `av list` /
+// `av doctor --json` reads, the same `av save` / `av inject` Console-tab
+// mechanism, the same recipe export. Only the label and the location moved,
+// twice.
+//
+// **Why the two features are separate types at all.** Automic Vault is not a
+// retrieval-based password manager and says so in its own product docs; ADR
+// 0010 in that project exists specifically to forbid ungated secret retrieval.
+// It is a good tool for a different job (authorising what a CLI may do with a
+// credential), and keeping it for that job while the credential vault covers
+// retrieval independently is the whole shape of that feature's plan - see
+// `data/plan-secrets-vault-for-grand-line-34/report.md`.
+//
+// `VaultData.swift`/`VaultRecipe.swift`/`VaultRecipeGit.swift` keep their
+// existing type names on purpose - they never stopped being "the Vault data
+// layer" across either rename. The captain's decisions here are about this
+// panel's user-facing label and its place in the navigation, not about
+// renaming every internal type behind it - and this app already has
+// precedent for exactly that distinction (its own display-name rebrand
+// deliberately left the bundle id, the signing identity and the Swift module
+// name alone).
+
+import AppKit
+
+final class VaultController: NSViewController, DaylightDrillActions {
+
+    /// Bootstrap/Settings' exact shape: a command that needs a real
+    /// interactive terminal runs in the shared Console via
+    /// `AppShellController.runInConsole`, never a background process this
+    /// page captures output from itself.
+    var onRunCommand: ((String, String) -> Void)?
+    /// Same as above, but the caller learns when the command finished -
+    /// used after "Save secret" so the secrets list can refresh once the
+    /// captain's real `av save` in the Console tab actually completes.
+    var onRunCommandTracked: ((String, String, @escaping (Bool) -> Void) -> Void)?
+
+    private let scroll = NSScrollView()
+    private let contentStack = NSStackView()
+
+    // Daylight §6.4: the page's own standing subtitle row is gone - the drill
+    // header carries that line now (`drillHeaderSubtitle`), computed from the
+    // same counts, and Refresh moved into its action cluster.
+    // A filled accent pill, matching Setup > Updates' own "Refresh" - one
+    // real, shared, theme-aware definition (`FleetController`,
+    // `ReviewController`, `HomeCanvasController`, `KubernetesController`
+    // follow the same recipe) rather than a page-local muted `.quiet` look.
+    private let refreshButton = HelmButton(title: "Refresh", variant: .primary, symbol: "arrow.clockwise")
+
+    // Whether `av` itself is installed - checked in the background (reusing
+    // the same `UpdatesSource`/`DependencyCatalog` "automic-vault" entry the
+    // Updates and Bootstrap pages already check/update) purely to decide
+    // whether the Secrets/Verified Launchers sections have anything to show.
+    // This page deliberately does NOT render its own install-status row
+    // (name/version/Check/Install buttons) - that already exists on the
+    // Updates and Bootstrap pages and duplicating it here was captain-flagged
+    // as redundant (fm/grandline-vault-header-and-avatar-divider).
+    private var installStatus: DependencyStatus = .unknown
+    private var isInstallBusy = false
+
+    // Quiet-until-it-matters attention banner - hidden unless a real tool has
+    // real issues (`av doctor --json`), never a manufactured warning.
+    private let attentionBanner = NSView()
+    private let attentionLabel = NSTextField(wrappingLabelWithString: "")
+    private let attentionIcon = NSImageView()
+
+    private let secretsPanel = HelmCard()
+    private let secretsStack = NSStackView()
+    /// UI4: a real pill, not a bare monospaced digit floating in the header.
+    /// Starts at `?` rather than `0` for GL-14's reason - the page has not
+    /// looked yet, and "no secrets" is a different claim from "not asked".
+    private let secretsCountBadge = HelmCountBadge(text: "?")
+    private let addSecretButton = HelmButton(title: "", variant: .primary)
+
+    private let toolsPanel = HelmCard()
+    private let toolsStack = NSStackView()
+    private let toolsCountBadge = HelmCountBadge(text: "?")
+
+    // "Backup the recipe, not the values" (fm/grandline-vault-recipe-backup) -
+    // see VaultRecipe.swift/VaultRecipeGit.swift for what's recorded and why.
+    private let recipePanel = HelmCard()
+    private let recipeDetailLabel = NSTextField(wrappingLabelWithString: "")
+    private let exportRecipeButton = HelmButton(title: "", variant: .primary)
+    private let checkBackupButton = HelmButton(title: "", variant: .secondary)
+    private let recipeSpinner = HelmProgressBar.inlineActivity(hue: RailDestination.vault.domainHue)
+    private var isRecipeBusy = false
+    // Bug fix (fm/grandline-dictation-global-hotkey-and-theme-fixes):
+    // `recipeDetailLabel.textColor` used to be set directly, ad hoc, at each
+    // call site (construction, busy/status updates, the two error paths) -
+    // using whatever `theme` was current AT THAT MOMENT, with nothing ever
+    // re-deriving it when the theme later changed. A captain who switched
+    // themes without touching this card again (the common case) was left
+    // with a color computed against the *previous* theme rendered on the
+    // *current* one - a captain screenshot showed this as the card's
+    // description text barely legible against a light theme. Tracking which
+    // color *category* the label is currently showing (not the literal
+    // color) lets `applyTheme()` re-derive the right one from the current
+    // theme on every change, the same way every other label on this page
+    // already does.
+    private var recipeLabelKind: RecipeLabelKind = .info
+
+    private enum RecipeLabelKind { case info, warn, error }
+
+    /// B1 (`data/grand-line-e2e-audit/report.md`): `nil` means "not read",
+    /// never "none". This page used to hold `[]` for a failed `av list` and
+    /// render it as a confident "0 secrets · 0 verified launchers" with bare
+    /// empty cards - reproduced by the audit's own probe on a machine that
+    /// genuinely has 4 secrets and a hardened launcher, and the state a
+    /// captain whose Automic Vault approval helper is wedged would sit in.
+    /// On a security surface that is a materially false statement, not a
+    /// cosmetic one.
+    private var secrets: [VaultSecret]?
+    private var tools: [VaultTool]?
+    private var isLoadingSnapshot = false
+    private var hasLoadedOnce = false
+    private var theme: HelmTheme = ThemeManager.shared.theme
+
+    // MARK: - Drill header (Daylight §6.4)
+
+    /// Set by `AppShellController` - "re-read my subtitle". The header is the
+    /// shell's; this page only says when its numbers moved.
+    var onDrillSubtitleChanged: (() -> Void)?
+
+    /// §6.4's live subtitle - the same line this page used to render itself,
+    /// counted off the same `secrets`/`tools` the cards below list, so the two
+    /// can never disagree. The "names and metadata only, never a value" clause
+    /// stays: it is the one thing about this page a captain most needs to know
+    /// and the page has nowhere else to say it now that the standing subtitle
+    /// row is gone.
+    var drillHeaderSubtitle: String? {
+        guard installStatus != .notInstalled else {
+            return "Automic Vault isn't installed on this machine yet"
+        }
+        guard let secrets, let tools else {
+            // B1: three genuinely different things, said differently.
+            return hasLoadedOnce
+                ? "Couldn\u{2019}t read Automic Vault - its approval helper may not be running"
+                : "Checking Automic Vault\u{2026}"
+        }
+        let secretText = secrets.count == 1 ? "1 secret" : "\(secrets.count) secrets"
+        let toolText = tools.count == 1 ? "1 verified launcher" : "\(tools.count) verified launchers"
+        let attention = tools.filter { if case .needsAttention = $0.status { return true } else { return false } }.count
+        if attention > 0 {
+            return "\(secretText) \u{00B7} \(toolText) \u{00B7} \(attention) needing attention"
+        }
+        return "\(secretText) \u{00B7} \(toolText) \u{00B7} names and metadata only, never a value"
+    }
+
+    /// §6.4's action cluster. Refresh is this page's one page-level action;
+    /// everything else acts on a single record and stays in that record's own
+    /// row or card header (Add Secret, Export Recipe).
+    var drillHeaderActions: [NSView] { [refreshButton] }
+
+    override func loadView() {
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 940, height: 720))
+        root.wantsLayer = true
+        view = root
+
+        // FlippedView - see ReviewController.loadView's identical comment for
+        // why a plain NSView here would leave a blank gap above the header
+        // until the first real render lands.
+        let content = FlippedView()
+        content.translatesAutoresizingMaskIntoConstraints = false
+
+        configureHeaderActions()
+        _ = buildSecretsSection()
+        _ = buildToolsSection()
+        _ = buildRecipeSection()
+
+        contentStack.orientation = .vertical
+        contentStack.alignment = .leading
+        contentStack.spacing = 20
+        contentStack.translatesAutoresizingMaskIntoConstraints = false
+        contentStack.addArrangedSubview(attentionBanner)
+        contentStack.addArrangedSubview(secretsPanel)
+        contentStack.addArrangedSubview(toolsPanel)
+        contentStack.addArrangedSubview(recipePanel)
+        attentionBanner.isHidden = true
+
+        content.addSubview(contentStack)
+        NSLayoutConstraint.activate([
+            contentStack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: HelmMetrics.pageGutter),
+            contentStack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -HelmMetrics.pageGutter),
+            contentStack.topAnchor.constraint(equalTo: content.topAnchor, constant: 24),
+            contentStack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -28),
+            attentionBanner.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            secretsPanel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            toolsPanel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+            recipePanel.widthAnchor.constraint(equalTo: contentStack.widthAnchor),
+        ])
+
+        scroll.documentView = content
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(scroll)
+        NSLayoutConstraint.activate([
+            scroll.leadingAnchor.constraint(equalTo: root.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            scroll.topAnchor.constraint(equalTo: root.topAnchor),
+            scroll.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            content.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+        ])
+
+        ThemeManager.shared.observe { [weak self, weak root] theme in
+            self?.theme = theme
+            root?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+            self?.applyTheme()
+            if self?.hasLoadedOnce == true { self?.rebuildAfterThemeChangeIfVisible { self?.renderAll() } }
+        }
+    }
+
+
+    /// P1: a theme change repaints immediately and defers the *rebuild*.
+    ///
+    /// `ThemeManager` fans out to ~450 observers synchronously, and several
+    /// pages answered a theme change with a full teardown-rebuild - so once a
+    /// session had visited most destinations, ⌘⌥T stalled the main thread for
+    /// most of a second (measured: 0.9-1.9s with all 21 mounted). Every
+    /// destination stays mounted for the process's life, so most of that work
+    /// was rebuilding pages nobody was looking at.
+    ///
+    /// The cheap repaint still runs for every observer; only the expensive
+    /// rebuild waits for the page's next real appearance - the same
+    /// rebuild-on-change shape Health and Schedules already use for visits.
+    private var needsThemeRebuild = false
+
+    private func rebuildAfterThemeChangeIfVisible(_ rebuild: () -> Void) {
+        if view.isHiddenOrHasHiddenAncestor {
+            needsThemeRebuild = true
+        } else {
+            rebuild()
+        }
+    }
+    override func viewWillAppear() {
+        super.viewWillAppear()
+        if needsThemeRebuild {
+            needsThemeRebuild = false
+            if hasLoadedOnce { renderAll() }
+        }
+        view.layoutSubtreeIfNeeded()
+        scrollToTop()
+        refresh()
+    }
+
+    private func scrollToTop() {
+        scroll.contentView.scroll(to: .zero)
+        scroll.reflectScrolledClipView(scroll.contentView)
+    }
+
+    // MARK: Building the static chrome
+
+    /// Daylight §6.4: this page's one page-level action, prepared here (with
+    /// the rest of the page's chrome) and positioned by the shell's drill
+    /// header via `drillHeaderActions`. The button instance stays this page's
+    /// own, per `DaylightDrillActions`.
+    private func configureHeaderActions() {
+        refreshButton.target = self
+        refreshButton.action = #selector(refreshTapped)
+        refreshButton.toolTip = "Refresh Vault status"
+        refreshButton.translatesAutoresizingMaskIntoConstraints = false
+    }
+
+    private func attentionBannerView() -> NSView {
+        attentionLabel.font = .systemFont(ofSize: HelmType.scaled(12), weight: .medium)
+        attentionLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        attentionIcon.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)?
+            .withSymbolConfiguration(NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold))
+        attentionIcon.translatesAutoresizingMaskIntoConstraints = false
+        attentionIcon.setContentHuggingPriority(.required, for: .horizontal)
+
+        let row = NSStackView(views: [attentionIcon, attentionLabel])
+        row.orientation = .horizontal
+        row.alignment = .firstBaseline
+        row.spacing = 8
+        row.translatesAutoresizingMaskIntoConstraints = false
+
+        attentionBanner.wantsLayer = true
+        attentionBanner.translatesAutoresizingMaskIntoConstraints = false
+        attentionBanner.addSubview(row)
+        NSLayoutConstraint.activate([
+            row.leadingAnchor.constraint(equalTo: attentionBanner.leadingAnchor, constant: 12),
+            row.trailingAnchor.constraint(equalTo: attentionBanner.trailingAnchor, constant: -12),
+            row.topAnchor.constraint(equalTo: attentionBanner.topAnchor, constant: 10),
+            row.bottomAnchor.constraint(equalTo: attentionBanner.bottomAnchor, constant: -10),
+        ])
+        return attentionBanner
+    }
+
+    private func buildSecretsSection() -> NSView {
+        _ = attentionBannerView() // configures attentionBanner's fixed chrome once.
+
+        addSecretButton.title = "+ Add Secret"
+        addSecretButton.controlSize = .small
+        addSecretButton.target = self
+        addSecretButton.action = #selector(addSecretTapped)
+
+
+        // The structured `HelmCard` header - icon tile, title, subtitle,
+        // trailing actions - replacing a hand-rolled title-only row so this
+        // card reads the same as every other icon-tile card on this page
+        // (Verified Launchers, Recipe Backup) and elsewhere in the app
+        // (`ShiftPanelView`'s own section headers use the identical shape).
+        secretsPanel.setHeader(
+            symbol: "lock.fill",
+            tint: .good,
+            title: "Secrets",
+            subtitle: "Keychain-backed, this device only",
+            actions: [secretsCountBadge, addSecretButton]
+        )
+        secretsStack.orientation = .vertical
+        secretsStack.alignment = .leading
+        secretsStack.spacing = 10
+        secretsStack.translatesAutoresizingMaskIntoConstraints = false
+
+        secretsPanel.setBody(secretsStack)
+        // UI4: the card is loading from the moment it exists, not from the
+        // moment `renderAll()` first runs.
+        addLoadingSkeleton(to: secretsStack)
+        return secretsPanel
+    }
+
+    private func buildToolsSection() -> NSView {
+
+        toolsPanel.setHeader(
+            symbol: "checkmark.shield.fill",
+            tint: .violet,
+            title: "Verified Launchers",
+            subtitle: "From av doctor --json",
+            actions: [toolsCountBadge]
+        )
+        toolsStack.orientation = .vertical
+        toolsStack.alignment = .leading
+        toolsStack.spacing = 10
+        toolsStack.translatesAutoresizingMaskIntoConstraints = false
+
+        toolsPanel.setBody(toolsStack)
+        addLoadingSkeleton(to: toolsStack)
+        return toolsPanel
+    }
+
+    private func buildRecipeSection() -> NSView {
+        exportRecipeButton.title = "Export Recipe"
+        exportRecipeButton.controlSize = .small
+        exportRecipeButton.target = self
+        exportRecipeButton.action = #selector(exportRecipeTapped)
+
+        checkBackupButton.title = "Check Against Backup"
+        checkBackupButton.controlSize = .small
+        checkBackupButton.target = self
+        checkBackupButton.action = #selector(checkBackupTapped)
+
+        recipeSpinner.isHidden = true
+
+        let buttonsRow = NSStackView(views: [checkBackupButton, exportRecipeButton, recipeSpinner])
+        buttonsRow.orientation = .horizontal
+        buttonsRow.spacing = 8
+        buttonsRow.alignment = .centerY
+
+        recipePanel.setHeader(
+            symbol: "shippingbox.fill",
+            tint: .accent,
+            title: "Recipe Backup",
+            subtitle: "Which secrets and tools are hardened, never a value",
+            actions: [buttonsRow]
+        )
+
+        recipeDetailLabel.font = HelmType.caption()
+        recipeDetailLabel.preferredMaxLayoutWidth = 700
+        // A neutral placeholder - `refreshRecipeStatusFromDisk()` replaces
+        // this with a real "Last exported to <repo> N days ago" (read from
+        // whatever recipe file already exists on disk, never fabricated)
+        // moments later, on every `refresh()`.
+        recipeDetailLabel.stringValue = "Checking for a previous export\u{2026}"
+        setRecipeLabelColor(.info)
+        recipeDetailLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        // `HelmCard.setBody` defaults to flush, for a full-bleed list whose
+        // own rows carry their inset. Real content passes the one shared card
+        // body padding instead of a hand-rolled wrapper view.
+        recipePanel.setBody(recipeDetailLabel, insets: HelmCard.contentInsets)
+        return recipePanel
+    }
+
+    // MARK: Refresh
+
+    @objc private func refreshTapped() { refresh() }
+
+    private func refresh() {
+        refreshRecipeStatusFromDisk()
+        checkAvInstalled { [weak self] in
+            guard let self else { return }
+            if self.installStatus == .notInstalled {
+                // `av` genuinely is not on this machine - the page says so on
+                // its own, so empty (not nil) is the honest value here.
+                self.secrets = []
+                self.tools = []
+                self.renderAll()
+            } else {
+                self.loadSnapshot()
+            }
+        }
+    }
+
+    // MARK: Install check (headless - no UI here; see Updates/Bootstrap for
+    // the real install-status row and Check/Install actions)
+
+    private func checkAvInstalled(completion: @escaping () -> Void) {
+        guard !isInstallBusy else { completion(); return }
+        isInstallBusy = true
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let outcome = VaultSource.checkInstall()
+            DispatchQueue.main.async {
+                guard let self else { completion(); return }
+                self.isInstallBusy = false
+                self.installStatus = outcome.status
+                completion()
+            }
+        }
+    }
+
+    // MARK: Snapshot (secrets + tools)
+
+    private func loadSnapshot() {
+        guard !isLoadingSnapshot else { return }
+        isLoadingSnapshot = true
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let snapshot = VaultSource.loadSnapshot()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isLoadingSnapshot = false
+                self.secrets = snapshot.secrets
+                self.tools = snapshot.tools
+                self.renderAll()
+            }
+        }
+    }
+
+    // MARK: Rendering
+
+    private func renderAll() {
+        hasLoadedOnce = true
+
+        let notInstalled = installStatus == .notInstalled
+        secretsPanel.isHidden = notInstalled
+        toolsPanel.isHidden = notInstalled
+
+        // B1: a read that failed says nothing about whether anything needs
+        // attention, so the banner stays down rather than claiming all-clear.
+        let needingAttention = (tools ?? []).filter { if case .needsAttention = $0.status { return true } else { return false } }
+        attentionBanner.isHidden = notInstalled || needingAttention.isEmpty
+        if !needingAttention.isEmpty {
+            let names = needingAttention.map(\.name).joined(separator: ", ")
+            attentionLabel.stringValue = needingAttention.count == 1
+                ? "\(names) needs attention - see Verified Launchers below."
+                : "\(needingAttention.count) tools need attention: \(names)."
+        }
+
+        // B1: "?" rather than "0" for a count this page does not have.
+        secretsCountBadge.text = secrets.map { "\($0.count)" } ?? "?"
+        rebuildSecretsStack()
+
+        toolsCountBadge.text = tools.map { "\($0.count)" } ?? "?"
+        rebuildToolsStack()
+
+        applyTheme()
+        onDrillSubtitleChanged?()
+        publishVaultSignal()
+        view.layoutSubtreeIfNeeded()
+        scrollToTop()
+    }
+
+    /// `fm/grandline-engineering-cards-stale-counts`: the Stores hub's Vault
+    /// card renders `BackgroundSignalsPoller.lastCounts`' vault numbers, which
+    /// only that poller's own 15-minute pass could write - the same staleness
+    /// the captain hit on Engineering's Updates and GitHub Sync cards. This
+    /// page has just loaded a real snapshot, so it hands the **snapshot** over
+    /// and lets the shared derivation count it; B1's rule (a failed `av` read
+    /// is not "nothing needs attention") is applied there, once.
+    ///
+    /// Gated on being on screen for the same reason as the Updates page's -
+    /// see `UpdatesController.publishToolUpdateSignal`.
+    private func publishVaultSignal() {
+        guard isViewLoaded, !view.isHidden else { return }
+        BackgroundSignalsPoller.shared.publishVaultRead(secrets: secrets, tools: tools)
+    }
+
+    private func rebuildSecretsStack() {
+        for v in secretsStack.arrangedSubviews {
+            secretsStack.removeArrangedSubview(v)
+            v.removeFromSuperview()
+        }
+        guard let secrets else {
+            // B1: three states, not two. "Checking" until the first read
+            // lands, then a real error - never a confident empty list.
+            addUnknownState(to: secretsStack, symbol: "key", noun: "secrets")
+            return
+        }
+        if secrets.isEmpty {
+            addEmptyState(to: secretsStack,
+                          symbol: "key",
+                          text: "No saved secrets yet. Use \u{201c}Add Secret\u{201d} above - the value is entered directly in a real terminal, never through this app.")
+            return
+        }
+        for secret in secrets {
+            let row = secretRowView(secret)
+            secretsStack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: secretsStack.widthAnchor).isActive = true
+        }
+    }
+
+    private func rebuildToolsStack() {
+        for v in toolsStack.arrangedSubviews {
+            toolsStack.removeArrangedSubview(v)
+            v.removeFromSuperview()
+        }
+        guard let tools else {
+            addUnknownState(to: toolsStack, symbol: "checkmark.shield", noun: "verified launchers")
+            return
+        }
+        if tools.isEmpty {
+            addEmptyState(to: toolsStack,
+                          symbol: "checkmark.shield",
+                          text: "No verified launchers registered with Automic Vault yet.")
+            return
+        }
+        for tool in tools {
+            let row = toolRowView(tool)
+            toolsStack.addArrangedSubview(row)
+            row.widthAnchor.constraint(equalTo: toolsStack.widthAnchor).isActive = true
+        }
+    }
+
+    /// This used to return a bare, unpadded, unconstrained wrapping label,
+    /// which is why an empty Secrets / Verified Launchers panel collapsed to a
+    /// header-only slab - measured live at `bodyH=0` for both, exactly the
+    /// state a fresh machine (or a machine where `av list` returns nothing)
+    /// shows (audit §5.5). `HelmEmptyState` is the app's one centered icon +
+    /// wrapping copy empty state (`HelmDesignSystem.swift`, audit §6.3
+    /// component 5 - the class this call site used to know as
+    /// `ShiftEmptyStateView`, before Phase 4 promoted it); giving it a real
+    /// height is what makes the panel actually occupy space.
+    /// B1: the state that used to render as an empty list. Two wordings,
+    /// because "I haven't looked yet" and "I looked and couldn't read it" are
+    /// different problems with different fixes - the second one names the
+    /// approval helper, which is the thing the captain actually has to go
+    /// restart (and the same failure the lock screen already handles by name).
+    private func addUnknownState(to stack: NSStackView, symbol: String, noun: String) {
+        guard hasLoadedOnce else {
+            // Review #3's UI4: while the first read is in flight this is a
+            // *loading* state, and this app's loading language is D3's
+            // skeleton (Review, Overview, Updates and GitHub Sync all took it;
+            // this page was written before that pass and kept a sentence).
+            // The card no longer sits empty either - see
+            // `addLoadingSkeleton`'s note for why the empty card was the more
+            // visible half of the finding.
+            addLoadingSkeleton(to: stack)
+            return
+        }
+        // A read that *failed* is not a loading state and must not shimmer as
+        // though an answer were still coming. It names the approval helper,
+        // which is the thing the captain actually has to go restart.
+        addEmptyState(to: stack,
+                      symbol: "exclamationmark.triangle",
+                      text: "Couldn\u{2019}t read \(noun) from Automic Vault. Its approval helper may not be running - check the \u{201c}Automic Vault\u{201d} menu bar app, then Refresh.")
+    }
+
+    /// D3's placeholder for a card whose list has not arrived.
+    ///
+    /// UI4's other half. Both cards are built in `loadView` with empty stacks
+    /// and only filled by the first `renderAll()`, so between opening the page
+    /// and the `av` subprocess answering, Secrets and Verified Launchers
+    /// rendered as bare 57pt headers with nothing under them - a card that
+    /// looks finished and empty rather than one that is still loading, while
+    /// the drill subtitle overhead said "Checking Automic Vault\u{2026}".
+    /// Seeding the skeleton at build time is what closes that window; the
+    /// `addUnknownState` path above keeps it up for as long as the read is
+    /// genuinely outstanding.
+    private func addLoadingSkeleton(to stack: NSStackView) {
+        let skeleton = HelmSkeletonList(rows: 2)
+        skeleton.applyTheme(theme)
+        stack.addArrangedSubview(skeleton)
+        skeleton.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+    }
+
+    private func addEmptyState(to stack: NSStackView, symbol: String, text: String) {
+        let empty = HelmEmptyState(symbol: symbol, body: text)
+        empty.applyTheme(theme)
+        empty.translatesAutoresizingMaskIntoConstraints = false
+        empty.heightAnchor.constraint(equalToConstant: 90).isActive = true
+        stack.addArrangedSubview(empty)
+        empty.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+    }
+
+    /// The app's one "accent-carrying row" (`HelmAccentRow`, `HelmDesignSystem.
+    /// swift`) - a colored left accent bar, a tinted round badge, an uppercase
+    /// kicker, a body line, a meta line, and a caller-owned trailing accessory
+    /// for this row's own action buttons (the same slot the Hosts / Keys /
+    /// Snippets lists use for Connect/Edit/…). Replaces the dense
+    /// checklist-row shape `ToolRowLayout` gave these two sections before this
+    /// pass - `ToolRowLayout` is still the right component for Updates/
+    /// Bootstrap/Automation/GitHub Sync's fixed-column checklists, but a
+    /// secret or a launcher reads as a record/finding, not a checklist item,
+    /// which is exactly the distinction `HelmAccentRow`'s own doc comment
+    /// draws between the two components.
+    private func secretRowView(_ secret: VaultSecret) -> NSView {
+        let row = HelmAccentRow(trailingAccessory: secretRowActions(for: secret), hover: false,
+                                maxContentWidth: HelmAccentRow.recordContentWidth)
+        row.configure(HelmAccentRow.Content(
+            tint: .good,
+            kicker: "Hardened",
+            title: secret.name,
+            // `av list` only ever returns bare secret names - there is no
+            // per-secret human-readable purpose (the prototype's "App lock"/
+            // "GitHub CLI" are illustrative examples, not real data this app
+            // has access to) - so this stays a plain, honest, generic line
+            // rather than a fabricated description.
+            meta: "Stored in Automic Vault's Keychain",
+            badgeSymbol: "key.fill",
+            titleIsCode: true
+        ), theme: theme)
+        return row
+    }
+
+    private func secretRowActions(for secret: VaultSecret) -> NSView {
+        let runButton = HelmButton(title: "Run injected\u{2026}", variant: .secondary, target: self, action: #selector(runInjectedTapped(_:)))
+        runButton.controlSize = .small
+        runButton.identifier = NSUserInterfaceItemIdentifier("secret-run:\(secret.name)")
+
+        // Still only ever copies the NAME already shown in this row; the
+        // secret's value never touches this app (see this file's header
+        // comment).
+        let copyButton = HelmButton(title: "Copy Name", variant: .secondary, target: self, action: #selector(copyNameTapped(_:)))
+        copyButton.controlSize = .small
+        copyButton.toolTip = "Copy secret name to clipboard"
+        copyButton.identifier = NSUserInterfaceItemIdentifier("secret-copy:\(secret.name)")
+
+        // AGENTS.md gotcha (12): `NSStackView`'s own `.gravityAreas` default
+        // distribution honors no hugging priority, so without `.fill` +
+        // required stack-level hugging on this stack (a content-priority API
+        // is a no-op on the stack itself) - plus required hugging on each
+        // button, since a stack has no intrinsic size of its own to hug
+        // against - the solver's tie-break can stretch whichever button it
+        // likes to fill the row. `HostsListSection`'s identical `actions`
+        // stack (`HostsListSection.swift`) is the reference for this exact
+        // trio. Without it, "Run injected…" rendered ~1000pt wide here.
+        let actions = NSStackView(views: [runButton, copyButton])
+        actions.orientation = .horizontal
+        actions.spacing = 8
+        actions.alignment = .centerY
+        actions.distribution = .fill
+        actions.setHuggingPriority(.required, for: .horizontal)
+        actions.setClippingResistancePriority(.required, for: .horizontal)
+        actions.translatesAutoresizingMaskIntoConstraints = false
+        for button in [runButton, copyButton] {
+            button.setContentHuggingPriority(.required, for: .horizontal)
+            button.setContentCompressionResistancePriority(.required, for: .horizontal)
+        }
+        return actions
+    }
+
+    private func toolRowView(_ tool: VaultTool) -> NSView {
+        let isHardened: Bool
+        switch tool.status {
+        case .hardened: isHardened = true
+        case .needsAttention: isHardened = false
+        }
+        // "Needs attention" (real `av doctor` issues) reads as amber, not
+        // red - a tool with issues to review isn't broken the same way. The
+        // kicker names the category ("Hardened"/"Needs Attention"); the meta
+        // line carries the real detail (`av doctor`'s own issue count).
+        let meta = isHardened
+            ? "Hardened, 0 issues"
+            : tool.status.label + " found"
+        let row = HelmAccentRow(hover: false)
+        row.configure(HelmAccentRow.Content(
+            tint: isHardened ? .good : .warn,
+            kicker: isHardened ? "Hardened" : "Needs Attention",
+            title: tool.name,
+            meta: meta,
+            badgeSymbol: "checkmark.shield.fill",
+            // §7's "signal row for launcher issues", and the only row on this
+            // page that gets one: a launcher `av doctor --json` itself reports
+            // issues for is the one thing here the captain has to act on. A
+            // hardened launcher and a stored secret are records, not signals -
+            // washing them too would leave the page with nothing standing out,
+            // which is the state PRODUCT.md's "quiet until it matters" is
+            // about.
+            isSignal: !isHardened
+        ), theme: theme)
+        return row
+    }
+
+    // MARK: Actions
+
+    @objc private func addSecretTapped() {
+        let sheet = VaultSaveSecretSheetController()
+        sheet.onSave = { [weak self] name in
+            guard let self, let command = VaultSource.saveSecretCommand(name: name) else { return }
+            if let tracked = self.onRunCommandTracked {
+                tracked("Save secret: \(name)", command) { [weak self] _ in
+                    DispatchQueue.main.async { self?.loadSnapshot() }
+                }
+            } else {
+                self.onRunCommand?("Save secret: \(name)", command)
+            }
+        }
+        presentAsSheet(sheet)
+    }
+
+    @objc private func runInjectedTapped(_ sender: NSButton) {
+        guard let raw = sender.identifier?.rawValue, raw.hasPrefix("secret-run:") else { return }
+        let name = String(raw.dropFirst("secret-run:".count))
+        presentInjectSheet(preselected: name)
+    }
+
+    @objc private func copyNameTapped(_ sender: NSButton) {
+        guard let raw = sender.identifier?.rawValue, raw.hasPrefix("secret-copy:") else { return }
+        let name = String(raw.dropFirst("secret-copy:".count))
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(name, forType: .string)
+        Toast.show(in: view, message: "Copied \u{201c}\(name)\u{201d} to clipboard")
+    }
+
+    // MARK: Recipe backup (fm/grandline-vault-recipe-backup)
+
+    @objc private func exportRecipeTapped() {
+        guard !isRecipeBusy else { return }
+        guard let repoPath = VaultRecipeGit.resolveRepoPath() else {
+            recipeDetailLabel.stringValue = "No local manjesh-config clone found yet - set it up from Bootstrap's \u{201c}Dotfiles & machine config\u{201d} card first."
+            setRecipeLabelColor(.warn)
+            return
+        }
+        setRecipeBusy(true, status: "Exporting recipe\u{2026}")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let snapshot = VaultSource.loadSnapshot()
+            // B1: exporting a failed read would commit a recipe claiming this
+            // machine has no secrets - a wrong backup is worse than no backup,
+            // and this one gets pushed to a git remote.
+            guard !snapshot.isDegraded else {
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.setRecipeBusy(false, status: "Couldn\u{2019}t read Automic Vault, so nothing was exported - a recipe built from a failed read would claim this machine has no secrets. Check the \u{201c}Automic Vault\u{201d} menu bar app, then try again.")
+                    self.setRecipeLabelColor(.error)
+                }
+                return
+            }
+            let recipe = VaultRecipe.build(from: snapshot, generatedAt: ISO8601DateFormatter().string(from: Date()))
+            let result = VaultRecipeGit.export(recipe: recipe, repoPath: repoPath)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.setRecipeBusy(false, status: result.message)
+                self.setRecipeLabelColor(result.ok ? .info : .error)
+                if result.ok {
+                    Toast.show(in: self.view, message: "Vault recipe exported")
+                }
+            }
+        }
+    }
+
+    @objc private func checkBackupTapped() {
+        guard !isRecipeBusy else { return }
+        guard let repoPath = VaultRecipeGit.resolveRepoPath() else {
+            recipeDetailLabel.stringValue = "No local manjesh-config clone found yet - set it up from Bootstrap's \u{201c}Dotfiles & machine config\u{201d} card first."
+            setRecipeLabelColor(.warn)
+            return
+        }
+        setRecipeBusy(true, status: "Checking against backup\u{2026}")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let recipe = VaultRecipeGit.loadExistingRecipe(repoPath: repoPath) else {
+                DispatchQueue.main.async {
+                    self?.setRecipeBusy(false, status: "No recipe backup found yet - use \u{201c}Export Recipe\u{201d} first.")
+                }
+                return
+            }
+            let snapshot = VaultSource.loadSnapshot()
+            // B1: every backed-up secret would report as "missing locally" -
+            // the same lie as "0 secrets", in checklist form.
+            guard !snapshot.isDegraded else {
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.setRecipeBusy(false, status: "Couldn\u{2019}t read Automic Vault, so there is nothing to compare against. Check the \u{201c}Automic Vault\u{201d} menu bar app, then try again.")
+                    self.setRecipeLabelColor(.error)
+                }
+                return
+            }
+            let items = VaultRecipeChecklist.build(recipe: recipe, currentSnapshot: snapshot)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.setRecipeBusy(false, status: "Compared against the backup from \(recipe.generatedAt).")
+                let sheet = VaultRecipeChecklistSheetController(items: items, generatedAt: recipe.generatedAt)
+                self.presentAsSheet(sheet)
+            }
+        }
+    }
+
+    /// Shows "Last exported to <repo> N days ago" - read straight off
+    /// whatever recipe file already exists on disk (`VaultRecipeGit.
+    /// loadExistingRecipe`, a plain local file read/decode, no git/network
+    /// call) - or a plain "no backup yet" message when none exists. Never
+    /// fabricated: if there's no local `manjesh-config` clone or no recipe
+    /// file in it, this says so plainly rather than guessing a date, mirroring
+    /// the prototype's own "Last exported to manjesh-config 4 days ago"
+    /// body line with real data instead of a hardcoded example. Runs on every
+    /// `refresh()` (page load + the header's Refresh button) - never a
+    /// background poll, matching this page's "quiet until it matters"
+    /// convention - and never overwrites an in-flight export/check status.
+    private func refreshRecipeStatusFromDisk() {
+        guard !isRecipeBusy else { return }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let text: String
+            if let repoPath = VaultRecipeGit.resolveRepoPath(),
+               let recipe = VaultRecipeGit.loadExistingRecipe(repoPath: repoPath) {
+                let repoName = (repoPath as NSString).lastPathComponent
+                text = Self.relativeExportSummary(generatedAt: recipe.generatedAt, repoName: repoName)
+            } else {
+                text = "No recipe backup found yet - use \u{201c}Export Recipe\u{201d} above to create one."
+            }
+            DispatchQueue.main.async {
+                guard let self, !self.isRecipeBusy else { return }
+                self.recipeDetailLabel.stringValue = text
+                self.setRecipeLabelColor(.info)
+            }
+        }
+    }
+
+    /// GL-P3: both run on every Recipe Backup render.
+    private static let isoFormatter = ISO8601DateFormatter()
+
+    private static let exportRelativeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .full
+        return f
+    }()
+
+    private static func relativeExportSummary(generatedAt: String, repoName: String) -> String {
+        guard let date = isoFormatter.date(from: generatedAt) else {
+            return "Last exported to \(repoName)."
+        }
+        let relative = exportRelativeFormatter.localizedString(for: date, relativeTo: Date())
+        return "Last exported to \(repoName) \(relative)."
+    }
+
+    private func setRecipeBusy(_ busy: Bool, status: String) {
+        isRecipeBusy = busy
+        exportRecipeButton.isEnabled = !busy
+        checkBackupButton.isEnabled = !busy
+        recipeSpinner.isHidden = !busy
+        if busy { recipeSpinner.startAnimation() } else { recipeSpinner.stopAnimation() }
+        recipeDetailLabel.stringValue = status
+        setRecipeLabelColor(.info)
+    }
+
+    private func setRecipeLabelColor(_ kind: RecipeLabelKind) {
+        recipeLabelKind = kind
+        recipeDetailLabel.textColor = recipeLabelColor(for: kind)
+    }
+
+    private func recipeLabelColor(for kind: RecipeLabelKind) -> NSColor {
+        switch kind {
+        case .info: return HelmTheme.mutedInk(theme)
+        case .warn: return HelmTheme.nsColor(theme.ansiHex[3])
+        case .error: return HelmTheme.nsColor(theme.ansiHex[1])
+        }
+    }
+
+    private func presentInjectSheet(preselected: String?) {
+        let sheet = VaultInjectSheetController(secretNames: (secrets ?? []).map(\.name), preselected: preselected)
+        sheet.onRun = { [weak self] secretName, command in
+            guard let self, let full = VaultSource.injectCommand(secretName: secretName, command: command) else { return }
+            self.onRunCommand?("Run: \(command)", full)
+        }
+        presentAsSheet(sheet)
+    }
+
+    // MARK: Theme
+
+    private func applyTheme() {
+        view.layer?.backgroundColor = HelmTheme.nsColor(theme.backgroundHex).cgColor
+        let ink = HelmTheme.nsColor(theme.chromeInkHex)
+        let warn = HelmTheme.nsColor(theme.ansiHex[3])
+
+        // §2.6 allows no radius outside its own scale, so this banner takes
+        // `dWell` under Daylight rather than the pre-Daylight literal 9.
+        attentionBanner.layer?.cornerRadius = theme.isDaylight ? HelmMetrics.dWell : 9
+        attentionBanner.layer?.backgroundColor = warn.withAlphaComponent(0.14).cgColor
+        // §2.4 measures the raw warn tone at 2.82:1 as a label on its own 14%
+        // wash - exactly this banner's pairing - and gives `warnText` as the
+        // corrected value for it. The pre-Daylight themes keep the plain ink
+        // they have always used, which is already a full-contrast tone here.
+        attentionLabel.textColor = theme.isDaylight
+            ? HelmTheme.nsColor(theme.daylightTokens.warnText)
+            : ink
+        attentionIcon.contentTintColor = warn
+
+        // Theme-derived, never the system `labelColor` default these two
+        // fell back to before this pass - the same rule `HelmCard`'s own
+        // header title/subtitle already follow.
+        secretsCountBadge.applyTheme(theme)
+        toolsCountBadge.applyTheme(theme)
+        // UI4: the two cards' rows are rebuilt with the current theme baked
+        // in, but a build-time skeleton predates the first `renderAll()` and
+        // would otherwise keep a stale palette across a theme switch.
+        for stack in [secretsStack, toolsStack] {
+            for case let skeleton as HelmSkeletonList in stack.arrangedSubviews {
+                skeleton.applyTheme(theme)
+            }
+        }
+
+        secretsPanel.applyTheme(theme)
+        toolsPanel.applyTheme(theme)
+        recipePanel.applyTheme(theme)
+        // Re-derive from the *current* theme, not whatever theme was active
+        // when this label's color was last set - see `recipeLabelKind`'s own
+        // doc comment for the bug this closes.
+        recipeDetailLabel.textColor = recipeLabelColor(for: recipeLabelKind)
+    }
+
+    // MARK: Probe / self-test surface
+
+    #if FM_SELFTESTS
+    /// Render a fixture snapshot through the page's **real** render path,
+    /// without shelling out to `av`. The page's own `av` plumbing is untouched
+    /// and covered by `VaultDataSelfTest`; what this exists for is the
+    /// presentation layer above it.
+    func debugRender(secrets: [VaultSecret]?, tools: [VaultTool]?) {
+        _ = view  // force `loadView` - this hook may be the first thing to touch the page
+        installStatus = .upToDate
+        self.secrets = secrets
+        self.tools = tools
+        renderAll()
+    }
+
+    /// B1: the state before any read has landed - `renderAll` has not run, so
+    /// `hasLoadedOnce` is still false and the page must say "checking", not
+    /// "none".
+    func debugPrepareUnreadForTests() {
+        _ = view
+        installStatus = .upToDate
+        secrets = nil
+        tools = nil
+    }
+
+    /// B1: what the two count badges are showing right now.
+    var debugSecretsBadge: String { secretsCountBadge.text }
+    var debugToolsBadge: String { toolsCountBadge.text }
+    /// UI4's probe surface: the badges themselves, so a suite can assert the
+    /// pill is painted rather than only that the digits are right.
+    var debugCountBadges: [HelmCountBadge] { [secretsCountBadge, toolsCountBadge] }
+    /// UI4: how many D3 skeleton lists the two cards are showing right now.
+    var debugSkeletonCount: Int {
+        [secretsStack, toolsStack].reduce(0) { $0 + $1.arrangedSubviews.filter { $0 is HelmSkeletonList }.count }
+    }
+
+    /// B1: the body copy of whatever empty/unknown state each card is
+    /// showing, so a test can tell the three states apart by what the captain
+    /// actually reads.
+    var debugSecretsPlaceholderText: String? { placeholderText(in: secretsStack) }
+    var debugToolsPlaceholderText: String? { placeholderText(in: toolsStack) }
+
+    private func placeholderText(in stack: NSStackView) -> String? {
+        for view in stack.arrangedSubviews where view is HelmEmptyState {
+            var found: String?
+            func walk(_ v: NSView) {
+                if let label = v as? NSTextField, !label.stringValue.isEmpty, found == nil {
+                    found = label.stringValue
+                }
+                for sub in v.subviews { walk(sub) }
+            }
+            walk(view)
+            return found
+        }
+        return nil
+    }
+
+    /// The real row views the Verified Launchers card is showing, in order.
+    var debugToolRows: [HelmAccentRow] { toolsStack.arrangedSubviews.compactMap { $0 as? HelmAccentRow } }
+    var debugSecretRows: [HelmAccentRow] { secretsStack.arrangedSubviews.compactMap { $0 as? HelmAccentRow } }
+    var debugAttentionBannerVisible: Bool { !attentionBanner.isHidden }
+    #endif
+}
+
+// MARK: - Add Secret sheet
+
+/// Only the secret NAME is ever entered here - the value is never touched by
+/// this app; `av save` prompts for it in the real Console terminal this
+/// sheet's Save action opens.
+final class VaultSaveSecretSheetController: NSViewController {
+    /// P3 (production review, section 21): this controller is built fresh on
+    /// every presentation, so a `ThemeManager` observation registered in
+    /// `loadView` and never removed leaves a dead closure in
+    /// `ThemeManager.observers` for the rest of the session - one per
+    /// presentation, growing without bound. `ThemeManager.swift`'s own
+    /// checklist calls for storing the token and unobserving; the six
+    /// `HelmFormSheet` editors already do. This is the same fix.
+    private var themeObservation: ThemeObservation?
+
+    var onSave: ((String) -> Void)?
+
+    private let nameField = HelmTextField(placeholder: "SECRET_NAME")
+    private let errorLabel = NSTextField(labelWithString: "")
+
+    override func loadView() {
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 360, height: 170))
+        view = root
+        themeObservation = ThemeManager.shared.observe { [weak root] theme in
+            root?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+        }
+
+        let title = NSTextField(labelWithString: "Save a new secret")
+        title.font = .systemFont(ofSize: HelmType.scaled(14), weight: .semibold)
+
+        let help = NSTextField(wrappingLabelWithString: "Only the name is sent here. Automic Vault will prompt for the value directly in a real terminal - Grand Line never sees it.")
+        help.font = .systemFont(ofSize: HelmType.scaled(11))
+        help.textColor = HelmTheme.mutedInk(ThemeManager.shared.theme)
+        help.preferredMaxLayoutWidth = 320
+
+
+        errorLabel.font = HelmType.captionSmall()
+        errorLabel.textColor = .systemRed
+        errorLabel.isHidden = true
+
+        let cancel = HelmButton(title: "Cancel", variant: .secondary, target: self, action: #selector(cancel))
+        cancel.keyEquivalent = "\u{1b}"
+        let save = HelmButton(title: "Save\u{2026}", variant: .primary, target: self, action: #selector(confirm))
+        save.keyEquivalent = "\r"
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let bottom = NSStackView(views: [spacer, cancel, save])
+        bottom.orientation = .horizontal
+        bottom.spacing = 10
+
+        let stack = NSStackView(views: [title, help, nameField, errorLabel, bottom])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
+            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 18),
+            stack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -18),
+            nameField.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            bottom.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ])
+    }
+
+    @objc private func confirm() {
+        let name = nameField.stringValue.trimmingCharacters(in: .whitespaces)
+        guard VaultSource.isSafeToken(name) else {
+            errorLabel.stringValue = "Use only letters, numbers, underscore, and dash."
+            errorLabel.isHidden = false
+            return
+        }
+        onSave?(name)
+        dismiss(self)
+    }
+
+    @objc private func cancel() {
+        dismiss(self)
+    }
+
+    deinit {
+        if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }
+    }
+
+}
+
+// MARK: - Recipe replay checklist sheet
+
+/// Shows how a previously-exported recipe compares to live `av` state right
+/// now - the "replay as a checklist" half of fm/grandline-vault-recipe-
+/// backup. Never re-saves or re-hardens anything itself: the captain
+/// re-enters each real value from its real source, matching the task
+/// brief's explicit "this app never invents or stores a value it doesn't
+/// get from `av` itself."
+final class VaultRecipeChecklistSheetController: NSViewController {
+    /// P3 (production review, section 21): this controller is built fresh on
+    /// every presentation, so a `ThemeManager` observation registered in
+    /// `loadView` and never removed leaves a dead closure in
+    /// `ThemeManager.observers` for the rest of the session - one per
+    /// presentation, growing without bound. `ThemeManager.swift`'s own
+    /// checklist calls for storing the token and unobserving; the six
+    /// `HelmFormSheet` editors already do. This is the same fix.
+    private var themeObservation: ThemeObservation?
+
+
+    private let items: [VaultRecipeChecklistItem]
+    private let generatedAt: String
+    private var theme: HelmTheme = ThemeManager.shared.theme
+
+    init(items: [VaultRecipeChecklistItem], generatedAt: String) {
+        self.items = items
+        self.generatedAt = generatedAt
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func loadView() {
+        // Deliberately no fixed frame height (unlike this file's other
+        // sheets/pages, which do use a fixed frame - see e.g.
+        // `VaultInjectSheetController`) - a checklist can be anywhere from
+        // one row to dozens, and a hardcoded height either wastes space
+        // (a short list left a large dead gap between `help` and the rows,
+        // captain-reported) or clips a long one. `root` keeps only a fixed
+        // width; its height is left to the required top/bottom pins on
+        // `stack` below plus the scroll view's own hug/cap constraints, so
+        // AppKit sizes the sheet to fit real content - the same "let a
+        // required constraint chain determine size" shape `HostEditorController`
+        // already relies on for its own standalone window (see AGENTS.md's
+        // AppKit-gotcha (3) for why this only works with inequalities, not a
+        // fixed-frame TAMIC=true view).
+        let root = NSView()
+        root.translatesAutoresizingMaskIntoConstraints = false
+        view = root
+        root.widthAnchor.constraint(equalToConstant: 480).isActive = true
+        themeObservation = ThemeManager.shared.observe { [weak self, weak root] theme in
+            self?.theme = theme
+            root?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+        }
+
+        let title = NSTextField(labelWithString: "Replay Checklist")
+        title.font = HelmType.sectionTitle()
+
+        let help = NSTextField(wrappingLabelWithString: "Compared against the recipe backup from \(generatedAt). \u{201c}Missing\u{201d} items were recorded before but aren\u{2019}t true right now - re-save the secret or re-harden the tool from its real source; this app never invents a value.")
+        help.font = .systemFont(ofSize: HelmType.scaled(11))
+        help.textColor = HelmTheme.mutedInk(ThemeManager.shared.theme)
+        help.preferredMaxLayoutWidth = 440
+
+        let listStack = NSStackView()
+        listStack.orientation = .vertical
+        listStack.alignment = .leading
+        listStack.spacing = 6
+        listStack.translatesAutoresizingMaskIntoConstraints = false
+
+        if items.isEmpty {
+            let empty = NSTextField(labelWithString: "No secrets or hardened tools recorded in the backup or right now.")
+            empty.font = HelmType.caption()
+            empty.textColor = HelmTheme.mutedInk(ThemeManager.shared.theme)
+            listStack.addArrangedSubview(empty)
+        } else {
+            for item in items {
+                listStack.addArrangedSubview(checklistRow(item))
+            }
+        }
+
+        // A plain `NSStackView` document view is not flipped, so short
+        // content (fewer rows than the scroll's height) sits at the
+        // *bottom* of the clip view rather than the top - the exact AppKit
+        // gotcha AGENTS.md documents (#9) for `FleetController`/`ReviewController`.
+        // That's what put the dead space between `help` and the rows here:
+        // wrapping in `FlippedView` pins the rows to the top instead.
+        let document = FlippedView()
+        document.translatesAutoresizingMaskIntoConstraints = false
+        document.addSubview(listStack)
+        NSLayoutConstraint.activate([
+            listStack.leadingAnchor.constraint(equalTo: document.leadingAnchor),
+            listStack.trailingAnchor.constraint(equalTo: document.trailingAnchor),
+            listStack.topAnchor.constraint(equalTo: document.topAnchor),
+            listStack.bottomAnchor.constraint(equalTo: document.bottomAnchor),
+        ])
+
+        let scroll = NSScrollView()
+        scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
+        scroll.documentView = document
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor)])
+
+        // Hug the real content height (so a short list shrinks the sheet
+        // instead of leaving dead space) but cap it so a long list scrolls
+        // within a reasonably sized window instead of growing unbounded -
+        // the standard min/max "hug + cap" pair: the `.defaultHigh` hug
+        // yields to the required cap once content exceeds it.
+        let hugContent = scroll.heightAnchor.constraint(equalTo: document.heightAnchor)
+        hugContent.priority = .defaultHigh
+        hugContent.isActive = true
+        scroll.heightAnchor.constraint(lessThanOrEqualToConstant: 360).isActive = true
+
+        let close = HelmButton(title: "Close", variant: .primary, target: self, action: #selector(closeTapped))
+        close.keyEquivalent = "\r"
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let bottom = NSStackView(views: [spacer, close])
+        bottom.orientation = .horizontal
+        bottom.translatesAutoresizingMaskIntoConstraints = false
+
+        let stack = NSStackView(views: [title, help, scroll, bottom])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
+            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 18),
+            stack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -18),
+            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            bottom.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ])
+    }
+
+    private func checklistRow(_ item: VaultRecipeChecklistItem) -> NSView {
+        let kindLabel = NSTextField(labelWithString: item.kind == .secret ? "Secret" : "Tool")
+        // Audit 2 §1.2's own cosmetic note: `scaled` clamps to
+        // `HelmType.minimumUIPointSize` (11), so at every chrome scale below
+        // ~1.16 this renders at 11 rather than the 9.5 it reads as. Left at
+        // 9.5 deliberately - the two are *not* interchangeable higher up the
+        // scale (at ×1.3 it is 12.35, where a literal 11 would be 14.3), so
+        // "fixing" the number would change how this renders for a captain who
+        // has scaled chrome text up. The finding was that the literal is
+        // misleading to read, not that it renders wrong.
+        kindLabel.font = .systemFont(ofSize: HelmType.scaled(9.5), weight: .medium)
+        kindLabel.textColor = HelmTheme.mutedInk(theme)
+
+        let nameLabel = NSTextField(labelWithString: item.name)
+        nameLabel.font = .systemFont(ofSize: HelmType.scaled(12), weight: .medium)
+
+        let (statusText, statusColorHex) = statusVisuals(item.status)
+        let statusLabel = NSTextField(labelWithString: statusText)
+        statusLabel.font = .systemFont(ofSize: HelmType.scaled(11), weight: .semibold)
+        statusLabel.textColor = HelmTheme.nsColor(statusColorHex)
+
+        let topRow = NSStackView(views: [kindLabel, nameLabel])
+        topRow.orientation = .horizontal
+        topRow.spacing = 6
+        topRow.alignment = .firstBaseline
+
+        var rowViews: [NSView] = [topRow]
+        if let detail = item.detail {
+            let detailLabel = NSTextField(labelWithString: "Launchers: \(detail)")
+            detailLabel.font = HelmType.captionSmall()
+            detailLabel.textColor = HelmTheme.mutedInk(theme)
+            rowViews.append(detailLabel)
+        }
+
+        let textStack = NSStackView(views: rowViews)
+        textStack.orientation = .vertical
+        textStack.alignment = .leading
+        textStack.spacing = 2
+
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+        let row = NSStackView(views: [textStack, spacer, statusLabel])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 8
+        row.distribution = .fill
+        row.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.setContentHuggingPriority(.required, for: .horizontal)
+        return row
+    }
+
+    private func statusVisuals(_ status: VaultRecipeItemStatus) -> (String, String) {
+        switch status {
+        case .matches: return ("Matches backup", theme.ansiHex[2])
+        case .missingLocally: return ("Missing - needs redo", theme.ansiHex[1])
+        case .newSinceBackup: return ("New since backup", theme.ansiHex[3])
+        }
+    }
+
+    @objc private func closeTapped() { dismiss(self) }
+
+    deinit {
+        if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }
+    }
+
+}
+
+// MARK: - Run injected sheet
+
+final class VaultInjectSheetController: NSViewController {
+    /// P3 (production review, section 21): this controller is built fresh on
+    /// every presentation, so a `ThemeManager` observation registered in
+    /// `loadView` and never removed leaves a dead closure in
+    /// `ThemeManager.observers` for the rest of the session - one per
+    /// presentation, growing without bound. `ThemeManager.swift`'s own
+    /// checklist calls for storing the token and unobserving; the six
+    /// `HelmFormSheet` editors already do. This is the same fix.
+    private var themeObservation: ThemeObservation?
+
+    var onRun: ((String, String) -> Void)?
+
+    private let secretNames: [String]
+    private let preselected: String?
+    private let secretPopup = HelmPopUpButton()
+    private let commandField = HelmTextField(placeholder: "e.g. gh auth status")
+    private let errorLabel = NSTextField(labelWithString: "")
+
+    init(secretNames: [String], preselected: String?) {
+        self.secretNames = secretNames
+        self.preselected = preselected
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func loadView() {
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 380, height: 190))
+        view = root
+        themeObservation = ThemeManager.shared.observe { [weak root] theme in
+            root?.appearance = NSAppearance(named: theme.mode == .dark ? .darkAqua : .aqua)
+        }
+
+        let title = NSTextField(labelWithString: "Run with a secret injected")
+        title.font = .systemFont(ofSize: HelmType.scaled(14), weight: .semibold)
+
+        let help = NSTextField(wrappingLabelWithString: "Runs \u{201c}av inject +SECRET -- command\u{201d} in a Console tab, so any output or approval prompt is visible directly - never captured by this app.")
+        help.font = .systemFont(ofSize: HelmType.scaled(11))
+        help.textColor = HelmTheme.mutedInk(ThemeManager.shared.theme)
+        help.preferredMaxLayoutWidth = 340
+
+        secretPopup.removeAllItems()
+        secretPopup.addItems(withTitles: secretNames)
+        if let preselected, secretNames.contains(preselected) {
+            secretPopup.selectItem(withTitle: preselected)
+        }
+        secretPopup.isEnabled = !secretNames.isEmpty
+        secretPopup.translatesAutoresizingMaskIntoConstraints = false
+
+
+        errorLabel.font = HelmType.captionSmall()
+        errorLabel.textColor = .systemRed
+        errorLabel.isHidden = true
+        if secretNames.isEmpty {
+            errorLabel.stringValue = "Save a secret first."
+            errorLabel.isHidden = false
+        }
+
+        let cancel = HelmButton(title: "Cancel", variant: .secondary, target: self, action: #selector(cancel))
+        cancel.keyEquivalent = "\u{1b}"
+        let run = HelmButton(title: "Run", variant: .primary, target: self, action: #selector(confirm))
+        run.keyEquivalent = "\r"
+        run.isEnabled = !secretNames.isEmpty
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let bottom = NSStackView(views: [spacer, cancel, run])
+        bottom.orientation = .horizontal
+        bottom.spacing = 10
+
+        let stack = NSStackView(views: [title, help, secretPopup, commandField, errorLabel, bottom])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        root.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
+            stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 18),
+            stack.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -18),
+            secretPopup.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            commandField.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            bottom.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ])
+    }
+
+    @objc private func confirm() {
+        guard let secret = secretPopup.titleOfSelectedItem, !secret.isEmpty else { return }
+        let command = commandField.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !command.isEmpty else {
+            errorLabel.stringValue = "Enter a command to run."
+            errorLabel.isHidden = false
+            return
+        }
+        onRun?(secret, command)
+        dismiss(self)
+    }
+
+    @objc private func cancel() {
+        dismiss(self)
+    }
+
+    deinit {
+        if let themeObservation { ThemeManager.shared.unobserve(themeObservation) }
+    }
+
+}

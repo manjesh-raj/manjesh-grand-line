@@ -1,4 +1,4 @@
-// Manjesh Grand Line - the Code Preview destination's web side.
+// Grand Line - the Code Preview destination's web side.
 //
 // Hand-written entry point for the bundle `native/Scripts/build-monaco-web.sh`
 // produces (see ../README.md). It mounts one full-page Monaco editor and

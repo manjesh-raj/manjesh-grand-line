@@ -43,9 +43,9 @@ as they are rather than rewritten across 180 files.
 
 ### Never launch a built copy from a worktree
 
-Every build of this app - a `swift run` binary, `.build/debug/FirstmateCockpit`,
-and the packaged `dist/Manjesh Grand Line.app` - shares one bundle identity
-(`com.firstmate.cockpit.native`). There is no OS-level process isolation between
+Every build of this app - a `swift run` binary, `.build/debug/GrandLine`,
+and the packaged `dist/Grand Line.app` - shares one bundle identity
+(`com.manjesh.grandline.native`). There is no OS-level process isolation between
 them, so a copy launched from a worktree contends with the captain's own running
 instance over the same JSON stores and the same git working tree.
 
@@ -134,7 +134,7 @@ Finish the run, or copy the script aside first.
 **The self-test suite is not hermetic, and an interrupted run poisons every
 later run on any tree - this cost real time before it was root-caused, so read
 it before chasing a "flaky" suite.** `run-all-tests.sh` runs each suite as a
-separate process against the **real** `FirstmateCockpit` `UserDefaults` domain
+separate process against the **real** `GrandLine` `UserDefaults` domain
 (the unbundled binary has no bundle id, so that is its domain).
 `AppShellBodyWidthSelfTest.withScratchEnv` carefully isolated every FM_* *file*
 override but not `UserDefaults`, and mounting a real `AppShellController`
@@ -163,7 +163,7 @@ regression by name. Full suite 3/3 clean afterwards with no leak, where the
 same tree had been intermittently red.
 
 **If a suite starts failing for no reason, check `defaults read
-FirstmateCockpit` before suspecting the code.**
+GrandLine` before suspecting the code.**
 
 **A second, newly-discovered way to poison it: never run two
 `./Scripts/run-all-tests.sh` passes concurrently.** Each pass saves and
@@ -210,7 +210,7 @@ i.e. its own vacuity guard, not a colour assertion. Reproduced by
 not the ambient-theme mechanism, and **confirmed pre-existing** by checking the
 four files that branch changed back out to `HEAD~1`, rebuilding and reproducing
 it identically. Whatever the runner supplies that a bare `env FM_RUN_...=1
-.build/debug/FirstmateCockpit` does not was not chased further. The practical
+.build/debug/GrandLine` does not was not chased further. The practical
 rule: for a **window-backed** suite, the runner is the authority - a standalone
 red is not by itself evidence you broke something, and the cheap disambiguation
 is to revert your own changed files to `HEAD~1`, rebuild, and see whether it
@@ -240,11 +240,15 @@ found the first two times.
 
 If a suite ever starts failing for no reason, check the domain by hand first:
 
-    defaults read FirstmateCockpit fm.themeID     # the self-test domain
-    defaults read com.firstmate.cockpit.native    # the real app's domain
+    defaults read GrandLine fm.themeID     # the self-test domain
+    defaults read com.manjesh.grandline.native    # the real app's domain
+
+(Both were renamed by `fm/grandline-rename-firstmate-cockpit-to-grand-line`;
+a machine that has not yet run the renamed build still has its values under
+`FirstmateCockpit` and `com.firstmate.cockpit.native`.)
 
 They are different domains. The unbundled binary has no bundle identifier, so
-its `UserDefaults` land in `FirstmateCockpit`; reading the wrong one is how one
+its `UserDefaults` land in `GrandLine`; reading the wrong one is how one
 investigation came to test a theme the captain was not using.
 
 ---
@@ -278,7 +282,7 @@ under Verification conventions. CI's own full run is unconditional either way.
 Local development is on **Swift 6.x**; CI pins `macos-15` and asserts the same
 major in every job that builds (`EXPECTED_SWIFT_MAJOR` in
 `.github/workflows/ci.yml`). This matters because the `build` job fails on
-**any** warning in `Sources/FirstmateCockpit`, and the compilers genuinely
+**any** warning in `Sources/GrandLine`, and the compilers genuinely
 disagree in both directions - a 6.x-only `#ImplicitStrongCapture` set that 5.10
 does not emit, and a 5.10-only redundant-downcast warning that 6.x does not. A
 warning-clean build says nothing about the other compiler. Bump the image label,
@@ -320,10 +324,10 @@ app. `swift build` does not build it and CI does not either; run
 
 Three rules follow, and they apply to anything shared with that process:
 
-- **`Sources/FirstmateCockpit/WidgetSharedContract.swift` is the only file
+- **`Sources/GrandLine/WidgetSharedContract.swift` is the only file
   compiled into both binaries**, which is why it imports nothing but
   `Foundation`. Adding an `AppKit`/`Yaml` import to it breaks the extension's
-  build, not the app's. The extension cannot link `FirstmateCockpit` - the app's
+  build, not the app's. The extension cannot link `GrandLine` - the app's
   model types reach AppKit within a line or two of anything useful.
 - **A table the extension has to duplicate needs a source guard, not a
   comment.** `WidgetPalette.swift` restates `DaylightTokens`' hexes because it
@@ -413,7 +417,7 @@ is scoped by blast radius, and CI's run is not.
 - **A narrow, single-purpose, low-blast-radius change may run only the suites
   that cover what it touched.** A literal icon swap on one row, a single colour
   or string constant on one page, a doc-only edit. Run those suites by their own
-  `FM_RUN_*` variable against `.build/debug/FirstmateCockpit`, and say in the PR
+  `FM_RUN_*` variable against `.build/debug/GrandLine`, and say in the PR
   which ones you ran and why that was the whole relevant set. The full-run
   pre-flight above still applies to whatever you do run: a dirty shared tree and
   a leaked `fm.themeID` break one suite exactly as happily as ninety.
@@ -470,7 +474,7 @@ round that cost.
   (fixes4): add temporary, env-var-gated debug code straight into the
   controller under test - print live `NSView.frame` geometry after a real
   layout pass, or a `Thread.callStackSymbols` dump inside a suspect delegate
-  callback - `swift build && FM_DEBUG_X=1 .build/debug/FirstmateCockpit`, read
+  callback - `swift build && FM_DEBUG_X=1 .build/debug/GrandLine`, read
   the printed numbers/stack, then revert the instrumentation before committing.
   This is real evidence from AppKit's actual layout/event engine, not a
   screenshot, but it is not guesswork either - say so explicitly in any PR that
@@ -602,7 +606,7 @@ fails unless its entry carries a trailing marker.
 
 - Live in `SelfTests/`, wrapped in `#if FM_SELFTESTS` (GL-27). A suite is
   compiled into debug builds only, so **always test against
-  `.build/debug/FirstmateCockpit`** - a release binary runs zero suites and
+  `.build/debug/GrandLine`** - a release binary runs zero suites and
   exits 0, which looks exactly like a clean run.
 - Get an `NSWindow` from `OffScreenProbe.window(...)`, never by hand; see that
   file's header for the measurements (a hand-rolled one is *not* off-screen,
@@ -1552,6 +1556,23 @@ noted.
 
 ## Stores, subprocesses and secrets
 
+- **The app has exactly one name, one identifier prefix and one data folder,
+  and all three have a single definition.** The display name is **"Grand
+  Line"** (never "Manjesh Grand Line", never "Firstmate Cockpit"), the Swift
+  module and the shipped executable are `GrandLine`, every identifier this app
+  owns is `com.manjesh.grandline…`, and every file-backed store nests under
+  `AppPaths.applicationSupportFolderName`. A hand-written copy of any of those
+  is how half a rename gets left behind - `LegacyRenameMigrationSelfTest`
+  fails the run on a source that spells a pre-rename name, and on a sixth
+  Keychain service that does not join `LegacyNameMigration.keychainServices`.
+  **Changing the bundle identifier again is not a find-and-replace**: it
+  orphans the captain's Keychain items, their Application Support folder, their
+  whole preference domain and every macOS privacy grant they have given the
+  app. The first three can be migrated and `LegacyNameMigration` is the worked
+  example; the fourth cannot be, ever, because granting it is a user consent
+  action - say so in the PR rather than leaving the captain to find out.
+  [`45-rename-to-grand-line.md`](docs/history/45-rename-to-grand-line.md) is
+  what a future one has to read first.
 - **Every store honours an `FM_*` override** for where it reads and writes; the
   repo-root README has the complete index. A store nested under Shift's data
   root must honour `FM_SHIFT_DIR` as a fallback, not only its own narrow
@@ -1616,7 +1637,7 @@ noted.
   whether it happened. Two consequences for any future calendar work: the
   permission request belongs to a real click and never to a page appearing
   (TCC prompts are not something a card may fire on its own), and **an
-  unbundled build must refuse to ask** - `.build/debug/FirstmateCockpit` has no
+  unbundled build must refuse to ask** - `.build/debug/GrandLine` has no
   `Info.plist`, and TCC kills a process that requests access without a usage
   description, so `canPrompt` checks for the key first.
 
@@ -1789,6 +1810,7 @@ can correct an earlier one - and several do.
 | [`42-widgets.md`](docs/history/42-widgets.md) | The WidgetKit extension (F23): the Tasks-due and Sticky-note widgets, the published snapshot, the queued-tap channel, and the Developer ID dependency |
 | [`43-google-accounts.md`](docs/history/43-google-accounts.md) | Gmail sign-in (two independent Google accounts), the OAuth/PKCE flow, and Google Calendar as a second read-only source for the daily review |
 | [`44-new-theme-families.md`](docs/history/44-new-theme-families.md) | The six families that took the picker from 14 palettes to 26 (Nord, Dracula/Alucard, One, Ayu, Night Owl/Light Owl, Oxocarbon) |
+| [`45-rename-to-grand-line.md`](docs/history/45-rename-to-grand-line.md) | The app's name, the bundle identifier, the Keychain service names, the Application Support folder |
 
 ## Maintaining this file
 

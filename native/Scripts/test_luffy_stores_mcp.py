@@ -58,7 +58,7 @@ _SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "luffy_stores
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _SWIFT_TOOLS = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-    "Sources", "FirstmateCockpit", "StrawHatTools.swift",
+    "Sources", "GrandLine", "StrawHatTools.swift",
 )
 
 
