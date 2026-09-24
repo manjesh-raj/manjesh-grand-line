@@ -306,3 +306,86 @@ The captain's screenshot is a Daylight-family palette.
 The 26-palette legibility sweep now covers borrowed tints as well as the seven domain hues, which is the half that needed it: `.neutral` is `chromeInkHex`, so its wash is the pairing AGENTS.md's colour rules warn about.
 Two injections were each confirmed to fail by name - the override removed (the tint check and the sweep's own vacuity guard), and the override routed through `HelmDomainHue.slate` (`daylight: the terminal shortcut resolves #8B8677 where Settings' Terminal row resolves #2A2B33`).
 **Scoped local run, per this repo's own convention**: `swift build` clean plus `FM_RUN_BAR_ICON_TILE_TESTS` and `FM_RUN_BAR_NAV_MODERNIZATION_TESTS`, which are the two suites that assert this button's tile at all. CI's full run is unchanged and still gates the merge.
+
+## The tiles get told apart, and the bar's own controls get tiles (`fm/grandline-topbar-icon-tiles-round2`)
+
+**The captain's ask**, a follow-up to the two entries above, against `data/grandline-topbar-icon-tiles-round2/captain-screenshots/143-current-topbar.png`.
+Two complaints.
+Three icons had no coloured tile at all - Recents, the theme toggle and the notification bell.
+Three others rendered in warm amber/tan tones he could not tell apart at a glance, which he named as Docs, Hosts and Schedules.
+His guidance on colour was that it should mean something rather than be arbitrary, with Console's grey tile as the example he liked, "because for terminal the black one actually makes sense".
+
+### The three that looked alike were not a colour-choice problem
+
+The report named Docs, Hosts and Schedules, and those three were never the same colour in §2.2's table: `RailDestination.domainHue` gives them blue, teal and violet, and has since the Daylight migration.
+Reading the screenshot against the captain's own `fm.themeID` (`ayu-dark`) and the default pin list found the real trio: **Hosts, Poneglyph and Sticky Board**, sitting in one warm tan with only Console between two of them.
+He named the destinations from the glyphs, and a closed-book glyph reads as Docs.
+
+The cause is the *resolution*, not the hues.
+`DaylightBarIconButton.tileHex` resolved a domain hue through `HelmDomainHue.fallbackTint` on the 24 non-Daylight palettes, which maps §2.2's seven identity hues onto seven `HelmTint` slots.
+That map is 1:1, but **a palette is under no obligation to make those seven slots seven colours**.
+Ayu publishes a single amber and spends it as both `accent` and its ANSI yellow, so teal (Hosts) and amber (Poneglyph, Sticky Board) resolved to the same tile.
+
+Measured as a washed tile over all 26 palettes, the closest pair of domain hues came out **literally identical** (distance 0.0000 in weighted RGB) on eight palettes and under a 0.035 separation floor on fourteen:
+
+| Palette | Closest pair | Distance |
+|---|---|---|
+| `tokyo-night-dark`, `tokyo-night-light`, `dracula`, `alucard`, `one-dark`, `oxocarbon-light` | blue / teal | 0.0000 |
+| `rose-pine-main` | teal / violet | 0.0000 |
+| `rose-pine-dawn` | teal / green | 0.0000 |
+| `helm-light` | blue / teal | 0.0173 |
+| `nord-snow` | blue / teal | 0.0203 |
+| `ayu-dark` (the captain's) | teal / amber | 0.0215 |
+| `one-light` | blue / teal | 0.0281 |
+| `ayu-light` | teal / amber | 0.0305 |
+| `light-owl` | teal / green | 0.0343 |
+
+So the fix is one line of resolution and no new colours: `tileHex` now returns `HelmDomainHue.categoricalHex` - §2.2's own `h1` verbatim - on **every** palette.
+The same sweep against those values has a worst pair of **0.0568** and nothing under the floor, with the 3:1 non-text legibility floor still held in all three ladder states (worst 3.0000, `nord-snow`/violet/active).
+Docs stays blue, Hosts stays teal and Schedules stays violet, which is the point: the bar was already drawing the app's established identity table, and what it needed was to stop laundering it through a vocabulary that has no room for seven identities.
+
+**The objection `HelmDomainHue.identityHex` records does not apply to a set**, and that is why this is allowed here and not everywhere.
+That property falls back to neutral off the Daylight family because one rose accent bar among grey siblings reads as an alarm - a hue becomes a *signal* by being the coloured thing among neutral things.
+Where every member of the set carries a tile, nothing is the coloured one and the row reads as a categorical palette instead.
+The entry above had already written that argument out for `fallbackTint`; this extends it one step, to the raw table.
+
+**`UnifiedSearch` deliberately still splits, and that is not a drift to reconcile later.**
+Its palette row draws one destination tile per *result*, in a list that is mostly not destinations at all, so a result carrying a raw §2.2 hue on a palette with no §2.2 vocabulary really would be the one coloured thing among neutral siblings.
+This row draws all seven at once and nothing else.
+
+### The three with no tile
+
+They had none because the previous entry's rule was "a button gets a tile when it carries a `HelmDomainHue`", and these three carry no destination.
+The captain overruled that, and he is right: two unexplained grey squares at either end of a row of coloured tiles read as unfinished rather than as a category.
+Each of the three got a deliberate hue rather than a default.
+
+- **Recents → `.slate`** (`DaylightBarIconButton.chromeTileHue`). It opens a *panel*, not a page - a way back to a place rather than a place. Slate is the hue §2.2 already gives Settings and Tools, the two destinations that are about the app rather than about the captain's work, and `HelmDomainHue`'s own comment calls it the one slot that claims nothing. A control painted in some destination's identity hue would promise navigation it does not offer, which is the captain's own "avoid confusion with an actual destination tile".
+- **The theme toggle → `.slate`**, the same hue and the same reason: appearance is the app's own chrome, and it is Settings' subject. One hue for both states a rule the row can be read by - **a coloured tile is a place, a slate tile is the app itself**. The two sit at opposite ends of the shortcut row rather than side by side, so sharing it costs no legibility.
+- **The bell → `.amber`** (`bellTileHue`). The one bar control that is not chrome, because it is the only one asking for something: the panel behind it is this app's "Waiting for you" list. Amber is already this app's attention hue - §2.2 gives it to `dailyOverview` ("here is your day") and `DaylightModule.briefing` carries it.
+
+**The rejected alternatives are worth recording, because both were the obvious pick.**
+The theme toggle wanted the palette's own `accentHex` - a control whose entire subject is the active palette, painted in it. That collides with Hosts on half the palettes, since teal's `fallbackTint` *is* `.accent`: the same defect this branch exists to remove.
+The bell wanted `.rose`/`.critical`. A bell at rest is not an alarm, and this app already has a louder signal for the case that is - the badge, fixed white-on-`systemRed` and never theme-tinted precisely so it reads as urgent on every palette. A permanently red tile spends that signal on an empty list and leaves the badge nothing to add.
+
+Console's tile was **not touched**, on the captain's explicit instruction. Its borrowed `HelmTint.neutral` is swept alongside the seven hues in the new separation check, because a hue colliding with *it* is the same defect; the closest the two ever come is 0.0568.
+
+### What is still a plain square, and one thing that is not a decision
+
+The overflow button drawing its generic ellipsis keeps `restyleAsPlainSquare`: it opens a menu rather than a surface, so it has no identity to paint, and it still takes a real tile in its other identity.
+
+The clipboard-history button is also still plain, and that is **not** a design decision - it is recorded here so it is not mistaken for one.
+That button is laid out with no width or height constraint at all, unlike every other square on the bar, so it resolves to its intrinsic size and does not render; it is absent from the captain's screenshot for that reason.
+It is also absent from `DaylightBarController.iconSquares`, so it never receives the bar's `applyTheme` either.
+Colouring a control nobody can see would be dressing up a separate bug, and making it appear is a visible change to the bar that nobody has asked for.
+
+### Verification
+
+- **`DaylightBarIconTileSelfTest` gained three cases.** `checkTheBarsOwnControlsAreTiled` asserts each of Recents, the theme toggle and the bell paints the wash of *its own declared hue* on four palettes (both Daylight halves, the captain's `ayu-dark`, and a light non-Daylight one), with its own discriminating-power guard first - that the expected wash is not already the plain chrome square, which would make every assertion after it vacuous. The bell is checked hardest of the three because it is a `NotificationBellButton` and shares none of the tile code: its fill, its contrast-corrected glyph, its ring alpha, and its badge ring following the tile rather than the old chrome surface. `checkEveryPaletteKeepsTheHuesApart` is the sweep in the table above, kept. `checkTheCaptainsThreeAreTellableApart` names Docs, Hosts and Schedules, asserts each still carries §2.2's own hue with no override, and fails in the captain's own wording.
+- **The sweep proves it can fail without reverting anything.** It re-runs itself against the replaced `fallbackTint` resolution and fails if *that* no longer collides - a separation floor nothing can breach is the one failure mode a sweep like this has. The floor, 0.045, sits above every measured failure (worst 0.0343) and below the tightest pass (0.0568).
+- **Three injections were each confirmed to fail by name**, by copying the file aside and editing it rather than by `git stash`: the resolution reverted to the split (`helm-dark: slate and override:neutral both render rgb(0.21, 0.23, 0.26) ... 0.0000`, plus `helm-light: Docs ... and Hosts ... 0.0173 apart`), Recents' hue removed (`daylight/Recently Visited paints rgb(0.95, 0.94, 0.91), expected the slate wash`), and the bell returned to the plain chrome square (`the bell paints rgb(0.95, 0.94, 0.91), expected the amber wash`).
+- **Real off-screen renders** of the real bar at 1512pt on `ayu-dark`, `dusk` and `daylight`, read back as PNGs - which is how the trio in the captain's screenshot was identified in the first place, and how the fix was eyeballed. The probe was reverted before commit and never touched `ThemeManager.setTheme`, so it could not poison `fm.themeID`.
+- **Full `./Scripts/run-all-tests.sh`: 207 passed, 0 failed, 1 documented skip.** This is a cross-cutting change - a shared resolution function plus a component every page's bar draws - so the scoped local run the entry above used would not have been enough. No separate *before* pass was taken, and that is stated rather than implied: a sibling worktree was mid-run at dispatch and this repository forbids two concurrent passes (they interleave each other's `fm.themeID` save/restore), and the branch point is `main` at `9637a91` with CI green. `fm.themeID` was `dusk` before and after.
+
+**The separation measure is weighted RGB, deliberately not `HelmContrast.ratio`.**
+That helper compares relative *luminance*, so two different hues of equal brightness score as identical - which is the exact defect being measured, so a luminance check here would be blind to it by construction.
+AGENTS.md already records that trap in the other direction; this is the same rule applied to a distance rather than to an equality.
