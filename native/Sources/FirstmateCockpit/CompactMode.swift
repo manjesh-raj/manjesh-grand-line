@@ -173,7 +173,16 @@ final class CompactModeHotkey {
     /// footer advertises, instead of a second copy of this predicate.
     static func matches(_ event: NSEvent) -> Bool {
         guard event.keyCode == gKeyCode else { return false }
-        return event.modifierFlags.intersection(.deviceIndependentFlagsMask) == modifiers
+        // `KeyChord.relevantModifierMask` (⌘⌥⌃⇧ only), never
+        // `.deviceIndependentFlagsMask`. The wider mask carries Caps Lock,
+        // Fn, the numeric-pad flag and the help flag, so an ambient flag
+        // riding along on the event makes this exact equality false and the
+        // chord silently stops working - the defect
+        // `fm/grandline-capture-global-hotkey-configurable` found in
+        // `ShiftGlobalHotkey`, which this class was shaped on and therefore
+        // inherited. `KeyChord`'s own header writes down why those flags are
+        // ambient state rather than a deliberate press.
+        return event.modifierFlags.intersection(KeyChord.relevantModifierMask) == modifiers
     }
 
     /// The chord `matches` accepts, as one value rather than a literal inside

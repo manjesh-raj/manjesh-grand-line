@@ -266,3 +266,135 @@ Mac and copying on it would still fill the history.
 - **No "paste as plain text" variant.** The mockup's footer names ⌘↩ for it;
   every entry this store holds *is* plain text, so the two would do the same
   thing and the second chord would be a lie.
+
+---
+
+## The capture chord: global for real, and the captain's to choose
+
+`fm/grandline-capture-global-hotkey-configurable`.
+
+The captain reported that ⌥Space opened the capture panel only while Grand Line
+itself was frontmost.
+It did nothing from Chrome, which is the one case a global hotkey exists for.
+He asked for two things: make it work from anywhere, the way Dictation's
+hold-to-record shortcut already does, and make the chord configurable with
+⌥Space as the default rather than the definition.
+
+The configurable half follows Dictation's own evolution exactly - phase 1 a
+fixed combo, phase 2 a real recorder over `KeyChord` - and
+[`16-dictation.md`](16-dictation.md) is where that precedent is written down.
+Nothing about it is restated here.
+
+### What was measured before anything was changed
+
+Three candidate causes, checked in the order the brief set them, against the
+captain's own running instance rather than against a fresh build.
+
+- **Accessibility trust is granted.** A read-only `lldb` attach to the running
+  packaged app (the technique `fm/grandline-live-gap-rootcause-scout`
+  established, and the same read-only shape) evaluated `AXIsProcessTrusted()`
+  and got `true`.
+  So the global monitor was not silently unarmed for want of the grant, and the
+  trust story - the first thing everyone suspects - was eliminated rather than
+  assumed.
+  Worth recording for the next investigation: the packaged app is re-signed on
+  every build with a local dev certificate, and the grant survived that.
+  `TCC.db`'s own mtime was five and a half hours *older* than the running
+  binary's signing time, so nobody had re-granted it after the rebuild either.
+- **Nothing else on the machine claims ⌥Space.** No
+  `com.apple.symbolichotkeys` entry binds keycode 49 with the Option flag alone
+  (the two nearby entries are ⌃Space and ⌃⌥Space, the input-source switches),
+  no launcher utility is installed, and Secure Event Input was off - which
+  matters because secure input blocks global key events while leaving
+  `.flagsChanged` alone, and would have produced exactly this asymmetry.
+- **That left the predicate, and it was genuinely divergent.**
+  `ShiftGlobalHotkey.matches` was the one hotkey in the app that never adopted
+  `KeyChord.relevantModifierMask`:
+
+      event.modifierFlags.intersection(.deviceIndependentFlagsMask) == [.option]
+
+  `.deviceIndependentFlagsMask` is `0xFFFF0000`.
+  It carries Caps Lock, Fn, the numeric-pad flag and the help flag alongside
+  ⌘⌥⌃⇧, and the comparison is an exact equality - so **any** ambient flag
+  riding along on the event makes it false and the chord stops matching, with
+  nothing logged and nothing to see.
+  `KeyChord`'s own header already writes down why that mask is the wrong one,
+  in as many words, and `DictationHotkey` - the one global hotkey here that
+  demonstrably fires from any app - has always masked with
+  `relevantModifierMask` instead.
+
+### Why "it works when Grand Line is frontmost" proved nothing
+
+The Shift menu carries a ⌥Space key equivalent of its own, added deliberately
+as the fallback for a captain who has not granted Accessibility.
+So the frontmost case has two independent implementations, and a predicate
+defect that kills both monitors still leaves the panel opening from the menu
+bar - which is precisely the shape the report described.
+Any future "the hotkey half-works" report should establish *which* of the two
+paths fired before concluding anything about the other.
+
+### What was not verified, plainly
+
+Nobody reproduced a real global ⌥Space keystroke being delivered to, or
+withheld from, this process.
+That needs a live keypress while a different app is frontmost, and this repo's
+agent shell has no Accessibility permission of its own.
+The only way to get one would have been to inject an event source into the
+captain's own running app, which is well beyond the read-only attach the
+convention sanctions and was declined.
+The predicate defect is proven from the code and from `KeyChord`'s own
+documented rule; that it is the *whole* of what the captain saw is inference,
+and is recorded as inference.
+The last-mile check - press the chord from Chrome, watch the panel open - is
+the captain's.
+
+### What changed
+
+- **`ShiftGlobalHotkey` now matches through `KeyChord`.** One definition of
+  "does this event mean this chord", shared with Dictation and the terminal
+  bindings, instead of three hand-written predicates drifting apart.
+- **It handles both event shapes**, following `DictationHotkey`'s established
+  design rather than inventing a second one: a modifier-only chord on
+  `.flagsChanged`, a regular key on `.keyDown`, and only the pair the current
+  chord needs installed. A capture trigger is a press rather than a hold, so a
+  modifier-only chord fires on the down edge only.
+- **`start()` is idempotent and `updateShortcut(_:)` exists.** The shipped
+  version installed a second monitor pair over the first, so a second `start()`
+  leaked the originals and the panel would have opened twice per press.
+- **`reassertIfTrustChanged()`, called on app activation.** Launch requests
+  Accessibility and installs the monitors in the same breath, so a captain
+  granting it in the System Settings pane that prompt opens is granting it
+  *after* the global monitor exists - and macOS does not arm an
+  already-registered global monitor retroactively. The cure used to be
+  relaunching, and nothing said so. The check is one `AXIsProcessTrusted()`
+  read and declines unless the answer actually changed.
+- **Settings > Capture**, a new page under Personalize: the recorder (at
+  `KeyChordRecorderView.Mode.command`, so a bare `Space` or a bare modifier is
+  refused while recording rather than after - either would fire constantly in
+  every app on the machine), and a row stating whether Accessibility is
+  granted. That second row exists because diagnosing this needed a debugger to
+  answer a question the app should have been able to answer out loud.
+- **The Shift menu's Capture item follows the recorded chord**, so a page can
+  never advertise a shortcut the app no longer listens for. A modifier-only
+  chord has no menu representation, so the item keeps its title and drops its
+  accelerator rather than printing something wrong.
+- **`CompactModeHotkey` had inherited the same defect** - it was shaped on
+  `ShiftGlobalHotkey` and copied the mask - so ⌃⌥G was equally dead under an
+  ambient flag. Fixed in the same pass, with its own Caps Lock case.
+
+### Verified
+
+- `ShiftGlobalHotkeySelfTest` (`FM_RUN_QUICK_CAPTURE_HOTKEY_TESTS=1`), pure
+  logic, so it guards the blocking CI lane. Ten cases over the predicate, the
+  two event shapes, the monitor-installation structure and the menu mapping.
+  Each fixture asserts its own discriminating power first - a bare `Space` must
+  be *refused* before "⌥Space matches" means anything.
+- Injection 1, the reported bug: restoring the `.deviceIndependentFlagsMask`
+  predicate fails exactly the three ambient-flag cases by name ("Caps Lock
+  being on must not stop ⌥Space matching", Fn, numeric-pad) and nothing else,
+  which is also the honest measure of how narrow the fix is.
+- Injection 2, the structural half: deleting the
+  `NSEvent.addGlobalMonitorForEvents` registration fails "start() must install
+  a GLOBAL keyDown monitor" plus two more. Every predicate case stays green
+  through it, which is the whole reason those structural checks exist - the
+  same gap `DictationHotkeySelfTest`'s own tests 10-12 closed for Dictation.

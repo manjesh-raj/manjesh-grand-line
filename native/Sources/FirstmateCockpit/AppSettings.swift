@@ -30,6 +30,7 @@ final class AppSettings {
         static let notifyOnNeedsDecision = "fm.notifyOnNeedsDecision"
         static let fmHome = "fm.fmHome"
         static let dictationShortcut = "fm.dictationShortcut"
+        static let quickCaptureShortcut = "fm.quickCaptureShortcut"
         static let dictationCleanupEnabled = "fm.dictationCleanupEnabled"
         static let dictationLocalWhisperEnabled = "fm.dictationLocalWhisperEnabled"
         static let morningBriefingEnabled = "fm.morningBriefingEnabled"
@@ -155,6 +156,31 @@ final class AppSettings {
         set {
             guard let data = try? JSONEncoder().encode(newValue) else { return }
             defaults.set(data, forKey: Keys.dictationShortcut)
+        }
+    }
+
+    /// Universal capture's configurable shortcut
+    /// (`fm/grandline-capture-global-hotkey-configurable`) - ⌥Space until the
+    /// captain records something else on Settings > Capture.
+    ///
+    /// Stored as JSON `Data` for exactly the reason `dictationShortcut` above
+    /// states: a `KeyChord` is a small cohesive value that is always read and
+    /// written as one unit, and splitting it into flat keys would invent a
+    /// half-written state nothing wants. Falls back to `.quickCaptureDefault`
+    /// whenever nothing has been saved yet or the stored value fails to
+    /// decode, so a corrupted preference costs the captain their choice and
+    /// not the feature.
+    var quickCaptureShortcut: KeyChord {
+        get {
+            guard let data = defaults.data(forKey: Keys.quickCaptureShortcut),
+                  let decoded = try? JSONDecoder().decode(KeyChord.self, from: data) else {
+                return .quickCaptureDefault
+            }
+            return decoded
+        }
+        set {
+            guard let data = try? JSONEncoder().encode(newValue) else { return }
+            defaults.set(data, forKey: Keys.quickCaptureShortcut)
         }
     }
 

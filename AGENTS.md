@@ -30,7 +30,7 @@ as they are rather than rewritten across 180 files.
 - [Build, run, test](#build-run-test) - the two CI lanes, the second (widget) binary, and the vendored patches a sync must re-apply
 - [Verification conventions](#verification-conventions) - how a change is proved here, and how much of the suite a PR has to run locally
 - [Writing a self-test](#writing-a-self-test)
-- [The AppKit gotcha catalogue](#the-appkit-gotcha-catalogue) - 20 measured traps
+- [The AppKit gotcha catalogue](#the-appkit-gotcha-catalogue) - 21 measured traps
 - [GL invariants](#gl-invariants) - GL-01 .. GL-38, one line each
 - [The component index](#the-component-index) - one button, one card, one row
 - [Stores, subprocesses and secrets](#stores-subprocesses-and-secrets)
@@ -668,7 +668,7 @@ fails unless its entry carries a trailing marker.
 
 ## The AppKit gotcha catalogue
 
-Twenty traps, every one measured on this app rather than read about. Each was
+Twenty-one traps, every one measured on this app rather than read about. Each was
 found by instrumenting a real layout or event pass; several took a full task to
 root-cause, and at least four have recurred in a new file after being fixed in
 an old one. **Read the ones that match what you are about to touch** - a tab
@@ -1333,6 +1333,45 @@ carries the two AppKit facts that make such a check hard to write (an
 `NSButton`'s tracking loop dequeues its own mouse-up, so the events must be
 `postEvent`ed and pumped rather than `sendEvent`ed; and a row's window
 coordinates go stale the moment a reload or a resize follows the click).
+
+### (21) `.deviceIndependentFlagsMask` is the wrong mask for a hotkey predicate
+
+**A chord predicate must mask with `KeyChord.relevantModifierMask` (⌘⌥⌃⇧),
+never with `.deviceIndependentFlagsMask`.** The latter is `0xFFFF0000` and
+carries Caps Lock, Fn, the numeric-pad flag and the help flag as well - so an
+exact equality against it turns any ambient flag riding along on the event into
+"this is not the chord", silently. `KeyChord`'s own header already writes down
+why those four are ambient *state* rather than a deliberate press.
+
+Shipped twice, both found by `fm/grandline-capture-global-hotkey-configurable`:
+`ShiftGlobalHotkey` (⌥Space, the captain's report) and `CompactModeHotkey`
+(⌃⌥G), the second having been shaped on the first and copied the mask.
+`DictationHotkey` never had it. **Three hand-written predicates for one
+question is the real defect** - route the comparison through `KeyChord` and
+there is one.
+
+Two things that made it expensive to find, and both generalise:
+
+- **A chord that is *also* an `NSMenuItem` key equivalent has two independent
+  implementations, and the menu masks the monitor's failure.** ⌥Space is in the
+  Shift menu as the no-Accessibility fallback, so a predicate defect that
+  killed both monitors still opened the panel while this app was frontmost -
+  which reads exactly like "the global half needs permission". Establish
+  *which* path fired before concluding anything about the other.
+- **A global `NSEvent` monitor is armed from the trust the process held when
+  it was registered**, and macOS does not arm an already-registered one
+  retroactively. Requesting Accessibility and calling `start()` in the same
+  breath means a captain who grants it in the pane that prompt opens has a
+  dead monitor until the next launch, with nothing saying so.
+  `ShiftGlobalHotkey.reassertIfTrustChanged()` (called on app activation) is
+  the shape; any new global monitor wants it.
+
+And the diagnostic worth reusing: `AXIsProcessTrusted()` can be read out of the
+captain's **own running instance** with a read-only `lldb -p` attach, which is
+how the trust story was eliminated here rather than assumed. Swift expression
+evaluation does not work against the packaged build (no debug info), but plain
+ObjC/C calls do.
+
 
 ---
 

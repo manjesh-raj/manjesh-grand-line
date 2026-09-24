@@ -89,7 +89,10 @@ enum DaylightDrillPageSlice6SelfTest {
     /// before, because F20 and F22 landed a day apart and each had to find and
     /// move all of them - the second of the two then hit a merge conflict in
     /// every copy.
-    private static let expectedCardCount = 22
+    ///
+    /// Twenty-four since `fm/grandline-capture-global-hotkey-configurable`
+    /// added the Capture page's two (Shortcut, System-wide access).
+    private static let expectedCardCount = 24
 
 
     static func run() -> Bool {

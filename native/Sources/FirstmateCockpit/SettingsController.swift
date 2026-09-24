@@ -74,6 +74,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     enum Category: String, CaseIterable {
         case appearance
         case terminal
+        case capture
         case menuBar
         case briefings
         case gmail
@@ -83,7 +84,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
 
         var navGroup: NavGroup {
             switch self {
-            case .appearance, .terminal, .menuBar: return .personalize
+            case .appearance, .terminal, .capture, .menuBar: return .personalize
             case .briefings, .gmail: return .yourDay
             case .intents, .security, .backup: return .system
             }
@@ -95,6 +96,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             switch self {
             case .appearance: return "Appearance"
             case .terminal: return "Terminal"
+            case .capture: return "Capture"
             case .menuBar: return "Menu Bar"
             case .briefings: return "Briefings"
             case .gmail: return "Google Accounts"
@@ -110,6 +112,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             switch self {
             case .appearance: return "paintpalette"
             case .terminal: return "terminal"
+            case .capture: return "square.and.pencil"
             case .menuBar: return "menubar.rectangle"
             case .briefings: return "sparkles"
             case .gmail: return "envelope"
@@ -169,6 +172,10 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             switch self {
             case .appearance: return .violet
             case .terminal: return .neutral
+            // Between Terminal's slate and Menu Bar's blue, and not repeated
+            // until Backup at the far end of the System group - the placement
+            // rule `checkEveryRowCarriesItsOwnColouredTile` actually asserts.
+            case .capture: return .good
             case .menuBar: return .info
             case .briefings: return .warn
             case .gmail: return .critical
@@ -185,6 +192,8 @@ final class SettingsController: NSViewController, DaylightDrillActions {
                 return "\(HelmTheme.allThemes.count) instrument-panel palettes, each contrast-verified to WCAG AA. Picking one repaints the whole window."
             case .terminal:
                 return "Where new tabs open, how their text looks, and the keys that move you between tabs and panes."
+            case .capture:
+                return "One chord, from any app, for anything you want to write down before it is gone. It files to tasks, notes, stickies, snippets or the vault."
             case .menuBar:
                 return "Run Grand Line from the status item with no main window. Nothing gets turned off."
             case .briefings:
@@ -209,6 +218,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
             switch self {
             case .appearance: return "theme dark light colour color palette font text size system pair"
             case .terminal: return "shell working directory font size shortcut split pane tab ssh reconnect notification bell"
+            case .capture: return "capture quick capture hotkey shortcut global option space accessibility permission note task sticky"
             case .menuBar: return "compact dock status item hotkey shortcut overdue badge menubar"
             case .briefings: return "morning briefing daily review calendar eventkit claude summary"
             case .gmail: return "google gmail oauth calendar work personal account sign in client id secret"
@@ -290,6 +300,12 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     /// and a recorder the captain just used takes effect on the next keypress
     /// rather than the next launch.
     var onTerminalShortcutsChanged: ((TerminalShortcutSet) -> Void)?
+
+    /// "The capture chord changed, tell the live monitor and the menu."
+    /// Forwarded for the same reason as the line above - this page owns no
+    /// `ShiftGlobalHotkey`, and a chord the captain just recorded has to take
+    /// effect on the next keypress rather than the next launch.
+    var onQuickCaptureShortcutChanged: ((KeyChord) -> Void)?
 
     /// Set by `AppShellController` so a sign-in that connects a calendar can
     /// make the Overview page re-read it. Optional: this page works with
@@ -419,6 +435,18 @@ final class SettingsController: NSViewController, DaylightDrillActions {
     private let notifySwitch = HelmToggle()
 
     private var shortcutRecorders: [TerminalShortcutAction: KeyChordRecorderView] = [:]
+    private var captureShortcutRecorder: KeyChordRecorderView?
+    private var resetCaptureShortcutButton: HelmButton?
+    private var captureAccessibilityButton: HelmButton?
+    private var captureAccessibilityStatus: NSTextField?
+
+    /// How this page asks whether the capture hotkey's global half is armed.
+    ///
+    /// Injected rather than read directly so a suite can drive both answers
+    /// without a real Accessibility grant - `AXIsProcessTrusted()` is a
+    /// property of the *process*, and a headless runner's answer is whatever
+    /// the machine happens to say. Defaults to the real call.
+    var quickCaptureAccessibilityTrusted: (() -> Bool)?
     private var resetShortcutsButton: HelmButton?
 
     private let morningBriefingSwitch = HelmToggle()
@@ -1045,6 +1073,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         switch category {
         case .appearance: sections = buildAppearanceSections()
         case .terminal: sections = buildTerminalSections()
+        case .capture: sections = buildCaptureSections()
         case .menuBar: sections = buildMenuBarSections()
         case .briefings: sections = buildBriefingsSections()
         case .gmail: sections = buildGmailSections()
@@ -1511,6 +1540,89 @@ final class SettingsController: NSViewController, DaylightDrillActions {
 
     private func refreshShortcutControls() {
         resetShortcutsButton?.isEnabled = AppSettings.shared.terminalShortcuts.hasCustomBindings
+    }
+
+    // MARK: - Capture (fm/grandline-capture-global-hotkey-configurable)
+
+    /// Settings > Capture.
+    ///
+    /// Two rows, and the second one exists because of how this page came to
+    /// be written. The captain reported ⌥Space working only while Grand Line
+    /// was frontmost, and diagnosing that took a live `lldb` read of the
+    /// running app to establish something the app could have said out loud:
+    /// whether the global half of the hotkey is actually armed. A chord that
+    /// silently works in one app and not the rest is exactly the failure a
+    /// settings page should be able to explain, so the trust state is a real
+    /// row here rather than a comment in `ShiftGlobalHotkey`.
+    private func buildCaptureSections() -> [SettingsSection] {
+        // `.command`: a capture trigger has to be a real key carrying a
+        // modifier. A bare `Space` recorded here would open the panel every
+        // time the captain pressed the space bar in any app on the machine,
+        // and a modifier on its own would fire while they reached for ⌘ - see
+        // `KeyChordRecorderView.Mode`.
+        let recorder = KeyChordRecorderView(shortcut: AppSettings.shared.quickCaptureShortcut, mode: .command)
+        recorder.widthAnchor.constraint(equalToConstant: 168).isActive = true
+        recorder.onChange = { [weak self] chord in self?.quickCaptureShortcutChanged(chord) }
+        captureShortcutRecorder = recorder
+
+        let reset = HelmButton(title: "Restore Default", variant: .secondary,
+                               target: self, action: #selector(resetQuickCaptureShortcut))
+        resetCaptureShortcutButton = reset
+
+        let grant = HelmButton(title: "Open Accessibility Settings", variant: .secondary,
+                               target: self, action: #selector(openAccessibilitySettings))
+        captureAccessibilityButton = grant
+
+        let status = muted(NSTextField(labelWithString: ""))
+        status.font = .systemFont(ofSize: HelmType.scaled(12))
+        captureAccessibilityStatus = status
+
+        let trustColumn = NSStackView(views: [status, grant])
+        trustColumn.orientation = .vertical
+        trustColumn.alignment = .trailing
+        trustColumn.spacing = HelmMetrics.s1
+
+        refreshCaptureControls()
+
+        return [
+            SettingsSection(heading: "Shortcut", aside: reset, group: SettingsGroup(rows: [
+                SettingsRow(title: "Open the capture panel",
+                            description: "Works from any app once Accessibility is granted, and from Grand Line itself either way. The Shift menu\u{2019}s Capture item follows whatever you record here.",
+                            control: recorder),
+            ]), foot: "Click the shortcut, then press the new keys. Esc cancels."),
+
+            SettingsSection(heading: "System-wide access", group: SettingsGroup(rows: [
+                SettingsRow(title: "Accessibility permission",
+                            description: "macOS only delivers keystrokes from other apps to a trusted Accessibility client. Without it the chord still works while Grand Line is frontmost, which is why a missing grant reads as \u{201C}it only sometimes works\u{201D} rather than as an error.",
+                            control: trustColumn),
+            ]), foot: "Granting it while Grand Line is already running is enough - the monitors are reinstalled the next time you switch back to this app. No relaunch needed.")
+        ]
+    }
+
+    private func refreshCaptureControls() {
+        captureShortcutRecorder?.shortcut = AppSettings.shared.quickCaptureShortcut
+        resetCaptureShortcutButton?.isEnabled =
+            AppSettings.shared.quickCaptureShortcut != .quickCaptureDefault
+        let trusted = quickCaptureAccessibilityTrusted?() ?? AXIsProcessTrusted()
+        captureAccessibilityStatus?.stringValue = trusted ? "Granted" : "Not granted"
+        captureAccessibilityButton?.isHidden = trusted
+    }
+
+    private func quickCaptureShortcutChanged(_ chord: KeyChord) {
+        AppSettings.shared.quickCaptureShortcut = chord
+        onQuickCaptureShortcutChanged?(chord)
+        refreshCaptureControls()
+    }
+
+    @objc private func resetQuickCaptureShortcut() {
+        quickCaptureShortcutChanged(.quickCaptureDefault)
+    }
+
+    /// Opens the exact pane the captain needs rather than "System Settings".
+    /// The same URL `DictationController`'s own status action uses.
+    @objc private func openAccessibilitySettings() {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else { return }
+        NSWorkspace.shared.open(url)
     }
 
     // MARK: - Menu Bar (F22)
@@ -2490,6 +2602,7 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         followSystemSwitch.isOn = AppSettings.shared.followSystemAppearance
         refreshSystemPairPopUps()
         refreshGmailSection()
+        refreshCaptureControls()
         syncDependentRows()
 
         rebuildAppearanceGrid()
@@ -2539,7 +2652,14 @@ final class SettingsController: NSViewController, DaylightDrillActions {
         for row in backupRows { row.applyTheme(theme) }
         sudoRowHost?.applyTheme(theme)
         for card in themeCards { card.applyTheme(theme) }
-        for recorder in shortcutRecorders.values { recorder.applyTheme(theme) }
+        // Every recorder on this page, Capture's included - a
+        // `KeyChordRecorderView` paints its own fill, border and ink from the
+        // theme and renders as an unfilled rectangle with default ink until
+        // this runs. Missed once while Capture's page was being added, and
+        // nothing failed: the control worked perfectly and looked wrong.
+        for recorder in shortcutRecorders.values + [captureShortcutRecorder].compactMap({ $0 }) {
+            recorder.applyTheme(theme)
+        }
         for toggle in [autoReconnectSwitch, notifySwitch, morningBriefingSwitch,
                        dailyReviewSwitch, dailyReviewCalendarSwitch, followSystemSwitch,
                        compactModeSwitch, compactDockSwitch, compactBadgeSwitch,
