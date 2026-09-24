@@ -82,6 +82,8 @@ enum DictationEngineSelfTest {
             ("systemDictationDisabledIsItsOwnStatus", test_systemDictationDisabledIsDistinct),
             ("hardCeilingScalesWithCapturedAudio", test_hardCeilingScalesWithCapturedAudio),
             ("pasteSkipsSyntheticKeystrokeWhenUntrustedAndReportsCopiedOnly", test_pasteSkipsSyntheticKeystrokeWhenUntrusted),
+            ("pasteGateOpensOnPostEventAccessAloneNotJustAXTrust", test_pasteGateOpensOnPostEventAccessAlone),
+            ("anUntrustedSuiteNeverRaisesARealTCCPrompt", test_untrustedPasteNeverPromptsInTests),
             ("doubleFinishDeliversOnce", test_doubleFinishDeliversOnce),
             ("whisperEngineIsNotResidentUntilUsed", test_whisperNotResidentUntilUsed),
             ("whisperEngineIsReleasedAfterIdle", test_whisperReleasedAfterIdle),
@@ -280,6 +282,69 @@ enum DictationEngineSelfTest {
         h.engine.debugFinishForTests(text: fixture)
         guard h.lastStatus == .copiedOnly else {
             return "expected .copiedOnly after an untrusted paste, got \(String(describing: h.lastStatus)) - this is the exact misleading-status bug (status read as success with nothing typed anywhere)"
+        }
+        return nil
+    }
+
+    /// `fm/grand-line-dictation-autopaste-fix`. The gate that decides whether
+    /// the synthetic \u{2318}V may be posted used to be `AXIsProcessTrusted()`
+    /// alone, which is not the permission that governs posting an event -
+    /// `CGPreflightPostEventAccess()` is. The case that matters is the one the
+    /// old gate got wrong: post-event access true, AX trust false. Asserted
+    /// against the pure rule rather than the live system reads, so it means
+    /// the same thing on a CI runner that has never been trusted at all.
+    ///
+    /// Reverting `pasteGateIsOpen` to `axTrusted` alone (the shipped bug's own
+    /// shape) fails this case by name on its second check.
+    private static func test_pasteGateOpensOnPostEventAccessAlone() -> String? {
+        // Discriminating power first: the four inputs must not all agree, or
+        // every check below would pass vacuously.
+        guard DictationEngine.pasteGateIsOpen(postEventAccess: false, axTrusted: false) == false else {
+            return "the gate opened with neither permission - it can no longer refuse anything"
+        }
+        guard DictationEngine.pasteGateIsOpen(postEventAccess: true, axTrusted: false) else {
+            return "the gate refused a process that macOS says may post events - this is the exact captain-reported bug (transcript copied, never pasted)"
+        }
+        guard DictationEngine.pasteGateIsOpen(postEventAccess: false, axTrusted: true) else {
+            return "the gate stopped honouring AXIsProcessTrusted() - the old, still-valid half of the rule regressed"
+        }
+        guard DictationEngine.pasteGateIsOpen(postEventAccess: true, axTrusted: true) else {
+            return "the gate refused a fully-permitted process"
+        }
+        return nil
+    }
+
+    /// The recovery path added by the same task calls `CGRequestPostEventAccess()`,
+    /// which raises a real system permission dialog. A suite must never do
+    /// that on the captain's own machine, so the forced-untrusted override has
+    /// to short-circuit the request rather than merely making it fail.
+    /// Deleting `requestPostEventAccessIfNotYetAsked()`'s
+    /// `accessibilityTrustOverrideForTests != nil` early return makes the
+    /// counter read 1 and fails this case.
+    private static func test_untrustedPasteNeverPromptsInTests() -> String? {
+        DictationEngine.pasteSinkForTests = nil
+        DictationEngine.accessibilityTrustOverrideForTests = false
+        DictationEngine.debugResetPostEventAccessRequestStateForTests()
+        let priorClipboard = NSPasteboard.general.string(forType: .string)
+        defer {
+            DictationEngine.accessibilityTrustOverrideForTests = nil
+            DictationEngine.debugResetPostEventAccessRequestStateForTests()
+            if let priorClipboard {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(priorClipboard, forType: .string)
+            }
+        }
+
+        let fixture = "scale the worker pool to six (DictationEngineSelfTest fixture)"
+        let outcome = DictationEngine.pasteAtCursor(fixture)
+        guard outcome == .skippedNoTrust else {
+            return "expected .skippedNoTrust with the gate forced closed, got \(outcome)"
+        }
+        guard DictationEngine.postEventAccessRequestCountForTests == 0 else {
+            return "a suite reached the real CGRequestPostEventAccess() \(DictationEngine.postEventAccessRequestCountForTests) time(s) - that raises a system dialog on the captain\'s machine"
+        }
+        guard NSPasteboard.general.string(forType: .string) == fixture else {
+            return "the pasteboard write must still happen when the gate is closed"
         }
         return nil
     }

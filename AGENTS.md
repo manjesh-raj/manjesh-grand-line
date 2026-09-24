@@ -1393,6 +1393,29 @@ root). Never conclude "Accessibility must be denied" - or accept a captain's
 "it looks granted" - from the Settings UI alone; read the live process. See
 [`16-dictation.md`](docs/history/16-dictation.md) for the full investigation.
 
+**And the rule that came out of the *second* round on the same bug
+(`fm/grand-line-dictation-autopaste-fix`): gate a permission-requiring call on
+the API that governs *that call*, and when the gate is closed, ask - do not
+narrate.** `AXIsProcessTrusted()` answers "may this process drive other apps
+through the Accessibility *API*"; `CGPreflightPostEventAccess()` answers "may
+this process *post* events", which is what `CGEvent.post` actually does. They
+are separate entry points onto TCC and they are free to disagree.
+`DictationEngine.pasteGateIsOpen(postEventAccess:axTrusted:)` takes either as
+sufficient, which can only ever add an attempt that used to be refused. The
+second half matters more: the first round's fix ended at a status string
+telling the captain to remove and re-add the row in System Settings by hand,
+the captain did exactly that twice, and the app still only copied.
+`CGRequestPostEventAccess()` (and `AXIsProcessTrustedWithOptions([prompt:
+true])` for the AX half) is the in-app version of that repair - it registers
+the *currently running* binary's signature with `tccd` rather than relying on
+whichever older one the existing row was recorded against. Two things any such
+call needs: it presents a system alert, so hop it to the main thread while
+keeping the once-per-launch decision synchronous and therefore assertable, and
+it must be short-circuited under `#if FM_SELFTESTS` - a suite that raises a
+real TCC dialog on the captain's machine is its own defect, and needs a
+reset hook, because a process-global "already asked" latch otherwise lets the
+first case to consume it leave every later case passing for the wrong reason.
+
 
 ---
 
